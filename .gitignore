@@ -1,0 +1,18 @@
+# Claude 로컬 설정
+.claude/
+
+# OS 관련
+.DS_Store
+Thumbs.db
+
+# 에디터 설정
+.vscode/
+.idea/
+*.swp
+
+# 로그 파일
+*.log
+
+# 임시 파일
+*.tmp
+*.bak
