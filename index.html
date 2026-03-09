@@ -1,0 +1,1546 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAMBA-WAVE</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Font Awesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Chart.js for Visualization -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+
+    <!-- Custom Styles - Signalry Modern Design -->
+    <style>
+        :root {
+            --primary: #FF8C00;
+            --secondary: #FFB84D;
+            --dark-bg: #0A0A0A;
+            --dark-card: #1A1A1A;
+            --dark-border: #2D2D2D;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #0F0F0F;
+            color: #E5E5E5;
+        }
+
+        /* 최소한의 스크롤바 */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 4px;
+        }
+
+        /* === 레이아웃 === */
+        body {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        main {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        /* === 헤더 === */
+        header {
+            background: #0F0F0F;
+            border-bottom: 1px solid #2D2D2D;
+            backdrop-filter: blur(10px);
+            background-color: rgba(15, 15, 15, 0.9);
+            position: sticky;
+            top: 0;
+            z-index: 30;
+        }
+
+        header .flex {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem 2rem;
+            max-width: 100%;
+        }
+
+        /* === 메인 레이아웃 === */
+        .flex-1 {
+            flex: 1;
+        }
+
+        main {
+            width: 100%;
+            background: linear-gradient(135deg, #0F0F0F 0%, #1A1A1A 100%);
+            padding-top: 2rem;
+        }
+
+        main > div {
+            padding: 2rem 3rem 4rem 3rem;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        /* === 타이포그래피 === */
+        h1, h2, h3 {
+            letter-spacing: -0.02em;
+        }
+
+        h1 {
+            font-size: 1.875rem;
+            font-weight: 700;
+        }
+
+        h2 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        p {
+            line-height: 1.6;
+            font-size: 0.95rem;
+        }
+
+        /* === 통계 카드 === */
+        .stat-card {
+            background: rgba(30, 30, 30, 0.5);
+            border: 1px solid #2D2D2D;
+            border-radius: 12px;
+            padding: 1.75rem;
+            backdrop-filter: blur(20px);
+            transition: all 0.3s ease;
+            min-height: 160px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .stat-card:hover {
+            background: rgba(40, 40, 40, 0.6);
+            border-color: #FF8C00;
+            transform: translateY(-4px);
+        }
+
+        .stat-card.sales {
+            border-left: 3px solid #FF8C00;
+        }
+
+        .stat-card.profit {
+            border-left: 3px solid #FFB84D;
+        }
+
+        .stat-card.orders {
+            border-left: 3px solid #FF8C00;
+        }
+
+        .stat-card.warning {
+            border-left: 3px solid #FFA500;
+        }
+
+        .stat-card p:first-child {
+            color: #999;
+            font-size: 0.8125rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.75rem;
+            font-weight: 500;
+        }
+
+        .stat-card p:nth-child(2) {
+            font-size: 1.75rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #FF8C00, #FFB84D);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0.5rem 0;
+            line-height: 1.2;
+        }
+
+        .stat-card p:last-child {
+            font-size: 0.875rem;
+            color: #888;
+            margin-top: auto;
+        }
+
+        /* === 네비게이션 === */
+        nav {
+            display: flex;
+            gap: 0;
+        }
+
+        .nav-item {
+            color: #E5E5E5;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .nav-item:hover {
+            color: #FF8C00;
+            border-bottom-color: #FF8C00;
+        }
+
+        .nav-item.sidebar-active {
+            background: transparent;
+            color: #FF8C00;
+            border-bottom: 2px solid #FF8C00;
+            border-left: none;
+        }
+
+        /* === 버튼 === */
+        button {
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+            border-radius: 8px;
+        }
+
+        button.bg-orange-600 {
+            background: linear-gradient(135deg, #FF8C00, #FFB84D);
+            color: white;
+            font-weight: 600;
+        }
+
+        button.bg-orange-600:hover {
+            box-shadow: 0 0 20px rgba(255, 140, 0, 0.4);
+            transform: translateY(-2px);
+        }
+
+        /* === 테이블 === */
+        table {
+            background: transparent;
+        }
+
+        thead {
+            background: transparent;
+            border-bottom: 2px solid #2D2D2D;
+        }
+
+        thead th {
+            color: #999;
+            font-weight: 500;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.1em;
+            padding: 1rem;
+        }
+
+        tbody tr {
+            border-bottom: 1px solid #1A1A1A;
+            transition: background 0.2s;
+        }
+
+        tbody tr:hover {
+            background: rgba(255, 140, 0, 0.05);
+        }
+
+        tbody td {
+            padding: 1rem;
+            color: #E5E5E5;
+            word-break: break-word;
+            overflow-wrap: break-word;
+            hyphens: auto;
+        }
+
+        /* === 입력 필드 === */
+        input, select, textarea {
+            background: rgba(30, 30, 30, 0.5);
+            border: 1px solid #2D2D2D;
+            color: #E5E5E5;
+            border-radius: 8px;
+            padding: 0.875rem 1rem;
+            transition: all 0.3s;
+            font-size: 0.9375rem;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        textarea {
+            resize: vertical;
+            line-height: 1.5;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #FF8C00;
+            background: rgba(30, 30, 30, 0.8);
+            box-shadow: 0 0 0 3px rgba(255, 140, 0, 0.1);
+        }
+
+        /* === 카드 === */
+        .bg-white {
+            background: rgba(30, 30, 30, 0.5) !important;
+            border: 1px solid #2D2D2D !important;
+            color: #E5E5E5 !important;
+        }
+
+        /* === 그래디언트 배경 === */
+        .gradient-orange {
+            background: linear-gradient(135deg, #FF8C00 0%, #FFB84D 100%);
+        }
+
+        /* === 배지 === */
+        .bg-red-100 {
+            background: rgba(255, 0, 0, 0.1) !important;
+            color: #FF8C00 !important;
+        }
+
+        .bg-blue-50 {
+            background: rgba(255, 140, 0, 0.05) !important;
+            color: #FF8C00 !important;
+        }
+
+        /* === 강조 텍스트 === */
+        .text-gray-400 {
+            color: #999 !important;
+        }
+
+        .text-gray-500 {
+            color: #888 !important;
+        }
+
+        .text-gray-600 {
+            color: #777 !important;
+        }
+
+        .text-gray-700 {
+            color: #666 !important;
+        }
+
+        .text-gray-900 {
+            color: #E5E5E5 !important;
+        }
+
+        /* === 모달 === */
+        .fixed.inset-0 {
+            background: rgba(0, 0, 0, 0.7) !important;
+            backdrop-filter: blur(4px);
+        }
+
+        .fixed.inset-0 > div {
+            background: #1A1A1A !important;
+            border: 1px solid #2D2D2D !important;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+        }
+
+        .modal-header {
+            border-bottom: 1px solid #2D2D2D;
+        }
+
+        /* === 폼 레이블 === */
+        label {
+            color: #E5E5E5 !important;
+            font-size: 0.9375rem;
+            font-weight: 500;
+            display: block;
+            margin-bottom: 0.5rem;
+            word-break: break-word;
+        }
+
+        .text-gray-700 {
+            color: #E5E5E5 !important;
+        }
+
+        .text-gray-600 {
+            color: #999 !important;
+        }
+
+        .text-gray-500 {
+            color: #888 !important;
+        }
+
+        /* === 선택 요소 === */
+        .bg-gray-50 {
+            background: rgba(255, 140, 0, 0.05) !important;
+        }
+
+        .bg-red-100 {
+            background: rgba(255, 100, 100, 0.15) !important;
+        }
+
+        .bg-green-50 {
+            background: rgba(100, 200, 100, 0.05) !important;
+        }
+
+        .border-gray-200 {
+            border-color: #2D2D2D !important;
+        }
+
+        .border-gray-300 {
+            border-color: #3D3D3D !important;
+        }
+
+        /* === 텍스트 색상 === */
+        .text-red-600 {
+            color: #FF6B6B !important;
+        }
+
+        .text-green-600 {
+            color: #51CF66 !important;
+        }
+
+        .text-blue-600 {
+            color: #4C9AFF !important;
+        }
+
+        .text-yellow-500 {
+            color: #FFD93D !important;
+        }
+
+        .text-purple-500 {
+            color: #DA77F2 !important;
+        }
+
+        /* === 모달 버튼 === */
+        .bg-blue-600 {
+            background: linear-gradient(135deg, #FF8C00, #FFB84D) !important;
+            color: white !important;
+            font-weight: 600;
+        }
+
+        .bg-blue-600:hover {
+            box-shadow: 0 0 20px rgba(255, 140, 0, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .bg-gray-300 {
+            background: rgba(60, 60, 60, 0.8) !important;
+            color: #E5E5E5 !important;
+            border: 1px solid #3D3D3D;
+        }
+
+        .bg-gray-300:hover {
+            background: rgba(70, 70, 70, 0.9) !important;
+            border-color: #4D4D4D;
+        }
+
+        .bg-gray-400 {
+            background: rgba(70, 70, 70, 0.9) !important;
+        }
+
+        /* === 청크 박스 === */
+        .bg-blue-50 {
+            background: rgba(255, 140, 0, 0.05) !important;
+        }
+
+        .text-blue-600 {
+            color: #FF8C00 !important;
+        }
+
+        /* === 차트 === */
+        canvas {
+            max-height: 400px;
+        }
+
+        .chart-container {
+            background: rgba(30, 30, 30, 0.5);
+            border: 1px solid #2D2D2D;
+            border-radius: 12px;
+            padding: 1.5rem;
+            backdrop-filter: blur(20px);
+        }
+
+        /* === 그리드 간격 === */
+        .gap-6 {
+            gap: 1.5rem;
+        }
+
+        .space-y-3 > * + * {
+            margin-top: 0.75rem;
+        }
+    </style>
+</head>
+<body class="bg-black">
+    <!-- Header - Modern Navigation -->
+    <header>
+        <div class="flex items-center justify-between px-8 py-4">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 bg-gradient-to-br from-orange-500 to-orange-600 rounded flex items-center justify-center">
+                    <i class="fas fa-chart-line text-white text-sm"></i>
+                </div>
+                <h1 class="text-lg font-bold text-white tracking-tight">SambaWave</h1>
+            </div>
+
+            <!-- 상단 네비게이션 -->
+            <nav style="display: flex; gap: 0; margin: 0 auto; margin-left: 3rem;">
+                <button class="nav-item" data-page="dashboard">대시보드</button>
+                <button class="nav-item" data-page="products">상품</button>
+                <button class="nav-item" data-page="channels">판매처</button>
+                <button class="nav-item" data-page="orders">주문</button>
+                <button class="nav-item" data-page="analytics">통계</button>
+                <button class="nav-item" data-page="contacts">연락</button>
+                <button class="nav-item" data-page="returns">반품</button>
+            </nav>
+
+            <div class="flex items-center gap-4">
+                <button class="relative p-2 transition" style="color: #888;">
+                    <i class="fas fa-bell text-lg"></i>
+                    <span class="absolute top-1 right-1 w-2 h-2 bg-orange-500 rounded-full"></span>
+                </button>
+                <button class="p-2 transition" style="color: #888;">
+                    <i class="fas fa-cog text-lg"></i>
+                </button>
+                <div class="w-8 h-8 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center text-white text-xs font-bold cursor-pointer">
+                    S
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="overflow-y-auto">
+            <div class="p-8">
+                <!-- Dashboard Page -->
+                <div id="page-dashboard" class="page-content">
+                    <div class="mb-8">
+                        <h2 class="text-3xl font-bold text-gray-900 mb-2">대시보드</h2>
+                        <p class="text-gray-600">오늘의 매출 현황과 주요 지표를 확인하세요</p>
+                    </div>
+
+                    <!-- Stats Grid -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        <!-- Sales -->
+                        <div class="stat-card sales">
+                            <div class="flex justify-between items-start mb-4">
+                                <div>
+                                    <p class="text-gray-600 text-sm font-medium">오늘 매출</p>
+                                    <p class="text-3xl font-bold text-gray-900 mt-2" id="dash-sales">₩0</p>
+                                </div>
+                                <i class="fas fa-arrow-up text-green-500 text-2xl"></i>
+                            </div>
+                            <p class="text-sm text-gray-500">주문 <span class="font-bold" id="dash-orders">0</span>개</p>
+                        </div>
+
+                        <!-- Profit -->
+                        <div class="stat-card profit">
+                            <div class="flex justify-between items-start mb-4">
+                                <div>
+                                    <p class="text-gray-600 text-sm font-medium">순이익</p>
+                                    <p class="text-3xl font-bold text-gray-900 mt-2" id="dash-profit">₩0</p>
+                                </div>
+                                <i class="fas fa-coins text-green-500 text-2xl"></i>
+                            </div>
+                            <p class="text-sm text-gray-500">수익률 <span class="font-bold text-green-600" id="dash-rate">0%</span></p>
+                        </div>
+
+                        <!-- Avg Order Value -->
+                        <div class="stat-card orders">
+                            <div class="flex justify-between items-start mb-4">
+                                <div>
+                                    <p class="text-gray-600 text-sm font-medium">평균 주문금액</p>
+                                    <p class="text-3xl font-bold text-gray-900 mt-2" id="dash-avg">₩0</p>
+                                </div>
+                                <i class="fas fa-shopping-bag text-purple-500 text-2xl"></i>
+                            </div>
+                            <p class="text-sm text-gray-500">1개월 기준</p>
+                        </div>
+
+                        <!-- Pending Orders -->
+                        <div class="stat-card warning">
+                            <div class="flex justify-between items-start mb-4">
+                                <div>
+                                    <p class="text-gray-600 text-sm font-medium">미배송 주문</p>
+                                    <p class="text-3xl font-bold text-gray-900 mt-2" id="dash-pending">0</p>
+                                </div>
+                                <i class="fas fa-exclamation-triangle text-yellow-500 text-2xl"></i>
+                            </div>
+                            <p class="text-sm text-gray-500">즉시 배송 처리</p>
+                        </div>
+                    </div>
+
+                    <!-- Recent Orders & Sales by Channel -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <!-- Recent Orders -->
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <h3 class="text-lg font-bold text-gray-900 mb-4">최근 주문</h3>
+                            <div class="space-y-3">
+                                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+                                        <div>
+                                            <p class="font-medium text-gray-900">주문 #12345</p>
+                                            <p class="text-xs text-gray-500">쿠팡 • 15분 전</p>
+                                        </div>
+                                    </div>
+                                    <p class="font-bold text-gray-900">₩150,000</p>
+                                </div>
+                                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-2 h-2 bg-yellow-500 rounded-full"></div>
+                                        <div>
+                                            <p class="font-medium text-gray-900">주문 #12344</p>
+                                            <p class="text-xs text-gray-500">무신사 • 32분 전</p>
+                                        </div>
+                                    </div>
+                                    <p class="font-bold text-gray-900">₩89,000</p>
+                                </div>
+                                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                        <div>
+                                            <p class="font-medium text-gray-900">주문 #12343</p>
+                                            <p class="text-xs text-gray-500">11번가 • 1시간 전</p>
+                                        </div>
+                                    </div>
+                                    <p class="font-bold text-gray-900">₩234,500</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Sales by Channel -->
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <h3 class="text-lg font-bold text-gray-900 mb-4">판매처별 매출</h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <div class="flex justify-between mb-2">
+                                        <p class="text-sm font-medium text-gray-700">쿠팡</p>
+                                        <p class="text-sm font-bold text-gray-900">₩450,000 (45%)</p>
+                                    </div>
+                                    <div class="w-full bg-gray-200 rounded-full h-2">
+                                        <div class="bg-blue-500 h-2 rounded-full" style="width: 45%"></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="flex justify-between mb-2">
+                                        <p class="text-sm font-medium text-gray-700">무신사</p>
+                                        <p class="text-sm font-bold text-gray-900">₩320,000 (32%)</p>
+                                    </div>
+                                    <div class="w-full bg-gray-200 rounded-full h-2">
+                                        <div class="bg-green-500 h-2 rounded-full" style="width: 32%"></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="flex justify-between mb-2">
+                                        <p class="text-sm font-medium text-gray-700">11번가</p>
+                                        <p class="text-sm font-bold text-gray-900">₩230,000 (23%)</p>
+                                    </div>
+                                    <div class="w-full bg-gray-200 rounded-full h-2">
+                                        <div class="bg-purple-500 h-2 rounded-full" style="width: 23%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Products Page -->
+                <div id="page-products" class="page-content hidden">
+                    <div class="mb-8 flex justify-between items-center">
+                        <div>
+                            <h2 class="text-3xl font-bold text-gray-900 mb-2">상품 관리</h2>
+                            <p class="text-gray-600">등록된 상품: <span class="font-bold" id="product-count">0</span>개</p>
+                        </div>
+                        <button onclick="ui.showProductModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2">
+                            <i class="fas fa-plus"></i> 상품 추가
+                        </button>
+                    </div>
+
+                    <!-- 검색 및 필터 -->
+                    <div class="bg-white rounded-lg shadow p-4 mb-6">
+                        <div class="flex gap-3">
+                            <input type="text" id="product-search" placeholder="상품명 또는 URL로 검색..." class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <select id="product-status" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="">상태: 모두</option>
+                                <option value="active">활성</option>
+                                <option value="inactive">비활성</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 상품 테이블 -->
+                    <div class="bg-white rounded-lg shadow overflow-hidden">
+                        <table class="w-full">
+                            <thead class="bg-gray-50 border-b border-gray-200">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">상품명</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">판매처</th>
+                                    <th class="px-6 py-3 text-right text-sm font-semibold text-gray-900">원가</th>
+                                    <th class="px-6 py-3 text-right text-sm font-semibold text-gray-900">마진율</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">상태</th>
+                                    <th class="px-6 py-3 text-center text-sm font-semibold text-gray-900">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody id="products-tbody" class="divide-y divide-gray-200">
+                                <tr>
+                                    <td colspan="6" class="px-6 py-8 text-center text-gray-500">상품을 추가해주세요</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Channels Page -->
+                <div id="page-channels" class="page-content hidden">
+                    <div class="mb-8 flex justify-between items-center">
+                        <div>
+                            <h2 class="text-3xl font-bold text-gray-900 mb-2">판매처 관리</h2>
+                            <p class="text-gray-600">연결된 판매처: <span class="font-bold" id="channel-count">0</span>개</p>
+                        </div>
+                        <button onclick="ui.showChannelModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2">
+                            <i class="fas fa-plus"></i> 판매처 추가
+                        </button>
+                    </div>
+
+                    <!-- 판매처 그리드 -->
+                    <div id="channels-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div class="bg-white rounded-lg shadow p-6 text-center text-gray-500">판매처를 추가해주세요</div>
+                    </div>
+                </div>
+
+                <!-- Sourcing Page -->
+                <div id="page-sourcing" class="page-content hidden">
+                    <div class="mb-8 flex justify-between items-center">
+                        <div>
+                            <h2 class="text-3xl font-bold text-gray-900 mb-2">소싱 추적</h2>
+                            <p class="text-gray-600">소싱사이트의 가격과 재고 변동을 모니터링합니다</p>
+                        </div>
+                        <button onclick="ui.showSourcingModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2">
+                            <i class="fas fa-plus"></i> 소싱사이트 추가
+                        </button>
+                    </div>
+
+                    <!-- 모니터링 요약 -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                        <div class="bg-white rounded-lg shadow p-6 border-l-4 border-blue-500">
+                            <p class="text-gray-600 text-sm font-medium">총 추적 중</p>
+                            <p class="text-3xl font-bold text-gray-900 mt-2" id="sourcing-tracked">0</p>
+                        </div>
+                        <div class="bg-white rounded-lg shadow p-6 border-l-4 border-green-500">
+                            <p class="text-gray-600 text-sm font-medium">오늘 업데이트</p>
+                            <p class="text-3xl font-bold text-gray-900 mt-2" id="sourcing-today">0</p>
+                        </div>
+                        <div class="bg-white rounded-lg shadow p-6 border-l-4 border-orange-500">
+                            <p class="text-gray-600 text-sm font-medium">가격 변동 알림</p>
+                            <p class="text-3xl font-bold text-gray-900 mt-2" id="sourcing-alerts">0</p>
+                        </div>
+                        <div class="bg-white rounded-lg shadow p-6 border-l-4 border-red-500">
+                            <p class="text-gray-600 text-sm font-medium">재고 부족</p>
+                            <p class="text-3xl font-bold text-gray-900 mt-2" id="sourcing-low-stock">0</p>
+                        </div>
+                    </div>
+
+                    <!-- 소싱사이트 목록 -->
+                    <div class="bg-white rounded-lg shadow overflow-hidden">
+                        <table class="w-full">
+                            <thead class="bg-gray-50 border-b border-gray-200">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">사이트명</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">유형</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">상태</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">마지막 업데이트</th>
+                                    <th class="px-6 py-3 text-center text-sm font-semibold text-gray-900">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sourcing-tbody" class="divide-y divide-gray-200">
+                                <tr>
+                                    <td colspan="5" class="px-6 py-8 text-center text-gray-500">추적 중인 사이트가 없습니다</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Orders Page -->
+                <div id="page-orders" class="page-content hidden">
+                    <div class="mb-8 flex justify-between items-center">
+                        <div>
+                            <h2 class="text-3xl font-bold text-gray-900 mb-2">주문/CS</h2>
+                            <p class="text-gray-600">미배송 주문: <span class="font-bold text-red-600" id="pending-count">0</span>개 / 전체: <span class="font-bold" id="total-orders">0</span>개</p>
+                        </div>
+                        <button onclick="ui.showOrderModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2">
+                            <i class="fas fa-plus"></i> 주문 추가
+                        </button>
+                    </div>
+
+                    <!-- 주문 상태 탭 -->
+                    <div class="flex gap-2 mb-6 bg-white rounded-lg shadow p-2">
+                        <button class="order-tab px-4 py-2 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition" data-status="all">
+                            전체
+                        </button>
+                        <button class="order-tab px-4 py-2 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition" data-status="pending">
+                            대기중
+                        </button>
+                        <button class="order-tab px-4 py-2 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition" data-status="shipped">
+                            배송중
+                        </button>
+                        <button class="order-tab px-4 py-2 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition" data-status="delivered">
+                            배송완료
+                        </button>
+                    </div>
+
+                    <!-- 주문 테이블 -->
+                    <div class="bg-white rounded-lg shadow overflow-hidden">
+                        <table class="w-full">
+                            <thead class="bg-gray-50 border-b border-gray-200">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">주문번호</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">고객</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">판매처</th>
+                                    <th class="px-6 py-3 text-right text-sm font-semibold text-gray-900">금액</th>
+                                    <th class="px-6 py-3 text-center text-sm font-semibold text-gray-900">상태</th>
+                                    <th class="px-6 py-3 text-center text-sm font-semibold text-gray-900">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody id="orders-tbody" class="divide-y divide-gray-200">
+                                <tr>
+                                    <td colspan="6" class="px-6 py-8 text-center text-gray-500">주문을 추가해주세요</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Analytics Page -->
+                <div id="page-analytics" class="page-content hidden">
+                    <div class="mb-8">
+                        <h2 class="text-3xl font-bold text-gray-900 mb-2">통계/분석</h2>
+                        <p class="text-gray-600">판매 현황과 수익을 분석합니다</p>
+                    </div>
+
+                    <!-- 통계 요약 카드 -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        <div class="bg-white rounded-lg shadow p-6 border-l-4 border-blue-500">
+                            <p class="text-gray-600 text-sm font-medium">월간 매출</p>
+                            <p class="text-3xl font-bold text-gray-900 mt-2" id="analytics-month-sales">₩0</p>
+                            <p class="text-sm text-gray-500 mt-2">총 주문: <span id="analytics-month-orders">0</span>개</p>
+                        </div>
+                        <div class="bg-white rounded-lg shadow p-6 border-l-4 border-green-500">
+                            <p class="text-gray-600 text-sm font-medium">월간 순이익</p>
+                            <p class="text-3xl font-bold text-gray-900 mt-2" id="analytics-month-profit">₩0</p>
+                            <p class="text-sm text-gray-500 mt-2">수익률: <span id="analytics-profit-rate">0%</span></p>
+                        </div>
+                        <div class="bg-white rounded-lg shadow p-6 border-l-4 border-purple-500">
+                            <p class="text-gray-600 text-sm font-medium">평균 주문금액</p>
+                            <p class="text-3xl font-bold text-gray-900 mt-2" id="analytics-avg-order">₩0</p>
+                            <p class="text-sm text-gray-500 mt-2">기본값: 30일</p>
+                        </div>
+                        <div class="bg-white rounded-lg shadow p-6 border-l-4 border-orange-500">
+                            <p class="text-gray-600 text-sm font-medium">주문 현황</p>
+                            <p class="text-3xl font-bold text-gray-900 mt-2" id="analytics-total-orders">0</p>
+                            <p class="text-sm text-gray-500 mt-2">배송완료: <span id="analytics-delivered">0</span>개</p>
+                        </div>
+                    </div>
+
+                    <!-- 탭 선택 -->
+                    <div class="flex gap-2 mb-6 bg-white rounded-lg shadow p-2">
+                        <button class="analytics-tab px-4 py-2 rounded-lg font-medium bg-blue-50 text-blue-600" data-tab="channel">
+                            판매처별 분석
+                        </button>
+                        <button class="analytics-tab px-4 py-2 rounded-lg font-medium text-gray-600 hover:bg-gray-100" data-tab="product">
+                            상품별 분석
+                        </button>
+                        <button class="analytics-tab px-4 py-2 rounded-lg font-medium text-gray-600 hover:bg-gray-100" data-tab="status">
+                            주문 상태 분석
+                        </button>
+                    </div>
+
+                    <!-- 차트 섹션 -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8 hidden" id="analytics-charts">
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <h3 class="font-bold text-gray-900 mb-4">일별 매출 추이 (30일)</h3>
+                            <canvas id="daily-sales-chart"></canvas>
+                        </div>
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <h3 class="font-bold text-gray-900 mb-4">판매처별 매출 비율</h3>
+                            <canvas id="channel-sales-chart"></canvas>
+                        </div>
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <h3 class="font-bold text-gray-900 mb-4">상품별 판매량 TOP 5</h3>
+                            <canvas id="product-sales-chart"></canvas>
+                        </div>
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <h3 class="font-bold text-gray-900 mb-4">주문 상태 분포</h3>
+                            <canvas id="order-status-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- 판매처별 분석 -->
+                    <div id="analytics-channel" class="analytics-content">
+                        <div class="bg-white rounded-lg shadow overflow-hidden">
+                            <table class="w-full">
+                                <thead class="bg-gray-50 border-b border-gray-200">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">판매처</th>
+                                        <th class="px-6 py-3 text-right text-sm font-semibold text-gray-900">매출</th>
+                                        <th class="px-6 py-3 text-right text-sm font-semibold text-gray-900">순이익</th>
+                                        <th class="px-6 py-3 text-right text-sm font-semibold text-gray-900">주문수</th>
+                                        <th class="px-6 py-3 text-right text-sm font-semibold text-gray-900">평균가</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="analytics-channel-tbody" class="divide-y divide-gray-200">
+                                    <tr>
+                                        <td colspan="5" class="px-6 py-8 text-center text-gray-500">데이터가 없습니다</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 상품별 분석 -->
+                    <div id="analytics-product" class="analytics-content hidden">
+                        <div class="bg-white rounded-lg shadow overflow-hidden">
+                            <table class="w-full">
+                                <thead class="bg-gray-50 border-b border-gray-200">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">상품명</th>
+                                        <th class="px-6 py-3 text-right text-sm font-semibold text-gray-900">매출</th>
+                                        <th class="px-6 py-3 text-right text-sm font-semibold text-gray-900">판매량</th>
+                                        <th class="px-6 py-3 text-right text-sm font-semibold text-gray-900">순이익</th>
+                                        <th class="px-6 py-3 text-right text-sm font-semibold text-gray-900">평균가</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="analytics-product-tbody" class="divide-y divide-gray-200">
+                                    <tr>
+                                        <td colspan="5" class="px-6 py-8 text-center text-gray-500">데이터가 없습니다</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 주문 상태 분석 -->
+                    <div id="analytics-status" class="analytics-content hidden">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div class="bg-white rounded-lg shadow p-6">
+                                <h3 class="font-bold text-gray-900 mb-6">주문 상태 분포</h3>
+                                <div class="space-y-4">
+                                    <div>
+                                        <div class="flex justify-between mb-2">
+                                            <p class="text-sm font-medium text-gray-700">대기중</p>
+                                            <p class="text-sm font-bold text-gray-900" id="status-pending">0</p>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-2">
+                                            <div class="bg-yellow-500 h-2 rounded-full" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div class="flex justify-between mb-2">
+                                            <p class="text-sm font-medium text-gray-700">배송중</p>
+                                            <p class="text-sm font-bold text-gray-900" id="status-shipped">0</p>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-2">
+                                            <div class="bg-blue-500 h-2 rounded-full" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div class="flex justify-between mb-2">
+                                            <p class="text-sm font-medium text-gray-700">배송완료</p>
+                                            <p class="text-sm font-bold text-gray-900" id="status-delivered">0</p>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-2">
+                                            <div class="bg-green-500 h-2 rounded-full" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-white rounded-lg shadow p-6">
+                                <h3 class="font-bold text-gray-900 mb-6">수익 분석</h3>
+                                <div class="space-y-4">
+                                    <div>
+                                        <p class="text-sm text-gray-600 mb-1">총 수익</p>
+                                        <p class="text-2xl font-bold text-gray-900" id="profit-total">₩0</p>
+                                    </div>
+                                    <div>
+                                        <p class="text-sm text-gray-600 mb-1">총 원가</p>
+                                        <p class="text-2xl font-bold text-gray-900" id="profit-cost">₩0</p>
+                                    </div>
+                                    <div>
+                                        <p class="text-sm text-gray-600 mb-1">순이익</p>
+                                        <p class="text-2xl font-bold text-green-600" id="profit-net">₩0</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Customer Contacts Page -->
+                <div id="page-contacts" class="page-content hidden">
+                    <div class="mb-8 flex justify-between items-center">
+                        <div>
+                            <h2 class="text-3xl font-bold text-gray-900 mb-2">고객 연락</h2>
+                            <p class="text-gray-600">주문과 연동된 문자, 알림톡 관리</p>
+                        </div>
+                        <button onclick="ui.showContactModal()" class="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 transition flex items-center gap-2">
+                            <i class="fas fa-plus"></i> 연락 발송
+                        </button>
+                    </div>
+
+                    <!-- 연락 통계 -->
+                    <div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
+                        <div class="bg-gradient-to-br from-gray-900 to-gray-800 text-white rounded-lg shadow p-6 border-l-4 border-orange-500">
+                            <p class="text-gray-300 text-sm font-medium">총 발송</p>
+                            <p class="text-3xl font-bold mt-2" id="contact-total">0</p>
+                        </div>
+                        <div class="bg-gradient-to-br from-gray-900 to-gray-800 text-white rounded-lg shadow p-6 border-l-4 border-green-500">
+                            <p class="text-gray-300 text-sm font-medium">발송완료</p>
+                            <p class="text-3xl font-bold mt-2" id="contact-sent">0</p>
+                        </div>
+                        <div class="bg-gradient-to-br from-gray-900 to-gray-800 text-white rounded-lg shadow p-6 border-l-4 border-yellow-500">
+                            <p class="text-gray-300 text-sm font-medium">대기중</p>
+                            <p class="text-3xl font-bold mt-2" id="contact-pending">0</p>
+                        </div>
+                        <div class="bg-gradient-to-br from-gray-900 to-gray-800 text-white rounded-lg shadow p-6 border-l-4 border-red-500">
+                            <p class="text-gray-300 text-sm font-medium">발송실패</p>
+                            <p class="text-3xl font-bold mt-2" id="contact-failed">0</p>
+                        </div>
+                        <div class="bg-orange-500 text-white rounded-lg shadow p-6 border-l-4 border-orange-600">
+                            <p class="text-orange-100 text-sm font-medium">오늘 발송</p>
+                            <p class="text-3xl font-bold mt-2" id="contact-today">0</p>
+                        </div>
+                    </div>
+
+                    <!-- 필터 -->
+                    <div class="bg-white rounded-lg shadow p-4 mb-6">
+                        <div class="flex gap-3">
+                            <input type="text" id="contact-search" placeholder="주문번호 또는 고객명으로 검색..." class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                            <select id="contact-type" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                                <option value="">연락 타입: 모두</option>
+                                <option value="sms">문자 (SMS)</option>
+                                <option value="kakao">알림톡</option>
+                                <option value="email">이메일</option>
+                            </select>
+                            <select id="contact-status" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                                <option value="">상태: 모두</option>
+                                <option value="sent">발송완료</option>
+                                <option value="pending">대기중</option>
+                                <option value="failed">발송실패</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 연락 테이블 -->
+                    <div class="bg-white rounded-lg shadow overflow-hidden">
+                        <table class="w-full">
+                            <thead class="bg-gray-50 border-b border-gray-200">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">주문번호</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">고객</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">연락 타입</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">메시지</th>
+                                    <th class="px-6 py-3 text-center text-sm font-semibold text-gray-900">상태</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">발송시간</th>
+                                    <th class="px-6 py-3 text-center text-sm font-semibold text-gray-900">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody id="contacts-tbody" class="divide-y divide-gray-200">
+                                <tr>
+                                    <td colspan="7" class="px-6 py-8 text-center text-gray-500">발송된 연락이 없습니다</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Returns Management Page -->
+                <div id="page-returns" class="page-content hidden">
+                    <div class="mb-8 flex justify-between items-center">
+                        <div>
+                            <h2 class="text-3xl font-bold text-gray-900 mb-2">반품/교환/취소</h2>
+                            <p class="text-gray-600">고객의 반품, 교환, 취소 요청을 관리합니다</p>
+                        </div>
+                    </div>
+
+                    <!-- 통계 -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                        <div class="bg-gradient-to-br from-gray-900 to-gray-800 text-white rounded-lg shadow p-6 border-l-4 border-orange-500">
+                            <p class="text-gray-300 text-sm font-medium">총 요청</p>
+                            <p class="text-3xl font-bold mt-2" id="return-total">0</p>
+                        </div>
+                        <div class="bg-gradient-to-br from-gray-900 to-gray-800 text-white rounded-lg shadow p-6 border-l-4 border-yellow-500">
+                            <p class="text-gray-300 text-sm font-medium">승인 대기</p>
+                            <p class="text-3xl font-bold mt-2" id="return-requested">0</p>
+                        </div>
+                        <div class="bg-gradient-to-br from-gray-900 to-gray-800 text-white rounded-lg shadow p-6 border-l-4 border-blue-500">
+                            <p class="text-gray-300 text-sm font-medium">처리 중</p>
+                            <p class="text-3xl font-bold mt-2" id="return-approved">0</p>
+                        </div>
+                        <div class="bg-gradient-to-br from-gray-900 to-gray-800 text-white rounded-lg shadow p-6 border-l-4 border-green-500">
+                            <p class="text-gray-300 text-sm font-medium">완료</p>
+                            <p class="text-3xl font-bold mt-2" id="return-completed">0</p>
+                        </div>
+                    </div>
+
+                    <!-- 필터 -->
+                    <div class="bg-white rounded-lg shadow p-4 mb-6">
+                        <div class="flex gap-3">
+                            <input type="text" id="return-search" placeholder="주문번호 또는 고객명으로 검색..." class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                            <select id="return-type" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                                <option value="">유형: 모두</option>
+                                <option value="return">반품</option>
+                                <option value="exchange">교환</option>
+                                <option value="cancel">취소</option>
+                            </select>
+                            <select id="return-status" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                                <option value="">상태: 모두</option>
+                                <option value="requested">요청됨</option>
+                                <option value="approved">승인됨</option>
+                                <option value="completed">완료</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 반품 테이블 -->
+                    <div class="bg-white rounded-lg shadow overflow-hidden">
+                        <table class="w-full">
+                            <thead class="bg-gray-50 border-b border-gray-200">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">주문번호</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">고객</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">유형</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">사유</th>
+                                    <th class="px-6 py-3 text-right text-sm font-semibold text-gray-900">금액</th>
+                                    <th class="px-6 py-3 text-center text-sm font-semibold text-gray-900">상태</th>
+                                    <th class="px-6 py-3 text-left text-sm font-semibold text-gray-900">요청일</th>
+                                    <th class="px-6 py-3 text-center text-sm font-semibold text-gray-900">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody id="returns-tbody" class="divide-y divide-gray-200">
+                                <tr>
+                                    <td colspan="8" class="px-6 py-8 text-center text-gray-500">반품/교환/취소 요청이 없습니다</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Settings Page -->
+                <div id="page-settings" class="page-content hidden">
+                    <div class="mb-8">
+                        <h2 class="text-3xl font-bold text-gray-900 mb-2">설정</h2>
+                        <p class="text-gray-600">시스템 설정을 관리합니다</p>
+                    </div>
+                    <div class="bg-white rounded-lg shadow p-6">
+                        <p class="text-gray-500">설정 기능은 Phase 4에서 개발됩니다.</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+    <!-- 상품 추가/수정 모달 -->
+    <div id="product-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center p-6 border-b border-gray-200 sticky top-0 bg-white">
+                <h3 class="text-2xl font-bold text-gray-900" id="modal-title">상품 추가</h3>
+                <button onclick="ui.closeProductModal()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <form id="product-form" class="p-6 space-y-4">
+                <!-- 상품 기본 정보 -->
+                <div class="border-b border-gray-200 pb-4">
+                    <h4 class="font-bold text-gray-900 mb-4">상품 기본 정보</h4>
+
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">상품명 *</label>
+                            <div class="flex gap-2">
+                                <input type="text" name="name" id="product-name-input" required class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                                <button type="button" onclick="ui.improveProductName()" class="bg-orange-600 text-white px-3 py-2 rounded-lg hover:bg-orange-700 transition" title="AI로 상품명 개선">
+                                    <i class="fas fa-wand-magic-sparkles"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">카테고리</label>
+                            <select name="category" id="product-category" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" onchange="ui.updateMarginSuggestion()">
+                                <option value="">선택하세요</option>
+                                <option value="의류">의류</option>
+                                <option value="신발">신발</option>
+                                <option value="가방">가방</option>
+                                <option value="액세서리">액세서리</option>
+                                <option value="전자제품">전자제품</option>
+                                <option value="가구">가구</option>
+                                <option value="화장품">화장품</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 이미지 AI 가공 -->
+                <div class="border-b border-gray-200 pb-4">
+                    <h4 class="font-bold text-gray-900 mb-4">상품 이미지 (AI 가공)</h4>
+
+                    <div class="flex gap-4">
+                        <div class="flex-1">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">이미지 업로드</label>
+                            <input type="file" id="product-image-input" accept="image/*" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" onchange="ui.analyzeProductImage()">
+                            <p class="text-xs text-gray-500 mt-1">권장: 1200x1200px, 2MB 이하</p>
+                        </div>
+                        <div class="w-32">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">미리보기</label>
+                            <div id="product-image-preview" class="w-32 h-32 bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center">
+                                <i class="fas fa-image text-gray-400 text-2xl"></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="product-image-analysis" class="mt-3 p-3 bg-blue-50 rounded-lg hidden">
+                        <p class="text-sm font-medium text-blue-900 mb-2">📊 이미지 분석 결과</p>
+                        <ul id="product-image-tips" class="text-xs text-blue-800 space-y-1"></ul>
+                    </div>
+                </div>
+
+                <!-- 가격 정보 -->
+                <div class="border-b border-gray-200 pb-4">
+                    <h4 class="font-bold text-gray-900 mb-4">가격 정보</h4>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">소싱사이트 URL *</label>
+                        <input type="url" name="sourceUrl" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 mb-4">
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">소싱 가격(원) *</label>
+                            <input type="number" name="sourcePrice" id="product-source-price" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" onchange="ui.calculateSalePrice()">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">원가(원) *</label>
+                            <input type="number" name="cost" id="product-cost" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" onchange="ui.calculateSalePrice()">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">마진율(%) *</label>
+                            <div class="flex gap-2">
+                                <input type="number" name="marginRate" id="product-margin-rate" value="30" step="0.1" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" onchange="ui.calculateSalePrice()">
+                                <button type="button" onclick="ui.suggestMarginRate()" class="bg-orange-600 text-white px-2 py-2 rounded-lg hover:bg-orange-700 transition" title="AI 마진율 추천">
+                                    💡
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 p-3 bg-orange-50 rounded-lg border border-orange-200">
+                        <p class="text-sm text-orange-800">
+                            <span class="font-bold">추정 판매가:</span>
+                            <span id="product-estimated-price" class="font-bold text-orange-600">₩0</span>
+                        </p>
+                    </div>
+                </div>
+
+                <!-- 상품 설명 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">상품 설명</label>
+                    <textarea name="description" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"></textarea>
+                </div>
+
+                <div class="flex gap-3 pt-4">
+                    <button type="submit" class="flex-1 bg-orange-600 text-white py-2 rounded-lg hover:bg-orange-700 transition font-medium">저장</button>
+                    <button type="button" onclick="ui.closeProductModal()" class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition font-medium">취소</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 판매처 추가/수정 모달 -->
+    <div id="channel-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-lg w-full max-w-md">
+            <div class="flex justify-between items-center p-6 border-b border-gray-200">
+                <h3 class="text-2xl font-bold text-gray-900">판매처 추가</h3>
+                <button onclick="ui.closeChannelModal()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <form id="channel-form" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">판매처명 *</label>
+                    <input type="text" name="name" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">판매처 유형 *</label>
+                    <select name="type" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="open-market">오픈마켓 (쿠팡, 11번가)</option>
+                        <option value="mall">종합몰 (SSG, 롯데온)</option>
+                        <option value="resale">리셀플랫폼 (무신사)</option>
+                        <option value="overseas">해외플랫폼 (아마존)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">플랫폼</label>
+                    <input type="text" name="platform" placeholder="예: coupang, musinsusa" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">수수료율(%) *</label>
+                    <input type="number" name="feeRate" step="0.1" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div class="flex gap-3 pt-4">
+                    <button type="submit" class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition font-medium">저장</button>
+                    <button type="button" onclick="ui.closeChannelModal()" class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition font-medium">취소</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 소싱사이트 추가 모달 -->
+    <div id="sourcing-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-lg w-full max-w-md">
+            <div class="flex justify-between items-center p-6 border-b border-gray-200">
+                <h3 class="text-2xl font-bold text-gray-900">소싱사이트 추가</h3>
+                <button onclick="ui.closeSourcingModal()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <form id="sourcing-form" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">사이트명 *</label>
+                    <input type="text" name="name" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">URL *</label>
+                    <input type="url" name="url" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">유형 *</label>
+                    <select name="type" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="brand">브랜드 직영몰</option>
+                        <option value="marketplace">종합몰</option>
+                        <option value="wholesale">도매사이트</option>
+                    </select>
+                </div>
+
+                <div class="flex gap-3 pt-4">
+                    <button type="submit" class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition font-medium">저장</button>
+                    <button type="button" onclick="ui.closeSourcingModal()" class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition font-medium">취소</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 고객 연락 발송 모달 -->
+    <div id="contact-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center p-6 border-b border-gray-200 sticky top-0 bg-white">
+                <h3 class="text-2xl font-bold text-gray-900">고객 연락 발송</h3>
+                <button onclick="ui.closeContactModal()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <form id="contact-form" class="p-6 space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">주문선택 *</label>
+                        <select name="orderId" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" id="contact-order-select">
+                            <option value="">선택하세요</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">연락 타입 *</label>
+                        <select name="type" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" onchange="ui.updateContactTemplates()">
+                            <option value="sms">문자 (SMS)</option>
+                            <option value="kakao">알림톡</option>
+                            <option value="email">이메일</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">템플릿 선택 *</label>
+                    <select name="template" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" id="contact-template-select">
+                        <option value="">템플릿을 선택하세요</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">메시지 *</label>
+                    <textarea name="message" required rows="5" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" placeholder="메시지 내용"></textarea>
+                    <p class="text-xs text-gray-500 mt-2">변수: {orderNumber}, {productName}, {amount}, {shippingCompany}, {trackingNumber}</p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">받는 사람 (자동입력됨)</label>
+                    <input type="text" id="contact-recipient" readonly class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100">
+                </div>
+
+                <div class="flex gap-3 pt-4">
+                    <button type="submit" class="flex-1 bg-orange-600 text-white py-2 rounded-lg hover:bg-orange-700 transition font-medium">발송</button>
+                    <button type="button" onclick="ui.closeContactModal()" class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition font-medium">취소</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 반품/교환/취소 요청 모달 -->
+    <div id="return-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-lg w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center p-6 border-b border-gray-200 sticky top-0 bg-white">
+                <h3 class="text-2xl font-bold text-gray-900">반품/교환/취소 요청</h3>
+                <button onclick="ui.closeReturnModal()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <form id="return-form" class="p-6 space-y-4">
+                <input type="hidden" name="orderId" id="return-order-id">
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">주문정보</label>
+                    <input type="text" id="return-order-info" readonly class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">요청 유형 *</label>
+                    <select name="type" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" onchange="ui.updateReturnReasons()">
+                        <option value="">선택하세요</option>
+                        <option value="return">반품</option>
+                        <option value="exchange">교환</option>
+                        <option value="cancel">취소</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">사유 *</label>
+                    <select name="reason" required id="return-reason-select" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <option value="">사유를 선택하세요</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">수량 *</label>
+                    <input type="number" name="quantity" value="1" min="1" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">환불/교환 요청액 (원) *</label>
+                    <input type="number" name="requestedAmount" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">상세 설명</label>
+                    <textarea name="description" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500" placeholder="상세 사항을 입력해주세요"></textarea>
+                </div>
+
+                <div class="flex gap-3 pt-4">
+                    <button type="submit" class="flex-1 bg-orange-600 text-white py-2 rounded-lg hover:bg-orange-700 transition font-medium">요청</button>
+                    <button type="button" onclick="ui.closeReturnModal()" class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition font-medium">취소</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 주문 추가 모달 -->
+    <div id="order-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center p-6 border-b border-gray-200 sticky top-0 bg-white">
+                <h3 class="text-2xl font-bold text-gray-900">주문 추가</h3>
+                <button onclick="ui.closeOrderModal()" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <form id="order-form" class="p-6 space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">판매처 *</label>
+                        <select name="channelId" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" id="order-channel-select">
+                            <option value="">선택하세요</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">상품 *</label>
+                        <select name="productId" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" id="order-product-select">
+                            <option value="">선택하세요</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">고객명 *</label>
+                        <input type="text" name="customerName" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">연락처</label>
+                        <input type="tel" name="customerPhone" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">배송주소</label>
+                    <input type="text" name="customerAddress" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div class="grid grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">수량 *</label>
+                        <input type="number" name="quantity" value="1" min="1" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">판매가(원) *</label>
+                        <input type="number" name="salePrice" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">원가(원) *</label>
+                        <input type="number" name="cost" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">수수료율(%)</label>
+                        <input type="number" name="feeRate" step="0.1" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">배송사</label>
+                        <input type="text" name="shippingCompany" placeholder="예: CJ대한통운" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">비고</label>
+                    <textarea name="notes" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                </div>
+
+                <div class="flex gap-3 pt-4">
+                    <button type="submit" class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition font-medium">저장</button>
+                    <button type="button" onclick="ui.closeOrderModal()" class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition font-medium">취소</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/storage.js"></script>
+    <script src="js/modules/products.js"></script>
+    <script src="js/modules/channels.js"></script>
+    <script src="js/modules/orders.js"></script>
+    <script src="js/modules/sourcing.js"></script>
+    <script src="js/modules/analytics.js"></script>
+    <script src="js/modules/contacts.js"></script>
+    <script src="js/modules/returns.js"></script>
+    <script src="js/modules/ai.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
