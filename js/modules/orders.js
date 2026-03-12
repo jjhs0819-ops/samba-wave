@@ -148,7 +148,7 @@ class OrderManager {
      * 주문 ID 생성
      */
     generateId() {
-        return 'ord_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        return 'ord_' + Date.now() + '_' + Math.random().toString(36).substring(2, 11);
     }
 
     /**
@@ -160,37 +160,6 @@ class OrderManager {
         const hhmm = String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
         const random = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
         return yymmdd + hhmm + random;
-    }
-
-    /**
-     * 상태별 주문 조회
-     */
-    getOrdersByStatus(status) {
-        return this.orders.filter(order => order.status === status);
-    }
-
-    /**
-     * 판매처별 주문 조회
-     */
-    getOrdersByChannel(channelId) {
-        return this.orders.filter(order => order.channelId === channelId);
-    }
-
-    /**
-     * 상품별 주문 조회
-     */
-    getOrdersByProduct(productId) {
-        return this.orders.filter(order => order.productId === productId);
-    }
-
-    /**
-     * 기간별 주문 조회
-     */
-    getOrdersByDateRange(startDate, endDate) {
-        return this.orders.filter(order => {
-            const orderDate = new Date(order.createdAt);
-            return orderDate >= startDate && orderDate <= endDate;
-        });
     }
 
     /**

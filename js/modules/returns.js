@@ -322,7 +322,7 @@ class ReturnManager {
      * ID 생성
      */
     generateId() {
-        return 'ret_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        return 'ret_' + Date.now() + '_' + Math.random().toString(36).substring(2, 11);
     }
 
     /**

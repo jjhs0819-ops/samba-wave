@@ -190,18 +190,9 @@ class ChannelManager {
      * ID 생성
      */
     generateId() {
-        return 'ch_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        return 'ch_' + Date.now() + '_' + Math.random().toString(36).substring(2, 11);
     }
 
-    /**
-     * 판매처 검색
-     */
-    searchChannels(query) {
-        return this.channels.filter(channel =>
-            channel.name.toLowerCase().includes(query.toLowerCase()) ||
-            channel.platform.toLowerCase().includes(query.toLowerCase())
-        );
-    }
 }
 
 // 글로벌 인스턴스

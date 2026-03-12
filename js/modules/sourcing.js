@@ -218,7 +218,7 @@ class SourcingManager {
      * ID 생성
      */
     generateId() {
-        return 'src_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        return 'src_' + Date.now() + '_' + Math.random().toString(36).substring(2, 11);
     }
 
     /**

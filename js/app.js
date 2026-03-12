@@ -11,12 +11,6 @@ class SambaWaveApp {
             'policy': 'policy',
             'policy-template': 'policy',
             'policy-option-name': 'policy',
-            'apply-group': 'apply',
-            'apply-category': 'apply',
-            'apply-recollect': 'apply',
-            'orders': 'orders',
-            'cs': 'orders',
-            'returns': 'orders',
             'analytics': 'analytics',
             'analytics-product': 'analytics'
         }
@@ -84,7 +78,8 @@ class SambaWaveApp {
         const redirects = {
             'channels': 'products',
             'contacts': 'cs',
-            'sourcing': 'sourcing-collect'
+            'sourcing': 'sourcing-collect',
+            'apply-group': 'sourcing-collect'
         }
         if (redirects[pageName]) pageName = redirects[pageName]
 
@@ -139,6 +134,27 @@ class SambaWaveApp {
         const c1 = document.getElementById('product-count')
         const c2 = document.getElementById('product-count2')
         if (c1 && c2) c2.textContent = c1.textContent
+
+        // 페이지별 초기화
+        if (pageName === 'analytics') setTimeout(initAcTables, 60)
+        if (pageName === 'products') setTimeout(updateDashboardCards, 100)
+        if (pageName === 'dashboard') setTimeout(initDashboardCharts, 80)
+        if (pageName === 'sourcing-collect') setTimeout(() => {
+            if (typeof ui !== 'undefined') ui.renderSearchFilterTable()
+        }, 60)
+        if (pageName === 'settings') setTimeout(() => {
+            // 금지어/삭제어 목록 렌더
+            if (typeof ui !== 'undefined') ui.renderForbiddenWords()
+            // Claude API 저장된 설정 불러오기
+            storage.getAll('settings').then(rows => {
+                const cfg = rows.find(r => r.id === 'claude')
+                if (!cfg) return
+                const keyEl = document.getElementById('claude-api-key')
+                const modelEl = document.getElementById('claude-model')
+                if (keyEl) keyEl.value = cfg.apiKey || ''
+                if (modelEl) modelEl.value = cfg.model || 'claude-sonnet-4-6'
+            })
+        }, 60)
     }
 
     /**
@@ -160,14 +176,17 @@ class SambaWaveApp {
         const notification = document.createElement('div')
         notification.className = 'fixed top-4 right-4 px-6 py-3 rounded-lg text-white font-medium shadow-lg z-50'
 
-        const bgColor = {
-            'success': '#51CF66',
-            'error': '#FF6B6B',
-            'warning': '#FFD93D',
-            'info': '#4C9AFF'
-        }[type] || '#4C9AFF'
+        const colorMap = {
+            'success': { bg: '#2A7A45', text: '#fff' },
+            'error':   { bg: '#C0392B', text: '#fff' },
+            'warning': { bg: '#E67E00', text: '#fff' },
+            'info':    { bg: '#1A65C0', text: '#fff' },
+        }
+        const { bg, text } = colorMap[type] || colorMap['info']
 
-        notification.style.background = bgColor
+        notification.style.background = bg
+        notification.style.color = text
+        notification.style.fontWeight = '600'
         notification.textContent = message
         document.body.appendChild(notification)
 
@@ -198,6 +217,14 @@ class SambaWaveApp {
 
 // 앱 인스턴스 생성
 const app = new SambaWaveApp()
+
+// 공유 마켓 목록 (설정/매출통계/상품전송 공통)
+// 판매마켓 ID와 표시명: SSG→신세계몰, 롯데온→롯데ON, GS샵→GS샵 으로 통일
+const MARKET_LIST = ['쿠팡','신세계몰','스마트스토어','11번가','지마켓','옥션','GS샵','롯데ON','롯데홈쇼핑','홈앤쇼핑','HMALL']
+
+// 공유 수집사이트 목록 (상품관리/정책적용/주문목록 공통) - 9개
+// 소싱처 식별명 (판매마켓 ID와 별도): SSG=소싱처명, LOTTEON=소싱처명, GSShop=소싱처명
+const SITE_LIST = ['ABCmart','FOLDERStyle','GrandStage','GSShop','LOTTEON','MUSINSA','Nike','OliveYoung','SSG']
 
 // URL 기반 페이지 복원
 window.addEventListener('load', async () => {
@@ -232,23 +259,20 @@ function addPriceRange() {
 }
 
 /**
- * 상품 수집 시작 (프레임 전용 - 실제 수집 미구현)
- */
-function startCollection() {
-    const url = document.getElementById('collect-url-input')?.value
-    if (!url) {
-        app.showNotification('URL을 입력해주세요', 'warning')
-        return
-    }
-    app.showNotification('수집 기능은 추후 구현됩니다', 'info')
-}
-
-/**
  * 초기 더미 데이터 생성
  */
 async function initializeDummyData() {
+    // 이미 초기화 완료 플래그가 있으면 재삽입하지 않음
+    const settings = await storage.getAll('settings')
+    const initialized = settings.find(s => s.id === 'dummyDataInitialized')
+    if (initialized) return
+
     const existingProducts = await storage.getAll('products')
-    if (existingProducts.length > 0) return
+    if (existingProducts.length > 0) {
+        // 상품이 있으면 플래그만 기록하고 종료
+        await storage.save('settings', { id: 'dummyDataInitialized', value: true })
+        return
+    }
 
     // 판매처 추가
     const channels = [
@@ -327,5 +351,8 @@ async function initializeDummyData() {
         }
     }
 
+    // 초기화 완료 플래그 저장 (이후 재삽입 방지)
+    await storage.save('settings', { id: 'dummyDataInitialized', value: true })
     console.log('더미 데이터 초기화 완료')
 }
+

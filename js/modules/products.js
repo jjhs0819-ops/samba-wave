@@ -32,6 +32,8 @@ class ProductManager {
                 sourceUrl: productData.sourceUrl,
                 sourcePrice: parseFloat(productData.sourcePrice),
                 name: productData.name,
+                nameEn: productData.nameEn || '', // 영문 상품명 (역직구용)
+                nameJa: productData.nameJa || '', // 일어 상품명 (역직구용)
                 description: productData.description || '',
                 category: productData.category || '',
                 images: productData.images || [],
@@ -131,10 +133,13 @@ class ProductManager {
      * 상품 검색
      */
     searchProducts(query) {
+        const q = query.toLowerCase()
         return this.products.filter(product =>
-            product.name.toLowerCase().includes(query.toLowerCase()) ||
-            product.sourceUrl.toLowerCase().includes(query.toLowerCase())
-        );
+            product.name.toLowerCase().includes(q) ||
+            (product.sourceUrl || '').toLowerCase().includes(q) ||
+            (product.sourceSite || '').toLowerCase().includes(q) ||
+            (product.brand || '').toLowerCase().includes(q)
+        )
     }
 
     /**

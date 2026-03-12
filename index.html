@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SAMBA-WAVE</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='40' y2='40' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0%25' stop-color='%23FF8C00'/%3E%3Cstop offset='100%25' stop-color='%23FFB84D'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='40' height='40' rx='8' fill='%230F0F0F'/%3E%3Ctext x='20' y='26' font-family='Arial Black,sans-serif' font-size='16' font-weight='900' fill='url(%23g)' text-anchor='middle' letter-spacing='0.5'%3ESW%3C/text%3E%3C/svg%3E">
 
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -213,6 +214,19 @@
             color: #FF8C00;
             border-bottom: 2px solid #FF8C00;
             border-left: none;
+        }
+
+        /* 검색그룹 nav 버튼: 기본 오렌지보다 부드러운 톤 */
+        .nav-item-group {
+            color: rgba(255, 180, 100, 0.75);
+        }
+        .nav-item-group:hover {
+            color: rgba(255, 180, 100, 1.0);
+            border-bottom-color: rgba(255, 180, 100, 0.8);
+        }
+        .nav-item-group.sidebar-active {
+            color: rgba(255, 180, 100, 1.0);
+            border-bottom-color: rgba(255, 180, 100, 0.9);
         }
 
         /* === 드롭다운 네비게이션 === */
@@ -462,9 +476,27 @@
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.375rem 0;
+            padding: 0.375rem 0.25rem;
             border-bottom: 1px solid rgba(45,45,45,0.5);
             font-size: 0.8125rem;
+            overflow: hidden;
+        }
+        .replace-row-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            flex-shrink: 0;
+            margin-left: auto;
+            padding-left: 0.5rem;
+        }
+        .replace-row-controls label {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            white-space: nowrap;
+            cursor: pointer;
+            font-size: 0.8rem;
+            color: #C5C5C5;
         }
 
         /* 이미지 순서 드래그 */
@@ -1285,25 +1317,14 @@
                         <button class="nav-dropdown-item" data-page="policy-option-name">상품·옵션명 관리</button>
                     </div>
                 </div>
-                <!-- 정책적용 드롭다운 -->
-                <div class="nav-dropdown" id="nav-group-apply">
-                    <button class="nav-dropdown-toggle">정책적용 <span class="arrow">▼</span></button>
-                    <div class="nav-dropdown-menu">
-                        <button class="nav-dropdown-item" data-page="apply-group">검색그룹 관리 및 정책적용</button>
-                        <button class="nav-dropdown-item" data-page="apply-category">카테고리 관리 및 정책적용</button>
-                    </div>
-                </div>
+                <!-- 카테고리 매핑 독립 메뉴 -->
+                <button class="nav-item" data-page="apply-category">카테고리 매핑</button>
                 <!-- 상품전송 단독 -->
                 <button class="nav-item" data-page="shipment">상품전송</button>
-                <!-- 주문관리 드롭다운 -->
-                <div class="nav-dropdown" id="nav-group-orders">
-                    <button class="nav-dropdown-toggle">주문관리 <span class="arrow">▼</span></button>
-                    <div class="nav-dropdown-menu">
-                        <button class="nav-dropdown-item" data-page="orders">주문목록</button>
-                        <button class="nav-dropdown-item" data-page="cs">CS관리</button>
-                        <button class="nav-dropdown-item" data-page="returns">반품·교환·취소</button>
-                    </div>
-                </div>
+                <!-- 주문관리 독립 메뉴 -->
+                <button class="nav-item" data-page="orders">주문</button>
+                <button class="nav-item" data-page="cs">CS관리</button>
+                <button class="nav-item" data-page="returns">반품·교환·취소</button>
                 <!-- 통계 드롭다운 -->
                 <div class="nav-dropdown" id="nav-group-analytics">
                     <button class="nav-dropdown-toggle">통계 <span class="arrow">▼</span></button>
@@ -1460,12 +1481,7 @@
                 <!-- Products Page (The.Mango 스타일) -->
                 <div id="page-products" class="page-content hidden">
                     <!-- 대시보드 KPI 카드 -->
-                    <div class="grid grid-cols-3 gap-4 mb-5">
-                        <div class="stat-card sales" style="display:flex; flex-direction:column; gap:4px;">
-                            <p style="font-size:0.75rem; color:#888; font-weight:500; letter-spacing:0.04em; text-transform:uppercase;">총 매출</p>
-                            <p id="dash-total-sales" style="font-size:1.625rem; font-weight:800; color:#FF8C00; letter-spacing:-0.02em;">₩0</p>
-                            <p id="dash-order-count" style="font-size:0.75rem; color:#666;">0건 누적</p>
-                        </div>
+                    <div class="grid grid-cols-2 gap-4 mb-5">
                         <div class="stat-card" style="display:flex; flex-direction:column; gap:4px;">
                             <p style="font-size:0.75rem; color:#888; font-weight:500; letter-spacing:0.04em; text-transform:uppercase;">수집상품 수</p>
                             <p id="dash-collected" style="font-size:1.625rem; font-weight:800; color:#E5E5E5; letter-spacing:-0.02em;">0<span style="font-size:1rem; color:#888; font-weight:500;">개</span></p>
@@ -1478,12 +1494,6 @@
                         </div>
                     </div>
 
-                    <!-- 헤더 -->
-                    <div class="mb-5">
-                        <h2 class="text-2xl font-bold" style="color:#E5E5E5;">MY 상품관리</h2>
-                        <p style="color:#888; font-size:0.8125rem;">** 총 <span id="product-count" style="color:#FF8C00; font-weight:600;">0</span>개 상품 저장됨</p>
-                    </div>
-
                     <!-- 필터 영역 -->
                     <div class="bg-white rounded-lg shadow p-4 mb-4" style="font-size:0.875rem;">
                         <div class="flex gap-3 mb-3 flex-wrap">
@@ -1494,7 +1504,8 @@
                                 <input type="date" style="width:140px; padding:0.375rem 0.5rem; font-size:0.8125rem;">
                             </div>
                             <select style="padding:0.375rem 0.625rem; font-size:0.8125rem; width:auto;">
-                                <option>수집사이트</option>
+                                <option value="">수집사이트</option>
+                                <option>ABCmart</option><option>FOLDERStyle</option><option>GrandStage</option><option>GSShop</option><option>LOTTEON</option><option>MUSINSA</option><option>Nike</option><option>OliveYoung</option><option>SSG</option>
                             </select>
                             <select style="padding:0.375rem 0.625rem; font-size:0.8125rem; width:auto;">
                                 <option>카테고리</option>
@@ -1514,31 +1525,30 @@
                                 <option value="no">상품번호 검색</option>
                                 <option value="source-no">수집사이트상품번호 검색</option>
                                 <option value="market-no">전송마켓상품번호 검색</option>
-                                <option value="filter">검색필터명 검색</option>
+                                <option value="filter">검색그룹명 검색</option>
                                 <option value="policy">적용정책명 검색</option>
                                 <option value="memo">상품메모 검색</option>
                                 <option value="brand">브랜드명(원문) 검색</option>
                             </select>
                             <input type="text" id="product-search" placeholder="검색어를 입력하세요." style="flex:1; min-width:160px; max-width:260px; padding:0.375rem 0.625rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:6px; color:#C5C5C5;">
                             <button style="background:rgba(255,140,0,0.15); border:1px solid #FF8C00; color:#FF8C00; padding:0.375rem 0.75rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; flex-shrink:0;">검색결과</button>
-                            <button style="background:rgba(60,60,60,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.375rem 0.75rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; flex-shrink:0;">검색내 재검색</button>
                         </div>
                     </div>
 
                     <!-- 결과 헤더 + 탭 -->
-                    <div class="bg-white rounded-lg shadow p-3 mb-4 flex items-center justify-between flex-wrap gap-2">
-                        <div class="flex items-center gap-4">
-                            <span style="font-size:0.875rem; color:#E5E5E5; font-weight:600;">상품관리 <span style="color:#FF8C00;">( 총 <span id="product-count2">0</span>개 검색 )</span></span>
-                            <div class="flex gap-1">
-                                <button class="product-view-tab market-tab active" data-view="detail" style="font-size:0.75rem; padding:0.25rem 0.75rem;">상세데이터</button>
-                                <button class="product-view-tab market-tab" data-view="image" style="font-size:0.75rem; padding:0.25rem 0.75rem;">상세이미지</button>
-                                <button class="product-view-tab market-tab" data-view="price" style="font-size:0.75rem; padding:0.25rem 0.75rem;">가격관리</button>
-                                <button class="product-view-tab market-tab" data-view="market-price" style="font-size:0.75rem; padding:0.25rem 0.75rem;">마켓가격변경</button>
-                            </div>
+                    <div style="background:rgba(18,18,18,0.95); border:1px solid #2A2A2A; border-radius:8px; padding:8px 14px; margin-bottom:1rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer; color:#888;">
+                                <input type="checkbox" id="product-select-all" onchange="ui.toggleAllProductsCheckbox(this.checked)" style="accent-color:#FF8C00; width:13px; height:13px; cursor:pointer;">
+                                <span style="font-size:0.8rem; color:#666; white-space:nowrap;">전체선택</span>
+                            </label>
+                            <span style="font-size:0.875rem; color:#E5E5E5; font-weight:600; white-space:nowrap;">상품관리 <span style="color:#FF8C00;">( 총 <span id="product-count2">0</span>개 검색 )</span></span>
+                            <button style="font-size:0.78rem; padding:4px 12px; border:1px solid rgba(255,140,0,0.35); border-radius:5px; color:#FF8C00; background:rgba(255,140,0,0.08); cursor:pointer; white-space:nowrap;">선택처리</button>
+                            <button onclick="ui.deleteSelectedProducts()" style="font-size:0.78rem; padding:4px 12px; border:1px solid rgba(255,107,107,0.35); border-radius:5px; color:#FF6B6B; background:rgba(255,107,107,0.08); cursor:pointer; white-space:nowrap;">선택삭제</button>
                         </div>
                         <div class="flex items-center gap-2">
-                            <button style="font-size:0.75rem; padding:0.25rem 0.75rem; border:1px solid #3D3D3D; border-radius:6px; color:#C5C5C5; background:transparent;">건별보기</button>
-                            <button style="font-size:0.75rem; padding:0.25rem 0.75rem; border:1px solid #3D3D3D; border-radius:6px; color:#C5C5C5; background:transparent;">이미지보기</button>
+                            <button id="btn-view-card" onclick="ui.setProductViewMode('card')" style="font-size:0.75rem; padding:0.25rem 0.75rem; border:1px solid #FF8C00; border-radius:6px; color:#FF8C00; background:rgba(255,140,0,0.15);">건별보기</button>
+                            <button id="btn-view-image" onclick="ui.setProductViewMode('image')" style="font-size:0.75rem; padding:0.25rem 0.75rem; border:1px solid #3D3D3D; border-radius:6px; color:#C5C5C5; background:transparent;">이미지만보기</button>
                             <select style="width:auto; padding:0.25rem 0.5rem; font-size:0.75rem;">
                                 <option>20개씩</option>
                                 <option>50개씩</option>
@@ -1547,33 +1557,8 @@
                         </div>
                     </div>
 
-                    <!-- 상품 테이블 (기존 렌더러 호환) -->
-                    <div class="bg-white rounded-lg shadow overflow-hidden">
-                        <table class="w-full">
-                            <thead class="bg-gray-50 border-b border-gray-200">
-                                <tr>
-                                    <th class="px-4 py-3 text-left text-sm font-semibold text-gray-900">상품명</th>
-                                    <th class="px-4 py-3 text-right text-sm font-semibold text-gray-900">원가</th>
-                                    <th class="px-4 py-3 text-right text-sm font-semibold text-gray-900">마진율</th>
-                                    <th class="px-4 py-3 text-right text-sm font-semibold text-gray-900">판매가(추정)</th>
-                                    <th class="px-4 py-3 text-left text-sm font-semibold text-gray-900">카테고리</th>
-                                    <th class="px-4 py-3 text-center text-sm font-semibold text-gray-900">상태</th>
-                                    <th class="px-4 py-3 text-center text-sm font-semibold text-gray-900">작업</th>
-                                </tr>
-                            </thead>
-                            <tbody id="products-tbody" class="divide-y divide-gray-200">
-                                <tr>
-                                    <td class="px-4 py-3 text-sm text-gray-900" style="font-weight:600;">나이키 에어 포스 1 07 블랙 CW2288-001</td>
-                                    <td class="px-4 py-3 text-right text-sm text-gray-700">₩118,730</td>
-                                    <td class="px-4 py-3 text-right text-sm" style="color:#FF8C00; font-weight:600;">15%</td>
-                                    <td class="px-4 py-3 text-right text-sm text-gray-700">₩136,540</td>
-                                    <td class="px-4 py-3 text-center"><span style="background:#dcfce7; color:#16a34a; font-size:0.75rem; padding:2px 8px; border-radius:4px;">활성</span></td>
-                                    <td class="px-4 py-3 text-sm text-gray-600">신발</td>
-                                    <td class="px-4 py-3 text-center text-sm"><button style="color:#FF8C00; background:transparent; font-size:0.75rem;">수정</button></td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
+                    <!-- 상품 카드 리스트 -->
+                    <div id="products-list" style="display:flex; flex-direction:column; gap:8px;"></div>
                 </div>
 
                 <!-- Channels Page (비활성화) -->
@@ -1618,10 +1603,18 @@
                             <button class="order-period-btn" data-period="3months" style="padding:0.22rem 0.55rem; border-radius:5px; font-size:0.75rem; background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; white-space:nowrap;">3개월</button>
                             <button class="order-period-btn" data-period="6months" style="padding:0.22rem 0.55rem; border-radius:5px; font-size:0.75rem; background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; white-space:nowrap;">6개월</button>
                             <button class="order-period-btn" data-period="thisyear" style="padding:0.22rem 0.55rem; border-radius:5px; font-size:0.75rem; background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; white-space:nowrap;">올해</button>
-                            <button class="order-period-btn" data-period="all" style="padding:0.22rem 0.55rem; border-radius:5px; font-size:0.75rem; background:linear-gradient(135deg,#FF8C00,#FFB84D); border:none; color:#fff; white-space:nowrap;">전체</button>
+                            <button class="order-period-btn" data-period="all" style="padding:0.22rem 0.55rem; border-radius:5px; font-size:0.75rem; background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; white-space:nowrap;">전체</button>
+                            <span style="width:1px; background:#333; height:18px; margin:0 4px; flex-shrink:0;"></span>
+                            <select style="padding:0.22rem 0.45rem; font-size:0.75rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5; max-width:240px; white-space:nowrap;">
+                                <option>G0마켓2.0-bonol06 (주문내역 / 클레임내역 / 문의내역)</option>
+                                <option>G0마켓2.0-bonol07 (주문내역 / 클레임내역 / 문의내역)</option>
+                            </select>
+                            <button style="padding:0.22rem 0.65rem; font-size:0.75rem; background:rgba(50,50,50,0.9); border:1px solid #3D3D3D; color:#C5C5C5; border-radius:4px; white-space:nowrap; cursor:pointer;">가져오기</button>
+                            <button style="padding:0.22rem 0.65rem; font-size:0.75rem; background:#8B1A1A; border:1px solid #C0392B; color:#fff; border-radius:4px; white-space:nowrap; cursor:pointer;">전체마켓 가져오기</button>
                         </div>
                         <!-- 우: 날짜 직접 입력 -->
                         <div style="display:flex; align-items:center; gap:4px; flex-shrink:0;">
+                            <button id="order-date-lock" onclick="ui.toggleOrderDateLock()" style="padding:0.22rem 0.55rem; border-radius:5px; font-size:0.72rem; background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; white-space:nowrap; cursor:pointer;">시작일 고정</button>
                             <input type="date" id="order-date-start" style="padding:0.22rem 0.4rem; font-size:0.75rem; border:1px solid #3D3D3D; border-radius:4px; background:#1E1E1E; color:#C5C5C5;">
                             <span style="color:#555; font-size:0.75rem;">~</span>
                             <input type="date" id="order-date-end" style="padding:0.22rem 0.4rem; font-size:0.75rem; border:1px solid #3D3D3D; border-radius:4px; background:#1E1E1E; color:#C5C5C5;">
@@ -1631,22 +1624,22 @@
 
                     <!-- 필터 바 -->
                     <div style="background:rgba(18,18,18,0.98); border:1px solid #232323; border-radius:10px; padding:0.75rem 1rem; margin-bottom:1rem; display:flex; align-items:center; gap:6px; flex-wrap:nowrap;">
-                        <select style="padding:0.28rem 0.45rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                        <select style="width:118px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
                             <option>전체마켓보기</option>
                             <option>쿠팡</option><option>스마트스토어</option><option>11번가</option>
                             <option>쿠팡 A사업자</option><option>쿠팡 B사업자</option>
                             <option>스마트스토어 A사업자</option><option>스마트스토어 B사업자</option>
                             <option>11번가 A사업자</option>
                         </select>
-                        <select style="padding:0.28rem 0.45rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
-                            <option>전체사이트보기</option><option>무신사</option><option>롯데온</option><option>SSG</option>
+                        <select style="width:110px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                            <option value="">전체사이트보기</option><option>ABCmart</option><option>FOLDERStyle</option><option>GrandStage</option><option>GSShop</option><option>LOTTEON</option><option>MUSINSA</option><option>Nike</option><option>OliveYoung</option><option>SSG</option>
                         </select>
-                        <select style="padding:0.28rem 0.45rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                        <select style="width:112px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
                             <option>마켓상태 보기</option><option>일반</option><option>송장전송완료</option><option>송장전송실패</option>
                             <option>교환요청</option><option>취소요청</option><option>반품요청</option>
                             <option>교환완료</option><option>취소완료</option><option>반품완료</option><option>배송완료</option>
                         </select>
-                        <select style="padding:0.28rem 0.45rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                        <select style="width:116px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
                             <option>-- 보기옵션 --</option>
                             <option>주문번호 입력 건 보기</option><option>주문번호 미입력 건 보기</option>
                             <option>구입금액 입력 건 보기</option><option>구입금액 미입력 건 보기</option>
@@ -1654,39 +1647,37 @@
                             <option>국내송장번호 입력 건 보기</option><option>국내송장번호 미입력 건 보기</option>
                             <option>미등록 상품 주문건 보기</option><option>통관부호 오류 건 보기</option>
                         </select>
-                        <select style="padding:0.28rem 0.45rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                        <select style="width:88px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
                             <option>-- 정렬 --</option><option>주문일자▲</option><option>주문일자▼</option>
+                        </select>
+                        <select style="width:92px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5; margin-left:auto; flex-shrink:0;">
+                            <option>50개 보기</option><option>100개 보기</option><option>200개 보기</option><option>500개 보기</option>
                         </select>
                     </div>
 
+                    <!-- 주문 로그 -->
+                    <div style="border:1px solid #1C2333; border-radius:8px; overflow:hidden; margin-bottom:0.75rem;">
+                        <div style="padding:6px 14px; background:#0D1117; border-bottom:1px solid #1C2333; display:flex; align-items:center; justify-content:space-between;">
+                            <span style="font-size:0.8rem; font-weight:600; color:#94A3B8;">주문 로그</span>
+                            <button onclick="document.getElementById('order-log').innerHTML='<p style=\'color:#3D4A60;\'>[대기] 로그가 초기화되었습니다.</p>'" style="font-size:0.72rem; color:#555; background:transparent; border:1px solid #1C2333; padding:1px 8px; border-radius:4px; cursor:pointer;">초기화</button>
+                        </div>
+                        <div id="order-log" style="height:120px; overflow-y:auto; padding:8px 14px; font-family:monospace; font-size:0.77rem; color:#4A5568; background:#080A10; line-height:1.6;">
+                            <p style="color:#3D4A60;">[대기] 주문 가져오기 결과가 여기에 표시됩니다...</p>
+                        </div>
+                    </div>
+
                     <!-- 주문 테이블 -->
-                    <div class="bg-white rounded-lg shadow overflow-x-auto">
-                        <table class="w-full" style="min-width:900px;">
+                    <div style="border:1px solid #2D2D2D; border-radius:8px; overflow-x:auto;">
+                        <table class="w-full" style="min-width:1100px; border-collapse:collapse;">
                             <thead>
-                                <tr>
-                                    <th style="width:36px; padding:0.75rem;"><input type="checkbox"></th>
-                                    <th class="px-3 py-3 text-left" style="font-size:0.8125rem;">주문번호</th>
-                                    <th class="px-3 py-3 text-left" style="font-size:0.8125rem;">상품정보</th>
-                                    <th class="px-3 py-3 text-left" style="font-size:0.8125rem; min-width:160px;">주문ID</th>
-                                    <th class="px-3 py-3 text-left" style="font-size:0.8125rem;">판매마켓</th>
-                                    <th class="px-3 py-3 text-left" style="font-size:0.8125rem;">주문일자</th>
-                                    <th class="px-3 py-3 text-right" style="font-size:0.8125rem;">금액</th>
-                                    <th class="px-3 py-3 text-center" style="font-size:0.8125rem;">상태</th>
-                                    <th class="px-3 py-3 text-center" style="font-size:0.8125rem;">작업</th>
+                                <tr style="background:#0D1117; border-bottom:2px solid #1C2333;">
+                                    <th style="width:36px; padding:0.5rem; text-align:center; border-right:1px solid #1C2333;"><input type="checkbox" style="accent-color:#F59E0B; width:13px; height:13px;"></th>
+                                    <th style="padding:0.6rem 0.75rem; text-align:center; font-size:0.75rem; font-weight:600; color:#94A3B8; letter-spacing:0.5px; border-right:1px solid #1C2333;">주문정보</th>
+                                    <th style="padding:0.6rem 0.75rem; text-align:center; font-size:0.75rem; font-weight:600; color:#94A3B8; letter-spacing:0.5px; border-right:1px solid #1C2333; width:143px;">금액</th>
+                                    <th style="padding:0.6rem 0.75rem; text-align:center; font-size:0.75rem; font-weight:600; color:#94A3B8; letter-spacing:0.5px; width:320px;">주문상태</th>
                                 </tr>
                             </thead>
                             <tbody id="orders-tbody">
-                                <tr>
-                                    <td style="width:36px; padding:0.75rem;"><input type="checkbox"></td>
-                                    <td class="px-3 py-3" style="font-size:0.8125rem; color:#C5C5C5;">ORD-2026-00001</td>
-                                    <td class="px-3 py-3" style="font-size:0.8125rem; color:#E5E5E5;">나이키 에어 포스 1 07 블랙</td>
-                                    <td class="px-3 py-3" style="font-size:0.8125rem; color:#888;">G마켓-A사업자-98765</td>
-                                    <td class="px-3 py-3" style="font-size:0.8125rem; color:#C5C5C5;">G마켓</td>
-                                    <td class="px-3 py-3" style="font-size:0.8125rem; color:#888;">2026-03-12</td>
-                                    <td class="px-3 py-3 text-right" style="font-size:0.8125rem; color:#FF8C00; font-weight:600;">₩136,540</td>
-                                    <td class="px-3 py-3 text-center"><span style="background:rgba(76,154,255,0.15); color:#4C9AFF; font-size:0.75rem; padding:2px 10px; border-radius:4px;">결제완료</span></td>
-                                    <td class="px-3 py-3 text-center" style="font-size:0.75rem;"><button style="color:#FF8C00; background:transparent;">상세</button></td>
-                                </tr>
                             </tbody>
                         </table>
                     </div>
@@ -1728,22 +1719,26 @@
                         <!-- 마켓 선택 -->
                         <div class="af-cb-group">
                             <div class="af-cb-label">마켓</div>
-                            <div class="af-cb-items">
+                            <div class="af-cb-items af-mkt-items">
                                 <label class="af-cb"><input type="checkbox" id="af-all-mkt" onchange="afToggleAll('mkt',this)"> <span>전체</span></label>
                                 <div class="af-cb-divider"></div>
-                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="G마켓"> <span>G마켓</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="옥션"> <span>옥션</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="11번가"> <span>11번가</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="스마트스토어"> <span>스마트스토어</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="쿠팡"> <span>쿠팡</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="롯데ON"> <span>롯데ON</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="쿠팡" checked> <span>쿠팡</span></label>
                                 <label class="af-cb"><input type="checkbox" class="af-mkt" value="신세계몰" checked> <span>신세계몰</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="스마트스토어" checked> <span>스마트스토어</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="11번가" checked> <span>11번가</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="지마켓" checked> <span>지마켓</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="옥션" checked> <span>옥션</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="GS샵" checked> <span>GS샵</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="롯데ON" checked> <span>롯데ON</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="롯데홈쇼핑" checked> <span>롯데홈쇼핑</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="홈앤쇼핑" checked> <span>홈앤쇼핑</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-mkt" value="HMALL" checked> <span>HMALL</span></label>
                             </div>
                         </div>
 
-                        <!-- 수입사이트 선택 -->
+                        <!-- 수집사이트 선택 -->
                         <div class="af-cb-group">
-                            <div class="af-cb-label">수입사이트</div>
+                            <div class="af-cb-label">수집사이트</div>
                             <div class="af-cb-items">
                                 <label class="af-cb"><input type="checkbox" id="af-all-site" onchange="afToggleAll('site',this)"> <span>전체</span></label>
                                 <div class="af-cb-divider"></div>
@@ -1754,7 +1749,7 @@
                                 <label class="af-cb"><input type="checkbox" class="af-site" value="LOTTEON" checked> <span>LOTTEON</span></label>
                                 <label class="af-cb"><input type="checkbox" class="af-site" value="MUSINSA" checked> <span>MUSINSA</span></label>
                                 <label class="af-cb"><input type="checkbox" class="af-site" value="Nike" checked> <span>Nike</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-site" value="OliveYoung"> <span>OliveYoung</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-site" value="OliveYoung" checked> <span>OliveYoung</span></label>
                                 <label class="af-cb"><input type="checkbox" class="af-site" value="SSG" checked> <span>SSG</span></label>
                             </div>
                         </div>
@@ -1765,14 +1760,15 @@
                             <div class="af-cb-items">
                                 <label class="af-cb"><input type="checkbox" id="af-all-status" onchange="afToggleAll('status',this)"> <span>전체</span></label>
                                 <div class="af-cb-divider"></div>
-                                <label class="af-cb"><input type="checkbox" class="af-status" value="결제완료" checked> <span>결제완료</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-status" value="배송대기중" checked> <span>배송대기중</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-status" value="현지배송완료" checked> <span>현지배송완료</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-status" value="배송지입고완료" checked> <span>배송지입고완료</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-status" value="오류입고" checked> <span>오류입고</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-status" value="국내배송중" checked> <span>국내배송중</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-status" value="반품/교환/취소" checked> <span>반품/교환/취소</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-status" value="배송완료" checked> <span>배송완료</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-status" value="confirmed" checked> <span>주문확인</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-status" value="waiting" checked> <span>배송대기</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-status" value="arrived" checked> <span>사무실도착</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-status" value="shipping" checked> <span>국내배송</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-status" value="cancel_req" checked> <span>취소요청</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-status" value="exchange_req" checked> <span>교환요청</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-status" value="return_req" checked> <span>반품요청</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-status" value="done" checked> <span>취소/반품/교환/완료</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-status" value="delivered" checked> <span>배송완료</span></label>
                             </div>
                         </div>
                     </div>
@@ -1781,23 +1777,23 @@
                     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                         <div class="stat-card sales">
                             <p>총 매출</p>
-                            <p>₩99,578,300</p>
-                            <p>3,617건 주문 누적</p>
+                            <p id="kpi-total-sales">₩0</p>
+                            <p id="kpi-total-orders-sub">0건 주문 누적</p>
                         </div>
                         <div class="stat-card orders">
                             <p>이번 달 주문</p>
-                            <p>391건</p>
-                            <p>3월 기준 · ▲14.3% 전월비</p>
+                            <p id="kpi-month-orders">0건</p>
+                            <p id="kpi-month-label">이번 달 기준</p>
                         </div>
                         <div class="stat-card profit">
                             <p>평균 주문금액</p>
-                            <p>₩27,530</p>
-                            <p>전월 대비 ▲8.3%</p>
+                            <p id="kpi-avg-order">₩0</p>
+                            <p id="kpi-profit-rate">마진율 0%</p>
                         </div>
                         <div class="stat-card warning">
-                            <p>활성 마켓 수</p>
-                            <p>2개</p>
-                            <p>G마켓 · 신세계몰</p>
+                            <p>총 마진</p>
+                            <p id="kpi-total-profit">₩0</p>
+                            <p id="kpi-profit-sub">필터 조건 기준</p>
                         </div>
                     </div>
 
@@ -1850,6 +1846,28 @@
 
                     <!-- ===== 테이블 뷰 ===== -->
                     <div id="ac-tables-view">
+
+                        <!-- 수익분석 요약 표 -->
+                        <div class="ac-card" style="margin-bottom:1rem; overflow-x:auto;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+                                <span style="font-size:0.8rem; color:#FFB84D; font-weight:600; letter-spacing:0.03em;">수익분석</span>
+                                <span id="ac-summary-label" style="font-size:0.72rem; color:#555;"></span>
+                            </div>
+                            <table class="ac-data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="min-width:48px;">기간</th>
+                                        <th style="white-space:nowrap;">총매출(건수)</th>
+                                        <th style="white-space:nowrap;">이행매출(건수)</th>
+                                        <th style="white-space:nowrap;">수익금</th>
+                                        <th style="white-space:nowrap;">수익률(이행기준)</th>
+                                        <th style="white-space:nowrap;">주문이행율</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="acTblSummaryBody"></tbody>
+                            </table>
+                        </div>
+
                         <!-- 탭 바 -->
                         <div class="ac-tab-bar">
                             <button class="ac-tab ac-tab-on" id="ac-tab-mkt" onclick="acTableTab('mkt')">마켓별 통계</button>
@@ -2022,22 +2040,24 @@
                     </div>
 
                     <!-- 필터 -->
-                    <div class="bg-white rounded-lg shadow p-4 mb-6">
-                        <div class="flex gap-3">
-                            <input type="text" id="return-search" placeholder="주문번호 또는 고객명으로 검색..." class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
-                            <select id="return-type" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
-                                <option value="">유형: 모두</option>
-                                <option value="return">반품</option>
-                                <option value="exchange">교환</option>
-                                <option value="cancel">취소</option>
-                            </select>
-                            <select id="return-status" class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
-                                <option value="">상태: 모두</option>
-                                <option value="requested">요청됨</option>
-                                <option value="approved">승인됨</option>
-                                <option value="completed">완료</option>
-                            </select>
-                        </div>
+                    <div style="background:rgba(18,18,18,0.98); border:1px solid #232323; border-radius:10px; padding:0.625rem 0.875rem; margin-bottom:0.75rem; display:flex; align-items:center; gap:6px; flex-wrap:nowrap;">
+                        <select id="return-search-type" style="width:123px; flex-shrink:0; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                            <option value="orderNo">주문번호</option>
+                            <option value="customer">고객명</option>
+                        </select>
+                        <input type="text" id="return-search-input" placeholder="검색어 입력" style="flex:1; min-width:0; padding:0.28rem 0.6rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;"
+                            onkeydown="if(event.key==='Enter') document.getElementById('return-search-btn').click()">
+                        <button id="return-search-btn" style="padding:0.28rem 0.75rem; font-size:0.8rem; background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; border-radius:4px; white-space:nowrap; cursor:pointer; flex-shrink:0;">검색</button>
+                        <span style="width:1px; background:#333; height:18px; flex-shrink:0;"></span>
+                        <select style="flex:2; min-width:0; padding:0.28rem 0.4rem; font-size:0.75rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                            <option>G0마켓2.0-bonol06 (주문내역 / 클레임내역 / 문의내역)</option>
+                            <option>G0마켓2.0-bonol07 (주문내역 / 클레임내역 / 문의내역)</option>
+                        </select>
+                        <button style="padding:0.28rem 0.6rem; font-size:0.8rem; background:rgba(50,50,50,0.9); border:1px solid #3D3D3D; color:#C5C5C5; border-radius:4px; white-space:nowrap; cursor:pointer; flex-shrink:0;">가져오기</button>
+                        <button style="padding:0.28rem 0.6rem; font-size:0.8rem; background:#8B1A1A; border:1px solid #C0392B; color:#fff; border-radius:4px; white-space:nowrap; cursor:pointer; flex-shrink:0;">전체마켓</button>
+                        <select style="width:132px; flex-shrink:0; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                            <option>50개 보기</option><option>100개 보기</option><option>200개 보기</option><option>500개 보기</option>
+                        </select>
                     </div>
 
                     <!-- 반품 테이블 -->
@@ -2066,71 +2086,89 @@
 
                 <!-- ===== 상품수집 (URL) 페이지 ===== -->
                 <div id="page-sourcing-collect" class="page-content hidden">
-                    <div class="mb-5 flex justify-between items-center">
-                        <div>
-                            <h2 class="text-2xl font-bold" style="color:#E5E5E5;">상품데이터 수집 (URL 이용)</h2>
-                            <p style="color:#888; font-size:0.8125rem;">** 현재까지 저장가능한 <span style="color:#FF8C00;">∞</span>개의 상품 중 총 <span id="sourcing-saved-count" style="color:#FF8C00; font-weight:600;">0</span>개 저장됨</p>
-                        </div>
-                        <button style="background:rgba(40,40,40,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.5rem 1.25rem; border-radius:8px; font-size:0.875rem; display:flex; align-items:center; gap:0.375rem;">
-                            <i class="fas fa-clock"></i> 저장대기목록
-                        </button>
+                    <!-- 프록시 서버 상태 배너 -->
+                    <div id="proxy-status-banner" style="display:flex; align-items:center; gap:10px; padding:10px 16px; border-radius:8px; margin-bottom:12px; background:rgba(255,140,0,0.07); border:1px solid rgba(255,140,0,0.2); font-size:0.82rem;">
+                        <span id="proxy-status-dot" style="width:8px; height:8px; border-radius:50%; background:#555; flex-shrink:0;"></span>
+                        <span id="proxy-status-text" style="color:#888;">프록시 서버 확인 중...</span>
+                        <button onclick="ui.checkAndRefreshProxyStatus()" style="margin-left:auto; background:transparent; border:1px solid #3D3D3D; color:#888; padding:2px 10px; border-radius:4px; font-size:0.75rem; cursor:pointer;">재확인</button>
                     </div>
-
                     <!-- 소싱사이트 태그 -->
-                    <div class="bg-white rounded-lg shadow p-4 mb-4">
-                        <p style="font-size:0.75rem; color:#888; margin-bottom:0.625rem;">소싱사이트 선택</p>
-                        <div id="sourcing-site-tags" class="flex flex-wrap gap-2">
-                            <button class="site-tag active">#ABCmart</button>
-                            <button class="site-tag">#MUSINSA</button>
-                            <button class="site-tag">#Nike</button>
-                            <button class="site-tag">#Adidas</button>
-                            <button class="site-tag">#SSG</button>
-                            <button class="site-tag">#GS Shop</button>
-                            <button style="font-size:0.8125rem; color:#FF8C00; padding:0.375rem 0.5rem; background:transparent; border:none; cursor:pointer;">+ 사이트 추가</button>
-                        </div>
-                    </div>
-
                     <!-- URL 입력 영역 -->
                     <div class="bg-white rounded-lg shadow p-5 mb-4">
-                        <div class="flex gap-3 mb-3">
-                            <input type="url" id="collect-url-input" placeholder="카테고리 또는 검색페이지 URL을 http:// 포함하여 입력" style="flex:1; padding:0.75rem 1rem; font-size:0.9rem;">
-                            <button onclick="startCollection()" style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; padding:0.75rem 1.5rem; border-radius:8px; font-weight:600; white-space:nowrap;">수집하기</button>
+                        <div style="display:flex; gap:0.75rem; margin-bottom:0.625rem;">
+                            <input type="url" id="collect-url-bulk" placeholder="카테고리/검색결과 페이지 URL (예: https://www.musinsa.com/app/goods/3900000)" style="flex:1; padding:0.75rem 1rem; font-size:0.875rem;">
+                            <button id="btn-collect-bulk" style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; padding:0.75rem 1.5rem; border-radius:8px; font-weight:600; white-space:nowrap; cursor:pointer;">
+                                <i class="fas fa-folder-plus" style="margin-right:0.375rem;"></i>그룹 생성
+                            </button>
                         </div>
-                        <p style="font-size:0.8rem; color:#888;">** 해당 사이트의 검색결과 상품을 한번에 저장 가능합니다</p>
+                        <p style="font-size:0.8rem; color:#888;">** URL 입력 후 그룹 생성 → 하단 검색그룹에서 상품수집을 실행하세요. 무신사 실제수집 시 프록시 서버(node proxy-server.mjs)가 필요합니다.</p>
                     </div>
 
-                    <!-- 실시간 결과 영역 -->
-                    <div class="bg-white rounded-lg shadow">
-                        <div class="p-4" style="border-bottom:1px solid #2D2D2D;">
-                            <p style="font-size:0.875rem; color:#E5E5E5;"><span id="collect-site-name" style="color:#FF8C00; font-weight:600;">사이트</span>에서의 실시간 검색한 결과입니다.</p>
+                    <!-- 수집 로그 -->
+                    <div class="bg-white rounded-lg shadow mb-4" style="overflow:hidden;">
+                        <div style="padding:8px 16px; border-bottom:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between;">
+                            <span style="font-size:0.85rem; font-weight:600; color:#C5C5C5;">수집 로그</span>
+                            <button onclick="document.getElementById('collect-log').innerHTML='<p style=\'color:#555;\'>로그가 초기화되었습니다.</p>'" style="font-size:0.75rem; color:#888; background:transparent; border:1px solid #3D3D3D; padding:2px 10px; border-radius:4px; cursor:pointer;">초기화</button>
                         </div>
-                        <!-- 액션 바 -->
-                        <div class="p-3 collect-action" style="display:flex; align-items:center; gap:8px; flex-wrap:nowrap; border-bottom:1px solid #2D2D2D;">
-                            <label style="display:flex; align-items:center; gap:0.375rem; font-size:0.8125rem; color:#C5C5C5; cursor:pointer; white-space:nowrap; flex-shrink:0;">
-                                <input type="checkbox" id="collect-select-all"> 전체선택
-                            </label>
-                            <button style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; padding:0.375rem 0.875rem; border-radius:6px; font-size:0.8125rem; font-weight:600; white-space:nowrap; flex-shrink:0;">선택상품저장</button>
-                            <button style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.375rem 0.875rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; flex-shrink:0;">검색된 상품 모두저장</button>
+                        <div id="collect-log" style="height:160px; overflow-y:auto; padding:10px 16px; font-family:monospace; font-size:0.78rem; color:#8A95B0; background:#080A10; line-height:1.6;">
+                            <p style="color:#555;">[대기] 수집 결과가 여기에 표시됩니다...</p>
                         </div>
-                        <!-- 수집 결과 테이블 -->
-                        <table class="w-full">
-                            <thead>
-                                <tr>
-                                    <th class="px-4 py-3 text-left" style="width:40px;"></th>
-                                    <th class="px-4 py-3 text-left" style="width:80px;">이미지</th>
-                                    <th class="px-4 py-3 text-left">상품명</th>
-                                    <th class="px-4 py-3 text-right">원가</th>
-                                    <th class="px-4 py-3 text-left">카테고리</th>
-                                    <th class="px-4 py-3 text-center">옵션수</th>
-                                    <th class="px-4 py-3 text-center">상태</th>
-                                </tr>
-                            </thead>
-                            <tbody id="collect-results-tbody">
-                                <tr>
-                                    <td colspan="7" class="px-6 py-10 text-center" style="color:#666;">URL을 입력하고 수집하기를 클릭하세요</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                    </div>
+
+                    <!-- 수집 결과 (수집하기 후 동적 렌더) -->
+                    <div id="collect-results-container"></div>
+
+                    <!-- ===== 검색그룹 목록 (통합) ===== -->
+                    <div style="margin-top:1.5rem;">
+                        <!-- 섹션 타이틀 -->
+                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem; flex-wrap:wrap; gap:8px;">
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <h3 style="font-size:1rem; font-weight:700; color:#E5E5E5;">검색그룹 목록</h3>
+                            </div>
+                            <!-- 액션 버튼 -->
+                            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                                <button onclick="ui.deleteSelectedGroups()" style="background:rgba(255,100,100,0.1); border:1px solid rgba(255,100,100,0.3); color:#FF6B6B; padding:0.3rem 0.75rem; border-radius:6px; font-size:0.8rem;">그룹 삭제</button>
+                                <button onclick="ui.handleCollectGroups()" style="background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.35); color:#FF8C00; padding:0.3rem 0.75rem; border-radius:6px; font-size:0.8rem;"><i class="fas fa-download" style="margin-right:0.25rem;"></i>상품수집</button>
+                                <button style="background:rgba(81,207,102,0.1); border:1px solid rgba(81,207,102,0.3); color:#51CF66; padding:0.3rem 0.75rem; border-radius:6px; font-size:0.8rem;">AI이미지변경</button>
+                                <select style="padding:0.3rem 0.5rem; font-size:0.8rem; width:auto;"><option>100개씩</option><option>50개씩</option></select>
+                                <select id="apply-group-site-filter" onchange="ui.renderSearchFilterTable()" style="padding:0.3rem 0.5rem; font-size:0.8rem; width:auto;"><option value="">전체 사이트</option></select>
+                                <select id="apply-group-sort" onchange="ui.renderSearchFilterTable()" style="padding:0.3rem 0.5rem; font-size:0.8rem; width:auto;">
+                                    <option value="lastCollectedAt_desc">수집일 ▼</option>
+                                    <option value="lastCollectedAt_asc">수집일 ▲</option>
+                                    <option value="createdAt_desc">그룹생성일 ▼</option>
+                                    <option value="createdAt_asc">그룹생성일 ▲</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- 정책 우선순위 안내 -->
+                        <div style="margin-bottom:0.75rem; padding:0.5rem 0.875rem; border-radius:8px; background:rgba(255,140,0,0.05); border:1px solid rgba(255,140,0,0.2); font-size:0.8rem; color:#888;">
+                            ※ 정책 우선순위: <span style="color:#FF8C00;">[상품별 개별정책]</span> → <span style="color:#FF8C00;">[카테고리 정책]</span> 순으로 적용됩니다
+                        </div>
+
+                        <!-- 그룹 테이블 -->
+                        <div class="bg-white rounded-lg shadow overflow-hidden">
+                            <table class="w-full">
+                                <thead>
+                                    <tr>
+                                        <th style="width:36px; padding:0.75rem;"><input type="checkbox" id="group-select-all" onchange="document.querySelectorAll('#apply-group-tbody .group-row-cb').forEach(cb=>cb.checked=this.checked)" style="accent-color:#FF8C00; cursor:pointer;"></th>
+                                        <th class="px-3 py-3 text-left" style="font-size:0.8rem;">사이트</th>
+                                        <th class="px-3 py-3 text-left" style="font-size:0.8rem;">그룹이름</th>
+                                        <th class="px-3 py-3 text-left" style="font-size:0.8rem;">링크</th>
+                                        <th class="px-3 py-3 text-left" style="font-size:0.8rem;">상품정책 적용</th>
+                                        <th class="px-3 py-3 text-center" style="font-size:0.8rem;">수집상품수</th>
+                                        <th class="px-3 py-3 text-center" style="font-size:0.8rem;">요청상품수</th>
+                                        <th class="px-3 py-3 text-center" style="font-size:0.8rem;">그룹생성일</th>
+                                        <th class="px-3 py-3 text-center" style="font-size:0.8rem;">최근수집일</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="apply-group-tbody">
+                                    <tr>
+                                        <td colspan="9" class="px-6 py-8 text-center" style="color:#666;">수집하기를 실행하면 검색그룹이 자동으로 생성됩니다</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
@@ -2145,19 +2183,14 @@
                     <div class="bg-white rounded-lg shadow p-4 mb-4">
                         <div class="flex gap-3 flex-wrap items-center">
                             <select id="policy-select" style="width:220px; padding:0.5rem 0.75rem; font-size:0.875rem;">
-                                <option>정책 선택 ▼</option>
+                                <option>정책 선택</option>
                                 <option>ABC_나이키 까대기</option>
                             </select>
-                            <select style="width:auto; padding:0.5rem 0.75rem; font-size:0.875rem;">
-                                <option>사이트: 신세계</option>
-                            </select>
-                            <div class="flex items-center gap-2">
-                                <span style="color:#888; font-size:0.8125rem;">설정 이름:</span>
-                                <input type="text" style="width:200px; padding:0.5rem 0.75rem; font-size:0.875rem;" placeholder="설정 이름 입력">
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <span style="color:#888; font-size:0.8125rem;">정책명:</span>
-                                <input type="text" id="policy-name" style="width:220px; padding:0.5rem 0.75rem; font-size:0.875rem;" placeholder="ABC_나이키가방 까대기">
+                            <!-- AI 정책명 변경 인풋 -->
+                            <div style="display:flex; align-items:center; gap:0.5rem; background:rgba(255,140,0,0.05); border:1px solid rgba(255,140,0,0.25); border-radius:8px; padding:0.4rem 0.75rem; flex:1; min-width:0;">
+                                <span style="font-size:0.75rem; color:#FF8C00; white-space:nowrap; font-weight:600;">✦ AI</span>
+                                <input type="text" placeholder="정책일괄 변경시 사용" style="background:transparent; border:none; outline:none; font-size:0.8125rem; color:#E5E5E5; flex:1; min-width:0; padding:0.1rem 0;">
+                                <button style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; border-radius:5px; padding:0.25rem 0.75rem; font-size:0.75rem; white-space:nowrap; cursor:pointer;">변경</button>
                             </div>
                         </div>
                     </div>
@@ -2166,33 +2199,31 @@
                     <div class="policy-section mb-4">
                         <div class="policy-section-header">
                             <span>가격계산 정책 설정</span>
-                            <button style="background:rgba(255,140,0,0.15); border:1px solid #FF8C00; color:#FF8C00; padding:0.25rem 0.75rem; border-radius:6px; font-size:0.8125rem;">설정저장</button>
                         </div>
                         <div class="p-4">
-                            <div class="flex flex-wrap gap-4 mb-3">
+                            <!-- 체크박스 · 배송비 · 마진율 · 기준통화 한 줄 -->
+                            <div class="flex items-center gap-4 flex-wrap mb-2">
+                                <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8125rem; color:#C5C5C5; cursor:pointer; white-space:nowrap;">
+                                    <input type="checkbox" checked> 상품가격별 범위 마진 설정
+                                </label>
                                 <div class="flex items-center gap-2">
-                                    <span style="color:#888; font-size:0.8125rem; white-space:nowrap;">국제운송료</span>
-                                    <input type="number" value="0" style="width:90px; padding:0.375rem 0.5rem; font-size:0.8125rem;">
+                                    <span style="color:#888; font-size:0.8125rem; white-space:nowrap;">배송비</span>
+                                    <input type="number" value="0" style="width:78px; padding:0.375rem 0.5rem; font-size:0.8125rem;">
                                     <span style="color:#888; font-size:0.8125rem;">원</span>
-                                    <select style="width:auto; padding:0.375rem 0.5rem; font-size:0.8125rem;"><option>배송포기</option><option>반영</option></select>
-                                    <select style="width:auto; padding:0.375rem 0.5rem; font-size:0.8125rem;"><option>LB</option><option>KG</option></select>
                                 </div>
                                 <div class="flex items-center gap-2">
                                     <span style="color:#888; font-size:0.8125rem; white-space:nowrap;">마진율</span>
-                                    <input type="number" value="15" style="width:70px; padding:0.375rem 0.5rem; font-size:0.8125rem;"> <span style="color:#888; font-size:0.8125rem;">%</span>
+                                    <input type="number" value="15" style="width:62px; padding:0.375rem 0.5rem; font-size:0.8125rem;"> <span style="color:#888; font-size:0.8125rem;">%</span>
                                     <span style="color:#555;">/</span>
-                                    <input type="number" value="0" style="width:80px; padding:0.375rem 0.5rem; font-size:0.8125rem;"> <span style="color:#888; font-size:0.8125rem;">원</span>
+                                    <input type="number" value="0" style="width:72px; padding:0.375rem 0.5rem; font-size:0.8125rem;"> <span style="color:#888; font-size:0.8125rem;">원</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span style="color:#888; font-size:0.8125rem; white-space:nowrap;">기준통화</span>
+                                    <select style="width:auto; padding:0.25rem 0.5rem; font-size:0.8125rem;"><option>KRW(원화)</option><option>USD</option></select>
                                 </div>
                             </div>
                             <!-- 가격범위별 마진 -->
                             <div class="mb-3">
-                                <label style="display:flex; align-items:center; gap:0.5rem; font-size:0.8125rem; color:#C5C5C5; margin-bottom:0.5rem; cursor:pointer;">
-                                    <input type="checkbox" checked> 상품가격별 범위 마진 설정
-                                </label>
-                                <div class="flex items-center gap-2 mb-2">
-                                    <span style="color:#888; font-size:0.8125rem;">기준통화</span>
-                                    <select style="width:auto; padding:0.25rem 0.5rem; font-size:0.8125rem;"><option>KRW(원화)</option><option>USD</option></select>
-                                </div>
                                 <div id="price-ranges">
                                     <div class="price-range-row">
                                         <span style="font-size:0.8rem; color:#888; width:200px;">0원 ~ 50,000원 미만</span>
@@ -2200,6 +2231,7 @@
                                         <span style="color:#555;">/</span>
                                         <span style="color:#888; font-size:0.75rem;">마진금액</span>
                                         <input type="number" style="width:80px; padding:0.25rem 0.5rem; font-size:0.8125rem;" placeholder="선택"> <span style="color:#888; font-size:0.75rem;">원</span>
+                                        <button onclick="this.parentElement.remove()" style="color:#FF6B6B; background:transparent; font-size:0.75rem; margin-left:0.5rem; cursor:pointer;">삭제</button>
                                     </div>
                                     <div class="price-range-row">
                                         <span style="font-size:0.8rem; color:#888; width:200px;">50,000원 ~ 150,000원</span>
@@ -2207,6 +2239,7 @@
                                         <span style="color:#555;">/</span>
                                         <span style="color:#888; font-size:0.75rem;">마진금액</span>
                                         <input type="number" style="width:80px; padding:0.25rem 0.5rem; font-size:0.8125rem;" placeholder="선택"> <span style="color:#888; font-size:0.75rem;">원</span>
+                                        <button onclick="this.parentElement.remove()" style="color:#FF6B6B; background:transparent; font-size:0.75rem; margin-left:0.5rem; cursor:pointer;">삭제</button>
                                     </div>
                                     <div class="price-range-row">
                                         <span style="font-size:0.8rem; color:#888; width:200px;">150,000원 이상</span>
@@ -2214,6 +2247,7 @@
                                         <span style="color:#555;">/</span>
                                         <span style="color:#888; font-size:0.75rem;">마진금액</span>
                                         <input type="number" style="width:80px; padding:0.25rem 0.5rem; font-size:0.8125rem;" placeholder="선택"> <span style="color:#888; font-size:0.75rem;">원</span>
+                                        <button onclick="this.parentElement.remove()" style="color:#FF6B6B; background:transparent; font-size:0.75rem; margin-left:0.5rem; cursor:pointer;">삭제</button>
                                     </div>
                                 </div>
                                 <button onclick="addPriceRange()" style="margin-top:0.5rem; font-size:0.8rem; color:#FF8C00; background:transparent; border:1px dashed #FF8C00; border-radius:6px; padding:0.25rem 0.75rem; cursor:pointer;">+ 가격범위 추가하기</button>
@@ -2253,12 +2287,17 @@
                         </div>
                         <div class="p-4">
                             <div class="flex flex-wrap gap-1 mb-4">
-                                <button class="market-tab active">G마켓</button>
-                                <button class="market-tab">11번가</button>
+                                <button class="market-tab active">쿠팡</button>
+                                <button class="market-tab">신세계몰</button>
                                 <button class="market-tab">스마트스토어</button>
-                                <button class="market-tab">쿠팡</button>
-                                <button class="market-tab">신세계</button>
-                                <button class="market-tab">롯데온</button>
+                                <button class="market-tab">11번가</button>
+                                <button class="market-tab">지마켓</button>
+                                <button class="market-tab">옥션</button>
+                                <button class="market-tab">GS샵</button>
+                                <button class="market-tab">롯데ON</button>
+                                <button class="market-tab">롯데홈쇼핑</button>
+                                <button class="market-tab">홈앤쇼핑</button>
+                                <button class="market-tab">HMALL</button>
                             </div>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4" style="font-size:0.875rem;">
                                 <div class="flex items-center gap-2">
@@ -2358,20 +2397,20 @@
                             <div class="mb-3">
                                 <p style="color:#888; font-size:0.8rem; margin-bottom:0.5rem;">기본이미지</p>
                                 <div class="flex flex-wrap gap-3">
-                                    <label style="cursor:pointer;"><input type="checkbox" checked> 대표이미지</label>
-                                    <label style="cursor:pointer;"><input type="checkbox" checked> 대표추가이미지</label>
-                                    <label style="cursor:pointer;"><input type="checkbox"> 상품제목</label>
-                                    <label style="cursor:pointer;"><input type="checkbox"> 옵션이미지</label>
-                                    <label style="cursor:pointer;"><input type="checkbox"> 비디오</label>
-                                    <label style="cursor:pointer;"><input type="checkbox"> 스펙정보</label>
-                                    <label style="cursor:pointer;"><input type="checkbox" checked> 상세이미지</label>
+                                    <label style="display:inline-flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap;"><input type="checkbox" checked style="flex-shrink:0; width:14px; height:14px;"> <span>대표이미지</span></label>
+                                    <label style="display:inline-flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap;"><input type="checkbox" checked style="flex-shrink:0; width:14px; height:14px;"> <span>대표추가이미지</span></label>
+                                    <label style="display:inline-flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap;"><input type="checkbox" style="flex-shrink:0; width:14px; height:14px;"> <span>상품제목</span></label>
+                                    <label style="display:inline-flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap;"><input type="checkbox" style="flex-shrink:0; width:14px; height:14px;"> <span>옵션이미지</span></label>
+                                    <label style="display:inline-flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap;"><input type="checkbox" style="flex-shrink:0; width:14px; height:14px;"> <span>비디오</span></label>
+                                    <label style="display:inline-flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap;"><input type="checkbox" style="flex-shrink:0; width:14px; height:14px;"> <span>스펙정보</span></label>
+                                    <label style="display:inline-flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap;"><input type="checkbox" checked style="flex-shrink:0; width:14px; height:14px;"> <span>상세이미지</span></label>
                                 </div>
                             </div>
                             <div>
                                 <p style="color:#888; font-size:0.8rem; margin-bottom:0.5rem;">추가이미지</p>
                                 <div class="flex flex-wrap gap-3">
-                                    <label style="cursor:pointer;"><input type="checkbox" checked> 상단이미지</label>
-                                    <label style="cursor:pointer;"><input type="checkbox" checked> 하단페이지</label>
+                                    <label style="display:inline-flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap;"><input type="checkbox" checked style="flex-shrink:0; width:14px; height:14px;"> <span>상단이미지</span></label>
+                                    <label style="display:inline-flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap;"><input type="checkbox" checked style="flex-shrink:0; width:14px; height:14px;"> <span>하단페이지</span></label>
                                 </div>
                             </div>
                         </div>
@@ -2455,12 +2494,14 @@
                                 <p style="color:#888; font-size:0.8rem; margin-bottom:0.375rem;">치환조건 리스트</p>
                                 <div style="border:1px solid #2D2D2D; border-radius:6px; min-height:80px; padding:0.5rem;">
                                     <div class="replace-row">
-                                        <span style="color:#888; font-size:0.75rem; width:20px;">1</span>
-                                        <span style="flex:1;">Nike → 나이키</span>
-                                        <label><input type="checkbox"> 대소문자</label>
-                                        <label><input type="checkbox"> 온전한단어</label>
-                                        <label><input type="checkbox"> 정규식</label>
-                                        <button style="color:#FF6B6B; background:transparent; font-size:0.75rem;">삭제</button>
+                                        <span style="color:#888; font-size:0.75rem; width:20px; flex-shrink:0;">1</span>
+                                        <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#E5E5E5;">Nike → 나이키</span>
+                                        <div class="replace-row-controls">
+                                            <label><input type="checkbox" style="accent-color:#FF8C00;"> 대소문자</label>
+                                            <label><input type="checkbox" style="accent-color:#FF8C00;"> 온전한단어</label>
+                                            <label><input type="checkbox" style="accent-color:#FF8C00;"> 정규식</label>
+                                            <button style="color:#FF6B6B; background:transparent; border:none; font-size:0.75rem; cursor:pointer; white-space:nowrap;">삭제</button>
+                                        </div>
                                     </div>
                                     <p style="text-align:center; color:#555; font-size:0.8rem; padding:0.5rem;">조건을 추가하세요</p>
                                 </div>
@@ -2506,21 +2547,20 @@
 
 
                 <!-- ===== 검색그룹 관리 및 정책적용 ===== -->
-                <div id="page-apply-group" class="page-content hidden">
-                    <!-- 탭 -->
-                    <div class="flex gap-0 mb-5" style="border-bottom:2px solid #2D2D2D;">
-                        <button onclick="app.navigateTo('apply-group')" class="market-tab active" style="border-radius:6px 6px 0 0; padding:0.625rem 1.25rem; font-size:0.875rem;">✓ 검색그룹 관리 및 정책적용</button>
-                        <button onclick="app.navigateTo('apply-category')" class="market-tab" style="border-radius:6px 6px 0 0; padding:0.625rem 1.25rem; font-size:0.875rem;">카테고리 관리 및 정책적용</button>
+                <div id="page-apply-group" class="page-content hidden" style="display:none!important">
+                    <!-- 페이지 타이틀 -->
+                    <div class="mb-5">
+                        <h2 class="text-2xl font-bold" style="color:#E5E5E5;">검색그룹</h2>
                     </div>
 
                     <!-- 정책 우선순위 안내 -->
                     <div class="mb-4 p-3 rounded-lg" style="background:rgba(255,140,0,0.05); border:1px solid rgba(255,140,0,0.2); font-size:0.8125rem; color:#888;">
-                        ※ 정책 우선순위: <span style="color:#FF8C00;">[상품별 개별정책]</span> → <span style="color:#FF8C00;">[검색그룹 정책]</span> → <span style="color:#FF8C00;">[카테고리 정책]</span> 순으로 적용됩니다
+                        ※ 정책 우선순위: <span style="color:#FF8C00;">[상품별 개별정책]</span> → <span style="color:#FF8C00;">[카테고리 정책]</span> 순으로 적용됩니다
                     </div>
 
                     <!-- 필터 -->
                     <div class="bg-white rounded-lg shadow p-3 mb-4 flex gap-3 flex-wrap">
-                        <select style="width:160px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>수집사이트</option></select>
+                        <select id="apply-group-site-filter" style="width:160px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option value="">수집사이트</option></select>
                         <input type="text" placeholder="그룹이름 검색" style="width:220px; padding:0.5rem 0.75rem; font-size:0.875rem;">
                         <button style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; padding:0.5rem 1rem; border-radius:6px; font-size:0.875rem;">검색하기</button>
                     </div>
@@ -2528,14 +2568,14 @@
                     <!-- 액션 바 -->
                     <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
                         <div class="flex gap-2">
-                            <button style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.375rem 0.875rem; border-radius:6px; font-size:0.8125rem;">그룹 병합&이름변경</button>
                             <button style="background:rgba(255,100,100,0.1); border:1px solid rgba(255,100,100,0.3); color:#FF6B6B; padding:0.375rem 0.875rem; border-radius:6px; font-size:0.8125rem;">그룹 삭제</button>
+                            <button onclick="app.navigateTo('apply-recollect')" style="background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.35); color:#FF8C00; padding:0.375rem 0.875rem; border-radius:6px; font-size:0.8125rem;">재수집</button>
+                            <button style="background:rgba(81,207,102,0.1); border:1px solid rgba(81,207,102,0.3); color:#51CF66; padding:0.375rem 0.875rem; border-radius:6px; font-size:0.8125rem;">AI이미지변경</button>
                         </div>
                         <div class="flex items-center gap-2">
                             <select style="width:auto; padding:0.375rem 0.5rem; font-size:0.8125rem;"><option>100개씩</option><option>50개씩</option></select>
                             <select style="width:auto; padding:0.375rem 0.5rem; font-size:0.8125rem;"><option>전체 검색그룹</option></select>
                             <select style="width:auto; padding:0.375rem 0.5rem; font-size:0.8125rem;"><option>최근수집일순</option></select>
-                            <button onclick="app.navigateTo('apply-recollect')" style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.375rem 0.875rem; border-radius:6px; font-size:0.8125rem;">수정수집</button>
                         </div>
                     </div>
 
@@ -2547,14 +2587,13 @@
                                     <th style="width:36px; padding:0.75rem;"><input type="checkbox"></th>
                                     <th class="px-3 py-3 text-left">사이트</th>
                                     <th class="px-3 py-3 text-left">그룹이름</th>
+                                    <th class="px-3 py-3 text-left">링크</th>
                                     <th class="px-3 py-3 text-left">상품정책 적용</th>
-                                    <th class="px-3 py-3 text-center">그룹세부설정</th>
+                                    <th class="px-3 py-3 text-center">수집상품수</th>
+                                    <th class="px-3 py-3 text-center">요청상품수</th>
                                 </tr>
                             </thead>
-                            <tbody id="apply-group-tbody">
-                                <tr>
-                                    <td colspan="5" class="px-6 py-8 text-center" style="color:#666;">등록된 검색그룹이 없습니다</td>
-                                </tr>
+                            <tbody id="apply-group-tbody-legacy">
                             </tbody>
                         </table>
                     </div>
@@ -2562,16 +2601,9 @@
 
                 <!-- ===== 카테고리 관리 및 정책적용 ===== -->
                 <div id="page-apply-category" class="page-content hidden">
-                    <!-- 탭 -->
-                    <div class="flex gap-0 mb-5" style="border-bottom:2px solid #2D2D2D;">
-                        <button onclick="app.navigateTo('apply-group')" class="market-tab" style="border-radius:6px 6px 0 0; padding:0.625rem 1.25rem; font-size:0.875rem;">검색그룹 관리 및 정책적용</button>
-                        <button onclick="app.navigateTo('apply-category')" class="market-tab active" style="border-radius:6px 6px 0 0; padding:0.625rem 1.25rem; font-size:0.875rem;">✓ 카테고리 관리 및 정책적용</button>
-                    </div>
-
-                    <!-- 카테고리 내부 서브탭 -->
-                    <div class="flex gap-2 mb-4">
-                        <button class="cat-inner-tab active" id="cat-tab-settings" onclick="switchCatTab('settings')" style="padding:0.5rem 1.25rem; border-radius:6px; font-size:0.875rem; background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; cursor:pointer;">카테고리 설정</button>
-                        <button class="cat-inner-tab" id="cat-tab-list" onclick="switchCatTab('list')" style="padding:0.5rem 1.25rem; border-radius:6px; font-size:0.875rem; background:rgba(50,50,50,0.8); color:#C5C5C5; border:1px solid #3D3D3D; cursor:pointer;">등록 카테고리 분류</button>
+                    <!-- 페이지 타이틀 -->
+                    <div class="mb-5">
+                        <h2 class="text-2xl font-bold" style="color:#E5E5E5;">카테고리 매핑</h2>
                     </div>
 
                     <!-- 카테고리 설정 패널 -->
@@ -2585,13 +2617,15 @@
                         <div class="flex" style="border-bottom:1px solid #2D2D2D;">
                             <div class="cat-col">
                                 <div class="cat-col-header">사이트</div>
-                                <button class="cat-item selected">THE MANGO</button>
-                                <button class="cat-item">ABCmart</button>
-                                <button class="cat-item">FOLDER</button>
+                                <button class="cat-item selected">ABCmart</button>
+                                <button class="cat-item">FOLDERStyle</button>
+                                <button class="cat-item">GrandStage</button>
                                 <button class="cat-item">GSShop</button>
                                 <button class="cat-item">LOTTEON</button>
-                                <button class="cat-item selected">MUSINSA</button>
+                                <button class="cat-item">MUSINSA</button>
                                 <button class="cat-item">Nike</button>
+                                <button class="cat-item">OliveYoung</button>
+                                <button class="cat-item">SSG</button>
                             </div>
                             <div class="cat-col">
                                 <div class="cat-col-header">대분류</div>
@@ -2628,48 +2662,13 @@
                         </div>
                     </div>
 
-                    <!-- 적용된 카테고리 테이블 -->
-                    <div class="bg-white rounded-lg shadow overflow-hidden">
-                        <table class="w-full">
-                            <thead>
-                                <tr>
-                                    <th class="px-4 py-3 text-left">카테고리</th>
-                                    <th class="px-4 py-3 text-left">적용된 정책</th>
-                                    <th class="px-4 py-3 text-left">국제운송료</th>
-                                    <th class="px-4 py-3 text-left">매핑된 마켓</th>
-                                    <th class="px-4 py-3 text-center">비고</th>
-                                </tr>
-                            </thead>
-                            <tbody id="apply-category-tbody">
-                                <tr>
-                                    <td class="px-4 py-3" style="color:#E5E5E5;">MUSINSA &gt; 데님팬츠</td>
-                                    <td class="px-4 py-3" style="color:#888;">-</td>
-                                    <td class="px-4 py-3" style="color:#888;">-</td>
-                                    <td class="px-4 py-3">
-                                        <div class="flex flex-wrap gap-2">
-                                            <label style="font-size:0.75rem; cursor:pointer;"><input type="checkbox" checked> G마켓</label>
-                                            <label style="font-size:0.75rem; cursor:pointer;"><input type="checkbox" checked> 11번가</label>
-                                            <label style="font-size:0.75rem; cursor:pointer;"><input type="checkbox"> 스마트</label>
-                                            <label style="font-size:0.75rem; cursor:pointer;"><input type="checkbox"> 쿠팡</label>
-                                        </div>
-                                    </td>
-                                    <td class="px-4 py-3 text-center">
-                                        <button style="font-size:0.75rem; border:1px solid #3D3D3D; color:#C5C5C5; padding:0.125rem 0.5rem; border-radius:4px; background:transparent;">설정보기</button>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                        <div class="p-3" style="border-top:1px solid #2D2D2D; font-size:0.8125rem; color:#888; text-align:center;">
-                            ( 총 1개 카테고리에 대해 설정값이 적용되었습니다. )
-                        </div>
-                    </div>
                     </div><!-- /cat-panel-settings -->
 
                     <!-- ===== 등록 카테고리 분류 패널 ===== -->
                     <div id="cat-panel-list" style="display:none;">
                         <!-- 필터 -->
                         <div class="bg-white rounded-lg shadow p-3 mb-4 flex flex-wrap gap-3 items-center">
-                            <select style="width:160px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>전체 사이트</option><option>THE MANGO</option><option>ABCmart</option><option>MUSINSA</option><option>Nike</option></select>
+                            <select style="width:160px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option value="">전체 사이트</option><option>ABCmart</option><option>FOLDERStyle</option><option>GrandStage</option><option>GSShop</option><option>LOTTEON</option><option>MUSINSA</option><option>Nike</option><option>OliveYoung</option><option>SSG</option></select>
                             <select style="width:160px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>전체 대분류</option><option>가방</option><option>바지</option><option>상의</option><option>신발</option></select>
                             <input type="text" placeholder="카테고리 검색" style="width:200px; padding:0.5rem 0.75rem; font-size:0.875rem;">
                             <button style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; padding:0.5rem 1rem; border-radius:6px; font-size:0.875rem;">검색</button>
@@ -2733,7 +2732,7 @@
                 <div id="page-apply-recollect" class="page-content hidden">
                     <!-- 뒤로가기 -->
                     <div class="mb-4">
-                        <button onclick="app.navigateTo('apply-group')" style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.375rem 0.875rem; border-radius:6px; font-size:0.8125rem;">← 검색그룹 관리로 돌아가기</button>
+                        <button onclick="app.navigateTo('sourcing-collect')" style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.375rem 0.875rem; border-radius:6px; font-size:0.8125rem;">← 상품수집으로 돌아가기</button>
                     </div>
 
                     <!-- 헤더 -->
@@ -2844,104 +2843,171 @@
 
                 <!-- ===== 상품전송 페이지 (The.Mango 스타일) ===== -->
                 <div id="page-shipment" class="page-content hidden">
-                    <!-- 필터 -->
-                    <div style="background:rgba(18,18,18,0.98); border:1px solid #232323; border-radius:10px; padding:0.875rem 1rem; margin-bottom:1rem;">
-                        <!-- 1행: 날짜 + 상태 필터 -->
-                        <div style="display:flex; align-items:center; gap:6px; flex-wrap:nowrap; margin-bottom:0.5rem;">
-                            <span style="font-size:0.8125rem; color:#888; white-space:nowrap;">등록일자</span>
-                            <input type="date" style="padding:0.28rem 0.45rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5; width:138px;">
-                            <span style="color:#555; font-size:0.8125rem;">~</span>
-                            <input type="date" style="padding:0.28rem 0.45rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5; width:138px;">
-                            <select style="padding:0.28rem 0.45rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;"><option>마켓등록/미등록</option><option>마켓등록</option><option>마켓미등록</option></select>
-                            <select style="padding:0.28rem 0.45rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;"><option>판매상품</option><option>전체상품</option><option>판매중</option><option>판매중지</option></select>
-                            <select style="padding:0.28rem 0.45rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;"><option>등록상태: 모두</option><option>마켓등록</option><option>마켓미등록</option></select>
-                            <button style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.28rem 0.75rem; border-radius:6px; font-size:0.8125rem; margin-left:auto; white-space:nowrap;">전송로그 보기</button>
-                        </div>
-                        <!-- 2행: 검색 -->
-                        <div style="display:flex; align-items:center; gap:6px; flex-wrap:nowrap;">
-                            <span style="font-size:0.8125rem; color:#888; white-space:nowrap;">상품번호 검색</span>
-                            <input type="text" placeholder="상품번호 입력" style="width:160px; padding:0.28rem 0.5rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
-                            <button style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; padding:0.28rem 0.875rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap;">검색하기</button>
-                            <span style="font-size:0.8125rem; color:#888; white-space:nowrap; margin-left:8px;">상품명 검색</span>
-                            <input type="text" placeholder="상품명 입력" style="width:200px; padding:0.28rem 0.5rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
-                            <button style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.28rem 0.875rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap;">검색내 재검색</button>
-                        </div>
+                    <!-- 페이지 헤더 -->
+                    <div class="mb-5">
+                        <h2 class="text-2xl font-bold" style="color:#E5E5E5;">상품 업데이트 & 마켓 전송</h2>
+                        <p style="color:#888; font-size:0.8125rem;">저장된 상품을 선택하여 소싱처 정보를 업데이트하고 마켓에 전송합니다</p>
                     </div>
 
-                    <!-- 소싱사이트 선택 -->
-                    <div style="background:rgba(18,18,18,0.98); border:1px solid #232323; border-radius:10px; padding:0.75rem 1rem; margin-bottom:0.75rem;">
-                        <div style="display:flex; align-items:center; gap:0; flex-wrap:nowrap;">
-                            <div style="display:flex; flex-wrap:wrap; gap:0.5rem 1rem; flex:1;">
-                                <span style="font-size:0.6875rem; color:#666; white-space:nowrap; align-self:center;">소싱사이트 선택</span>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" style="accent-color:#FF8C00;">ABCmart</label>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" style="accent-color:#FF8C00;">MUSINSA</label>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" style="accent-color:#FF8C00;">Nike</label>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" style="accent-color:#FF8C00;">SSG</label>
+                    <!-- 전송 설정 패널 (이미지 구조) -->
+                    <div style="background:rgba(14,14,20,0.98); border:1px solid #1E2030; border-radius:8px; margin-bottom:10px; font-size:0.8rem;">
+
+                        <!-- 검색조건 테이블 -->
+                        <div style="padding:0;">
+                            <!-- 검색항목 -->
+                            <div style="display:flex; align-items:center; padding:8px 16px; border-bottom:1px solid #181C28; gap:8px;">
+                                <span style="min-width:72px; color:#666; font-size:0.78rem;">검색항목</span>
+                                <select style="padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#B0BAD0; border-radius:4px; outline:none; cursor:pointer; width:80px;">
+                                    <option>전체</option><option>활성</option><option>비활성</option>
+                                </select>
+                                <input type="text" placeholder="" style="width:200px; padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#C5C5C5; border-radius:4px; outline:none;">
                             </div>
-                            <span style="font-size:0.65rem; color:#666; white-space:nowrap; margin-left:1rem;">** 여러 사이트 동시 업데이트시 나열된 순서대로 진행됩니다</span>
-                        </div>
-                    </div>
-
-                    <!-- 업데이트 항목 선택 -->
-                    <div style="background:rgba(18,18,18,0.98); border:1px solid #232323; border-radius:10px; padding:0.75rem 1rem; margin-bottom:0.75rem;">
-                        <div style="display:flex; align-items:center; gap:0; flex-wrap:nowrap;">
-                            <div style="display:flex; flex-wrap:wrap; gap:0.5rem 1rem; flex:1;">
-                                <span style="font-size:0.6875rem; color:#666; white-space:nowrap; align-self:center;">업데이트 항목</span>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" style="accent-color:#FF8C00;">가격정보</label>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" style="accent-color:#FF8C00;">재고정보</label>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" style="accent-color:#FF8C00;">이미지</label>
+                            <!-- 수집사이트 -->
+                            <div style="display:flex; align-items:center; padding:8px 16px; border-bottom:1px solid #181C28; gap:8px;">
+                                <span style="min-width:72px; color:#666; font-size:0.78rem;">소싱사이트</span>
+                                <select style="padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#B0BAD0; border-radius:4px; outline:none; cursor:pointer; width:140px;">
+                                    <option>전체</option><option>ABCmart</option><option>eBay</option><option>FOLDERStyle</option><option>GrandStage</option><option>GSShop</option><option>LOTTEON</option><option>MUSINSA</option><option>Nike</option><option>OliveYoung</option><option>SSG</option><option>Zara</option>
+                                </select>
                             </div>
-                            <span style="font-size:0.65rem; color:#FF6B6B; white-space:nowrap; margin-left:1rem;">** 선택한 항목이 없으면 상품 업데이트는 생략됩니다</span>
-                        </div>
-                    </div>
-
-                    <!-- 마켓 전송 선택 -->
-                    <div style="background:rgba(18,18,18,0.98); border:1px solid #232323; border-radius:10px; padding:0.75rem 1rem; margin-bottom:0.75rem;">
-                        <div style="display:flex; align-items:center; gap:0; flex-wrap:nowrap;">
-                            <div style="display:flex; flex-wrap:wrap; gap:0.5rem 1rem; flex:1; align-items:center;">
-                                <label style="cursor:pointer; color:#FFB84D; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" id="shipment-select-all" style="accent-color:#FF8C00;" onchange="document.querySelectorAll('.shipment-market-cb').forEach(cb=>cb.checked=this.checked)">전체전송</label>
-                                <span style="width:1px; height:12px; background:#3D3D3D; flex-shrink:0;"></span>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" class="shipment-market-cb" style="accent-color:#FF8C00;">옥션</label>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" class="shipment-market-cb" style="accent-color:#FF8C00;">G마켓</label>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" class="shipment-market-cb" style="accent-color:#FF8C00;">11번가</label>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" class="shipment-market-cb" style="accent-color:#FF8C00;">스마트스토어</label>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" class="shipment-market-cb" style="accent-color:#FF8C00;">쿠팡</label>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" class="shipment-market-cb" style="accent-color:#FF8C00;">롯데ON</label>
-                                <label style="cursor:pointer; color:#C5C5C5; font-size:0.6875rem; display:inline-flex; align-items:center; gap:4px; white-space:nowrap; flex-shrink:0;"><input type="checkbox" class="shipment-market-cb" style="accent-color:#FF8C00;">신세계몰</label>
+                            <!-- 마켓등록 -->
+                            <div style="display:flex; align-items:center; padding:8px 16px; border-bottom:1px solid #181C28; gap:8px;">
+                                <span style="min-width:72px; color:#666; font-size:0.78rem;">마켓등록</span>
+                                <select style="padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#B0BAD0; border-radius:4px; outline:none; cursor:pointer; width:100px;">
+                                    <option>전체</option><option>등록</option><option>미등록</option>
+                                </select>
+                                <select style="padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#B0BAD0; border-radius:4px; outline:none; cursor:pointer; width:160px;">
+                                    <option>마켓 계정을 선택해주세요.</option><option>11번가-A</option><option>스마트스토어-A</option><option>쿠팡-A</option><option>롯데ON-A</option>
+                                </select>
                             </div>
-                            <span style="font-size:0.65rem; color:#888; white-space:nowrap; margin-left:1rem;">** 업데이트 완료 후 선택 마켓에 동시전송</span>
-                        </div>
-                    </div>
-
-                    <!-- 액션 + 정렬 -->
-                    <div class="mb-4">
-                        <div class="flex flex-wrap gap-2 mb-3">
-                            <button style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; padding:0.5rem 1.25rem; border-radius:6px; font-size:0.875rem;">상품업데이트&amp;마켓전송 시작(검색결과모든상품)</button>
-                            <button style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.5rem 1.25rem; border-radius:6px; font-size:0.875rem;">상품업데이트&amp;마켓전송(범위설정)</button>
-                        </div>
-                        <div class="flex flex-wrap justify-between items-center gap-3">
-                            <p style="color:#888; font-size:0.875rem;">총 <span style="color:#FF8C00; font-weight:600;">0</span>개의 상품이 검색되었습니다.</p>
-                            <div class="flex flex-wrap gap-2">
-                                <select style="padding:0.375rem 0.5rem; font-size:0.8125rem;"><option>상품업데이트 날짜순▲</option><option>상품업데이트 날짜순▼</option><option>상품수집 날짜순▲</option><option>상품수집 날짜순▼</option><option>옥션 업데이트순</option><option>G마켓 업데이트순</option><option>11번가 업데이트순</option><option>스마트스토어 업데이트순</option><option>쿠팡 업데이트순</option></select>
+                            <!-- 등록일자 -->
+                            <div style="display:flex; align-items:center; padding:8px 16px; border-bottom:1px solid #181C28; gap:8px;">
+                                <span style="min-width:72px; color:#666; font-size:0.78rem;">등록일자</span>
+                                <div style="display:flex; align-items:center; gap:5px; padding:4px 10px; background:#111520; border:1px solid #2A3040; border-radius:4px; color:#B0BAD0; font-size:0.78rem; cursor:pointer;">
+                                    <span id="ship-date-range">2025-09-12 ~ 2026-03-12</span>
+                                    <span style="color:#555; margin-left:4px;">📅</span>
+                                </div>
+                            </div>
+                            <!-- 실패건처리 -->
+                            <div style="display:flex; align-items:center; padding:8px 16px; gap:8px; flex-wrap:wrap;">
+                                <span style="min-width:72px; color:#666; font-size:0.78rem; white-space:nowrap;">실패건처리</span>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.78rem; color:#8A95B0; cursor:pointer; white-space:nowrap; flex-shrink:0;"><input type="checkbox" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 재고연동 실패 건</label>
+                                <div style="display:flex; align-items:center; gap:5px; padding:4px 10px; background:#111520; border:1px solid #2A3040; border-radius:4px; color:#666; font-size:0.78rem; cursor:pointer; white-space:nowrap; flex-shrink:0;">
+                                    <span>업데이트 날짜 선택</span><span>📅</span>
+                                </div>
+                                <input type="text" placeholder="실패사유로 검색" style="width:130px; padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#C5C5C5; border-radius:4px; outline:none; flex-shrink:0;">
+                                <button style="padding:4px 14px; font-size:0.78rem; background:#8B1A1A; border:1px solid #C0392B; color:#fff; border-radius:4px; cursor:pointer; font-weight:600; white-space:nowrap; flex-shrink:0;">실패건 마켓상품삭제</button>
                             </div>
                         </div>
+
+                        <!-- 검색하기 버튼 행 -->
+                        <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 16px; border-top:1px solid #181C28; border-bottom:2px solid #181C28; flex-wrap:wrap; gap:8px;">
+                            <div style="display:flex; gap:8px;">
+                                <button onclick="ui.startShipment()" style="padding:6px 40px; font-size:0.875rem; font-weight:700; background:#2A2F3E; border:1px solid #3D4560; color:#E5E5E5; border-radius:6px; cursor:pointer;">검색하기</button>
+                                <button style="padding:6px 24px; font-size:0.875rem; background:transparent; border:1px solid #2A3040; color:#9AA5C0; border-radius:6px; cursor:pointer;">초기화</button>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:10px; font-size:0.75rem;">
+                                <label style="display:inline-flex; align-items:center; gap:4px; color:#FF8C00; cursor:pointer; white-space:nowrap;"><input type="radio" name="ship-session" checked style="accent-color:#FF8C00;"> 현재 세션</label>
+                                <label style="display:inline-flex; align-items:center; gap:4px; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="radio" name="ship-session" style="accent-color:#FF8C00;"> 전체 세션</label>
+                                <button style="padding:4px 10px; font-size:0.75rem; background:transparent; border:1px solid #2A3040; color:#9AA5C0; border-radius:4px; cursor:pointer;">작업 초기화</button>
+                                <button style="padding:4px 10px; font-size:0.75rem; background:transparent; border:1px solid #2A3040; color:#9AA5C0; border-radius:4px; cursor:pointer;">실패 로그 보기</button>
+                            </div>
+                        </div>
+
+                        <!-- 수집사이트 -->
+                        <div style="padding:10px 16px 12px; border-bottom:1px solid #181C28;">
+                            <div style="font-size:0.85rem; font-weight:600; color:#C5C5C5; margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid #1C1E2A;">소싱사이트</div>
+                            <div style="display:flex; flex-wrap:wrap; gap:8px 24px;">
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#9AA5C0; cursor:pointer; white-space:nowrap; font-weight:600;"><input type="checkbox" id="ship-site-all" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;" onchange="var v=this.checked;document.querySelectorAll('.ship-site-cb').forEach(c=>c.checked=v)"><span>전체</span></label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>ABCmart</span></label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>eBay</span></label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>FOLDERStyle</span></label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>GrandStage</span></label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>GSShop</span></label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>LOTTEON</span></label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>MUSINSA</span></label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>Nike</span></label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>OliveYoung</span></label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>SSG</span></label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>Zara</span></label>
+                            </div>
+                        </div>
+
+                        <!-- 업데이트 항목 -->
+                        <div style="padding:10px 16px 12px; border-bottom:1px solid #181C28;">
+                            <div style="font-size:0.85rem; font-weight:600; color:#C5C5C5; margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid #1C1E2A;">업데이트 항목</div>
+                            <div style="display:flex; flex-wrap:wrap; gap:6px 20px;">
+                                <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="ship-item-all" style="accent-color:#FF8C00; width:14px; height:14px; flex-shrink:0;" onchange="['ship-item-price','ship-item-thumb','ship-item-detail'].forEach(function(id){document.getElementById(id).checked=this.checked},this)"> 전체</label>
+                                <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="ship-item-price" style="accent-color:#FF8C00; width:14px; height:14px; flex-shrink:0;"> 가격/재고</label>
+                                <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="ship-item-thumb" style="accent-color:#FF8C00; width:14px; height:14px; flex-shrink:0;"> 썸네일</label>
+                                <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="ship-item-detail" style="accent-color:#FF8C00; width:14px; height:14px; flex-shrink:0;"> 상세페이지</label>
+                            </div>
+                        </div>
+
+                        <!-- 스킵 설정 -->
+                        <div style="padding:10px 16px 12px; border-bottom:1px solid #181C28;">
+                            <div style="font-size:0.85rem; font-weight:600; color:#C5C5C5; margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid #1C1E2A;">스킵 설정</div>
+                            <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 스킵 기능 활성화 (재고/가격 변동 없을시 스킵)</label>
+                        </div>
+
+                        <!-- 마켓 -->
+                        <div style="padding:10px 16px 12px;">
+                            <div style="font-size:0.85rem; font-weight:600; color:#C5C5C5; margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #1C1E2A;">마켓</div>
+                            <div id="shipment-account-checkboxes" style="display:flex; flex-wrap:wrap; gap:6px 20px;">
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="ship-market-all" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;" onchange="document.querySelectorAll('.ship-market-cb').forEach(c=>c.checked=this.checked)"> 전체</label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 쿠팡</label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> SSG</label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 스마트스토어</label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 11번가</label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 지마켓</label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 옥션</label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> GS샵</label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 롯데온</label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 롯데홈쇼핑</label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 홈앤쇼핑</label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> HMALL</label>
+                            </div>
+                        </div>
                     </div>
 
-                    <!-- 결과 테이블 -->
+                    <!-- 전송 로그 창 -->
+                    <div style="background:rgba(8,10,16,0.98); border:1px solid #1C1E2A; border-radius:8px; margin-bottom:12px; overflow:hidden;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 14px; background:#0A0D14; border-bottom:1px solid #1C1E2A;">
+                            <span style="font-size:0.82rem; font-weight:600; color:#9AA5C0;">전송 로그</span>
+                            <div style="display:flex; gap:6px; align-items:center;">
+                                <button onclick="document.getElementById('shipment-log').innerHTML='<div style=\'color:#374151;\'>로그가 초기화되었습니다.</div>'" style="padding:3px 10px; font-size:0.72rem; background:transparent; border:1px solid #252B3B; color:#666; border-radius:4px; cursor:pointer;">초기화</button>
+                                <button onclick="ui.startShipment()" style="padding:4px 16px; font-size:0.78rem; background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:600;">전송 시작</button>
+                            </div>
+                        </div>
+                        <div id="shipment-log" style="height:200px; overflow-y:auto; padding:10px 14px; font-family:'Courier New',monospace; font-size:0.73rem; line-height:1.8; color:#4A5568;">
+                            <div style="color:#374151;">— 전송 시작 버튼을 누르면 로그가 여기에 실시간으로 표시됩니다 —</div>
+                        </div>
+                        <div id="shipment-progress" style="display:none; padding:6px 14px 8px; border-top:1px solid #1C1E2A;">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                <span id="shipment-progress-text" style="font-size:0.75rem; color:#7B8DB0;">처리 중...</span>
+                            </div>
+                            <div style="background:#111520; border-radius:4px; height:5px; overflow:hidden;">
+                                <div id="shipment-progress-bar" style="background:linear-gradient(90deg,#FF8C00,#FFB84D); height:100%; width:0%; transition:width 0.3s;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 상품 목록 -->
                     <div class="bg-white rounded-lg shadow overflow-hidden">
                         <table class="w-full">
                             <thead>
                                 <tr>
-                                    <th class="px-3 py-3 text-left" style="font-size:0.8125rem; width:40px;">No</th>
-                                    <th class="px-3 py-3 text-left" style="font-size:0.8125rem;">사이트</th>
-                                    <th class="px-3 py-3 text-left" style="font-size:0.8125rem;">상품명<br><span style="font-weight:normal; color:#888;">+등록마켓 정보</span></th>
-                                    <th class="px-3 py-3 text-left" style="font-size:0.8125rem;">상품업데이트</th>
-                                    <th class="px-3 py-3 text-left" style="font-size:0.8125rem;">마켓전송</th>
-                                    <th class="px-3 py-3 text-center" style="font-size:0.8125rem;">개별업데이트</th>
+                                    <th style="width:40px; padding:0.75rem;"><input type="checkbox" id="shipment-select-all" onchange="document.querySelectorAll('.shipment-product-cb').forEach(cb => cb.checked = this.checked)"></th>
+                                    <th style="padding:0.75rem 0.5rem; text-align:left; font-size:0.75rem; color:#888;">No</th>
+                                    <th style="padding:0.75rem 0.5rem; text-align:left; font-size:0.75rem; color:#888;">상품명</th>
+                                    <th style="padding:0.75rem 0.5rem; text-align:right; font-size:0.75rem; color:#888;">판매가</th>
+                                    <th style="padding:0.75rem 0.5rem; text-align:center; font-size:0.75rem; color:#888;">등록마켓</th>
+                                    <th style="padding:0.75rem 0.5rem; text-align:center; font-size:0.75rem; color:#888;">전송상태</th>
                                 </tr>
                             </thead>
                             <tbody id="shipment-tbody">
-                                <tr><td colspan="6" class="px-6 py-8 text-center" style="color:#666;">검색결과가 없습니다</td></tr>
+                                <tr>
+                                    <td colspan="6" class="px-6 py-8 text-center" style="color:#666;">상품수집 후 상품을 저장하면 여기에 표시됩니다</td>
+                                </tr>
                             </tbody>
                         </table>
                     </div>
@@ -2954,21 +3020,91 @@
                             <h2 class="text-2xl font-bold" style="color:#E5E5E5;">CS관리</h2>
                             <p style="color:#888; font-size:0.8125rem;">고객 문의 및 CS 요청을 관리합니다</p>
                         </div>
+                        <button onclick="ui.showCsTemplateModal()" style="display:flex; align-items:center; gap:6px; padding:0.45rem 1rem; background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.35); color:#FF8C00; border-radius:8px; font-size:0.875rem; cursor:pointer;">
+                            <i class="fas fa-file-alt"></i> 답변 양식 설정
+                        </button>
                     </div>
 
-                    <!-- 통계카드 -->
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                        <div class="stat-card"><p style="color:#999;">총 문의</p><p style="color:#FF8C00;" class="text-3xl font-bold">0</p><p style="color:#888;">건</p></div>
-                        <div class="stat-card"><p style="color:#999;">대기중</p><p style="color:#FFD93D;" class="text-3xl font-bold">0</p><p style="color:#888;">건</p></div>
-                        <div class="stat-card"><p style="color:#999;">처리중</p><p style="color:#4C9AFF;" class="text-3xl font-bold">0</p><p style="color:#888;">건</p></div>
-                        <div class="stat-card"><p style="color:#999;">완료</p><p style="color:#51CF66;" class="text-3xl font-bold">0</p><p style="color:#888;">건</p></div>
+                    <!-- 답변 양식 설정 모달 -->
+                    <div id="cs-template-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:1000; align-items:center; justify-content:center;">
+                        <div style="background:#141414; border:1px solid #2D2D2D; border-radius:12px; width:640px; max-width:90vw; max-height:85vh; overflow-y:auto;">
+                            <div style="padding:1.25rem 1.5rem; border-bottom:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between;">
+                                <span style="font-size:1rem; font-weight:700; color:#E5E5E5;"><i class="fas fa-file-alt" style="color:#FF8C00; margin-right:8px;"></i>답변 양식 설정</span>
+                                <button onclick="ui.closeCsTemplateModal()" style="background:transparent; color:#888; font-size:1.25rem; cursor:pointer;">×</button>
+                            </div>
+                            <div style="padding:1.25rem 1.5rem;">
+                                <!-- 양식 목록 -->
+                                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem;">
+                                    <span style="font-size:0.875rem; font-weight:600; color:#C5C5C5;">저장된 양식</span>
+                                    <button onclick="ui.addCsTemplate()" style="padding:0.25rem 0.75rem; font-size:0.8rem; background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; border-radius:6px; cursor:pointer;">+ 양식 추가</button>
+                                </div>
+                                <div id="cs-template-list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:1rem;">
+                                    <!-- 기본 양식 예시 -->
+                                    <div style="background:#1A1A1A; border:1px solid #2D2D2D; border-radius:8px; padding:0.75rem 1rem; display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
+                                        <div style="flex:1; min-width:0;">
+                                            <div style="font-size:0.8rem; font-weight:600; color:#E5E5E5; margin-bottom:4px;">교환/반품 기본 답변</div>
+                                            <div style="font-size:0.75rem; color:#888; white-space:pre-wrap; line-height:1.5;">안녕하세요, {고객명}님. 문의 주신 건에 대해 답변 드립니다...</div>
+                                        </div>
+                                        <div style="display:flex; gap:4px; flex-shrink:0;">
+                                            <button style="font-size:0.72rem; padding:2px 8px; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5; background:transparent; cursor:pointer;">수정</button>
+                                            <button style="font-size:0.72rem; padding:2px 8px; border:1px solid rgba(255,107,107,0.3); border-radius:4px; color:#FF6B6B; background:transparent; cursor:pointer;">삭제</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- 새 양식 작성 -->
+                                <div style="border-top:1px solid #2D2D2D; padding-top:1rem;">
+                                    <div style="font-size:0.875rem; font-weight:600; color:#C5C5C5; margin-bottom:0.625rem;">새 양식 작성</div>
+                                    <input type="text" id="cs-template-name" placeholder="양식 이름 (예: 배송지연 안내)" style="width:100%; padding:0.5rem 0.75rem; font-size:0.8125rem; background:#1A1A1A; border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; margin-bottom:0.5rem; box-sizing:border-box; outline:none;">
+                                    <textarea id="cs-template-content" placeholder="{고객명}, {주문번호} 등 변수 사용 가능&#10;&#10;예) 안녕하세요 {고객명}님, {주문번호} 주문 건에 대해 답변 드립니다." rows="6" style="width:100%; padding:0.5rem 0.75rem; font-size:0.8125rem; background:#1A1A1A; border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; resize:vertical; box-sizing:border-box; outline:none;"></textarea>
+                                    <div style="margin:6px 0 12px; display:flex; align-items:center; flex-wrap:wrap; gap:5px;">
+                                        <span style="font-size:0.75rem; color:#666; flex-shrink:0;">변수 클릭 시 삽입:</span>
+                                        <button type="button" onclick="ui.insertCsVar('{고객명}')" style="font-size:0.75rem; padding:1px 8px; background:rgba(255,140,0,0.12); border:1px solid rgba(255,140,0,0.3); color:#FF8C00; border-radius:4px; cursor:pointer;">{고객명}</button>
+                                        <button type="button" onclick="ui.insertCsVar('{주문번호}')" style="font-size:0.75rem; padding:1px 8px; background:rgba(255,140,0,0.12); border:1px solid rgba(255,140,0,0.3); color:#FF8C00; border-radius:4px; cursor:pointer;">{주문번호}</button>
+                                        <button type="button" onclick="ui.insertCsVar('{상품명}')" style="font-size:0.75rem; padding:1px 8px; background:rgba(255,140,0,0.12); border:1px solid rgba(255,140,0,0.3); color:#FF8C00; border-radius:4px; cursor:pointer;">{상품명}</button>
+                                        <button type="button" onclick="ui.insertCsVar('{옵션}')" style="font-size:0.75rem; padding:1px 8px; background:rgba(255,140,0,0.12); border:1px solid rgba(255,140,0,0.3); color:#FF8C00; border-radius:4px; cursor:pointer;">{옵션}</button>
+                                        <button type="button" onclick="ui.insertCsVar('{주소}')" style="font-size:0.75rem; padding:1px 8px; background:rgba(255,140,0,0.12); border:1px solid rgba(255,140,0,0.3); color:#FF8C00; border-radius:4px; cursor:pointer;">{주소}</button>
+                                        <button type="button" onclick="ui.insertCsVar('{날짜}')" style="font-size:0.75rem; padding:1px 8px; background:rgba(255,140,0,0.12); border:1px solid rgba(255,140,0,0.3); color:#FF8C00; border-radius:4px; cursor:pointer;">{날짜}</button>
+                                    </div>
+                                    <div style="display:flex; justify-content:flex-end; gap:8px;">
+                                        <button onclick="ui.closeCsTemplateModal()" style="padding:0.4rem 1rem; font-size:0.8125rem; background:transparent; border:1px solid #3D3D3D; color:#888; border-radius:6px; cursor:pointer;">취소</button>
+                                        <button onclick="ui.saveCsTemplate()" style="padding:0.4rem 1rem; font-size:0.8125rem; background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; border-radius:6px; cursor:pointer;">저장</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- 필터 -->
-                    <div class="bg-white rounded-lg shadow p-3 mb-4 flex gap-3 flex-wrap">
-                        <input type="text" placeholder="주문번호 또는 고객명 검색" style="flex:1; padding:0.5rem 0.75rem; font-size:0.875rem; min-width:200px;">
-                        <select style="width:auto; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>유형: 전체</option><option>배송문의</option><option>교환/반품</option><option>상품문의</option></select>
-                        <select style="width:auto; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>상태: 전체</option><option>대기중</option><option>처리중</option><option>완료</option></select>
+                    <div style="background:rgba(18,18,18,0.98); border:1px solid #232323; border-radius:10px; padding:0.625rem 0.875rem; margin-bottom:0.75rem; display:flex; align-items:center; gap:6px; flex-wrap:nowrap;">
+                        <!-- 검색기준 드롭박스 + 인풋 + 검색 -->
+                        <select id="cs-search-type" style="width:123px; flex-shrink:0; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                            <option value="orderNo">주문번호</option>
+                            <option value="customer">고객명</option>
+                        </select>
+                        <input type="text" id="cs-search-input" placeholder="검색어 입력" style="flex:1; min-width:0; padding:0.28rem 0.6rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;"
+                            onkeydown="if(event.key==='Enter') document.getElementById('cs-search-btn').click()">
+                        <button id="cs-search-btn" style="padding:0.28rem 0.75rem; font-size:0.8rem; background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; border-radius:4px; white-space:nowrap; cursor:pointer; flex-shrink:0;">검색</button>
+                        <span style="width:1px; background:#333; height:18px; flex-shrink:0;"></span>
+                        <select style="flex:2; min-width:0; padding:0.28rem 0.4rem; font-size:0.75rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                            <option>G0마켓2.0-bonol06 (주문내역 / 클레임내역 / 문의내역)</option>
+                            <option>G0마켓2.0-bonol07 (주문내역 / 클레임내역 / 문의내역)</option>
+                        </select>
+                        <button style="padding:0.28rem 0.6rem; font-size:0.8rem; background:rgba(50,50,50,0.9); border:1px solid #3D3D3D; color:#C5C5C5; border-radius:4px; white-space:nowrap; cursor:pointer; flex-shrink:0;">가져오기</button>
+                        <button style="padding:0.28rem 0.6rem; font-size:0.8rem; background:#8B1A1A; border:1px solid #C0392B; color:#fff; border-radius:4px; white-space:nowrap; cursor:pointer; flex-shrink:0;">전체마켓</button>
+                        <select style="width:132px; flex-shrink:0; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                            <option>50개 보기</option><option>100개 보기</option><option>200개 보기</option><option>500개 보기</option>
+                        </select>
+                    </div>
+
+                    <!-- CS 로그 -->
+                    <div style="border:1px solid #1C2333; border-radius:8px; overflow:hidden; margin-bottom:0.75rem;">
+                        <div style="padding:6px 14px; background:#0D1117; border-bottom:1px solid #1C2333; display:flex; align-items:center; justify-content:space-between;">
+                            <span style="font-size:0.8rem; font-weight:600; color:#94A3B8;">CS 로그</span>
+                            <button onclick="document.getElementById('cs-log').innerHTML='<p style=\'color:#3D4A60;\'>[대기] 로그가 초기화되었습니다.</p>'" style="font-size:0.72rem; color:#555; background:transparent; border:1px solid #1C2333; padding:1px 8px; border-radius:4px; cursor:pointer;">초기화</button>
+                        </div>
+                        <div id="cs-log" style="height:120px; overflow-y:auto; padding:8px 14px; font-family:monospace; font-size:0.77rem; color:#4A5568; background:#080A10; line-height:1.6;">
+                            <p style="color:#3D4A60;">[대기] CS 가져오기 결과가 여기에 표시됩니다...</p>
+                        </div>
                     </div>
 
                     <!-- CS 테이블 -->
@@ -3056,6 +3192,10 @@
                             <button class="stg-tab" data-market="lotteon" onclick="switchSettingsTab('lotteon',this)">롯데ON</button>
                             <button class="stg-tab" data-market="11st" onclick="switchSettingsTab('11st',this)">11번가</button>
                             <button class="stg-tab" data-market="ssg" onclick="switchSettingsTab('ssg',this)">SSG</button>
+                            <button class="stg-tab" data-market="gsshop" onclick="switchSettingsTab('gsshop',this)">GSSHOP</button>
+                            <button class="stg-tab" data-market="lottehome" onclick="switchSettingsTab('lottehome',this)">롯데홈쇼핑</button>
+                            <button class="stg-tab" data-market="homeand" onclick="switchSettingsTab('homeand',this)">홈앤쇼핑</button>
+                            <button class="stg-tab" data-market="hmall" onclick="switchSettingsTab('hmall',this)">HMALL</button>
                         </div>
 
                         <!-- 탭 패널 공통 래퍼 -->
@@ -3067,10 +3207,11 @@
                                 <div class="stg-form">
                                     <div class="stg-row"><label>계정</label><input type="text" placeholder=""></div>
                                     <div class="stg-row"><label>API 연동용 판매자 ID</label><input type="text" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions">
-                                    <button class="stg-btn-cancel">닫기</button>
-                                    <button class="stg-btn-save">설정</button>
+<button class="stg-btn-save">설정</button>
                                 </div>
                             </div>
 
@@ -3079,10 +3220,11 @@
                                 <div class="stg-panel-title">지마켓 설정</div>
                                 <div class="stg-form">
                                     <div class="stg-row"><label>계정</label><input type="text" placeholder="" class="stg-input-highlight"></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions">
-                                    <button class="stg-btn-cancel">닫기</button>
-                                    <button class="stg-btn-save">설정</button>
+<button class="stg-btn-save">설정</button>
                                 </div>
                             </div>
 
@@ -3090,10 +3232,11 @@
                                 <div class="stg-panel-title">옥션 설정</div>
                                 <div class="stg-form">
                                     <div class="stg-row"><label>계정</label><input type="text" placeholder="" class="stg-input-highlight"></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions">
-                                    <button class="stg-btn-cancel">닫기</button>
-                                    <button class="stg-btn-save">설정</button>
+<button class="stg-btn-save">설정</button>
                                 </div>
                             </div>
 
@@ -3106,10 +3249,11 @@
                                     <div class="stg-row"><label>업체코드</label><input type="text" placeholder=""></div>
                                     <div class="stg-row"><label>Access key</label><input type="text" placeholder=""></div>
                                     <div class="stg-row"><label>Secret key</label><input type="text" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions">
-                                    <button class="stg-btn-cancel">닫기</button>
-                                    <button class="stg-btn-save">설정</button>
+<button class="stg-btn-save">설정</button>
                                 </div>
                             </div>
 
@@ -3120,10 +3264,11 @@
                                     <div class="stg-row"><label>계정</label><input type="text" placeholder=""></div>
                                     <div class="stg-row"><label>업체코드</label><input type="text" placeholder=""></div>
                                     <div class="stg-row"><label>롯데ON API key</label><input type="text" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions">
-                                    <button class="stg-btn-cancel">닫기</button>
-                                    <button class="stg-btn-save">설정</button>
+<button class="stg-btn-save">설정</button>
                                 </div>
                             </div>
 
@@ -3131,17 +3276,18 @@
                             <div class="stg-panel" id="stg-11st" style="display:none;">
                                 <div class="stg-panel-title">11번가 설정</div>
                                 <div class="stg-form">
-                                    <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:nowrap; padding:0.25rem 0 0.5rem;">
-                                        <label class="stg-check-label" style="flex-shrink:0;"><input type="checkbox" id="stg-11st-foreign"> 해외 사업자</label>
-                                        <span class="stg-check-hint" style="flex-shrink:0;">사업자 소재지가 해외인 경우 체크해주세요.</span>
+                                    <div style="display:flex; align-items:center; gap:0.75rem; padding:0.25rem 0 0.5rem;">
+                                        <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.875rem; cursor:pointer; flex-shrink:0; white-space:nowrap;"><input type="checkbox" id="stg-11st-foreign" style="flex-shrink:0; width:14px; height:14px;"> 해외 사업자</label>
+                                        <span style="font-size:0.8rem; color:#888; white-space:nowrap;">사업자 소재지가 해외인 경우 체크해주세요.</span>
                                     </div>
                                     <div class="stg-row"><label>계정</label><input type="text" placeholder="" class="stg-input-highlight"></div>
                                     <div class="stg-row"><label>패스워드</label><input type="password" placeholder="" class="stg-input-highlight"></div>
                                     <div class="stg-row"><label>11번가 API key</label><input type="text" placeholder="" class="stg-input-highlight"></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions">
-                                    <button class="stg-btn-cancel">닫기</button>
-                                    <button class="stg-btn-save">설정</button>
+<button class="stg-btn-save">설정</button>
                                 </div>
                             </div>
 
@@ -3151,16 +3297,81 @@
                                 <div class="stg-form">
                                     <div class="stg-row"><label>API ID</label><input type="text" placeholder=""></div>
                                     <div class="stg-row"><label>API KEY</label><input type="text" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions" style="margin-top:2rem;">
-                                    <button class="stg-btn-cancel">닫기</button>
-                                    <button class="stg-btn-save">설정</button>
+<button class="stg-btn-save">설정</button>
+                                </div>
+                            </div>
+
+                            <!-- GSSHOP -->
+                            <div class="stg-panel" id="stg-gsshop" style="display:none;">
+                                <div class="stg-panel-title">GSSHOP 설정</div>
+                                <div class="stg-form">
+                                    <div class="stg-row"><label>API ID</label><input type="text" placeholder=""></div>
+                                    <div class="stg-row"><label>API KEY</label><input type="text" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                </div>
+                                <div class="stg-actions" style="margin-top:2rem;">
+<button class="stg-btn-save">설정</button>
+                                </div>
+                            </div>
+
+                            <!-- 롯데홈쇼핑 -->
+                            <div class="stg-panel" id="stg-lottehome" style="display:none;">
+                                <div class="stg-panel-title">롯데홈쇼핑 설정</div>
+                                <div class="stg-form">
+                                    <div class="stg-row"><label>API ID</label><input type="text" placeholder=""></div>
+                                    <div class="stg-row"><label>API KEY</label><input type="text" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                </div>
+                                <div class="stg-actions" style="margin-top:2rem;">
+<button class="stg-btn-save">설정</button>
+                                </div>
+                            </div>
+
+                            <!-- 홈앤쇼핑 -->
+                            <div class="stg-panel" id="stg-homeand" style="display:none;">
+                                <div class="stg-panel-title">홈앤쇼핑 설정</div>
+                                <div class="stg-form">
+                                    <div class="stg-row"><label>API ID</label><input type="text" placeholder=""></div>
+                                    <div class="stg-row"><label>API KEY</label><input type="text" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                </div>
+                                <div class="stg-actions" style="margin-top:2rem;">
+<button class="stg-btn-save">설정</button>
+                                </div>
+                            </div>
+
+                            <!-- HMALL -->
+                            <div class="stg-panel" id="stg-hmall" style="display:none;">
+                                <div class="stg-panel-title">HMALL 설정</div>
+                                <div class="stg-form">
+                                    <div class="stg-row"><label>API ID</label><input type="text" placeholder=""></div>
+                                    <div class="stg-row"><label>API KEY</label><input type="text" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                </div>
+                                <div class="stg-actions" style="margin-top:2rem;">
+<button class="stg-btn-save">설정</button>
                                 </div>
                             </div>
 
 
                         </div><!-- /max-width wrapper -->
                     </div><!-- /ac-card -->
+
+                    <!-- 마켓별 계정 현황판 -->
+                    <div class="ac-card" style="margin-top:1.25rem;">
+                        <div class="ac-card-title" style="margin-bottom:1rem;">마켓별 계정 현황</div>
+                        <div id="market-account-dashboard" style="display:flex; flex-direction:column; gap:16px;">
+                            <div style="color:#666; font-size:0.875rem; padding:1rem 0;">마켓 계정을 등록하면 여기에 현황이 표시됩니다.</div>
+                        </div>
+                    </div>
 
                     <!-- SMS / 카카오 알림톡 설정 -->
                     <div class="ac-card" style="margin-top:1.25rem;">
@@ -3216,6 +3427,104 @@
                         </div>
 
                     </div><!-- /SMS 알림톡 카드 -->
+
+                    <!-- Claude API 연동 -->
+                    <div class="ac-card" style="margin-top:1.25rem;">
+                        <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:1.25rem;">
+                            <span style="font-size:0.9375rem; font-weight:700; color:#A78BFA; white-space:nowrap;">Claude AI API 연동</span>
+                            <span style="font-size:0.8125rem; color:#666;">** Anthropic Claude API를 연결하면 상품명 가공, CS 자동 답변 등 AI 기능을 사용할 수 있습니다.</span>
+                            <button onclick="ui.saveClaudeApiSettings()" style="margin-left:auto; background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.3rem 0.875rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; cursor:pointer;">설정저장</button>
+                        </div>
+                        <div style="max-width:720px; display:flex; flex-direction:column; gap:0.875rem;">
+                            <div class="stg-row stg-row-wide">
+                                <label>API Key</label>
+                                <input type="password" id="claude-api-key" placeholder="sk-ant-api03-..." style="flex:1; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none; font-family:monospace;">
+                                <button onclick="ui.testClaudeApi()" style="background:rgba(167,139,250,0.1); border:1px solid rgba(167,139,250,0.35); color:#A78BFA; padding:0.35rem 0.875rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; cursor:pointer;">연결 테스트</button>
+                            </div>
+                            <div class="stg-row stg-row-wide">
+                                <label>모델 선택</label>
+                                <select id="claude-model" style="width:260px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
+                                    <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (권장)</option>
+                                    <option value="claude-opus-4-6">Claude Opus 4.6 (고성능)</option>
+                                    <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (빠름/저렴)</option>
+                                </select>
+                            </div>
+                            <div class="stg-row stg-row-wide">
+                                <label>AI 기능 활성화</label>
+                                <div style="display:flex; gap:1.25rem; flex-wrap:nowrap; align-items:center;">
+                                    <label style="display:flex; align-items:center; gap:5px; font-size:0.8125rem; color:#C5C5C5; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="claude-feat-name" checked style="accent-color:#A78BFA;"> 상품명 가공</label>
+                                    <label style="display:flex; align-items:center; gap:5px; font-size:0.8125rem; color:#C5C5C5; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="claude-feat-desc" style="accent-color:#A78BFA;"> 상세설명 생성</label>
+                                    <label style="display:flex; align-items:center; gap:5px; font-size:0.8125rem; color:#C5C5C5; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="claude-feat-cs" style="accent-color:#A78BFA;"> CS 자동 답변</label>
+                                    <label style="display:flex; align-items:center; gap:5px; font-size:0.8125rem; color:#C5C5C5; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="claude-feat-tag" style="accent-color:#A78BFA;"> 태그 자동 생성</label>
+                                    <label style="display:flex; align-items:center; gap:5px; font-size:0.8125rem; color:#C5C5C5; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="claude-feat-img" style="accent-color:#A78BFA;"> 이미지 변경</label>
+                                </div>
+                            </div>
+                            <div id="claude-api-status" style="font-size:0.8125rem; color:#666; padding:0.4rem 0;"></div>
+                        </div>
+                    </div><!-- /Claude API 카드 -->
+
+                    <!-- 금지어 / 삭제어 설정 -->
+                    <div class="ac-card" style="margin-top:1.25rem;">
+                        <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:1.5rem;">
+                            <span style="font-size:0.9375rem; font-weight:700; color:#FF6B6B; white-space:nowrap;">금지어 · 삭제어 설정</span>
+                            <span style="font-size:0.8125rem; color:#666;">** 수집 시 금지어 포함 상품은 자동 제외, 삭제어는 상품명에서 자동 제거됩니다. 단어는 ;로 구분</span>
+                        </div>
+
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem;">
+
+                            <!-- 금지어 그룹 -->
+                            <div>
+                                <div style="display:flex; align-items:center; gap:8px; margin-bottom:0.75rem;">
+                                    <span style="font-size:0.875rem; font-weight:600; color:#FF6B6B; white-space:nowrap;">금지어 템플릿 관리</span>
+                                    <select id="forbidden-group-select" onchange="ui.onForbiddenGroupChange('forbidden')"
+                                        style="flex:1; padding:0.35rem 0.5rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
+                                        <option value="">그룹 선택</option>
+                                    </select>
+                                </div>
+                                <div style="border:1px solid #2D2D2D; border-radius:8px; overflow:hidden;">
+                                    <div style="background:#0D1117; padding:6px 12px; border-bottom:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                                        <input type="text" id="forbidden-group-name" placeholder="그룹 이름 입력 후 저장 → 새 그룹 생성"
+                                            style="flex:1; font-size:0.8rem; font-weight:600; color:#C5C5C5; background:transparent; border:none; outline:none; min-width:0;">
+                                        <button onclick="ui.deleteForbiddenGroup('forbidden')" style="font-size:0.72rem; padding:1px 8px; border:1px solid rgba(255,107,107,0.3); border-radius:4px; color:#FF6B6B; background:transparent; cursor:pointer; white-space:nowrap; flex-shrink:0;">그룹삭제</button>
+                                    </div>
+                                    <textarea id="forbidden-words-textarea" placeholder="단어를 ;로 구분해서 입력&#10;예) 나이키;아디다스;퓨마;리복;"
+                                        oninput="ui.updateForbiddenWordCount('forbidden')"
+                                        style="width:100%; height:200px; padding:10px 12px; font-size:0.8125rem; background:#080A10; border:none; color:#D8DEE9; resize:vertical; outline:none; font-family:monospace; line-height:1.6; box-sizing:border-box;"></textarea>
+                                    <div style="background:#0D1117; padding:6px 12px; border-top:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between;">
+                                        <span id="forbidden-word-count" style="font-size:0.75rem; color:#666;">( 금지어 0개 )</span>
+                                        <button onclick="ui.saveForbiddenGroup('forbidden')" style="padding:0.3rem 0.875rem; font-size:0.8125rem; background:linear-gradient(135deg,#FF6B6B,#FF8C8C); color:#fff; border:none; border-radius:6px; cursor:pointer;">저장</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 삭제어 그룹 -->
+                            <div>
+                                <div style="display:flex; align-items:center; gap:8px; margin-bottom:0.75rem;">
+                                    <span style="font-size:0.875rem; font-weight:600; color:#FFB84D; white-space:nowrap;">삭제어 템플릿 관리</span>
+                                    <select id="deletion-group-select" onchange="ui.onForbiddenGroupChange('deletion')"
+                                        style="flex:1; padding:0.35rem 0.5rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
+                                        <option value="">그룹 선택</option>
+                                    </select>
+                                </div>
+                                <div style="border:1px solid #2D2D2D; border-radius:8px; overflow:hidden;">
+                                    <div style="background:#0D1117; padding:6px 12px; border-bottom:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                                        <input type="text" id="deletion-group-name" placeholder="그룹 이름 입력 후 저장 → 새 그룹 생성"
+                                            style="flex:1; font-size:0.8rem; font-weight:600; color:#C5C5C5; background:transparent; border:none; outline:none; min-width:0;">
+                                        <button onclick="ui.deleteForbiddenGroup('deletion')" style="font-size:0.72rem; padding:1px 8px; border:1px solid rgba(255,184,77,0.3); border-radius:4px; color:#FFB84D; background:transparent; cursor:pointer; white-space:nowrap; flex-shrink:0;">그룹삭제</button>
+                                    </div>
+                                    <textarea id="deletion-words-textarea" placeholder="단어를 ;로 구분해서 입력&#10;예) [해외직구];정품보장;무료배송;"
+                                        oninput="ui.updateForbiddenWordCount('deletion')"
+                                        style="width:100%; height:200px; padding:10px 12px; font-size:0.8125rem; background:#080A10; border:none; color:#D8DEE9; resize:vertical; outline:none; font-family:monospace; line-height:1.6; box-sizing:border-box;"></textarea>
+                                    <div style="background:#0D1117; padding:6px 12px; border-top:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between;">
+                                        <span id="deletion-word-count" style="font-size:0.75rem; color:#666;">( 삭제어 0개 )</span>
+                                        <button onclick="ui.saveForbiddenGroup('deletion')" style="padding:0.3rem 0.875rem; font-size:0.8125rem; background:linear-gradient(135deg,#FFB84D,#FFD080); color:#fff; border:none; border-radius:6px; cursor:pointer;">저장</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div><!-- /금지어 삭제어 카드 -->
+
 
                 </div>
             </div>
@@ -3318,6 +3627,21 @@
                             <span class="font-bold">추정 판매가:</span>
                             <span id="product-estimated-price" class="font-bold text-orange-600">₩0</span>
                         </p>
+                    </div>
+                </div>
+
+                <!-- 역직구 상품명 (영문/일어) -->
+                <div class="border-b border-gray-200 pb-4">
+                    <h4 class="font-bold text-gray-900 mb-4">역직구 상품명 <span style="font-size:0.8rem; font-weight:400; color:#888;">(eBay, Lazada, Shopee, Qoo10 등 해외 마켓 전송 시 사용)</span></h4>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">영문 상품명 (EN)</label>
+                            <input type="text" name="nameEn" id="product-name-en" placeholder="English product name" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">일어 상품명 (JP)</label>
+                            <input type="text" name="nameJa" id="product-name-ja" placeholder="日本語商品名" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        </div>
                     </div>
                 </div>
 
@@ -3605,6 +3929,106 @@
         </div>
     </div>
 
+    <!-- SMS 전송 모달 -->
+    <div id="sms-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:1100; align-items:center; justify-content:center;">
+        <div style="background:#141414; border:1px solid #2D2D2D; border-radius:12px; width:700px; max-width:94vw; max-height:90vh; overflow-y:auto;">
+            <!-- 헤더 -->
+            <div style="padding:1.1rem 1.4rem; border-bottom:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; background:#141414; z-index:1;">
+                <span style="font-size:0.95rem; font-weight:700; color:#E5E5E5;"><i class="fas fa-comment-dots" style="color:#FF8C00; margin-right:8px;"></i>메시지 전송</span>
+                <button onclick="ui.closeSmsModal()" style="background:transparent; color:#888; font-size:1.3rem; cursor:pointer; line-height:1;">×</button>
+            </div>
+
+            <div style="padding:1.2rem 1.4rem; display:flex; flex-direction:column; gap:1.1rem;">
+                <!-- SMS 메시지 전송 섹션 -->
+                <div style="background:#0F0F0F; border:1px solid #2D2D2D; border-radius:10px; padding:1rem;">
+                    <div style="font-size:0.85rem; font-weight:600; color:#C5C5C5; margin-bottom:0.85rem; display:flex; align-items:center; gap:6px;">
+                        <i class="fas fa-paper-plane" style="color:#FF8C00; font-size:0.8rem;"></i>SMS 메시지 전송
+                    </div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+                        <div>
+                            <label style="font-size:0.75rem; color:#888; display:block; margin-bottom:3px;">받는분 전화번호</label>
+                            <input type="text" id="sms-to-phone" placeholder="010-0000-0000" style="width:100%; padding:0.45rem 0.65rem; font-size:0.8125rem; background:#1A1A1A; border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; box-sizing:border-box; outline:none;">
+                        </div>
+                        <div>
+                            <label style="font-size:0.75rem; color:#888; display:block; margin-bottom:3px;">보내는분 전화번호</label>
+                            <input type="text" id="sms-from-phone" placeholder="010-0000-0000" style="width:100%; padding:0.45rem 0.65rem; font-size:0.8125rem; background:#1A1A1A; border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; box-sizing:border-box; outline:none;">
+                        </div>
+                    </div>
+                    <div style="position:relative;">
+                        <textarea id="sms-message-body" placeholder="메시지를 입력하거나 아래 템플릿을 선택하세요." rows="5" oninput="ui.updateSmsBytes()" style="width:100%; padding:0.5rem 0.75rem; font-size:0.8125rem; background:#1A1A1A; border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; resize:vertical; box-sizing:border-box; outline:none; padding-bottom:1.8rem;"></textarea>
+                        <div id="sms-byte-info" style="position:absolute; bottom:6px; right:10px; font-size:0.72rem; color:#666; pointer-events:none;">
+                            <span id="sms-byte-count">0</span> / <span id="sms-byte-limit">90</span> byte (<span id="sms-type">SMS</span>)
+                        </div>
+                    </div>
+                    <!-- 변수 삽입 -->
+                    <div style="margin-top:7px; display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
+                        <span style="font-size:0.72rem; color:#555; flex-shrink:0;">변수 삽입:</span>
+                        <button type="button" onclick="ui.insertSmsVar('{수령인}')" style="font-size:0.72rem; padding:1px 7px; background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.25); color:#FF8C00; border-radius:4px; cursor:pointer;">{수령인}</button>
+                        <button type="button" onclick="ui.insertSmsVar('{주문인}')" style="font-size:0.72rem; padding:1px 7px; background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.25); color:#FF8C00; border-radius:4px; cursor:pointer;">{주문인}</button>
+                        <button type="button" onclick="ui.insertSmsVar('{주문번호}')" style="font-size:0.72rem; padding:1px 7px; background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.25); color:#FF8C00; border-radius:4px; cursor:pointer;">{주문번호}</button>
+                        <button type="button" onclick="ui.insertSmsVar('{마켓명}')" style="font-size:0.72rem; padding:1px 7px; background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.25); color:#FF8C00; border-radius:4px; cursor:pointer;">{마켓명}</button>
+                        <button type="button" onclick="ui.insertSmsVar('{상품명}')" style="font-size:0.72rem; padding:1px 7px; background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.25); color:#FF8C00; border-radius:4px; cursor:pointer;">{상품명}</button>
+                        <button type="button" onclick="ui.insertSmsVar('{국내택배사}')" style="font-size:0.72rem; padding:1px 7px; background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.25); color:#FF8C00; border-radius:4px; cursor:pointer;">{국내택배사}</button>
+                        <button type="button" onclick="ui.insertSmsVar('{국내송장번호}')" style="font-size:0.72rem; padding:1px 7px; background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.25); color:#FF8C00; border-radius:4px; cursor:pointer;">{국내송장번호}</button>
+                        <button type="button" onclick="ui.insertSmsVar('{통관부호URL}')" style="font-size:0.72rem; padding:1px 7px; background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.25); color:#FF8C00; border-radius:4px; cursor:pointer;">{통관부호URL}</button>
+                    </div>
+                    <div style="display:flex; gap:8px; margin-top:10px;">
+                        <button onclick="ui.sendSms()" style="flex:1; padding:0.5rem; font-size:0.8125rem; background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">
+                            <i class="fas fa-paper-plane" style="margin-right:5px;"></i>SMS 메시지 발송
+                        </button>
+                        <button onclick="ui.clearSmsMessage()" style="padding:0.5rem 1rem; font-size:0.8125rem; background:transparent; border:1px solid #444; color:#888; border-radius:6px; cursor:pointer;">
+                            메시지 삭제
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 메시지 템플릿 섹션 -->
+                <div style="background:#0F0F0F; border:1px solid #2D2D2D; border-radius:10px; padding:1rem;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.85rem;">
+                        <span style="font-size:0.85rem; font-weight:600; color:#C5C5C5; display:flex; align-items:center; gap:6px;">
+                            <i class="fas fa-layer-group" style="color:#FF8C00; font-size:0.8rem;"></i>메시지 템플릿
+                        </span>
+                        <button id="sms-tpl-edit-btn" onclick="ui.toggleSmsTemplateEditMode()" style="padding:0.25rem 0.7rem; font-size:0.75rem; background:transparent; border:1px solid #3D3D3D; color:#888; border-radius:5px; cursor:pointer;">템플릿 수정모드</button>
+                    </div>
+                    <div id="sms-template-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px;">
+                        <!-- 기본 템플릿들 -->
+                        <div class="sms-tpl-card" style="background:#1A1A1A; border:1px solid #2D2D2D; border-radius:8px; padding:0.7rem; display:flex; flex-direction:column; gap:5px;">
+                            <div class="sms-tpl-name" style="font-size:0.8rem; font-weight:600; color:#E5E5E5;">SSG 취소요청</div>
+                            <div class="sms-tpl-content" style="font-size:0.72rem; color:#666; line-height:1.45; flex:1;">{수령인}님 {마켓명} 주문 취소 요청이 접수되었습니다.</div>
+                            <button onclick="ui.selectSmsTemplate(this)" style="padding:2px 0; font-size:0.72rem; background:rgba(255,140,0,0.12); border:1px solid rgba(255,140,0,0.3); color:#FF8C00; border-radius:4px; cursor:pointer; margin-top:2px;">발송 메시지 선택</button>
+                        </div>
+                        <div class="sms-tpl-card" style="background:#1A1A1A; border:1px solid #2D2D2D; border-radius:8px; padding:0.7rem; display:flex; flex-direction:column; gap:5px;">
+                            <div class="sms-tpl-name" style="font-size:0.8rem; font-weight:600; color:#E5E5E5;">가격변동 취소</div>
+                            <div class="sms-tpl-content" style="font-size:0.72rem; color:#666; line-height:1.45; flex:1;">{수령인}님 {상품명} 가격 변동으로 인해 주문이 취소됩니다.</div>
+                            <button onclick="ui.selectSmsTemplate(this)" style="padding:2px 0; font-size:0.72rem; background:rgba(255,140,0,0.12); border:1px solid rgba(255,140,0,0.3); color:#FF8C00; border-radius:4px; cursor:pointer; margin-top:2px;">발송 메시지 선택</button>
+                        </div>
+                        <div class="sms-tpl-card" style="background:#1A1A1A; border:1px solid #2D2D2D; border-radius:8px; padding:0.7rem; display:flex; flex-direction:column; gap:5px;">
+                            <div class="sms-tpl-name" style="font-size:0.8rem; font-weight:600; color:#E5E5E5;">배송 안내</div>
+                            <div class="sms-tpl-content" style="font-size:0.72rem; color:#666; line-height:1.45; flex:1;">{수령인}님 주문하신 {상품명}이 {국내택배사}로 발송되었습니다. 송장번호: {국내송장번호}</div>
+                            <button onclick="ui.selectSmsTemplate(this)" style="padding:2px 0; font-size:0.72rem; background:rgba(255,140,0,0.12); border:1px solid rgba(255,140,0,0.3); color:#FF8C00; border-radius:4px; cursor:pointer; margin-top:2px;">발송 메시지 선택</button>
+                        </div>
+                        <div class="sms-tpl-card" style="background:#1A1A1A; border:1px solid #2D2D2D; border-radius:8px; padding:0.7rem; display:flex; flex-direction:column; gap:5px;">
+                            <div class="sms-tpl-name" style="font-size:0.8rem; font-weight:600; color:#E5E5E5;">재고부족 취소</div>
+                            <div class="sms-tpl-content" style="font-size:0.72rem; color:#666; line-height:1.45; flex:1;">{수령인}님 {상품명} 재고 부족으로 주문이 취소됩니다. 불편을 드려 죄송합니다.</div>
+                            <button onclick="ui.selectSmsTemplate(this)" style="padding:2px 0; font-size:0.72rem; background:rgba(255,140,0,0.12); border:1px solid rgba(255,140,0,0.3); color:#FF8C00; border-radius:4px; cursor:pointer; margin-top:2px;">발송 메시지 선택</button>
+                        </div>
+                        <div class="sms-tpl-card" style="background:#1A1A1A; border:1px solid #2D2D2D; border-radius:8px; padding:0.7rem; display:flex; flex-direction:column; gap:5px;">
+                            <div class="sms-tpl-name" style="font-size:0.8rem; font-weight:600; color:#E5E5E5;">통관부호 요청</div>
+                            <div class="sms-tpl-content" style="font-size:0.72rem; color:#666; line-height:1.45; flex:1;">{수령인}님 해외 배송 통관을 위해 개인통관부호 등록이 필요합니다. {통관부호URL}</div>
+                            <button onclick="ui.selectSmsTemplate(this)" style="padding:2px 0; font-size:0.72rem; background:rgba(255,140,0,0.12); border:1px solid rgba(255,140,0,0.3); color:#FF8C00; border-radius:4px; cursor:pointer; margin-top:2px;">발송 메시지 선택</button>
+                        </div>
+                        <div class="sms-tpl-card" style="background:#1A1A1A; border:1px solid #2D2D2D; border-radius:8px; padding:0.7rem; display:flex; flex-direction:column; gap:5px; border-style:dashed;">
+                            <button onclick="ui.addSmsTemplate()" style="width:100%; height:100%; min-height:56px; background:transparent; border:none; color:#555; font-size:0.8rem; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;">
+                                <i class="fas fa-plus" style="font-size:1rem; color:#444;"></i>
+                                <span>템플릿 추가</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="js/storage.js"></script>
     <script src="js/modules/products.js"></script>
@@ -3615,440 +4039,14 @@
     <script src="js/modules/contacts.js"></script>
     <script src="js/modules/returns.js"></script>
     <script src="js/modules/ai.js"></script>
-    <script src="js/ui.js"></script>
+    <script src="js/modules/forbidden.js"></script>
+    <script src="js/modules/collector.js"></script>
+    <script src="js/modules/policy.js"></script>
+    <script src="js/modules/account.js"></script>
+    <script src="js/modules/category.js"></script>
+    <script src="js/modules/shipment-manager.js"></script>
+    <script src="js/modules/analytics-ui.js"></script>
     <script src="js/app.js"></script>
-    <script>
-        /* ============================================
-           매출통계 — 필터 / 뷰 전환 / 차트
-        ============================================ */
-        let acCharts = {}
-
-        // 뷰 전환 (차트 ↔ 테이블)
-        function acView(type) {
-            const isChart = type === 'chart'
-            document.getElementById('ac-charts-view').style.display = isChart ? '' : 'none'
-            document.getElementById('ac-tables-view').style.display = isChart ? 'none' : ''
-            document.getElementById('ac-btn-chart').classList.toggle('ac-active', isChart)
-            document.getElementById('ac-btn-table').classList.toggle('ac-active', !isChart)
-            if (isChart) setTimeout(initAcCharts, 30)
-            else initAcTables()
-        }
-
-        // 체크박스 그룹 전체 토글
-        function afToggleAll(group, allCb) {
-            document.querySelectorAll('.af-' + group).forEach(cb => {
-                cb.checked = allCb.checked
-            })
-        }
-
-        // 초기화: 모든 체크박스 해제
-        function afResetAll() {
-            ;['mkt','site','status'].forEach(g => {
-                document.querySelectorAll('.af-' + g).forEach(cb => cb.checked = false)
-                const allCb = document.getElementById('af-all-' + g)
-                if (allCb) allCb.checked = false
-            })
-        }
-
-        function acSearch() { /* 실제 데이터 연동 시 구현 */ }
-
-        // 테이블 탭 전환
-        function acTableTab(tab) {
-            ;['mkt','site','status'].forEach(t => {
-                document.getElementById('ac-tbl-' + t).style.display = 'none'
-                document.getElementById('ac-tab-' + t).classList.remove('ac-tab-on')
-            })
-            document.getElementById('ac-tbl-' + tab).style.display = ''
-            document.getElementById('ac-tab-' + tab).classList.add('ac-tab-on')
-        }
-
-        // 테이블 초기화 (샘플 데이터)
-        function initAcTables() {
-            const months = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
-            const mktData = [
-                [0, 52296000, 0],
-                [3822800, 29988400, 0],
-                [2310200, 11260900, 0],
-                ...Array(9).fill([0,0,0])
-            ]
-            let mktHtml = ''
-            months.forEach((m, i) => {
-                const row = mktData[i] || [0,0,0]
-                const sum = row.reduce((a,b)=>a+b,0)
-                mktHtml += `<tr>
-                    <td>${m}</td>
-                    ${row.map(v => `<td>${v ? `<span style="color:#C5C5C5;">₩${v.toLocaleString()}</span>` : '<span class="ac-cnt">-</span>'}</td>`).join('')}
-                    <td>${sum ? `<span style="color:#FF8C00;">₩${sum.toLocaleString()}</span>` : '<span class="ac-cnt">-</span>'}</td>
-                </tr>`
-            })
-            mktHtml += `<tr class="ac-sum-row"><td>합계</td><td>₩6,133,000<br><span class="ac-pct">(6.2%)</span></td><td>₩93,445,300<br><span class="ac-pct">(93.8%)</span></td><td>₩0</td><td>₩99,578,300<br><span class="ac-cnt">3,617건</span></td></tr>`
-            document.getElementById('acTblMktBody').innerHTML = mktHtml
-
-            // 사이트별 (샘플)
-            const sites = ['ABCmart','FOLDERStyle','GrandStage','GSShop','LOTTEON','MUSINSA','Nike','SSG']
-            const siteTotals = [6941900,2056400,4918500,18172600,11091500,50636200,3090000,1944000]
-            let siteHtml = ''
-            months.forEach((m, i) => {
-                siteHtml += `<tr><td>${m}</td>${sites.map((_,si) => i < 3 ? `<td><span style="color:#888;">₩${Math.round(siteTotals[si]/(i===0?1:i===1?2:3)*0.8).toLocaleString()}</span></td>` : '<td><span class="ac-cnt">-</span></td>').join('')}<td><span class="ac-cnt">-</span></td></tr>`
-            })
-            siteHtml += `<tr class="ac-sum-row"><td>합계</td>${siteTotals.map(v=>`<td>₩${v.toLocaleString()}</td>`).join('')}<td>₩99,578,300</td></tr>`
-            document.getElementById('acTblSiteBody').innerHTML = siteHtml
-
-            // 주문상태별 (샘플)
-            const statusData = [[0,0,49622500,2673500,0],[162700,2168900,32424500,1286700,0],[0,0,10910000,192000,0]]
-            let statusHtml = ''
-            months.forEach((m,i) => {
-                const row = statusData[i] || [0,0,0,0,0]
-                const sum = row.reduce((a,b)=>a+b,0)
-                statusHtml += `<tr><td>${m}</td>${row.map(v=>`<td>${v?`<span style="color:#C5C5C5;">₩${v.toLocaleString()}</span>`:'<span class="ac-cnt">-</span>'}</td>`).join('')}<td>${sum?`<span style="color:#FF8C00;">₩${sum.toLocaleString()}</span>`:'<span class="ac-cnt">-</span>'}</td></tr>`
-            })
-            statusHtml += `<tr class="ac-sum-row"><td>합계</td><td>₩162,700</td><td>₩2,168,900</td><td>₩92,957,000</td><td>₩4,152,200</td><td>₩0</td><td>₩99,578,300<br><span class="ac-cnt">3,617건</span></td></tr>`
-            document.getElementById('acTblStatusBody').innerHTML = statusHtml
-        }
-
-        // 차트 초기화
-        function initAcCharts() {
-            if (typeof Chart === 'undefined') return
-            Chart.defaults.color = '#555'
-            Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-            const dkGrid = { color: 'rgba(255,255,255,0.035)', drawBorder: false }
-            const tooltip = {
-                backgroundColor: 'rgba(8,8,8,0.95)',
-                borderColor: '#2D2D2D',
-                borderWidth: 1,
-                titleColor: '#C5C5C5',
-                bodyColor: '#777',
-                padding: 11,
-                cornerRadius: 8
-            }
-
-            // 1. 월별 매출 추이 라인
-            const lineEl = document.getElementById('ac-line')
-            if (lineEl) {
-                if (acCharts.line) acCharts.line.destroy()
-                acCharts.line = new Chart(lineEl.getContext('2d'), {
-                    type: 'line',
-                    data: {
-                        labels: ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'],
-                        datasets: [
-                            { label:'신세계몰', data:[52296000,29988400,11260900,...Array(9).fill(0)], borderColor:'#FF8C00', backgroundColor:'rgba(255,140,0,0.07)', borderWidth:2.5, tension:0.4, fill:true, pointRadius:4, pointBackgroundColor:'#FF8C00', pointBorderColor:'#0A0A0A', pointBorderWidth:2 },
-                            { label:'G마켓', data:[0,3822800,2310200,...Array(9).fill(0)], borderColor:'#4C9AFF', backgroundColor:'rgba(76,154,255,0.07)', borderWidth:2.5, tension:0.4, fill:true, pointRadius:4, pointBackgroundColor:'#4C9AFF', pointBorderColor:'#0A0A0A', pointBorderWidth:2 },
-                            { label:'플레이오토', data:[0,0,0,...Array(9).fill(0)], borderColor:'#51CF66', backgroundColor:'rgba(81,207,102,0.05)', borderWidth:2, tension:0.4, fill:true, pointRadius:3, pointBackgroundColor:'#51CF66', pointBorderColor:'#0A0A0A', pointBorderWidth:2 }
-                        ]
-                    },
-                    options: {
-                        responsive:true, maintainAspectRatio:true,
-                        interaction:{mode:'index',intersect:false},
-                        plugins:{ legend:{display:false}, tooltip:{...tooltip, callbacks:{label:(c)=>` ${c.dataset.label}: ₩${c.raw.toLocaleString()}`}} },
-                        scales:{
-                            x:{grid:dkGrid, ticks:{color:'#444', font:{size:11}}},
-                            y:{grid:dkGrid, ticks:{color:'#444', font:{size:11}, callback:(v)=>v>=1000000?`₩${(v/1000000).toFixed(0)}M`:`₩${(v/1000).toFixed(0)}K`}}
-                        }
-                    }
-                })
-            }
-
-            // 2. 마켓별 도넛
-            const donutEl = document.getElementById('ac-donut-mkt')
-            if (donutEl) {
-                if (acCharts.donut) acCharts.donut.destroy()
-                acCharts.donut = new Chart(donutEl.getContext('2d'), {
-                    type: 'doughnut',
-                    data: {
-                        labels: ['신세계몰','G마켓','플레이오토(EMP)'],
-                        datasets: [{ data:[93445300,6133000,0], backgroundColor:['#FF8C00','#4C9AFF','#51CF66'], borderColor:'#0E0E0E', borderWidth:3, hoverOffset:10 }]
-                    },
-                    options: {
-                        responsive:true, maintainAspectRatio:true, cutout:'70%',
-                        plugins:{
-                            legend:{position:'bottom', labels:{color:'#777', padding:16, font:{size:12}, boxWidth:10, borderRadius:4}},
-                            tooltip:{...tooltip, callbacks:{label:(c)=>` ${c.label}: ₩${c.raw.toLocaleString()} (${c.raw>0?(c.raw/99578300*100).toFixed(1)+'%':'0%'})`}}
-                        }
-                    }
-                })
-            }
-
-            // 3. 사이트별 가로 바
-            const barSiteEl = document.getElementById('ac-bar-site')
-            if (barSiteEl) {
-                if (acCharts.barSite) acCharts.barSite.destroy()
-                const siteLabels = ['MUSINSA','GSShop','LOTTEON','ABCmart','GrandStage','Nike','FOLDERStyle','SSG']
-                const siteVals   = [50636200,18172600,11091500,6941900,4918500,3090000,2056400,1944000]
-                acCharts.barSite = new Chart(barSiteEl.getContext('2d'), {
-                    type: 'bar',
-                    data: {
-                        labels: siteLabels,
-                        datasets: [{ label:'매출', data:siteVals,
-                            backgroundColor: siteVals.map((_,i)=>`rgba(255,140,0,${0.85 - i*0.08})`),
-                            borderRadius:5, borderSkipped:false }]
-                    },
-                    options: {
-                        indexAxis:'y', responsive:true, maintainAspectRatio:true,
-                        plugins:{legend:{display:false}, tooltip:{...tooltip, callbacks:{label:(c)=>` ₩${c.raw.toLocaleString()}`}}},
-                        scales:{
-                            x:{grid:dkGrid, ticks:{color:'#444', font:{size:10}, callback:(v)=>`₩${(v/1000000).toFixed(0)}M`}},
-                            y:{grid:{display:false}, ticks:{color:'#999', font:{size:11}}}
-                        }
-                    }
-                })
-            }
-
-            // 4. 주문상태 도넛
-            const statusEl = document.getElementById('ac-donut-status')
-            if (statusEl) {
-                if (acCharts.status) acCharts.status.destroy()
-                acCharts.status = new Chart(statusEl.getContext('2d'), {
-                    type: 'doughnut',
-                    data: {
-                        labels: ['결제완료','배송대기','배송완료','반품/취소'],
-                        datasets: [{ data:[344,1488,1917,391], backgroundColor:['#FFD93D','#4C9AFF','#51CF66','#FF6B6B'], borderColor:'#0E0E0E', borderWidth:3, hoverOffset:8 }]
-                    },
-                    options: {
-                        responsive:true, maintainAspectRatio:true, cutout:'65%',
-                        plugins:{
-                            legend:{position:'bottom', labels:{color:'#777', padding:12, font:{size:11}, boxWidth:8, borderRadius:3}},
-                            tooltip:{...tooltip, callbacks:{label:(c)=>` ${c.label}: ${c.raw.toLocaleString()}건`}}
-                        }
-                    }
-                })
-            }
-
-            // 5. 월별 주문건수 바
-            const ordersEl = document.getElementById('ac-bar-orders')
-            if (ordersEl) {
-                if (acCharts.orders) acCharts.orders.destroy()
-                acCharts.orders = new Chart(ordersEl.getContext('2d'), {
-                    type: 'bar',
-                    data: {
-                        labels: ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'],
-                        datasets: [{ label:'주문건수', data:[2232,994,391,...Array(9).fill(0)],
-                            backgroundColor:'rgba(255,140,0,0.72)', borderRadius:6, borderSkipped:false }]
-                    },
-                    options: {
-                        responsive:true, maintainAspectRatio:true,
-                        plugins:{legend:{display:false}, tooltip:{...tooltip, callbacks:{label:(c)=>` ${c.raw.toLocaleString()}건`}}},
-                        scales:{
-                            x:{grid:{display:false}, ticks:{color:'#444', font:{size:11}}},
-                            y:{grid:dkGrid, ticks:{color:'#444', font:{size:11}}}
-                        }
-                    }
-                })
-            }
-        }
-
-        // analytics/products 페이지 진입 시 자동 초기화
-        const _origNavigateTo = SambaWaveApp.prototype.navigateTo
-        SambaWaveApp.prototype.navigateTo = function(pageName) {
-            _origNavigateTo.call(this, pageName)
-            if (pageName === 'analytics') setTimeout(initAcTables, 60) // 테이블뷰 기본
-            if (pageName === 'products') setTimeout(updateDashboardCards, 100)
-            if (pageName === 'dashboard') setTimeout(initDashboardCharts, 80)
-        }
-
-        // 상품관리 페이지 대시보드 KPI 카드 업데이트
-        async function updateDashboardCards() {
-            try {
-                const products = await storage.getAll('products')
-                const orders   = await storage.getAll('orders')
-
-                // 총 매출 합산
-                const totalSales = orders.reduce((sum, o) => sum + (o.salePrice || 0), 0)
-                const orderCount = orders.length
-
-                // 판매 중인 상품 수 (active 상태)
-                const selling = products.filter(p => p.status === 'active').length
-
-                const elSales = document.getElementById('dash-total-sales')
-                const elCount = document.getElementById('dash-order-count')
-                const elCollected = document.getElementById('dash-collected')
-                const elSelling = document.getElementById('dash-selling')
-
-                if (elSales) elSales.textContent = '₩' + totalSales.toLocaleString()
-                if (elCount) elCount.textContent = orderCount.toLocaleString() + '건 누적'
-                if (elCollected) elCollected.innerHTML = products.length + '<span style="font-size:1rem; color:#888; font-weight:500;">개</span>'
-                if (elSelling) elSelling.innerHTML = selling + '<span style="font-size:1rem; color:#888; font-weight:500;">개</span>'
-            } catch(e) {
-                console.warn('대시보드 카드 업데이트 실패:', e)
-            }
-        }
-
-        // ── 대시보드 차트 초기화 ──────────────────────────────────────────
-        const dbCharts = {}
-        async function initDashboardCharts() {
-            // 날짜 표시
-            const now = new Date()
-            const dbDate = document.getElementById('db-date')
-            if (dbDate) dbDate.textContent = now.toLocaleDateString('ko-KR', { year:'numeric', month:'long', day:'numeric' })
-
-            // 실제 상품 데이터로 KPI 업데이트
-            try {
-                const products = await storage.getAll('products')
-                const el = document.getElementById('db-collected')
-                if (el) el.textContent = products.length + '개'
-            } catch(e) {}
-
-            // ── 최근 일주일 테이블 ──────────────────────────────────────
-            const weekTbody = document.getElementById('db-week-tbody')
-            if (weekTbody) {
-                // 샘플 데이터 (최신일이 첫 행)
-                const weekData = [
-                    { date:'03/11(화)', total:3820000, fulfill:3620000, rate:94.8 },
-                    { date:'03/10(월)', total:4150000, fulfill:4010000, rate:96.6 },
-                    { date:'03/09(일)', total:1980000, fulfill:1820000, rate:91.9 },
-                    { date:'03/08(토)', total:2340000, fulfill:2100000, rate:89.7 },
-                    { date:'03/07(금)', total:5210000, fulfill:5050000, rate:96.9 },
-                    { date:'03/06(목)', total:4780000, fulfill:4560000, rate:95.4 },
-                    { date:'03/05(수)', total:3690000, fulfill:3500000, rate:94.8 },
-                ]
-                weekTbody.innerHTML = weekData.map(r => `
-                    <tr>
-                        <td>${r.date}</td>
-                        <td class="num-orange">₩${r.total.toLocaleString()}</td>
-                        <td class="num-blue">₩${r.fulfill.toLocaleString()}</td>
-                        <td class="num-green">${r.rate.toFixed(1)}%</td>
-                    </tr>`).join('')
-            }
-
-            // ── 금월/전월 비교 테이블 ────────────────────────────────────
-            const monthTbody = document.getElementById('db-month-tbody')
-            if (monthTbody) {
-                const rows = [
-                    { label:'3월 (금월)', total:25970000, fulfill:24660000, rate:94.9 },
-                    { label:'2월 (전월)', total:31480000, fulfill:29820000, rate:94.7 },
-                    { label:'전월 대비', total:'+▲5,510,000', fulfill:'+▲1,160,000', rate:'+0.2%', diff:true },
-                ]
-                monthTbody.innerHTML = rows.map(r => {
-                    if (r.diff) {
-                        return `<tr style="background:rgba(255,140,0,0.04);">
-                            <td style="font-weight:600; color:#FFB84D;">${r.label}</td>
-                            <td style="text-align:right; color:#4C9AFF; font-weight:600;">${r.total}</td>
-                            <td style="text-align:right; color:#4C9AFF; font-weight:600;">${r.fulfill}</td>
-                            <td style="text-align:right; color:#51CF66; font-weight:600;">${r.rate}</td>
-                        </tr>`
-                    }
-                    return `<tr>
-                        <td>${r.label}</td>
-                        <td class="num-orange">₩${r.total.toLocaleString()}</td>
-                        <td class="num-blue">₩${r.fulfill.toLocaleString()}</td>
-                        <td class="num-green">${r.rate.toFixed(1)}%</td>
-                    </tr>`
-                }).join('')
-            }
-
-            const months = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
-            const scaleOpts = {
-                x:{ ticks:{ color:'#555', font:{ size:11 } }, grid:{ color:'rgba(255,255,255,0.03)' } },
-                y:{ ticks:{ color:'#555', font:{ size:11 }, callback: v => '₩'+(v/1000000).toFixed(1)+'M' }, grid:{ color:'rgba(255,255,255,0.06)' } }
-            }
-
-            // 1. 월별 매출 추이 (line)
-            const lineEl = document.getElementById('db-line')
-            if (lineEl) {
-                if (dbCharts.line) dbCharts.line.destroy()
-                const ssgData = [0,3822800,2310200,8541000,12330000,9820000,7450000,0,0,0,0,0]
-                const gmktData = [52296000,29988400,11260900,21430000,18970000,24560000,19340000,0,0,0,0,0]
-                dbCharts.line = new Chart(lineEl.getContext('2d'), {
-                    type: 'line',
-                    data: { labels: months,
-                        datasets: [
-                            { label:'신세계몰', data:ssgData, borderColor:'#FF8C00', backgroundColor:'rgba(255,140,0,0.08)', tension:0.4, pointRadius:3, pointBackgroundColor:'#FF8C00', fill:true },
-                            { label:'G마켓', data:gmktData, borderColor:'#4C9AFF', backgroundColor:'rgba(76,154,255,0.08)', tension:0.4, pointRadius:3, pointBackgroundColor:'#4C9AFF', fill:true }
-                        ]
-                    },
-                    options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales: scaleOpts }
-                })
-            }
-
-            // 2. 마켓별 도넛
-            const donutEl = document.getElementById('db-donut')
-            if (donutEl) {
-                if (dbCharts.donut) dbCharts.donut.destroy()
-                dbCharts.donut = new Chart(donutEl.getContext('2d'), {
-                    type: 'doughnut',
-                    data: { labels:['G마켓','신세계몰'], datasets:[{ data:[6133000,93445300], backgroundColor:['#4C9AFF','#FF8C00'], borderWidth:0, hoverOffset:6 }] },
-                    options: { responsive:true, maintainAspectRatio:false, cutout:'65%', plugins:{ legend:{ position:'bottom', labels:{ color:'#888', font:{ size:11 }, padding:12 } } } }
-                })
-            }
-
-            // 3. 수입사이트별 가로바
-            const barSiteEl = document.getElementById('db-bar-site')
-            if (barSiteEl) {
-                if (dbCharts.barSite) dbCharts.barSite.destroy()
-                const sLabels = ['MUSINSA','GSShop','LOTTEON','ABCmart','GrandStage','Nike','FOLDERStyle','SSG']
-                const sVals   = [50636200,18172600,11091500,6941900,4918500,3090000,2056400,1944000]
-                dbCharts.barSite = new Chart(barSiteEl.getContext('2d'), {
-                    type:'bar',
-                    data:{ labels:sLabels, datasets:[{ data:sVals, backgroundColor:['#FF8C00','#FFB84D','#4C9AFF','#51CF66','#FF6B6B','#CC5DE8','#74C0FC','#A9E34B'], borderRadius:4 }] },
-                    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ color:'#555', font:{ size:10 }, callback:v=>'₩'+(v/1000000).toFixed(1)+'M' }, grid:{ color:'rgba(255,255,255,0.04)' } }, y:{ ticks:{ color:'#888', font:{ size:10 } }, grid:{ display:false } } } }
-                })
-            }
-
-            // 4. 마켓 사업자별 상품등록현황 테이블
-            const mktTbody = document.getElementById('db-mkt-reg-tbody')
-            if (mktTbody) {
-                const mktNames = [
-                    'G마켓 - A사업자','G마켓 - B사업자',
-                    '옥션 - A사업자','옥션 - B사업자',
-                    '스마트스토어','쿠팡','롯데ON','11번가','신세계몰'
-                ]
-                const mktReg   = [1842,934,1755,812,1230,980,640,520,320]
-                const mktColors= ['#4C9AFF','#74C0FC','#4C9AFF','#74C0FC','#51CF66','#FF6B6B','#FFB84D','#FF8C00','#A9E34B']
-                const total    = mktReg.reduce((a,b)=>a+b,0)
-                mktTbody.innerHTML = mktNames.map((n,i) => {
-                    const pct = ((mktReg[i]/total)*100).toFixed(1)
-                    return `<tr>
-                        <td>${n}</td>
-                        <td class="num-orange">${mktReg[i].toLocaleString()}</td>
-                        <td>${pct}%</td>
-                        <td style="min-width:120px;">
-                            <div style="height:6px; background:#1A1A1A; border-radius:3px;">
-                                <div style="height:6px; width:${pct}%; background:${mktColors[i]}; border-radius:3px;"></div>
-                            </div>
-                        </td>
-                    </tr>`
-                }).join('')
-            }
-
-        }
-
-        // 카테고리 내부 서브탭 전환
-        // 설정 탭 전환
-        function switchSettingsTab(market, clickedBtn) {
-            // 모든 패널 숨기기
-            document.querySelectorAll('.stg-panel').forEach(p => p.style.display = 'none')
-            // 모든 탭 비활성화
-            document.querySelectorAll('.stg-tab').forEach(t => t.classList.remove('stg-tab-on'))
-            // 선택 탭/패널 활성화
-            const panel = document.getElementById('stg-' + market)
-            if (panel) panel.style.display = ''
-            if (clickedBtn) clickedBtn.classList.add('stg-tab-on')
-        }
-
-        function switchCatTab(tab) {
-            const settings = document.getElementById('cat-panel-settings')
-            const list = document.getElementById('cat-panel-list')
-            const btnSettings = document.getElementById('cat-tab-settings')
-            const btnList = document.getElementById('cat-tab-list')
-            if (tab === 'settings') {
-                settings.style.display = ''
-                list.style.display = 'none'
-                btnSettings.style.background = 'linear-gradient(135deg,#FF8C00,#FFB84D)'
-                btnSettings.style.color = '#fff'
-                btnSettings.style.border = 'none'
-                btnList.style.background = 'rgba(50,50,50,0.8)'
-                btnList.style.color = '#C5C5C5'
-                btnList.style.border = '1px solid #3D3D3D'
-            } else {
-                settings.style.display = 'none'
-                list.style.display = ''
-                btnList.style.background = 'linear-gradient(135deg,#FF8C00,#FFB84D)'
-                btnList.style.color = '#fff'
-                btnList.style.border = 'none'
-                btnSettings.style.background = 'rgba(50,50,50,0.8)'
-                btnSettings.style.color = '#C5C5C5'
-                btnSettings.style.border = '1px solid #3D3D3D'
-            }
-        }
-    </script>
+    <script src="js/ui.js"></script>
 </body>
 </html>

@@ -6,7 +6,7 @@
 class StorageManager {
     constructor() {
         this.dbName = 'SambaWave';
-        this.version = 2;
+        this.version = 4;
         this.db = null;
         this.useIndexedDB = true;
     }
@@ -54,7 +54,26 @@ class StorageManager {
                     { name: 'nameRules', keyPath: 'id', indexes: [{ name: 'name', unique: false }] },
                     { name: 'sourcingJobs', keyPath: 'id', indexes: [{ name: 'status', unique: false }, { name: 'siteId', unique: false }] },
                     { name: 'shipments', keyPath: 'id', indexes: [{ name: 'productId', unique: false }, { name: 'status', unique: false }] },
-                    { name: 'csRequests', keyPath: 'id', indexes: [{ name: 'orderId', unique: false }, { name: 'status', unique: false }] }
+                    { name: 'csRequests', keyPath: 'id', indexes: [{ name: 'orderId', unique: false }, { name: 'status', unique: false }] },
+                    // Phase 6 (상품수집 엔진) 새 스토어
+                    { name: 'searchFilters', keyPath: 'id', indexes: [
+                        { name: 'sourceSite', unique: false },
+                        { name: 'name', unique: false }
+                    ]},
+                    { name: 'collectedProducts', keyPath: 'id', indexes: [
+                        { name: 'sourceSite', unique: false },
+                        { name: 'searchFilterId', unique: false },
+                        { name: 'status', unique: false },
+                        { name: 'siteProductId', unique: false }
+                    ]},
+                    { name: 'forbiddenWords', keyPath: 'id', indexes: [
+                        { name: 'type', unique: false }
+                    ]},
+                    { name: 'marketAccounts', keyPath: 'id', indexes: [
+                        { name: 'marketType', unique: false },
+                        { name: 'sellerId', unique: false },
+                        { name: 'isActive', unique: false }
+                    ]}
                 ];
 
                 stores.forEach(store => {
@@ -206,8 +225,9 @@ class StorageManager {
      */
     async exportData() {
         const backup = {};
-        const stores = ['products', 'channels', 'orders', 'sourcingSites', 'analytics', 'settings',
-                        'policies', 'categoryMappings', 'nameRules', 'sourcingJobs', 'shipments', 'csRequests'];
+        const stores = ['products', 'channels', 'orders', 'sourcingSites', 'analytics', 'contactLogs', 'returns', 'settings',
+                        'policies', 'categoryMappings', 'nameRules', 'sourcingJobs', 'shipments', 'csRequests',
+                        'searchFilters', 'collectedProducts', 'forbiddenWords', 'marketAccounts'];
 
         for (const storeName of stores) {
             backup[storeName] = await this.getAll(storeName);
@@ -262,12 +282,105 @@ class StorageManager {
             reader.readAsText(file);
         });
     }
+
+    /**
+     * 인덱스 기반 페이지네이션 조회 (10만건 대응)
+     */
+    async getByIndexPaginated(storeName, indexName, value, page = 1, pageSize = 50) {
+        if (!this.useIndexedDB) {
+            const all = await this.getByIndex(storeName, indexName, value)
+            const start = (page - 1) * pageSize
+            return all.slice(start, start + pageSize)
+        }
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readonly')
+            const objectStore = transaction.objectStore(storeName)
+            const index = objectStore.index(indexName)
+            const results = []
+            let skipCount = (page - 1) * pageSize
+            let collectCount = 0
+            const request = index.openCursor(IDBKeyRange.only(value))
+            request.onerror = () => reject(request.error)
+            request.onsuccess = (event) => {
+                const cursor = event.target.result
+                if (!cursor) { resolve(results); return }
+                if (skipCount > 0) { skipCount--; cursor.continue(); return }
+                if (collectCount < pageSize) { results.push(cursor.value); collectCount++; cursor.continue() }
+                else resolve(results)
+            }
+        })
+    }
+
+    /**
+     * 인덱스별 카운트
+     */
+    async countByIndex(storeName, indexName, value) {
+        if (!this.useIndexedDB) {
+            const all = await this.getByIndex(storeName, indexName, value)
+            return all.length
+        }
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readonly')
+            const objectStore = transaction.objectStore(storeName)
+            const index = objectStore.index(indexName)
+            const request = index.count(IDBKeyRange.only(value))
+            request.onerror = () => reject(request.error)
+            request.onsuccess = () => resolve(request.result)
+        })
+    }
+
+    /**
+     * 트랜잭션 기반 배치 저장 (대량 등록 성능 최적화)
+     */
+    async batchSave(storeName, items) {
+        if (!items || items.length === 0) return
+        if (!this.useIndexedDB) {
+            for (const item of items) await this.save(storeName, item)
+            return
+        }
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readwrite')
+            const objectStore = transaction.objectStore(storeName)
+            transaction.onerror = () => reject(transaction.error)
+            transaction.oncomplete = () => resolve()
+            for (const item of items) objectStore.put(item)
+        })
+    }
+
+    /**
+     * 트랜잭션 기반 배치 삭제
+     */
+    async batchDelete(storeName, ids) {
+        if (!ids || ids.length === 0) return
+        if (!this.useIndexedDB) {
+            for (const id of ids) await this.delete(storeName, id)
+            return
+        }
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readwrite')
+            const objectStore = transaction.objectStore(storeName)
+            transaction.onerror = () => reject(transaction.error)
+            transaction.oncomplete = () => resolve()
+            for (const id of ids) objectStore.delete(id)
+        })
+    }
+
+    /**
+     * 다중 필드 키워드 검색 (디바운스 권장)
+     */
+    async searchByKeyword(storeName, fields, keyword, limit = 100) {
+        const all = await this.getAll(storeName)
+        const lower = keyword.toLowerCase()
+        const results = all.filter(item =>
+            fields.some(field => item[field] && String(item[field]).toLowerCase().includes(lower))
+        )
+        return results.slice(0, limit)
+    }
 }
 
 // 글로벌 인스턴스 생성
-const storage = new StorageManager();
+const storage = new StorageManager()
 
-// 앱 시작 시 초기화
-document.addEventListener('DOMContentLoaded', () => {
-    storage.init();
-});
+// IndexedDB는 DOM 없이도 열 수 있으므로 즉시 초기화 시작
+// ui.js 에서 storageReady 를 await 해서 DB 준비 완료 후 데이터 로드
+const storageReady = storage.init()

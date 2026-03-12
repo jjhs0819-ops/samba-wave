@@ -184,7 +184,7 @@ class ContactManager {
      * ID 생성
      */
     generateId() {
-        return 'con_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        return 'con_' + Date.now() + '_' + Math.random().toString(36).substring(2, 11);
     }
 
     /**
