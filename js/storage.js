@@ -6,7 +6,7 @@
 class StorageManager {
     constructor() {
         this.dbName = 'SambaWave';
-        this.version = 1;
+        this.version = 2;
         this.db = null;
         this.useIndexedDB = true;
     }
@@ -39,6 +39,7 @@ class StorageManager {
 
                 // Object Stores 생성
                 const stores = [
+                    // Phase 1~4 기존 스토어
                     { name: 'products', keyPath: 'id', indexes: [{ name: 'sourceUrl', unique: false }] },
                     { name: 'channels', keyPath: 'id', indexes: [] },
                     { name: 'orders', keyPath: 'id', indexes: [{ name: 'channelId', unique: false }, { name: 'date', unique: false }] },
@@ -46,7 +47,14 @@ class StorageManager {
                     { name: 'analytics', keyPath: 'id', indexes: [{ name: 'date', unique: false }] },
                     { name: 'contactLogs', keyPath: 'id', indexes: [{ name: 'orderId', unique: false }, { name: 'status', unique: false }] },
                     { name: 'returns', keyPath: 'id', indexes: [{ name: 'orderId', unique: false }, { name: 'status', unique: false }] },
-                    { name: 'settings', keyPath: 'key', indexes: [] }
+                    { name: 'settings', keyPath: 'key', indexes: [] },
+                    // Phase 5 (The.Mango 프레임) 새 스토어
+                    { name: 'policies', keyPath: 'id', indexes: [{ name: 'name', unique: false }] },
+                    { name: 'categoryMappings', keyPath: 'id', indexes: [{ name: 'siteId', unique: false }] },
+                    { name: 'nameRules', keyPath: 'id', indexes: [{ name: 'name', unique: false }] },
+                    { name: 'sourcingJobs', keyPath: 'id', indexes: [{ name: 'status', unique: false }, { name: 'siteId', unique: false }] },
+                    { name: 'shipments', keyPath: 'id', indexes: [{ name: 'productId', unique: false }, { name: 'status', unique: false }] },
+                    { name: 'csRequests', keyPath: 'id', indexes: [{ name: 'orderId', unique: false }, { name: 'status', unique: false }] }
                 ];
 
                 stores.forEach(store => {
@@ -198,7 +206,8 @@ class StorageManager {
      */
     async exportData() {
         const backup = {};
-        const stores = ['products', 'channels', 'orders', 'sourcingSites', 'analytics', 'settings'];
+        const stores = ['products', 'channels', 'orders', 'sourcingSites', 'analytics', 'settings',
+                        'policies', 'categoryMappings', 'nameRules', 'sourcingJobs', 'shipments', 'csRequests'];
 
         for (const storeName of stores) {
             backup[storeName] = await this.getAll(storeName);

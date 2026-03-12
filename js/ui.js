@@ -85,7 +85,7 @@ class UIManager {
         await contactManager.loadContactLogs();
         await returnManager.loadReturns();
 
-        this.renderDashboard();
+        // this.renderDashboard(); // 대시보드 페이지 삭제로 제거
         this.renderProducts();
         this.renderChannels();
         this.renderOrders();
@@ -290,38 +290,42 @@ class UIManager {
         }
 
         if (products.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-8 text-center text-gray-500">상품이 없습니다</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-8 text-center text-gray-500">상품이 없습니다</td></tr>';
             return;
         }
 
-        tbody.innerHTML = products.map(product => `
+        tbody.innerHTML = products.map(product => {
+            // 추정 판매가 계산
+            const estimatedPrice = product.cost ? Math.round(product.cost / (1 - (product.marginRate || 30) / 100)) : 0;
+            return `
             <tr class="hover:bg-gray-50">
-                <td class="px-6 py-4">
-                    <div>
-                        <p class="font-medium text-gray-900">${product.name}</p>
-                        <p class="text-xs text-gray-500">${product.category || '카테고리 없음'}</p>
-                    </div>
+                <td class="px-4 py-3">
+                    <p class="font-medium" style="color:#E5E5E5;">${product.name}</p>
+                    <p class="text-xs" style="color:#888;">${product.sourceUrl ? product.sourceUrl.substring(0, 40) + '...' : ''}</p>
                 </td>
-                <td class="px-6 py-4">
-                    <span class="text-sm text-gray-600">${product.channels ? Object.keys(product.channels).length : 0}개</span>
+                <td class="px-4 py-3 text-right">
+                    <span style="color:#E5E5E5;">₩${this.formatNumber(product.cost)}</span>
                 </td>
-                <td class="px-6 py-4 text-right">
-                    <span class="font-medium text-gray-900">₩${this.formatNumber(product.cost)}</span>
+                <td class="px-4 py-3 text-right">
+                    <span style="color:#FF8C00;">${product.marginRate}%</span>
                 </td>
-                <td class="px-6 py-4 text-right">
-                    <span class="text-sm font-medium text-blue-600">${product.marginRate}%</span>
+                <td class="px-4 py-3 text-right">
+                    <span style="color:#FFB84D;">₩${this.formatNumber(estimatedPrice)}</span>
                 </td>
-                <td class="px-6 py-4">
-                    <span class="inline-block px-3 py-1 rounded-full text-xs font-medium ${product.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}">
+                <td class="px-4 py-3">
+                    <span style="color:#888; font-size:0.8125rem;">${product.category || '-'}</span>
+                </td>
+                <td class="px-4 py-3 text-center">
+                    <span class="inline-block px-2 py-1 rounded text-xs font-medium" style="${product.status === 'active' ? 'background:rgba(81,207,102,0.15); color:#51CF66;' : 'background:rgba(100,100,100,0.2); color:#888;'}">
                         ${product.status === 'active' ? '활성' : '비활성'}
                     </span>
                 </td>
-                <td class="px-6 py-4 text-center">
-                    <button onclick="ui.showProductModal('${product.id}')" class="text-blue-600 hover:text-blue-800 text-sm font-medium mr-3">수정</button>
-                    <button onclick="ui.deleteProduct('${product.id}')" class="text-red-600 hover:text-red-800 text-sm font-medium">삭제</button>
+                <td class="px-4 py-3 text-center">
+                    <button onclick="ui.showProductModal('${product.id}')" style="color:#FF8C00; font-size:0.8125rem; margin-right:0.75rem; background:transparent;">수정</button>
+                    <button onclick="ui.deleteProduct('${product.id}')" style="color:#FF6B6B; font-size:0.8125rem; background:transparent;">삭제</button>
                 </td>
             </tr>
-        `).join('');
+        `}).join('');
     }
 
     async deleteProduct(productId) {
@@ -518,39 +522,57 @@ class UIManager {
         }
 
         if (orders.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-8 text-center text-gray-500">주문이 없습니다</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" class="px-6 py-8 text-center" style="color:#666;">주문이 없습니다</td></tr>';
             return;
         }
 
-        tbody.innerHTML = orders.map(order => {
+        tbody.innerHTML = orders.map((order, idx) => {
             const channel = channelManager.channels.find(c => c.id === order.channelId);
-            const statusColor = {
-                'pending': 'bg-yellow-100 text-yellow-800',
-                'shipped': 'bg-blue-100 text-blue-800',
-                'delivered': 'bg-green-100 text-green-800',
-                'cancelled': 'bg-red-100 text-red-800'
-            }[order.status] || 'bg-gray-100 text-gray-800';
+            const statusBadge = {
+                'pending': 'background:rgba(255,211,61,0.15); color:#FFD93D; border:1px solid rgba(255,211,61,0.3);',
+                'shipped': 'background:rgba(76,154,255,0.15); color:#4C9AFF; border:1px solid rgba(76,154,255,0.3);',
+                'delivered': 'background:rgba(81,207,102,0.15); color:#51CF66; border:1px solid rgba(81,207,102,0.3);',
+                'cancelled': 'background:rgba(255,107,107,0.15); color:#FF6B6B; border:1px solid rgba(255,107,107,0.3);'
+            }[order.status] || 'background:rgba(100,100,100,0.15); color:#999; border:1px solid #3D3D3D;';
+
+            // 품번(productCode) — 없으면 주문번호 대체
+            const productCode = order.productCode || order.orderNumber || ''
+            const naverUrl = `https://search.naver.com/search.naver?query=${encodeURIComponent(productCode)}`
+            const danawaUrl = `https://search.danawa.com/dsearch.php?query=${encodeURIComponent(productCode)}`
 
             return `
-                <tr class="hover:bg-gray-50">
-                    <td class="px-6 py-4 font-mono text-sm font-medium text-gray-900">${order.orderNumber}</td>
-                    <td class="px-6 py-4">
-                        <div>
-                            <p class="font-medium text-gray-900">${order.customerName}</p>
-                            <p class="text-xs text-gray-500">${order.customerPhone}</p>
-                        </div>
+                <tr style="border-bottom:1px solid #2D2D2D;">
+                    <td style="padding:0.625rem 0.75rem; text-align:center;"><input type="checkbox"></td>
+                    <td style="padding:0.625rem 0.75rem; font-size:0.8125rem; color:#C5C5C5; font-family:monospace;">${order.orderNumber || '-'}</td>
+                    <td style="padding:0.625rem 0.75rem;">
+                        <p style="font-size:0.8125rem; color:#E5E5E5; font-weight:500;">${order.productName || order.customerName || '-'}</p>
+                        <p style="font-size:0.75rem; color:#888;">${productCode}</p>
                     </td>
-                    <td class="px-6 py-4 text-sm">${channel ? channel.name : '알 수 없음'}</td>
-                    <td class="px-6 py-4 text-right font-bold text-gray-900">₩${this.formatNumber(order.salePrice)}</td>
-                    <td class="px-6 py-4 text-center">
-                        <span class="inline-block px-3 py-1 rounded-full text-xs font-medium ${statusColor}">
+                    <td style="padding:0.625rem 0.75rem;">
+                        <select style="width:140px; padding:0.25rem 0.5rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; color:#C5C5C5; border-radius:4px;">
+                            <option value="">주문ID 선택</option>
+                            <option value="coupang" ${order.orderId === 'coupang' ? 'selected' : ''}>쿠팡</option>
+                            <option value="smartstore" ${order.orderId === 'smartstore' ? 'selected' : ''}>스마트스토어</option>
+                            <option value="11st" ${order.orderId === '11st' ? 'selected' : ''}>11번가</option>
+                        </select>
+                    </td>
+                    <td style="padding:0.625rem 0.75rem; font-size:0.8125rem; color:#C5C5C5;">${channel ? channel.name : '-'}</td>
+                    <td style="padding:0.625rem 0.75rem; font-size:0.8125rem; color:#C5C5C5; white-space:nowrap;">${order.createdAt ? new Date(order.createdAt).toLocaleDateString('ko-KR') : '-'}</td>
+                    <td style="padding:0.625rem 0.75rem; text-align:right;">
+                        <p style="font-size:0.8125rem; color:#E5E5E5; font-weight:600;">₩${this.formatNumber(order.salePrice)}</p>
+                        <p style="font-size:0.75rem; color:#888;">원가 ₩${this.formatNumber(order.costPrice || 0)}</p>
+                    </td>
+                    <td style="padding:0.625rem 0.75rem; text-align:center;">
+                        <span style="display:inline-block; padding:0.2rem 0.6rem; border-radius:12px; font-size:0.75rem; ${statusBadge}">
                             ${orderManager.getStatusLabel(order.status)}
                         </span>
                     </td>
-                    <td class="px-6 py-4 text-center space-x-1">
-                        <button onclick="ui.updateOrderStatus('${order.id}', 'shipped')" class="text-blue-600 hover:text-blue-800 text-sm">배송</button>
-                        <button onclick="ui.showReturnModal('${order.id}')" class="text-orange-600 hover:text-orange-800 text-sm" title="반품/교환/취소">↩️</button>
-                        <button onclick="ui.deleteOrder('${order.id}')" class="text-red-600 hover:text-red-800 text-sm">삭제</button>
+                    <td style="padding:0.625rem 0.75rem; text-align:center;">
+                        <div style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                            <a href="${naverUrl}" target="_blank" style="display:inline-block; padding:0.2rem 0.6rem; font-size:0.75rem; background:rgba(3,199,90,0.15); border:1px solid rgba(3,199,90,0.3); color:#03C75A; border-radius:4px; text-decoration:none;">네이버검색</a>
+                            <a href="${danawaUrl}" target="_blank" style="display:inline-block; padding:0.2rem 0.6rem; font-size:0.75rem; background:rgba(0,112,200,0.15); border:1px solid rgba(0,112,200,0.3); color:#4C9AFF; border-radius:4px; text-decoration:none;">다나와검색</a>
+                            <button onclick="ui.deleteOrder('${order.id}')" style="padding:0.2rem 0.6rem; font-size:0.75rem; background:rgba(255,107,107,0.1); border:1px solid rgba(255,107,107,0.3); color:#FF6B6B; border-radius:4px;">삭제</button>
+                        </div>
                     </td>
                 </tr>
             `;
@@ -1156,8 +1178,12 @@ class UIManager {
      */
 
     async updateCounts() {
-        document.getElementById('product-count').textContent = productManager.products.length;
-        document.getElementById('channel-count').textContent = channelManager.channels.length;
+        const pCount = productManager.products.length;
+        document.getElementById('product-count').textContent = pCount;
+        const pc2 = document.getElementById('product-count2');
+        if (pc2) pc2.textContent = pCount;
+        const ccEl = document.getElementById('channel-count');
+        if (ccEl) ccEl.textContent = channelManager.channels.length;
         document.getElementById('total-orders').textContent = orderManager.orders.length;
         document.getElementById('pending-count').textContent = orderManager.getPendingOrders().length;
     }

@@ -1,3 +1,12 @@
 {
-  "outputStyle": "default"
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "context7"
+  ],
+  "outputStyle": "Teacher",
+  "permissions": {
+    "allow": [
+      "Bash(wc -l C:/Users/canno/workspace/samba-wave/js/ui.js C:/Users/canno/workspace/samba-wave/js/modules/*.js C:/Users/canno/workspace/samba-wave/index.html)"
+    ]
+  }
 }
