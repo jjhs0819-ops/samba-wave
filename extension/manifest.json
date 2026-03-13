@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "SAMBA-WAVE",
+  "version": "1.0.0",
+  "description": "무재고 위탁판매 솔루션 - 무신사 로그인 쿠키 연동",
+  "permissions": [
+    "cookies",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://*.musinsa.com/*",
+    "http://localhost:3001/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

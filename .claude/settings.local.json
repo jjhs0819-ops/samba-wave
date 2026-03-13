@@ -1,26 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(wc -l C:/Users/canno/workspace/samba-wave/js/ui.js C:/Users/canno/workspace/samba-wave/js/modules/*.js C:/Users/canno/workspace/samba-wave/index.html)",
-      "mcp__sequential-thinking__sequentialthinking",
-      "Bash(wc -l /c/Users/canno/workspace/samba-wave/index.html /c/Users/canno/workspace/samba-wave/js/*.js /c/Users/canno/workspace/samba-wave/js/modules/*.js 2>/dev/null)",
-      "Bash(find /c/Users/canno/workspace/samba-wave -name \"*.html\" -exec grep -o \"id=\\\\\"page-[^\\\\\"]*\\\\\"\" {} + | sort -u)",
-      "Bash(node -e \"\nconst fs = require\\('fs'\\);\nconst content = fs.readFileSync\\('js/ui.js', 'utf8'\\);\nconst lines = content.split\\('\\\\n'\\);\nlet count = 0;\nconst result = lines.map\\(line => {\n  const trimmed = line.trimEnd\\(\\);\n  // for\\(\\) 루프 헤더는 건드리지 않음\n  if \\(trimmed.endsWith\\(';'\\) && !trimmed.match\\(/^\\\\s*for\\\\s*\\\\\\(/\\)\\) {\n    count++;\n    return trimmed.slice\\(0, -1\\);\n  }\n  return line;\n}\\);\nfs.writeFileSync\\('js/ui.js', result.join\\('\\\\n'\\)\\);\nconsole.log\\('세미콜론 제거 완료: ' + count + '개 / ' + lines.length + '줄'\\);\n\")",
-      "Bash(node --check /c/Users/canno/workspace/samba-wave/js/modules/collector.js && echo \"collector.js OK\"\nnode --check /c/Users/canno/workspace/samba-wave/js/modules/shipment-manager.js && echo \"shipment-manager.js OK\"\nnode --check /c/Users/canno/workspace/samba-wave/js/ui.js && echo \"ui.js OK\")",
-      "WebFetch(domain:www.musinsa.com)",
-      "WebFetch(domain:api.musinsa.com)",
-      "WebFetch(domain:api.allorigins.win)",
-      "Bash(node --version && npm --version)",
-      "Bash(cd \"/c/Users/canno/workspace/samba-wave\" && node test-musinsa-api.mjs 2>&1)",
-      "Bash(cd \"/c/Users/canno/workspace/samba-wave\" && node test-musinsa-api2.mjs 2>&1)",
-      "Bash(cd \"/c/Users/canno/workspace/samba-wave\" && node test-musinsa-api3.mjs 2>&1)",
-      "Bash(cd \"/c/Users/canno/workspace/samba-wave\" && node test-musinsa-api4.mjs 2>&1)",
-      "Bash(cd \"/c/Users/canno/workspace/samba-wave\" && node test-musinsa-api5.mjs 2>&1)",
-      "Bash(cd \"/c/Users/canno/workspace/samba-wave\" && node test-musinsa-api6.mjs 2>&1)",
-      "Bash(cd \"/c/Users/canno/workspace/samba-wave\" && node test-musinsa-api7.mjs 2>&1)",
-      "Bash(cd \"/c/Users/canno/workspace/samba-wave\" && node test-musinsa-api8.mjs 2>&1)",
-      "Bash(cd \"/c/Users/canno/workspace/samba-wave\" && npm install 2>&1)",
-      "Bash(curl -s http://localhost:3001/api/musinsa/goods/3900000 | node -e \"const d=JSON.parse\\(require\\('fs'\\).readFileSync\\('/dev/stdin','utf8'\\)\\); const p=d.data; console.log\\('상품명:', p.name\\); console.log\\('브랜드:', p.brand\\); console.log\\('판매가:', p.salePrice, '원'\\); console.log\\('정상가:', p.originalPrice, '원'\\); console.log\\('할인율:', p.discountRate, '%'\\); console.log\\('카테고리:', p.category\\); console.log\\('이미지:', p.images[0]\\); console.log\\('URL:', p.sourceUrl\\);\")"
+      "Bash",
+      "WebFetch"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -120,6 +120,123 @@ class CategoryManager {
     getMarketCategoryList(market) {
         return this.marketCategories[market] || []
     }
+
+    // ==================== 카테고리 트리 영속화 ====================
+
+    /**
+     * categoryTree 스토어에서 전체 트리 로드
+     * @returns {{ [siteName]: { cat1, cat2, cat3, cat4 } }}
+     */
+    async loadCategoryTree() {
+        const records = await storage.getAll('categoryTree')
+        const result = {}
+        for (const rec of records) {
+            result[rec.siteName] = {
+                cat1: rec.cat1 || [],
+                cat2: rec.cat2 || {},
+                cat3: rec.cat3 || {},
+                cat4: rec.cat4 || {}
+            }
+        }
+        return result
+    }
+
+    /**
+     * 수집 상품 기반 카테고리를 기존 트리에 병합 후 저장
+     * 상품이 삭제되어도 한번 생성된 카테고리는 유지됨
+     * @param {Object} newCatData - extractCategoriesFromProducts() 결과
+     */
+    async mergeAndSaveCategories(newCatData) {
+        const toSortedArr = (set) => [...set].sort((a, b) => a.localeCompare(b, 'ko'))
+
+        for (const [siteName, newData] of Object.entries(newCatData)) {
+            const existing = await storage.get('categoryTree', siteName) || {
+                siteName, cat1: [], cat2: {}, cat3: {}, cat4: {}
+            }
+
+            // cat1 병합
+            const cat1 = toSortedArr(new Set([...existing.cat1, ...newData.cat1]))
+
+            // cat2 병합 (cat1별 하위 목록)
+            const cat2 = { ...existing.cat2 }
+            for (const [k, arr] of Object.entries(newData.cat2)) {
+                cat2[k] = toSortedArr(new Set([...(cat2[k] || []), ...arr]))
+            }
+
+            // cat3 병합
+            const cat3 = { ...existing.cat3 }
+            for (const [k, arr] of Object.entries(newData.cat3)) {
+                cat3[k] = toSortedArr(new Set([...(cat3[k] || []), ...arr]))
+            }
+
+            // cat4 병합
+            const cat4 = { ...existing.cat4 }
+            for (const [k, arr] of Object.entries(newData.cat4)) {
+                cat4[k] = toSortedArr(new Set([...(cat4[k] || []), ...arr]))
+            }
+
+            await storage.save('categoryTree', {
+                siteName, cat1, cat2, cat3, cat4,
+                updatedAt: new Date().toISOString()
+            })
+        }
+    }
+
+    /**
+     * 특정 소싱사이트의 카테고리 트리 삭제
+     * @param {string} siteName - 소싱사이트명
+     */
+    async deleteSiteCategoryTree(siteName) {
+        await storage.delete('categoryTree', siteName)
+    }
+
+    /**
+     * 수집 상품에서 사이트별 카테고리 계층 추출
+     * @param {Array} products - collectedProducts 배열
+     * @returns {{ [site]: { cat1, cat2, cat3, cat4 } }}
+     */
+    extractCategoriesFromProducts(products) {
+        const raw = {}
+        for (const p of products) {
+            const site = p.sourceSite
+            if (!site) continue
+            if (!raw[site]) raw[site] = { cat1: new Set(), cat2: {}, cat3: {}, cat4: {} }
+
+            const c1 = (p.category1 || '').trim()
+            const c2 = (p.category2 || '').trim()
+            const c3 = (p.category3 || '').trim()
+            const c4 = (p.category4 || '').trim()
+
+            if (!c1) continue
+            raw[site].cat1.add(c1)
+
+            if (!c2) continue
+            if (!raw[site].cat2[c1]) raw[site].cat2[c1] = new Set()
+            raw[site].cat2[c1].add(c2)
+
+            if (!c3) continue
+            const k12 = `${c1}|${c2}`
+            if (!raw[site].cat3[k12]) raw[site].cat3[k12] = new Set()
+            raw[site].cat3[k12].add(c3)
+
+            if (!c4) continue
+            const k123 = `${c1}|${c2}|${c3}`
+            if (!raw[site].cat4[k123]) raw[site].cat4[k123] = new Set()
+            raw[site].cat4[k123].add(c4)
+        }
+
+        const toArr = set => [...set].sort((a, b) => a.localeCompare(b, 'ko'))
+        const result = {}
+        for (const [site, data] of Object.entries(raw)) {
+            result[site] = {
+                cat1: toArr(data.cat1),
+                cat2: Object.fromEntries(Object.entries(data.cat2).map(([k, v]) => [k, toArr(v)])),
+                cat3: Object.fromEntries(Object.entries(data.cat3).map(([k, v]) => [k, toArr(v)])),
+                cat4: Object.fromEntries(Object.entries(data.cat4).map(([k, v]) => [k, toArr(v)]))
+            }
+        }
+        return result
+    }
 }
 
 // 글로벌 인스턴스

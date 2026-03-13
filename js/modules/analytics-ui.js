@@ -501,7 +501,8 @@ async function updateDashboardCards() {
 
     const totalSales = orders.reduce((sum, o) => sum + (o.salePrice || 0), 0)
     const orderCount = orders.length
-    const selling = products.filter(p => p.status === 'active').length
+    // 마켓에 등록되어 판매중인 상품만 카운트
+    const selling = products.filter(p => (p.registeredAccounts || []).length > 0).length
 
     const elSales = document.getElementById('dash-total-sales')
     const elCount = document.getElementById('dash-order-count')

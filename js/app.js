@@ -137,7 +137,13 @@ class SambaWaveApp {
 
         // 페이지별 초기화
         if (pageName === 'analytics') setTimeout(initAcTables, 60)
-        if (pageName === 'products') setTimeout(updateDashboardCards, 100)
+        if (pageName === 'apply-category') setTimeout(() => {
+            if (typeof ui !== 'undefined') ui.renderCategoryBrowser()
+        }, 60)
+        if (pageName === 'products') setTimeout(() => {
+            updateDashboardCards()
+            if (typeof ui !== 'undefined') ui.renderProducts()
+        }, 100)
         if (pageName === 'dashboard') setTimeout(initDashboardCharts, 80)
         if (pageName === 'sourcing-collect') setTimeout(() => {
             if (typeof ui !== 'undefined') ui.renderSearchFilterTable()
@@ -147,7 +153,7 @@ class SambaWaveApp {
             if (typeof ui !== 'undefined') ui.renderForbiddenWords()
             // Claude API 저장된 설정 불러오기
             storage.getAll('settings').then(rows => {
-                const cfg = rows.find(r => r.id === 'claude')
+                const cfg = rows.find(r => r.key === 'claude')
                 if (!cfg) return
                 const keyEl = document.getElementById('claude-api-key')
                 const modelEl = document.getElementById('claude-model')
@@ -230,6 +236,12 @@ const SITE_LIST = ['ABCmart','FOLDERStyle','GrandStage','GSShop','LOTTEON','MUSI
 window.addEventListener('load', async () => {
     app.restorePageFromUrl()
     await initializeDummyData()
+    // 더미데이터 추가 후 상품 목록 새로고침
+    if (typeof ui !== 'undefined') {
+        await productManager.loadProducts()
+        ui.renderProducts()
+        ui.updateCounts()
+    }
 })
 
 // 뒤로가기/앞으로가기 지원
@@ -263,14 +275,15 @@ function addPriceRange() {
  */
 async function initializeDummyData() {
     // 이미 초기화 완료 플래그가 있으면 재삽입하지 않음
+    // settings 스토어의 keyPath는 'key'이므로 key 속성으로 조회/저장
     const settings = await storage.getAll('settings')
-    const initialized = settings.find(s => s.id === 'dummyDataInitialized')
+    const initialized = settings.find(s => s.key === 'dummyDataInitialized')
     if (initialized) return
 
     const existingProducts = await storage.getAll('products')
     if (existingProducts.length > 0) {
         // 상품이 있으면 플래그만 기록하고 종료
-        await storage.save('settings', { id: 'dummyDataInitialized', value: true })
+        await storage.save('settings', { key: 'dummyDataInitialized', value: true })
         return
     }
 
@@ -352,7 +365,7 @@ async function initializeDummyData() {
     }
 
     // 초기화 완료 플래그 저장 (이후 재삽입 방지)
-    await storage.save('settings', { id: 'dummyDataInitialized', value: true })
+    await storage.save('settings', { key: 'dummyDataInitialized', value: true })
     console.log('더미 데이터 초기화 완료')
 }
 

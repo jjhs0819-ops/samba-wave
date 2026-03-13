@@ -4,7 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SAMBA-WAVE</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='40' y2='40' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0%25' stop-color='%23FF8C00'/%3E%3Cstop offset='100%25' stop-color='%23FFB84D'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='40' height='40' rx='8' fill='%230F0F0F'/%3E%3Ctext x='20' y='26' font-family='Arial Black,sans-serif' font-size='16' font-weight='900' fill='url(%23g)' text-anchor='middle' letter-spacing='0.5'%3ESW%3C/text%3E%3C/svg%3E">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40' fill='none'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='40' y2='40' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0%25' stop-color='%23FF8C00'/%3E%3Cstop offset='100%25' stop-color='%23FFB84D'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='40' height='40' rx='8' fill='%231A1A1A'/%3E%3Cpath d='M4 16 Q10 12 16 16 Q22 20 28 16 Q34 12 38 16' stroke='%23FF8C00' stroke-opacity='0.25' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3Cpath d='M4 21 Q10 17 16 21 Q22 25 28 21 Q34 17 38 21' stroke='%23FF8C00' stroke-opacity='0.55' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3Cpath d='M4 26 Q10 22 16 26 Q22 30 28 26 Q34 22 38 26' stroke='url(%23g)' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3Ctext x='20' y='15' font-family='Arial Black,sans-serif' font-size='7.5' font-weight='900' fill='url(%23g)' text-anchor='middle' dominant-baseline='middle' letter-spacing='0.5'%3ESW%3C/text%3E%3C/svg%3E">
+
+    <!-- 테마 초기화 (FOUC 방지 - CSS 로드 전 실행) -->
+    <script>
+    (function(){
+        if (localStorage.getItem('samba-theme') === 'light') {
+            document.documentElement.setAttribute('data-theme', 'light')
+        }
+    })()
+    </script>
 
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -357,6 +366,11 @@
             font-weight: 600;
             font-size: 0.9375rem;
         }
+
+        /* 숫자 입력 스피너(상하버튼) 제거 */
+        input[type=number] { -moz-appearance: textfield; }
+        input[type=number]::-webkit-outer-spin-button,
+        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
         /* 마켓 탭 */
         .market-tab {
@@ -1267,6 +1281,574 @@
             border-color: #2D2D2D;
         }
         .ac-view-btn:not(.ac-active):hover { color: #999; border-color: #3D3D3D; }
+
+        /* ============================================
+           테마 토글 버튼
+        ============================================ */
+        .theme-toggle-btn {
+            color: #888;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+        .theme-toggle-btn:hover {
+            color: #FF8C00;
+            background: rgba(255,140,0,0.1);
+        }
+
+        /* ============================================
+           라이트 모드 오버라이드
+        ============================================ */
+        [data-theme="light"] {
+            --lt-bg: #F3F4F6;
+            --lt-bg-main: #EBEDF0;
+            --lt-card: #FFFFFF;
+            --lt-card-hover: #F9FAFB;
+            --lt-border: #E0E0E0;
+            --lt-border-light: #EBEBEB;
+            --lt-text: #1A1A1A;
+            --lt-text-secondary: #555555;
+            --lt-text-muted: #888888;
+            --lt-input-bg: #FFFFFF;
+            --lt-input-border: #D0D0D0;
+            --lt-header-bg: rgba(255,255,255,0.95);
+            --lt-dropdown-bg: #FFFFFF;
+            --lt-modal-bg: #FFFFFF;
+            --lt-hover-bg: rgba(255,140,0,0.06);
+            --lt-scrollbar: #CCC;
+        }
+
+        /* 스크롤바 */
+        [data-theme="light"] ::-webkit-scrollbar-thumb { background: var(--lt-scrollbar); }
+        [data-theme="light"] ::-webkit-scrollbar-track { background: #F0F0F0; }
+
+        /* body, main 배경 */
+        [data-theme="light"] body {
+            background: var(--lt-bg) !important;
+            color: var(--lt-text) !important;
+        }
+        [data-theme="light"] main {
+            background: linear-gradient(135deg, var(--lt-bg) 0%, var(--lt-bg-main) 100%) !important;
+        }
+
+        /* 헤더 */
+        [data-theme="light"] header {
+            background: var(--lt-header-bg) !important;
+            background-color: var(--lt-header-bg) !important;
+            border-bottom-color: var(--lt-border) !important;
+        }
+
+        /* 로고 영역 */
+        [data-theme="light"] header h1 { color: #1A1A1A !important; }
+        [data-theme="light"] header p { color: #888 !important; }
+        [data-theme="light"] header svg rect { fill: #F0F0F0; stroke: #D0D0D0; }
+
+        /* 네비게이션 */
+        [data-theme="light"] .nav-item { color: #444 !important; }
+        [data-theme="light"] .nav-item:hover { color: #FF8C00 !important; }
+        [data-theme="light"] .nav-item.sidebar-active { color: #FF8C00 !important; }
+        [data-theme="light"] .nav-dropdown-toggle { color: #444 !important; }
+        [data-theme="light"] .nav-dropdown-toggle:hover,
+        [data-theme="light"] .nav-dropdown:hover .nav-dropdown-toggle { color: #FF8C00 !important; }
+        [data-theme="light"] .nav-dropdown.active .nav-dropdown-toggle { color: #FF8C00 !important; }
+        [data-theme="light"] .nav-dropdown-menu {
+            background: var(--lt-dropdown-bg) !important;
+            border-color: var(--lt-border) !important;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.12) !important;
+        }
+        [data-theme="light"] .nav-dropdown-item { color: #555 !important; }
+        [data-theme="light"] .nav-dropdown-item:hover { color: #FF8C00 !important; background: rgba(255,140,0,0.06) !important; }
+        [data-theme="light"] .nav-dropdown-item.active { color: #FF8C00 !important; background: rgba(255,140,0,0.08) !important; }
+
+        /* 통계 카드 */
+        [data-theme="light"] .stat-card {
+            background: var(--lt-card) !important;
+            border-color: var(--lt-border) !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        [data-theme="light"] .stat-card:hover {
+            background: var(--lt-card-hover) !important;
+            border-color: #FF8C00 !important;
+        }
+        [data-theme="light"] .stat-card p:first-child { color: #888 !important; }
+        [data-theme="light"] .stat-card p:last-child { color: #999 !important; }
+
+        /* 입력 필드 */
+        [data-theme="light"] input,
+        [data-theme="light"] textarea {
+            background: var(--lt-input-bg) !important;
+            border-color: var(--lt-input-border) !important;
+            color: var(--lt-text) !important;
+        }
+        [data-theme="light"] input:focus,
+        [data-theme="light"] textarea:focus {
+            background: #FFFFFF !important;
+            border-color: #FF8C00 !important;
+            box-shadow: 0 0 0 3px rgba(255,140,0,0.12) !important;
+        }
+        [data-theme="light"] select {
+            background: var(--lt-input-bg) !important;
+            border-color: var(--lt-input-border) !important;
+            color: var(--lt-text) !important;
+        }
+        [data-theme="light"] select:hover { border-color: #FF8C00 !important; color: var(--lt-text) !important; }
+        [data-theme="light"] select option { background: #FFFFFF; color: #1A1A1A; }
+
+        /* 테이블 */
+        [data-theme="light"] thead { border-bottom-color: var(--lt-border) !important; }
+        [data-theme="light"] thead th { color: #888 !important; }
+        [data-theme="light"] tbody tr { border-bottom-color: var(--lt-border-light) !important; }
+        [data-theme="light"] tbody tr:hover { background: rgba(255,140,0,0.04) !important; }
+        [data-theme="light"] tbody td { color: var(--lt-text) !important; }
+
+        /* 카드 (.bg-white, .ac-card, .chart-container) */
+        [data-theme="light"] .bg-white {
+            background: var(--lt-card) !important;
+            border-color: var(--lt-border) !important;
+            color: var(--lt-text) !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
+        }
+        [data-theme="light"] .ac-card {
+            background: var(--lt-card) !important;
+            border-color: var(--lt-border) !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        [data-theme="light"] .ac-card:hover { border-color: #CCC !important; }
+        [data-theme="light"] .ac-card-title { color: var(--lt-text) !important; }
+        [data-theme="light"] .ac-card-sub { color: #999 !important; }
+        [data-theme="light"] .chart-container {
+            background: var(--lt-card) !important;
+            border-color: var(--lt-border) !important;
+        }
+
+        /* 상품 카드 */
+        [data-theme="light"] .product-card {
+            background: var(--lt-card) !important;
+            border-color: var(--lt-border) !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        [data-theme="light"] .product-card:hover { border-color: #CCC !important; }
+        [data-theme="light"] .product-card-img { background: #F0F0F0 !important; }
+        [data-theme="light"] .product-card-options { border-top-color: var(--lt-border) !important; }
+
+        /* 정책 섹션 */
+        [data-theme="light"] .policy-section {
+            background: var(--lt-card) !important;
+            border-color: var(--lt-border) !important;
+        }
+        [data-theme="light"] .policy-section-header { border-bottom-color: var(--lt-border) !important; }
+
+        /* 모달 */
+        [data-theme="light"] .fixed.inset-0 { background: rgba(0,0,0,0.3) !important; }
+        [data-theme="light"] .fixed.inset-0 > div {
+            background: var(--lt-modal-bg) !important;
+            border-color: var(--lt-border) !important;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15) !important;
+        }
+        [data-theme="light"] .modal-header { border-bottom-color: var(--lt-border) !important; }
+
+        /* 버튼 */
+        [data-theme="light"] .bg-gray-300 {
+            background: #E5E5E5 !important;
+            color: #444 !important;
+            border-color: #D0D0D0 !important;
+        }
+        [data-theme="light"] .bg-gray-300:hover { background: #DDD !important; border-color: #CCC !important; }
+        [data-theme="light"] .bg-gray-400 { background: #D0D0D0 !important; }
+
+        /* 라벨 */
+        [data-theme="light"] label { color: #444 !important; }
+
+        /* 텍스트 오버라이드 */
+        [data-theme="light"] .text-gray-400 { color: #999 !important; }
+        [data-theme="light"] .text-gray-500 { color: #888 !important; }
+        [data-theme="light"] .text-gray-600 { color: #666 !important; }
+        [data-theme="light"] .text-gray-700 { color: #555 !important; }
+        [data-theme="light"] .text-gray-900 { color: #1A1A1A !important; }
+
+        /* 배경 오버라이드 */
+        [data-theme="light"] .bg-gray-50 { background: #F9FAFB !important; }
+        [data-theme="light"] .bg-blue-50 { background: rgba(255,140,0,0.06) !important; }
+        [data-theme="light"] .bg-green-50 { background: rgba(100,200,100,0.06) !important; }
+        [data-theme="light"] .bg-red-100 { background: rgba(255,100,100,0.08) !important; }
+        [data-theme="light"] .border-gray-200 { border-color: var(--lt-border) !important; }
+        [data-theme="light"] .border-gray-300 { border-color: var(--lt-input-border) !important; }
+
+        /* 사이트 태그 */
+        [data-theme="light"] .site-tag {
+            border-color: #D0D0D0 !important;
+            background: #F5F5F5 !important;
+            color: #666 !important;
+        }
+        [data-theme="light"] .site-tag:hover { border-color: #FF8C00 !important; color: #FF8C00 !important; }
+        [data-theme="light"] .site-tag.active {
+            background: rgba(255,140,0,0.1) !important;
+            border-color: #FF8C00 !important;
+            color: #FF8C00 !important;
+        }
+
+        /* 마켓 탭 */
+        [data-theme="light"] .market-tab { color: #888 !important; }
+        [data-theme="light"] .market-tab.active {
+            background: rgba(255,140,0,0.06) !important;
+            border-color: var(--lt-border) !important;
+        }
+
+        /* 카테고리 브라우저 */
+        [data-theme="light"] .cat-col { border-right-color: var(--lt-border) !important; }
+        [data-theme="light"] .cat-col-header {
+            color: #888 !important;
+            border-bottom-color: var(--lt-border) !important;
+            background: #F5F5F5 !important;
+        }
+        [data-theme="light"] .cat-item { color: #444 !important; }
+
+        /* 드래그 아이템 */
+        [data-theme="light"] .drag-item {
+            background: #F5F5F5 !important;
+            border-color: var(--lt-border) !important;
+        }
+        [data-theme="light"] .drag-handle { color: #BBB !important; }
+
+        /* 가격범위·치환 행 */
+        [data-theme="light"] .price-range-row { border-bottom-color: var(--lt-border-light) !important; }
+        [data-theme="light"] .replace-row { border-bottom-color: var(--lt-border-light) !important; }
+
+        /* 필터 바 */
+        [data-theme="light"] .af-filter-bar {
+            background: var(--lt-card) !important;
+            border-color: var(--lt-border) !important;
+        }
+        [data-theme="light"] .af-divider { background: var(--lt-border) !important; }
+        [data-theme="light"] .af-toggle-btn {
+            background: #F5F5F5 !important;
+            border-color: var(--lt-input-border) !important;
+            color: #666 !important;
+        }
+        [data-theme="light"] .af-toggle-btn:hover,
+        [data-theme="light"] .af-toggle-btn.af-open {
+            border-color: #FF8C00 !important;
+            color: #FF8C00 !important;
+        }
+        [data-theme="light"] .af-drawer {
+            border-top-color: var(--lt-border-light) !important;
+            background: #F9FAFB !important;
+        }
+        [data-theme="light"] .af-drawer-title { color: #999 !important; }
+        [data-theme="light"] .af-chip {
+            border-color: var(--lt-input-border) !important;
+            color: #666 !important;
+        }
+        [data-theme="light"] .af-chip:hover { border-color: rgba(255,140,0,0.5) !important; color: #FF8C00 !important; }
+        [data-theme="light"] .af-chip.af-on { background: rgba(255,140,0,0.08) !important; border-color: #FF8C00 !important; color: #FF8C00 !important; }
+        [data-theme="light"] .af-cb-group {
+            border-top-color: var(--lt-border-light) !important;
+            background: #F9FAFB !important;
+        }
+        [data-theme="light"] .af-cb-label { color: #999 !important; }
+        [data-theme="light"] .af-cb { color: #666 !important; }
+        [data-theme="light"] .af-cb:hover { color: #444 !important; }
+        [data-theme="light"] .af-cb input[type="checkbox"] { accent-color: #E07000 !important; }
+        [data-theme="light"] .af-cb input[type="checkbox"]:checked + span { color: #C06000 !important; }
+        [data-theme="light"] .af-cb-divider { background: var(--lt-border) !important; }
+
+        /* 설정 탭 */
+        [data-theme="light"] .stg-tab { color: #888 !important; }
+        [data-theme="light"] .stg-tab:hover { color: #444 !important; }
+        [data-theme="light"] .stg-tab.stg-tab-on { color: #FF8C00 !important; }
+        [data-theme="light"] .stg-panel-title {
+            color: var(--lt-text) !important;
+            border-bottom-color: var(--lt-border) !important;
+        }
+        [data-theme="light"] .stg-row label { color: #666 !important; }
+        [data-theme="light"] .stg-row input[type="text"],
+        [data-theme="light"] .stg-row input[type="password"] {
+            background: var(--lt-input-bg) !important;
+            border-color: var(--lt-input-border) !important;
+            color: var(--lt-text) !important;
+        }
+        [data-theme="light"] .stg-check-label { color: #444 !important; }
+        [data-theme="light"] .stg-check-hint { background: rgba(255,140,0,0.06) !important; }
+        [data-theme="light"] .stg-actions { border-top-color: var(--lt-border) !important; }
+        [data-theme="light"] .stg-btn-cancel {
+            background: #E5E5E5 !important;
+            border-color: #D0D0D0 !important;
+            color: #666 !important;
+        }
+        [data-theme="light"] .stg-btn-save {
+            background: #FFFFFF !important;
+            border-color: #FF8C00 !important;
+        }
+
+        /* 매출통계 탭, 테이블 */
+        [data-theme="light"] .ac-tab-bar {
+            background: #F0F0F0 !important;
+            border-color: var(--lt-border) !important;
+        }
+        [data-theme="light"] .ac-tab { color: #888 !important; }
+        [data-theme="light"] .ac-tab.ac-tab-on { background: rgba(255,140,0,0.1) !important; color: #FF8C00 !important; }
+        [data-theme="light"] .ac-data-table th {
+            color: #888 !important;
+            border-bottom-color: var(--lt-border) !important;
+            background: #F5F5F5 !important;
+        }
+        [data-theme="light"] .ac-data-table td {
+            color: #555 !important;
+            border-bottom-color: var(--lt-border-light) !important;
+        }
+        [data-theme="light"] .ac-data-table td:first-child { color: #333 !important; }
+        [data-theme="light"] .ac-data-table .ac-sum-row td { background: rgba(255,140,0,0.06) !important; }
+        [data-theme="light"] .ac-view-btn:not(.ac-active) {
+            background: #F0F0F0 !important;
+            color: #666 !important;
+            border-color: var(--lt-border) !important;
+        }
+
+        /* 대시보드 테이블 */
+        [data-theme="light"] .db-tbl th {
+            color: #888 !important;
+            border-bottom-color: var(--lt-border) !important;
+        }
+        [data-theme="light"] .db-tbl td {
+            color: #444 !important;
+            border-bottom-color: var(--lt-border-light) !important;
+        }
+        [data-theme="light"] .db-tbl td:first-child { color: #888 !important; }
+        [data-theme="light"] .db-tbl tbody tr:hover td { background: rgba(255,140,0,0.04) !important; }
+
+        /* 레전드 */
+        [data-theme="light"] .ac-legend-item { color: #666 !important; }
+
+        /* 테마 토글 버튼 라이트 모드 */
+        [data-theme="light"] .theme-toggle-btn { color: #666; }
+        [data-theme="light"] .theme-toggle-btn:hover { color: #FF8C00; background: rgba(255,140,0,0.08); }
+        [data-theme="light"] .theme-icon-light { display: inline !important; }
+        [data-theme="light"] .theme-icon-dark { display: none !important; }
+
+        /* 헤더 아이콘 버튼 */
+        [data-theme="light"] header button[style*="color: #888"] { color: #666 !important; }
+
+        /* 인라인 스타일 오버라이드 (공통 패턴) */
+        [data-theme="light"] [style*="color:#E5E5E5"],
+        [data-theme="light"] [style*="color: #E5E5E5"] { color: #1A1A1A !important; }
+        [data-theme="light"] [style*="color:#888"],
+        [data-theme="light"] [style*="color: #888"] { color: #888 !important; }
+        [data-theme="light"] [style*="color:#666"],
+        [data-theme="light"] [style*="color: #666"] { color: #999 !important; }
+        [data-theme="light"] [style*="color:#555"],
+        [data-theme="light"] [style*="color: #555"] { color: #888 !important; }
+        [data-theme="light"] [style*="color:#444"],
+        [data-theme="light"] [style*="color: #444"] { color: #999 !important; }
+        [data-theme="light"] [style*="color:#999"],
+        [data-theme="light"] [style*="color: #999"] { color: #AAA !important; }
+        [data-theme="light"] [style*="color:#C5C5C5"] { color: #444 !important; }
+
+        /* 인라인 배경 오버라이드 */
+        [data-theme="light"] [style*="background:rgba(18,18,18"],
+        [data-theme="light"] [style*="background:rgba(14,14,14"],
+        [data-theme="light"] [style*="background:rgba(30,30,30"],
+        [data-theme="light"] [style*="background:rgba(22,22,22"],
+        [data-theme="light"] [style*="background:rgba(8,8,8"],
+        [data-theme="light"] [style*="background:#1E1E1E"],
+        [data-theme="light"] [style*="background:#1A1A1A"],
+        [data-theme="light"] [style*="background:#141414"] {
+            background: var(--lt-card) !important;
+        }
+
+        /* 인라인 보더 오버라이드 */
+        [data-theme="light"] [style*="border:1px solid #2A2A2A"],
+        [data-theme="light"] [style*="border:1px solid #2D2D2D"],
+        [data-theme="light"] [style*="border:1px solid #3D3D3D"],
+        [data-theme="light"] [style*="border-bottom:1px solid #2D2D2D"],
+        [data-theme="light"] [style*="border-top:1px solid #2D2D2D"] {
+            border-color: var(--lt-border) !important;
+        }
+
+        /* 페이지 콘텐츠 내 주요 섹션 */
+        [data-theme="light"] .page-content h2 { color: var(--lt-text) !important; }
+        [data-theme="light"] .page-content h3 { color: var(--lt-text) !important; }
+
+        /* 주문 탭 버튼 라이트 모드 */
+        [data-theme="light"] .order-tab {
+            background: #E8E8E8 !important;
+            color: #555 !important;
+            border-color: #D0D0D0 !important;
+        }
+
+        /* 주문 로그 / 전송 로그 - 파란빛 다크 팔레트 오버라이드 */
+        [data-theme="light"] [style*="background:#0D1117"],
+        [data-theme="light"] [style*="background:#080A10"],
+        [data-theme="light"] [style*="background:#0A0D14"],
+        [data-theme="light"] [style*="background:#111520"],
+        [data-theme="light"] [style*="background:rgba(14,14,20"],
+        [data-theme="light"] [style*="background:rgba(8,10,16"] {
+            background: var(--lt-card) !important;
+        }
+        [data-theme="light"] [style*="border:1px solid #1C2333"],
+        [data-theme="light"] [style*="border:1px solid #1E2030"],
+        [data-theme="light"] [style*="border:1px solid #2A3040"],
+        [data-theme="light"] [style*="border:1px solid #1C1E2A"],
+        [data-theme="light"] [style*="border-bottom:1px solid #1C2333"],
+        [data-theme="light"] [style*="border-bottom:1px solid #181C28"],
+        [data-theme="light"] [style*="border-bottom:1px solid #1C1E2A"],
+        [data-theme="light"] [style*="border-bottom:2px solid #1C2333"],
+        [data-theme="light"] [style*="border-right:1px solid #1C2333"],
+        [data-theme="light"] [style*="border-top:1px solid #1C1E2A"] {
+            border-color: var(--lt-border) !important;
+        }
+        [data-theme="light"] [style*="color:#94A3B8"],
+        [data-theme="light"] [style*="color:#9AA5C0"],
+        [data-theme="light"] [style*="color:#B0BAD0"] {
+            color: #555 !important;
+        }
+        [data-theme="light"] [style*="color:#4A5568"] {
+            color: #888 !important;
+        }
+        [data-theme="light"] [style*="color:#8A95B0"] {
+            color: #666 !important;
+        }
+        [data-theme="light"] [style*="color:#7B8DB0"] {
+            color: #666 !important;
+        }
+        [data-theme="light"] [style*="color:#374151"],
+        [data-theme="light"] [style*="color:#3D4A60"] {
+            color: #999 !important;
+        }
+
+        /* 전송/주문 페이지 - 섹션 border 추가 오버라이드 */
+        [data-theme="light"] [style*="border-bottom:1px solid #181C28"] {
+            border-bottom-color: var(--lt-border) !important;
+        }
+        [data-theme="light"] [style*="border-bottom:1px solid #1C1E2A"] {
+            border-bottom-color: var(--lt-border) !important;
+        }
+        [data-theme="light"] [style*="border-top:1px solid #1C1E2A"] {
+            border-top-color: var(--lt-border) !important;
+        }
+        [data-theme="light"] [style*="border:1px solid #252B3B"] {
+            border-color: var(--lt-border) !important;
+        }
+
+        /* 버튼 - rgba(50,50,50) 패턴 (주문기간버튼, 가져오기, Key발급 등) */
+        [data-theme="light"] [style*="background:rgba(50,50,50"] {
+            background: #E8E8E8 !important;
+            border-color: #D0D0D0 !important;
+            color: #444 !important;
+        }
+        /* 필터 바 - rgba(18,18,18) + #232323 패턴 */
+        [data-theme="light"] [style*="border:1px solid #232323"] {
+            border-color: var(--lt-border) !important;
+        }
+
+        /* 전송 페이지 설정 패널 내부 input/select 오버라이드 */
+        [data-theme="light"] #page-shipment select,
+        [data-theme="light"] #page-shipment input[type="text"] {
+            background: var(--lt-input-bg) !important;
+            border-color: var(--lt-input-border) !important;
+            color: var(--lt-text) !important;
+        }
+        /* 전송 페이지 날짜 선택 박스 */
+        [data-theme="light"] #page-shipment [style*="background:#111520"] {
+            background: var(--lt-input-bg) !important;
+        }
+
+        /* 주문 페이지 select/input 오버라이드 */
+        [data-theme="light"] #page-orders select {
+            background: var(--lt-input-bg) !important;
+            border-color: var(--lt-input-border) !important;
+            color: var(--lt-text) !important;
+        }
+        [data-theme="light"] #page-orders input[type="text"],
+        [data-theme="light"] #page-orders textarea {
+            background: var(--lt-input-bg) !important;
+            border-color: var(--lt-input-border) !important;
+            color: var(--lt-text) !important;
+        }
+
+        /* 주문 행 - JS 동적 생성 파란빛 다크 오버라이드 */
+        [data-theme="light"] [style*="background:#161B27"],
+        [data-theme="light"] [style*="background:#0F1320"],
+        [data-theme="light"] [style*="background:#1C2035"],
+        [data-theme="light"] [style*="background:#1A1F2E"],
+        [data-theme="light"] [style*="background:#12233D"],
+        [data-theme="light"] [style*="background:#152035"],
+        [data-theme="light"] [style*="background:#122B1A"],
+        [data-theme="light"] [style*="background:#221E0E"],
+        [data-theme="light"] [style*="background:#2A1E0A"],
+        [data-theme="light"] [style*="background:#2A1310"],
+        [data-theme="light"] [style*="background:#0E0E14"] {
+            background: var(--lt-card) !important;
+        }
+        [data-theme="light"] [style*="background:#0A0C14"] {
+            background: #F5F5F5 !important;
+        }
+        [data-theme="light"] [style*="border:1px solid #252B3B"],
+        [data-theme="light"] [style*="border:1px solid #2D3550"],
+        [data-theme="light"] [style*="border:1px solid #1E3A60"],
+        [data-theme="light"] [style*="border:1px solid #1A4A28"],
+        [data-theme="light"] [style*="border:1px solid #78450A"],
+        [data-theme="light"] [style*="border:1px solid #6B2A20"],
+        [data-theme="light"] [style*="border:1px solid #2D3A55"],
+        [data-theme="light"] [style*="border:1px solid #1E2030"],
+        [data-theme="light"] [style*="border-right:1px solid #252B3B"],
+        [data-theme="light"] [style*="border-bottom:1px solid #252B3B"],
+        [data-theme="light"] [style*="border-bottom:1px solid #1E2030"] {
+            border-color: var(--lt-border) !important;
+        }
+        [data-theme="light"] [style*="background:#252B3B"] {
+            background: var(--lt-border) !important;
+        }
+        [data-theme="light"] [style*="background:#2D3550"] {
+            background: var(--lt-border) !important;
+        }
+        /* 주문 행 텍스트 색상 오버라이드 */
+        [data-theme="light"] [style*="color:#EEF2FF"] { color: #1A1A1A !important; }
+        [data-theme="light"] [style*="color:#D8DEE9"] { color: #333 !important; }
+        [data-theme="light"] [style*="color:#D1D9EE"] { color: #333 !important; }
+        [data-theme="light"] [style*="color:#8B9FC8"] { color: #666 !important; }
+        [data-theme="light"] [style*="color:#7BAAD4"] { color: #2563EB !important; }
+        [data-theme="light"] [style*="color:#6DBF8A"] { color: #16A34A !important; }
+        [data-theme="light"] [style*="color:#D4A017"] { color: #B45309 !important; }
+        [data-theme="light"] [style*="color:#3D4A6A"] { color: #BBB !important; }
+        [data-theme="light"] [style*="color:#9AA5C0"] { color: #666 !important; }
+
+        /* 전송 검색하기/초기화 버튼 */
+        [data-theme="light"] [style*="background:#2A2F3E"] {
+            background: #E8E8E8 !important;
+            color: #333 !important;
+        }
+        [data-theme="light"] [style*="border:1px solid #3D4560"],
+        [data-theme="light"] [style*="border:1px solid #2A3040"] {
+            border-color: var(--lt-border) !important;
+        }
+        [data-theme="light"] [style*="border-top:1px solid #181C28"],
+        [data-theme="light"] [style*="border-bottom:2px solid #181C28"] {
+            border-color: var(--lt-border) !important;
+        }
+
+        /* 주문 메시지 발송 뱃지 - 더 밝은 톤 */
+        [data-theme="light"] [style*="background:#0D1E14"] {
+            background: #E8F5E9 !important;
+            color: #2E7D32 !important;
+        }
+        [data-theme="light"] [style*="border:1px solid #1B5C38"] {
+            border-color: #81C784 !important;
+        }
+
+        /* 통계/설정 체크박스 - 라이트 모드 accent-color */
+        [data-theme="light"] input[type="checkbox"] { accent-color: #E07000 !important; }
+        [data-theme="light"] input[type="radio"] { accent-color: #E07000 !important; }
+
+        /* 전환 애니메이션 */
+        body, main, header, .stat-card, .ac-card, .product-card, .policy-section,
+        .bg-white, input, select, textarea, .nav-item, .nav-dropdown-toggle,
+        .nav-dropdown-menu, .site-tag, .market-tab, .af-filter-bar, .af-toggle-btn,
+        .af-chip, .stg-tab, .stg-row input, .theme-toggle-btn, label, thead, tbody tr,
+        .drag-item, .cat-col, .cat-col-header, .chart-container {
+            transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+        }
     </style>
 </head>
 <body class="bg-black">
@@ -1320,7 +1902,7 @@
                 <!-- 카테고리 매핑 독립 메뉴 -->
                 <button class="nav-item" data-page="apply-category">카테고리 매핑</button>
                 <!-- 상품전송 단독 -->
-                <button class="nav-item" data-page="shipment">상품전송</button>
+                <button class="nav-item" data-page="shipment">상품전송/삭제</button>
                 <!-- 주문관리 독립 메뉴 -->
                 <button class="nav-item" data-page="orders">주문</button>
                 <button class="nav-item" data-page="cs">CS관리</button>
@@ -1338,6 +1920,11 @@
             </nav>
 
             <div class="flex items-center gap-4">
+                <!-- 다크/라이트 모드 토글 -->
+                <button id="theme-toggle" class="p-2 transition theme-toggle-btn" onclick="toggleTheme()" title="다크/라이트 모드 전환">
+                    <i class="fas fa-sun text-lg theme-icon-light" style="display:none;"></i>
+                    <i class="fas fa-moon text-lg theme-icon-dark"></i>
+                </button>
                 <button class="relative p-2 transition" style="color: #888;">
                     <i class="fas fa-bell text-lg"></i>
                     <span class="absolute top-1 right-1 w-2 h-2 bg-orange-500 rounded-full"></span>
@@ -1503,37 +2090,34 @@
                                 <span style="color:#888;">~</span>
                                 <input type="date" style="width:140px; padding:0.375rem 0.5rem; font-size:0.8125rem;">
                             </div>
-                            <select style="padding:0.375rem 0.625rem; font-size:0.8125rem; width:auto;">
-                                <option value="">수집사이트</option>
-                                <option>ABCmart</option><option>FOLDERStyle</option><option>GrandStage</option><option>GSShop</option><option>LOTTEON</option><option>MUSINSA</option><option>Nike</option><option>OliveYoung</option><option>SSG</option>
-                            </select>
-                            <select style="padding:0.375rem 0.625rem; font-size:0.8125rem; width:auto;">
-                                <option>카테고리</option>
+                            <select id="product-source-site" onchange="ui.renderProducts()" style="padding:0.375rem 0.625rem; font-size:0.8125rem; width:auto;">
+                                <option value="">소싱사이트</option>
+                                <option value="ABCmart">ABCmart</option><option value="FOLDERStyle">FOLDERStyle</option><option value="GrandStage">GrandStage</option><option value="GSShop">GSShop</option><option value="LOTTEON">LOTTEON</option><option value="MUSINSA">MUSINSA</option><option value="Nike">Nike</option><option value="OliveYoung">OliveYoung</option><option value="SSG">SSG</option>
                             </select>
                             <select id="product-status" style="padding:0.375rem 0.625rem; font-size:0.8125rem; width:auto;">
-                                <option value="">등록상태: 모두</option>
-                                <option value="active">활성</option>
-                                <option value="inactive">비활성</option>
+                                <option value="">판매현황</option>
+                                <option value="active">마켓등록</option>
+                                <option value="inactive">미등록</option>
                             </select>
                             <select style="padding:0.375rem 0.625rem; font-size:0.8125rem; width:auto;">
                                 <option>판매상태</option>
                             </select>
                         </div>
                         <div style="display:flex; align-items:center; gap:6px; flex-wrap:nowrap; margin-top:0.5rem;">
-                            <select id="product-search-type" style="padding:0.375rem 0.5rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:6px; color:#C5C5C5; width:160px; flex-shrink:0;">
-                                <option value="name">상품명 검색</option>
-                                <option value="no">상품번호 검색</option>
-                                <option value="source-no">수집사이트상품번호 검색</option>
-                                <option value="market-no">전송마켓상품번호 검색</option>
-                                <option value="filter">검색그룹명 검색</option>
-                                <option value="policy">적용정책명 검색</option>
-                                <option value="memo">상품메모 검색</option>
-                                <option value="brand">브랜드명(원문) 검색</option>
+                            <select id="product-search-type" onchange="ui.renderProducts()" style="padding:0.375rem 0.5rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:6px; color:#C5C5C5; width:120px; flex-shrink:0;">
+                                <option value="name">상품명</option>
+                                <option value="filter">검색그룹</option>
+                                <option value="no">상품번호</option>
+                                <option value="policy">적용정책</option>
+                                <option value="brand">브랜드</option>
                             </select>
                             <input type="text" id="product-search" placeholder="검색어를 입력하세요." style="flex:1; min-width:160px; max-width:260px; padding:0.375rem 0.625rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:6px; color:#C5C5C5;">
-                            <button style="background:rgba(255,140,0,0.15); border:1px solid #FF8C00; color:#FF8C00; padding:0.375rem 0.75rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; flex-shrink:0;">검색결과</button>
+                            <button onclick="ui.renderProducts()" style="background:rgba(255,140,0,0.15); border:1px solid #FF8C00; color:#FF8C00; padding:0.375rem 0.75rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; flex-shrink:0; cursor:pointer;">검색결과</button>
                         </div>
                     </div>
+
+                    <!-- 상품관리 로그창 -->
+                    <div id="product-log-line" style="display:none; background:#0A0A0A; border:1px solid #1E1E1E; border-radius:6px; padding:5px 12px; font-size:0.73rem; color:#888; font-family:monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:0.5rem;"></div>
 
                     <!-- 결과 헤더 + 탭 -->
                     <div style="background:rgba(18,18,18,0.95); border:1px solid #2A2A2A; border-radius:8px; padding:8px 14px; margin-bottom:1rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
@@ -1543,16 +2127,26 @@
                                 <span style="font-size:0.8rem; color:#666; white-space:nowrap;">전체선택</span>
                             </label>
                             <span style="font-size:0.875rem; color:#E5E5E5; font-weight:600; white-space:nowrap;">상품관리 <span style="color:#FF8C00;">( 총 <span id="product-count2">0</span>개 검색 )</span></span>
-                            <button style="font-size:0.78rem; padding:4px 12px; border:1px solid rgba(255,140,0,0.35); border-radius:5px; color:#FF8C00; background:rgba(255,140,0,0.08); cursor:pointer; white-space:nowrap;">선택처리</button>
-                            <button onclick="ui.deleteSelectedProducts()" style="font-size:0.78rem; padding:4px 12px; border:1px solid rgba(255,107,107,0.35); border-radius:5px; color:#FF6B6B; background:rgba(255,107,107,0.08); cursor:pointer; white-space:nowrap;">선택삭제</button>
+                            <button onclick="ui.bulkAiImageChange()" style="font-size:0.78rem; padding:4px 12px; border:1px solid rgba(81,207,102,0.35); border-radius:5px; color:#51CF66; background:rgba(81,207,102,0.08); cursor:pointer; white-space:nowrap;">AI이미지 변경</button>
+                            <button onclick="ui.bulkAiNameChange()" style="font-size:0.78rem; padding:4px 12px; border:1px solid rgba(81,207,102,0.35); border-radius:5px; color:#51CF66; background:rgba(81,207,102,0.08); cursor:pointer; white-space:nowrap;">AI상품명변경</button>
+                            <button onclick="ui.bulkAiTagChange()" style="font-size:0.78rem; padding:4px 12px; border:1px solid rgba(76,154,255,0.35); border-radius:5px; color:#4C9AFF; background:rgba(76,154,255,0.08); cursor:pointer; white-space:nowrap;">AI태그</button>
+                            <button onclick="ui.bulkShipment()" style="font-size:0.78rem; padding:4px 12px; border:1px solid rgba(76,154,255,0.35); border-radius:5px; color:#4C9AFF; background:rgba(76,154,255,0.08); cursor:pointer; white-space:nowrap;">상품전송</button>
+                            <button onclick="ui.deleteSelectedProducts()" style="font-size:0.78rem; padding:4px 12px; border:1px solid rgba(255,107,107,0.35); border-radius:5px; color:#FF6B6B; background:rgba(255,107,107,0.08); cursor:pointer; white-space:nowrap;">삭제</button>
                         </div>
                         <div class="flex items-center gap-2">
                             <button id="btn-view-card" onclick="ui.setProductViewMode('card')" style="font-size:0.75rem; padding:0.25rem 0.75rem; border:1px solid #FF8C00; border-radius:6px; color:#FF8C00; background:rgba(255,140,0,0.15);">건별보기</button>
                             <button id="btn-view-image" onclick="ui.setProductViewMode('image')" style="font-size:0.75rem; padding:0.25rem 0.75rem; border:1px solid #3D3D3D; border-radius:6px; color:#C5C5C5; background:transparent;">이미지만보기</button>
-                            <select style="width:auto; padding:0.25rem 0.5rem; font-size:0.75rem;">
-                                <option>20개씩</option>
-                                <option>50개씩</option>
-                                <option>100개씩</option>
+                            <select id="product-sort" onchange="ui.renderProducts()" style="width:auto; padding:0.25rem 0.5rem; font-size:0.75rem; background:#1A1A1A; border:1px solid #3D3D3D; color:#C5C5C5; border-radius:6px;">
+                                <option value="collect-desc">수집일 최신순</option>
+                                <option value="collect-asc">수집일 오래된순</option>
+                                <option value="update-desc">업데이트일 최신순</option>
+                                <option value="update-asc">업데이트일 오래된순</option>
+                            </select>
+                            <select id="product-page-size" onchange="ui.renderProducts()" style="width:auto; padding:0.25rem 0.5rem; font-size:0.75rem; background:#1A1A1A; border:1px solid #3D3D3D; color:#C5C5C5; border-radius:6px;">
+                                <option value="20">20개씩</option>
+                                <option value="50">50개씩</option>
+                                <option value="100">100개씩</option>
+                                <option value="0">전체</option>
                             </select>
                         </div>
                     </div>
@@ -1659,7 +2253,10 @@
                     <div style="border:1px solid #1C2333; border-radius:8px; overflow:hidden; margin-bottom:0.75rem;">
                         <div style="padding:6px 14px; background:#0D1117; border-bottom:1px solid #1C2333; display:flex; align-items:center; justify-content:space-between;">
                             <span style="font-size:0.8rem; font-weight:600; color:#94A3B8;">주문 로그</span>
-                            <button onclick="document.getElementById('order-log').innerHTML='<p style=\'color:#3D4A60;\'>[대기] 로그가 초기화되었습니다.</p>'" style="font-size:0.72rem; color:#555; background:transparent; border:1px solid #1C2333; padding:1px 8px; border-radius:4px; cursor:pointer;">초기화</button>
+                            <div style="display:flex; gap:4px;">
+                                <button onclick="ui.copyLog('order-log')" style="font-size:0.72rem; color:#555; background:transparent; border:1px solid #1C2333; padding:1px 8px; border-radius:4px; cursor:pointer;">복사</button>
+                                <button onclick="document.getElementById('order-log').innerHTML='<p style=\'color:#3D4A60;\'>[대기] 로그가 초기화되었습니다.</p>'" style="font-size:0.72rem; color:#555; background:transparent; border:1px solid #1C2333; padding:1px 8px; border-radius:4px; cursor:pointer;">초기화</button>
+                            </div>
                         </div>
                         <div id="order-log" style="height:120px; overflow-y:auto; padding:8px 14px; font-family:monospace; font-size:0.77rem; color:#4A5568; background:#080A10; line-height:1.6;">
                             <p style="color:#3D4A60;">[대기] 주문 가져오기 결과가 여기에 표시됩니다...</p>
@@ -1736,9 +2333,9 @@
                             </div>
                         </div>
 
-                        <!-- 수집사이트 선택 -->
+                        <!-- 소싱사이트 선택 -->
                         <div class="af-cb-group">
-                            <div class="af-cb-label">수집사이트</div>
+                            <div class="af-cb-label">소싱사이트</div>
                             <div class="af-cb-items">
                                 <label class="af-cb"><input type="checkbox" id="af-all-site" onchange="afToggleAll('site',this)"> <span>전체</span></label>
                                 <div class="af-cb-divider"></div>
@@ -2092,6 +2689,12 @@
                         <span id="proxy-status-text" style="color:#888;">프록시 서버 확인 중...</span>
                         <button onclick="ui.checkAndRefreshProxyStatus()" style="margin-left:auto; background:transparent; border:1px solid #3D3D3D; color:#888; padding:2px 10px; border-radius:4px; font-size:0.75rem; cursor:pointer;">재확인</button>
                     </div>
+                    <!-- 무신사 인증 (최대혜택가용) -->
+                    <div style="display:flex; align-items:center; gap:8px; padding:6px 14px; background:rgba(20,20,20,0.6); border:1px solid #2D2D2D; border-radius:8px; font-size:0.78rem; margin-bottom:12px;">
+                        <span id="musinsa-auth-dot" style="width:8px; height:8px; border-radius:50%; background:#555; flex-shrink:0;"></span>
+                        <span id="musinsa-auth-text" style="color:#888;">인증 상태 확인 중...</span>
+                        <input id="musinsa-cookie-input" type="hidden">
+                    </div>
                     <!-- 소싱사이트 태그 -->
                     <!-- URL 입력 영역 -->
                     <div class="bg-white rounded-lg shadow p-5 mb-4">
@@ -2101,14 +2704,23 @@
                                 <i class="fas fa-folder-plus" style="margin-right:0.375rem;"></i>그룹 생성
                             </button>
                         </div>
-                        <p style="font-size:0.8rem; color:#888;">** URL 입력 후 그룹 생성 → 하단 검색그룹에서 상품수집을 실행하세요. 무신사 실제수집 시 프록시 서버(node proxy-server.mjs)가 필요합니다.</p>
+                        <div style="display:flex; align-items:center; gap:16px; margin-top:4px;">
+                            <p style="font-size:0.8rem; color:#888; flex:1;">** URL 입력 후 그룹 생성 → 하단 검색그룹에서 상품수집을 실행하세요. 무신사 실제수집 시 수집 서버가 필요합니다.</p>
+                            <label style="display:flex; align-items:center; gap:6px; white-space:nowrap; cursor:pointer;">
+                                <input type="checkbox" id="collect-detail-images" style="accent-color:#FF8C00; width:14px; height:14px; cursor:pointer;">
+                                <span style="font-size:0.78rem; color:#999;">상세페이지 이미지 수집</span>
+                            </label>
+                        </div>
                     </div>
 
                     <!-- 수집 로그 -->
                     <div class="bg-white rounded-lg shadow mb-4" style="overflow:hidden;">
                         <div style="padding:8px 16px; border-bottom:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between;">
                             <span style="font-size:0.85rem; font-weight:600; color:#C5C5C5;">수집 로그</span>
-                            <button onclick="document.getElementById('collect-log').innerHTML='<p style=\'color:#555;\'>로그가 초기화되었습니다.</p>'" style="font-size:0.75rem; color:#888; background:transparent; border:1px solid #3D3D3D; padding:2px 10px; border-radius:4px; cursor:pointer;">초기화</button>
+                            <div style="display:flex; gap:4px;">
+                                <button onclick="ui.copyLog('collect-log')" style="font-size:0.75rem; color:#888; background:transparent; border:1px solid #3D3D3D; padding:2px 10px; border-radius:4px; cursor:pointer;">복사</button>
+                                <button onclick="document.getElementById('collect-log').innerHTML='<p style=\'color:#555;\'>로그가 초기화되었습니다.</p>'" style="font-size:0.75rem; color:#888; background:transparent; border:1px solid #3D3D3D; padding:2px 10px; border-radius:4px; cursor:pointer;">초기화</button>
+                            </div>
                         </div>
                         <div id="collect-log" style="height:160px; overflow-y:auto; padding:10px 16px; font-family:monospace; font-size:0.78rem; color:#8A95B0; background:#080A10; line-height:1.6;">
                             <p style="color:#555;">[대기] 수집 결과가 여기에 표시됩니다...</p>
@@ -2151,11 +2763,11 @@
                             <table class="w-full">
                                 <thead>
                                     <tr>
-                                        <th style="width:36px; padding:0.75rem;"><input type="checkbox" id="group-select-all" onchange="document.querySelectorAll('#apply-group-tbody .group-row-cb').forEach(cb=>cb.checked=this.checked)" style="accent-color:#FF8C00; cursor:pointer;"></th>
-                                        <th class="px-3 py-3 text-left" style="font-size:0.8rem;">사이트</th>
-                                        <th class="px-3 py-3 text-left" style="font-size:0.8rem;">그룹이름</th>
-                                        <th class="px-3 py-3 text-left" style="font-size:0.8rem;">링크</th>
-                                        <th class="px-3 py-3 text-left" style="font-size:0.8rem;">상품정책 적용</th>
+                                        <th style="width:36px; padding:0.75rem; text-align:center;"><input type="checkbox" id="group-select-all" onchange="document.querySelectorAll('#apply-group-tbody .group-row-cb').forEach(cb=>cb.checked=this.checked)" style="accent-color:#FF8C00; cursor:pointer;"></th>
+                                        <th class="px-3 py-3 text-center" style="font-size:0.8rem;">사이트</th>
+                                        <th class="px-3 py-3 text-center" style="font-size:0.8rem;">그룹이름</th>
+                                        <th class="px-3 py-3 text-center" style="font-size:0.8rem;">링크</th>
+                                        <th class="px-3 py-3 text-center" style="font-size:0.8rem;">정책적용</th>
                                         <th class="px-3 py-3 text-center" style="font-size:0.8rem;">수집상품수</th>
                                         <th class="px-3 py-3 text-center" style="font-size:0.8rem;">요청상품수</th>
                                         <th class="px-3 py-3 text-center" style="font-size:0.8rem;">그룹생성일</th>
@@ -2182,16 +2794,16 @@
                     <!-- 정책 선택 -->
                     <div class="bg-white rounded-lg shadow p-4 mb-4">
                         <div class="flex gap-3 flex-wrap items-center">
-                            <select id="policy-select" style="width:220px; padding:0.5rem 0.75rem; font-size:0.875rem;">
-                                <option>정책 선택</option>
-                                <option>ABC_나이키 까대기</option>
+                            <select id="policy-select" class="policy-select-dynamic" onchange="ui.onPolicySelect()" style="width:220px; padding:0.5rem 0.75rem; font-size:0.875rem;">
+                                <option value="">정책 선택</option>
                             </select>
-                            <!-- AI 정책명 변경 인풋 -->
-                            <div style="display:flex; align-items:center; gap:0.5rem; background:rgba(255,140,0,0.05); border:1px solid rgba(255,140,0,0.25); border-radius:8px; padding:0.4rem 0.75rem; flex:1; min-width:0;">
-                                <span style="font-size:0.75rem; color:#FF8C00; white-space:nowrap; font-weight:600;">✦ AI</span>
-                                <input type="text" placeholder="정책일괄 변경시 사용" style="background:transparent; border:none; outline:none; font-size:0.8125rem; color:#E5E5E5; flex:1; min-width:0; padding:0.1rem 0;">
-                                <button style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; border-radius:5px; padding:0.25rem 0.75rem; font-size:0.75rem; white-space:nowrap; cursor:pointer;">변경</button>
+                            <!-- 정책명 수정 -->
+                            <div style="display:flex; align-items:center; gap:0.5rem; background:rgba(255,140,0,0.05); border:1px solid rgba(255,140,0,0.25); border-radius:8px; padding:0.4rem 0.75rem; min-width:200px;">
+                                <input type="text" id="policy-name-input" placeholder="정책명 수정" style="background:transparent; border:none; outline:none; font-size:0.8125rem; color:#E5E5E5; flex:1; min-width:0; padding:0.1rem 0;">
+                                <button onclick="ui.renameSelectedPolicy()" style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; border-radius:5px; padding:0.25rem 0.75rem; font-size:0.75rem; white-space:nowrap; cursor:pointer;">수정</button>
                             </div>
+                            <!-- 신규 정책 등록 -->
+                            <button onclick="ui.showNewPolicyModal()" style="font-size:0.8125rem; padding:0.5rem 1rem; background:rgba(81,207,102,0.1); border:1px solid rgba(81,207,102,0.35); border-radius:8px; color:#51CF66; cursor:pointer; white-space:nowrap;">+ 신규 등록</button>
                         </div>
                     </div>
 
@@ -2286,18 +2898,19 @@
                             <span style="font-size:0.75rem; color:#888;">** 마켓 선택 후 전송에 필요한 기본 설정값 입력</span>
                         </div>
                         <div class="p-4">
-                            <div class="flex flex-wrap gap-1 mb-4">
-                                <button class="market-tab active">쿠팡</button>
-                                <button class="market-tab">신세계몰</button>
-                                <button class="market-tab">스마트스토어</button>
-                                <button class="market-tab">11번가</button>
-                                <button class="market-tab">지마켓</button>
-                                <button class="market-tab">옥션</button>
-                                <button class="market-tab">GS샵</button>
-                                <button class="market-tab">롯데ON</button>
-                                <button class="market-tab">롯데홈쇼핑</button>
-                                <button class="market-tab">홈앤쇼핑</button>
-                                <button class="market-tab">HMALL</button>
+                            <div class="flex flex-wrap gap-1 mb-4" id="market-policy-tabs">
+                                <button class="market-tab active" onclick="ui.selectMarketTab(this)">쿠팡</button>
+                                <button class="market-tab" onclick="ui.selectMarketTab(this)">신세계몰</button>
+                                <button class="market-tab" onclick="ui.selectMarketTab(this)">스마트스토어</button>
+                                <button class="market-tab" onclick="ui.selectMarketTab(this)">11번가</button>
+                                <button class="market-tab" onclick="ui.selectMarketTab(this)">지마켓</button>
+                                <button class="market-tab" onclick="ui.selectMarketTab(this)">옥션</button>
+                                <button class="market-tab" onclick="ui.selectMarketTab(this)">GS샵</button>
+                                <button class="market-tab" onclick="ui.selectMarketTab(this)">롯데ON</button>
+                                <button class="market-tab" onclick="ui.selectMarketTab(this)">롯데홈쇼핑</button>
+                                <button class="market-tab" onclick="ui.selectMarketTab(this)">홈앤쇼핑</button>
+                                <button class="market-tab" onclick="ui.selectMarketTab(this)">HMALL</button>
+                                <button class="market-tab" onclick="ui.selectMarketTab(this)">플레이오토</button>
                             </div>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4" style="font-size:0.875rem;">
                                 <div class="flex items-center gap-2">
@@ -2314,16 +2927,8 @@
                                     <input type="number" value="21" style="width:70px; padding:0.375rem 0.5rem; font-size:0.8125rem;"> <span style="color:#888; font-size:0.8125rem;">%</span>
                                 </div>
                                 <div class="flex items-center gap-2">
-                                    <span style="color:#888; min-width:100px;">원산지</span>
-                                    <input type="text" value="기타" style="flex:1; padding:0.375rem 0.5rem; font-size:0.8125rem;">
-                                </div>
-                                <div class="flex items-center gap-2">
                                     <span style="color:#888; min-width:100px;">배송비</span>
                                     <input type="number" value="0" style="width:90px; padding:0.375rem 0.5rem; font-size:0.8125rem;"> <span style="color:#888; font-size:0.8125rem;">원</span>
-                                </div>
-                                <div class="flex items-center gap-2" style="flex-wrap:nowrap;">
-                                    <span style="color:#888; min-width:100px; white-space:nowrap; flex-shrink:0;">카테고리매핑</span>
-                                    <label style="display:flex; align-items:center; gap:0.25rem; cursor:pointer; white-space:nowrap; flex-shrink:0;"><input type="checkbox" checked> 사용</label>
                                 </div>
                             </div>
                         </div>
@@ -2342,6 +2947,66 @@
                                 <span style="color:#888; min-width:160px;">상품/옵션명 관리</span>
                                 <select style="width:200px; padding:0.375rem 0.5rem; font-size:0.8125rem;"><option>기본정책</option></select>
                                 <button onclick="app.navigateTo('policy-option-name')" style="background:transparent; border:1px solid #3D3D3D; color:#C5C5C5; padding:0.25rem 0.75rem; border-radius:6px; font-size:0.8125rem;">설정편집</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 금지어 / 삭제어 설정 -->
+                    <div class="policy-section mb-4">
+                        <div class="policy-section-header">
+                            <span style="color:#FF6B6B;">금지어 · 삭제어 설정</span>
+                            <span style="font-size:0.75rem; color:#666;">수집 시 금지어 포함 상품 자동 제외, 삭제어는 상품명에서 자동 제거 (단어는 ;로 구분)</span>
+                        </div>
+                        <div class="p-4">
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem;">
+                                <!-- 금지어 그룹 -->
+                                <div>
+                                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:0.75rem;">
+                                        <span style="font-size:0.875rem; font-weight:600; color:#FF6B6B; white-space:nowrap;">금지어 템플릿 관리</span>
+                                        <select id="forbidden-group-select" onchange="ui.onForbiddenGroupChange('forbidden')"
+                                            style="flex:1; padding:0.35rem 0.5rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
+                                            <option value="">그룹 선택</option>
+                                        </select>
+                                    </div>
+                                    <div style="border:1px solid #2D2D2D; border-radius:8px; overflow:hidden;">
+                                        <div style="background:#0D1117; padding:6px 12px; border-bottom:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                                            <input type="text" id="forbidden-group-name" placeholder="그룹 이름 입력 후 저장 → 새 그룹 생성"
+                                                style="flex:1; font-size:0.8rem; font-weight:600; color:#C5C5C5; background:transparent; border:none; outline:none; min-width:0;">
+                                            <button onclick="ui.deleteForbiddenGroup('forbidden')" style="font-size:0.72rem; padding:1px 8px; border:1px solid rgba(255,107,107,0.3); border-radius:4px; color:#FF6B6B; background:transparent; cursor:pointer; white-space:nowrap; flex-shrink:0;">그룹삭제</button>
+                                        </div>
+                                        <textarea id="forbidden-words-textarea" placeholder="단어를 ;로 구분해서 입력&#10;예) 나이키;아디다스;퓨마;리복;"
+                                            oninput="ui.updateForbiddenWordCount('forbidden')"
+                                            style="width:100%; height:160px; padding:10px 12px; font-size:0.8125rem; background:#080A10; border:none; color:#D8DEE9; resize:vertical; outline:none; font-family:monospace; line-height:1.6; box-sizing:border-box;"></textarea>
+                                        <div style="background:#0D1117; padding:6px 12px; border-top:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between;">
+                                            <span id="forbidden-word-count" style="font-size:0.75rem; color:#666;">( 금지어 0개 )</span>
+                                            <button onclick="ui.saveForbiddenGroup('forbidden')" style="padding:0.3rem 0.875rem; font-size:0.8125rem; background:linear-gradient(135deg,#FF6B6B,#FF8C8C); color:#fff; border:none; border-radius:6px; cursor:pointer;">저장</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- 삭제어 그룹 -->
+                                <div>
+                                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:0.75rem;">
+                                        <span style="font-size:0.875rem; font-weight:600; color:#FFB84D; white-space:nowrap;">삭제어 템플릿 관리</span>
+                                        <select id="deletion-group-select" onchange="ui.onForbiddenGroupChange('deletion')"
+                                            style="flex:1; padding:0.35rem 0.5rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
+                                            <option value="">그룹 선택</option>
+                                        </select>
+                                    </div>
+                                    <div style="border:1px solid #2D2D2D; border-radius:8px; overflow:hidden;">
+                                        <div style="background:#0D1117; padding:6px 12px; border-bottom:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                                            <input type="text" id="deletion-group-name" placeholder="그룹 이름 입력 후 저장 → 새 그룹 생성"
+                                                style="flex:1; font-size:0.8rem; font-weight:600; color:#C5C5C5; background:transparent; border:none; outline:none; min-width:0;">
+                                            <button onclick="ui.deleteForbiddenGroup('deletion')" style="font-size:0.72rem; padding:1px 8px; border:1px solid rgba(255,184,77,0.3); border-radius:4px; color:#FFB84D; background:transparent; cursor:pointer; white-space:nowrap; flex-shrink:0;">그룹삭제</button>
+                                        </div>
+                                        <textarea id="deletion-words-textarea" placeholder="단어를 ;로 구분해서 입력&#10;예) [해외직구];정품보장;무료배송;"
+                                            oninput="ui.updateForbiddenWordCount('deletion')"
+                                            style="width:100%; height:160px; padding:10px 12px; font-size:0.8125rem; background:#080A10; border:none; color:#D8DEE9; resize:vertical; outline:none; font-family:monospace; line-height:1.6; box-sizing:border-box;"></textarea>
+                                        <div style="background:#0D1117; padding:6px 12px; border-top:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between;">
+                                            <span id="deletion-word-count" style="font-size:0.75rem; color:#666;">( 삭제어 0개 )</span>
+                                            <button onclick="ui.saveForbiddenGroup('deletion')" style="padding:0.3rem 0.875rem; font-size:0.8125rem; background:linear-gradient(135deg,#FFB84D,#FFD080); color:#fff; border:none; border-radius:6px; cursor:pointer;">저장</button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -2531,15 +3196,11 @@
                         </div>
                     </div>
 
-                    <!-- 중복단어 필터링 -->
+                    <!-- 중복단어 필터링 (1행, 체크 즉시 적용) -->
                     <div class="policy-section mb-4">
                         <div class="policy-section-header">
-                            <span>상품명 중복단어 필터링</span>
-                            <button style="background:rgba(255,140,0,0.15); border:1px solid #FF8C00; color:#FF8C00; padding:0.25rem 0.75rem; border-radius:6px; font-size:0.75rem;">설정저장</button>
-                        </div>
-                        <div class="p-4">
-                            <label style="cursor:pointer; display:flex; align-items:center; gap:0.5rem; font-size:0.875rem;">
-                                <input type="checkbox" checked> 중복단어를 필터링 합니다
+                            <label style="cursor:pointer; display:flex; align-items:center; gap:0.5rem; font-size:0.875rem; color:#C5C5C5; font-weight:400;">
+                                <input type="checkbox" id="duplicate-word-filter" checked onchange="app.saveSetting('duplicateWordFilter', this.checked)" style="accent-color:#FF8C00; width:14px; height:14px;"> 상품명 중복단어 필터링
                             </label>
                         </div>
                     </div>
@@ -2560,7 +3221,7 @@
 
                     <!-- 필터 -->
                     <div class="bg-white rounded-lg shadow p-3 mb-4 flex gap-3 flex-wrap">
-                        <select id="apply-group-site-filter" style="width:160px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option value="">수집사이트</option></select>
+                        <select id="apply-group-site-filter" style="width:160px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option value="">소싱사이트</option></select>
                         <input type="text" placeholder="그룹이름 검색" style="width:220px; padding:0.5rem 0.75rem; font-size:0.875rem;">
                         <button style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; padding:0.5rem 1rem; border-radius:6px; font-size:0.875rem;">검색하기</button>
                     </div>
@@ -2588,7 +3249,7 @@
                                     <th class="px-3 py-3 text-left">사이트</th>
                                     <th class="px-3 py-3 text-left">그룹이름</th>
                                     <th class="px-3 py-3 text-left">링크</th>
-                                    <th class="px-3 py-3 text-left">상품정책 적용</th>
+                                    <th class="px-3 py-3 text-left">정책적용</th>
                                     <th class="px-3 py-3 text-center">수집상품수</th>
                                     <th class="px-3 py-3 text-center">요청상품수</th>
                                 </tr>
@@ -2608,57 +3269,24 @@
 
                     <!-- 카테고리 설정 패널 -->
                     <div id="cat-panel-settings">
-                    <div class="mb-3 p-3 rounded-lg" style="background:rgba(255,140,0,0.05); border:1px solid rgba(255,140,0,0.2); font-size:0.8125rem; color:#888;">
-                        ** 카테고리별로 원하는 정책 적용 가능. 하위 카테고리 자동적용
+                    <div class="mb-3 p-3 rounded-lg" style="background:rgba(255,140,0,0.05); border:1px solid rgba(255,140,0,0.2); font-size:0.8125rem; display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                        <span style="color:#888;">AI가 최하단 카테고리 기준으로 등록 마켓 카테고리를 선택합니다.</span>
+                        <button onclick="ui.runAiCategoryMapping()"
+                            style="flex-shrink:0; padding:5px 14px; font-size:0.8rem; border:none; border-radius:6px; color:#fff; background:linear-gradient(135deg,#FF8C00,#FFB84D); cursor:pointer; font-weight:600; white-space:nowrap;">
+                            AI 카테고리 매핑
+                        </button>
                     </div>
 
-                    <!-- 5단계 카테고리 브라우저 -->
+                    <!-- 5단계 카테고리 브라우저 (수집 상품 기반 동적 렌더링) -->
                     <div class="bg-white rounded-lg shadow mb-4" style="overflow:hidden;">
-                        <div class="flex" style="border-bottom:1px solid #2D2D2D;">
-                            <div class="cat-col">
-                                <div class="cat-col-header">사이트</div>
-                                <button class="cat-item selected">ABCmart</button>
-                                <button class="cat-item">FOLDERStyle</button>
-                                <button class="cat-item">GrandStage</button>
-                                <button class="cat-item">GSShop</button>
-                                <button class="cat-item">LOTTEON</button>
-                                <button class="cat-item">MUSINSA</button>
-                                <button class="cat-item">Nike</button>
-                                <button class="cat-item">OliveYoung</button>
-                                <button class="cat-item">SSG</button>
+                        <div id="cat-browser-cols" class="flex" style="border-bottom:1px solid #2D2D2D; min-height:160px;"></div>
+                        <div class="p-3" style="font-size:0.875rem; border-top:1px solid #1E1E1E;">
+                            <div class="flex items-center gap-3 mb-2">
+                                <span style="color:#555; font-size:0.75rem;">[선택카테고리]</span>
+                                <span id="cat-selected-path" style="color:#FF8C00; font-weight:500;">-</span>
+                                <span id="cat-product-count" style="color:#888; font-size:0.8rem;"></span>
                             </div>
-                            <div class="cat-col">
-                                <div class="cat-col-header">대분류</div>
-                                <button class="cat-item">가방</button>
-                                <button class="cat-item">디지털</button>
-                                <button class="cat-item selected">바지</button>
-                                <button class="cat-item">뷰티</button>
-                                <button class="cat-item">상의</button>
-                                <button class="cat-item">소품</button>
-                                <button class="cat-item">신발</button>
-                            </div>
-                            <div class="cat-col">
-                                <div class="cat-col-header">중분류</div>
-                                <button class="cat-item">기타하의</button>
-                                <button class="cat-item selected">데님팬츠</button>
-                                <button class="cat-item">숏팬츠</button>
-                                <button class="cat-item">슬랙스</button>
-                                <button class="cat-item">코튼팬츠</button>
-                                <button class="cat-item">조거팬츠</button>
-                            </div>
-                            <div class="cat-col">
-                                <div class="cat-col-header">소분류</div>
-                                <p style="padding:0.75rem; font-size:0.8rem; color:#555;">선택하세요</p>
-                            </div>
-                            <div class="cat-col">
-                                <div class="cat-col-header">세분류</div>
-                                <p style="padding:0.75rem; font-size:0.8rem; color:#555;">선택하세요</p>
-                            </div>
-                        </div>
-                        <div class="p-3 flex items-center gap-3" style="font-size:0.875rem;">
-                            <span style="color:#888;">[선택카테고리]</span>
-                            <span style="color:#FF8C00; font-weight:500;">MUSINSA.com &gt; 바지 &gt; 데님 팬츠</span>
-                            <button style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; padding:0.25rem 0.875rem; border-radius:6px; font-size:0.8125rem;">카테고리설정</button>
+                            <div id="cat-product-grid" style="display:none; grid-template-columns:repeat(5,1fr); gap:6px;"></div>
                         </div>
                     </div>
 
@@ -2753,7 +3381,7 @@
                             </div>
                         </div>
                         <div class="flex flex-wrap gap-3">
-                            <select style="width:140px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>수집사이트</option><option>THE MANGO</option><option>ABCmart</option><option>MUSINSA</option></select>
+                            <select style="width:140px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>소싱사이트</option><option>THE MANGO</option><option>ABCmart</option><option>MUSINSA</option></select>
                             <select style="width:120px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>정책</option><option>기본정책</option><option>마진정책A</option></select>
                             <select style="width:130px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>변동유형</option><option>가격변동</option><option>재고변동</option><option>옵션변동</option><option>정책변경</option></select>
                             <input type="text" placeholder="키워드 검색" style="width:200px; padding:0.5rem 0.75rem; font-size:0.875rem;">
@@ -2862,11 +3490,11 @@
                                 </select>
                                 <input type="text" placeholder="" style="width:200px; padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#C5C5C5; border-radius:4px; outline:none;">
                             </div>
-                            <!-- 수집사이트 -->
+                            <!-- 소싱사이트 -->
                             <div style="display:flex; align-items:center; padding:8px 16px; border-bottom:1px solid #181C28; gap:8px;">
                                 <span style="min-width:72px; color:#666; font-size:0.78rem;">소싱사이트</span>
                                 <select style="padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#B0BAD0; border-radius:4px; outline:none; cursor:pointer; width:140px;">
-                                    <option>전체</option><option>ABCmart</option><option>eBay</option><option>FOLDERStyle</option><option>GrandStage</option><option>GSShop</option><option>LOTTEON</option><option>MUSINSA</option><option>Nike</option><option>OliveYoung</option><option>SSG</option><option>Zara</option>
+                                    <option>전체</option><option>ABCmart</option><option>FOLDERStyle</option><option>GrandStage</option><option>GSShop</option><option>LOTTEON</option><option>MUSINSA</option><option>Nike</option><option>OliveYoung</option><option>SSG</option>
                                 </select>
                             </div>
                             <!-- 마켓등록 -->
@@ -2913,13 +3541,12 @@
                             </div>
                         </div>
 
-                        <!-- 수집사이트 -->
+                        <!-- 소싱사이트 -->
                         <div style="padding:10px 16px 12px; border-bottom:1px solid #181C28;">
                             <div style="font-size:0.85rem; font-weight:600; color:#C5C5C5; margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid #1C1E2A;">소싱사이트</div>
                             <div style="display:flex; flex-wrap:wrap; gap:8px 24px;">
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#9AA5C0; cursor:pointer; white-space:nowrap; font-weight:600;"><input type="checkbox" id="ship-site-all" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;" onchange="var v=this.checked;document.querySelectorAll('.ship-site-cb').forEach(c=>c.checked=v)"><span>전체</span></label>
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>ABCmart</span></label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>eBay</span></label>
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>FOLDERStyle</span></label>
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>GrandStage</span></label>
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>GSShop</span></label>
@@ -2928,7 +3555,6 @@
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>Nike</span></label>
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>OliveYoung</span></label>
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>SSG</span></label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>Zara</span></label>
                             </div>
                         </div>
 
@@ -2974,7 +3600,9 @@
                         <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 14px; background:#0A0D14; border-bottom:1px solid #1C1E2A;">
                             <span style="font-size:0.82rem; font-weight:600; color:#9AA5C0;">전송 로그</span>
                             <div style="display:flex; gap:6px; align-items:center;">
+                                <button onclick="ui.copyLog('shipment-log')" style="padding:3px 10px; font-size:0.72rem; background:transparent; border:1px solid #252B3B; color:#666; border-radius:4px; cursor:pointer;">복사</button>
                                 <button onclick="document.getElementById('shipment-log').innerHTML='<div style=\'color:#374151;\'>로그가 초기화되었습니다.</div>'" style="padding:3px 10px; font-size:0.72rem; background:transparent; border:1px solid #252B3B; color:#666; border-radius:4px; cursor:pointer;">초기화</button>
+                                <button onclick="ui.deleteFromShipment()" style="padding:4px 14px; font-size:0.78rem; background:rgba(255,107,107,0.12); border:1px solid rgba(255,107,107,0.35); color:#FF6B6B; border-radius:4px; cursor:pointer; font-weight:600;">삭제</button>
                                 <button onclick="ui.startShipment()" style="padding:4px 16px; font-size:0.78rem; background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:600;">전송 시작</button>
                             </div>
                         </div>
@@ -2998,10 +3626,10 @@
                                 <tr>
                                     <th style="width:40px; padding:0.75rem;"><input type="checkbox" id="shipment-select-all" onchange="document.querySelectorAll('.shipment-product-cb').forEach(cb => cb.checked = this.checked)"></th>
                                     <th style="padding:0.75rem 0.5rem; text-align:left; font-size:0.75rem; color:#888;">No</th>
+                                    <th style="padding:0.75rem 0.5rem; text-align:left; font-size:0.75rem; color:#888;">소싱처</th>
                                     <th style="padding:0.75rem 0.5rem; text-align:left; font-size:0.75rem; color:#888;">상품명</th>
-                                    <th style="padding:0.75rem 0.5rem; text-align:right; font-size:0.75rem; color:#888;">판매가</th>
                                     <th style="padding:0.75rem 0.5rem; text-align:center; font-size:0.75rem; color:#888;">등록마켓</th>
-                                    <th style="padding:0.75rem 0.5rem; text-align:center; font-size:0.75rem; color:#888;">전송상태</th>
+                                    <th style="padding:0.75rem 0.5rem; text-align:center; font-size:0.75rem; color:#888;">업데이트일</th>
                                 </tr>
                             </thead>
                             <tbody id="shipment-tbody">
@@ -3100,7 +3728,10 @@
                     <div style="border:1px solid #1C2333; border-radius:8px; overflow:hidden; margin-bottom:0.75rem;">
                         <div style="padding:6px 14px; background:#0D1117; border-bottom:1px solid #1C2333; display:flex; align-items:center; justify-content:space-between;">
                             <span style="font-size:0.8rem; font-weight:600; color:#94A3B8;">CS 로그</span>
-                            <button onclick="document.getElementById('cs-log').innerHTML='<p style=\'color:#3D4A60;\'>[대기] 로그가 초기화되었습니다.</p>'" style="font-size:0.72rem; color:#555; background:transparent; border:1px solid #1C2333; padding:1px 8px; border-radius:4px; cursor:pointer;">초기화</button>
+                            <div style="display:flex; gap:4px;">
+                                <button onclick="ui.copyLog('cs-log')" style="font-size:0.72rem; color:#555; background:transparent; border:1px solid #1C2333; padding:1px 8px; border-radius:4px; cursor:pointer;">복사</button>
+                                <button onclick="document.getElementById('cs-log').innerHTML='<p style=\'color:#3D4A60;\'>[대기] 로그가 초기화되었습니다.</p>'" style="font-size:0.72rem; color:#555; background:transparent; border:1px solid #1C2333; padding:1px 8px; border-radius:4px; cursor:pointer;">초기화</button>
+                            </div>
                         </div>
                         <div id="cs-log" style="height:120px; overflow-y:auto; padding:8px 14px; font-family:monospace; font-size:0.77rem; color:#4A5568; background:#080A10; line-height:1.6;">
                             <p style="color:#3D4A60;">[대기] CS 가져오기 결과가 여기에 표시됩니다...</p>
@@ -3463,67 +4094,7 @@
                         </div>
                     </div><!-- /Claude API 카드 -->
 
-                    <!-- 금지어 / 삭제어 설정 -->
-                    <div class="ac-card" style="margin-top:1.25rem;">
-                        <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:1.5rem;">
-                            <span style="font-size:0.9375rem; font-weight:700; color:#FF6B6B; white-space:nowrap;">금지어 · 삭제어 설정</span>
-                            <span style="font-size:0.8125rem; color:#666;">** 수집 시 금지어 포함 상품은 자동 제외, 삭제어는 상품명에서 자동 제거됩니다. 단어는 ;로 구분</span>
-                        </div>
-
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem;">
-
-                            <!-- 금지어 그룹 -->
-                            <div>
-                                <div style="display:flex; align-items:center; gap:8px; margin-bottom:0.75rem;">
-                                    <span style="font-size:0.875rem; font-weight:600; color:#FF6B6B; white-space:nowrap;">금지어 템플릿 관리</span>
-                                    <select id="forbidden-group-select" onchange="ui.onForbiddenGroupChange('forbidden')"
-                                        style="flex:1; padding:0.35rem 0.5rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
-                                        <option value="">그룹 선택</option>
-                                    </select>
-                                </div>
-                                <div style="border:1px solid #2D2D2D; border-radius:8px; overflow:hidden;">
-                                    <div style="background:#0D1117; padding:6px 12px; border-bottom:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between; gap:8px;">
-                                        <input type="text" id="forbidden-group-name" placeholder="그룹 이름 입력 후 저장 → 새 그룹 생성"
-                                            style="flex:1; font-size:0.8rem; font-weight:600; color:#C5C5C5; background:transparent; border:none; outline:none; min-width:0;">
-                                        <button onclick="ui.deleteForbiddenGroup('forbidden')" style="font-size:0.72rem; padding:1px 8px; border:1px solid rgba(255,107,107,0.3); border-radius:4px; color:#FF6B6B; background:transparent; cursor:pointer; white-space:nowrap; flex-shrink:0;">그룹삭제</button>
-                                    </div>
-                                    <textarea id="forbidden-words-textarea" placeholder="단어를 ;로 구분해서 입력&#10;예) 나이키;아디다스;퓨마;리복;"
-                                        oninput="ui.updateForbiddenWordCount('forbidden')"
-                                        style="width:100%; height:200px; padding:10px 12px; font-size:0.8125rem; background:#080A10; border:none; color:#D8DEE9; resize:vertical; outline:none; font-family:monospace; line-height:1.6; box-sizing:border-box;"></textarea>
-                                    <div style="background:#0D1117; padding:6px 12px; border-top:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between;">
-                                        <span id="forbidden-word-count" style="font-size:0.75rem; color:#666;">( 금지어 0개 )</span>
-                                        <button onclick="ui.saveForbiddenGroup('forbidden')" style="padding:0.3rem 0.875rem; font-size:0.8125rem; background:linear-gradient(135deg,#FF6B6B,#FF8C8C); color:#fff; border:none; border-radius:6px; cursor:pointer;">저장</button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- 삭제어 그룹 -->
-                            <div>
-                                <div style="display:flex; align-items:center; gap:8px; margin-bottom:0.75rem;">
-                                    <span style="font-size:0.875rem; font-weight:600; color:#FFB84D; white-space:nowrap;">삭제어 템플릿 관리</span>
-                                    <select id="deletion-group-select" onchange="ui.onForbiddenGroupChange('deletion')"
-                                        style="flex:1; padding:0.35rem 0.5rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
-                                        <option value="">그룹 선택</option>
-                                    </select>
-                                </div>
-                                <div style="border:1px solid #2D2D2D; border-radius:8px; overflow:hidden;">
-                                    <div style="background:#0D1117; padding:6px 12px; border-bottom:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between; gap:8px;">
-                                        <input type="text" id="deletion-group-name" placeholder="그룹 이름 입력 후 저장 → 새 그룹 생성"
-                                            style="flex:1; font-size:0.8rem; font-weight:600; color:#C5C5C5; background:transparent; border:none; outline:none; min-width:0;">
-                                        <button onclick="ui.deleteForbiddenGroup('deletion')" style="font-size:0.72rem; padding:1px 8px; border:1px solid rgba(255,184,77,0.3); border-radius:4px; color:#FFB84D; background:transparent; cursor:pointer; white-space:nowrap; flex-shrink:0;">그룹삭제</button>
-                                    </div>
-                                    <textarea id="deletion-words-textarea" placeholder="단어를 ;로 구분해서 입력&#10;예) [해외직구];정품보장;무료배송;"
-                                        oninput="ui.updateForbiddenWordCount('deletion')"
-                                        style="width:100%; height:200px; padding:10px 12px; font-size:0.8125rem; background:#080A10; border:none; color:#D8DEE9; resize:vertical; outline:none; font-family:monospace; line-height:1.6; box-sizing:border-box;"></textarea>
-                                    <div style="background:#0D1117; padding:6px 12px; border-top:1px solid #2D2D2D; display:flex; align-items:center; justify-content:space-between;">
-                                        <span id="deletion-word-count" style="font-size:0.75rem; color:#666;">( 삭제어 0개 )</span>
-                                        <button onclick="ui.saveForbiddenGroup('deletion')" style="padding:0.3rem 0.875rem; font-size:0.8125rem; background:linear-gradient(135deg,#FFB84D,#FFD080); color:#fff; border:none; border-radius:6px; cursor:pointer;">저장</button>
-                                    </div>
-                                </div>
-                            </div>
-
-                        </div>
-                    </div><!-- /금지어 삭제어 카드 -->
+                    <!-- 금지어/삭제어 설정은 정책관리 탭으로 이동 -->
 
 
                 </div>
@@ -4028,6 +4599,47 @@
             </div>
         </div>
     </div>
+
+    <!-- 테마 전환 -->
+    <script>
+    // 테마 전환 함수
+    function toggleTheme() {
+        const html = document.documentElement
+        const current = html.getAttribute('data-theme')
+        const next = current === 'light' ? 'dark' : 'light'
+
+        if (next === 'light') {
+            html.setAttribute('data-theme', 'light')
+        } else {
+            html.removeAttribute('data-theme')
+        }
+        localStorage.setItem('samba-theme', next)
+
+        // 아이콘 토글
+        updateThemeIcons(next)
+    }
+
+    // 테마 아이콘 업데이트
+    function updateThemeIcons(theme) {
+        const lightIcon = document.querySelector('.theme-icon-light')
+        const darkIcon = document.querySelector('.theme-icon-dark')
+        if (lightIcon && darkIcon) {
+            if (theme === 'light') {
+                lightIcon.style.display = 'inline'
+                darkIcon.style.display = 'none'
+            } else {
+                lightIcon.style.display = 'none'
+                darkIcon.style.display = 'inline'
+            }
+        }
+    }
+
+    // DOM 로드 후 아이콘 초기 상태 설정
+    document.addEventListener('DOMContentLoaded', () => {
+        const saved = localStorage.getItem('samba-theme') || 'dark'
+        updateThemeIcons(saved)
+    })
+    </script>
 
     <!-- Scripts -->
     <script src="js/storage.js"></script>

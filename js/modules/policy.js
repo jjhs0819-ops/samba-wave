@@ -72,8 +72,11 @@ class PolicyManager {
 
     /**
      * 정책 기반 마켓 가격 계산
+     * @param {number} cost - 원가
+     * @param {string} policyId - 적용 정책 ID
+     * @param {number} feeRate - 마켓 수수료율 (%)
      */
-    calculateMarketPrice(cost, policyId) {
+    calculateMarketPrice(cost, policyId, feeRate = 0) {
         const policy = this.policies.find(p => p.id === policyId)
         if (!policy) return Math.ceil(cost * 1.15)
 
@@ -104,6 +107,11 @@ class PolicyManager {
         const profit = price - cost
         if (pricing.minMarginAmount > 0 && profit < pricing.minMarginAmount) {
             price = cost + pricing.minMarginAmount
+        }
+
+        // 마켓 수수료 반영: 수수료를 마켓이 가져가므로 판매가를 역산
+        if (feeRate > 0) {
+            price = price / (1 - feeRate / 100)
         }
 
         // 할인 적용
@@ -173,9 +181,12 @@ class PolicyManager {
 
     /**
      * 가격 계산 미리보기 (원가 → 마켓 전송가)
+     * @param {number} cost - 원가
+     * @param {string} policyId - 적용 정책 ID
+     * @param {number} feeRate - 마켓 수수료율 (%)
      */
-    getPricePreview(cost, policyId) {
-        const marketPrice = this.calculateMarketPrice(cost, policyId)
+    getPricePreview(cost, policyId, feeRate = 0) {
+        const marketPrice = this.calculateMarketPrice(cost, policyId, feeRate)
         const profit = marketPrice - cost
         const profitRate = cost > 0 ? ((profit / marketPrice) * 100).toFixed(1) : 0
         return { cost, marketPrice, profit, profitRate }

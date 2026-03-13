@@ -27,7 +27,7 @@ class ForbiddenManager {
     }
 
     async saveGroups() {
-        await storage.save('settings', { id: 'forbiddenGroups', groups: this.groups })
+        await storage.save('settings', { key: 'forbiddenGroups', groups: this.groups })
         // 그룹에서 개별 단어 목록 재생성 (필터링용)
         this.words = []
         for (const g of this.groups.filter(g => g.isActive)) {
@@ -189,6 +189,22 @@ class ForbiddenManager {
             deletionFound,
             cleanName: this.cleanProductName(product.name)
         }
+    }
+
+    /**
+     * 등록 상품명 표시용: 삭제어 부분에 취소선(중간선) HTML 반환
+     * 원본 텍스트를 유지하되 삭제 대상 단어만 <s> 태그로 감쌈
+     */
+    getDeletionMarkedHtml(name) {
+        if (!name) return ''
+        const deletionActive = this.words.filter(w => w.type === 'deletion' && w.isActive && (w.scope === 'title' || w.scope === 'both'))
+        if (deletionActive.length === 0) return name
+        let result = name
+        for (const dw of deletionActive) {
+            const regex = new RegExp(dw.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+            result = result.replace(regex, m => `<s style="color:#FF6B6B; opacity:0.75;">${m}</s>`)
+        }
+        return result
     }
 
     getForbiddenWords() {

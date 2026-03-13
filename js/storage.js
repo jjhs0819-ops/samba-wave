@@ -6,7 +6,7 @@
 class StorageManager {
     constructor() {
         this.dbName = 'SambaWave';
-        this.version = 4;
+        this.version = 5;
         this.db = null;
         this.useIndexedDB = true;
     }
@@ -73,7 +73,9 @@ class StorageManager {
                         { name: 'marketType', unique: false },
                         { name: 'sellerId', unique: false },
                         { name: 'isActive', unique: false }
-                    ]}
+                    ]},
+                    // Phase 7 (카테고리 트리 영속화)
+                    { name: 'categoryTree', keyPath: 'siteName', indexes: [] }
                 ];
 
                 stores.forEach(store => {

@@ -11,6 +11,9 @@ class UIManager {
         this.smsSentOrders = new Set()   // 발송 완료된 주문 ID 집합
         this.orderDateStartLocked = false // 시작일 고정 여부
         this.productViewMode = 'card'    // 'card' | 'image'
+        this.catState = { site: null, cat1: null, cat2: null, cat3: null, cat4: null } // 카테고리 브라우저 선택 상태
+        this._catData = null             // 수집 상품 기반 카테고리 데이터
+        this.focusedProductId = null     // 이미지뷰 클릭 시 단일 상품 포커스
         this.init()
     }
 
@@ -24,6 +27,81 @@ class UIManager {
         } else {
             this.setupEventListeners().catch(err => console.error('UI 초기화 오류:', err))
         }
+    }
+
+    // ==================== 모달 다이얼로그 시스템 ====================
+
+    /**
+     * confirm() 대체 — 확인/취소 모달
+     * @param {string} message - 메시지 (줄바꿈은 \n)
+     * @param {Object} opts - { title, confirmText, cancelText, danger }
+     * @returns {Promise<boolean>}
+     */
+    showConfirm(message, opts = {}) {
+        const { title = '확인', confirmText = '확인', cancelText = '취소', danger = false } = opts
+        return new Promise(resolve => {
+            const overlay = document.createElement('div')
+            overlay.className = 'sw-modal-overlay'
+            overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);'
+            const btnColor = danger
+                ? 'background:linear-gradient(135deg,#FF4444,#FF6B6B);'
+                : 'background:linear-gradient(135deg,#FF8C00,#FFB84D);'
+            overlay.innerHTML = `
+                <div style="background:#1A1A1A;border:1px solid #2D2D2D;border-radius:12px;padding:24px;min-width:320px;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                    <div style="font-size:0.95rem;font-weight:600;color:#E5E5E5;margin-bottom:16px;">${title}</div>
+                    <div style="font-size:0.85rem;color:#B0B0B0;line-height:1.6;margin-bottom:24px;white-space:pre-line;">${message}</div>
+                    <div style="display:flex;justify-content:flex-end;gap:8px;">
+                        <button class="sw-modal-cancel" style="padding:8px 20px;font-size:0.82rem;border:1px solid #3D3D3D;border-radius:6px;color:#999;background:transparent;cursor:pointer;">${cancelText}</button>
+                        <button class="sw-modal-ok" style="padding:8px 20px;font-size:0.82rem;border:none;border-radius:6px;color:#fff;${btnColor}cursor:pointer;font-weight:600;">${confirmText}</button>
+                    </div>
+                </div>`
+            const cleanup = (val) => { overlay.remove(); resolve(val) }
+            overlay.querySelector('.sw-modal-ok').onclick = () => cleanup(true)
+            overlay.querySelector('.sw-modal-cancel').onclick = () => cleanup(false)
+            overlay.addEventListener('click', e => { if (e.target === overlay) cleanup(false) })
+            // ESC 키로 취소
+            const esc = e => { if (e.key === 'Escape') { cleanup(false); document.removeEventListener('keydown', esc) } }
+            document.addEventListener('keydown', esc)
+            document.body.appendChild(overlay)
+            overlay.querySelector('.sw-modal-ok').focus()
+        })
+    }
+
+    /**
+     * prompt() 대체 — 입력 모달
+     * @param {string} message - 안내 메시지
+     * @param {Object} opts - { title, placeholder, defaultValue }
+     * @returns {Promise<string|null>}
+     */
+    showPrompt(message, opts = {}) {
+        const { title = '입력', placeholder = '', defaultValue = '' } = opts
+        return new Promise(resolve => {
+            const overlay = document.createElement('div')
+            overlay.className = 'sw-modal-overlay'
+            overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);'
+            overlay.innerHTML = `
+                <div style="background:#1A1A1A;border:1px solid #2D2D2D;border-radius:12px;padding:24px;min-width:360px;max-width:480px;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                    <div style="font-size:0.95rem;font-weight:600;color:#E5E5E5;margin-bottom:12px;">${title}</div>
+                    <div style="font-size:0.85rem;color:#B0B0B0;margin-bottom:14px;">${message}</div>
+                    <input class="sw-modal-input" type="text" value="${(defaultValue || '').replace(/"/g, '&quot;')}" placeholder="${placeholder}"
+                        style="width:100%;padding:10px 12px;font-size:0.85rem;background:#0F0F0F;border:1px solid #3D3D3D;color:#E5E5E5;border-radius:6px;outline:none;box-sizing:border-box;">
+                    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+                        <button class="sw-modal-cancel" style="padding:8px 20px;font-size:0.82rem;border:1px solid #3D3D3D;border-radius:6px;color:#999;background:transparent;cursor:pointer;">취소</button>
+                        <button class="sw-modal-ok" style="padding:8px 20px;font-size:0.82rem;border:none;border-radius:6px;color:#fff;background:linear-gradient(135deg,#FF8C00,#FFB84D);cursor:pointer;font-weight:600;">확인</button>
+                    </div>
+                </div>`
+            const input = overlay.querySelector('.sw-modal-input')
+            const cleanup = (val) => { overlay.remove(); resolve(val) }
+            overlay.querySelector('.sw-modal-ok').onclick = () => cleanup(input.value)
+            overlay.querySelector('.sw-modal-cancel').onclick = () => cleanup(null)
+            overlay.addEventListener('click', e => { if (e.target === overlay) cleanup(null) })
+            input.addEventListener('keydown', e => { if (e.key === 'Enter') cleanup(input.value) })
+            const esc = e => { if (e.key === 'Escape') { cleanup(null); document.removeEventListener('keydown', esc) } }
+            document.addEventListener('keydown', esc)
+            document.body.appendChild(overlay)
+            input.focus()
+            input.select()
+        })
     }
 
     /**
@@ -87,7 +165,7 @@ class UIManager {
 
         // 수집 탭 전환
         // 수집하기 버튼 클릭 이벤트
-        document.getElementById('btn-collect-bulk')?.addEventListener('click', () => this.handleCollect('bulk'))
+        document.getElementById('btn-collect-bulk')?.addEventListener('click', () => this.handleCollect())
 
 
         // 기간 버튼 - 기본값: 올해 1월 1일 ~ 오늘
@@ -418,7 +496,7 @@ class UIManager {
      */
     renderProductImageGrid(products) {
         const cells = products.map((p, idx) => {
-            const imgSrc = p.image || p.imageUrl || ''
+            const imgSrc = (p.images && p.images[0]) || p.image || p.imageUrl || ''
             const regDate = p.createdAt ? p.createdAt.slice(0, 10) : '-'
             const no = String(idx + 1).padStart(6, '0')
             const imgInner = imgSrc
@@ -430,7 +508,7 @@ class UIManager {
 
             return `
                 <div style="background:#1E1E1E; border:1px solid #2A2A2A; border-radius:6px; overflow:hidden; cursor:pointer; position:relative;"
-                     onclick="ui.jumpToProduct('${p.id}')">
+                     onclick="ui.focusProduct('${p.id}')">
                     <!-- 체크박스 -->
                     <input type="checkbox" class="product-select-cb" data-product-id="${p.id}"
                         style="position:absolute; top:6px; left:6px; z-index:2; accent-color:#FF8C00; width:14px; height:14px; cursor:pointer;"
@@ -486,21 +564,14 @@ class UIManager {
                 if (matchFilter) {
                     const collected = await storage.getByIndex('collectedProducts', 'searchFilterId', matchFilter.id)
                     products = collected.map(p => ({
-                        id: p.id,
-                        name: p.name,
-                        cost: p.originalPrice || p.salePrice || 0,
+                        ...p,
+                        cost: p.bestBenefitPrice || p.couponPrice || p.salePrice || p.originalPrice || 0,
                         sourcePrice: p.originalPrice || p.salePrice || 0,
-                        marginRate: 15,
+                        marginRate: p.marginRate || 15,
                         salePrice: p.salePrice || 0,
                         status: p.status === 'saved' ? 'active' : (p.status || 'active'),
-                        sourceSite: p.sourceSite || '',
-                        brand: p.brand || '',
-                        category: p.category || '',
-                        images: p.images || [],
-                        sourceUrl: p.sourceUrl || '',
                         createdAt: p.collectedAt || p.createdAt || '',
-                        updatedAt: p.updatedAt || '',
-                        _isCollected: true   // 수집상품 구분 플래그
+                        _isCollected: true
                     }))
                 } else {
                     products = []
@@ -510,13 +581,68 @@ class UIManager {
             }
         }
 
+        // 소싱사이트 필터
+        const sourceSiteFilter = document.getElementById('product-source-site')?.value || ''
+        if (sourceSiteFilter) products = products.filter(p => p.sourceSite === sourceSiteFilter)
+
         // 상태 필터
         const statusFilter = document.getElementById('product-status')?.value || ''
         if (statusFilter) products = products.filter(p => p.status === statusFilter)
 
+        // 정렬
+        const sortVal = document.getElementById('product-sort')?.value || 'collect-desc'
+        const isCollect = sortVal.startsWith('collect')
+        const isDesc = sortVal.endsWith('desc')
+        products.sort((a, b) => {
+            const aDate = isCollect
+                ? (a.collectedAt || a.createdAt || '')
+                : (a.updatedAt || a.createdAt || '')
+            const bDate = isCollect
+                ? (b.collectedAt || b.createdAt || '')
+                : (b.updatedAt || b.createdAt || '')
+            return isDesc ? bDate.localeCompare(aDate) : aDate.localeCompare(bDate)
+        })
+
         // 검색결과 카운트 업데이트
         const countEl2 = document.getElementById('product-count2')
         if (countEl2) countEl2.textContent = products.length
+
+        // 페이지 크기 적용
+        const pageSize = parseInt(document.getElementById('product-page-size')?.value || '20')
+        if (pageSize > 0) products = products.slice(0, pageSize)
+
+        // 포커스 모드: 특정 상품 하나만 표시 (products.length 체크 전에 처리)
+        if (this.focusedProductId) {
+            let focused = products.find(p => p.id === this.focusedProductId)
+            // products 스토어에 없으면 collectedProducts에서 검색 (카테고리 브라우저 클릭 시)
+            if (!focused) {
+                const collected = await storage.get('collectedProducts', this.focusedProductId)
+                if (collected) {
+                    focused = {
+                        ...collected,
+                        cost: collected.bestBenefitPrice || collected.couponPrice || collected.salePrice || collected.originalPrice || 0,
+                        sourcePrice: collected.originalPrice || collected.salePrice || 0,
+                        marginRate: collected.marginRate || 15,
+                        salePrice: collected.salePrice || 0,
+                        status: collected.status === 'saved' ? 'active' : (collected.status || 'active'),
+                        createdAt: collected.collectedAt || collected.createdAt || '',
+                        _isCollected: true
+                    }
+                }
+            }
+            if (focused) {
+                products = [focused]
+                if (!document.getElementById('product-focus-back')) {
+                    list.insertAdjacentHTML('beforebegin',
+                        `<div id="product-focus-back" style="margin-bottom:8px;">
+                            <button onclick="ui.clearProductFocus()"
+                                style="padding:5px 14px; font-size:0.8rem; border:1px solid #3D3D3D; border-radius:6px; color:#C5C5C5; background:rgba(40,40,40,0.9); cursor:pointer;">
+                                ← 목록으로
+                            </button>
+                        </div>`)
+                }
+            }
+        }
 
         if (products.length === 0) {
             list.innerHTML = `<div style="padding:3rem; text-align:center; color:#555; font-size:0.9rem;">등록된 상품이 없습니다</div>`
@@ -528,6 +654,13 @@ class UIManager {
             list.innerHTML = this.renderProductImageGrid(products)
             return
         }
+
+        // collectedProductId → searchFilterId 조회용 맵 (기존 저장 상품 대응)
+        const collectedMap = {}
+        try {
+            const allCollected = await storage.getAll('collectedProducts')
+            allCollected.forEach(c => { collectedMap[c.id] = c })
+        } catch(e) {}
 
         // 정책 목록 (드롭다운용)
         const policies = (typeof policyManager !== 'undefined') ? policyManager.policies : []
@@ -544,10 +677,15 @@ class UIManager {
             const regDate = product.createdAt ? product.createdAt.slice(0, 10) : '-'
             const modDate = product.updatedAt ? product.updatedAt.slice(0, 10) : regDate
             const no = String(idx + 1).padStart(3, '0')
-            const imgSrc = product.image || product.imageUrl || ''
-            const imgHtml = imgSrc
-                ? `<img src="${imgSrc}" style="width:110px; height:110px; object-fit:cover; border-radius:8px; border:1px solid #2D2D2D;">`
-                : `<div style="width:110px; height:110px; border-radius:8px; border:1px dashed #3D3D3D; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:6px; text-align:center;"><i class="fas fa-image" style="font-size:1.8rem; color:#3A3A3A;"></i><span style="font-size:0.72rem; color:#444; line-height:1.3;">이미지<br>없음</span></div>`
+            const rawImgSrc = (product.images && product.images[0]) || product.image || product.imageUrl || ''
+            // via.placeholder.com 등 외부 서비스 URL → SVG 대체
+            let imgSrc = (rawImgSrc && !rawImgSrc.includes('via.placeholder.com')) ? rawImgSrc : ''
+            if (!imgSrc) {
+                const _ch = (product.brand || product.name || '?')[0]
+                const _svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#1A1A1A"/><text x="100" y="140" text-anchor="middle" font-size="100" font-family="sans-serif" fill="#FF8C00">${_ch}</text></svg>`
+                imgSrc = 'data:image/svg+xml,' + encodeURIComponent(_svg)
+            }
+            const imgHtml = `<img src="${imgSrc}" style="width:110px; height:110px; object-fit:cover; border-radius:8px; border:1px solid #2D2D2D;" onerror="this.outerHTML='<div style=\\'width:110px;height:110px;border-radius:8px;border:1px dashed #3D3D3D;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;text-align:center;\\'><i class=\\'fas fa-image\\' style=\\'font-size:1.8rem;color:#3A3A3A;\\'></i><span style=\\'font-size:0.72rem;color:#444;line-height:1.3;\\'>이미지<br>없음</span></div>'">`
 
             // 마켓가격 섹션 (적용 정책 기준)
             const appliedPolicy = policies.find(p => p.id === product.appliedPolicyId)
@@ -568,7 +706,14 @@ class UIManager {
                 displayShipping ? `배송비 ₩${this.formatNumber(displayShipping)}` : '',
                 displayExtra ? `추가 ₩${this.formatNumber(displayExtra)}` : ''
             ].filter(Boolean).join(' · ')
-            const marketPriceDisplay = `<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; white-space:nowrap;"><span style="color:#FFB84D; font-weight:600;">₩${this.formatNumber(salePrice)}</span><span style="color:#888; font-size:0.75rem;">+₩${this.formatNumber(profit)}</span>${policyBasis ? `<span style="color:#555; font-size:0.71rem; border-left:1px solid #2D2D2D; padding-left:6px;">${policyBasis}</span>` : ''}</div>`
+            // 계산식: 원가 [+배송] ÷(1-마진%) [÷(1-수수료%)] = 마켓가
+            const formulaParts = [`₩${this.formatNumber(cost)}`]
+            if (displayShipping > 0) formulaParts.push(`+₩${this.formatNumber(displayShipping)}`)
+            formulaParts.push(`÷(1-${displayMarginRate}%)`)
+            if (displayFeeRate > 0) formulaParts.push(`÷(1-${displayFeeRate}%)`)
+            formulaParts.push(`= ₩${this.formatNumber(salePrice)}`)
+            const formulaStr = formulaParts.join(' ')
+            const marketPriceDisplay = `<div style="display:flex; align-items:center; gap:6px; width:100%;"><div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; white-space:nowrap;"><span style="color:#FFB84D; font-weight:600;">₩${this.formatNumber(salePrice)}</span><span style="color:#888; font-size:0.75rem;">+₩${this.formatNumber(profit)}</span>${policyBasis ? `<span style="color:#555; font-size:0.71rem; border-left:1px solid #2D2D2D; padding-left:6px;">${policyBasis}</span>` : ''}</div><span style="margin-left:auto; font-size:0.7rem; color:#3A3A3A; font-family:monospace; white-space:nowrap; padding-left:12px;">${formulaStr}</span></div>`
 
             // 카테고리
             const catSrc = product.sourceCategory || product.category || '-'
@@ -576,7 +721,9 @@ class UIManager {
 
             // 검색필터 태그 / 검색그룹 연동 표시
             const filterTags = product.filterTags || []
-            const filterId = product.searchFilterId || (filterTags.length > 0 ? filterTags[0] : null)
+            // collectedProductId로 역참조 (기존 저장 상품의 검색그룹 복원)
+            const linkedCollected = product.collectedProductId ? collectedMap[product.collectedProductId] : null
+            const filterId = product.searchFilterId || linkedCollected?.searchFilterId || (filterTags.length > 0 ? filterTags[0] : null)
             let filterHtml = ''
             if (filterId && typeof collectorManager !== 'undefined') {
                 const filter = collectorManager.filters.find(f => f.id === filterId || f.name === filterId)
@@ -618,24 +765,24 @@ class UIManager {
                 </span>`
             }).join('')
 
-            // 금지어 삭제 후 변환된 상품명 계산
+            // 삭제어 처리
             const hasForbidden = typeof forbiddenManager !== 'undefined'
             const cleanedName = hasForbidden ? forbiddenManager.cleanProductName(product.name) : product.name
             const isConverted = hasForbidden && cleanedName !== product.name
+            // 등록 상품명: 원본 유지 + 삭제어 부분만 취소선 표시
+            const registeredNameHtml = hasForbidden && isConverted
+                ? forbiddenManager.getDeletionMarkedHtml(product.name)
+                : product.name
 
-            // 상품명 표시 HTML
-            const productNameHtml = isConverted
-                ? `<span style="color:#FF8C00; font-weight:600;">${cleanedName}</span>
-                   <span style="background:rgba(255,140,0,0.15); color:#FF8C00; font-size:0.7rem; padding:1px 4px; border-radius:3px; margin-left:5px;">변환됨</span>
-                   <div style="margin-top:2px;"><span style="color:#666; font-size:0.75rem; text-decoration:line-through;">${product.name}</span></div>`
-                : `<span style="color:#D1D9EE; font-weight:500;">${product.name}</span>`
+            // 원 상품명 표시: 항상 원본 그대로 표시
+            const productNameHtml = `<span style="color:#D1D9EE; font-weight:500;">${product.name}</span>`
 
             // 인라인 수정 모드 여부
             const isEditing = this._editingProductIds?.has(product.id) || false
 
-            // 태그 표시
+            // 태그 표시 (삭제 버튼 포함)
             const tags = product.tags || []
-            const tagsHtml = tags.map(t => `<span style="background:rgba(100,100,255,0.12); color:#8B8FD4; font-size:0.7rem; padding:2px 8px; border-radius:4px; border:1px solid rgba(100,100,255,0.2);">#${t}</span>`).join(' ')
+            const tagsHtml = tags.map(t => `<span style="background:rgba(100,100,255,0.12); color:#8B8FD4; font-size:0.7rem; padding:2px 6px; border-radius:4px; border:1px solid rgba(100,100,255,0.2); display:inline-flex; align-items:center; gap:3px;">#${t.replace(/'/g,"\\'")} <button onclick="ui.deleteProductTag('${product.id}','${t.replace(/'/g,"\\'")}');event.stopPropagation()" style="font-size:0.65rem; color:#6B6FA8; background:none; border:none; cursor:pointer; padding:0; line-height:1; margin-left:1px;">✕</button></span>`).join(' ')
 
             // 헤더 버튼 (수정모드 / 일반모드)
             const headerBtnsHtml = isEditing
@@ -658,9 +805,18 @@ class UIManager {
                 ? `<input type="text" data-field="name" value="${(product.name || '').replace(/"/g, '&quot;')}" style="width:100%; padding:3px 7px; font-size:0.8rem; background:#1A1A1A; border:1px solid #FF8C00; color:#C5C5C5; border-radius:4px; outline:none;">`
                 : productNameHtml
 
-            const costCell = isEditing
+            // 정상가(normalPrice) / 원가(최대혜택가)
+            const normalPrice = product.sourcePrice || product.originalPrice || 0
+            const costCell = `<span style="color:#C5C5C5; font-weight:600;">${normalPrice > 0 ? `₩${this.formatNumber(normalPrice)}` : '-'}</span>${product.discountRate ? `<span style="color:#FF6B6B; font-size:0.72rem; margin-left:6px;">${product.discountRate}% 할인 → ₩${this.formatNumber(product.salePrice || 0)}</span>` : ''}`
+            // bestBenefitPrice 우선 (쿠폰/혜택 포함 최저가) — 옵션은 salePrice 기준이라 혜택가보다 높을 수 있음
+            const validOptPrices = (product.options || []).filter(o => !o.isSoldOut && (o.price || 0) > 0).map(o => o.price)
+            const optMinPrice = validOptPrices.length > 0 ? Math.min(...validOptPrices) : 0
+            const costPrice = product.bestBenefitPrice || optMinPrice || product.couponPrice || product.salePrice || cost
+            const isLoggedInPrice = product.isLoggedIn
+            const benefitLabel = isLoggedInPrice ? '로그인 최대혜택가' : '최대혜택가'
+            const costPriceCell = isEditing
                 ? `<input type="number" data-field="cost" value="${cost}" style="width:120px; padding:3px 7px; font-size:0.8rem; background:#1A1A1A; border:1px solid #FF8C00; color:#C5C5C5; border-radius:4px; outline:none;"> <span style="color:#444; font-size:0.72rem; margin-left:6px;">원가</span>`
-                : `<span style="color:#C5C5C5; font-weight:600;">₩${this.formatNumber(cost)}</span><span style="color:#444; font-size:0.72rem; margin-left:6px;">공급가 기준</span>`
+                : `<span style="color:#FFB84D; font-weight:600;">₩${this.formatNumber(costPrice)}</span><span style="color:#444; font-size:0.72rem; margin-left:6px;">${benefitLabel}</span>`
 
             const marketPriceCell = isEditing
                 ? `<input type="number" data-field="marginRate" value="${marginRate}" style="width:80px; padding:3px 7px; font-size:0.8rem; background:#1A1A1A; border:1px solid #FF8C00; color:#C5C5C5; border-radius:4px; outline:none;"> <span style="color:#444; font-size:0.72rem; margin-left:4px;">% 마진율</span>`
@@ -673,9 +829,8 @@ class UIManager {
                     <div style="display:flex; align-items:center; gap:12px; font-size:0.75rem; color:#666;">
                         <input type="checkbox" class="product-select-cb" data-product-id="${product.id}" style="accent-color:#FF8C00; width:13px; height:13px; cursor:pointer;">
                         <span style="color:#444;">No.${no}</span>
-                        <span>등록 <span style="color:#888;">${regDate}</span></span>
-                        <span>변동 <span style="color:#888;">${modDate}</span></span>
-                        <span style="background:${statusBg}; color:${statusColor}; padding:2px 8px; border-radius:4px; font-size:0.7rem;">${statusText}</span>
+                        <span>수집 <span style="color:#888;">${regDate}</span></span>
+                        <span>업데이트 <span style="color:#888;">${modDate}</span></span>
                     </div>
                     <div style="display:flex; gap:6px; align-items:center;">
                         ${headerBtnsHtml}
@@ -686,10 +841,18 @@ class UIManager {
                     <!-- 좌: 이미지 -->
                     <div style="width:130px; flex-shrink:0; display:flex; flex-direction:column; align-items:center; gap:8px; padding-right:14px; border-right:1px solid #222;">
                         ${imgHtml}
-                        <button style="font-size:0.68rem; color:#666; background:transparent; border:1px solid #2D2D2D; border-radius:4px; padding:3px 10px; cursor:pointer; width:100%;">이미지 변경</button>
+                        <button onclick="ui.openImageEditor('${product.id}')" style="font-size:0.68rem; color:#666; background:transparent; border:1px solid #2D2D2D; border-radius:4px; padding:3px 10px; cursor:pointer; width:100%;">이미지 변경</button>
+                        ${product.sourceSite ? `<span style="font-size:0.7rem; color:#FF8C00; background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.25); border-radius:4px; padding:2px 8px; width:100%; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${product.sourceSite}</span>` : ''}
                     </div>
                     <!-- 우: 상세 정보 테이블 -->
                     <div style="flex:1; padding-left:16px;">
+                        <!-- 액션 버튼 바 -->
+                        <div style="display:flex; flex-wrap:wrap; gap:3px; margin-bottom:8px;">
+                            <button onclick="ui.showPriceHistory('${product.id}')" style="font-size:0.72rem; padding:3px 9px; background:#1E1E1E; color:#999; border:1px solid #2D2D2D; border-radius:3px; cursor:pointer; white-space:nowrap;">가격변경이력</button>
+                            <button onclick="${product.sourceUrl ? `window.open('${product.sourceUrl}','_blank')` : `app.showNotification('원문링크 없음','warning')`}" style="font-size:0.72rem; padding:3px 9px; background:#1E1E1E; color:#999; border:1px solid #2D2D2D; border-radius:3px; cursor:pointer; white-space:nowrap;">원문링크</button>
+                            <button onclick="ui.enrichSingleProduct('${product.id}')" style="font-size:0.72rem; padding:3px 9px; background:#1E1E1E; color:#999; border:1px solid #2D2D2D; border-radius:3px; cursor:pointer; white-space:nowrap;">업데이트</button>
+                            <button onclick="ui.goToShipmentWithProduct('${product.id}')" style="font-size:0.72rem; padding:3px 9px; background:#1E1E1E; color:#FF6B6B; border:1px solid rgba(255,107,107,0.2); border-radius:3px; cursor:pointer; white-space:nowrap;">마켓삭제</button>
+                        </div>
                         <table style="width:100%; border-collapse:collapse; font-size:0.8125rem;">
                             <colgroup><col style="width:80px;"><col></colgroup>
                             <tbody>
@@ -700,8 +863,7 @@ class UIManager {
                                 <tr style="border-bottom:1px solid #1E1E1E;">
                                     <td style="padding:6px 8px; color:#555; font-size:0.75rem; white-space:nowrap; vertical-align:middle;">등록 상품명</td>
                                     <td style="padding:6px 8px; vertical-align:middle;">
-                                        <span style="color:#D1D9EE; font-size:0.8rem;">${cleanedName}</span>
-                                        ${isConverted ? `<span style="background:rgba(255,140,0,0.15); color:#FF8C00; font-size:0.7rem; padding:1px 4px; border-radius:3px; margin-left:5px;">변환됨</span>` : ''}
+                                        <span style="color:#D1D9EE; font-size:0.8rem;">${registeredNameHtml}</span>
                                     </td>
                                 </tr>
                                 <tr style="border-bottom:1px solid #1E1E1E;">
@@ -719,8 +881,12 @@ class UIManager {
                                     </td>
                                 </tr>
                                 <tr style="border-bottom:1px solid #1E1E1E;">
-                                    <td style="padding:6px 8px; color:#555; font-size:0.75rem; vertical-align:middle;">대표가격</td>
+                                    <td style="padding:6px 8px; color:#555; font-size:0.75rem; vertical-align:middle;">정상가</td>
                                     <td style="padding:6px 8px; vertical-align:middle;">${costCell}</td>
+                                </tr>
+                                <tr style="border-bottom:1px solid #1E1E1E;">
+                                    <td style="padding:6px 8px; color:#555; font-size:0.75rem; vertical-align:middle;">원가</td>
+                                    <td style="padding:6px 8px; vertical-align:middle;">${costPriceCell}</td>
                                 </tr>
                                 <tr style="border-bottom:1px solid #1E1E1E;">
                                     <td style="padding:6px 8px; color:#555; font-size:0.75rem; vertical-align:middle;">마켓가격</td>
@@ -730,9 +896,24 @@ class UIManager {
                                     <td style="padding:6px 8px; color:#555; font-size:0.75rem; vertical-align:middle;">카테고리</td>
                                     <td style="padding:6px 8px; vertical-align:middle;">
                                         <span style="font-size:0.8rem;">${this.formatCategoryHierarchy(catSrc)}</span>
-                                        <span style="color:#444; margin:0 6px; font-size:0.75rem;">→</span>
-                                        <span style="font-size:0.8rem;">${this.formatCategoryHierarchy(catMarket)}</span>
-                                        <button style="margin-left:8px; font-size:0.68rem; padding:2px 7px; border:1px solid #2D2D2D; border-radius:4px; color:#666; background:transparent; cursor:pointer;">맵핑</button>
+                                    </td>
+                                </tr>
+                                <tr style="border-bottom:1px solid #1E1E1E;">
+                                    <td style="padding:6px 8px; color:#555; font-size:0.75rem; vertical-align:top; padding-top:10px;">상품정보</td>
+                                    <td style="padding:6px 8px; vertical-align:middle;">
+                                        <div style="display:flex; flex-wrap:wrap; gap:4px 16px; font-size:0.78rem;">
+                                            ${product.origin ? `<span style="color:#888;">제조국 <span style="color:#C5C5C5;">${product.origin}</span></span>` : ''}
+                                            ${product.manufacturer ? `<span style="color:#888;">제조사 <span style="color:#C5C5C5;">${product.manufacturer}</span></span>` : ''}
+                                            ${product.styleCode ? `<span style="color:#888;">품번 <span style="color:#C5C5C5;">${product.styleCode}</span></span>` : ''}
+                                            ${product.season ? `<span style="color:#888;">시즌 <span style="color:#C5C5C5;">${product.season}</span></span>` : ''}
+                                            ${product.kcCert ? `<span style="color:#888;">KC <span style="color:#C5C5C5;">${product.kcCert}</span></span>` : ''}
+                                            ${!product.origin && !product.manufacturer && !product.styleCode ? '<span style="color:#444;">정보 없음</span>' : ''}
+                                        </div>
+                                        ${product.material ? `<div style="margin-top:3px; font-size:0.75rem; color:#888;">소재 <span style="color:#B0B0B0;">${product.material}</span></div>` : ''}
+                                        ${product.color ? `<div style="margin-top:2px; font-size:0.75rem; color:#888;">색상 <span style="color:#B0B0B0;">${product.color}</span></div>` : ''}
+                                        ${product.sizeInfo ? `<div style="margin-top:2px; font-size:0.75rem; color:#888;">치수 <span style="color:#B0B0B0;">${product.sizeInfo}</span></div>` : ''}
+                                        ${product.careInstructions ? `<div style="margin-top:2px; font-size:0.75rem; color:#888;">취급주의 <span style="color:#B0B0B0;">${product.careInstructions}</span></div>` : ''}
+                                        ${product.qualityGuarantee ? `<div style="margin-top:2px; font-size:0.75rem; color:#888;">품질보증 <span style="color:#B0B0B0;">${product.qualityGuarantee}</span></div>` : ''}
                                     </td>
                                 </tr>
                                 <tr style="border-bottom:1px solid #1E1E1E;">
@@ -742,8 +923,11 @@ class UIManager {
                                 <tr style="border-bottom:1px solid #1E1E1E;">
                                     <td style="padding:6px 8px; color:#555; font-size:0.75rem; vertical-align:middle;">적용정책</td>
                                     <td style="padding:6px 8px; vertical-align:middle;">
-                                        <span style="color:#C5C5C5; font-size:0.8rem;">${policyName}</span>
-                                        <button style="margin-left:8px; font-size:0.68rem; padding:2px 7px; border:1px solid #2D2D2D; border-radius:4px; color:#666; background:transparent; cursor:pointer;">변경</button>
+                                        <select onchange="ui.changeProductPolicy('${product.id}', this.value, ${!!product._isCollected})"
+                                            style="background:rgba(22,22,22,0.9); border:1px solid #2D2D2D; color:#C5C5C5; border-radius:4px; padding:2px 6px; font-size:0.75rem; outline:none;">
+                                            <option value="" ${!product.appliedPolicyId ? 'selected' : ''}>기본 (그룹 정책)</option>
+                                            ${policies.map(p => `<option value="${p.id}" ${p.id === product.appliedPolicyId ? 'selected' : ''}>${p.name}</option>`).join('')}
+                                        </select>
                                     </td>
                                 </tr>
                                 <tr style="border-bottom:1px solid #1E1E1E;">
@@ -751,15 +935,23 @@ class UIManager {
                                     <td style="padding:6px 8px; vertical-align:middle;">
                                         <div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
                                             ${tagsHtml}
-                                            <button onclick="ui.addProductTag('${product.id}')" style="font-size:0.68rem; padding:2px 7px; border:1px solid #2D2D2D; border-radius:4px; color:#666; background:transparent; cursor:pointer;">+ 태그추가</button>
+                                            <input type="text" id="tag-input-${product.id}" placeholder="태그는 ','로 구분입력"
+                                                onkeydown="if(event.key==='Enter'){ui.addProductTagInline('${product.id}');event.preventDefault()}"
+                                                style="font-size:0.7rem; padding:2px 7px; border:1px solid #2D2D2D; border-radius:4px; color:#C5C5C5; background:#1A1A1A; outline:none; width:160px;">
+                                            <button onclick="ui.addProductTagInline('${product.id}')" style="font-size:0.68rem; padding:2px 7px; border:1px solid rgba(100,100,255,0.3); border-radius:4px; color:#8B8FD4; background:rgba(100,100,255,0.08); cursor:pointer; white-space:nowrap;">추가</button>
                                         </div>
                                     </td>
                                 </tr>
                                 <tr style="border-bottom:1px solid #1E1E1E;">
-                                    <td style="padding:6px 8px; color:#555; font-size:0.75rem; vertical-align:top; padding-top:10px;">옵션</td>
+                                    <td style="padding:6px 8px; color:#555; font-size:0.75rem; vertical-align:middle;">옵션</td>
                                     <td style="padding:6px 8px;">
                                         ${product.options && product.options.length
-                                            ? this.renderOptionTable(product)
+                                            ? `<div style="display:flex; align-items:center; gap:8px;">
+                                                <span style="color:#888; font-size:0.78rem;">${product.options.length}개 옵션</span>
+                                                <button onclick="const t=this.closest('td').querySelector('.opt-panel');t.style.display=t.style.display==='none'?'block':'none';this.textContent=t.style.display==='none'?'펼치기':'접기'"
+                                                    style="font-size:0.7rem; padding:2px 8px; border:1px solid #2D2D2D; border-radius:4px; color:#888; background:transparent; cursor:pointer;">펼치기</button>
+                                               </div>
+                                               <div class="opt-panel" style="display:none; margin-top:8px;">${this.renderOptionTable(product)}</div>`
                                             : `<span style="color:#444; font-size:0.75rem;">※ 옵션 미설정 — 단일상품</span>`}
                                     </td>
                                 </tr>
@@ -826,14 +1018,37 @@ class UIManager {
 
         // 행 생성
         const rows = options.map((o, idx) => {
-            const optionCost = basePrice
-            const optionSalePrice = o.price || basePrice
-            const origStock = o.originalStock || 999
-            const stockStatus = o.stockStatus === '품절'
-                ? '<span style="color:#FF6B6B; font-size:0.7rem;">품절</span>'
+            const optionCost = o.price || basePrice
+            const optionSalePrice = product.salePrice || Math.ceil(optionCost * (1 + (product.marginRate || 15) / 100))
+            const origStock = o.originalStock ?? o.stock
+            const currentStock = o.stock ?? origStock
+            const stockUnknown = currentStock === null || currentStock === undefined || currentStock === -1
+
+            // 품절 판정: isSoldOut 또는 stockStatus 또는 stock === 0
+            const isBrandDelivery = o.isBrandDelivery === true
+            const isSoldOut = !isBrandDelivery && (o.isSoldOut || o.stockStatus === '품절' || currentStock === 0)
+            let stockDisplay
+            if (isBrandDelivery) {
+                stockDisplay = '<span style="color:#6B8AFF; font-weight:600; font-size:0.78rem;">브랜드배송</span>'
+            } else if (isSoldOut) {
+                stockDisplay = '<span style="color:#FF6B6B; font-weight:600;">품절</span>'
+            } else if (stockUnknown) {
+                stockDisplay = `<input type="number" value="" placeholder="직접입력" data-field="stock" data-idx="${idx}" data-pid="${product.id}"
+                    style="width:70px; background:rgba(255,255,255,0.05); border:1px solid #3D3D3D; color:#E5E5E5; border-radius:4px; padding:2px 6px; text-align:right; font-size:0.875rem;">
+                    <span style="font-size:0.72rem; color:#51CF66;">재고있음</span>`
+            } else if (currentStock >= 999) {
+                stockDisplay = `<input type="number" value="" placeholder="직접입력" data-field="stock" data-idx="${idx}" data-pid="${product.id}"
+                    style="width:70px; background:rgba(255,255,255,0.05); border:1px solid #3D3D3D; color:#E5E5E5; border-radius:4px; padding:2px 6px; text-align:right; font-size:0.875rem;">
+                    <span style="font-size:0.72rem; color:#51CF66;">충분</span>`
+            } else {
+                stockDisplay = `<input type="number" value="${currentStock}" data-field="stock" data-idx="${idx}" data-pid="${product.id}"
+                    style="width:60px; background:rgba(255,255,255,0.05); border:1px solid #3D3D3D; color:#E5E5E5; border-radius:4px; padding:2px 6px; text-align:right; font-size:0.875rem;">개`
+            }
+            const origStockLabel = !stockUnknown && origStock !== null && origStock !== undefined && origStock !== -1 && origStock !== currentStock
+                ? `<br><span style="font-size:0.7rem; color:#666;">(원재고: ${origStock}개)</span>`
                 : ''
 
-            // 마켓전송가격: marketPrices에서 계정별 가격 표시 (이미지 형식: "계정명 : 가격원")
+            // 마켓전송가격: marketPrices에서 계정별 가격 표시
             const marketPriceLines = Object.entries(product.marketPrices || {}).map(([accId, price]) => {
                 const accLabel = typeof accountManager !== 'undefined'
                     ? accountManager.getAccountLabel(accId)
@@ -841,21 +1056,21 @@ class UIManager {
                 return `<div style="font-size:0.78rem; color:#C5C5C5;">${accLabel} : <span style="color:#FFB84D; font-weight:600;">${price?.toLocaleString()}원</span></div>`
             }).join('') || '<span style="color:#555; font-size:0.75rem;">미계산</span>'
 
+            const isChecked = o.enabled !== false && !isSoldOut
+
             return `
-                <tr id="opt-row-${product.id}-${idx}" style="border-bottom:1px solid rgba(45,45,45,0.5);">
+                <tr id="opt-row-${product.id}-${idx}" style="border-bottom:1px solid rgba(45,45,45,0.5);${isSoldOut ? ' opacity:0.5;' : ''}">
                     <td style="padding:0.5rem; text-align:center;">
-                        <input type="checkbox" class="opt-cb-${product.id}" data-idx="${idx}" checked style="cursor:pointer;">
+                        <input type="checkbox" class="opt-cb-${product.id}" data-idx="${idx}" ${isChecked ? 'checked' : ''} style="cursor:pointer; accent-color:#FF8C00;">
                     </td>
-                    <td style="padding:0.5rem; font-size:0.875rem; color:#E5E5E5;">${o.name} ${stockStatus}</td>
+                    <td style="padding:0.5rem; font-size:0.875rem; color:#E5E5E5;">${o.name}</td>
                     <td style="padding:0.5rem; text-align:right; font-size:0.875rem; color:#C5C5C5;">₩${optionCost.toLocaleString()}</td>
                     <td style="padding:0.5rem; text-align:right; font-size:0.875rem; color:#E5E5E5;">
                         <input type="number" value="${optionSalePrice}" data-field="price" data-idx="${idx}" data-pid="${product.id}"
-                            style="width:90px; background:rgba(255,255,255,0.05); border:1px solid #3D3D3D; color:#E5E5E5; border-radius:4px; padding:2px 6px; text-align:right; font-size:0.875rem;">원
+                            style="width:100px; background:rgba(255,255,255,0.05); border:1px solid #3D3D3D; color:#E5E5E5; border-radius:4px; padding:2px 6px; text-align:right; font-size:0.875rem;">원
                     </td>
                     <td style="padding:0.5rem; text-align:right; font-size:0.875rem; color:#E5E5E5;">
-                        <input type="number" value="${o.stock}" data-field="stock" data-idx="${idx}" data-pid="${product.id}"
-                            style="width:70px; background:rgba(255,255,255,0.05); border:1px solid #3D3D3D; color:#E5E5E5; border-radius:4px; padding:2px 6px; text-align:right; font-size:0.875rem;">개<br>
-                        <span style="font-size:0.7rem; color:#666;">(원재고:${origStock}개)</span>
+                        ${stockDisplay}${origStockLabel}
                     </td>
                     <td style="padding:0.5rem; text-align:right;">${marketPriceLines}</td>
                 </tr>`
@@ -907,7 +1122,7 @@ class UIManager {
      * @param {string} productId - 상품 ID
      */
     async addOption(productId) {
-        const name = prompt('추가할 옵션명을 입력하세요')
+        const name = await this.showPrompt('추가할 옵션명을 입력하세요', { title: '옵션 추가' })
         if (!name || !name.trim()) return
 
         let product = await storage.get('products', productId)
@@ -990,11 +1205,62 @@ class UIManager {
         this.renderProducts()
     }
 
+    /**
+     * 상품 1개 완전 삭제 (products + collectedProducts + savedCount 동기화)
+     * @param {string} productId - products 스토어 or collectedProducts 스토어 ID
+     * @returns {string|null} 감소한 searchFilterId (없으면 null)
+     */
+    async _deleteProductWithCascade(productId) {
+        let searchFilterId = null
+
+        if (productId.startsWith('col_')) {
+            // collectedProducts 스토어 항목
+            const cp = await storage.get('collectedProducts', productId)
+            searchFilterId = cp?.searchFilterId || null
+            await storage.delete('collectedProducts', productId)
+            productManager.products = productManager.products.filter(p => p.id !== productId)
+        } else {
+            // products 스토어 항목 (bridge)
+            const prod = await storage.get('products', productId)
+            // collectedProductId 연결된 항목도 삭제
+            if (prod?.collectedProductId) {
+                const cp = await storage.get('collectedProducts', prod.collectedProductId)
+                searchFilterId = cp?.searchFilterId || prod.searchFilterId || null
+                await storage.delete('collectedProducts', prod.collectedProductId)
+            } else {
+                searchFilterId = prod?.searchFilterId || null
+            }
+            await storage.delete('products', productId)
+            productManager.products = productManager.products.filter(p => p.id !== productId)
+        }
+
+        // searchFilters savedCount 감소
+        if (searchFilterId && typeof collectorManager !== 'undefined') {
+            const filter = collectorManager.filters.find(f => f.id === searchFilterId)
+            if (filter && filter.savedCount > 0) {
+                await collectorManager.updateFilter(filter.id, { savedCount: filter.savedCount - 1 })
+            }
+        }
+
+        return searchFilterId
+    }
+
     async deleteProduct(productId) {
-        if (confirm('정말 삭제하시겠습니까?')) {
-            await productManager.deleteProduct(productId)
+        // 삭제 잠금 체크 (products 스토어 또는 collectedProducts 스토어)
+        let targetProduct = productManager.products.find(p => p.id === productId)
+        if (!targetProduct && productId.startsWith('col_')) {
+            try { targetProduct = await storage.get('collectedProducts', productId) } catch {}
+        }
+        if (targetProduct?.deleteLocked) {
+            app.showNotification('삭제잠금 상태입니다', 'warning')
+            return
+        }
+        if (await this.showConfirm('정말 삭제하시겠습니까?', { title: '상품 삭제', danger: true })) {
+            await this._deleteProductWithCascade(productId)
+            app.showNotification('상품이 삭제되었습니다', 'success')
             this.renderProducts()
             this.updateCounts()
+            await this.renderSearchFilterTable()
         }
     }
 
@@ -1010,17 +1276,88 @@ class UIManager {
     }
 
     /**
+     * 이미지 그리드 클릭 → 건별보기로 전환 + 해당 상품만 표시
+     */
+    focusProduct(productId) {
+        document.getElementById('product-focus-back')?.remove()
+        this.focusedProductId = productId
+        this.setProductViewMode('card')
+        this.renderProducts()
+    }
+
+    clearProductFocus() {
+        document.getElementById('product-focus-back')?.remove()
+        this.focusedProductId = null
+        this.setProductViewMode('image')
+        this.renderProducts()
+    }
+
+    /**
      * 이미지 그리드에서 클릭 → 건별보기로 전환 후 해당 상품으로 스크롤
      */
     jumpToProduct(productId) {
-        // 건별보기로 전환
         this.setProductViewMode('card')
-        // 렌더 완료 후 스크롤 + 하이라이트
         requestAnimationFrame(() => {
             const card = document.querySelector(`[data-product-id="${productId}"]`)
             if (!card) return
             card.scrollIntoView({ behavior: 'smooth', block: 'center' })
         })
+    }
+
+    // ==================== 선택처리 일괄 액션 ====================
+
+    toggleSelectActionMenu() {
+        const menu = document.getElementById('select-action-menu')
+        if (!menu) return
+        const isVisible = menu.style.display !== 'none'
+        menu.style.display = isVisible ? 'none' : 'block'
+        if (!isVisible) {
+            const close = (e) => {
+                if (!menu.contains(e.target) && e.target.id !== 'btn-select-action') {
+                    menu.style.display = 'none'
+                    document.removeEventListener('click', close)
+                }
+            }
+            setTimeout(() => document.addEventListener('click', close), 0)
+        }
+    }
+
+    async bulkAiImageChange() {
+        const checked = [...document.querySelectorAll('.product-select-cb:checked')]
+        if (checked.length === 0) { app.showNotification('상품을 선택해주세요', 'warning'); return }
+        app.showNotification(`${checked.length}개 상품 AI이미지 변경 처리 중...`, 'info')
+        // TODO: aiProcessor 연동
+    }
+
+    async bulkAiNameChange() {
+        const checked = [...document.querySelectorAll('.product-select-cb:checked')]
+        if (checked.length === 0) { app.showNotification('상품을 선택해주세요', 'warning'); return }
+        app.showNotification(`${checked.length}개 상품 AI상품명 변경 처리 중...`, 'info')
+        // TODO: aiProcessor 연동
+    }
+
+    async bulkAiTagChange() {
+        const checked = [...document.querySelectorAll('.product-select-cb:checked')]
+        if (checked.length === 0) { app.showNotification('상품을 선택해주세요', 'warning'); return }
+        app.showNotification(`${checked.length}개 상품 AI태그 생성 처리 중...`, 'info')
+        // TODO: aiProcessor 연동
+    }
+
+    bulkShipment() {
+        const checked = [...document.querySelectorAll('.product-select-cb:checked')]
+        if (checked.length === 0) { app.showNotification('전송할 상품을 선택해주세요', 'warning'); return }
+        app.navigateTo('shipment')
+    }
+
+    /**
+     * 카테고리 브라우저에서 상품 클릭 → 상품관리 페이지로 이동 후 해당 상품만 표시
+     */
+    navigateToProduct(productId) {
+        document.getElementById('product-focus-back')?.remove()
+        this.focusedProductId = productId
+        app.navigateTo('products')
+        // renderProducts는 app.navigateTo 내부에서 100ms 후 호출됨
+        // focusedProductId가 세팅되어 있으므로 해당 상품만 렌더링됨
     }
 
     // 인라인 수정 저장
@@ -1051,8 +1388,22 @@ class UIManager {
     }
 
     // 삭제 잠금 토글
-    toggleDeleteLock(productId, locked) {
-        productManager.updateProduct(productId, { deleteLocked: locked })
+    async toggleDeleteLock(productId, locked) {
+        if (productId.startsWith('col_')) {
+            // collectedProducts 스토어 직접 업데이트
+            try {
+                const p = await storage.get('collectedProducts', productId)
+                if (p) {
+                    p.deleteLocked = locked
+                    await storage.save('collectedProducts', p)
+                    // productManager.products에도 반영
+                    const idx = productManager.products.findIndex(x => x.id === productId)
+                    if (idx !== -1) productManager.products[idx].deleteLocked = locked
+                }
+            } catch (e) { console.error('삭제잠금 저장 실패:', e) }
+        } else {
+            await productManager.updateProduct(productId, { deleteLocked: locked })
+        }
     }
 
     // 재고 잠금 토글
@@ -1060,15 +1411,54 @@ class UIManager {
         productManager.updateProduct(productId, { stockLocked: locked })
     }
 
-    // 상품 태그 추가
-    addProductTag(productId) {
-        const tag = prompt('추가할 태그를 입력하세요 (#제외)')
-        if (!tag || !tag.trim()) return
-        const product = productManager.products.find(p => p.id === productId)
+    // 상품 태그 인라인 추가 (","로 구분 다중입력 지원)
+    async addProductTagInline(productId) {
+        const input = document.getElementById(`tag-input-${productId}`)
+        if (!input) return
+        const raw = input.value.trim()
+        if (!raw) return
+        const newTags = raw.split(',').map(t => t.trim()).filter(Boolean)
+        input.value = ''
+
+        let product = productManager.products.find(p => p.id === productId)
+        let isCollected = false
+        if (!product && productId.startsWith('col_')) {
+            try { product = await storage.get('collectedProducts', productId); isCollected = !!product } catch {}
+        }
         if (!product) return
+
         const tags = [...(product.tags || [])]
-        if (!tags.includes(tag.trim())) tags.push(tag.trim())
-        productManager.updateProduct(productId, { tags })
+        for (const t of newTags) { if (!tags.includes(t)) tags.push(t) }
+
+        if (isCollected) {
+            product.tags = tags
+            await storage.save('collectedProducts', product)
+            const idx = productManager.products.findIndex(x => x.id === productId)
+            if (idx !== -1) productManager.products[idx].tags = tags
+        } else {
+            await productManager.updateProduct(productId, { tags })
+        }
+        this.renderProducts()
+    }
+
+    // 상품 태그 삭제
+    async deleteProductTag(productId, tagToRemove) {
+        let product = productManager.products.find(p => p.id === productId)
+        let isCollected = false
+        if (!product && productId.startsWith('col_')) {
+            try { product = await storage.get('collectedProducts', productId); isCollected = !!product } catch {}
+        }
+        if (!product) return
+
+        const tags = (product.tags || []).filter(t => t !== tagToRemove)
+        if (isCollected) {
+            product.tags = tags
+            await storage.save('collectedProducts', product)
+            const idx = productManager.products.findIndex(x => x.id === productId)
+            if (idx !== -1) productManager.products[idx].tags = tags
+        } else {
+            await productManager.updateProduct(productId, { tags })
+        }
         this.renderProducts()
     }
 
@@ -1086,19 +1476,193 @@ class UIManager {
             app.showNotification('삭제할 상품을 선택해주세요', 'warning')
             return
         }
-        if (!confirm(`선택된 ${checked.length}개 상품을 삭제하시겠습니까?`)) return
+        if (!await this.showConfirm(`선택된 ${checked.length}개 상품을 삭제하시겠습니까?`, { title: '상품 일괄 삭제', danger: true })) return
 
         const ids = checked.map(cb => cb.dataset.productId).filter(Boolean)
-        let deleted = 0
+        if (ids.length === 0) {
+            app.showNotification('상품 ID를 찾을 수 없습니다', 'error')
+            return
+        }
+
+        let deletedCount = 0
         for (const id of ids) {
             try {
-                await productManager.deleteProduct(id)
-                deleted++
-            } catch {}
+                await this._deleteProductWithCascade(id)
+                deletedCount++
+            } catch (e) {
+                console.error('상품 삭제 오류:', id, e)
+            }
         }
-        app.showNotification(`${deleted}개 상품이 삭제되었습니다`, 'success')
+
+        if (deletedCount > 0) {
+            app.showNotification(`${deletedCount}개 상품이 삭제되었습니다`, 'success')
+        }
+        // DB에서 최신 상태 재로드 후 렌더링
+        await productManager.loadProducts()
         this.renderProducts()
         this.updateCounts()
+        // 검색그룹 목록 카운트 갱신
+        await this.renderSearchFilterTable()
+    }
+
+    /**
+     * 가격/재고 이력 모달 표시
+     */
+    async showPriceHistory(productId) {
+        const product = productManager.products.find(p => p.id === productId)
+        if (!product) return
+
+        // 기존 모달 제거
+        document.getElementById('price-history-modal')?.remove()
+
+        const siteName = product.sourceSite || 'MUSINSA'
+        const currentPrice = product.cost || product.sourcePrice || 0
+        const histories = product.priceHistory || []
+
+        // 이력이 없으면 안내 메시지
+        if (histories.length === 0) {
+            const modal = document.createElement('div')
+            modal.id = 'price-history-modal'
+            modal.style.cssText = 'position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.7);'
+            modal.innerHTML = `
+                <div style="background:#141414; border:1px solid #2D2D2D; border-radius:10px; width:400px; padding:32px; text-align:center;">
+                    <div style="font-size:0.95rem; font-weight:700; color:#E5E5E5; margin-bottom:12px;">가격 / 재고 이력</div>
+                    <div style="color:#888; font-size:0.85rem; margin-bottom:20px;">수집된 이력 데이터가 없습니다.</div>
+                    <button onclick="document.getElementById('price-history-modal').remove()" style="padding:6px 20px; background:#FF8C00; border:none; color:#fff; border-radius:6px; cursor:pointer; font-size:0.8rem;">닫기</button>
+                </div>`
+            modal.addEventListener('click', e => { if (e.target === modal) modal.remove() })
+            document.body.appendChild(modal)
+            return
+        }
+
+        // 날짜 포맷 헬퍼 (24시간제)
+        const fmtDate = (isoStr) => {
+            const d = new Date(isoStr)
+            return `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+        }
+
+        // 재고 표시 헬퍼: 숫자면 수량, null이면 O/X
+        const fmtStock = (stock, isSoldOut, opt = {}) => {
+            if (opt.isBrandDelivery) return '<span style="color:#6B8AFF; font-weight:700;">브랜드</span>'
+            if (stock === null || stock === undefined || stock === -1) {
+                if (isSoldOut) return '<span style="color:#FF6B6B; font-weight:700;">품절</span>'
+                return '<span style="color:#51CF66; font-weight:700;">O</span>'
+            }
+            if (typeof stock === 'number') {
+                if (stock <= 0) return '<span style="color:#FF6B6B; font-weight:700;">품절</span>'
+                if (stock >= 999) return '<span style="color:#51CF66; font-weight:700;">충분</span>'
+                return `<span style="color:#51CF66; font-weight:700;">${stock}개</span>`
+            }
+            // 수량 알 수 없음 → O/X 표기
+            if (isSoldOut) return '<span style="color:#FF6B6B; font-weight:700;">X</span>'
+            return '<span style="color:#51CF66; font-weight:700;">O</span>'
+        }
+
+        // 가격 통계
+        const allPrices = histories.map(h => h.price).filter(p => p > 0)
+        const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : currentPrice
+        const maxPrice = allPrices.length > 0 ? Math.max(...allPrices) : currentPrice
+        const minEntry = histories.find(h => h.price === minPrice)
+        const maxEntry = histories.find(h => h.price === maxPrice)
+        const minDate = minEntry ? fmtDate(minEntry.date) : '-'
+        const maxDate = maxEntry ? fmtDate(maxEntry.date) : '-'
+
+        // 이력 테이블 행 생성 (최신순 정렬)
+        const sorted = [...histories].sort((a, b) => new Date(b.date) - new Date(a.date))
+        const rowsHtml = sorted.map(h => {
+            const dateStr = fmtDate(h.date)
+            const opts = h.options || []
+            const optRows = opts.map(opt => `
+                <tr style="border-bottom:1px solid #1E1E1E;">
+                    <td style="padding:4px 12px; color:#666; font-size:0.75rem;">└ ${opt.name}</td>
+                    <td style="padding:4px 12px; text-align:right; color:#C5C5C5; font-size:0.75rem;">₩ ${this.formatNumber(opt.price || h.price)}</td>
+                    <td style="padding:4px 12px; text-align:center; font-size:0.75rem;">${fmtStock(opt.stock, opt.isSoldOut, opt)}</td>
+                </tr>`).join('')
+
+            // 옵션 없는 경우 상품 전체 행만 표시
+            if (opts.length === 0) {
+                return `
+                <tr style="border-bottom:1px solid #2A2A2A; background:#1A1A1A;">
+                    <td style="padding:6px 12px; color:#C5C5C5; font-size:0.8rem; font-weight:600;">${dateStr}</td>
+                    <td style="padding:6px 12px; text-align:right; color:#E5E5E5; font-size:0.8rem;">₩ ${this.formatNumber(h.price)}</td>
+                    <td style="padding:6px 12px; text-align:center; font-size:0.8rem; color:#51CF66; font-weight:700;">O</td>
+                </tr>`
+            }
+
+            return `
+                <tr style="border-bottom:1px solid #2A2A2A; background:#1A1A1A;">
+                    <td style="padding:6px 12px; color:#C5C5C5; font-size:0.8rem; font-weight:600;">${dateStr}</td>
+                    <td style="padding:6px 12px; text-align:right; color:#E5E5E5; font-size:0.8rem;">₩ ${this.formatNumber(h.price)}</td>
+                    <td style="padding:6px 12px; text-align:center; color:#666; font-size:0.8rem;">${opts.length}개 옵션</td>
+                </tr>
+                ${optRows}`
+        }).join('')
+
+        // 재고 열 헤더: 수량 파악 가능 여부에 따라 표시 변경
+        const hasNumericStock = histories.some(h => (h.options || []).some(o => typeof o.stock === 'number' && o.stock >= 0))
+        const stockHeader = hasNumericStock ? '재고(수량/O/X)' : '재고(O/X)'
+
+        const modal = document.createElement('div')
+        modal.id = 'price-history-modal'
+        modal.style.cssText = 'position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.7);'
+        modal.innerHTML = `
+            <div style="background:#141414; border:1px solid #2D2D2D; border-radius:10px; width:520px; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid #2D2D2D;">
+                    <span style="font-size:0.95rem; font-weight:700; color:#E5E5E5;">가격 / 재고 이력</span>
+                    <div style="display:flex; gap:6px;">
+                        <span style="font-size:0.72rem; padding:3px 10px; background:#1E1E1E; border:1px solid #3D3D3D; color:#888; border-radius:4px;">${histories.length}건 기록</span>
+                        <button onclick="document.getElementById('price-history-modal').remove()" style="background:transparent; border:none; color:#666; font-size:1.2rem; cursor:pointer; line-height:1;">✕</button>
+                    </div>
+                </div>
+                <div style="overflow-y:auto; flex:1;">
+                    <div style="padding:14px 18px; border-bottom:1px solid #222;">
+                        <div style="font-size:0.72rem; color:#666; margin-bottom:4px;">[${siteName}]</div>
+                        <div style="font-size:0.88rem; font-weight:700; color:#E5E5E5;">${product.name}</div>
+                    </div>
+                    <div style="padding:12px 18px; border-bottom:1px solid #222; display:flex; flex-direction:column; gap:6px;">
+                        <div style="display:flex; gap:16px; font-size:0.8rem;">
+                            <span style="color:#888; min-width:60px;">현재가</span>
+                            <span style="color:#E5E5E5; font-weight:600;">₩ ${this.formatNumber(currentPrice)}</span>
+                        </div>
+                        <div style="display:flex; gap:16px; font-size:0.8rem;">
+                            <span style="color:#888; min-width:60px;">최저가</span>
+                            <span style="color:#5B8EE8; font-weight:600;">₩ ${this.formatNumber(minPrice)} <span style="font-size:0.72rem; color:#5B8EE8;">(${minDate})</span></span>
+                        </div>
+                        <div style="display:flex; gap:16px; font-size:0.8rem;">
+                            <span style="color:#888; min-width:60px;">최고가</span>
+                            <span style="color:#E06B6B; font-weight:600;">₩ ${this.formatNumber(maxPrice)} <span style="font-size:0.72rem; color:#E06B6B;">(${maxDate})</span></span>
+                        </div>
+                    </div>
+                    <table style="width:100%; border-collapse:collapse;">
+                        <thead>
+                            <tr style="background:#1A1A1A; border-bottom:1px solid #2D2D2D;">
+                                <th style="padding:6px 12px; text-align:left; font-size:0.75rem; color:#666; font-weight:500;">날짜</th>
+                                <th style="padding:6px 12px; text-align:right; font-size:0.75rem; color:#666; font-weight:500;">가격(₩)</th>
+                                <th style="padding:6px 12px; text-align:center; font-size:0.75rem; color:#666; font-weight:500;">${stockHeader}</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rowsHtml}</tbody>
+                    </table>
+                </div>
+            </div>`
+        modal.addEventListener('click', e => { if (e.target === modal) modal.remove() })
+        document.body.appendChild(modal)
+    }
+
+    /**
+     * 상품전송 탭으로 이동 (마켓삭제 버튼)
+     */
+    goToShipmentWithProduct(productId) {
+        app.navigateTo('shipment')
+        // 잠시 후 해당 상품 행 하이라이트
+        setTimeout(() => {
+            const cb = document.querySelector(`.shipment-product-cb[value="${productId}"]`)
+            if (cb) {
+                cb.checked = true
+                cb.closest('tr')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                cb.closest('tr').style.background = 'rgba(255,107,107,0.08)'
+            }
+        }, 200)
     }
 
     /**
@@ -1192,7 +1756,7 @@ class UIManager {
     }
 
     async deleteChannel(channelId) {
-        if (confirm('정말 삭제하시겠습니까?')) {
+        if (await this.showConfirm('정말 삭제하시겠습니까?', { title: '판매처 삭제', danger: true })) {
             await channelManager.deleteChannel(channelId)
             this.renderChannels()
             this.updateCounts()
@@ -1400,7 +1964,7 @@ class UIManager {
             const channelName = channel ? channel.name : '마켓'
             const orderDate = order.createdAt ? new Date(order.createdAt) : null
             const dateStr   = orderDate ? orderDate.toLocaleDateString('ko-KR') : '-'
-            const timeStr   = orderDate ? orderDate.toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit' }) : ''
+            const timeStr   = orderDate ? orderDate.toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit', hour12: false }) : ''
             const salePrice       = order.salePrice || 0
             const feeRate         = channel ? (channel.feeRate || 0) : 0
             const settlementPrice = Math.round(salePrice * (1 - feeRate / 100))
@@ -1439,13 +2003,14 @@ class UIManager {
                 <!-- 주문번호 컬럼 (썸네일 + 정보) -->
                 <td style="${S.cell}">
                     <div style="display:flex; gap:10px; align-items:flex-start;">
-                        <!-- 썸네일 + 주문일시 -->
+                        <!-- 썸네일 + 주문일시 + 삭제 -->
                         <div style="display:flex; flex-direction:column; align-items:center; gap:5px; flex-shrink:0;">
                             ${thumbHtml}
                             <div style="font-size:0.68rem; color:#7B8DB0; text-align:center; line-height:1.5; white-space:nowrap;">
                                 <div>${dateStr}</div>
                                 <div>${timeStr}</div>
                             </div>
+                            <button onclick="ui.deleteOrder('${order.id}')" style="width:100%; padding:4px 0; font-size:0.7rem; font-weight:600; background:#1A1015; border:1px solid #6B2A20; color:#FF6B6B; border-radius:4px; cursor:pointer;">주문삭제</button>
                         </div>
                         <!-- 주문 정보 -->
                         <div style="flex:1; min-width:0;">
@@ -1588,7 +2153,7 @@ class UIManager {
     }
 
     async deleteOrder(orderId) {
-        if (confirm('정말 삭제하시겠습니까?')) {
+        if (await this.showConfirm('정말 삭제하시겠습니까?', { title: '주문 삭제', danger: true })) {
             await orderManager.deleteOrder(orderId)
             this.renderOrders()
             this.updateCounts()
@@ -1657,7 +2222,7 @@ class UIManager {
     }
 
     async deleteSourcingSite(siteId) {
-        if (confirm('정말 삭제하시겠습니까?')) {
+        if (await this.showConfirm('정말 삭제하시겠습니까?', { title: '소싱사이트 삭제', danger: true })) {
             await sourcingManager.deleteSourcingSite(siteId)
             this.renderSourcing()
         }
@@ -2201,7 +2766,7 @@ class UIManager {
     }
 
     async rejectReturn(returnId) {
-        const reason = prompt('거부 사유를 입력해주세요:')
+        const reason = await this.showPrompt('거부 사유를 입력해주세요:', { title: '반품 거부' })
         if (reason !== null) {
             await returnManager.rejectReturn(returnId, reason)
             this.renderReturns()
@@ -2347,7 +2912,7 @@ class UIManager {
                                 ${contactManager.getStatusLabel(log.status)}
                             </span>
                         </td>
-                        <td class="px-6 py-4 text-sm text-gray-500">${log.sentAt ? new Date(log.sentAt).toLocaleString('ko-KR') : '-'}</td>
+                        <td class="px-6 py-4 text-sm text-gray-500">${log.sentAt ? new Date(log.sentAt).toLocaleString('ko-KR', { hour12: false }) : '-'}</td>
                         <td class="px-6 py-4 text-center">
                             <button onclick="ui.deleteContact('${log.id}')" class="text-red-600 hover:text-red-800 text-sm">삭제</button>
                         </td>
@@ -2366,7 +2931,7 @@ class UIManager {
     }
 
     async deleteContact(contactId) {
-        if (confirm('정말 삭제하시겠습니까?')) {
+        if (await this.showConfirm('정말 삭제하시겠습니까?', { title: '연락 삭제', danger: true })) {
             await contactManager.deleteContact(contactId)
             this.renderContacts()
         }
@@ -2405,8 +2970,247 @@ class UIManager {
         } else {
             dot.style.background = '#888'
             text.style.color = '#888'
-            text.textContent = '시뮬레이션 모드 — 실제수집을 위해 node proxy-server.mjs 실행 필요'
+            text.textContent = '시뮬레이션 모드 — 실제수집을 위해 수집 서버를 실행해주세요'
         }
+        // 인증 상태 확인
+        this._refreshAuthStatusUI()
+    }
+
+    async _refreshAuthStatusUI() {
+        const authDot = document.getElementById('musinsa-auth-dot')
+        const authText = document.getElementById('musinsa-auth-text')
+        if (!authDot || !authText) return
+        try {
+            const r = await fetch('http://localhost:3001/api/musinsa/auth/status')
+            const d = await r.json()
+            if (d.isLoggedIn) {
+                authDot.style.background = '#51CF66'
+                authText.style.color = '#51CF66'
+                authText.textContent = '로그인 상태 — 최대혜택가 반영 활성'
+            } else {
+                authDot.style.background = '#888'
+                authText.style.color = '#888'
+                authText.textContent = '비로그인 — 로그인 시 최대혜택가 반영'
+            }
+        } catch {
+            authDot.style.background = '#555'
+            authText.style.color = '#555'
+            authText.textContent = '프록시 서버 미연결'
+        }
+    }
+
+    async setMusinsaAuth() {
+        const input = document.getElementById('musinsa-cookie-input')
+        const cookie = input?.value?.trim()
+        if (!cookie) {
+            app.showNotification('쿠키를 입력해주세요', 'warning')
+            return
+        }
+        try {
+            const r = await fetch('http://localhost:3001/api/musinsa/auth', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cookie })
+            })
+            const d = await r.json()
+            if (d.success && d.isLoggedIn) {
+                app.showNotification(d.message, 'success')
+                input.value = ''
+            } else {
+                app.showNotification(d.message || '인증 실패', 'error')
+            }
+            this._refreshAuthStatusUI()
+        } catch (e) {
+            app.showNotification('프록시 서버 연결 실패', 'error')
+        }
+    }
+
+    async clearMusinsaAuth() {
+        try {
+            await fetch('http://localhost:3001/api/musinsa/auth', { method: 'DELETE' })
+            app.showNotification('연동 해제 완료', 'success')
+            this._refreshAuthStatusUI()
+        } catch (e) {
+            app.showNotification('프록시 서버 연결 실패', 'error')
+        }
+    }
+
+    async musinsaLogin() {
+        // 1) Chrome 쿠키 자동 읽기 시도
+        const authText = document.getElementById('musinsa-auth-text')
+        const authDot = document.getElementById('musinsa-auth-dot')
+        if (authText) { authText.style.color = '#888'; authText.textContent = '로그인 중...' }
+
+        try {
+            const r = await fetch('http://localhost:3001/api/musinsa/chrome-login')
+            const d = await r.json()
+            if (d.success && d.isLoggedIn) {
+                app.showNotification(d.message, 'success')
+                this._refreshAuthStatusUI()
+                return
+            }
+            // Chrome 자동 로그인 실패 → 모달로 폴백
+            app.showNotification(d.message || 'Chrome 자동 로그인 실패', 'warning')
+        } catch {
+            // 서버 미연결이면 바로 모달 표시
+        }
+        this._refreshAuthStatusUI()
+        this.showMusinsaLoginModal()
+    }
+
+    showMusinsaLoginModal() {
+        const existing = document.getElementById('musinsa-auth-modal')
+        if (existing) existing.remove()
+
+        const modal = document.createElement('div')
+        modal.id = 'musinsa-auth-modal'
+        modal.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.7);'
+        modal.innerHTML = `
+            <div style="background:#1A1A1A;border:1px solid #2D2D2D;border-radius:12px;padding:28px;width:520px;max-width:90vw;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+                    <span style="font-size:1rem;font-weight:700;color:#E5E5E5;">무신사 로그인</span>
+                    <button onclick="document.getElementById('musinsa-auth-modal').remove()" style="background:none;border:none;color:#666;font-size:1.2rem;cursor:pointer;">&times;</button>
+                </div>
+                <div style="display:flex;gap:2px;background:#0F0F0F;border:1px solid #2D2D2D;border-radius:8px;padding:4px;margin-bottom:16px;">
+                    <button id="musinsa-tab-login" onclick="ui._switchMusinsaTab('login')" style="flex:1;padding:8px;border:none;background:linear-gradient(135deg,#FF8C00,#FFB84D);color:#fff;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:pointer;">간편 로그인</button>
+                    <button id="musinsa-tab-cookie" onclick="ui._switchMusinsaTab('cookie')" style="flex:1;padding:8px;border:none;background:transparent;color:#888;border-radius:6px;font-size:0.82rem;cursor:pointer;">쿠키 직접 입력</button>
+                </div>
+                <div id="musinsa-panel-login">
+                    <div style="font-size:0.78rem;color:#888;margin-bottom:12px;padding:8px 12px;background:#0F0F0F;border:1px solid #2D2D2D;border-radius:6px;">입력한 정보는 로그인용으로만 사용되며 서버에 저장되지 않습니다</div>
+                    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
+                        <input id="musinsa-login-id" type="text" placeholder="무신사 아이디" style="padding:10px 14px;font-size:0.85rem;background:#0F0F0F;border:1px solid #3D3D3D;color:#E5E5E5;border-radius:6px;outline:none;">
+                        <input id="musinsa-login-pw" type="password" placeholder="비밀번호" style="padding:10px 14px;font-size:0.85rem;background:#0F0F0F;border:1px solid #3D3D3D;color:#E5E5E5;border-radius:6px;outline:none;">
+                    </div>
+                    <button id="musinsa-login-btn" onclick="ui._submitMusinsaLogin()" style="width:100%;padding:12px;background:linear-gradient(135deg,#FF8C00,#FFB84D);border:none;color:#fff;border-radius:6px;font-size:0.9rem;font-weight:700;cursor:pointer;">로그인</button>
+                </div>
+                <div id="musinsa-panel-cookie" style="display:none;">
+                    <div style="background:#0F0F0F;border:1px solid #2D2D2D;border-radius:8px;padding:16px;margin-bottom:16px;">
+                        <div style="font-size:0.82rem;color:#FFB84D;font-weight:600;margin-bottom:12px;">3단계로 간편 연동</div>
+                        <div style="display:flex;flex-direction:column;gap:10px;font-size:0.8rem;color:#B0B0B0;line-height:1.6;">
+                            <div><span style="color:#FF8C00;font-weight:700;">1.</span> <a href="https://www.musinsa.com" target="_blank" style="color:#6B8AFF;text-decoration:underline;">무신사</a>에 로그인 후 F12 키를 누르세요</div>
+                            <div><span style="color:#FF8C00;font-weight:700;">2.</span> Console 탭 클릭 후 아래 명령어를 붙여넣고 Enter</div>
+                            <div style="display:flex;align-items:center;gap:8px;background:#161616;border:1px solid #333;border-radius:6px;padding:8px 12px;margin:4px 0;">
+                                <code style="color:#51CF66;font-size:0.82rem;flex:1;font-family:monospace;">copy(document.cookie)</code>
+                                <button onclick="navigator.clipboard.writeText('copy(document.cookie)');app.showNotification('명령어 복사됨','success')" style="background:rgba(255,140,0,0.15);border:1px solid rgba(255,140,0,0.3);color:#FF8C00;padding:3px 10px;border-radius:4px;font-size:0.72rem;cursor:pointer;white-space:nowrap;">복사</button>
+                            </div>
+                            <div><span style="color:#FF8C00;font-weight:700;">3.</span> 아래 입력창에 Ctrl+V 붙여넣고 연동 버튼 클릭</div>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-bottom:16px;">
+                        <input id="musinsa-cookie-paste" type="text" placeholder="여기에 Ctrl+V 붙여넣기" style="flex:1;padding:10px 14px;font-size:0.85rem;background:#0F0F0F;border:1px solid #3D3D3D;color:#E5E5E5;border-radius:6px;outline:none;">
+                        <button id="musinsa-auth-submit-btn" onclick="ui._submitMusinsaAuth()" style="background:linear-gradient(135deg,#FF8C00,#FFB84D);border:none;color:#fff;padding:10px 24px;border-radius:6px;font-size:0.85rem;cursor:pointer;font-weight:700;white-space:nowrap;">연동</button>
+                    </div>
+                </div>
+                <div id="musinsa-auth-result" style="font-size:0.78rem;color:#888;text-align:center;min-height:20px;"></div>
+            </div>`
+        modal.addEventListener('click', e => { if (e.target === modal) modal.remove() })
+        document.body.appendChild(modal)
+        document.getElementById('musinsa-login-id')?.focus()
+        document.getElementById('musinsa-login-pw')?.addEventListener('keydown', e => {
+            if (e.key === 'Enter') ui._submitMusinsaLogin()
+        })
+    }
+
+    // 레거시 호환 (기존 코드 참조 대비)
+    showMusinsaAuthGuide() { this.showMusinsaLoginModal() }
+
+    _switchMusinsaTab(tab) {
+        const loginPanel = document.getElementById('musinsa-panel-login')
+        const cookiePanel = document.getElementById('musinsa-panel-cookie')
+        const loginBtn = document.getElementById('musinsa-tab-login')
+        const cookieBtn = document.getElementById('musinsa-tab-cookie')
+        const activeStyle = 'flex:1;padding:8px;border:none;background:linear-gradient(135deg,#FF8C00,#FFB84D);color:#fff;border-radius:6px;font-size:0.82rem;font-weight:700;cursor:pointer;'
+        const inactiveStyle = 'flex:1;padding:8px;border:none;background:transparent;color:#888;border-radius:6px;font-size:0.82rem;cursor:pointer;'
+        if (tab === 'login') {
+            loginPanel.style.display = ''
+            cookiePanel.style.display = 'none'
+            loginBtn.style.cssText = activeStyle
+            cookieBtn.style.cssText = inactiveStyle
+        } else {
+            loginPanel.style.display = 'none'
+            cookiePanel.style.display = ''
+            cookieBtn.style.cssText = activeStyle
+            loginBtn.style.cssText = inactiveStyle
+            document.getElementById('musinsa-cookie-paste')?.focus()
+        }
+    }
+
+    async _submitMusinsaLogin() {
+        const idInput = document.getElementById('musinsa-login-id')
+        const pwInput = document.getElementById('musinsa-login-pw')
+        const result = document.getElementById('musinsa-auth-result')
+        const btn = document.getElementById('musinsa-login-btn')
+
+        const id = idInput?.value?.trim()
+        const password = pwInput?.value
+        if (!id) { result.innerHTML = '<span style="color:#FF6B6B;">아이디를 입력해주세요</span>'; return }
+        if (!password) { result.innerHTML = '<span style="color:#FF6B6B;">비밀번호를 입력해주세요</span>'; return }
+
+        btn.disabled = true
+        btn.textContent = '로그인 중...'
+        result.innerHTML = '<span style="color:#888;">인증 확인 중...</span>'
+
+        try {
+            const r = await fetch('http://localhost:3001/api/musinsa/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, password })
+            })
+            const d = await r.json()
+            if (d.success && d.isLoggedIn) {
+                result.innerHTML = `<span style="color:#51CF66;font-weight:600;">${d.message}</span>`
+                app.showNotification(d.message, 'success')
+                setTimeout(() => {
+                    document.getElementById('musinsa-auth-modal')?.remove()
+                    this._refreshAuthStatusUI()
+                }, 1500)
+            } else if (d.code === 'REQUIRES_VERIFICATION') {
+                result.innerHTML = `<span style="color:#FFB84D;">${d.message}</span>`
+                app.showNotification('쿠키 직접 입력으로 전환합니다', 'warning')
+                this._switchMusinsaTab('cookie')
+            } else {
+                result.innerHTML = `<span style="color:#FF6B6B;">${d.message || '로그인 실패'}</span>`
+            }
+        } catch (e) {
+            result.innerHTML = '<span style="color:#FF6B6B;">수집 서버 연결 실패</span>'
+        }
+        btn.disabled = false
+        btn.textContent = '로그인'
+    }
+
+    async _submitMusinsaAuth() {
+        const input = document.getElementById('musinsa-cookie-paste')
+        const result = document.getElementById('musinsa-auth-result')
+        const btn = document.getElementById('musinsa-auth-submit-btn')
+        const cookie = input?.value?.trim()
+        if (!cookie) { result.innerHTML = '<span style="color:#FF6B6B;">쿠키를 붙여넣어주세요</span>'; return }
+
+        btn.disabled = true
+        btn.textContent = '확인 중...'
+        result.innerHTML = '<span style="color:#888;">인증 확인 중...</span>'
+
+        try {
+            const r = await fetch('http://localhost:3001/api/musinsa/auth', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cookie })
+            })
+            const d = await r.json()
+            if (d.success && d.isLoggedIn) {
+                result.innerHTML = `<span style="color:#51CF66;font-weight:600;">${d.message}</span>`
+                app.showNotification(d.message, 'success')
+                setTimeout(() => {
+                    document.getElementById('musinsa-auth-modal')?.remove()
+                }, 1500)
+            } else {
+                result.innerHTML = `<span style="color:#FF6B6B;">${d.message || '인증 실패'}</span>`
+            }
+            this._refreshAuthStatusUI()
+        } catch (e) {
+            result.innerHTML = '<span style="color:#FF6B6B;">프록시 서버 연결 실패</span>'
+        }
+        btn.disabled = false
+        btn.textContent = '연동'
     }
 
     /**
@@ -2452,16 +3256,35 @@ class UIManager {
     }
 
     /**
-     * 수집 실행
+     * 수집 로그 메시지 출력
      */
+    /**
+     * 로그 내용 클립보드 복사
+     */
+    copyLog(logId) {
+        const el = document.getElementById(logId)
+        if (!el) return
+        const text = [...el.querySelectorAll('p, div')].map(p => p.textContent).join('\n')
+        navigator.clipboard.writeText(text).then(() => {
+            app.showNotification('로그가 클립보드에 복사되었습니다', 'success')
+        }).catch(() => {
+            app.showNotification('복사 실패', 'error')
+        })
+    }
+
     _log(msg, type = 'info') {
         const logEl = document.getElementById('collect-log')
         if (!logEl) return
+        // 로그 영역 최소 높이 확보
+        if (!logEl.style.minHeight) {
+            logEl.style.minHeight = '200px'
+            logEl.style.maxHeight = '400px'
+            logEl.style.overflowY = 'auto'
+        }
         const colors = { info: '#8A95B0', success: '#51CF66', error: '#FF6B6B', warn: '#FFB84D' }
         const time = new Date().toLocaleTimeString('ko-KR', { hour12: false })
         const line = document.createElement('p')
-        line.style.color = colors[type] || colors.info
-        line.style.margin = '1px 0'
+        line.style.cssText = `color:${colors[type] || colors.info}; margin:2px 0; font-size:0.8rem; font-family:monospace; line-height:1.4;`
         line.textContent = `[${time}] ${msg}`
         logEl.appendChild(line)
         logEl.scrollTop = logEl.scrollHeight
@@ -2534,14 +3357,37 @@ class UIManager {
             app.showNotification('삭제할 그룹을 선택해주세요', 'warning')
             return
         }
-        if (!confirm(`선택된 ${checked.length}개 그룹을 삭제하시겠습니까?`)) return
+        if (!await this.showConfirm(`선택된 ${checked.length}개 그룹을 삭제하시겠습니까?\n(그룹 내 수집상품도 함께 삭제됩니다)`, { title: '그룹 삭제', danger: true })) return
 
         const filterIds = checked.map(cb => cb.closest('tr')?.getAttribute('data-filter-id')).filter(Boolean)
+        let totalDeleted = 0
+        let totalMarket = 0
+
         for (const id of filterIds) {
-            await collectorManager.deleteFilter(id)
+            const result = await collectorManager.deleteFilter(id)
+
+            if (result.skipped && result.marketRegistered > 0) {
+                const forceDelete = await this.showConfirm(
+                    `이 그룹에 마켓 등록된 상품이 ${result.marketRegistered}개 있습니다.\n마켓에서 먼저 삭제하는 것을 권장합니다.\n\n그래도 강제 삭제하시겠습니까?`,
+                    { title: '마켓 등록 상품 경고', danger: true, confirmText: '강제 삭제' }
+                )
+                if (forceDelete) {
+                    const forceResult = await collectorManager.deleteFilter(id, { force: true })
+                    totalDeleted += forceResult.deleted
+                    totalMarket += forceResult.marketRegistered
+                }
+            } else {
+                totalDeleted += result.deleted
+            }
         }
-        app.showNotification(`${filterIds.length}개 그룹이 삭제되었습니다`, 'success')
+
+        const msg = totalMarket > 0
+            ? `${filterIds.length}개 그룹 삭제 (상품 ${totalDeleted}개, 마켓등록 ${totalMarket}개 포함)`
+            : `${filterIds.length}개 그룹 삭제 (상품 ${totalDeleted}개 포함)`
+        app.showNotification(msg, 'success')
         await this.renderSearchFilterTable()
+        await productManager.loadProducts()
+        this.renderProducts()
     }
 
     /**
@@ -2561,11 +3407,19 @@ class UIManager {
             return
         }
 
+        // 상세이미지 수집 토글 상태 반영
+        const detailImgCheckbox = document.getElementById('collect-detail-images')
+        if (typeof collectorManager !== 'undefined') {
+            collectorManager.collectDetailImages = detailImgCheckbox?.checked || false
+        }
+
         const logEl = document.getElementById('collect-log')
         if (logEl) logEl.innerHTML = ''
         this._log(`${filterIds.length}개 그룹 수집 시작...`)
 
-        app.showLoading(true)
+        // 수집 엔진 로그를 UI에 실시간 연결
+        collectorManager.onLog = (msg, type) => this._log(msg, type)
+
         try {
             let totalSaved = 0
             for (const filterId of filterIds) {
@@ -2600,17 +3454,23 @@ class UIManager {
                     )
                     const newTotal = already + result.saved
                     if (newTotal >= target) {
-                        this._log(`[${filter.name}] 목표 ${target}개 달성 → 중지`, 'success')
+                        this._log(`[${filter.name}] 목표 ${target}개 달성`, 'success')
                     }
                 }
             }
             this._log(`수집 완료. 총 ${totalSaved}개 저장됨`, 'success')
             await this.renderSearchFilterTable()
+            if (totalSaved > 0) {
+                await productManager.loadProducts()
+                this.updateCounts()
+                app.showNotification(`${totalSaved}개 상품이 상품관리에 추가됨`, 'success')
+            }
         } catch (err) {
             this._log(`오류: ${err.message}`, 'error')
             app.showNotification('수집 실패: ' + err.message, 'error')
+        } finally {
+            collectorManager.onLog = null
         }
-        app.showLoading(false)
     }
 
     /**
@@ -2747,6 +3607,8 @@ class UIManager {
             this._log(`${count}개 상품 저장 완료 → 상품관리로 이동 가능`, 'success')
             app.showNotification(`${count}개 상품이 저장되었습니다`, 'success')
             await this.updateSavedCount()
+            // 저장된 항목만 유지, 미저장 항목 즉시 삭제
+            collectorManager.collectResults = collectorManager.collectResults.filter(p => selected.includes(p.id))
             this.renderCollectResults(1)
         } catch (err) {
             this._log(`저장 오류: ${err.message}`, 'error')
@@ -2762,7 +3624,7 @@ class UIManager {
         if (typeof collectorManager === 'undefined' || collectorManager.collectResults.length === 0) {
             app.showNotification('저장할 상품이 없습니다', 'warning'); return
         }
-        if (!confirm(`${collectorManager.collectResults.length}개 상품을 모두 저장하시겠습니까?`)) return
+        if (!await this.showConfirm(`${collectorManager.collectResults.length}개 상품을 모두 저장하시겠습니까?`, { title: '전체 저장' })) return
 
         app.showLoading(true)
         try {
@@ -2770,6 +3632,8 @@ class UIManager {
             this._log(`${count}개 전체 저장 완료 → 상품관리로 이동 가능`, 'success')
             app.showNotification(`${count}개 상품이 저장되었습니다`, 'success')
             await this.updateSavedCount()
+            // 전체 저장 후 목록 초기화
+            collectorManager.collectResults = []
             this.renderCollectResults(1)
         } catch (err) {
             this._log(`저장 오류: ${err.message}`, 'error')
@@ -2791,6 +3655,49 @@ class UIManager {
             sel.innerHTML = '<option value="">정책 선택</option>' +
                 policyManager.policies.map(p => `<option value="${p.id}" ${p.id === current ? 'selected' : ''}>${p.name}</option>`).join('')
         })
+    }
+
+    /**
+     * 정책 선택 시 정책명 input에 현재 이름 표시
+     */
+    onPolicySelect() {
+        const sel = document.getElementById('policy-select')
+        const input = document.getElementById('policy-name-input')
+        if (!sel || !input) return
+        const id = sel.value
+        if (!id || typeof policyManager === 'undefined') { input.value = ''; return }
+        const policy = policyManager.policies.find(p => p.id === id)
+        input.value = policy ? policy.name : ''
+    }
+
+    /**
+     * 선택된 정책의 이름 수정
+     */
+    async renameSelectedPolicy() {
+        const sel = document.getElementById('policy-select')
+        const input = document.getElementById('policy-name-input')
+        if (!sel || !input) return
+        const id = sel.value
+        const newName = (input.value || '').trim()
+        if (!id) { app.showNotification('정책을 선택해주세요', 'error'); return }
+        if (!newName) { app.showNotification('정책명을 입력해주세요', 'error'); return }
+        await policyManager.updatePolicy(id, { name: newName })
+        this.renderPolicyList()
+        app.showNotification(`정책명이 "${newName}"으로 수정되었습니다`, 'success')
+    }
+
+    /**
+     * 신규 정책 등록 모달
+     */
+    async showNewPolicyModal() {
+        const name = await this.showPrompt('새 정책 이름을 입력하세요', { title: '신규 정책 등록', placeholder: '예: 나이키 15% 마진' })
+        if (!name || !name.trim()) return
+        const policy = await policyManager.addPolicy({ name: name.trim() })
+        this.renderPolicyList()
+        // 신규 정책 자동 선택
+        const sel = document.getElementById('policy-select')
+        if (sel) { sel.value = policy.id; this.onPolicySelect() }
+        app.showNotification(`정책 "${policy.name}" 등록 완료`, 'success')
     }
 
     // ==================== 마켓 계정 ====================
@@ -2902,6 +3809,277 @@ class UIManager {
         }).join('')
     }
 
+    // ==================== 카테고리 브라우저 ====================
+
+    /**
+     * 5단계 카테고리 브라우저 렌더링
+     * - categoryTree 스토어(영구 보존)에서 로드
+     * - 현재 수집 상품의 신규 카테고리를 트리에 병합 후 저장
+     */
+    async renderCategoryBrowser() {
+        const container = document.getElementById('cat-browser-cols')
+        if (!container) return
+
+        container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;width:100%;padding:2rem;color:#555;font-size:0.875rem;">데이터 로딩중...</div>'
+
+        try {
+            const products = await storage.getAll('collectedProducts')
+            this._catProducts = products || [] // 상품수 계산용 캐시
+
+            let catData = {}
+
+            if (products && products.length > 0 && typeof categoryManager !== 'undefined') {
+                const fromProducts = categoryManager.extractCategoriesFromProducts(products)
+
+                // categoryTree DB 병합/로드 시도 (스토어 미생성 시 폴백)
+                try {
+                    await categoryManager.mergeAndSaveCategories(fromProducts)
+                    catData = await categoryManager.loadCategoryTree()
+                } catch (dbErr) {
+                    console.warn('categoryTree DB 오류, 수집 상품 기반으로 표시:', dbErr)
+                    catData = fromProducts
+                }
+            } else if (typeof categoryManager !== 'undefined') {
+                // 상품 없어도 저장된 트리 로드 시도
+                try {
+                    catData = await categoryManager.loadCategoryTree()
+                } catch (dbErr) {
+                    console.warn('categoryTree 로드 오류:', dbErr)
+                }
+            }
+
+            this._catData = catData
+
+            if (Object.keys(this._catData).length === 0) {
+                container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;width:100%;padding:2rem;color:#555;font-size:0.875rem;">카테고리 데이터가 없습니다. 먼저 상품을 수집해주세요.</div>'
+                return
+            }
+
+            this.catState = { site: null, cat1: null, cat2: null, cat3: null, cat4: null }
+            this._renderCatCols()
+        } catch (e) {
+            console.error('카테고리 브라우저 로드 실패:', e)
+            container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;width:100%;padding:2rem;color:#FF6B6B;font-size:0.875rem;">로드 실패</div>'
+        }
+    }
+
+    /**
+     * 카테고리 브라우저 컬럼 렌더링 (선택 상태 반영)
+     */
+    _renderCatCols() {
+        const container = document.getElementById('cat-browser-cols')
+        if (!container || !this._catData) return
+
+        const { site, cat1, cat2, cat3, cat4 } = this.catState
+        const catData = this._catData
+
+        const sites = Object.keys(catData).sort((a, b) => a.localeCompare(b, 'ko'))
+        const cat1List = site ? (catData[site]?.cat1 || []) : []
+        const cat2List = (site && cat1) ? (catData[site]?.cat2?.[cat1] || []) : []
+        const cat3List = (site && cat1 && cat2) ? (catData[site]?.cat3?.[`${cat1}|${cat2}`] || []) : []
+        const cat4List = (site && cat1 && cat2 && cat3) ? (catData[site]?.cat4?.[`${cat1}|${cat2}|${cat3}`] || []) : []
+
+        const renderCol = (header, items, selected, onClickFn, emptyMsg) => {
+            const btns = items.length === 0
+                ? `<p style="padding:0.75rem; font-size:0.8rem; color:#555;">${emptyMsg}</p>`
+                : items.map((item, idx) =>
+                    `<button class="cat-item${selected === item ? ' selected' : ''}"
+                        onclick="${onClickFn}(${idx})"
+                        style="text-align:left; width:100%;">${item}</button>`
+                ).join('')
+            return `<div class="cat-col"><div class="cat-col-header">${header}</div>${btns}</div>`
+        }
+
+        // 사이트 컬럼: 각 항목에 삭제(×) 버튼 포함
+        const siteColBtns = sites.length === 0
+            ? `<p style="padding:0.75rem; font-size:0.8rem; color:#555;">수집된 사이트 없음</p>`
+            : sites.map((item, idx) =>
+                `<div class="cat-item${site === item ? ' selected' : ''}"
+                    style="display:flex; align-items:center; justify-content:space-between; padding-right:4px; cursor:pointer;"
+                    onclick="ui._catClickSite(${idx})">
+                    <span>${item}</span>
+                    <button onclick="event.stopPropagation(); ui._deleteSiteCatTree('${item}')"
+                        style="background:none; border:none; color:#555; font-size:0.8rem; cursor:pointer; padding:0 2px; line-height:1; flex-shrink:0;"
+                        title="${item} 카테고리 삭제">×</button>
+                </div>`
+            ).join('')
+        const siteCol = `<div class="cat-col"><div class="cat-col-header">사이트</div>${siteColBtns}</div>`
+
+        container.innerHTML =
+            siteCol +
+            renderCol('대분류', cat1List, cat1, 'ui._catClickCat1', site ? '카테고리 없음' : '사이트 선택') +
+            renderCol('중분류', cat2List, cat2, 'ui._catClickCat2', cat1 ? '항목 없음' : '대분류 선택') +
+            renderCol('소분류', cat3List, cat3, 'ui._catClickCat3', cat2 ? '항목 없음' : '중분류 선택') +
+            renderCol('세분류', cat4List, cat4, 'ui._catClickCat4', cat3 ? '항목 없음' : '소분류 선택')
+
+        // 선택 경로 표시
+        const pathParts = [site, cat1, cat2, cat3, cat4].filter(Boolean)
+        const pathEl = document.getElementById('cat-selected-path')
+        if (pathEl) pathEl.textContent = pathParts.length > 0 ? pathParts.join(' > ') : '-'
+
+        // 선택 카테고리에 속하는 상품 필터링 (대분류 이상 선택 시에만 표시)
+        const matched = (site && cat1)
+            ? (this._catProducts || []).filter(p => {
+                if (p.sourceSite !== site) return false
+                if (p.category1 !== cat1) return false
+                if (cat2 && p.category2 !== cat2) return false
+                if (cat3 && p.category3 !== cat3) return false
+                if (cat4 && p.category4 !== cat4) return false
+                return true
+            })
+            : []
+
+        // 상품수 표시
+        const countEl = document.getElementById('cat-product-count')
+        if (countEl) {
+            countEl.textContent = site ? `상품 ${matched.length.toLocaleString()}개` : ''
+        }
+
+        // 3열 상품 그리드 렌더링
+        const gridEl = document.getElementById('cat-product-grid')
+        if (gridEl) {
+            if (!site || matched.length === 0) {
+                gridEl.style.display = 'none'
+                gridEl.innerHTML = ''
+            } else {
+                gridEl.style.display = 'grid'
+                gridEl.innerHTML = matched.slice(0, 30).map(p => {
+                    const rawImg = (p.images && p.images[0]) || p.image || p.imageUrl || ''
+                    // 외부 서비스(via.placeholder.com 등) 또는 이미지 없음 → SVG 데이터 URL 생성
+                    const ch = (p.brand || p.name || '?')[0]
+                    let img = (rawImg && !rawImg.includes('via.placeholder.com')) ? rawImg : ''
+                    if (!img) {
+                        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#1A1A1A"/><text x="100" y="140" text-anchor="middle" font-size="100" font-family="sans-serif" fill="#FF8C00">${ch}</text></svg>`
+                        img = 'data:image/svg+xml,' + encodeURIComponent(svg)
+                    }
+                    const cost = p.cost || p.originalPrice || p.salePrice || 0
+                    const name = (p.name || '-').length > 18 ? p.name.slice(0, 18) + '…' : (p.name || '-')
+                    return `<div onclick="ui.navigateToProduct('${p.id}')"
+                        style="cursor:pointer;background:#0F0F0F;border:1px solid #1E1E1E;border-radius:6px;overflow:hidden;transition:border-color 0.15s;"
+                        onmouseover="this.style.borderColor='#FF8C00'" onmouseout="this.style.borderColor='#1E1E1E'">
+                        <div style="position:relative;padding-top:100%;background:#1A1A1A;overflow:hidden;">
+                            <img src="${img}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;">
+                        </div>
+                        <div style="padding:4px 6px;">
+                            <div style="font-size:0.68rem;color:#C5C5C5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${name}</div>
+                            <div style="font-size:0.68rem;color:#FF8C00;">₩${cost.toLocaleString()}</div>
+                        </div>
+                    </div>`
+                }).join('')
+                if (matched.length > 30) {
+                    gridEl.innerHTML += `<div style="grid-column:1/-1;text-align:center;padding:4px;font-size:0.75rem;color:#555;">외 ${(matched.length - 30).toLocaleString()}개 더 있음</div>`
+                }
+            }
+        }
+    }
+
+    _catClickSite(idx) {
+        const sites = Object.keys(this._catData).sort((a, b) => a.localeCompare(b, 'ko'))
+        this.catState = { site: sites[idx], cat1: null, cat2: null, cat3: null, cat4: null }
+        this._renderCatCols()
+    }
+
+    /**
+     * AI 카테고리 매핑 실행
+     * 현재 선택된 카테고리 트리 기준으로 등록 마켓 카테고리를 AI가 자동 매핑
+     */
+    async runAiCategoryMapping() {
+        const catData = this._catData || {}
+        const sites = Object.keys(catData)
+        if (sites.length === 0) {
+            app.showNotification('카테고리 데이터가 없습니다. 먼저 상품을 수집해주세요.', 'warning')
+            return
+        }
+
+        const accounts = typeof accountManager !== 'undefined' ? accountManager.accounts : []
+        if (accounts.length === 0) {
+            app.showNotification('등록된 마켓 계정이 없습니다.', 'warning')
+            return
+        }
+
+        app.showNotification('AI 카테고리 매핑 처리 중...', 'info')
+
+        // 소싱처 최하단 카테고리 추출 후 마켓 카테고리 자동 매핑 (TODO: Claude API 연동)
+        let mapped = 0
+        for (const site of sites) {
+            const data = catData[site]
+            if (!data) continue
+            // 최하단 카테고리 수집 (cat3 > cat2 > cat1 순)
+            const leafCategories = []
+            for (const [k3, arr3] of Object.entries(data.cat3 || {})) {
+                arr3.forEach(c3 => leafCategories.push({ site, path: k3.replace('|', ' > ') + ' > ' + c3 }))
+            }
+            if (leafCategories.length === 0) {
+                for (const [c1, arr2] of Object.entries(data.cat2 || {})) {
+                    arr2.forEach(c2 => leafCategories.push({ site, path: c1 + ' > ' + c2 }))
+                }
+            }
+            if (leafCategories.length === 0) {
+                data.cat1.forEach(c1 => leafCategories.push({ site, path: c1 }))
+            }
+
+            for (const leaf of leafCategories) {
+                const exists = typeof categoryManager !== 'undefined'
+                    ? categoryManager.mappings.find(m => m.sourceSite === leaf.site && m.sourceCategory === leaf.path)
+                    : null
+                if (!exists && typeof categoryManager !== 'undefined') {
+                    await categoryManager.addMapping({ sourceSite: leaf.site, sourceCategory: leaf.path, targetMappings: {} })
+                    mapped++
+                }
+            }
+        }
+
+        if (typeof ui !== 'undefined') ui.renderCategoryMappings()
+        app.showNotification(`AI 카테고리 매핑 완료: ${mapped}개 신규 추가`, 'success')
+    }
+
+    async _deleteSiteCatTree(siteName) {
+        const ok = await this.showConfirm(
+            `'${siteName}' 카테고리 트리를 삭제하시겠습니까?\n(수집 상품에서 재수집하지 않으면 복구되지 않습니다)`,
+            { title: '사이트 카테고리 삭제', confirmText: '삭제', danger: true }
+        )
+        if (!ok) return
+        await categoryManager.deleteSiteCategoryTree(siteName)
+        delete this._catData[siteName]
+        // 선택 중인 사이트가 삭제된 경우 선택 초기화
+        if (this.catState.site === siteName) {
+            this.catState = { site: null, cat1: null, cat2: null, cat3: null, cat4: null }
+        }
+        this._renderCatCols()
+    }
+
+    _catClickCat1(idx) {
+        const { site } = this.catState
+        if (!site) return
+        const list = this._catData[site]?.cat1 || []
+        this.catState = { ...this.catState, cat1: list[idx], cat2: null, cat3: null, cat4: null }
+        this._renderCatCols()
+    }
+
+    _catClickCat2(idx) {
+        const { site, cat1 } = this.catState
+        if (!site || !cat1) return
+        const list = this._catData[site]?.cat2?.[cat1] || []
+        this.catState = { ...this.catState, cat2: list[idx], cat3: null, cat4: null }
+        this._renderCatCols()
+    }
+
+    _catClickCat3(idx) {
+        const { site, cat1, cat2 } = this.catState
+        if (!site || !cat1 || !cat2) return
+        const list = this._catData[site]?.cat3?.[`${cat1}|${cat2}`] || []
+        this.catState = { ...this.catState, cat3: list[idx], cat4: null }
+        this._renderCatCols()
+    }
+
+    _catClickCat4(idx) {
+        const { site, cat1, cat2, cat3 } = this.catState
+        if (!site || !cat1 || !cat2 || !cat3) return
+        const list = this._catData[site]?.cat4?.[`${cat1}|${cat2}|${cat3}`] || []
+        this.catState = { ...this.catState, cat4: list[idx] }
+        this._renderCatCols()
+    }
+
     // ==================== 카테고리 매핑 목록 ====================
 
     /**
@@ -2992,7 +4170,7 @@ class UIManager {
     async editAccount(id) {
         const acc = accountManager.accounts.find(a => a.id === id)
         if (!acc) return
-        const newLabel = prompt('계정 라벨을 수정하세요', acc.accountLabel || acc.sellerId)
+        const newLabel = await this.showPrompt('계정 라벨을 수정하세요', { title: '계정 수정', defaultValue: acc.accountLabel || acc.sellerId })
         if (newLabel === null) return
         await accountManager.updateAccount(id, { accountLabel: newLabel.trim() })
         this.renderAccountList()
@@ -3002,7 +4180,7 @@ class UIManager {
     }
 
     async deleteAccount(id) {
-        if (!confirm('계정을 삭제하시겠습니까?')) return
+        if (!await this.showConfirm('계정을 삭제하시겠습니까?', { title: '계정 삭제', danger: true })) return
         await accountManager.deleteAccount(id)
         this.renderAccountList()
         this.renderAccountCheckboxes()
@@ -3042,7 +4220,7 @@ class UIManager {
         const tbody = document.getElementById('apply-group-tbody')
         if (!tbody || typeof collectorManager === 'undefined') return
 
-        // 수집사이트 드롭박스 동적 populate
+        // 소싱사이트 드롭박스 동적 populate
         const siteFilter = document.getElementById('apply-group-site-filter')
         if (siteFilter && siteFilter.options.length <= 1 && typeof SITE_LIST !== 'undefined') {
             SITE_LIST.forEach(site => {
@@ -3075,8 +4253,9 @@ class UIManager {
             return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va)
         })
 
-        const policyOptions = typeof policyManager !== 'undefined'
-            ? policyManager.policies.map(p => `<option value="${p.id}">${p.name}</option>`).join('')
+        // 정책 선택 옵션 생성 (selectedId에 따라 selected 적용)
+        const makePolicyOptions = (selectedId) => typeof policyManager !== 'undefined'
+            ? policyManager.policies.map(p => `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>${p.name}</option>`).join('')
             : ''
 
         const fmtDate = iso => {
@@ -3110,8 +4289,8 @@ class UIManager {
                 <td style="padding:0.5rem 0.75rem;">
                     <div style="display:flex; align-items:center; gap:0.5rem;">
                         <select onchange="ui.applyPolicyToFilter('${f.id}', this.value)" style="width:150px; padding:0.3rem 0.5rem; font-size:0.8125rem; background:rgba(22,22,22,0.95); border:1px solid #353535; color:#C5C5C5; border-radius:5px;">
-                            <option value="">정책 선택</option>
-                            ${policyOptions}
+                            <option value="" ${!f.appliedPolicyId ? 'selected' : ''}>정책 선택</option>
+                            ${makePolicyOptions(f.appliedPolicyId)}
                         </select>
                         ${f.appliedPolicyId
                             ? `<button onclick="ui.removePolicyFromFilter('${f.id}')" style="font-size:0.75rem; color:#FF6B6B; background:transparent; border:1px solid rgba(255,107,107,0.3); border-radius:4px; padding:0.15rem 0.5rem;">해제</button>`
@@ -3172,6 +4351,29 @@ class UIManager {
         await this.renderSearchFilterTable()
     }
 
+    // 개별 상품 정책 변경 (그룹 정책보다 우선 적용)
+    async changeProductPolicy(productId, policyId, isCollected) {
+        const storeName = isCollected ? 'collectedProducts' : 'products'
+        const product = await storage.get(storeName, productId)
+        if (!product) return
+        const updated = { ...product, appliedPolicyId: policyId || null, updatedAt: new Date().toISOString() }
+        await storage.save(storeName, updated)
+        if (!isCollected) {
+            const idx = productManager.products.findIndex(p => p.id === productId)
+            if (idx !== -1) productManager.products[idx] = updated
+        }
+        app.showNotification(policyId ? '개별 정책이 적용되었습니다' : '그룹 정책으로 초기화되었습니다', 'success')
+        await this.renderProducts()
+    }
+
+    // 마켓정책 탭 선택 (active 클래스 토글)
+    selectMarketTab(btn) {
+        const container = btn.closest('#market-policy-tabs')
+        if (!container) return
+        container.querySelectorAll('.market-tab').forEach(b => b.classList.remove('active'))
+        btn.classList.add('active')
+    }
+
     // 요청상품수 자동저장
     async updateCollectCount(filterId, value) {
         const count = parseInt(value)
@@ -3216,14 +4418,48 @@ class UIManager {
         }
 
         tbody.innerHTML = products.map((p, i) => {
-            const registeredCount = (p.registeredAccounts || []).length
-            const lastShipment = typeof shipmentManager !== 'undefined'
-                ? shipmentManager.shipments.filter(s => s.productId === p.id).slice(-1)[0]
-                : null
+            const accounts = p.registeredAccounts || []
 
-            const statusBadge = lastShipment
-                ? `<span style="${typeof shipmentManager !== 'undefined' ? shipmentManager.getStatusStyle(lastShipment.status) : ''}; padding:0.15rem 0.5rem; border-radius:4px; font-size:0.75rem;">${typeof shipmentManager !== 'undefined' ? shipmentManager.getStatusLabel(lastShipment.status) : '-'}</span>`
-                : `<span style="background:rgba(100,100,100,0.2); color:#888; padding:0.15rem 0.5rem; border-radius:4px; font-size:0.75rem;">미전송</span>`
+            // 등록마켓: "마켓명(최신 전송일자)" 형식
+            const registeredMarketsHtml = accounts.length > 0
+                ? accounts.map(acc => {
+                    const dateStr = acc.lastSentAt ? acc.lastSentAt.slice(0, 10) : '-'
+                    return `<span style="display:inline-block; background:rgba(255,140,0,0.1); color:#FFB84D; font-size:0.68rem; padding:1px 5px; border-radius:3px; border:1px solid rgba(255,140,0,0.2); white-space:nowrap;">${acc.marketName || acc.accountId || '마켓'}(${dateStr})</span>`
+                }).join(' ')
+                : `<span style="color:#444; font-size:0.75rem;">미등록</span>`
+
+            // 전송 이력에서 최신 전송 찾기
+            const productShipments = typeof shipmentManager !== 'undefined'
+                ? shipmentManager.shipments.filter(s => s.productId === p.id)
+                : []
+            const lastShipment = productShipments.slice(-1)[0] || null
+            const updateDateStr = lastShipment?.completedAt
+                ? lastShipment.completedAt.slice(0, 16).replace('T', ' ')
+                : (lastShipment?.createdAt ? lastShipment.createdAt.slice(0, 16).replace('T', ' ') : null)
+
+            // 최근 데이터 수집일 (상품의 collectedAt 또는 updatedAt)
+            const collectedDate = p.collectedAt || p.updatedAt || p.createdAt || null
+            const collectedDateStr = collectedDate
+                ? new Date(collectedDate).toLocaleString('ko-KR', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12: false })
+                : '-'
+
+            let statusCell
+            if (lastShipment && typeof shipmentManager !== 'undefined') {
+                // 전송 이력이 있는 경우: 전송 상태 + 업데이트일
+                const statusLabel = shipmentManager.getStatusLabel(lastShipment.status)
+                const statusStyle = shipmentManager.getStatusStyle(lastShipment.status)
+                statusCell = `
+                    <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+                        <span style="${statusStyle}; padding:0.15rem 0.5rem; border-radius:4px; font-size:0.75rem;">${statusLabel}</span>
+                        ${updateDateStr ? `<span style="font-size:0.68rem; color:#666;">${updateDateStr}</span>` : ''}
+                    </div>`
+            } else {
+                // 전송 이력 없음: 최근 수집일 표시
+                statusCell = `
+                    <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+                        <span style="font-size:0.72rem; color:#666;">${collectedDateStr}</span>
+                    </div>`
+            }
 
             return `
                 <tr style="border-bottom:1px solid #1A1A1A;">
@@ -3232,14 +4468,14 @@ class UIManager {
                     </td>
                     <td style="padding:0.625rem 0.75rem; font-size:0.75rem; color:#888; font-family:monospace;">${i + 1}</td>
                     <td style="padding:0.625rem 0.75rem;">
-                        <p style="font-size:0.8125rem; color:#E5E5E5; font-weight:500;">${p.name}</p>
-                        <p style="font-size:0.7rem; color:#888;">${p.sourceSite} | ${p.brand || ''}</p>
+                        <span style="font-size:0.75rem; color:#FF8C00; font-weight:600;">${p.sourceSite || '-'}</span>
                     </td>
-                    <td style="padding:0.625rem 0.75rem; text-align:right;">
-                        <span style="font-size:0.8125rem; color:#FFB84D;">₩${this.formatNumber(p.salePrice)}</span>
+                    <td style="padding:0.625rem 0.75rem;">
+                        <p style="font-size:0.8125rem; color:#E5E5E5; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:300px;">${p.name}</p>
+                        <p style="font-size:0.7rem; color:#666;">${p.brand || ''}</p>
                     </td>
-                    <td style="padding:0.625rem 0.75rem; text-align:center; font-size:0.8125rem; color:#C5C5C5;">${registeredCount}개 마켓</td>
-                    <td style="padding:0.625rem 0.75rem; text-align:center;">${statusBadge}</td>
+                    <td style="padding:0.625rem 0.75rem; display:flex; flex-wrap:wrap; gap:3px; align-items:center;">${registeredMarketsHtml}</td>
+                    <td style="padding:0.625rem 0.75rem; text-align:center;">${statusCell}</td>
                 </tr>
             `
         }).join('')
@@ -3281,6 +4517,26 @@ class UIManager {
         }
         app.showLoading(false)
         if (progressEl) progressEl.style.display = 'none'
+    }
+
+    /**
+     * 선택된 상품을 상품전송 목록(collectedProducts)에서 삭제
+     */
+    async deleteFromShipment() {
+        const selected = [...document.querySelectorAll('.shipment-product-cb:checked')]
+        if (selected.length === 0) { app.showNotification('삭제할 상품을 선택해주세요', 'warning'); return }
+        if (!await this.showConfirm(`선택된 ${selected.length}개 상품을 삭제하시겠습니까?`, { title: '전송상품 삭제', danger: true })) return
+
+        let count = 0
+        for (const cb of selected) {
+            try {
+                await storage.delete('collectedProducts', cb.value)
+                count++
+            } catch(e) { console.error('삭제 오류:', cb.value, e) }
+        }
+
+        if (count > 0) app.showNotification(`${count}개 상품이 삭제되었습니다`, 'success')
+        await this.renderShipmentPage()
     }
 
     // ==================== 금지어/삭제어 ====================
@@ -3367,7 +4623,7 @@ class UIManager {
         const id = sel?.value
         if (!id) { app.showNotification('삭제할 그룹을 선택해주세요', 'warning'); return }
         const group = forbiddenManager.groups.find(g => g.id === id)
-        if (!confirm(`"${group?.name}" 그룹을 삭제하시겠습니까?`)) return
+        if (!await this.showConfirm(`"${group?.name}" 그룹을 삭제하시겠습니까?`, { title: '금지어 그룹 삭제', danger: true })) return
         await forbiddenManager.deleteGroup(id)
         this._renderGroupSelect(type)
         this.onForbiddenGroupChange(type)
@@ -3383,9 +4639,9 @@ class UIManager {
         if (!key) { app.showNotification('API Key를 입력해주세요', 'warning'); return }
 
         // storage에 저장 (settings 스토어)
-        storage.save('settings', { id: 'claude', apiKey: key, model, updatedAt: new Date().toISOString() })
+        storage.save('settings', { key: 'claude', apiKey: key, model, updatedAt: new Date().toISOString() })
             .then(() => {
-                if (status) status.innerHTML = `<span style="color:#51CF66;">✓ 저장 완료 (${new Date().toLocaleTimeString('ko-KR')})</span>`
+                if (status) status.innerHTML = `<span style="color:#51CF66;">✓ 저장 완료 (${new Date().toLocaleTimeString('ko-KR', { hour12: false })})</span>`
                 app.showNotification('Claude API 설정이 저장되었습니다', 'success')
             })
             .catch(() => app.showNotification('저장에 실패했습니다', 'error'))
@@ -3517,7 +4773,7 @@ class UIManager {
 
         // 발신번호 저장
         if (from) {
-            storage.save('settings', { id: 'smsSettings', fromPhone: from })
+            storage.save('settings', { key: 'smsSettings', fromPhone: from })
         }
 
         // 발송 완료 처리
@@ -3589,6 +4845,215 @@ class UIManager {
         grid.insertBefore(newCard, addCard)
     }
 
+    // ==================== 이미지 편집 모달 ====================
+
+    /**
+     * 이미지 편집 모달 열기
+     */
+    async openImageEditor(productId) {
+        let product = await storage.get('products', productId)
+        const storeKey = product ? 'products' : 'collectedProducts'
+        if (!product) product = await storage.get('collectedProducts', productId)
+        if (!product) { app.showNotification('상품을 찾을 수 없습니다', 'error'); return }
+
+        const images = product.images || []
+        const detailImages = product.detailImages || []
+        this._imageEditorProductId = productId
+        this._imageEditorStoreKey = storeKey
+
+        // 탭: 대표이미지변경, 상품이미지, 상세페이지이미지
+        const modal = document.createElement('div')
+        modal.id = 'image-editor-modal'
+        modal.style.cssText = 'position:fixed; inset:0; z-index:9999; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.7);'
+        modal.onclick = (e) => { if (e.target === modal) modal.remove() }
+
+        const thumbSrc = images[0] || ''
+        const productImgs = images.slice(1)
+
+        modal.innerHTML = `
+        <div style="background:#1A1A1A; border:1px solid #333; border-radius:12px; width:780px; max-height:85vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+            <!-- 헤더 -->
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid #2D2D2D;">
+                <span style="font-size:1rem; font-weight:600; color:#E5E5E5;">상품 이미지 관리</span>
+                <div style="display:flex; gap:4px;">
+                    <button id="img-tab-thumb" onclick="ui._switchImageTab('thumb')" style="padding:5px 14px; font-size:0.78rem; background:#FF8C00; color:#fff; border:none; border-radius:5px; cursor:pointer;">대표이미지</button>
+                    <button id="img-tab-product" onclick="ui._switchImageTab('product')" style="padding:5px 14px; font-size:0.78rem; background:#2D2D2D; color:#999; border:none; border-radius:5px; cursor:pointer;">상품이미지 (${productImgs.length})</button>
+                    <button id="img-tab-detail" onclick="ui._switchImageTab('detail')" style="padding:5px 14px; font-size:0.78rem; background:#2D2D2D; color:#999; border:none; border-radius:5px; cursor:pointer;">상세페이지 (${detailImages.length})</button>
+                    <button onclick="this.closest('#image-editor-modal').remove()" style="margin-left:8px; padding:5px 10px; font-size:0.85rem; background:transparent; color:#888; border:1px solid #333; border-radius:5px; cursor:pointer;">✕</button>
+                </div>
+            </div>
+
+            <!-- 대표이미지 탭 -->
+            <div id="img-panel-thumb" style="padding:20px;">
+                <p style="font-size:0.78rem; color:#888; margin-bottom:16px; line-height:1.5;">
+                    ※ 대표이미지를 변경하시면 쿠팡을 제외한 모든 마켓의 대표이미지가 변경됩니다.<br>
+                    ※ 동일한 이미지 URL은 한번만 변경하시면 동일한 이미지 URL에 동시에 적용됩니다.
+                </p>
+                <div style="display:flex; gap:20px; align-items:flex-start;">
+                    <div>
+                        <p style="font-size:0.78rem; color:#888; margin-bottom:8px;">[상품 대표이미지]</p>
+                        <div style="width:240px; height:240px; border:1px solid #2D2D2D; border-radius:8px; overflow:hidden; background:#111; display:flex; align-items:center; justify-content:center;">
+                            ${thumbSrc
+                                ? `<img id="img-editor-thumb-preview" src="${thumbSrc}" style="max-width:100%; max-height:100%; object-fit:contain;">`
+                                : '<span style="color:#444; font-size:0.85rem;">이미지 없음</span>'}
+                        </div>
+                        <p style="font-size:0.7rem; color:#555; margin-top:6px; word-break:break-all; max-width:240px;">${thumbSrc || '(URL 없음)'}</p>
+                    </div>
+                    <div style="display:flex; align-items:center; padding-top:100px;">
+                        <span style="color:#444; font-size:1.2rem;">→</span>
+                    </div>
+                    <div style="flex:1;">
+                        <p style="font-size:0.78rem; color:#888; margin-bottom:8px;">[변경할 이미지]</p>
+                        <div id="img-editor-thumb-new" style="width:240px; height:240px; border:1px solid #2D2D2D; border-radius:8px; overflow:hidden; background:#111; display:flex; align-items:center; justify-content:center;">
+                            <span style="color:#444; font-size:0.85rem;">No image</span>
+                        </div>
+                        <div style="margin-top:10px; display:flex; gap:6px; flex-wrap:wrap;">
+                            <input id="img-editor-thumb-url" type="text" placeholder="http:// 를 포함한 이미지 경로를 입력해주세요"
+                                style="flex:1; min-width:200px; padding:6px 10px; font-size:0.8rem; background:#111; border:1px solid #333; color:#C5C5C5; border-radius:5px; outline:none;">
+                            <button onclick="ui._applyThumbUrl()" style="padding:6px 14px; font-size:0.78rem; background:#FF8C00; color:#fff; border:none; border-radius:5px; cursor:pointer;">변경완료</button>
+                        </div>
+                        <div style="margin-top:8px; display:flex; gap:6px;">
+                            <button onclick="ui._selectImageFromList('thumb')" style="padding:5px 12px; font-size:0.75rem; background:#2D2D2D; color:#C5C5C5; border:none; border-radius:4px; cursor:pointer;">이미지 선택변경</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 상품이미지 탭 -->
+            <div id="img-panel-product" style="padding:20px; display:none;">
+                <p style="font-size:0.78rem; color:#888; margin-bottom:12px;">※ 상품 이미지 목록입니다. 드래그하여 순서를 변경하거나, URL을 직접 수정할 수 있습니다. (최대 9장)</p>
+                <div id="img-editor-product-list" style="display:flex; flex-wrap:wrap; gap:10px;">
+                    ${images.map((img, i) => `
+                        <div style="position:relative; width:120px;">
+                            <div style="width:120px; height:120px; border:1px solid ${i === 0 ? '#FF8C00' : '#2D2D2D'}; border-radius:6px; overflow:hidden; background:#111;">
+                                <img src="${img}" style="width:100%; height:100%; object-fit:cover;" onerror="this.style.display='none'">
+                            </div>
+                            ${i === 0 ? '<span style="position:absolute; top:4px; left:4px; background:#FF8C00; color:#fff; font-size:0.65rem; padding:1px 6px; border-radius:3px;">대표</span>' : ''}
+                            <div style="display:flex; gap:2px; margin-top:4px;">
+                                <input type="text" value="${img}" data-img-idx="${i}" class="img-url-input"
+                                    style="flex:1; padding:2px 4px; font-size:0.65rem; background:#111; border:1px solid #333; color:#999; border-radius:3px; outline:none; min-width:0;">
+                                ${i > 0 ? `<button onclick="ui._removeProductImage(${i})" style="padding:2px 6px; font-size:0.65rem; background:transparent; color:#FF6B6B; border:1px solid rgba(255,107,107,0.3); border-radius:3px; cursor:pointer;">✕</button>` : ''}
+                            </div>
+                        </div>
+                    `).join('')}
+                    ${images.length < 9 ? `
+                    <div onclick="ui._addProductImage()" style="width:120px; height:120px; border:2px dashed #333; border-radius:6px; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-direction:column; gap:4px;">
+                        <span style="color:#555; font-size:1.5rem;">+</span>
+                        <span style="color:#555; font-size:0.7rem;">이미지 추가</span>
+                    </div>` : ''}
+                </div>
+                <div style="margin-top:12px; text-align:right;">
+                    <button onclick="ui._saveProductImages()" style="padding:6px 20px; font-size:0.8rem; background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; border-radius:6px; cursor:pointer;">이미지 저장</button>
+                </div>
+            </div>
+
+            <!-- 상세페이지이미지 탭 -->
+            <div id="img-panel-detail" style="padding:20px; display:none;">
+                <p style="font-size:0.78rem; color:#888; margin-bottom:12px;">※ 수집된 상세페이지 이미지입니다. 마켓 상세페이지에 사용됩니다.</p>
+                ${detailImages.length > 0 ? `
+                <div style="display:flex; flex-wrap:wrap; gap:8px; max-height:400px; overflow-y:auto;">
+                    ${detailImages.map((img, i) => `
+                        <div style="position:relative;">
+                            <img src="${img}" style="width:100px; height:100px; object-fit:cover; border:1px solid #2D2D2D; border-radius:4px;" onerror="this.style.display='none'">
+                            <span style="position:absolute; top:2px; left:2px; background:rgba(0,0,0,0.6); color:#999; font-size:0.6rem; padding:1px 4px; border-radius:2px;">${i + 1}</span>
+                        </div>
+                    `).join('')}
+                </div>
+                <p style="margin-top:10px; font-size:0.75rem; color:#666;">총 ${detailImages.length}장</p>
+                ` : '<p style="color:#555; font-size:0.85rem; padding:40px 0; text-align:center;">수집된 상세페이지 이미지가 없습니다.<br><span style="font-size:0.75rem; color:#444;">수집 시 "상세페이지 이미지 수집" 체크박스를 활성화해주세요.</span></p>'}
+            </div>
+        </div>`
+
+        document.body.appendChild(modal)
+    }
+
+    _switchImageTab(tab) {
+        const tabs = ['thumb', 'product', 'detail']
+        tabs.forEach(t => {
+            const panel = document.getElementById(`img-panel-${t}`)
+            const btn = document.getElementById(`img-tab-${t}`)
+            if (panel) panel.style.display = t === tab ? 'block' : 'none'
+            if (btn) {
+                btn.style.background = t === tab ? '#FF8C00' : '#2D2D2D'
+                btn.style.color = t === tab ? '#fff' : '#999'
+            }
+        })
+    }
+
+    async _applyThumbUrl() {
+        const input = document.getElementById('img-editor-thumb-url')
+        const url = input?.value?.trim()
+        if (!url) { app.showNotification('이미지 URL을 입력해주세요', 'warning'); return }
+
+        // 미리보기 업데이트
+        const previewDiv = document.getElementById('img-editor-thumb-new')
+        if (previewDiv) previewDiv.innerHTML = `<img src="${url}" style="max-width:100%; max-height:100%; object-fit:contain;" onerror="this.outerHTML='<span style=\\'color:#FF6B6B;\\'>로드 실패</span>'">`
+
+        // 저장
+        const product = await storage.get(this._imageEditorStoreKey, this._imageEditorProductId)
+        if (!product) return
+        if (!product.images) product.images = []
+        product.images[0] = url
+        product.updatedAt = new Date().toISOString()
+        await storage.save(this._imageEditorStoreKey, product)
+        app.showNotification('대표이미지가 변경되었습니다', 'success')
+    }
+
+    _selectImageFromList(target) {
+        const product = this._imageEditorProductId
+        const modal = document.getElementById('image-editor-modal')
+        if (!modal) return
+        // 상품이미지 탭으로 전환하여 선택하도록 안내
+        this._switchImageTab('product')
+        app.showNotification('상품이미지 목록에서 대표로 사용할 이미지 URL을 복사하세요', 'info')
+    }
+
+    async _removeProductImage(idx) {
+        const product = await storage.get(this._imageEditorStoreKey, this._imageEditorProductId)
+        if (!product || !product.images) return
+        product.images.splice(idx, 1)
+        product.updatedAt = new Date().toISOString()
+        await storage.save(this._imageEditorStoreKey, product)
+        // 모달 새로고침
+        document.getElementById('image-editor-modal')?.remove()
+        this.openImageEditor(this._imageEditorProductId)
+    }
+
+    async _addProductImage() {
+        const url = await this.showPrompt('추가할 이미지 URL을 입력해주세요:', { title: '이미지 추가', placeholder: 'https://...' })
+        if (!url?.trim()) return
+        const product = await storage.get(this._imageEditorStoreKey, this._imageEditorProductId)
+        if (!product) return
+        if (!product.images) product.images = []
+        if (product.images.length >= 9) { app.showNotification('최대 9장까지 추가 가능합니다', 'warning'); return }
+        product.images.push(url.trim())
+        product.updatedAt = new Date().toISOString()
+        await storage.save(this._imageEditorStoreKey, product)
+        document.getElementById('image-editor-modal')?.remove()
+        this.openImageEditor(this._imageEditorProductId)
+    }
+
+    async _saveProductImages() {
+        const inputs = document.querySelectorAll('.img-url-input')
+        const product = await storage.get(this._imageEditorStoreKey, this._imageEditorProductId)
+        if (!product) return
+        const newImages = []
+        inputs.forEach(input => {
+            const url = input.value?.trim()
+            if (url) newImages.push(url)
+        })
+        product.images = newImages
+        product.updatedAt = new Date().toISOString()
+        await storage.save(this._imageEditorStoreKey, product)
+        app.showNotification(`이미지 ${newImages.length}장 저장 완료`, 'success')
+
+        // 상품 목록 UI 갱신
+        if (typeof productManager !== 'undefined') {
+            await productManager.loadProducts()
+            this.renderProducts()
+        }
+    }
+
     /**
      * 카테고리 문자열을 계층 스타일 HTML로 변환
      * '>' 기준으로 분리, 마지막 노드는 밝게 표시
@@ -3602,6 +5067,160 @@ class UIManager {
             const color = i === 0 ? '#888' : i === parts.length - 1 ? '#E5E5E5' : '#B0B0B0'
             return `<span style="color:${color};">${p}</span>`
         }).join('<span style="color:#444; margin:0 0.25rem; font-size:0.75rem;">›</span>')
+    }
+
+    // 상품관리 1줄 로그창 업데이트
+    setProductLog(msg, type = 'info') {
+        const el = document.getElementById('product-log-line')
+        if (!el) return
+        const colors = { info: '#888', success: '#51CF66', error: '#FF6B6B', warning: '#FFB84D' }
+        el.style.display = 'block'
+        el.style.color = colors[type] || '#888'
+        el.textContent = `[${new Date().toLocaleTimeString('ko-KR')}] ${msg}`
+    }
+
+    /**
+     * 개별 상품 상세 정보 보강 (업데이트 버튼)
+     * 무신사 상품의 경우 상세 페이지를 다시 수집하여 누락 필드 보강
+     */
+    async enrichSingleProduct(productId) {
+        // 1) productManager에서 찾기 (prod_... 형식)
+        let product = typeof productManager !== 'undefined'
+            ? productManager.products.find(p => p.id === productId)
+            : null
+
+        // 2) 못 찾으면 collectedProducts에서 직접 조회 (col_musinsa_... 형식)
+        let isCollectedOnly = false
+        if (!product) {
+            try {
+                product = await storage.get('collectedProducts', productId)
+                isCollectedOnly = !!product
+            } catch {}
+        }
+
+        // 3) collectedProductId로 역추적
+        if (!product && typeof productManager !== 'undefined') {
+            product = productManager.products.find(p => p.collectedProductId === productId)
+        }
+
+        if (!product) {
+            app.showNotification('상품을 찾을 수 없습니다', 'warning')
+            return
+        }
+
+        // 무신사 상품만 실제 보강 가능
+        if (product.sourceSite !== 'MUSINSA' || !product.siteProductId) {
+            app.showNotification('무신사 상품만 업데이트 가능합니다', 'warning')
+            return
+        }
+
+        this.setProductLog(`[${product.name?.slice(0, 20)}] 업데이트 시작...`, 'info')
+        app.showNotification('상세 정보 수집 중...', 'info')
+
+        try {
+            this.setProductLog(`프록시 서버 호출 중 (goodsNo: ${product.siteProductId})...`, 'info')
+            const r = await fetch(`http://localhost:3001/api/musinsa/goods/${product.siteProductId}`)
+            if (!r.ok) throw new Error(`HTTP ${r.status}`)
+            const d = await r.json()
+            if (!d.success || !d.data) throw new Error(d.message || '상세 수집 실패')
+
+            const detail = d.data
+
+            // 가격/재고 이력 — 변경 여부와 무관하게 항상 스냅샷 기록
+            const prevPrice = product.salePrice || product.bestBenefitPrice || 0
+            const newPrice = detail.salePrice || detail.bestBenefitPrice || 0
+            const priceHistory = [...(product.priceHistory || [])]
+
+            // 옵션별 스냅샷 (최신 detail.options 기준)
+            const latestOptions = (detail.options && detail.options.length > 0) ? detail.options : (product.options || [])
+            const optionSnapshot = latestOptions.map(o => ({
+                name: o.name || '',
+                price: o.price || newPrice || 0,
+                stock: o.stock ?? null,
+                isSoldOut: o.isSoldOut || false,
+                isBrandDelivery: o.isBrandDelivery || false
+            }))
+
+            const changeAmt = newPrice - prevPrice
+            const changePct = prevPrice > 0 ? ((changeAmt / prevPrice) * 100).toFixed(1) : '0'
+            priceHistory.push({
+                date: new Date().toISOString(),
+                price: newPrice || prevPrice,
+                prevPrice,
+                changeAmount: changeAmt,
+                changePercent: parseFloat(changePct),
+                options: optionSnapshot
+            })
+
+            if (changeAmt !== 0 && prevPrice > 0) {
+                this.setProductLog(`가격 변경: ₩${this.formatNumber(prevPrice)} → ₩${this.formatNumber(newPrice)} (${changeAmt > 0 ? '+' : ''}${changePct}%)`, changeAmt > 0 ? 'warning' : 'success')
+            } else {
+                this.setProductLog(`가격 변동 없음 (₩${this.formatNumber(newPrice || prevPrice)}) | 옵션 ${optionSnapshot.length}개 재고 기록 완료`, 'success')
+            }
+
+            const updates = {
+                category: detail.category || product.category || '',
+                category1: detail.category1 || product.category1 || '',
+                category2: detail.category2 || product.category2 || '',
+                category3: detail.category3 || product.category3 || '',
+                category4: detail.category4 || product.category4 || '',
+                options: (detail.options && detail.options.length > 0) ? detail.options : product.options || [],
+                origin: detail.origin || product.origin || '',
+                material: detail.material || product.material || '',
+                manufacturer: detail.manufacturer || product.manufacturer || '',
+                season: detail.season || product.season || '',
+                styleCode: detail.styleCode || product.styleCode || '',
+                kcCert: detail.kcCert || product.kcCert || '',
+                nameEn: detail.nameEn || product.nameEn || '',
+                tags: (detail.tags && detail.tags.length > 0) ? detail.tags : product.tags || [],
+                brand: detail.brand || product.brand || '',
+                images: (detail.images && detail.images.length > 0) ? detail.images : product.images || [],
+                detailImages: (detail.detailImages && detail.detailImages.length > 0) ? detail.detailImages : product.detailImages || [],
+                detailHtml: detail.detailHtml || product.detailHtml || '',
+                salePrice: detail.salePrice || product.salePrice || 0,
+                bestBenefitPrice: detail.bestBenefitPrice || product.bestBenefitPrice || 0,
+                originalPrice: detail.originalPrice || product.originalPrice || 0,
+                couponPrice: detail.couponPrice || product.couponPrice || 0,
+                discountRate: detail.discountRate ?? product.discountRate ?? 0,
+                isLoggedIn: detail.isLoggedIn ?? product.isLoggedIn ?? false,
+                priceHistory,
+                updatedAt: new Date().toISOString()
+            }
+
+            // collectedProducts 업데이트
+            if (isCollectedOnly) {
+                Object.assign(product, updates)
+                await storage.save('collectedProducts', product)
+            }
+
+            // products 스토어 업데이트 (bridge 상품)
+            const bridgeProduct = typeof productManager !== 'undefined'
+                ? productManager.products.find(p => p.collectedProductId === productId || p.id === productId)
+                : null
+            if (bridgeProduct) {
+                Object.assign(bridgeProduct, updates)
+                await storage.save('products', bridgeProduct)
+            }
+
+            // collectedProducts도 업데이트 (bridgeProduct에서 찾은 경우)
+            const collectedId = bridgeProduct?.collectedProductId || productId
+            if (!isCollectedOnly) {
+                try {
+                    const collected = await storage.get('collectedProducts', collectedId)
+                    if (collected) {
+                        Object.assign(collected, updates)
+                        await storage.save('collectedProducts', collected)
+                    }
+                } catch {}
+            }
+
+            app.showNotification('상세 정보 업데이트 완료', 'success')
+            await productManager.loadProducts()
+            this.renderProducts()
+        } catch (e) {
+            this.setProductLog(`업데이트 실패: ${e.message}`, 'error')
+            app.showNotification(`업데이트 실패: ${e.message}`, 'error')
+        }
     }
 }
 

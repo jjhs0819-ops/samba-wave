@@ -62,9 +62,18 @@ class ShipmentManager {
                 if (productForPolicy && typeof policyManager !== 'undefined') {
                     const marketPrices = {}
                     for (const accountId of filteredAccounts) {
+                        // 계정의 마켓 수수료율 조회 (채널의 platform과 계정의 marketType 매칭)
+                        const account = typeof accountManager !== 'undefined'
+                            ? accountManager.accounts.find(a => a.id === accountId)
+                            : null
+                        const channel = (account && typeof channelManager !== 'undefined')
+                            ? channelManager.channels.find(c => c.platform === account.marketType || c.name === account.marketName)
+                            : null
+                        const feeRate = channel?.feeRate || 0
                         marketPrices[accountId] = policyManager.calculateMarketPrice(
-                            productForPolicy.originalPrice || productForPolicy.salePrice || 0,
-                            productForPolicy.appliedPolicyId
+                            productForPolicy.cost || productForPolicy.originalPrice || productForPolicy.salePrice || 0,
+                            productForPolicy.appliedPolicyId,
+                            feeRate
                         )
                     }
                     const updatedWithPrices = { ...productForPolicy, marketPrices, updatedAt: new Date().toISOString() }
