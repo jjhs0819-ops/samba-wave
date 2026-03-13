@@ -18,6 +18,7 @@ class AccountManager {
             { id: 'gsshop', name: 'GS샵', group: '국내', apiFields: ['apiKey', 'apiSecret'] }, // 판매마켓 ID (소싱처 GSShop과 별도)
             { id: 'lotteon', name: '롯데ON', group: '국내', apiFields: ['apiKey', 'apiSecret'] }, // 판매마켓 ID (소싱처 LOTTEON과 별도)
             { id: 'ssg', name: '신세계몰', group: '국내', apiFields: ['apiKey', 'apiSecret', 'mallId'] }, // 판매마켓 ID (소싱처 SSG와 별도)
+            { id: 'lottehome', name: '롯데홈쇼핑', group: '국내', apiFields: ['userId', 'password', 'agncNo'] }, // 롯데아이몰 OpenAPI
             // 플레이오토
             { id: 'playauto', name: '플레이오토', group: '연동솔루션', apiFields: ['apiKey', 'userId'] },
             // 해외

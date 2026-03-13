@@ -2,186 +2,80 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
+  <title>SAMBA-WAVE</title>
+  <link rel="icon" href="icon16.png" type="image/png">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      width: 280px;
+      width: 240px;
       font-family: 'Segoe UI', sans-serif;
       background: #0F0F0F;
       color: #E5E5E5;
     }
 
-    .header {
-      background: linear-gradient(135deg, #FF8C00, #FFB84D);
-      padding: 14px 16px;
+    .container {
       display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 10px;
+      padding: 24px 20px;
+      gap: 12px;
     }
 
-.header-title {
-      font-size: 14px;
+    .icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+    }
+
+    .app-name {
+      font-size: 15px;
       font-weight: 700;
-      color: #fff;
+      color: #FFB84D;
     }
 
-    .header-sub {
+    .version {
       font-size: 11px;
-      color: rgba(255,255,255,0.8);
+      color: #666;
     }
 
-    .body {
-      padding: 16px;
+    .divider {
+      width: 100%;
+      height: 1px;
+      background: #2D2D2D;
     }
 
-    .status-card {
-      background: rgba(255,255,255,0.05);
-      border: 1px solid #2D2D2D;
-      border-radius: 8px;
-      padding: 12px 14px;
-      margin-bottom: 12px;
-    }
-
-    .status-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 12px;
-    }
-
-    .status-label {
-      color: #888;
-    }
-
-    .status-value {
-      font-weight: 600;
-    }
-
-    .badge {
+    .sync-badge {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      padding: 2px 8px;
-      border-radius: 20px;
+      gap: 6px;
       font-size: 11px;
-      font-weight: 600;
+      color: #22c55e;
     }
 
-    .badge-green { background: rgba(34,197,94,0.15); color: #22c55e; }
-    .badge-red { background: rgba(239,68,68,0.15); color: #ef4444; }
-    .badge-gray { background: rgba(150,150,150,0.15); color: #888; }
-
-    .dot {
+    .sync-dot {
       width: 6px;
       height: 6px;
       border-radius: 50%;
-      background: currentColor;
+      background: #22c55e;
+      animation: pulse 2s infinite;
     }
 
-    .btn {
-      width: 100%;
-      padding: 10px;
-      border: none;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s;
-      margin-bottom: 8px;
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
     }
-
-    .btn-primary {
-      background: linear-gradient(135deg, #FF8C00, #FFB84D);
-      color: #000;
-    }
-
-    .btn-primary:hover { filter: brightness(1.1); }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-
-    .btn-secondary {
-      background: rgba(255,255,255,0.07);
-      color: #ccc;
-      border: 1px solid #333;
-    }
-
-    .btn-secondary:hover { background: rgba(255,255,255,0.12); }
-
-    .log {
-      background: rgba(0,0,0,0.3);
-      border: 1px solid #2D2D2D;
-      border-radius: 6px;
-      padding: 10px;
-      font-size: 11px;
-      color: #888;
-      min-height: 40px;
-      line-height: 1.6;
-    }
-
-    .log.success { color: #22c55e; }
-    .log.error { color: #ef4444; }
-    .log.loading { color: #FFB84D; }
-
-    .divider {
-      height: 1px;
-      background: #2D2D2D;
-      margin: 12px 0;
-    }
-
-    .hint {
-      font-size: 11px;
-      color: #555;
-      text-align: center;
-      line-height: 1.5;
-    }
-
-    a { color: #FF8C00; text-decoration: none; }
   </style>
 </head>
 <body>
-  <div class="header">
-    <!-- 삼바웨이브 SVG 로고 -->
-    <svg width="32" height="32" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect width="40" height="40" rx="8" fill="rgba(0,0,0,0.25)"/>
-      <path d="M4 16 Q10 12 16 16 Q22 20 28 16 Q34 12 38 16" stroke="#FF8C00" stroke-opacity="0.25" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-      <path d="M4 21 Q10 17 16 21 Q22 25 28 21 Q34 17 38 21" stroke="#FF8C00" stroke-opacity="0.55" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-      <path d="M4 26 Q10 22 16 26 Q22 30 28 26 Q34 22 38 26" stroke="#FFB84D" stroke-width="2" fill="none" stroke-linecap="round"/>
-      <text x="20" y="13" font-family="Arial Black, sans-serif" font-size="7.5" font-weight="900" fill="#FFB84D" text-anchor="middle" dominant-baseline="middle" letter-spacing="0.5">SW</text>
-    </svg>
-    <div>
-      <div class="header-title">SAMBA-WAVE</div>
-      <div class="header-sub">무신사 쿠키 연동</div>
-    </div>
-  </div>
-
-  <div class="body">
-    <div class="status-card">
-      <div class="status-row" style="margin-bottom:8px">
-        <span class="status-label">무신사 로그인</span>
-        <span id="loginStatus" class="badge badge-gray"><span class="dot"></span>확인 중...</span>
-      </div>
-      <div class="status-row">
-        <span class="status-label">프록시 서버</span>
-        <span id="proxyStatus" class="badge badge-gray"><span class="dot"></span>확인 중...</span>
-      </div>
-    </div>
-
-    <button class="btn btn-primary" id="syncBtn" onclick="syncCookies()">
-      쿠키 동기화
-    </button>
-
-    <button class="btn btn-secondary" onclick="openMusinsa()">
-      무신사 열기
-    </button>
-
+  <div class="container">
+    <img src="icon48.png" class="icon">
+    <div class="app-name">SAMBA-WAVE</div>
+    <div class="version" id="version"></div>
     <div class="divider"></div>
-
-    <div class="log" id="logBox">동기화 버튼을 눌러 로그인 상태를 프록시에 전달하세요.</div>
-
-    <div class="divider"></div>
-    <div class="hint">
-      프록시: <a href="#" onclick="openProxy()">localhost:3001</a><br>
-      웨일/크롬 모두 지원
+    <div class="sync-badge">
+      <span class="sync-dot"></span>
+      자동 동기화 활성
     </div>
   </div>
 

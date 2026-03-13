@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "SAMBA-WAVE",
-  "version": "1.0.0",
-  "description": "무재고 위탁판매 솔루션 - 무신사 로그인 쿠키 연동",
+  "version": "1.4.0",
+  "description": "무재고 위탁판매 솔루션 - 무신사 수집 + 롯데홈쇼핑 OpenAPI 연동",
   "permissions": [
     "cookies",
     "storage",
-    "tabs"
+    "tabs",
+    "webRequest"
   ],
   "host_permissions": [
     "https://*.musinsa.com/*",

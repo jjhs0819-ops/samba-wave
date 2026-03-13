@@ -236,6 +236,14 @@ class UIManager {
         this.renderAccountList()
         this.renderCategoryMappings()
         await this.renderCS()
+        // 알리고 설정 로드
+        if (typeof loadAligoSettings === 'function') loadAligoSettings()
+        // 마켓별 설정 로드
+        if (typeof loadGsShopSettings === 'function') loadGsShopSettings()
+        if (typeof loadLotteHomeSettings === 'function') loadLotteHomeSettings()
+        if (typeof loadMarketSettings === 'function') {
+          Object.keys(MARKET_FIELD_MAP).forEach(m => loadMarketSettings(m))
+        }
     }
 
     /**
@@ -1018,7 +1026,7 @@ class UIManager {
 
         // 행 생성
         const rows = options.map((o, idx) => {
-            const optionCost = o.price || basePrice
+            const optionCost = o.price || product.bestBenefitPrice || basePrice
             const optionSalePrice = product.salePrice || Math.ceil(optionCost * (1 + (product.marginRate || 15) / 100))
             const origStock = o.originalStock ?? o.stock
             const currentStock = o.stock ?? origStock
@@ -1183,15 +1191,21 @@ class UIManager {
     // ==================== 마켓 ON/OFF ====================
 
     async toggleMarket(productId, marketName) {
-        const product = productManager.products.find(p => p.id === productId)
+        // products 스토어에서 먼저 검색, 없으면 collectedProducts에서 검색
+        let product = productManager.products.find(p => p.id === productId)
+        let isCollected = false
+        if (!product) {
+            product = await storage.get('collectedProducts', productId)
+            isCollected = true
+        }
         if (!product) return
         if (!product.marketEnabled) product.marketEnabled = {}
         // 현재 값이 false이면 true로, 그 외(true/undefined)이면 false로 토글
         product.marketEnabled[marketName] = product.marketEnabled[marketName] === false ? true : false
-        await storage.save('products', product)
+        await storage.save(isCollected ? 'collectedProducts' : 'products', product)
 
-        // collectedProductId 역참조로 collectedProducts도 동기화
-        if (product.collectedProductId) {
+        // products 기반 상품이면 collectedProductId 역참조로 collectedProducts도 동기화
+        if (!isCollected && product.collectedProductId) {
             const cp = await storage.get('collectedProducts', product.collectedProductId)
             if (cp) {
                 await storage.save('collectedProducts', {
@@ -1509,14 +1523,23 @@ class UIManager {
      * 가격/재고 이력 모달 표시
      */
     async showPriceHistory(productId) {
-        const product = productManager.products.find(p => p.id === productId)
+        let product = productManager.products.find(p => p.id === productId)
+        if (!product) {
+            const collected = await storage.get('collectedProducts', productId)
+            if (collected) {
+                product = { ...collected,
+                    cost: collected.bestBenefitPrice || collected.couponPrice || collected.salePrice || collected.originalPrice || 0,
+                    sourcePrice: collected.originalPrice || collected.salePrice || 0,
+                }
+            }
+        }
         if (!product) return
 
         // 기존 모달 제거
         document.getElementById('price-history-modal')?.remove()
 
         const siteName = product.sourceSite || 'MUSINSA'
-        const currentPrice = product.cost || product.sourcePrice || 0
+        const currentPrice = product.bestBenefitPrice || product.cost || product.sourcePrice || 0
         const histories = product.priceHistory || []
 
         // 이력이 없으면 안내 메시지
@@ -2943,7 +2966,8 @@ class UIManager {
 
     async updateCounts() {
         const pCount = productManager.products.length
-        document.getElementById('product-count').textContent = pCount
+        const pc1 = document.getElementById('product-count')
+        if (pc1) pc1.textContent = pCount
         const pc2 = document.getElementById('product-count2')
         if (pc2) pc2.textContent = pCount
         const ccEl = document.getElementById('channel-count')
@@ -3788,8 +3812,11 @@ class UIManager {
             const name = marketNames[mType] || mType
             const accountItems = accs.map(acc => `
                 <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 10px; border:1px solid #2A2A2A; border-radius:6px; background:#111;">
-                    <span style="font-size:0.8rem; color:#C5C5C5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:180px;">${acc.sellerId || acc.accountLabel || '-'}</span>
-                    <div style="display:flex; gap:4px; flex-shrink:0;">
+                    <div style="overflow:hidden; min-width:0; flex:1;">
+                        <div style="font-size:0.8rem; color:#C5C5C5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${acc.sellerId || acc.accountLabel || '-'}</div>
+                        ${acc.businessName ? `<div style="font-size:0.72rem; color:#FF8C00; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px;">${acc.businessName}</div>` : ''}
+                    </div>
+                    <div style="display:flex; gap:4px; flex-shrink:0; margin-left:6px;">
                         <button onclick="ui.editAccount('${acc.id}')" style="padding:2px 8px; font-size:0.72rem; background:transparent; border:1px solid #3D3D3D; color:#9AA5C0; border-radius:4px; cursor:pointer;">수정</button>
                         <button onclick="ui.deleteAccount('${acc.id}')" style="padding:2px 8px; font-size:0.72rem; background:transparent; border:1px solid #C0392B; color:#FF6B6B; border-radius:4px; cursor:pointer;">삭제</button>
                     </div>
@@ -4687,13 +4714,15 @@ class UIManager {
             if (toPhone) toPhone.value = order.recipientPhone || order.customerPhone || ''
         }
 
-        // 발신번호 복원 (저장된 설정)
-        storage.getAll('settings').then(rows => {
-            const cfg = rows.find(r => r.id === 'smsSettings')
-            if (cfg) {
-                const fromEl = document.getElementById('sms-from-phone')
-                if (fromEl && cfg.fromPhone) fromEl.value = cfg.fromPhone
-            }
+        // 발신번호 복원 (저장된 설정 또는 알리고 발신번호)
+        Promise.all([
+            storage.get('settings', 'smsSettings'),
+            storage.get('settings', 'aligo_sms')
+        ]).then(([cfg, aligo]) => {
+            const fromEl = document.getElementById('sms-from-phone')
+            if (!fromEl) return
+            const saved = cfg?.fromPhone || aligo?.sender || ''
+            if (saved) fromEl.value = saved
         })
 
         // 바이트 초기화
@@ -5127,15 +5156,18 @@ class UIManager {
             const detail = d.data
 
             // 가격/재고 이력 — 변경 여부와 무관하게 항상 스냅샷 기록
-            const prevPrice = product.salePrice || product.bestBenefitPrice || 0
-            const newPrice = detail.salePrice || detail.bestBenefitPrice || 0
+            const prevPrice = product.bestBenefitPrice || product.salePrice || 0
+            const newPrice = detail.bestBenefitPrice || detail.salePrice || 0
             const priceHistory = [...(product.priceHistory || [])]
 
             // 옵션별 스냅샷 (최신 detail.options 기준)
+            // 혜택가 할인율을 옵션 가격에도 동일 적용
+            const salePrice = detail.salePrice || 0
+            const benefitRatio = (salePrice > 0 && newPrice > 0 && newPrice < salePrice) ? newPrice / salePrice : 1
             const latestOptions = (detail.options && detail.options.length > 0) ? detail.options : (product.options || [])
             const optionSnapshot = latestOptions.map(o => ({
                 name: o.name || '',
-                price: o.price || newPrice || 0,
+                price: Math.round((o.price || salePrice || newPrice || 0) * benefitRatio),
                 stock: o.stock ?? null,
                 isSoldOut: o.isSoldOut || false,
                 isBrandDelivery: o.isBrandDelivery || false
@@ -5164,7 +5196,9 @@ class UIManager {
                 category2: detail.category2 || product.category2 || '',
                 category3: detail.category3 || product.category3 || '',
                 category4: detail.category4 || product.category4 || '',
-                options: (detail.options && detail.options.length > 0) ? detail.options : product.options || [],
+                options: (detail.options && detail.options.length > 0)
+                  ? detail.options.map(o => ({ ...o, price: Math.round((o.price || 0) * benefitRatio) }))
+                  : product.options || [],
                 origin: detail.origin || product.origin || '',
                 material: detail.material || product.material || '',
                 manufacturer: detail.manufacturer || product.manufacturer || '',
@@ -5226,3 +5260,789 @@ class UIManager {
 
 // 글로벌 인스턴스
 const ui = new UIManager()
+
+// ═══════════════════════════════════════════════════════════
+// 마켓 공통 설정 저장/로드 (스마트스토어, G마켓, 옥션, 쿠팡, 롯데ON, 11번가, SSG, 홈앤쇼핑, HMALL)
+// ═══════════════════════════════════════════════════════════
+
+const MARKET_FIELD_MAP = {
+  smartstore: {
+    marketName: '스마트스토어',
+    sellerIdField: 'account',
+    fields: { businessName: 'ss-business-name', account: 'ss-account', apiKey: 'ss-api-key', storeId: 'ss-store-id', maxCount: 'ss-max-count' }
+  },
+  gmarket: {
+    marketName: 'G마켓',
+    sellerIdField: 'account',
+    fields: { businessName: 'gm-business-name', account: 'gm-account', storeId: 'gm-store-id', maxCount: 'gm-max-count' }
+  },
+  auction: {
+    marketName: '옥션',
+    sellerIdField: 'account',
+    fields: { businessName: 'ac-business-name', account: 'ac-account', storeId: 'ac-store-id', maxCount: 'ac-max-count' }
+  },
+  coupang: {
+    marketName: '쿠팡',
+    sellerIdField: 'account',
+    fields: { businessName: 'cp-business-name', account: 'cp-account', password: 'cp-password', vendorId: 'cp-vendor-id', accessKey: 'cp-access-key', secretKey: 'cp-secret-key', storeId: 'cp-store-id', maxCount: 'cp-max-count' }
+  },
+  lotteon: {
+    marketName: '롯데ON',
+    sellerIdField: 'account',
+    fields: { businessName: 'lo-business-name', account: 'lo-account', vendorCode: 'lo-vendor-code', apiKey: 'lo-api-key', storeId: 'lo-store-id', maxCount: 'lo-max-count' }
+  },
+  '11st': {
+    marketName: '11번가',
+    sellerIdField: 'account',
+    fields: { businessName: 'st-business-name', account: 'st-account', password: 'st-password', apiKey: 'st-api-key', storeId: 'st-store-id', maxCount: 'st-max-count' }
+  },
+  ssg: {
+    marketName: 'SSG',
+    sellerIdField: 'apiId',
+    fields: { businessName: 'sg-business-name', apiId: 'sg-api-id', apiKey: 'sg-api-key', storeId: 'sg-store-id', maxCount: 'sg-max-count' }
+  },
+  homeand: {
+    marketName: '홈앤쇼핑',
+    sellerIdField: 'apiId',
+    fields: { businessName: 'ha-business-name', apiId: 'ha-api-id', apiKey: 'ha-api-key', storeId: 'ha-store-id', maxCount: 'ha-max-count' }
+  },
+  hmall: {
+    marketName: 'HMALL',
+    sellerIdField: 'apiId',
+    fields: { businessName: 'hm-business-name', apiId: 'hm-api-id', apiKey: 'hm-api-key', storeId: 'hm-store-id', maxCount: 'hm-max-count' }
+  }
+}
+
+/** 마켓 공통 설정 저장 */
+async function saveMarketSettings(marketType) {
+  const cfg = MARKET_FIELD_MAP[marketType]
+  if (!cfg) return
+
+  const data = {}
+  for (const [key, elId] of Object.entries(cfg.fields)) {
+    const el = document.getElementById(elId)
+    data[key] = el?.value?.trim() || ''
+  }
+
+  await storage.save('settings', { key: `market_${marketType}`, ...data })
+
+  const sellerId = data[cfg.sellerIdField] || ''
+  if (typeof accountManager !== 'undefined' && sellerId) {
+    await accountManager.loadAccounts()
+    const existing = accountManager.accounts.find(a => a.marketType === marketType && a.sellerId === sellerId)
+    if (existing) {
+      await accountManager.updateAccount(existing.id, {
+        accountLabel: `${cfg.marketName}-${sellerId}`,
+        businessName: data.businessName || '',
+        apiKey: data.apiKey || data.accessKey || ''
+      })
+    } else {
+      await accountManager.addAccount({
+        marketType,
+        sellerId,
+        accountLabel: `${cfg.marketName}-${sellerId}`,
+        businessName: data.businessName || '',
+        apiKey: data.apiKey || data.accessKey || '',
+        apiSecret: data.secretKey || ''
+      })
+    }
+    if (typeof ui !== 'undefined') {
+      ui.renderAccountDashboard()
+      ui.renderAccountList()
+      ui.renderAccountCheckboxes()
+    }
+  }
+
+  if (typeof app !== 'undefined') app.showNotification(`${cfg.marketName} 설정이 저장되었습니다.`, 'success')
+}
+
+/** 마켓 공통 설정 로드 */
+async function loadMarketSettings(marketType) {
+  const cfg = MARKET_FIELD_MAP[marketType]
+  if (!cfg) return
+  try {
+    const data = await storage.get('settings', `market_${marketType}`)
+    if (!data) return
+    for (const [key, elId] of Object.entries(cfg.fields)) {
+      const el = document.getElementById(elId)
+      if (el && data[key] !== undefined) el.value = data[key]
+    }
+  } catch (e) {
+    console.warn(`[${cfg.marketName}] 설정 로드 실패:`, e.message)
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 알리고(ALIGO) SMS / 카카오 알림톡 설정 UI
+// ═══════════════════════════════════════════════════════════
+
+async function saveAligoSmsSettings() {
+  const userId = document.getElementById('aligo-sms-user-id')?.value?.trim() || ''
+  const apiKey = document.getElementById('aligo-sms-api-key')?.value?.trim() || ''
+  const sender = document.getElementById('aligo-sms-sender')?.value?.trim() || ''
+  await storage.save('settings', { key: 'aligo_sms', userId, apiKey, sender })
+  const statusEl = document.getElementById('aligo-sms-status')
+  if (statusEl) { statusEl.textContent = '✓ 저장됨'; statusEl.style.color = '#51CF66' }
+  app.showNotification('SMS 설정이 저장되었습니다.', 'success')
+}
+
+async function testAligoSmsKey() {
+  const userId = document.getElementById('aligo-sms-user-id')?.value?.trim()
+  const apiKey = document.getElementById('aligo-sms-api-key')?.value?.trim()
+  const statusEl = document.getElementById('aligo-sms-status')
+  if (!userId || !apiKey) {
+    showAppModal('입력 필요', 'Identifier와 API Key를 먼저 입력하세요.', 'warning')
+    return
+  }
+  if (statusEl) { statusEl.textContent = '확인 중...'; statusEl.style.color = '#FFD93D' }
+  try {
+    const res = await fetch('http://localhost:3001/api/aligo/sms/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, apiKey })
+    })
+    const data = await res.json()
+    if (data.success) {
+      if (statusEl) { statusEl.textContent = `✓ ${data.message}`; statusEl.style.color = '#51CF66' }
+      showAppModal('SMS Key 테스트 성공', data.message, 'success')
+    } else {
+      if (statusEl) { statusEl.textContent = `✗ ${data.message}`; statusEl.style.color = '#FF6B6B' }
+      showAppModal('SMS Key 테스트 실패', data.message, 'error')
+    }
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = '✗ 서버 연결 실패'; statusEl.style.color = '#FF6B6B' }
+    showAppModal('연결 실패', '프록시 서버를 시작하세요.', 'error')
+  }
+}
+
+async function saveAligoKakaoSettings() {
+  const userId = document.getElementById('aligo-kakao-user-id')?.value?.trim() || ''
+  const apiKey = document.getElementById('aligo-kakao-api-key')?.value?.trim() || ''
+  const senderKey = document.getElementById('aligo-kakao-sender-key')?.value?.trim() || ''
+  const sender = document.getElementById('aligo-kakao-sender')?.value?.trim() || ''
+  await storage.save('settings', { key: 'aligo_kakao', userId, apiKey, senderKey, sender })
+  const statusEl = document.getElementById('aligo-kakao-status')
+  if (statusEl) { statusEl.textContent = '✓ 저장됨'; statusEl.style.color = '#51CF66' }
+  app.showNotification('카카오 알림톡 설정이 저장되었습니다.', 'success')
+}
+
+async function testAligoKakaoKey() {
+  const userId = document.getElementById('aligo-kakao-user-id')?.value?.trim()
+  const apiKey = document.getElementById('aligo-kakao-api-key')?.value?.trim()
+  const statusEl = document.getElementById('aligo-kakao-status')
+  if (!userId || !apiKey) {
+    showAppModal('입력 필요', 'Identifier와 API Key를 먼저 입력하세요.', 'warning')
+    return
+  }
+  if (statusEl) { statusEl.textContent = '확인 중...'; statusEl.style.color = '#FFD93D' }
+  try {
+    const res = await fetch('http://localhost:3001/api/aligo/kakao/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, apiKey })
+    })
+    const data = await res.json()
+    if (data.success) {
+      if (statusEl) { statusEl.textContent = '✓ 인증 성공'; statusEl.style.color = '#51CF66' }
+      showAppModal('카카오 알림톡 인증 성공', data.message, 'success')
+    } else {
+      if (statusEl) { statusEl.textContent = `✗ ${data.message}`; statusEl.style.color = '#FF6B6B' }
+      showAppModal('카카오 알림톡 인증 실패', data.message, 'error')
+    }
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = '✗ 서버 연결 실패'; statusEl.style.color = '#FF6B6B' }
+    showAppModal('연결 실패', '프록시 서버를 시작하세요.', 'error')
+  }
+}
+
+/** 알리고 설정 로드 (탭 진입 시 호출) */
+async function loadAligoSettings() {
+  try {
+    const sms = await storage.get('settings', 'aligo_sms')
+    const kakao = await storage.get('settings', 'aligo_kakao')
+    if (sms) {
+      if (document.getElementById('aligo-sms-user-id')) document.getElementById('aligo-sms-user-id').value = sms.userId || ''
+      if (document.getElementById('aligo-sms-api-key')) document.getElementById('aligo-sms-api-key').value = sms.apiKey || ''
+      if (document.getElementById('aligo-sms-sender')) document.getElementById('aligo-sms-sender').value = sms.sender || ''
+      const statusEl = document.getElementById('aligo-sms-status')
+      if (statusEl && sms.apiKey) { statusEl.textContent = '✓ 저장됨'; statusEl.style.color = '#51CF66' }
+    }
+    if (kakao) {
+      if (document.getElementById('aligo-kakao-user-id')) document.getElementById('aligo-kakao-user-id').value = kakao.userId || ''
+      if (document.getElementById('aligo-kakao-api-key')) document.getElementById('aligo-kakao-api-key').value = kakao.apiKey || ''
+      if (document.getElementById('aligo-kakao-sender-key')) document.getElementById('aligo-kakao-sender-key').value = kakao.senderKey || ''
+      if (document.getElementById('aligo-kakao-sender')) document.getElementById('aligo-kakao-sender').value = kakao.sender || ''
+      const statusEl = document.getElementById('aligo-kakao-status')
+      if (statusEl && kakao.apiKey) { statusEl.textContent = '✓ 저장됨'; statusEl.style.color = '#51CF66' }
+    }
+  } catch (e) {
+    console.warn('[알리고] 설정 로드 실패:', e.message)
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 롯데홈쇼핑 설정 UI 전역 함수
+// ═══════════════════════════════════════════════════════════
+
+/** 롯데홈쇼핑 인증 테스트 */
+async function testLotteHomeAuth() {
+  const btn = document.getElementById('lh-auth-btn')
+  const statusEl = document.getElementById('lh-auth-status')
+  const userId = document.getElementById('lh-user-id')?.value?.trim()
+  const password = document.getElementById('lh-password')?.value?.trim()
+  const agncNo = document.getElementById('lh-agnc-no')?.value?.trim()
+  const env = document.querySelector('input[name="lh-env"]:checked')?.value || 'test'
+
+  if (!userId || !password) {
+    statusEl.textContent = '협력업체ID와 비밀번호를 입력해주세요.'
+    statusEl.style.color = '#FF6B6B'
+    return
+  }
+
+  btn.disabled = true
+  btn.textContent = '인증 중...'
+  statusEl.textContent = '인증 요청 중...'
+  statusEl.style.color = '#FFD93D'
+
+  try {
+    const res = await fetch('http://localhost:3001/api/lottehome/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, password, agncNo, env })
+    })
+    const data = await res.json()
+
+    if (data.success) {
+      statusEl.textContent = `✓ ${data.message}`
+      statusEl.style.color = '#51CF66'
+      // lotteHomeApi 자격증명 업데이트
+      if (typeof lotteHomeApi !== 'undefined') {
+        lotteHomeApi.updateCredentials({ userId, password, agncNo, env })
+      }
+    } else {
+      statusEl.textContent = `✗ 인증 실패: ${data.message}`
+      statusEl.style.color = '#FF6B6B'
+    }
+  } catch (e) {
+    statusEl.textContent = `✗ 서버 연결 실패 (프록시 서버를 시작하세요)`
+    statusEl.style.color = '#FF6B6B'
+  } finally {
+    btn.disabled = false
+    btn.textContent = '인증 테스트'
+  }
+}
+
+/** 롯데홈쇼핑 인증 초기화 */
+async function clearLotteHomeAuth() {
+  try {
+    await fetch('http://localhost:3001/api/lottehome/auth', { method: 'DELETE' })
+    const statusEl = document.getElementById('lh-auth-status')
+    if (statusEl) {
+      statusEl.textContent = '인증 초기화 완료'
+      statusEl.style.color = '#888'
+    }
+  } catch (e) {
+    console.warn('[롯데홈쇼핑] 인증 초기화 실패:', e.message)
+  }
+}
+
+/** 기초정보 API에서 배송정책/출고지/반품지 불러오기 */
+async function loadLotteHomeDefaults() {
+  const userId = document.getElementById('lh-user-id')?.value?.trim()
+  const password = document.getElementById('lh-password')?.value?.trim()
+  const agncNo = document.getElementById('lh-agnc-no')?.value?.trim()
+  const env = document.querySelector('input[name="lh-env"]:checked')?.value || 'test'
+
+  if (!userId || !password) {
+    alert('협력업체ID와 비밀번호를 먼저 입력하고 인증 테스트를 진행하세요.')
+    return
+  }
+
+  const params = new URLSearchParams({ userId, password, agncNo: agncNo || '', env })
+
+  try {
+    // 배송비정책 로드
+    const dlvRes = await fetch(`http://localhost:3001/api/lottehome/delivery-policies?${params}`)
+    const dlvData = await dlvRes.json()
+    if (dlvData.success) {
+      const select = document.getElementById('lh-dlv-polc-no')
+      if (select) {
+        select.innerHTML = '<option value="">— 선택 —</option>'
+        // 응답 구조에 따라 배열 추출 (실제 API 응답 확인 후 조정 가능)
+        const list = dlvData.data?.list || dlvData.data?.dlv_polc_list || []
+        const items = Array.isArray(list) ? list : [list].filter(Boolean)
+        items.forEach(item => {
+          const opt = document.createElement('option')
+          opt.value = item.dlv_polc_no || item.polc_no || ''
+          opt.textContent = item.dlv_polc_nm || item.polc_nm || opt.value
+          select.appendChild(opt)
+        })
+      }
+    }
+
+    // 출고지/반품지 로드
+    const plcRes = await fetch(`http://localhost:3001/api/lottehome/delivery-places?${params}`)
+    const plcData = await plcRes.json()
+    if (plcData.success) {
+      const rlsSelect = document.getElementById('lh-corp-rls-pl-sn')
+      const dlvpSelect = document.getElementById('lh-corp-dlvp-sn')
+      const list = plcData.data?.list || plcData.data?.dlv_plc_list || []
+      const items = Array.isArray(list) ? list : [list].filter(Boolean)
+
+      if (rlsSelect) {
+        rlsSelect.innerHTML = '<option value="">— 선택 —</option>'
+        items.forEach(item => {
+          const opt = document.createElement('option')
+          opt.value = item.corp_dlvp_sn || item.sn || ''
+          opt.textContent = item.corp_dlvp_nm || item.nm || opt.value
+          rlsSelect.appendChild(opt)
+        })
+      }
+      if (dlvpSelect) {
+        dlvpSelect.innerHTML = '<option value="">— 선택 —</option>'
+        items.forEach(item => {
+          const opt = document.createElement('option')
+          opt.value = item.corp_dlvp_sn || item.sn || ''
+          opt.textContent = item.corp_dlvp_nm || item.nm || opt.value
+          dlvpSelect.appendChild(opt)
+        })
+      }
+    }
+
+    alert('기초정보를 불러왔습니다. 목록에서 선택 후 설정을 저장하세요.')
+  } catch (e) {
+    alert(`불러오기 실패: ${e.message}\n프록시 서버가 실행 중인지 확인하세요.`)
+  }
+}
+
+/** 롯데홈쇼핑 설정 저장 */
+async function saveLotteHomeSettings() {
+  const env = document.querySelector('input[name="lh-env"]:checked')?.value || 'test'
+  const userId = document.getElementById('lh-user-id')?.value?.trim() || ''
+  const password = document.getElementById('lh-password')?.value?.trim() || ''
+  const agncNo = document.getElementById('lh-agnc-no')?.value?.trim() || ''
+  const businessName = document.getElementById('lh-business-name')?.value?.trim() || ''
+  const maxCount = document.getElementById('lh-max-count')?.value || ''
+
+  // 계정 자격증명 저장
+  const credentials = { userId, password, agncNo, businessName, env, maxCount }
+  await storage.save('settings', { key: 'lottehome_credentials', ...credentials })
+
+  // 기본설정(defaults) 저장
+  const defaults = {
+    key: 'lottehome_defaults',
+    pur_shp_cd: document.getElementById('lh-pur-shp-cd')?.value || '10',
+    sale_shp_cd: document.getElementById('lh-sale-shp-cd')?.value || '20',
+    tdf_sct_cd: document.getElementById('lh-tdf-sct-cd')?.value || '10',
+    mrgn_rt: document.getElementById('lh-mrgn-rt')?.value || '',
+    dlv_polc_no: document.getElementById('lh-dlv-polc-no')?.value || '',
+    corp_rls_pl_sn: document.getElementById('lh-corp-rls-pl-sn')?.value || '',
+    corp_dlvp_sn: document.getElementById('lh-corp-dlvp-sn')?.value || '',
+    dlv_mean_cd: document.getElementById('lh-dlv-mean-cd')?.value || '10',
+    dlv_dday: document.getElementById('lh-dlv-dday')?.value || '3',
+    inv_mgmt_yn: document.getElementById('lh-inv-mgmt-yn')?.value || 'Y',
+    gift_pkg_yn: document.getElementById('lh-gift-pkg-yn')?.value || 'N',
+    sum_pkg_psb_yn: document.getElementById('lh-sum-pkg-psb-yn')?.value || 'Y'
+  }
+  await storage.save('settings', defaults)
+
+  // lotteHomeApi 자격증명 동기화
+  if (typeof lotteHomeApi !== 'undefined') {
+    lotteHomeApi.updateCredentials({ userId, password, agncNo, env })
+  }
+
+  // accountManager에 롯데홈쇼핑 계정 동기화 (userId 기준으로 구분)
+  if (typeof accountManager !== 'undefined' && userId) {
+    await accountManager.loadAccounts()
+    const existing = accountManager.accounts.find(a => a.marketType === 'lottehome' && a.sellerId === userId)
+    if (existing) {
+      await accountManager.updateAccount(existing.id, {
+        accountLabel: `롯데홈쇼핑 (${env === 'prod' ? '운영' : '테스트'})`,
+        businessName
+      })
+    } else {
+      await accountManager.addAccount({
+        marketType: 'lottehome',
+        sellerId: userId,
+        accountLabel: `롯데홈쇼핑 (${env === 'prod' ? '운영' : '테스트'})`,
+        businessName,
+        apiKey: '',
+        apiSecret: ''
+      })
+    }
+    if (typeof ui !== 'undefined') {
+      ui.renderAccountDashboard()
+      ui.renderAccountList()
+      ui.renderAccountCheckboxes()
+    }
+  }
+
+  if (typeof app !== 'undefined') {
+    app.showNotification('롯데홈쇼핑 설정이 저장되었습니다.', 'success')
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 공용 모달 유틸리티
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * 앱 테마에 맞는 모달 표시
+ * @param {string} title - 모달 제목
+ * @param {string|HTMLElement} content - 본문 (HTML 문자열 또는 DOM)
+ * @param {'info'|'success'|'error'|'warning'} type
+ */
+function showAppModal(title, content, type = 'info') {
+  // 기존 모달 제거
+  document.getElementById('app-modal-overlay')?.remove()
+
+  const colorMap = {
+    success: { icon: '✓', accent: '#51CF66' },
+    error:   { icon: '✗', accent: '#FF6B6B' },
+    warning: { icon: '⚠', accent: '#FFD93D' },
+    info:    { icon: 'ℹ', accent: '#4C9AFF' },
+  }
+  const { icon, accent } = colorMap[type] || colorMap.info
+
+  const overlay = document.createElement('div')
+  overlay.id = 'app-modal-overlay'
+  overlay.style.cssText = `
+    position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:9999;
+    display:flex; align-items:center; justify-content:center;
+  `
+
+  const modal = document.createElement('div')
+  modal.style.cssText = `
+    background:#1a1a1a; border:1px solid #2D2D2D; border-radius:12px;
+    min-width:320px; max-width:480px; width:90%; padding:28px 28px 20px;
+    box-shadow:0 20px 60px rgba(0,0,0,0.6);
+  `
+
+  const bodyHtml = typeof content === 'string' ? content : content.outerHTML
+
+  modal.innerHTML = `
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+      <span style="font-size:20px; color:${accent};">${icon}</span>
+      <span style="font-size:16px; font-weight:700; color:#E5E5E5;">${title}</span>
+    </div>
+    <div style="color:#B0B0B0; font-size:14px; line-height:1.7; margin-bottom:20px;">${bodyHtml}</div>
+    <div style="text-align:right;">
+      <button id="app-modal-close" style="
+        padding:8px 22px; background:${accent}22; color:${accent};
+        border:1px solid ${accent}55; border-radius:6px; cursor:pointer;
+        font-size:13px; font-weight:600;
+      ">확인</button>
+    </div>
+  `
+
+  overlay.appendChild(modal)
+  document.body.appendChild(overlay)
+
+  const close = () => overlay.remove()
+  document.getElementById('app-modal-close').addEventListener('click', close)
+  overlay.addEventListener('click', e => { if (e.target === overlay) close() })
+}
+
+// ═══════════════════════════════════════════════════════════
+// GS샵 설정 UI 전역 함수
+// ═══════════════════════════════════════════════════════════
+
+/** GS샵 인증 테스트 */
+async function testGsShopAuth() {
+  const btn = document.getElementById('gs-auth-btn')
+  const statusEl = document.getElementById('gs-auth-status')
+  const apiKey = document.getElementById('gs-api-key')?.value?.trim()
+  const vendorId = document.getElementById('gs-vendor-id')?.value?.trim()
+  const env = document.querySelector('input[name="gs-env"]:checked')?.value || 'dev'
+
+  if (!apiKey) {
+    statusEl.textContent = 'API Key를 입력해주세요.'
+    statusEl.style.color = '#FF6B6B'
+    return
+  }
+
+  btn.disabled = true
+  btn.textContent = '확인 중...'
+  statusEl.textContent = '인증 확인 중...'
+  statusEl.style.color = '#FFD93D'
+
+  try {
+    const res = await fetch('http://localhost:3001/api/gsshop/auth/check', {
+      headers: {
+        'x-gs-aes-key': apiKey,
+        'x-gs-sup-cd': vendorId || '',
+        'x-gs-env': env
+      }
+    })
+    const data = await res.json()
+
+    if (data.success && data.authenticated) {
+      statusEl.textContent = `✓ ${data.message}`
+      statusEl.style.color = '#51CF66'
+      if (typeof gsShopApi !== 'undefined') {
+        gsShopApi.updateCredentials({ aesKey: apiKey, supCd: vendorId, env })
+      }
+    } else {
+      statusEl.textContent = `✗ 인증 실패: ${data.message}`
+      statusEl.style.color = '#FF6B6B'
+    }
+  } catch (e) {
+    statusEl.textContent = '✗ 서버 연결 실패 (프록시 서버를 시작하세요)'
+    statusEl.style.color = '#FF6B6B'
+  } finally {
+    btn.disabled = false
+    btn.textContent = '인증 테스트'
+  }
+}
+
+/** 기초정보 API에서 출고지/반품지/MDID 불러오기 */
+async function loadGsShopDefaults() {
+  const apiKey = document.getElementById('gs-api-key')?.value?.trim()
+  const vendorId = document.getElementById('gs-vendor-id')?.value?.trim()
+  const env = document.querySelector('input[name="gs-env"]:checked')?.value || 'dev'
+
+  if (!apiKey || !vendorId) {
+    showAppModal('입력 필요', 'AES256 인증키와 협력사코드를 먼저 입력하세요.', 'warning')
+    return
+  }
+
+  const headers = { 'x-gs-aes-key': apiKey, 'x-gs-sup-cd': vendorId, 'x-gs-env': env }
+
+  try {
+    // 출고지/반송지 + MDID 동시 조회
+    const [addrRes, mdRes] = await Promise.all([
+      fetch('http://localhost:3001/api/gsshop/delivery-places', { headers }),
+      fetch('http://localhost:3001/api/gsshop/md-list', { headers })
+    ])
+    const addrData = await addrRes.json()
+    const mdData   = await mdRes.json()
+
+    let loaded = []
+
+    // ── 출고지/반송지 ──
+    if (addrData.success) {
+      // 응답 구조: { success, data: { resultList: [...] } }
+      const addrList = addrData.data?.resultList || []
+
+      const rlsSelect = document.getElementById('gs-release-place')
+      const rtnSelect = document.getElementById('gs-return-place')
+
+      // 출고지 (직송출고지여부 Y)
+      const relItems = addrList.filter(i => i.dirdlvRelspYn === 'Y' || i.baseRelspYn === 'Y')
+      if (rlsSelect) {
+        rlsSelect.innerHTML = '<option value="">— 선택 —</option>'
+        relItems.forEach(item => {
+          const opt = document.createElement('option')
+          opt.value = item.supAddrCd || ''
+          opt.textContent = `[${item.supAddrCd}] ${item.addrGbnNm || ''} ${item.baseAddr ? '— ' + item.baseAddr : ''}`
+          rlsSelect.appendChild(opt)
+        })
+      }
+
+      // 반송지 (직송반송지여부 Y)
+      const retItems = addrList.filter(i => i.dirdlvRetpYn === 'Y' || i.baseRetpYn === 'Y')
+      if (rtnSelect) {
+        rtnSelect.innerHTML = '<option value="">— 선택 —</option>'
+        retItems.forEach(item => {
+          const opt = document.createElement('option')
+          opt.value = item.supAddrCd || ''
+          opt.textContent = `[${item.supAddrCd}] ${item.addrGbnNm || ''} ${item.baseAddr ? '— ' + item.baseAddr : ''}`
+          rtnSelect.appendChild(opt)
+        })
+      }
+
+      loaded.push(`출고지 ${relItems.length}건 / 반송지 ${retItems.length}건`)
+    } else {
+      loaded.push(`출고지 조회 실패: ${addrData.message}`)
+    }
+
+    // ── MDID ──
+    if (mdData.success) {
+      // 응답 구조: { success, data: { resultList: [...] } }
+      const mdList = mdData.data?.resultList || []
+
+      const mdSelect = document.getElementById('gs-md-id')
+      if (mdSelect) {
+        mdSelect.innerHTML = '<option value="">— 선택 —</option>'
+        mdList.forEach(item => {
+          const opt = document.createElement('option')
+          opt.value = item.mdId || ''
+          opt.textContent = `[${item.mdId}] ${item.mdNm || ''}`
+          mdSelect.appendChild(opt)
+        })
+      }
+      loaded.push(`MD ${mdList.length}건`)
+    } else {
+      loaded.push(`MDID 조회 실패: ${mdData.message}`)
+    }
+
+    const hasError = loaded.some(s => s.includes('실패'))
+    showAppModal(
+      '기초정보 불러오기 완료',
+      loaded.map(s => `<div>${s}</div>`).join(''),
+      hasError ? 'warning' : 'success'
+    )
+  } catch (e) {
+    showAppModal('불러오기 실패', e.message, 'error')
+  }
+}
+
+/** GS샵 설정 저장 */
+async function saveGsShopSettings() {
+  const env = document.querySelector('input[name="gs-env"]:checked')?.value || 'dev'
+  const apiKey = document.getElementById('gs-api-key')?.value?.trim() || ''
+  const vendorId = document.getElementById('gs-vendor-id')?.value?.trim() || ''
+  const businessName = document.getElementById('gs-business-name')?.value?.trim() || ''
+  const maxCount = document.getElementById('gs-max-count')?.value || ''
+
+  await storage.save('settings', { key: 'gsshop_credentials', apiKey, vendorId, businessName, env, maxCount })
+
+  const defaults = {
+    key: 'gsshop_defaults',
+    dlvType: document.getElementById('gs-dlv-type')?.value || '직송',
+    taxType: document.getElementById('gs-tax-type')?.value || '과세',
+    shipFeeType: document.getElementById('gs-ship-fee-type')?.value || '무료',
+    shipFee: document.getElementById('gs-ship-fee')?.value || '0',
+    releasePlace: document.getElementById('gs-release-place')?.value || '',
+    returnPlace: document.getElementById('gs-return-place')?.value || '',
+    mdId: document.getElementById('gs-md-id')?.value?.trim() || '',
+    margin: document.getElementById('gs-margin')?.value || ''
+  }
+  await storage.save('settings', defaults)
+
+  if (typeof gsShopApi !== 'undefined') {
+    gsShopApi.updateCredentials({ aesKey: apiKey, supCd: vendorId, env })
+  }
+
+  // accountManager에 GS샵 계정 동기화 (vendorId 기준으로 구분)
+  if (typeof accountManager !== 'undefined' && vendorId) {
+    await accountManager.loadAccounts()
+    const existing = accountManager.accounts.find(a => a.marketType === 'gsshop' && a.sellerId === vendorId)
+    if (existing) {
+      await accountManager.updateAccount(existing.id, {
+        accountLabel: `GS샵 (${env === 'prod' ? '운영' : '테스트'})`,
+        businessName,
+        apiKey
+      })
+    } else {
+      await accountManager.addAccount({
+        marketType: 'gsshop',
+        sellerId: vendorId,
+        accountLabel: `GS샵 (${env === 'prod' ? '운영' : '테스트'})`,
+        businessName,
+        apiKey,
+        apiSecret: ''
+      })
+    }
+    ui.renderAccountDashboard()
+    ui.renderAccountList()
+    ui.renderAccountCheckboxes()
+  }
+
+  if (typeof app !== 'undefined') {
+    app.showNotification('GS샵 설정이 저장되었습니다.', 'success')
+  }
+}
+
+/** GS샵 설정 로드 (설정 탭 진입 시 호출) */
+async function loadGsShopSettings() {
+  try {
+    const creds = await storage.get('settings', 'gsshop_credentials')
+    const defaults = await storage.get('settings', 'gsshop_defaults')
+
+    if (creds) {
+      if (document.getElementById('gs-api-key')) document.getElementById('gs-api-key').value = creds.apiKey || ''
+      if (document.getElementById('gs-vendor-id')) document.getElementById('gs-vendor-id').value = creds.vendorId || ''
+      if (document.getElementById('gs-business-name')) document.getElementById('gs-business-name').value = creds.businessName || ''
+      if (document.getElementById('gs-max-count')) document.getElementById('gs-max-count').value = creds.maxCount || ''
+      const envRadio = document.querySelector(`input[name="gs-env"][value="${creds.env || 'dev'}"]`)
+      if (envRadio) envRadio.checked = true
+      if (typeof gsShopApi !== 'undefined') gsShopApi.updateCredentials({ aesKey: creds.apiKey, supCd: creds.vendorId, env: creds.env })
+    }
+
+    if (defaults) {
+      // 일반 input 필드
+      const map = { dlvType: 'gs-dlv-type', taxType: 'gs-tax-type', shipFeeType: 'gs-ship-fee-type',
+                    shipFee: 'gs-ship-fee', margin: 'gs-margin' }
+      for (const [key, elId] of Object.entries(map)) {
+        const el = document.getElementById(elId)
+        if (el && defaults[key] !== undefined) el.value = defaults[key]
+      }
+      // select 필드: 저장된 값이 없으면 임시 option 추가
+      const selects = [
+        { id: 'gs-release-place', val: defaults.releasePlace },
+        { id: 'gs-return-place',  val: defaults.returnPlace },
+        { id: 'gs-md-id',         val: defaults.mdId }
+      ]
+      selects.forEach(({ id, val }) => {
+        if (!val) return
+        const el = document.getElementById(id)
+        if (!el) return
+        if (!Array.from(el.options).find(o => o.value === val)) {
+          const opt = document.createElement('option')
+          opt.value = val
+          opt.textContent = val
+          el.appendChild(opt)
+        }
+        el.value = val
+      })
+    }
+  } catch (e) {
+    console.warn('[GS샵] 설정 로드 실패:', e.message)
+  }
+}
+
+/** 롯데홈쇼핑 설정 로드 (설정 탭 진입 시 호출) */
+async function loadLotteHomeSettings() {
+  try {
+    const creds = await storage.get('settings', 'lottehome_credentials')
+    const defaults = await storage.get('settings', 'lottehome_defaults')
+
+    if (creds) {
+      if (document.getElementById('lh-user-id')) document.getElementById('lh-user-id').value = creds.userId || ''
+      if (document.getElementById('lh-password')) document.getElementById('lh-password').value = creds.password || ''
+      if (document.getElementById('lh-agnc-no')) document.getElementById('lh-agnc-no').value = creds.agncNo || ''
+      if (document.getElementById('lh-business-name')) document.getElementById('lh-business-name').value = creds.businessName || ''
+      if (document.getElementById('lh-max-count')) document.getElementById('lh-max-count').value = creds.maxCount || ''
+      const envRadio = document.querySelector(`input[name="lh-env"][value="${creds.env || 'test'}"]`)
+      if (envRadio) envRadio.checked = true
+
+      // lotteHomeApi 자격증명 동기화
+      if (typeof lotteHomeApi !== 'undefined') {
+        lotteHomeApi.updateCredentials(creds)
+      }
+    }
+
+    if (defaults) {
+      const fields = ['pur-shp-cd', 'sale-shp-cd', 'tdf-sct-cd', 'mrgn-rt', 'dlv-polc-no',
+                      'corp-rls-pl-sn', 'corp-dlvp-sn', 'dlv-mean-cd', 'dlv-dday',
+                      'inv-mgmt-yn', 'gift-pkg-yn', 'sum-pkg-psb-yn']
+      for (const f of fields) {
+        const el = document.getElementById(`lh-${f}`)
+        const key = f.replace(/-/g, '_')
+        if (el && defaults[key] !== undefined) el.value = defaults[key]
+      }
+    }
+
+    // 인증 상태 확인
+    const statusEl = document.getElementById('lh-auth-status')
+    if (statusEl) {
+      try {
+        const authRes = await fetch('http://localhost:3001/api/lottehome/auth/status')
+        const authData = await authRes.json()
+        if (authData.authenticated) {
+          statusEl.textContent = `✓ ${authData.message}`
+          statusEl.style.color = '#51CF66'
+        } else {
+          statusEl.textContent = authData.message || '미인증'
+          statusEl.style.color = '#888'
+        }
+      } catch {
+        statusEl.textContent = '서버 미연결'
+        statusEl.style.color = '#888'
+      }
+    }
+  } catch (e) {
+    console.warn('[롯데홈쇼핑] 설정 로드 실패:', e.message)
+  }
+}

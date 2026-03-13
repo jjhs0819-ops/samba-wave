@@ -3221,7 +3221,7 @@
 
                     <!-- 필터 -->
                     <div class="bg-white rounded-lg shadow p-3 mb-4 flex gap-3 flex-wrap">
-                        <select id="apply-group-site-filter" style="width:160px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option value="">소싱사이트</option></select>
+                        <select id="legacy-apply-group-site-filter" style="width:160px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option value="">소싱사이트</option></select>
                         <input type="text" placeholder="그룹이름 검색" style="width:220px; padding:0.5rem 0.75rem; font-size:0.875rem;">
                         <button style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; padding:0.5rem 1rem; border-radius:6px; font-size:0.875rem;">검색하기</button>
                     </div>
@@ -3836,13 +3836,14 @@
                             <div class="stg-panel" id="stg-smartstore">
                                 <div class="stg-panel-title">스마트스토어 설정</div>
                                 <div class="stg-form">
-                                    <div class="stg-row"><label>계정</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>API 연동용 판매자 ID</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
-                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="ss-business-name" placeholder="상호명 입력"></div>
+                                    <div class="stg-row"><label>계정</label><input type="text" id="ss-account" placeholder=""></div>
+                                    <div class="stg-row"><label>API 연동용 판매자 ID</label><input type="text" id="ss-api-key" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" id="ss-store-id" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="ss-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions">
-<button class="stg-btn-save">설정</button>
+<button class="stg-btn-save" onclick="saveMarketSettings('smartstore')">설정</button>
                                 </div>
                             </div>
 
@@ -3850,24 +3851,26 @@
                             <div class="stg-panel" id="stg-gmarket" style="display:none;">
                                 <div class="stg-panel-title">지마켓 설정</div>
                                 <div class="stg-form">
-                                    <div class="stg-row"><label>계정</label><input type="text" placeholder="" class="stg-input-highlight"></div>
-                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
-                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="gm-business-name" placeholder="상호명 입력"></div>
+                                    <div class="stg-row"><label>계정</label><input type="text" id="gm-account" placeholder="" class="stg-input-highlight"></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" id="gm-store-id" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="gm-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions">
-<button class="stg-btn-save">설정</button>
+<button class="stg-btn-save" onclick="saveMarketSettings('gmarket')">설정</button>
                                 </div>
                             </div>
 
                             <div class="stg-panel" id="stg-auction" style="display:none;">
                                 <div class="stg-panel-title">옥션 설정</div>
                                 <div class="stg-form">
-                                    <div class="stg-row"><label>계정</label><input type="text" placeholder="" class="stg-input-highlight"></div>
-                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
-                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="ac-business-name" placeholder="상호명 입력"></div>
+                                    <div class="stg-row"><label>계정</label><input type="text" id="ac-account" placeholder="" class="stg-input-highlight"></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" id="ac-store-id" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="ac-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions">
-<button class="stg-btn-save">설정</button>
+<button class="stg-btn-save" onclick="saveMarketSettings('auction')">설정</button>
                                 </div>
                             </div>
 
@@ -3875,16 +3878,17 @@
                             <div class="stg-panel" id="stg-coupang" style="display:none;">
                                 <div class="stg-panel-title">쿠팡 설정</div>
                                 <div class="stg-form">
-                                    <div class="stg-row"><label>계정</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>패스워드</label><input type="password" placeholder=""></div>
-                                    <div class="stg-row"><label>업체코드</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>Access key</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>Secret key</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
-                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="cp-business-name" placeholder="상호명 입력"></div>
+                                    <div class="stg-row"><label>계정</label><input type="text" id="cp-account" placeholder=""></div>
+                                    <div class="stg-row"><label>패스워드</label><input type="password" id="cp-password" placeholder=""></div>
+                                    <div class="stg-row"><label>업체코드</label><input type="text" id="cp-vendor-id" placeholder=""></div>
+                                    <div class="stg-row"><label>Access key</label><input type="text" id="cp-access-key" placeholder=""></div>
+                                    <div class="stg-row"><label>Secret key</label><input type="text" id="cp-secret-key" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" id="cp-store-id" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="cp-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions">
-<button class="stg-btn-save">설정</button>
+<button class="stg-btn-save" onclick="saveMarketSettings('coupang')">설정</button>
                                 </div>
                             </div>
 
@@ -3892,14 +3896,15 @@
                             <div class="stg-panel" id="stg-lotteon" style="display:none;">
                                 <div class="stg-panel-title">롯데ON 설정</div>
                                 <div class="stg-form">
-                                    <div class="stg-row"><label>계정</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>업체코드</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>롯데ON API key</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
-                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="lo-business-name" placeholder="상호명 입력"></div>
+                                    <div class="stg-row"><label>계정</label><input type="text" id="lo-account" placeholder=""></div>
+                                    <div class="stg-row"><label>업체코드</label><input type="text" id="lo-vendor-code" placeholder=""></div>
+                                    <div class="stg-row"><label>롯데ON API key</label><input type="text" id="lo-api-key" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" id="lo-store-id" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="lo-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions">
-<button class="stg-btn-save">설정</button>
+<button class="stg-btn-save" onclick="saveMarketSettings('lotteon')">설정</button>
                                 </div>
                             </div>
 
@@ -3911,14 +3916,15 @@
                                         <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.875rem; cursor:pointer; flex-shrink:0; white-space:nowrap;"><input type="checkbox" id="stg-11st-foreign" style="flex-shrink:0; width:14px; height:14px;"> 해외 사업자</label>
                                         <span style="font-size:0.8rem; color:#888; white-space:nowrap;">사업자 소재지가 해외인 경우 체크해주세요.</span>
                                     </div>
-                                    <div class="stg-row"><label>계정</label><input type="text" placeholder="" class="stg-input-highlight"></div>
-                                    <div class="stg-row"><label>패스워드</label><input type="password" placeholder="" class="stg-input-highlight"></div>
-                                    <div class="stg-row"><label>11번가 API key</label><input type="text" placeholder="" class="stg-input-highlight"></div>
-                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
-                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="st-business-name" placeholder="상호명 입력"></div>
+                                    <div class="stg-row"><label>계정</label><input type="text" id="st-account" placeholder="" class="stg-input-highlight"></div>
+                                    <div class="stg-row"><label>패스워드</label><input type="password" id="st-password" placeholder="" class="stg-input-highlight"></div>
+                                    <div class="stg-row"><label>11번가 API key</label><input type="text" id="st-api-key" placeholder="" class="stg-input-highlight"></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" id="st-store-id" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="st-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions">
-<button class="stg-btn-save">설정</button>
+<button class="stg-btn-save" onclick="saveMarketSettings('11st')">설정</button>
                                 </div>
                             </div>
 
@@ -3926,27 +3932,111 @@
                             <div class="stg-panel" id="stg-ssg" style="display:none;">
                                 <div class="stg-panel-title">SSG 설정</div>
                                 <div class="stg-form">
-                                    <div class="stg-row"><label>API ID</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>API KEY</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
-                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="sg-business-name" placeholder="상호명 입력"></div>
+                                    <div class="stg-row"><label>API ID</label><input type="text" id="sg-api-id" placeholder=""></div>
+                                    <div class="stg-row"><label>API KEY</label><input type="text" id="sg-api-key" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" id="sg-store-id" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="sg-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions" style="margin-top:2rem;">
-<button class="stg-btn-save">설정</button>
+<button class="stg-btn-save" onclick="saveMarketSettings('ssg')">설정</button>
                                 </div>
                             </div>
 
                             <!-- GSSHOP -->
                             <div class="stg-panel" id="stg-gsshop" style="display:none;">
-                                <div class="stg-panel-title">GSSHOP 설정</div>
+                                <div class="stg-panel-title">GS샵 설정</div>
                                 <div class="stg-form">
-                                    <div class="stg-row"><label>API ID</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>API KEY</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
-                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                    <!-- 환경 선택 -->
+                                    <div class="stg-row">
+                                        <label>API 환경</label>
+                                        <div style="display:flex; gap:1rem; align-items:center;">
+                                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                                <input type="radio" name="gs-env" id="gs-env-dev" value="dev" checked>
+                                                <span style="color:#FFD93D;">개발</span>
+                                            </label>
+                                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                                <input type="radio" name="gs-env" id="gs-env-prod" value="prod">
+                                                <span style="color:#51CF66;">운영</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="gs-business-name" placeholder="계정 구분용 사업자명 (예: A사업자)"></div>
+                                    <div class="stg-row"><label>AES256 인증키</label><input type="password" id="gs-api-key" placeholder="개발키 또는 운영키 (withgs.gsshop.com에서 확인)"></div>
+                                    <div class="stg-row"><label>협력사코드(supCd)</label><input type="text" id="gs-vendor-id" placeholder="GS샵 협력사코드 (예: 91000000)"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="gs-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
+
+                                <!-- 인증 테스트 -->
+                                <div style="margin-top:1.25rem; padding:1rem; background:rgba(0,110,189,0.08); border:1px solid rgba(0,110,189,0.3); border-radius:8px;">
+                                    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                                        <button id="gs-auth-btn" onclick="testGsShopAuth()" style="padding:8px 18px; background:#006EBD; color:#fff; border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:13px;">인증 테스트</button>
+                                        <span id="gs-auth-status" style="font-size:13px; color:#888;">미인증</span>
+                                    </div>
+                                </div>
+
+                                <!-- 기본 설정 -->
+                                <div style="margin-top:1.5rem;">
+                                    <div style="font-size:13px; font-weight:600; color:#4C9AFF; margin-bottom:1rem; display:flex; align-items:center; justify-content:space-between;">
+                                        <span>기본 설정 (상품 등록 기본값)</span>
+                                        <button onclick="loadGsShopDefaults()" style="padding:5px 12px; background:rgba(76,154,255,0.15); color:#4C9AFF; border:1px solid rgba(76,154,255,0.3); border-radius:5px; cursor:pointer; font-size:12px;">API에서 불러오기</button>
+                                    </div>
+                                    <div class="stg-form">
+                                        <div class="stg-row">
+                                            <label>배송형태</label>
+                                            <select id="gs-dlv-type" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="직송">업체직송(택배)</option>
+                                                <option value="직송설치">직송설치</option>
+                                                <option value="주문제작">주문제작</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>과세구분</label>
+                                            <select id="gs-tax-type" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="과세">과세</option>
+                                                <option value="면세">면세</option>
+                                                <option value="영세">영세</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>배송비 형태</label>
+                                            <select id="gs-ship-fee-type" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="무료">무료</option>
+                                                <option value="유료">유료</option>
+                                                <option value="조건부">조건부 무료</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>배송비(원)</label>
+                                            <input type="number" id="gs-ship-fee" min="0" placeholder="예: 3000" style="width:140px;">
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>출고지</label>
+                                            <select id="gs-release-place" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="">— 선택 (API 불러오기 후) —</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>반품지</label>
+                                            <select id="gs-return-place" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="">— 선택 (API 불러오기 후) —</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>담당 MD ID</label>
+                                            <select id="gs-md-id" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="">— 선택 (API 불러오기 후) —</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>마진율(%)</label>
+                                            <input type="number" id="gs-margin" min="0" max="100" placeholder="예: 30" style="width:120px;">
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div class="stg-actions" style="margin-top:2rem;">
-<button class="stg-btn-save">설정</button>
+                                    <button onclick="saveGsShopSettings()" style="padding:10px 28px; background:#006EBD; color:#fff; border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:14px;">설정 저장</button>
                                 </div>
                             </div>
 
@@ -3954,13 +4044,126 @@
                             <div class="stg-panel" id="stg-lottehome" style="display:none;">
                                 <div class="stg-panel-title">롯데홈쇼핑 설정</div>
                                 <div class="stg-form">
-                                    <div class="stg-row"><label>API ID</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>API KEY</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
-                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                    <!-- API 환경 선택 -->
+                                    <div class="stg-row">
+                                        <label>API 환경</label>
+                                        <div style="display:flex; gap:1rem; align-items:center;">
+                                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                                <input type="radio" name="lh-env" id="lh-env-test" value="test" checked>
+                                                <span style="color:#FFD93D;">테스트</span>
+                                            </label>
+                                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                                                <input type="radio" name="lh-env" id="lh-env-prod" value="prod">
+                                                <span style="color:#51CF66;">운영</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="lh-business-name" placeholder="계정 구분용 사업자명 (예: A사업자)"></div>
+                                    <div class="stg-row"><label>협력업체ID</label><input type="text" id="lh-user-id" placeholder="strUserId"></div>
+                                    <div class="stg-row"><label>비밀번호</label><input type="password" id="lh-password" placeholder="strPassWd"></div>
+                                    <div class="stg-row"><label>대행업체번호</label><input type="text" id="lh-agnc-no" placeholder="strAgncNo (선택)"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="lh-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
+
+                                <!-- 인증 테스트 -->
+                                <div style="margin-top:1.25rem; padding:1rem; background:rgba(255,140,0,0.06); border:1px solid rgba(255,140,0,0.2); border-radius:8px;">
+                                    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                                        <button id="lh-auth-btn" onclick="testLotteHomeAuth()" style="padding:8px 18px; background:#FF8C00; color:#000; border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:13px;">인증 테스트</button>
+                                        <span id="lh-auth-status" style="font-size:13px; color:#888;">미인증</span>
+                                        <button onclick="clearLotteHomeAuth()" style="padding:6px 12px; background:rgba(255,107,107,0.15); color:#FF6B6B; border:1px solid rgba(255,107,107,0.3); border-radius:5px; cursor:pointer; font-size:12px;">인증초기화</button>
+                                    </div>
+                                </div>
+
+                                <!-- 기본설정 (기초정보 API 연동) -->
+                                <div style="margin-top:1.5rem;">
+                                    <div style="font-size:13px; font-weight:600; color:#FFB84D; margin-bottom:1rem; display:flex; align-items:center; justify-content:space-between;">
+                                        <span>기본 설정 (상품 등록 기본값)</span>
+                                        <button onclick="loadLotteHomeDefaults()" style="padding:5px 12px; background:rgba(76,154,255,0.15); color:#4C9AFF; border:1px solid rgba(76,154,255,0.3); border-radius:5px; cursor:pointer; font-size:12px;">API에서 불러오기</button>
+                                    </div>
+                                    <div class="stg-form">
+                                        <div class="stg-row">
+                                            <label>구매형태</label>
+                                            <select id="lh-pur-shp-cd" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="10">일반(10)</option>
+                                                <option value="20">해외직구(20)</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>판매형태</label>
+                                            <select id="lh-sale-shp-cd" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="10">일반(10)</option>
+                                                <option value="20">위탁(20)</option>
+                                                <option value="30">직매입(30)</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>과세구분</label>
+                                            <select id="lh-tdf-sct-cd" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="10">과세(10)</option>
+                                                <option value="20">면세(20)</option>
+                                                <option value="30">영세(30)</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>마진율(%)</label>
+                                            <input type="number" id="lh-mrgn-rt" min="0" max="100" placeholder="예: 30" style="width:120px;">
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>배송비정책</label>
+                                            <select id="lh-dlv-polc-no" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="">— 선택 (API 불러오기 후) —</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>출고지</label>
+                                            <select id="lh-corp-rls-pl-sn" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="">— 선택 (API 불러오기 후) —</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>반품지</label>
+                                            <select id="lh-corp-dlvp-sn" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="">— 선택 (API 불러오기 후) —</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>배송수단</label>
+                                            <select id="lh-dlv-mean-cd" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="10">택배(10)</option>
+                                                <option value="20">직배송(20)</option>
+                                                <option value="30">퀵서비스(30)</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>배송기일(일)</label>
+                                            <input type="number" id="lh-dlv-dday" min="1" max="30" placeholder="예: 3" style="width:100px;">
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>재고관리</label>
+                                            <select id="lh-inv-mgmt-yn" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="Y">사용(Y)</option>
+                                                <option value="N">미사용(N)</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>선물포장</label>
+                                            <select id="lh-gift-pkg-yn" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="N">불가(N)</option>
+                                                <option value="Y">가능(Y)</option>
+                                            </select>
+                                        </div>
+                                        <div class="stg-row">
+                                            <label>합배송</label>
+                                            <select id="lh-sum-pkg-psb-yn" style="flex:1; background:#1a1a1a; color:#E5E5E5; border:1px solid #2D2D2D; border-radius:5px; padding:6px 10px;">
+                                                <option value="Y">가능(Y)</option>
+                                                <option value="N">불가(N)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div class="stg-actions" style="margin-top:2rem;">
-<button class="stg-btn-save">설정</button>
+                                    <button onclick="saveLotteHomeSettings()" style="padding:10px 28px; background:#FF8C00; color:#000; border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:14px;">설정 저장</button>
                                 </div>
                             </div>
 
@@ -3968,13 +4171,14 @@
                             <div class="stg-panel" id="stg-homeand" style="display:none;">
                                 <div class="stg-panel-title">홈앤쇼핑 설정</div>
                                 <div class="stg-form">
-                                    <div class="stg-row"><label>API ID</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>API KEY</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
-                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="ha-business-name" placeholder="상호명 입력"></div>
+                                    <div class="stg-row"><label>API ID</label><input type="text" id="ha-api-id" placeholder=""></div>
+                                    <div class="stg-row"><label>API KEY</label><input type="text" id="ha-api-key" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" id="ha-store-id" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="ha-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions" style="margin-top:2rem;">
-<button class="stg-btn-save">설정</button>
+<button class="stg-btn-save" onclick="saveMarketSettings('homeand')">설정</button>
                                 </div>
                             </div>
 
@@ -3982,13 +4186,14 @@
                             <div class="stg-panel" id="stg-hmall" style="display:none;">
                                 <div class="stg-panel-title">HMALL 설정</div>
                                 <div class="stg-form">
-                                    <div class="stg-row"><label>API ID</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>API KEY</label><input type="text" placeholder=""></div>
-                                    <div class="stg-row"><label>스토어 ID</label><input type="text" placeholder="스토어 ID 입력"></div>
-                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="hm-business-name" placeholder="상호명 입력"></div>
+                                    <div class="stg-row"><label>API ID</label><input type="text" id="hm-api-id" placeholder=""></div>
+                                    <div class="stg-row"><label>API KEY</label><input type="text" id="hm-api-key" placeholder=""></div>
+                                    <div class="stg-row"><label>스토어 ID</label><input type="text" id="hm-store-id" placeholder="스토어 ID 입력"></div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="hm-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
                                 </div>
                                 <div class="stg-actions" style="margin-top:2rem;">
-<button class="stg-btn-save">설정</button>
+<button class="stg-btn-save" onclick="saveMarketSettings('hmall')">설정</button>
                                 </div>
                             </div>
 
@@ -4012,19 +4217,20 @@
                             <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:1.25rem;">
                                 <span style="font-size:0.9375rem; font-weight:700; color:#4C9AFF; white-space:nowrap;">SMS 설정</span>
                                 <span style="font-size:0.8125rem; color:#666;">** 알리고(ALIGO) 문자메세지 설정을 할 수 있습니다.</span>
-                                <button style="margin-left:auto; background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.3rem 0.875rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap;">설정저장</button>
+                                <span id="aligo-sms-status" style="font-size:0.8rem; color:#888;"></span>
+                                <button onclick="saveAligoSmsSettings()" style="margin-left:auto; background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.3rem 0.875rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; cursor:pointer;">설정저장</button>
                             </div>
                             <div style="max-width:720px; display:flex; flex-direction:column; gap:0.875rem;">
                                 <div class="stg-row stg-row-wide">
                                     <label>알리고(ALIGO) SMS API KEY</label>
-                                    <input type="text" placeholder="Identifier를 입력하세요." style="flex:2; min-width:160px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
-                                    <input type="text" placeholder="API Key를 입력하세요." style="flex:4; min-width:280px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
-                                    <button style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.35rem 0.75rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap;">Key 발급받기</button>
-                                    <button style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.35rem 0.75rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap;">Key 테스트</button>
+                                    <input type="text" id="aligo-sms-user-id" placeholder="Identifier (아이디)" style="flex:2; min-width:160px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
+                                    <input type="text" id="aligo-sms-api-key" placeholder="API Key를 입력하세요." style="flex:4; min-width:280px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
+                                    <button onclick="window.open('https://www.aligo.in/index.html','_blank')" style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.35rem 0.75rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; cursor:pointer;">Key 발급받기</button>
+                                    <button onclick="testAligoSmsKey()" style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.35rem 0.75rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; cursor:pointer;">Key 테스트</button>
                                 </div>
                                 <div class="stg-row stg-row-wide">
                                     <label>SMS 발신번호</label>
-                                    <input type="text" placeholder="010-0000-0000" style="width:160px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none; flex-shrink:0;">
+                                    <input type="text" id="aligo-sms-sender" placeholder="010-0000-0000" style="width:160px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none; flex-shrink:0;">
                                     <span style="font-size:0.8125rem; color:#FF6B6B; white-space:nowrap;">※ 발신번호는 사전에 알리고에 등록하신 후 입력해주시기 바랍니다.</span>
                                 </div>
                             </div>
@@ -4035,23 +4241,24 @@
                             <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:1.25rem;">
                                 <span style="font-size:0.9375rem; font-weight:700; color:#FFB84D; white-space:nowrap;">카카오 알림톡 설정</span>
                                 <span style="font-size:0.8125rem; color:#666;">** 알리고(ALIGO) 카카오 알림톡 설정을 할 수 있습니다.</span>
-                                <button style="margin-left:auto; background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.3rem 0.875rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap;">설정저장</button>
+                                <span id="aligo-kakao-status" style="font-size:0.8rem; color:#888;"></span>
+                                <button onclick="saveAligoKakaoSettings()" style="margin-left:auto; background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.3rem 0.875rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; cursor:pointer;">설정저장</button>
                             </div>
                             <div style="max-width:720px; display:flex; flex-direction:column; gap:0.875rem;">
                                 <div class="stg-row stg-row-wide">
                                     <label>알리고 카카오 알림톡 API KEY</label>
-                                    <input type="text" placeholder="Identifier를 입력하세요." style="flex:2; min-width:160px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
-                                    <input type="text" placeholder="API Key를 입력하세요." style="flex:4; min-width:280px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
-                                    <button style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.35rem 0.75rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap;">Key 발급받기</button>
-                                    <button style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.35rem 0.75rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap;">Key 테스트</button>
+                                    <input type="text" id="aligo-kakao-user-id" placeholder="Identifier (아이디)" style="flex:2; min-width:160px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
+                                    <input type="text" id="aligo-kakao-api-key" placeholder="API Key를 입력하세요." style="flex:4; min-width:280px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
+                                    <button onclick="window.open('https://www.aligo.in/index.html','_blank')" style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.35rem 0.75rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; cursor:pointer;">Key 발급받기</button>
+                                    <button onclick="testAligoKakaoKey()" style="background:rgba(50,50,50,0.8); border:1px solid #3D3D3D; color:#C5C5C5; padding:0.35rem 0.75rem; border-radius:6px; font-size:0.8125rem; white-space:nowrap; cursor:pointer;">Key 테스트</button>
                                 </div>
                                 <div class="stg-row stg-row-wide">
                                     <label>알림톡 SenderKey</label>
-                                    <input type="text" placeholder="Senderkey를 입력하세요." style="flex:1; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
+                                    <input type="text" id="aligo-kakao-sender-key" placeholder="Senderkey를 입력하세요." style="flex:1; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none;">
                                 </div>
                                 <div class="stg-row stg-row-wide">
                                     <label>알림톡 발신번호</label>
-                                    <input type="text" placeholder="010-0000-0000" style="width:160px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none; flex-shrink:0;">
+                                    <input type="text" id="aligo-kakao-sender" placeholder="010-0000-0000" style="width:160px; padding:0.4rem 0.625rem; font-size:0.8125rem; background:rgba(255,255,255,0.04); border:1px solid #3D3D3D; border-radius:6px; color:#E5E5E5; outline:none; flex-shrink:0;">
                                     <span style="font-size:0.8125rem; color:#FF6B6B; white-space:nowrap;">※ 발신번호는 사전에 알리고에 등록하신 후 입력해주시기 바랍니다.</span>
                                 </div>
                             </div>
@@ -4080,16 +4287,7 @@
                                     <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (빠름/저렴)</option>
                                 </select>
                             </div>
-                            <div class="stg-row stg-row-wide">
-                                <label>AI 기능 활성화</label>
-                                <div style="display:flex; gap:1.25rem; flex-wrap:nowrap; align-items:center;">
-                                    <label style="display:flex; align-items:center; gap:5px; font-size:0.8125rem; color:#C5C5C5; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="claude-feat-name" checked style="accent-color:#A78BFA;"> 상품명 가공</label>
-                                    <label style="display:flex; align-items:center; gap:5px; font-size:0.8125rem; color:#C5C5C5; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="claude-feat-desc" style="accent-color:#A78BFA;"> 상세설명 생성</label>
-                                    <label style="display:flex; align-items:center; gap:5px; font-size:0.8125rem; color:#C5C5C5; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="claude-feat-cs" style="accent-color:#A78BFA;"> CS 자동 답변</label>
-                                    <label style="display:flex; align-items:center; gap:5px; font-size:0.8125rem; color:#C5C5C5; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="claude-feat-tag" style="accent-color:#A78BFA;"> 태그 자동 생성</label>
-                                    <label style="display:flex; align-items:center; gap:5px; font-size:0.8125rem; color:#C5C5C5; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="claude-feat-img" style="accent-color:#A78BFA;"> 이미지 변경</label>
-                                </div>
-                            </div>
+
                             <div id="claude-api-status" style="font-size:0.8125rem; color:#666; padding:0.4rem 0;"></div>
                         </div>
                     </div><!-- /Claude API 카드 -->
@@ -4656,6 +4854,8 @@
     <script src="js/modules/policy.js"></script>
     <script src="js/modules/account.js"></script>
     <script src="js/modules/category.js"></script>
+    <script src="js/modules/lottehome-api.js"></script>
+    <script src="js/modules/gsshop-api.js"></script>
     <script src="js/modules/shipment-manager.js"></script>
     <script src="js/modules/analytics-ui.js"></script>
     <script src="js/app.js"></script>

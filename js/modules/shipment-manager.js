@@ -154,11 +154,21 @@ class ShipmentManager {
     }
 
     /**
-     * 마켓 계정에 전송 (시뮬레이션)
+     * 마켓 계정에 전송 (롯데홈쇼핑은 실제 API, 나머지는 시뮬레이션)
      */
     async _transmitToAccount(shipmentId, productId, accountId) {
         const shipment = await storage.get('shipments', shipmentId)
         if (!shipment) return
+
+        // 계정 정보 조회
+        const account = typeof accountManager !== 'undefined'
+            ? accountManager.accounts.find(a => a.id === accountId)
+            : null
+
+        // 롯데홈쇼핑 실제 API 분기
+        if (account?.marketType === 'lottehome') {
+            return await this._transmitToLotteHome(shipmentId, productId, account)
+        }
 
         await this._delay(200 + Math.random() * 300)
 
@@ -173,10 +183,6 @@ class ShipmentManager {
         // 시뮬레이션 결과 (90% 성공률)
         const success = Math.random() > 0.10
 
-        // 해외 마켓 여부 판단 (영문/일어명 검증용)
-        const account = typeof accountManager !== 'undefined'
-            ? accountManager.accounts.find(a => a.id === accountId)
-            : null
         const overseasMarkets = ['ebay', 'lazada', 'shopee', 'qoo10', 'quten']
         const isOverseas = account && overseasMarkets.includes(account.marketType)
 
@@ -192,9 +198,8 @@ class ShipmentManager {
             ...shipment,
             transmitResult: {
                 ...shipment.transmitResult,
-                [accountId]: success ? 'success' : 'failed' // 항상 문자열 'success'/'failed' 유지
+                [accountId]: success ? 'success' : 'failed'
             },
-            // 카테고리 매핑 정보 저장
             mappedCategories: {
                 ...(shipment.mappedCategories || {}),
                 [accountId]: mappedCategory
@@ -204,21 +209,157 @@ class ShipmentManager {
         const idx = this.shipments.findIndex(s => s.id === shipmentId)
         if (idx !== -1) this.shipments[idx] = updated
 
-        // 상품 registeredAccounts 업데이트 (위에서 조회한 product 재사용)
-        if (success) {
-            if (product) {
-                const registeredAccounts = product.registeredAccounts || []
-                if (!registeredAccounts.includes(accountId)) {
-                    const updatedProduct = {
-                        ...product,
-                        registeredAccounts: [...registeredAccounts, accountId],
-                        status: 'registered',
-                        updatedAt: new Date().toISOString()
-                    }
-                    await storage.save('collectedProducts', updatedProduct)
+        if (success && product) {
+            const registeredAccounts = product.registeredAccounts || []
+            if (!registeredAccounts.includes(accountId)) {
+                const updatedProduct = {
+                    ...product,
+                    registeredAccounts: [...registeredAccounts, accountId],
+                    status: 'registered',
+                    updatedAt: new Date().toISOString()
                 }
+                await storage.save('collectedProducts', updatedProduct)
             }
         }
+    }
+
+    /**
+     * 롯데홈쇼핑 실제 API 전송
+     */
+    async _transmitToLotteHome(shipmentId, productId, account) {
+        const shipment = await storage.get('shipments', shipmentId)
+        if (!shipment) return
+
+        let success = false
+        let errorMsg = ''
+        let lotteGoodsReqNo = ''
+
+        try {
+            // 1. 수집 상품 로드
+            const product = await storage.get('collectedProducts', productId)
+            if (!product) throw new Error('상품을 찾을 수 없습니다.')
+
+            // 2. 롯데홈쇼핑 자격증명 로드
+            const creds = await storage.get('settings', 'lottehome_credentials')
+            if (!creds?.userId || !creds?.password) {
+                throw new Error('롯데홈쇼핑 계정 설정이 없습니다. 설정 탭에서 저장해주세요.')
+            }
+
+            // 3. 기본설정 로드
+            const defaults = await storage.get('settings', 'lottehome_defaults') || {}
+
+            // 4. lotteHomeApi 자격증명 동기화
+            if (typeof lotteHomeApi !== 'undefined') {
+                lotteHomeApi.updateCredentials(creds)
+            } else {
+                throw new Error('lotteHomeApi 모듈이 로드되지 않았습니다.')
+            }
+
+            // 5. 상품 파라미터 매핑
+            const params = lotteHomeApi.mapProductToLotteParams(product, defaults, account.id)
+
+            // 6. 필수 파라미터 사전 검증
+            const required = ['goods_nm', 'sale_prc', 'img_url', 'dlv_polc_no', 'corp_rls_pl_sn', 'corp_dlvp_sn']
+            const missing = required.filter(k => !params[k])
+            if (missing.length > 0) {
+                throw new Error(`필수 파라미터 누락: ${missing.join(', ')}. 롯데홈쇼핑 기본설정을 완료하세요.`)
+            }
+
+            // 7. 롯데홈쇼핑 API 호출
+            console.log(`[롯데홈쇼핑] 상품 등록 요청: ${product.name}`)
+            const result = await lotteHomeApi.registerGoods(params)
+
+            if (!result.success) {
+                throw new Error(result.message || 'API 응답 오류')
+            }
+
+            // 8. 임시상품번호 저장
+            lotteGoodsReqNo = result.data?.goods_req_no || result.data?.GOODS_REQ_NO || ''
+            success = true
+            console.log(`[롯데홈쇼핑] 등록 성공 - 임시상품번호: ${lotteGoodsReqNo}`)
+
+            // 9. 상품에 롯데 임시상품번호 저장
+            const updatedProduct = {
+                ...product,
+                registeredAccounts: [...(product.registeredAccounts || []).filter(id => id !== account.id), account.id],
+                status: 'registered',
+                [`lotteGoodsReqNo_${account.id}`]: lotteGoodsReqNo,
+                updatedAt: new Date().toISOString()
+            }
+            await storage.save('collectedProducts', updatedProduct)
+
+        } catch (e) {
+            errorMsg = e.message
+            console.error(`[롯데홈쇼핑] 전송 실패:`, e.message)
+        }
+
+        // 10. shipment 결과 업데이트
+        const updatedShipment = {
+            ...shipment,
+            transmitResult: {
+                ...shipment.transmitResult,
+                [account.id]: success ? 'success' : 'failed'
+            },
+            lotteDetails: {
+                ...(shipment.lotteDetails || {}),
+                [account.id]: { lotteGoodsReqNo, errorMsg }
+            }
+        }
+        await storage.save('shipments', updatedShipment)
+        const idx = this.shipments.findIndex(s => s.id === shipmentId)
+        if (idx !== -1) this.shipments[idx] = updatedShipment
+    }
+
+    /**
+     * 롯데홈쇼핑 전시상품 수정
+     */
+    async updateLotteGoods(productId, accountId) {
+        const product = await storage.get('collectedProducts', productId)
+        if (!product) return { success: false, message: '상품 없음' }
+
+        const goodsNo = product[`lotteGoodsNo_${accountId}`]
+        if (!goodsNo) return { success: false, message: '롯데 상품번호 없음 (전시 전)' }
+
+        const creds = await storage.get('settings', 'lottehome_credentials')
+        const defaults = await storage.get('settings', 'lottehome_defaults') || {}
+        if (typeof lotteHomeApi !== 'undefined') lotteHomeApi.updateCredentials(creds)
+
+        const params = lotteHomeApi.mapProductToLotteParams(product, defaults, accountId)
+        return await lotteHomeApi.updateDisplayGoods(goodsNo, params)
+    }
+
+    /**
+     * 롯데홈쇼핑 재고 수정
+     */
+    async updateLotteStock(productId, accountId, invQty) {
+        const product = await storage.get('collectedProducts', productId)
+        if (!product) return { success: false, message: '상품 없음' }
+
+        const goodsNo = product[`lotteGoodsNo_${accountId}`]
+        const itemNo = product[`lotteItemNo_${accountId}`] || ''
+        if (!goodsNo) return { success: false, message: '롯데 상품번호 없음' }
+
+        const creds = await storage.get('settings', 'lottehome_credentials')
+        if (typeof lotteHomeApi !== 'undefined') lotteHomeApi.updateCredentials(creds)
+
+        return await lotteHomeApi.updateStock(goodsNo, itemNo, invQty)
+    }
+
+    /**
+     * 롯데홈쇼핑 판매상태 변경
+     * @param {string} saleStatCd - 10:판매진행 20:품절 30:영구중단
+     */
+    async updateLotteSaleStatus(productId, accountId, saleStatCd) {
+        const product = await storage.get('collectedProducts', productId)
+        if (!product) return { success: false, message: '상품 없음' }
+
+        const goodsNo = product[`lotteGoodsNo_${accountId}`]
+        if (!goodsNo) return { success: false, message: '롯데 상품번호 없음' }
+
+        const creds = await storage.get('settings', 'lottehome_credentials')
+        if (typeof lotteHomeApi !== 'undefined') lotteHomeApi.updateCredentials(creds)
+
+        return await lotteHomeApi.updateGoodsSaleStatus(goodsNo, saleStatCd)
     }
 
     /**
@@ -312,8 +453,21 @@ class ShipmentManager {
     }
 
     async deleteFromMarket(productId, accountId) {
-        // 시뮬레이션: 마켓 상품 삭제
         const product = await storage.get('collectedProducts', productId)
+
+        // 롯데홈쇼핑: 마켓 삭제 대신 영구중단(30) 처리
+        const account = typeof accountManager !== 'undefined'
+            ? accountManager.accounts.find(a => a.id === accountId)
+            : null
+        if (account?.marketType === 'lottehome' && product?.[`lotteGoodsNo_${accountId}`]) {
+            try {
+                await this.updateLotteSaleStatus(productId, accountId, '30')
+                console.log(`[롯데홈쇼핑] 상품 영구중단 처리: ${productId}`)
+            } catch (e) {
+                console.warn('[롯데홈쇼핑] 영구중단 API 실패 (로컬 삭제만 진행):', e.message)
+            }
+        }
+
         if (product) {
             const registeredAccounts = (product.registeredAccounts || []).filter(id => id !== accountId)
             const updated = {

@@ -281,7 +281,8 @@ function initAcTables(filteredOrders, selYear, selMonth, checkedMkts, checkedSit
     mktHtml += `<tr><td style="white-space:nowrap;">${label}</td>${rowVals.map(v => `<td>${fmt(v)}</td>`).join('')}<td>${fmtOrange(rowSum)}</td></tr>`
   })
   mktHtml += `<tr class="ac-sum-row"><td>합계</td>${mktColTotals.map(v => `<td>${fmtOrange(v)}</td>`).join('')}<td>${fmtOrange(mktGrandTotal)}</td></tr>`
-  document.getElementById('acTblMktBody').innerHTML = mktHtml
+  const acTblMktBody = document.getElementById('acTblMktBody')
+  if (acTblMktBody) acTblMktBody.innerHTML = mktHtml
 
   // ── 사이트별 테이블 ──
   const allSites = (typeof SITE_LIST !== 'undefined') ? SITE_LIST : ['ABCmart','FOLDERStyle','GrandStage','GSShop','LOTTEON','MUSINSA','Nike','OliveYoung','SSG']
@@ -313,7 +314,8 @@ function initAcTables(filteredOrders, selYear, selMonth, checkedMkts, checkedSit
     siteHtml += `<tr><td style="white-space:nowrap;">${label}</td>${rowVals.map(v => `<td>${fmt(v)}</td>`).join('')}<td>${fmtOrange(rowSum)}</td></tr>`
   })
   siteHtml += `<tr class="ac-sum-row"><td>합계</td>${siteColTotals.map(v => `<td>${fmtOrange(v)}</td>`).join('')}<td>${fmtOrange(siteGrandTotal)}</td></tr>`
-  document.getElementById('acTblSiteBody').innerHTML = siteHtml
+  const acTblSiteBody = document.getElementById('acTblSiteBody')
+  if (acTblSiteBody) acTblSiteBody.innerHTML = siteHtml
 
   // ── 주문상태별 테이블 ──
   const statusMap = {
@@ -355,7 +357,8 @@ function initAcTables(filteredOrders, selYear, selMonth, checkedMkts, checkedSit
     ).join('')}<td>${fmtOrange(rowSum)}</td></tr>`
   })
   statusHtml += `<tr class="ac-sum-row"><td>합계</td>${statusColSales.map((v, i) => `<td>${fmtOrange(v)}<br><span class="ac-cnt">${statusColCounts[i]}건</span></td>`).join('')}<td>${fmtOrange(statusGrandTotal)}</td></tr>`
-  document.getElementById('acTblStatusBody').innerHTML = statusHtml
+  const acTblStatusBody = document.getElementById('acTblStatusBody')
+  if (acTblStatusBody) acTblStatusBody.innerHTML = statusHtml
 }
 
 // 차트 초기화
@@ -504,8 +507,8 @@ async function updateDashboardCards() {
     // 마켓에 등록되어 판매중인 상품만 카운트
     const selling = products.filter(p => (p.registeredAccounts || []).length > 0).length
 
-    const elSales = document.getElementById('dash-total-sales')
-    const elCount = document.getElementById('dash-order-count')
+    const elSales = document.getElementById('db-total-sales')
+    const elCount = document.getElementById('db-month-orders')
     const elCollected = document.getElementById('dash-collected')
     const elSelling = document.getElementById('dash-selling')
 
@@ -659,4 +662,13 @@ function switchSettingsTab(market, clickedBtn) {
   const panel = document.getElementById('stg-' + market)
   if (panel) panel.style.display = ''
   if (clickedBtn) clickedBtn.classList.add('stg-tab-on')
+
+  // 롯데홈쇼핑 탭 진입 시 저장된 설정 로드
+  if (market === 'lottehome' && typeof loadLotteHomeSettings === 'function') {
+    loadLotteHomeSettings()
+  }
+  // GS샵 탭 진입 시 저장된 설정 로드
+  if (market === 'gsshop' && typeof loadGsShopSettings === 'function') {
+    loadGsShopSettings()
+  }
 }

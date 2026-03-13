@@ -20,6 +20,8 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
+import iconv from 'iconv-lite'
+import { XMLParser } from 'fast-xml-parser'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -321,8 +323,8 @@ async function fetchMusinsaProduct(goodsNo) {
   // 멤버 등급 할인율 — 필드명 여러 개 시도
   const memberRate = gp.memberDiscountRate || gp.gradeDiscountRate || gp.memberGradeDiscountRate || gp.gradeRate || 0
 
-  console.log(`[가격] ${goodsNo} immediateDiscountedPrice=${gp.immediateDiscountedPrice} salePrice=${gp.salePrice} normalPrice=${normalP} couponPrice=${gp.couponPrice} benefitSalePrice=${gp.benefitSalePrice} bestBenefitPrice=${gp.bestBenefitPrice} maxBenefitPrice=${gp.maxBenefitPrice} memberRate=${memberRate} → sPrice=${sPrice}`)
-  console.log(`[gp필드] ${goodsNo}: ${Object.keys(gp).join(', ')}`)
+  console.log(`[가격] ${goodsNo} salePrice=${gp.salePrice} normalPrice=${normalP} couponPrice=${gp.couponPrice} memberRate=${memberRate} → sPrice=${sPrice}`)
+  console.log(`[적립] ${goodsNo} savePoint=${gp.savePoint} savePointPercent=${gp.savePointPercent} memberSavePointRate=${gp.memberSavePointRate} memberSaveMoneyRate=${gp.memberSaveMoneyRate} totalDiscount=${gp.totalDiscount} couponDiscount=${gp.couponDiscount}`)
 
   // API가 직접 제공하는 최대혜택가가 있으면 우선 사용 (필드명 여러 개 시도)
   const apiBestBenefit = gp.maxBenefitPrice || gp.benefitSalePrice || gp.bestBenefitPrice || 0
@@ -348,8 +350,13 @@ async function fetchMusinsaProduct(goodsNo) {
       if (Array.isArray(coupons)) {
         for (const c of coupons) {
           let actualDiscount = 0
+          // salePrice 해석: 상품가의 50% 미만이면 "할인금액", 이상이면 "적용 후 가격"
           if (c.salePrice > 0 && c.salePrice < sPrice) {
-            actualDiscount = sPrice - c.salePrice
+            if (c.salePrice < sPrice * 0.5) {
+              actualDiscount = c.salePrice  // 할인금액 자체
+            } else {
+              actualDiscount = sPrice - c.salePrice  // 적용 후 가격에서 차감
+            }
           } else if (c.discountPrice > 0) {
             actualDiscount = c.discountPrice
           }
@@ -378,16 +385,38 @@ async function fetchMusinsaProduct(goodsNo) {
         `https://goods-detail.musinsa.com/api2/goods/${goodsNo}/benefit`,
         { headers: getHeaders() }
       )
+      console.log(`[benefit] ${goodsNo} 응답상태: ${benefitRes.status}`)
       if (benefitRes.ok) {
         const bJson = await benefitRes.json()
         const bd = bJson.data || {}
-        const bPrice = bd.maxBenefitPrice || bd.benefitSalePrice || bd.maxBenefitSalePrice || 0
-        console.log(`[benefit] ${goodsNo}: ${JSON.stringify(bd).slice(0, 200)}`)
-        if (bPrice > 0 && bPrice < sPrice) {
-          directBenefitPrice = bPrice  // 최종 최대혜택가 직접 사용
-          const bDiscount = sPrice - bPrice
+        console.log(`[benefit] ${goodsNo}: ${JSON.stringify(bd).slice(0, 500)}`)
+
+        // benefit API 응답 해석: "가격" vs "할인금액" 구분
+        // salePrice의 50% 이상이면 "가격", 미만이면 "할인금액"
+        const half = sPrice * 0.5
+        const candidates = [
+          bd.benefitSalePrice,       // 혜택 적용 후 가격 (우선)
+          bd.maxBenefitSalePrice,    // 최대혜택 적용 후 가격
+        ].filter(v => v > 0 && v > half && v < sPrice)
+
+        // 할인금액 필드 (가격이 아님)
+        const discountFields = [
+          bd.maxBenefitPrice,        // 최대 혜택 금액 (할인+적립 합계)
+          bd.totalBenefitPrice,
+        ].filter(v => v > 0 && v < half)
+
+        if (candidates.length > 0) {
+          // "가격" 필드가 있으면 직접 사용
+          directBenefitPrice = Math.min(...candidates)
+          const bDiscount = sPrice - directBenefitPrice
           if (bDiscount > bestCouponDiscount) bestCouponDiscount = bDiscount
-          console.log(`[benefit] ${goodsNo} benefit API 최대혜택가: ${bPrice.toLocaleString()} (할인: -${bDiscount.toLocaleString()})`)
+          console.log(`[benefit] ${goodsNo} 최대혜택가(가격): ${directBenefitPrice.toLocaleString()} (할인: -${bDiscount.toLocaleString()})`)
+        } else if (discountFields.length > 0) {
+          // "할인금액" 필드만 있으면 salePrice에서 차감
+          const maxDiscount = Math.max(...discountFields)
+          directBenefitPrice = sPrice - maxDiscount
+          if (maxDiscount > bestCouponDiscount) bestCouponDiscount = maxDiscount
+          console.log(`[benefit] ${goodsNo} 최대혜택가(할인금액 차감): ${directBenefitPrice.toLocaleString()} (할인: -${maxDiscount.toLocaleString()})`)
         }
       }
     } catch (e) {
@@ -395,10 +424,35 @@ async function fetchMusinsaProduct(goodsNo) {
     }
   }
 
-  const T = Math.floor(bestCouponDiscount / 10) * 10
-  const I = memberRate > 0 ? Math.floor((sPrice - T) * (memberRate / 100) / 10) * 10 : 0
-  // benefit API 직접 제공 값 우선 사용 → 중복할인 방지
-  const bestBenefitPrice = directBenefitPrice > 0 ? directBenefitPrice : (sPrice - T - I)
+  // 최대혜택가 계산 (쿠폰적용가 - 등급할인 - 적립금사용)
+  // 쿠폰적용가
+  const couponAppliedPrice = (gp.couponPrice > 0 && gp.couponPrice < sPrice) ? gp.couponPrice : sPrice
+
+  // 등급 할인 — 실제 가격 할인, 10원 단위 절사
+  const gradeDiscountRate = gp.memberDiscountRate || 0
+  const gradeDiscount = Math.floor(couponAppliedPrice * gradeDiscountRate / 100 / 10) * 10
+  const priceAfterGradeDiscount = couponAppliedPrice - gradeDiscount
+
+  // 적립금 사용 (goods-detail API 필드 기반, 상품·회원별로 다름)
+  // 무신사 규칙: 보유 적립금 5,000원 이상이어야 사용 가능
+  const MIN_POINT_BALANCE = 5000
+  let pointUsage = 0
+  const isPointRestricted = d.isRestictedUsePoint === true
+  const maxUsePointRate = d.maxUsePointRate || 0
+  const memberPoint = d.point?.memberPoint || 0
+  if (!isPointRestricted && maxUsePointRate > 0 && memberPoint >= MIN_POINT_BALANCE) {
+    const maxUsable = Math.floor(priceAfterGradeDiscount * maxUsePointRate / 10) * 10
+    pointUsage = Math.min(maxUsable, memberPoint)
+  }
+
+  // benefit API 값이 있으면 우선, 없으면 쿠폰가 - 등급할인 - 적립금사용
+  let bestBenefitPrice
+  if (directBenefitPrice > 0) {
+    bestBenefitPrice = directBenefitPrice
+  } else {
+    bestBenefitPrice = priceAfterGradeDiscount - pointUsage
+  }
+  console.log(`[혜택] ${goodsNo} 쿠폰가=${couponAppliedPrice} 등급할인=${gradeDiscount}(${gradeDiscountRate}%) 적립금사용=${pointUsage}(한도:${maxUsePointRate}, 잔액:${memberPoint}, 금지:${isPointRestricted}) → 최대혜택가=${bestBenefitPrice}`)
 
   console.log(`[상품] ${goodsNo} ${d.goodsNm} | 옵션 ${options.length}개 | 혜택가 ${bestBenefitPrice.toLocaleString()} | ${musinsaCookie ? '로그인' : '비로그인'}`)
 
@@ -692,8 +746,12 @@ async function getAesKey(localStatePath) {
   return Buffer.from(result, 'base64')
 }
 
-// 하위 호환용 alias
-async function getChromeAesKey() { return getAesKey(BROWSER_PROFILES[1].localState) }
+// 하위 호환용 alias (프로필이 1개뿐일 경우 TypeError 방지)
+async function getChromeAesKey() {
+  const profile = BROWSER_PROFILES[1] || BROWSER_PROFILES[0]
+  if (!profile) throw new Error('사용 가능한 브라우저 프로필이 없습니다')
+  return getAesKey(profile.localState)
+}
 
 // Chrome 쿠키 값 AES-256-GCM 복호화
 function decryptChromeValue(encryptedValue, aesKey) {
@@ -770,27 +828,39 @@ async function readChromeMusinsaCookies() {
 app.get('/api/musinsa/chrome-login', async (req, res) => {
   try {
     const cookieStr = await readChromeMusinsaCookies()
+    const cookieNames = cookieStr.split(';').map(c => c.trim().split('=')[0])
+    console.log(`[Chrome로그인] DB에서 읽은 쿠키 ${cookieNames.length}개: ${cookieNames.join(', ')}`)
 
-    // 회원정보 API로 검증
-    const meRes = await fetch('https://api.musinsa.com/api2/member/v1/me', {
-      headers: { ...API_HEADERS, 'Cookie': cookieStr }
-    })
-    const meJson = await meRes.json()
-
-    if (!meJson.data?.memberId) {
-      return res.json({ success: false, message: 'Chrome에서 무신사에 로그인해주세요' })
-    }
-
+    // 일단 쿠키 저장 (검증 전)
     musinsaCookie = cookieStr
     saveCookieCache(cookieStr)
-    console.log(`[Chrome로그인] ${meJson.data.memberId} (${meJson.data.gradeName || '-'})`)
+
+    // 회원정보 API로 검증 (실패해도 저장 유지)
+    try {
+      const meRes = await fetch('https://api.musinsa.com/api2/member/v1/me', {
+        headers: { ...API_HEADERS, 'Cookie': cookieStr }
+      })
+      const meJson = await meRes.json()
+
+      if (meJson.data?.memberId) {
+        console.log(`[Chrome로그인] 인증 확인: ${meJson.data.memberId} (${meJson.data.gradeName || '-'})`)
+        return res.json({
+          success: true,
+          isLoggedIn: true,
+          memberId: meJson.data.memberId,
+          gradeName: meJson.data.gradeName || '',
+          message: `${meJson.data.memberId} 로그인 성공 (${meJson.data.gradeName || '등급미확인'})`,
+        })
+      }
+      console.log(`[Chrome로그인] 인증 API 실패 (쿠키는 저장됨), 응답: ${JSON.stringify(meJson).slice(0, 100)}`)
+    } catch (verifyErr) {
+      console.log(`[Chrome로그인] 인증 API 예외 (쿠키는 저장됨): ${verifyErr.message}`)
+    }
 
     return res.json({
       success: true,
       isLoggedIn: true,
-      memberId: meJson.data.memberId,
-      gradeName: meJson.data.gradeName || '',
-      message: `${meJson.data.memberId} 로그인 성공 (${meJson.data.gradeName || '등급미확인'})`,
+      message: `Chrome DB에서 쿠키 ${cookieNames.length}개 저장 완료 (수집 시 로그인 여부 확인됩니다)`,
     })
   } catch (err) {
     console.log(`[Chrome로그인] 실패: ${err.message}`)
@@ -807,26 +877,37 @@ app.post('/api/musinsa/set-cookie', async (req, res) => {
     const { cookie } = req.body
     if (!cookie) return res.json({ success: false, message: '쿠키가 없습니다' })
 
-    // 회원정보 API로 검증
-    const meRes = await fetch('https://api.musinsa.com/api2/member/v1/me', {
-      headers: { ...API_HEADERS, 'Cookie': cookie }
-    })
-    const meJson = await meRes.json()
-
-    if (!meJson.data?.memberId) {
-      return res.json({ success: false, message: '유효하지 않은 쿠키입니다 (로그인 상태 아님)' })
-    }
-
+    // 일단 쿠키 저장 (검증은 시도만 - 실패해도 저장)
     musinsaCookie = cookie
     saveCookieCache(cookie)
-    console.log(`[확장로그인] ${meJson.data.memberId} (${meJson.data.gradeName || '-'})`)
 
+    // 회원정보 API로 검증 시도 (실패해도 성공으로 처리)
+    try {
+      const meRes = await fetch('https://api.musinsa.com/api2/member/v1/me', {
+        headers: { ...API_HEADERS, 'Cookie': cookie }
+      })
+      const meJson = await meRes.json()
+
+      if (meJson.data?.memberId) {
+        console.log(`[확장로그인] ${meJson.data.memberId} (${meJson.data.gradeName || '-'})`)
+        return res.json({
+          success: true,
+          isLoggedIn: true,
+          memberId: meJson.data.memberId,
+          gradeName: meJson.data.gradeName || '',
+          message: `${meJson.data.memberId} 로그인 성공 (${meJson.data.gradeName || '등급미확인'})`,
+        })
+      }
+    } catch (verifyErr) {
+      console.log(`[확장로그인] 검증 API 실패 (쿠키는 저장됨): ${verifyErr.message}`)
+    }
+
+    // 검증 실패해도 쿠키 저장 성공으로 응답
+    console.log(`[확장로그인] 쿠키 저장 완료 (검증 생략, ${cookie.length}자)`)
     return res.json({
       success: true,
       isLoggedIn: true,
-      memberId: meJson.data.memberId,
-      gradeName: meJson.data.gradeName || '',
-      message: `${meJson.data.memberId} 로그인 성공 (${meJson.data.gradeName || '등급미확인'})`,
+      message: '쿠키가 설정되었습니다. 수집 시 로그인 여부가 확인됩니다.',
     })
   } catch (err) {
     console.log(`[확장로그인] 실패: ${err.message}`)
@@ -1075,6 +1156,891 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: '무신사 프록시 서버 정상 작동중', port: PORT, isLoggedIn: !!musinsaCookie })
 })
 
+// ═══════════════════════════════════════════════════════════
+// 롯데홈쇼핑(롯데아이몰) OpenAPI 연동
+// EUC-KR 인코딩 요청 / XML 응답 처리
+// ═══════════════════════════════════════════════════════════
+
+// 롯데홈쇼핑 API 환경 설정
+const LOTTE_BASE = {
+  test: 'http://openapitst.lotteimall.com/openapi/',
+  prod: 'https://openapi.lotteimall.com/openapi/'
+}
+
+// 인증 캐시 파일 경로
+const LOTTE_AUTH_FILE = join(__dirname, '.lottehome-auth.json')
+
+// 메모리 인증 캐시 (서버 실행 중 유지)
+let lotteAuthCache = null
+
+// 서버 시작 시 기존 인증 캐시 복원
+if (existsSync(LOTTE_AUTH_FILE)) {
+  try {
+    lotteAuthCache = JSON.parse(readFileSync(LOTTE_AUTH_FILE, 'utf8'))
+    const remaining = lotteAuthCache ? (new Date(lotteAuthCache.expiresAt) - Date.now()) / 60000 : 0
+    if (remaining > 0) {
+      console.log(`[롯데홈쇼핑] 인증 캐시 복원 (잔여: ${Math.floor(remaining)}분)`)
+    } else {
+      lotteAuthCache = null
+      console.log('[롯데홈쇼핑] 캐시된 인증키 만료, 재인증 필요')
+    }
+  } catch (e) {
+    console.log('[롯데홈쇼핑] 인증 캐시 복원 실패:', e.message)
+  }
+}
+
+// XML 파서 설정
+const xmlParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '@_',
+  textNodeName: '#text',
+  parseTagValue: true,
+  trimValues: true
+})
+
+/**
+ * 롯데홈쇼핑 API 공통 호출 (EUC-KR 인코딩)
+ * @param {string} endpoint - API 엔드포인트명 (예: createCertification.lotte)
+ * @param {string} method - GET | POST
+ * @param {object} params - 요청 파라미터 (평문 UTF-8, 전송 시 EUC-KR 변환)
+ * @param {string} env - 'test' | 'prod'
+ */
+async function callLotteApi(endpoint, method, params = {}, env = 'test') {
+  const baseUrl = LOTTE_BASE[env] || LOTTE_BASE.test
+  let url = baseUrl + endpoint
+
+  // EUC-KR로 인코딩된 쿼리스트링 생성
+  const encodeEucKr = (val) => {
+    const buf = iconv.encode(String(val), 'euc-kr')
+    return [...buf].map(b => '%' + b.toString(16).toUpperCase().padStart(2, '0')).join('')
+  }
+
+  const buildQuery = (obj) =>
+    Object.entries(obj)
+      .filter(([, v]) => v !== undefined && v !== null && v !== '')
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeEucKr(v)}`)
+      .join('&')
+
+  const headers = {
+    'Content-Type': 'application/x-www-form-urlencoded; charset=euc-kr',
+    'Accept': 'text/xml; charset=euc-kr',
+    'Accept-Charset': 'euc-kr'
+  }
+
+  let response
+  if (method === 'GET') {
+    const qs = buildQuery(params)
+    if (qs) url += '?' + qs
+    response = await fetch(url, { method: 'GET', headers })
+  } else {
+    const body = buildQuery(params)
+    response = await fetch(url, { method: 'POST', headers, body })
+  }
+
+  // EUC-KR 응답을 Buffer로 받아 UTF-8 변환
+  const arrayBuf = await response.arrayBuffer()
+  const rawBuf = Buffer.from(arrayBuf)
+  const xmlStr = iconv.decode(rawBuf, 'euc-kr')
+
+  // XML 파싱
+  const parsed = xmlParser.parse(xmlStr)
+  return parseLotteResponse(parsed, xmlStr)
+}
+
+/**
+ * 롯데홈쇼핑 응답 파싱 (성공/에러 분기)
+ * 실제 응답 구조: { Response: { Errors: { Error: { Code, Message } }, ... } }
+ */
+function parseLotteResponse(parsed, rawXml = '') {
+  // 실제 루트는 대문자 Response
+  const root = parsed?.Response || parsed?.response || parsed?.result || parsed
+
+  // 에러 블록 확인 (Response.Errors.Error)
+  const errorBlock = root?.Errors?.Error || root?.errors?.error
+  if (errorBlock) {
+    const code = errorBlock.Code ?? errorBlock.code ?? ''
+    const msg = errorBlock.Message || errorBlock.message || '알 수 없는 오류'
+    // 코드 0은 성공으로 간주
+    if (code !== 0 && String(code) !== '0') {
+      const err = new Error(`[${code}] ${msg}`)
+      err.lotteCode = String(code)
+      err.lotteMsg = msg
+      throw err
+    }
+  }
+
+  return { success: true, data: root, rawXml }
+}
+
+/**
+ * 응답 객체에서 인증키 필드를 재귀 탐색
+ * 롯데 API 응답 구조가 버전/환경마다 다를 수 있어 광범위하게 탐색
+ */
+function findCertKey(obj, depth = 0) {
+  if (!obj || typeof obj !== 'object' || depth > 5) return null
+
+  // 알려진 인증키 필드명 패턴 (대소문자 무시)
+  const certKeyNames = [
+    'certification_key', 'certkey', 'cert_key', 'strCertKey',
+    'certificationkey', 'authkey', 'auth_key', 'token',
+    'strtoken', 'sessionkey', 'session_key'
+  ]
+
+  for (const [k, v] of Object.entries(obj)) {
+    const keyLower = k.toLowerCase()
+    if (certKeyNames.some(name => keyLower === name.toLowerCase()) && v && typeof v !== 'object') {
+      return String(v)
+    }
+  }
+
+  // 재귀 탐색
+  for (const v of Object.values(obj)) {
+    if (v && typeof v === 'object') {
+      const found = findCertKey(v, depth + 1)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+/**
+ * 롯데홈쇼핑 인증키 자동 관리
+ * - 캐시된 인증키가 있고 30분 이상 남아있으면 재사용
+ * - 만료 30분 전이거나 없으면 새로 발급
+ */
+async function ensureLotteAuth(userId, password, agncNo = '', env = 'test') {
+  const now = Date.now()
+  const REFRESH_BEFORE_MS = 30 * 60 * 1000 // 만료 30분 전 갱신
+
+  // 캐시가 유효하면 재사용
+  if (lotteAuthCache &&
+      lotteAuthCache.userId === userId &&
+      lotteAuthCache.env === env &&
+      new Date(lotteAuthCache.expiresAt).getTime() - now > REFRESH_BEFORE_MS) {
+    return lotteAuthCache
+  }
+
+  // 새 인증키 발급
+  console.log('[롯데홈쇼핑] 인증키 발급 요청...')
+  const params = { strUserId: userId, strPassWd: password }
+  if (agncNo) params.strAgncNo = agncNo
+
+  const result = await callLotteApi('createCertification.lotte', 'POST', params, env)
+  const data = result.data
+
+  console.log('[롯데홈쇼핑] 인증 응답:', JSON.stringify(data, null, 2))
+
+  // 응답 객체 전체에서 인증키 재귀 탐색
+  const certKey = findCertKey(data)
+  if (!certKey) {
+    throw new Error(`인증키를 응답에서 찾을 수 없습니다. 응답 구조: ${JSON.stringify(data)}`)
+  }
+
+  // 24시간 유효 (23시간 55분으로 설정하여 여유 확보)
+  const expiresAt = new Date(now + 23 * 60 * 60 * 1000 + 55 * 60 * 1000).toISOString()
+
+  lotteAuthCache = {
+    userId, env, certKey, agncNo,
+    issuedAt: new Date().toISOString(),
+    expiresAt
+  }
+
+  // 파일에 저장 (서버 재시작 후 복원용)
+  try {
+    writeFileSync(LOTTE_AUTH_FILE, JSON.stringify(lotteAuthCache))
+  } catch (e) {
+    console.warn('[롯데홈쇼핑] 인증 캐시 저장 실패:', e.message)
+  }
+
+  console.log(`[롯데홈쇼핑] 인증키 발급 완료 (만료: ${expiresAt})`)
+  return lotteAuthCache
+}
+
+// ─────────────────────────────────────────────
+// 롯데홈쇼핑 API: 인증
+// ─────────────────────────────────────────────
+
+// POST /api/lottehome/auth - 인증키 발급
+app.post('/api/lottehome/auth', async (req, res) => {
+  const { userId, password, agncNo, env } = req.body
+  if (!userId || !password) {
+    return res.status(400).json({ success: false, message: '협력업체ID와 비밀번호를 입력해주세요.' })
+  }
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo || '', env || 'test')
+    const remaining = Math.floor((new Date(auth.expiresAt).getTime() - Date.now()) / 60000)
+    return res.json({
+      success: true,
+      message: `인증 성공 (잔여: ${Math.floor(remaining / 60)}시간 ${remaining % 60}분)`,
+      certKey: auth.certKey,
+      expiresAt: auth.expiresAt,
+      remaining
+    })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode || 'AUTH_FAILED' })
+  }
+})
+
+// GET /api/lottehome/auth/status - 캐시된 인증 상태 확인
+app.get('/api/lottehome/auth/status', (req, res) => {
+  if (!lotteAuthCache) {
+    return res.json({ authenticated: false, message: '인증 정보 없음' })
+  }
+  const remaining = Math.floor((new Date(lotteAuthCache.expiresAt).getTime() - Date.now()) / 60000)
+  if (remaining <= 0) {
+    lotteAuthCache = null
+    return res.json({ authenticated: false, message: '인증키 만료됨' })
+  }
+  return res.json({
+    authenticated: true,
+    userId: lotteAuthCache.userId,
+    env: lotteAuthCache.env,
+    expiresAt: lotteAuthCache.expiresAt,
+    remaining,
+    message: `인증 유효 (잔여: ${Math.floor(remaining / 60)}시간 ${remaining % 60}분)`
+  })
+})
+
+// DELETE /api/lottehome/auth - 인증 캐시 초기화
+app.delete('/api/lottehome/auth', (req, res) => {
+  lotteAuthCache = null
+  if (existsSync(LOTTE_AUTH_FILE)) {
+    try { unlinkSync(LOTTE_AUTH_FILE) } catch {}
+  }
+  console.log('[롯데홈쇼핑] 인증 캐시 초기화')
+  return res.json({ success: true, message: '인증 캐시가 초기화되었습니다.' })
+})
+
+// ─────────────────────────────────────────────
+// 롯데홈쇼핑 API: 기초정보 조회
+// ─────────────────────────────────────────────
+
+// GET /api/lottehome/brands?brnd_nm=나이키&userId=...&password=...
+app.get('/api/lottehome/brands', async (req, res) => {
+  const { userId, password, agncNo, env, brnd_nm } = req.query
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo, env)
+    const result = await callLotteApi('searchBrandListOpenApi.lotte', 'GET', {
+      strCertKey: auth.certKey,
+      brnd_nm: brnd_nm || ''
+    }, env || 'test')
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode })
+  }
+})
+
+// GET /api/lottehome/categories?disp_tp_cd=&md_gsgr_no=
+app.get('/api/lottehome/categories', async (req, res) => {
+  const { userId, password, agncNo, env, disp_tp_cd, md_gsgr_no } = req.query
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo, env)
+    const result = await callLotteApi('searchDispCatListOpenApi.lotte', 'GET', {
+      strCertKey: auth.certKey,
+      disp_tp_cd: disp_tp_cd || '',
+      md_gsgr_no: md_gsgr_no || ''
+    }, env || 'test')
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode })
+  }
+})
+
+// GET /api/lottehome/md-groups
+app.get('/api/lottehome/md-groups', async (req, res) => {
+  const { userId, password, agncNo, env } = req.query
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo, env)
+    const result = await callLotteApi('searchMdGsgrListOpenApi.lotte', 'GET', {
+      strCertKey: auth.certKey
+    }, env || 'test')
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode })
+  }
+})
+
+// GET /api/lottehome/delivery-policies
+app.get('/api/lottehome/delivery-policies', async (req, res) => {
+  const { userId, password, agncNo, env } = req.query
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo, env)
+    const result = await callLotteApi('searchDlvPolcListOpenApi.lotte', 'GET', {
+      strCertKey: auth.certKey
+    }, env || 'test')
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode })
+  }
+})
+
+// POST /api/lottehome/delivery-policies - 배송비정책 등록
+app.post('/api/lottehome/delivery-policies', async (req, res) => {
+  const { userId, password, agncNo, env, ...policyData } = req.body
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo, env)
+    const result = await callLotteApi('registApiDlvPolcInfo.lotte', 'POST', {
+      strCertKey: auth.certKey,
+      ...policyData
+    }, env || 'test')
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode })
+  }
+})
+
+// GET /api/lottehome/delivery-places
+app.get('/api/lottehome/delivery-places', async (req, res) => {
+  const { userId, password, agncNo, env } = req.query
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo, env)
+    const result = await callLotteApi('searchDlvPlcListOpenApi.lotte', 'GET', {
+      strCertKey: auth.certKey
+    }, env || 'test')
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode })
+  }
+})
+
+// ─────────────────────────────────────────────
+// 롯데홈쇼핑 API: 상품 CRUD
+// ─────────────────────────────────────────────
+
+// POST /api/lottehome/goods - 신규상품등록
+app.post('/api/lottehome/goods', async (req, res) => {
+  const { userId, password, agncNo, env, ...goodsData } = req.body
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo, env)
+    const result = await callLotteApi('registApiGoodsInfo.lotte', 'POST', {
+      strCertKey: auth.certKey,
+      ...goodsData
+    }, env || 'test')
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode })
+  }
+})
+
+// PUT /api/lottehome/goods/new/:goodsReqNo - 신규상품수정
+app.put('/api/lottehome/goods/new/:goodsReqNo', async (req, res) => {
+  const { goodsReqNo } = req.params
+  const { userId, password, agncNo, env, ...goodsData } = req.body
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo, env)
+    const result = await callLotteApi('upateApiNewGoodsInfo.lotte', 'POST', {
+      strCertKey: auth.certKey,
+      goods_req_no: goodsReqNo,
+      ...goodsData
+    }, env || 'test')
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode })
+  }
+})
+
+// PUT /api/lottehome/goods/display/:goodsNo - 전시상품수정
+app.put('/api/lottehome/goods/display/:goodsNo', async (req, res) => {
+  const { goodsNo } = req.params
+  const { userId, password, agncNo, env, ...goodsData } = req.body
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo, env)
+    const result = await callLotteApi('upateApiDisplayGoodsInfo.lotte', 'POST', {
+      strCertKey: auth.certKey,
+      goods_no: goodsNo,
+      ...goodsData
+    }, env || 'test')
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode })
+  }
+})
+
+// PATCH /api/lottehome/goods/:goodsNo/status - 판매상태 변경
+app.patch('/api/lottehome/goods/:goodsNo/status', async (req, res) => {
+  const { goodsNo } = req.params
+  const { userId, password, agncNo, env, sale_stat_cd } = req.body
+  // sale_stat_cd: 10=판매진행, 20=품절, 30=영구중단
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo, env)
+    const result = await callLotteApi('updateGoodsSaleStat.lotte', 'POST', {
+      strCertKey: auth.certKey,
+      goods_no: goodsNo,
+      sale_stat_cd: sale_stat_cd || '20'
+    }, env || 'test')
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode })
+  }
+})
+
+// ─────────────────────────────────────────────
+// 롯데홈쇼핑 API: 재고
+// ─────────────────────────────────────────────
+
+// PUT /api/lottehome/stock - 재고수정
+app.put('/api/lottehome/stock', async (req, res) => {
+  const { userId, password, agncNo, env, goods_no, item_no, inv_qty } = req.body
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo, env)
+    const result = await callLotteApi('registStock.lotte', 'POST', {
+      strCertKey: auth.certKey,
+      goods_no, item_no, inv_qty
+    }, env || 'test')
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode })
+  }
+})
+
+// GET /api/lottehome/stock?goods_no=
+app.get('/api/lottehome/stock', async (req, res) => {
+  const { userId, password, agncNo, env, goods_no } = req.query
+  try {
+    const auth = await ensureLotteAuth(userId, password, agncNo, env)
+    const result = await callLotteApi('searchStockList.lotte', 'GET', {
+      strCertKey: auth.certKey,
+      goods_no: goods_no || ''
+    }, env || 'test')
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.lotteCode })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════
+// GS샵(GS리테일) 제휴 API V3 연동
+// 인증: supCd(헤더) + token(AES256 암호화: Sysdate+supCd)
+// 운영: https://withgs-api.gsshop.com
+// 테스트: https://atwithgs-api.gsshop.com
+// ═══════════════════════════════════════════════════════════
+
+const GS_BASE = {
+  prod: 'https://withgs-api.gsshop.com',
+  dev:  'https://atwithgs-api.gsshop.com'
+}
+
+/**
+ * GSSHOP V3 인증 토큰 생성
+ * token = AES256_CBC(yyyyMMddHHmmss + supCd, aesKey)
+ * 인증가이드 V3.0.1 기준:
+ *   - key: UTF-8 인코딩 후 32바이트 맞춤 (ljust(32)[:32])
+ *   - IV: key 앞 16글자 UTF-8 (Java: key.substring(0,16), Python: key[:16])
+ *   - padding: PKCS5Padding (= Node.js aes-256-cbc 기본값)
+ *   - 결과: Base64 인코딩
+ * @param {string} supCd - 협력사코드
+ * @param {string} aesKey - AES256 키 (UTF-8 문자열)
+ */
+function generateGsToken(supCd, aesKey) {
+  const now = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  const sysdate = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  const plainText = sysdate + supCd
+
+  // IV = key 앞 16글자 UTF-8 (인증가이드: key.substring(0,16))
+  const iv = Buffer.from(aesKey.substring(0, 16), 'utf8')
+  // key = UTF-8 인코딩 후 32바이트로 맞춤 (부족하면 0패딩, 초과하면 자름)
+  const keyBytes = Buffer.from(aesKey, 'utf8')
+  const keyBuf = Buffer.alloc(32)
+  keyBytes.copy(keyBuf, 0, 0, Math.min(keyBytes.length, 32))
+
+  const cipher = crypto.createCipheriv('aes-256-cbc', keyBuf, iv)
+  const encrypted = Buffer.concat([cipher.update(plainText, 'utf8'), cipher.final()])
+  return encrypted.toString('base64')
+}
+
+/**
+ * GS샵 V3 API 공통 호출
+ * @param {string} path - API 경로 (예: /api/v3/products)
+ * @param {string} method - GET | POST | PUT
+ * @param {object|null} body - 요청 바디 (POST/PUT)
+ * @param {object} params - 쿼리 파라미터
+ * @param {string} supCd - 협력사코드
+ * @param {string} token - 생성된 AES256 토큰
+ */
+async function callGsApi(path, method, body = null, params = {}, supCd = '', token = '', env = 'dev') {
+  const base = GS_BASE[env] || GS_BASE.dev
+  const qs = new URLSearchParams(params).toString()
+  const url = base + path + (qs ? '?' + qs : '')
+
+  const options = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'supCd': supCd,
+      'token': token
+    }
+  }
+  if (body && method !== 'GET') {
+    options.body = JSON.stringify(body)
+  }
+
+  console.log(`[GS샵V3] ${method} ${url}`)
+  const response = await fetch(url, options)
+  const text = await response.text()
+
+  let data
+  try { data = JSON.parse(text) } catch { data = { raw: text } }
+
+  console.log(`[GS샵V3] ${method} ${path} → ${response.status}`, data?.resultCode || '')
+
+  if (!response.ok) {
+    const err = new Error(`[${response.status}] ${data?.message || data?.msg || text.substring(0, 120)}`)
+    err.gsCode = response.status
+    err.gsData = data
+    throw err
+  }
+
+  return { success: true, data, status: response.status }
+}
+
+/**
+ * 요청에서 GS샵 자격증명 추출 후 토큰 생성
+ */
+function extractGsCreds(req) {
+  const supCd    = req.headers['x-gs-sup-cd']  || req.body?.supCd  || req.query?.supCd  || ''
+  const aesKey   = req.headers['x-gs-aes-key'] || req.body?.aesKey || req.query?.aesKey || ''
+  const subSupCd = req.headers['x-gs-sub-sup-cd'] || req.body?.subSupCd || ''
+  const env      = req.headers['x-gs-env'] || req.query?.env || 'dev'  // 'dev'=테스트, 'prod'=운영
+  const token    = aesKey && supCd ? generateGsToken(supCd, aesKey) : ''
+  return { supCd, aesKey, subSupCd, env, token }
+}
+
+// ─────────────────────────────────────────────
+// GS샵 API: 인증 확인 (MDID 조회로 검증)
+// GET /api/gsshop/auth/check
+// ─────────────────────────────────────────────
+app.get('/api/gsshop/auth/check', async (req, res) => {
+  const { supCd, env, token } = extractGsCreds(req)
+  if (!supCd || !token) {
+    return res.json({ success: false, authenticated: false, message: 'supCd와 aesKey가 필요합니다.' })
+  }
+  try {
+    // MDID 조회로 인증 유효성 간접 검증
+    const result = await callGsApi('/api/v3/products/getSupMdidList.gs', 'GET', null, {}, supCd, token, env)
+    return res.json({ success: true, authenticated: true, env, message: `인증 성공 (${env === 'prod' ? '운영' : '테스트'})`, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, authenticated: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// ─────────────────────────────────────────────
+// GS샵 API: 기초정보 조회
+// ─────────────────────────────────────────────
+
+// GET /api/gsshop/brands?brandNm=검색어  → /api/v3/products/getPrdBrandList (이름으로 검색)
+// GET /api/gsshop/brands?fromDtm=&toDtm= → /SupSendBrandInfo.gs (변경분 배치 조회)
+app.get('/api/gsshop/brands', async (req, res) => {
+  const { supCd, env, token } = extractGsCreds(req)
+  const { brandNm, fromDtm, toDtm } = req.query
+  try {
+    let result
+    if (brandNm !== undefined) {
+      // 이름 검색 API
+      result = await callGsApi('/api/v3/products/getPrdBrandList', 'GET', null, { brandNm: brandNm || '' }, supCd, token, env)
+    } else {
+      // 변경분 배치 API (fromDtm/toDtm, 최대 7일)
+      result = await callGsApi('/SupSendBrandInfo.gs', 'GET', null,
+        { ...(fromDtm && { fromDtm }), ...(toDtm && { toDtm }) }, supCd, token, env)
+    }
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// GET /api/gsshop/categories?sectSts=A&shopAttrCd=S  → 전시매장(GS 카테고리) 조회
+app.get('/api/gsshop/categories', async (req, res) => {
+  const { supCd, env, token } = extractGsCreds(req)
+  const { sectSts = 'A', shopAttrCd = '' } = req.query
+  try {
+    const result = await callGsApi('/api/v3/products/getAllSectList', 'GET', null,
+      { ...(sectSts && { sectSts }), ...(shopAttrCd && { shopAttrCd }) }, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// GET /api/gsshop/product-categories  → 상품분류코드 전체 조회 (1일 1회 배치용)
+app.get('/api/gsshop/product-categories', async (req, res) => {
+  const { supCd, env, token } = extractGsCreds(req)
+  try {
+    const result = await callGsApi('/SupSendPrdClsInfo.gs', 'GET', null, {}, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// GET /api/gsshop/delivery-places  → 출고지/반송지 전체 조회
+// Query: supAddrCd, addrGbnNm, dirdlvRelspYn, dirdlvRetpYn
+app.get('/api/gsshop/delivery-places', async (req, res) => {
+  const { supCd, env, token } = extractGsCreds(req)
+  const { supAddrCd, addrGbnNm, dirdlvRelspYn, dirdlvRetpYn } = req.query
+  const params = {}
+  if (supAddrCd)    params.supAddrCd    = supAddrCd
+  if (addrGbnNm)    params.addrGbnNm    = addrGbnNm
+  if (dirdlvRelspYn) params.dirdlvRelspYn = dirdlvRelspYn
+  if (dirdlvRetpYn)  params.dirdlvRetpYn  = dirdlvRetpYn
+  try {
+    const result = await callGsApi('/api/v3/products/getSupAddrList.gs', 'GET', null, params, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// POST /api/gsshop/delivery-places/register  → 출고지/반송지 등록
+app.post('/api/gsshop/delivery-places/register', async (req, res) => {
+  const { supCd, env, token } = extractGsCreds(req)
+  const { supCd: _s, aesKey: _k, ...addrData } = req.body
+  try {
+    const result = await callGsApi('/api/v3/supAddrReg.gs', 'POST', addrData, {}, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// POST /api/gsshop/delivery-places/update  → 출고지/반송지 수정
+app.post('/api/gsshop/delivery-places/update', async (req, res) => {
+  const { supCd, env, token } = extractGsCreds(req)
+  const { supCd: _s, aesKey: _k, ...addrData } = req.body
+  try {
+    const result = await callGsApi('/api/v3/supAddrMod.gs', 'POST', addrData, {}, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// GET /api/gsshop/md-list  → 협력사 MDID 조회 (V1.0.1)
+// Query: subSupCheckYn(Y/N), subSupCd
+//        prcModAuthYn(A=전체/Y=권한있음/N=권한없음)
+//        prdNmModAuthYn(A/Y/N), descdModAuthYn(A/Y/N)
+// 권한 중 하나라도 N이면 상품등록 시 GS상품코드 미리턴 → MD승인 필요
+app.get('/api/gsshop/md-list', async (req, res) => {
+  const { supCd, env, token } = extractGsCreds(req)
+  const {
+    subSupCheckYn = 'N', subSupCd,
+    prcModAuthYn = 'A', prdNmModAuthYn = 'A', descdModAuthYn = 'A'
+  } = req.query
+  const params = { prcModAuthYn, prdNmModAuthYn, descdModAuthYn, subSupCheckYn }
+  if (subSupCd) params.subSupCd = subSupCd
+  try {
+    const result = await callGsApi('/api/v3/products/getSupMdidList.gs', 'GET', null, params, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// ─────────────────────────────────────────────
+// GS샵 API: 상품 등록/수정
+// ─────────────────────────────────────────────
+
+// POST /api/gsshop/goods  → 상품 등록
+app.post('/api/gsshop/goods', async (req, res) => {
+  const { supCd, env, token } = extractGsCreds(req)
+  const { supCd: _s, aesKey: _k, env: _e, ...goodsData } = req.body
+  try {
+    const result = await callGsApi('/api/v3/products', 'POST', goodsData, {}, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode, detail: e.gsData })
+  }
+})
+
+// POST /api/gsshop/goods/:supPrdCd/base-info  → 기본부가정보 수정
+app.post('/api/gsshop/goods/:supPrdCd/base-info', async (req, res) => {
+  const { supPrdCd } = req.params
+  const { supCd, env, token } = extractGsCreds(req)
+  const { supCd: _s, aesKey: _k, env: _e, ...bodyData } = req.body
+  try {
+    const result = await callGsApi(`/api/v3/products/${supPrdCd}/base-info`, 'POST', bodyData, {}, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// POST /api/gsshop/goods/:supPrdCd/price  → 가격 수정
+app.post('/api/gsshop/goods/:supPrdCd/price', async (req, res) => {
+  const { supPrdCd } = req.params
+  const { supCd, env, token, subSupCd } = extractGsCreds(req)
+  const { prdPrcInfo } = req.body
+  try {
+    const result = await callGsApi(`/api/v3/products/${supPrdCd}/price`, 'POST',
+      { subSupCd, prdPrcInfo }, {}, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// POST /api/gsshop/goods/:supPrdCd/sale-status  → 판매상태 변경
+app.post('/api/gsshop/goods/:supPrdCd/sale-status', async (req, res) => {
+  const { supPrdCd } = req.params
+  const { supCd, env, token } = extractGsCreds(req)
+  const { saleEndDtm, attrSaleEndStModYn = 'Y' } = req.body
+  try {
+    const result = await callGsApi(`/api/v3/products/${supPrdCd}/sale-status`, 'POST',
+      { saleEndDtm, attrSaleEndStModYn }, {}, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// POST /api/gsshop/goods/:supPrdCd/images  → 이미지 수정
+app.post('/api/gsshop/goods/:supPrdCd/images', async (req, res) => {
+  const { supPrdCd } = req.params
+  const { supCd, env, token } = extractGsCreds(req)
+  const { prdCntntListCntntUrlNm, mobilBannerImgUrl } = req.body
+  try {
+    const result = await callGsApi(`/api/v3/products/${supPrdCd}/images`, 'POST',
+      { prdCntntListCntntUrlNm, mobilBannerImgUrl }, {}, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// POST /api/gsshop/goods/:supPrdCd/attributes  → 속성(옵션) 수정
+app.post('/api/gsshop/goods/:supPrdCd/attributes', async (req, res) => {
+  const { supPrdCd } = req.params
+  const { supCd, env, token } = extractGsCreds(req)
+  const { attrPrdList, prdTypCd, subSupCd } = req.body
+  try {
+    const result = await callGsApi(`/api/v3/products/${supPrdCd}/attributes`, 'POST',
+      { prdTypCd, subSupCd, attrPrdList }, {}, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// GET /api/gsshop/goods/:supPrdCd/approve-status  → 상품 승인상태 조회
+// 응답: prdStCd(R=승인요청,F=반려,N=대기,Y=판매중,E=종료,T=품절,D=완전종료), prdCd, ecExposYn, returnDesc
+app.get('/api/gsshop/goods/:supPrdCd/approve-status', async (req, res) => {
+  const { supPrdCd } = req.params
+  const { supCd, env, token } = extractGsCreds(req)
+  try {
+    const result = await callGsApi('/api/v3/getPrdAprvInfo.gs', 'GET', null,
+      { supCd, supPrdCd }, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// GET /api/gsshop/goods/:supPrdCd  → 상품 상세 조회 (MD승인 완료 상품만)
+// Query: searchItmCd (ALL|NM,PRC,ATTR,DLV,ADD,CMP,SECT,SAFE,GOV,SPEC,HTML,IMG,QADE)
+app.get('/api/gsshop/goods/:supPrdCd', async (req, res) => {
+  const { supPrdCd } = req.params
+  const { supCd, env, token } = extractGsCreds(req)
+  const { searchItmCd = 'ALL' } = req.query
+  try {
+    const result = await callGsApi('/api/v3/getPrdInfo.gs', 'GET', null,
+      { supCd, supPrdCd, searchItmCd }, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// ─────────────────────────────────────────────
+// GS샵 API: 프로모션
+// ─────────────────────────────────────────────
+
+// GET /api/gsshop/promotions  → 프로모션 목록 조회
+// Query: fromDtm(필수), toDtm(필수), pmoApplySt, prdCd, prdNm, brandCd, rowsPerPage, pageIdx
+app.get('/api/gsshop/promotions', async (req, res) => {
+  const { supCd, env, token } = extractGsCreds(req)
+  const { fromDtm, toDtm, pmoApplySt = 'ALL', prdCd, prdNm, brandCd, rowsPerPage = 100, pageIdx = 1 } = req.query
+  if (!fromDtm || !toDtm) {
+    return res.json({ success: false, message: 'fromDtm, toDtm 필수 (yyyyMMdd, 최대 7일)' })
+  }
+  const params = { fromDtm, toDtm, pmoApplySt, rowsPerPage, pageIdx, params: {} }
+  if (prdCd)   params.prdCd   = prdCd
+  if (prdNm)   params.prdNm   = prdNm
+  if (brandCd) params.brandCd = brandCd
+  try {
+    const result = await callGsApi('/api/v3/getPromotionList.gs', 'GET', null, params, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// POST /api/gsshop/promotions/approve  → 프로모션 승인/반려 처리
+// Body: { saleproAgreeDocNo, pmoReqNo, prdCd, aprvStCd(30=승인/40=반려), aprvRetRsn }
+app.post('/api/gsshop/promotions/approve', async (req, res) => {
+  const { supCd, env, token } = extractGsCreds(req)
+  const { saleproAgreeDocNo, pmoReqNo, prdCd, aprvStCd, aprvRetRsn } = req.body
+  if (!saleproAgreeDocNo || !pmoReqNo || !prdCd || !aprvStCd) {
+    return res.json({ success: false, message: 'saleproAgreeDocNo, pmoReqNo, prdCd, aprvStCd 필수' })
+  }
+  const body = { saleproAgreeDocNo, pmoReqNo, prdCd, aprvStCd }
+  if (aprvRetRsn) body.aprvRetRsn = aprvRetRsn
+  try {
+    const result = await callGsApi('/api/v3/modifyPromotionStatus.gs', 'POST', body, {}, supCd, token, env)
+    return res.json({ success: true, data: result.data })
+  } catch (e) {
+    return res.json({ success: false, message: e.message, code: e.gsCode })
+  }
+})
+
+// ═══════════════════════════════════════════════════════════
+// 알리고(ALIGO) SMS / 카카오 알림톡
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * 알리고 API 공통 호출 (application/x-www-form-urlencoded)
+ */
+async function callAligoApi(url, params) {
+  const body = new URLSearchParams(params).toString()
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body
+  })
+  const text = await res.text()
+  try { return JSON.parse(text) } catch { return { result_code: '-1', message: text } }
+}
+
+// POST /api/aligo/sms/test  → SMS API Key 잔액조회로 검증
+app.post('/api/aligo/sms/test', async (req, res) => {
+  const { userId, apiKey } = req.body
+  if (!userId || !apiKey) return res.json({ success: false, message: 'userId와 apiKey가 필요합니다.' })
+  try {
+    const data = await callAligoApi('https://apis.aligo.in/remain/', { key: apiKey, user_id: userId })
+    if (Number(data.result_code) > 0) {
+      return res.json({ success: true, message: `인증 성공 (SMS잔여: ${data.SMS_CNT}건)`, data })
+    }
+    return res.json({ success: false, message: data.message || '인증 실패' })
+  } catch (e) {
+    return res.json({ success: false, message: e.message })
+  }
+})
+
+// POST /api/aligo/kakao/test  → 카카오 알림톡 토큰 발급으로 검증
+app.post('/api/aligo/kakao/test', async (req, res) => {
+  const { userId, apiKey } = req.body
+  if (!userId || !apiKey) return res.json({ success: false, message: 'userId와 apiKey가 필요합니다.' })
+  try {
+    const data = await callAligoApi('https://kakaoapi.aligo.in/akv10/token/create/30/s/', { userid: userId, apikey: apiKey })
+    if (Number(data.code) === 0) {
+      return res.json({ success: true, message: '카카오 알림톡 인증 성공', token: data.token })
+    }
+    return res.json({ success: false, message: data.message || '인증 실패' })
+  } catch (e) {
+    return res.json({ success: false, message: e.message })
+  }
+})
+
 // ─────────────────────────────────────────────
 // 서버 시작
 // ─────────────────────────────────────────────
@@ -1091,6 +2057,12 @@ server.listen(PORT, () => {
 ║   GET  /api/musinsa/search      URL→검색 변환    ║
 ║   GET  /api/musinsa/chrome-login Chrome 자동로그인║
 ║   POST /api/musinsa/login       ID/PW 로그인     ║
+║   POST /api/lottehome/auth      롯데홈쇼핑 인증  ║
+║   GET  /api/lottehome/*         롯데홈쇼핑 기초정보║
+║   POST /api/lottehome/goods     롯데홈쇼핑 상품등록║
+║   GET  /api/gsshop/auth/check  GS샵 인증확인     ║
+║   POST /api/gsshop/goods       GS샵 상품등록      ║
+║   GET  /api/gsshop/goods/:id   GS샵 상품조회      ║
 ╚══════════════════════════════════════════════════╝
   `)
 })

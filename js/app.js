@@ -19,7 +19,7 @@ class SambaWaveApp {
             'sourcing-collect',
             'products',
             'policy', 'policy-template', 'policy-option-name',
-            'apply-group', 'apply-category', 'apply-recollect',
+            'apply-category', 'apply-recollect',
             'shipment',
             'orders', 'cs', 'returns',
             'analytics', 'analytics-product',
@@ -228,7 +228,7 @@ const app = new SambaWaveApp()
 // 판매마켓 ID와 표시명: SSG→신세계몰, 롯데온→롯데ON, GS샵→GS샵 으로 통일
 const MARKET_LIST = ['쿠팡','신세계몰','스마트스토어','11번가','지마켓','옥션','GS샵','롯데ON','롯데홈쇼핑','홈앤쇼핑','HMALL']
 
-// 공유 수집사이트 목록 (상품관리/정책적용/주문목록 공통) - 9개
+// 공유 소싱사이트 목록 (상품관리/정책적용/주문목록 공통) - 9개
 // 소싱처 식별명 (판매마켓 ID와 별도): SSG=소싱처명, LOTTEON=소싱처명, GSShop=소싱처명
 const SITE_LIST = ['ABCmart','FOLDERStyle','GrandStage','GSShop','LOTTEON','MUSINSA','Nike','OliveYoung','SSG']
 
@@ -274,6 +274,8 @@ function addPriceRange() {
  * 초기 더미 데이터 생성
  */
 async function initializeDummyData() {
+    // DB 초기화 완료 대기 (IndexedDB 준비 전 호출 방지)
+    await storageReady
     // 이미 초기화 완료 플래그가 있으면 재삽입하지 않음
     // settings 스토어의 keyPath는 'key'이므로 key 속성으로 조회/저장
     const settings = await storage.getAll('settings')

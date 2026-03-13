@@ -104,10 +104,12 @@ class StorageManager {
                 request.onsuccess = () => resolve(request.result);
             });
         } else {
-            // localStorage 대체 구현
-            const key = `${storeName}_${data.id}`;
-            localStorage.setItem(key, JSON.stringify(data));
-            return data.id;
+            // localStorage 대체 구현 (스토어별 keyPath 대응)
+            const keyPath = storeName === 'settings' ? 'key' : 'id'
+            const keyValue = data[keyPath]
+            const lsKey = `${storeName}_${keyValue}`
+            localStorage.setItem(lsKey, JSON.stringify(data));
+            return keyValue;
         }
     }
 
@@ -229,7 +231,7 @@ class StorageManager {
         const backup = {};
         const stores = ['products', 'channels', 'orders', 'sourcingSites', 'analytics', 'contactLogs', 'returns', 'settings',
                         'policies', 'categoryMappings', 'nameRules', 'sourcingJobs', 'shipments', 'csRequests',
-                        'searchFilters', 'collectedProducts', 'forbiddenWords', 'marketAccounts'];
+                        'searchFilters', 'collectedProducts', 'forbiddenWords', 'marketAccounts', 'categoryTree'];
 
         for (const storeName of stores) {
             backup[storeName] = await this.getAll(storeName);

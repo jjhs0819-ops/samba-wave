@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash",
-      "WebFetch"
+      "WebFetch",
+      "WebSearch",
+      "mcp__memory__create_entities"
     ]
   },
   "enableAllProjectMcpServers": true,

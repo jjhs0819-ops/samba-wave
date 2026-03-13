@@ -118,7 +118,7 @@ class AIProcessor {
                         width: img.width,
                         height: img.height,
                         size: (imageFile.size / 1024).toFixed(2) + ' KB',
-                        recommendations: this.getImageRecommendations(img.width, img.height, fileSize)
+                        recommendations: this.getImageRecommendations(img.width, img.height, imageFile.size)
                     };
 
                     resolve(analysis);

@@ -60,22 +60,21 @@ class ContactManager {
     /**
      * 연락 발송 시뮬레이션
      */
-    async simulateSendContact(contact) {
-        return new Promise(async (resolve) => {
+    simulateSendContact(contact) {
+        return new Promise((resolve) => {
             // 2초 후 발송 완료 처리
-            setTimeout(async () => {
-                contact.status = 'sent';
-                contact.sentAt = new Date().toISOString();
-                await storage.save('contactLogs', contact);
-
-                const index = this.contactLogs.findIndex(c => c.id === contact.id);
-                if (index !== -1) {
-                    this.contactLogs[index] = contact;
-                }
-
-                resolve(contact);
-            }, 2000);
-        });
+            setTimeout(() => {
+                contact.status = 'sent'
+                contact.sentAt = new Date().toISOString()
+                storage.save('contactLogs', contact).then(() => {
+                    const index = this.contactLogs.findIndex(c => c.id === contact.id)
+                    if (index !== -1) {
+                        this.contactLogs[index] = contact
+                    }
+                    resolve(contact)
+                })
+            }, 2000)
+        })
     }
 
     /**
