@@ -144,7 +144,7 @@ class ContactManager {
     parseTemplate(template, variables) {
         let message = template;
         Object.keys(variables).forEach(key => {
-            message = message.replace(`{${key}}`, variables[key]);
+            message = message.replaceAll(`{${key}}`, variables[key]);
         });
         return message;
     }

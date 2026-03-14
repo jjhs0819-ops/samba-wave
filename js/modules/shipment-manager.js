@@ -165,6 +165,11 @@ class ShipmentManager {
             ? accountManager.accounts.find(a => a.id === accountId)
             : null
 
+        // KREAM 실제 API 분기
+        if (account?.marketType === 'kream') {
+            return await this._transmitToKream(shipmentId, productId, account)
+        }
+
         // 롯데홈쇼핑 실제 API 분기
         if (account?.marketType === 'lottehome') {
             return await this._transmitToLotteHome(shipmentId, productId, account)
@@ -219,6 +224,111 @@ class ShipmentManager {
                     updatedAt: new Date().toISOString()
                 }
                 await storage.save('collectedProducts', updatedProduct)
+            }
+        }
+    }
+
+    /**
+     * KREAM 실제 API 전송 (매도 입찰 등록)
+     */
+    async _transmitToKream(shipmentId, productId, account) {
+        const shipment = await storage.get('shipments', shipmentId)
+        if (!shipment) return
+
+        let success = false
+        let errorMsg = ''
+
+        try {
+            // 1. 수집 상품 로드
+            const product = await storage.get('collectedProducts', productId)
+            if (!product) throw new Error('상품 정보를 찾을 수 없습니다.')
+
+            // 2. KREAM 계정 설정 조회
+            const email = account.additionalFields?.email || account.sellerId || ''
+            const password = account.additionalFields?.password || account.apiKey || ''
+            const saleType = account.additionalFields?.saleType || 'general'
+
+            if (!email || !password) throw new Error('KREAM 계정 정보(이메일/비밀번호)가 없습니다.')
+
+            const proxyUrl = 'http://localhost:3001'
+
+            // 3. KREAM 로그인 (브라우저 로그인 우선)
+            const browserStatus = await fetch(`${proxyUrl}/api/kream/browser-status`).then(r => r.json()).catch(() => ({}))
+            if (!browserStatus.isLoggedIn) {
+                // 브라우저 로그인 시도
+                const browserLogin = await fetch(`${proxyUrl}/api/kream/browser-login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                }).then(r => r.json()).catch(() => ({ success: false }))
+
+                if (!browserLogin.success) {
+                    // API 토큰 로그인 fallback
+                    const loginRes = await fetch(`${proxyUrl}/api/kream/login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email, password })
+                    }).then(r => r.json())
+                    if (!loginRes.success) throw new Error(`KREAM 로그인 실패: ${loginRes.message}`)
+                }
+            }
+
+            // 4. 옵션별 매도 입찰 등록
+            const options = product.options || []
+            let successCount = 0
+            for (const opt of options) {
+                const askPrice = opt.kreamGeneralPrice || opt.kreamAsk || opt.price || 0
+                if (!askPrice || opt.isSoldOut) continue
+
+                // KREAM 상품 ID 추출 (siteProductId 또는 kreamData에서)
+                const kreamProductId = product.kreamData?.modelNo || product.siteProductId || ''
+
+                const bidRes = await fetch(`${proxyUrl}/api/kream/sell/bid`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        productId: kreamProductId,
+                        size: opt.name,
+                        price: askPrice,
+                        saleType
+                    })
+                }).then(r => r.json()).catch(() => ({ success: false, message: '네트워크 오류' }))
+
+                if (bidRes.success) successCount++
+            }
+
+            if (options.length === 0) throw new Error('전송할 옵션(사이즈)이 없습니다. KREAM은 사이즈별 매도 입찰이 필요합니다.')
+            success = successCount > 0
+        } catch (e) {
+            errorMsg = e.message
+            console.error(`[KREAM전송] 실패: ${e.message}`)
+        }
+
+        const updated = {
+            ...shipment,
+            transmitResult: {
+                ...shipment.transmitResult,
+                [account.id]: success ? 'success' : 'failed'
+            },
+            transmitError: errorMsg ? { ...(shipment.transmitError || {}), [account.id]: errorMsg } : shipment.transmitError
+        }
+        await storage.save('shipments', updated)
+        const idx = this.shipments.findIndex(s => s.id === shipmentId)
+        if (idx !== -1) this.shipments[idx] = updated
+
+        if (success) {
+            // product 변수 재사용 (try 블록 밖에서 재조회)
+            const savedProduct = await storage.get('collectedProducts', productId)
+            if (savedProduct) {
+                const registeredAccounts = savedProduct.registeredAccounts || []
+                if (!registeredAccounts.includes(account.id)) {
+                    await storage.save('collectedProducts', {
+                        ...savedProduct,
+                        registeredAccounts: [...registeredAccounts, account.id],
+                        status: 'registered',
+                        updatedAt: new Date().toISOString()
+                    })
+                }
             }
         }
     }
@@ -399,6 +509,7 @@ class ShipmentManager {
                             channelName: account ? account.accountLabel : accountId,
                             productId: shipment.productId,
                             productName: product ? product.name : '',
+                            sourceSite: product?.sourceSite || '',
                             customerName: '위탁판매',
                             customerPhone: '',
                             salePrice: product ? (product.marketPrices?.[accountId] || product.salePrice || 0) : 0,

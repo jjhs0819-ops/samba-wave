@@ -16,3 +16,18 @@ Thumbs.db
 # 임시 파일
 *.tmp
 *.bak
+
+# 인증 토큰 캐시 (보안 - 커밋 금지)
+.musinsa-cookie.json
+.kream-token.json
+
+# Chrome 프로필 (KREAM 세션)
+.chrome-kream-profile/
+.kream-cookies-tmp.db
+
+# Node.js
+node_modules/
+
+# 디버그 스크린샷
+kream-debug.png
+kream-home.png

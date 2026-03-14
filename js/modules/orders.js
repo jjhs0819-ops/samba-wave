@@ -30,7 +30,10 @@ class OrderManager {
                 id: this.generateId(),
                 orderNumber: this.generateOrderNumber(),
                 channelId: orderData.channelId,
+                channelName: orderData.channelName || '',
                 productId: orderData.productId,
+                productName: orderData.productName || '',
+                sourceSite: orderData.sourceSite || '',
                 quantity: parseInt(orderData.quantity) || 1,
                 customerName: orderData.customerName,
                 customerPhone: orderData.customerPhone || '',
@@ -53,7 +56,9 @@ class OrderManager {
             // 수익 계산
             order.revenue = order.salePrice * (1 - order.feeRate / 100);
             order.profit = order.revenue - order.cost;
-            order.profitRate = ((order.profit / order.revenue) * 100).toFixed(2);
+            order.profitRate = order.revenue > 0
+                ? ((order.profit / order.revenue) * 100).toFixed(2)
+                : '0.00';
 
             await storage.save('orders', order);
             this.orders.push(order);

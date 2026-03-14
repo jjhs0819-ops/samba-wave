@@ -100,6 +100,7 @@ class StorageManager {
                 const objectStore = transaction.objectStore(storeName);
                 const request = objectStore.put(data);
 
+                transaction.onerror = () => reject(transaction.error);
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => resolve(request.result);
             });
@@ -244,7 +245,17 @@ class StorageManager {
      * 백업 데이터 복구
      */
     async importData(backup) {
+        // 허용된 스토어 목록 외에는 무시 (악의적인 백업 파일 방어)
+        const allowedStores = new Set([
+            'products', 'channels', 'orders', 'sourcingSites', 'analytics',
+            'contactLogs', 'returns', 'settings', 'policies', 'categoryMappings',
+            'nameRules', 'sourcingJobs', 'shipments', 'csRequests',
+            'searchFilters', 'collectedProducts', 'forbiddenWords',
+            'marketAccounts', 'categoryTree'
+        ])
         for (const [storeName, items] of Object.entries(backup)) {
+            if (!allowedStores.has(storeName)) continue
+            if (!Array.isArray(items)) continue
             await this.clear(storeName);
             for (const item of items) {
                 await this.save(storeName, item);

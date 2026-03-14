@@ -15,7 +15,7 @@ function acView(type) {
   document.getElementById('ac-tables-view').style.display = isChart ? 'none' : ''
   document.getElementById('ac-btn-chart').classList.toggle('ac-active', isChart)
   document.getElementById('ac-btn-table').classList.toggle('ac-active', !isChart)
-  if (isChart) setTimeout(initAcCharts, 30)
+  if (isChart) setTimeout(() => initAcCharts().catch(console.error), 30)
   else initAcTables()
 }
 
@@ -90,6 +90,10 @@ function acSearch() {
 
   // selMonth를 넘겨서 일별/월별 전환
   initAcTables(orders, selYear, selMonth, checkedMkts, checkedSites, checkedStatus)
+  // 차트 뷰 활성화 시 차트도 갱신
+  if (document.getElementById('ac-charts-view')?.style.display !== 'none') {
+    initAcCharts()
+  }
 }
 
 // 테이블 탭 전환
@@ -285,7 +289,7 @@ function initAcTables(filteredOrders, selYear, selMonth, checkedMkts, checkedSit
   if (acTblMktBody) acTblMktBody.innerHTML = mktHtml
 
   // ── 사이트별 테이블 ──
-  const allSites = (typeof SITE_LIST !== 'undefined') ? SITE_LIST : ['ABCmart','FOLDERStyle','GrandStage','GSShop','LOTTEON','MUSINSA','Nike','OliveYoung','SSG']
+  const allSites = (typeof SITE_LIST !== 'undefined') ? SITE_LIST : ['ABCmart','FOLDERStyle','GrandStage','GSShop','KREAM','LOTTEON','MUSINSA','Nike','OliveYoung','SSG']
   const siteList = checkedSites && checkedSites.length > 0 ? checkedSites : allSites
 
   const siteTblEl = document.getElementById('acTblSiteBody')?.closest('table')
@@ -361,8 +365,14 @@ function initAcTables(filteredOrders, selYear, selMonth, checkedMkts, checkedSit
   if (acTblStatusBody) acTblStatusBody.innerHTML = statusHtml
 }
 
-// 차트 초기화
-function initAcCharts() {
+// hex → rgba 변환
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16)
+  return `rgba(${r},${g},${b},${alpha})`
+}
+
+// 차트 초기화 (동적 데이터)
+async function initAcCharts() {
   if (typeof Chart === 'undefined') return
   Chart.defaults.color = '#555'
   Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -377,20 +387,52 @@ function initAcCharts() {
     cornerRadius: 8
   }
 
+  // ── 실제 주문 데이터 로드 ──
+  const orders = (typeof orderManager !== 'undefined') ? orderManager.orders : []
+  const selYear = parseInt(document.getElementById('af-year')?.value) || new Date().getFullYear()
+
+  // 마켓 이름 매핑 헬퍼
+  const getMarketName = (o) => {
+    if (o.channelName) return o.channelName
+    if (typeof channelManager !== 'undefined') {
+      const ch = channelManager.channels.find(c => c.id === o.channelId)
+      if (ch) return ch.name
+    }
+    return o.channelId || '기타'
+  }
+
+  // 연도 필터된 주문
+  const yearOrders = orders.filter(o => new Date(o.createdAt).getFullYear() === selYear)
+
+  // ── 마켓별 월별 매출 집계 ──
+  const mktSalesMap = {}
+  yearOrders.forEach(o => {
+    const name = getMarketName(o)
+    const month = new Date(o.createdAt).getMonth()
+    if (!mktSalesMap[name]) mktSalesMap[name] = Array(12).fill(0)
+    mktSalesMap[name][month] += (o.salePrice || 0)
+  })
+
+  const mktColors = ['#FF8C00','#4C9AFF','#51CF66','#FFD93D','#FF6B6B','#CC5DE8','#74C0FC','#A9E34B','#E599F7','#20C997']
+  const mktNames = Object.keys(mktSalesMap)
+
   // 월별 매출 추이 라인
   const lineEl = document.getElementById('ac-line')
   if (lineEl) {
     if (acCharts.line) acCharts.line.destroy()
+    const datasets = mktNames.length > 0
+      ? mktNames.map((name, i) => ({
+          label: name, data: mktSalesMap[name],
+          borderColor: mktColors[i % mktColors.length],
+          backgroundColor: hexToRgba(mktColors[i % mktColors.length], 0.07),
+          borderWidth: 2.5, tension: 0.4, fill: true, pointRadius: 4,
+          pointBackgroundColor: mktColors[i % mktColors.length],
+          pointBorderColor: '#0A0A0A', pointBorderWidth: 2
+        }))
+      : [{ label: '데이터 없음', data: Array(12).fill(0), borderColor: '#555', borderWidth: 1, tension: 0.4 }]
     acCharts.line = new Chart(lineEl.getContext('2d'), {
       type: 'line',
-      data: {
-        labels: ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'],
-        datasets: [
-          { label:'신세계몰', data:[52296000,29988400,11260900,...Array(9).fill(0)], borderColor:'#FF8C00', backgroundColor:'rgba(255,140,0,0.07)', borderWidth:2.5, tension:0.4, fill:true, pointRadius:4, pointBackgroundColor:'#FF8C00', pointBorderColor:'#0A0A0A', pointBorderWidth:2 },
-          { label:'G마켓', data:[0,3822800,2310200,...Array(9).fill(0)], borderColor:'#4C9AFF', backgroundColor:'rgba(76,154,255,0.07)', borderWidth:2.5, tension:0.4, fill:true, pointRadius:4, pointBackgroundColor:'#4C9AFF', pointBorderColor:'#0A0A0A', pointBorderWidth:2 },
-          { label:'플레이오토', data:[0,0,0,...Array(9).fill(0)], borderColor:'#51CF66', backgroundColor:'rgba(81,207,102,0.05)', borderWidth:2, tension:0.4, fill:true, pointRadius:3, pointBackgroundColor:'#51CF66', pointBorderColor:'#0A0A0A', pointBorderWidth:2 }
-        ]
-      },
+      data: { labels: ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'], datasets },
       options: {
         responsive:true, maintainAspectRatio:true,
         interaction:{mode:'index',intersect:false},
@@ -403,39 +445,43 @@ function initAcCharts() {
     })
   }
 
-  // 마켓별 도넛
+  // ── 마켓별 도넛 (동적) ──
   const donutEl = document.getElementById('ac-donut-mkt')
   if (donutEl) {
     if (acCharts.donut) acCharts.donut.destroy()
+    const mktTotals = mktNames.map(name => mktSalesMap[name].reduce((a, b) => a + b, 0))
+    const grandTotal = mktTotals.reduce((a, b) => a + b, 0)
+    const donutLabels = mktNames.length > 0 ? mktNames : ['데이터 없음']
+    const donutData = mktNames.length > 0 ? mktTotals : [1]
+    const donutColors = mktNames.length > 0 ? mktNames.map((_, i) => mktColors[i % mktColors.length]) : ['#333']
     acCharts.donut = new Chart(donutEl.getContext('2d'), {
       type: 'doughnut',
-      data: {
-        labels: ['신세계몰','G마켓','플레이오토(EMP)'],
-        datasets: [{ data:[93445300,6133000,0], backgroundColor:['#FF8C00','#4C9AFF','#51CF66'], borderColor:'#0E0E0E', borderWidth:3, hoverOffset:10 }]
-      },
+      data: { labels: donutLabels, datasets: [{ data: donutData, backgroundColor: donutColors, borderColor: '#0E0E0E', borderWidth: 3, hoverOffset: 10 }] },
       options: {
         responsive:true, maintainAspectRatio:true, cutout:'70%',
         plugins:{
           legend:{position:'bottom', labels:{color:'#777', padding:16, font:{size:12}, boxWidth:10, borderRadius:4}},
-          tooltip:{...tooltip, callbacks:{label:(c)=>` ${c.label}: ₩${c.raw.toLocaleString()} (${c.raw>0?(c.raw/99578300*100).toFixed(1)+'%':'0%'})`}}
+          tooltip:{...tooltip, callbacks:{label:(c)=>` ${c.label}: ₩${c.raw.toLocaleString()} (${grandTotal>0?(c.raw/grandTotal*100).toFixed(1)+'%':'0%'})`}}
         }
       }
     })
   }
 
-  // 사이트별 가로 바
+  // ── 사이트별 가로 바 (동적) ──
   const barSiteEl = document.getElementById('ac-bar-site')
   if (barSiteEl) {
     if (acCharts.barSite) acCharts.barSite.destroy()
-    const siteLabels = ['MUSINSA','GSShop','LOTTEON','ABCmart','GrandStage','Nike','FOLDERStyle','SSG']
-    const siteVals   = [50636200,18172600,11091500,6941900,4918500,3090000,2056400,1944000]
+    const allSites = (typeof SITE_LIST !== 'undefined') ? SITE_LIST : ['ABCmart','FOLDERStyle','GrandStage','GSShop','KREAM','LOTTEON','MUSINSA','Nike','OliveYoung','SSG']
+    const siteSales = allSites.map(site => yearOrders.filter(o => (o.sourceSite || '').includes(site)).reduce((s, o) => s + (o.salePrice || 0), 0))
+    // 매출 내림차순 정렬
+    const sorted = allSites.map((name, i) => ({ name, sales: siteSales[i] })).sort((a, b) => b.sales - a.sales)
     acCharts.barSite = new Chart(barSiteEl.getContext('2d'), {
       type: 'bar',
       data: {
-        labels: siteLabels,
-        datasets: [{ label:'매출', data:siteVals,
-          backgroundColor: siteVals.map((_,i)=>`rgba(255,140,0,${0.85 - i*0.08})`),
-          borderRadius:5, borderSkipped:false }]
+        labels: sorted.map(s => s.name),
+        datasets: [{ label: '매출', data: sorted.map(s => s.sales),
+          backgroundColor: sorted.map((_, i) => `rgba(255,140,0,${Math.max(0.15, 0.85 - i * 0.08)})`),
+          borderRadius: 5, borderSkipped: false }]
       },
       options: {
         indexAxis:'y', responsive:true, maintainAspectRatio:true,
@@ -448,16 +494,22 @@ function initAcCharts() {
     })
   }
 
-  // 주문상태 도넛
+  // ── 주문상태 도넛 (동적) ──
   const statusEl = document.getElementById('ac-donut-status')
   if (statusEl) {
     if (acCharts.status) acCharts.status.destroy()
+    const statusMap = { pending: '결제완료', confirmed: '주문확인', waiting: '배송대기', shipping: '국내배송', delivered: '배송완료', cancelled: '취소', returned: '반품' }
+    const statusCounts = {}
+    yearOrders.forEach(o => {
+      const label = statusMap[o.status] || o.status || '기타'
+      statusCounts[label] = (statusCounts[label] || 0) + 1
+    })
+    const statusLabels = Object.keys(statusCounts).length > 0 ? Object.keys(statusCounts) : ['데이터 없음']
+    const statusData = Object.keys(statusCounts).length > 0 ? Object.values(statusCounts) : [1]
+    const statusColors = ['#FFD93D','#4C9AFF','#51CF66','#FF6B6B','#CC5DE8','#74C0FC','#FF8C00','#A9E34B','#333']
     acCharts.status = new Chart(statusEl.getContext('2d'), {
       type: 'doughnut',
-      data: {
-        labels: ['결제완료','배송대기','배송완료','반품/취소'],
-        datasets: [{ data:[344,1488,1917,391], backgroundColor:['#FFD93D','#4C9AFF','#51CF66','#FF6B6B'], borderColor:'#0E0E0E', borderWidth:3, hoverOffset:8 }]
-      },
+      data: { labels: statusLabels, datasets: [{ data: statusData, backgroundColor: statusLabels.map((_, i) => statusColors[i % statusColors.length]), borderColor: '#0E0E0E', borderWidth: 3, hoverOffset: 8 }] },
       options: {
         responsive:true, maintainAspectRatio:true, cutout:'65%',
         plugins:{
@@ -468,16 +520,17 @@ function initAcCharts() {
     })
   }
 
-  // 월별 주문건수 바
+  // ── 월별 주문건수 바 (동적) ──
   const ordersEl = document.getElementById('ac-bar-orders')
   if (ordersEl) {
     if (acCharts.orders) acCharts.orders.destroy()
+    const monthCounts = Array(12).fill(0)
+    yearOrders.forEach(o => { monthCounts[new Date(o.createdAt).getMonth()]++ })
     acCharts.orders = new Chart(ordersEl.getContext('2d'), {
       type: 'bar',
       data: {
         labels: ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'],
-        datasets: [{ label:'주문건수', data:[2232,994,391,...Array(9).fill(0)],
-          backgroundColor:'rgba(255,140,0,0.72)', borderRadius:6, borderSkipped:false }]
+        datasets: [{ label: '주문건수', data: monthCounts, backgroundColor: 'rgba(255,140,0,0.72)', borderRadius: 6, borderSkipped: false }]
       },
       options: {
         responsive:true, maintainAspectRatio:true,
@@ -521,63 +574,103 @@ async function updateDashboardCards() {
   }
 }
 
-// 대시보드 차트 초기화
+// 대시보드 차트 초기화 (동적 데이터)
 async function initDashboardCharts() {
   const now = new Date()
   const dbDate = document.getElementById('db-date')
   if (dbDate) dbDate.textContent = now.toLocaleDateString('ko-KR', { year:'numeric', month:'long', day:'numeric' })
 
-  try {
-    const products = await storage.getAll('products')
-    const el = document.getElementById('db-collected')
-    if (el) el.textContent = products.length + '개'
-  } catch(e) {}
+  // ── 데이터 로드 ──
+  let products = [], orders = [], collectedProducts = []
+  try { products = await storage.getAll('products') } catch(e) {}
+  try { orders = await storage.getAll('orders') } catch(e) {}
+  try { collectedProducts = await storage.getAll('collectedProducts') } catch(e) {}
 
-  // 최근 일주일 테이블
+  const el = document.getElementById('db-collected')
+  if (el) el.textContent = products.length + '개'
+
+  const curYear = now.getFullYear()
+  const curMonth = now.getMonth() + 1
+  const prevMonth = curMonth === 1 ? 12 : curMonth - 1
+  const prevYear = curMonth === 1 ? curYear - 1 : curYear
+
+  // 마켓 이름 매핑 헬퍼
+  const getMarketName = (o) => {
+    if (o.channelName) return o.channelName
+    if (typeof channelManager !== 'undefined') {
+      const ch = channelManager.channels.find(c => c.id === o.channelId)
+      if (ch) return ch.name
+    }
+    return o.channelId || '기타'
+  }
+
+  // 요일 라벨
+  const dayNames = ['일','월','화','수','목','금','토']
+
+  // ── 최근 일주일 테이블 (동적) ──
   const weekTbody = document.getElementById('db-week-tbody')
   if (weekTbody) {
-    const weekData = [
-      { date:'03/11(화)', total:3820000, fulfill:3620000, rate:94.8 },
-      { date:'03/10(월)', total:4150000, fulfill:4010000, rate:96.6 },
-      { date:'03/09(일)', total:1980000, fulfill:1820000, rate:91.9 },
-      { date:'03/08(토)', total:2340000, fulfill:2100000, rate:89.7 },
-      { date:'03/07(금)', total:5210000, fulfill:5050000, rate:96.9 },
-      { date:'03/06(목)', total:4780000, fulfill:4560000, rate:95.4 },
-      { date:'03/05(수)', total:3690000, fulfill:3500000, rate:94.8 },
-    ]
+    const weekData = []
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(now)
+      d.setDate(d.getDate() - i)
+      const dateStr = `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}(${dayNames[d.getDay()]})`
+      const dayOrders = orders.filter(o => {
+        const od = new Date(o.createdAt)
+        return od.getFullYear() === d.getFullYear() && od.getMonth() === d.getMonth() && od.getDate() === d.getDate()
+      })
+      const total = dayOrders.reduce((s, o) => s + (o.salePrice || 0), 0)
+      const fulfilled = dayOrders.filter(o => o.orderNumber && o.orderNumber.trim() !== '')
+      const fulfill = fulfilled.reduce((s, o) => s + (o.salePrice || 0), 0)
+      const rate = total > 0 ? ((fulfill / total) * 100) : 0
+      weekData.push({ date: dateStr, total, fulfill, rate })
+    }
     weekTbody.innerHTML = weekData.map(r => `
       <tr>
         <td>${r.date}</td>
-        <td class="num-orange">₩${r.total.toLocaleString()}</td>
-        <td class="num-blue">₩${r.fulfill.toLocaleString()}</td>
-        <td class="num-green">${r.rate.toFixed(1)}%</td>
+        <td class="num-orange">${r.total > 0 ? '₩' + r.total.toLocaleString() : '-'}</td>
+        <td class="num-blue">${r.fulfill > 0 ? '₩' + r.fulfill.toLocaleString() : '-'}</td>
+        <td class="num-green">${r.total > 0 ? r.rate.toFixed(1) + '%' : '-'}</td>
       </tr>`).join('')
   }
 
-  // 금월/전월 비교 테이블
+  // ── 금월/전월 비교 테이블 (동적) ──
   const monthTbody = document.getElementById('db-month-tbody')
   if (monthTbody) {
-    const rows = [
-      { label:'3월 (금월)', total:25970000, fulfill:24660000, rate:94.9 },
-      { label:'2월 (전월)', total:31480000, fulfill:29820000, rate:94.7 },
-      { label:'전월 대비', total:'+▲5,510,000', fulfill:'+▲1,160,000', rate:'+0.2%', diff:true },
-    ]
-    monthTbody.innerHTML = rows.map(r => {
-      if (r.diff) {
-        return `<tr style="background:rgba(255,140,0,0.04);">
-          <td style="font-weight:600; color:#FFB84D;">${r.label}</td>
-          <td style="text-align:right; color:#4C9AFF; font-weight:600;">${r.total}</td>
-          <td style="text-align:right; color:#4C9AFF; font-weight:600;">${r.fulfill}</td>
-          <td style="text-align:right; color:#51CF66; font-weight:600;">${r.rate}</td>
-        </tr>`
-      }
-      return `<tr>
-        <td>${r.label}</td>
-        <td class="num-orange">₩${r.total.toLocaleString()}</td>
-        <td class="num-blue">₩${r.fulfill.toLocaleString()}</td>
-        <td class="num-green">${r.rate.toFixed(1)}%</td>
+    const curOrders = orders.filter(o => { const d = new Date(o.createdAt); return d.getFullYear() === curYear && (d.getMonth()+1) === curMonth })
+    const prevOrders = orders.filter(o => { const d = new Date(o.createdAt); return d.getFullYear() === prevYear && (d.getMonth()+1) === prevMonth })
+    const curTotal = curOrders.reduce((s, o) => s + (o.salePrice || 0), 0)
+    const curFulfill = curOrders.filter(o => o.orderNumber?.trim()).reduce((s, o) => s + (o.salePrice || 0), 0)
+    const curRate = curTotal > 0 ? ((curFulfill / curTotal) * 100) : 0
+    const prevTotal = prevOrders.reduce((s, o) => s + (o.salePrice || 0), 0)
+    const prevFulfill = prevOrders.filter(o => o.orderNumber?.trim()).reduce((s, o) => s + (o.salePrice || 0), 0)
+    const prevRate = prevTotal > 0 ? ((prevFulfill / prevTotal) * 100) : 0
+
+    const diffTotal = curTotal - prevTotal
+    const diffFulfill = curFulfill - prevFulfill
+    const diffRate = curRate - prevRate
+    const sign = v => v >= 0 ? '+▲' : '-▼'
+    const fmtDiff = v => sign(v) + Math.abs(v).toLocaleString()
+
+    monthTbody.innerHTML = `
+      <tr>
+        <td>${curMonth}월 (금월)</td>
+        <td class="num-orange">${curTotal > 0 ? '₩' + curTotal.toLocaleString() : '-'}</td>
+        <td class="num-blue">${curFulfill > 0 ? '₩' + curFulfill.toLocaleString() : '-'}</td>
+        <td class="num-green">${curTotal > 0 ? curRate.toFixed(1) + '%' : '-'}</td>
+      </tr>
+      <tr>
+        <td>${prevMonth}월 (전월)</td>
+        <td class="num-orange">${prevTotal > 0 ? '₩' + prevTotal.toLocaleString() : '-'}</td>
+        <td class="num-blue">${prevFulfill > 0 ? '₩' + prevFulfill.toLocaleString() : '-'}</td>
+        <td class="num-green">${prevTotal > 0 ? prevRate.toFixed(1) + '%' : '-'}</td>
+      </tr>
+      <tr style="background:rgba(255,140,0,0.04);">
+        <td style="font-weight:600; color:#FFB84D;">전월 대비</td>
+        <td style="text-align:right; color:#4C9AFF; font-weight:600;">${fmtDiff(diffTotal)}</td>
+        <td style="text-align:right; color:#4C9AFF; font-weight:600;">${fmtDiff(diffFulfill)}</td>
+        <td style="text-align:right; color:#51CF66; font-weight:600;">${diffRate >= 0 ? '+' : ''}${diffRate.toFixed(1)}%</td>
       </tr>`
-    }).join('')
   }
 
   const months = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
@@ -586,20 +679,34 @@ async function initDashboardCharts() {
     y:{ ticks:{ color:'#555', font:{ size:11 }, callback: v => '₩'+(v/1000000).toFixed(1)+'M' }, grid:{ color:'rgba(255,255,255,0.06)' } }
   }
 
+  // ── 마켓별 월별 매출 집계 ──
+  const mktSalesMap = {}
+  const yearOrders = orders.filter(o => new Date(o.createdAt).getFullYear() === curYear)
+  yearOrders.forEach(o => {
+    const name = getMarketName(o)
+    const month = new Date(o.createdAt).getMonth()
+    if (!mktSalesMap[name]) mktSalesMap[name] = Array(12).fill(0)
+    mktSalesMap[name][month] += (o.salePrice || 0)
+  })
+  const mktColors = ['#FF8C00','#4C9AFF','#51CF66','#FFD93D','#FF6B6B','#CC5DE8','#74C0FC','#A9E34B','#E599F7','#20C997']
+  const mktNames = Object.keys(mktSalesMap)
+
   // 월별 매출 추이 (line)
   const lineEl = document.getElementById('db-line')
   if (lineEl) {
     if (dbCharts.line) dbCharts.line.destroy()
-    const ssgData  = [0,3822800,2310200,8541000,12330000,9820000,7450000,0,0,0,0,0]
-    const gmktData = [52296000,29988400,11260900,21430000,18970000,24560000,19340000,0,0,0,0,0]
+    const datasets = mktNames.length > 0
+      ? mktNames.map((name, i) => ({
+          label: name, data: mktSalesMap[name],
+          borderColor: mktColors[i % mktColors.length],
+          backgroundColor: hexToRgba(mktColors[i % mktColors.length], 0.08),
+          tension: 0.4, pointRadius: 3,
+          pointBackgroundColor: mktColors[i % mktColors.length], fill: true
+        }))
+      : [{ label: '데이터 없음', data: Array(12).fill(0), borderColor: '#555', borderWidth: 1, tension: 0.4 }]
     dbCharts.line = new Chart(lineEl.getContext('2d'), {
       type: 'line',
-      data: { labels: months,
-        datasets: [
-          { label:'신세계몰', data:ssgData,  borderColor:'#FF8C00', backgroundColor:'rgba(255,140,0,0.08)',  tension:0.4, pointRadius:3, pointBackgroundColor:'#FF8C00', fill:true },
-          { label:'G마켓',   data:gmktData, borderColor:'#4C9AFF', backgroundColor:'rgba(76,154,255,0.08)', tension:0.4, pointRadius:3, pointBackgroundColor:'#4C9AFF', fill:true }
-        ]
-      },
+      data: { labels: months, datasets },
       options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales: scaleOpts }
     })
   }
@@ -608,9 +715,13 @@ async function initDashboardCharts() {
   const donutEl = document.getElementById('db-donut')
   if (donutEl) {
     if (dbCharts.donut) dbCharts.donut.destroy()
+    const mktTotals = mktNames.map(name => mktSalesMap[name].reduce((a, b) => a + b, 0))
+    const donutLabels = mktNames.length > 0 ? mktNames : ['데이터 없음']
+    const donutData = mktNames.length > 0 ? mktTotals : [1]
+    const donutColors = mktNames.length > 0 ? mktNames.map((_, i) => mktColors[i % mktColors.length]) : ['#333']
     dbCharts.donut = new Chart(donutEl.getContext('2d'), {
       type: 'doughnut',
-      data: { labels:['G마켓','신세계몰'], datasets:[{ data:[6133000,93445300], backgroundColor:['#4C9AFF','#FF8C00'], borderWidth:0, hoverOffset:6 }] },
+      data: { labels: donutLabels, datasets: [{ data: donutData, backgroundColor: donutColors, borderWidth: 0, hoverOffset: 6 }] },
       options: { responsive:true, maintainAspectRatio:false, cutout:'65%', plugins:{ legend:{ position:'bottom', labels:{ color:'#888', font:{ size:11 }, padding:12 } } } }
     })
   }
@@ -619,35 +730,64 @@ async function initDashboardCharts() {
   const barSiteEl = document.getElementById('db-bar-site')
   if (barSiteEl) {
     if (dbCharts.barSite) dbCharts.barSite.destroy()
-    const sLabels = ['MUSINSA','GSShop','LOTTEON','ABCmart','GrandStage','Nike','FOLDERStyle','SSG']
-    const sVals   = [50636200,18172600,11091500,6941900,4918500,3090000,2056400,1944000]
+    const allSites = (typeof SITE_LIST !== 'undefined') ? SITE_LIST : ['ABCmart','FOLDERStyle','GrandStage','GSShop','KREAM','LOTTEON','MUSINSA','Nike','OliveYoung','SSG']
+    const siteSales = allSites.map(site => yearOrders.filter(o => (o.sourceSite || '').includes(site)).reduce((s, o) => s + (o.salePrice || 0), 0))
+    const sorted = allSites.map((name, i) => ({ name, sales: siteSales[i] })).sort((a, b) => b.sales - a.sales)
+    const barColors = ['#FF8C00','#FFB84D','#4C9AFF','#51CF66','#FF6B6B','#CC5DE8','#74C0FC','#A9E34B','#E599F7','#20C997']
     dbCharts.barSite = new Chart(barSiteEl.getContext('2d'), {
-      type:'bar',
-      data:{ labels:sLabels, datasets:[{ data:sVals, backgroundColor:['#FF8C00','#FFB84D','#4C9AFF','#51CF66','#FF6B6B','#CC5DE8','#74C0FC','#A9E34B'], borderRadius:4 }] },
-      options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ color:'#555', font:{ size:10 }, callback:v=>'₩'+(v/1000000).toFixed(1)+'M' }, grid:{ color:'rgba(255,255,255,0.04)' } }, y:{ ticks:{ color:'#888', font:{ size:10 } }, grid:{ display:false } } } }
+      type: 'bar',
+      data: { labels: sorted.map(s => s.name), datasets: [{ data: sorted.map(s => s.sales), backgroundColor: sorted.map((_, i) => barColors[i % barColors.length]), borderRadius: 4 }] },
+      options: { indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ color:'#555', font:{ size:10 }, callback:v=>'₩'+(v/1000000).toFixed(1)+'M' }, grid:{ color:'rgba(255,255,255,0.04)' } }, y:{ ticks:{ color:'#888', font:{ size:10 } }, grid:{ display:false } } } }
     })
   }
 
-  // 마켓 사업자별 상품등록현황 테이블
+  // ── 마켓 사업자별 상품등록현황 (동적) ──
   const mktTbody = document.getElementById('db-mkt-reg-tbody')
   if (mktTbody) {
-    const mktNames  = ['G마켓 - A사업자','G마켓 - B사업자','옥션 - A사업자','옥션 - B사업자','스마트스토어','쿠팡','롯데ON','11번가','신세계몰']
-    const mktReg    = [1842,934,1755,812,1230,980,640,520,320]
-    const mktColors = ['#4C9AFF','#74C0FC','#4C9AFF','#74C0FC','#51CF66','#FF6B6B','#FFB84D','#FF8C00','#A9E34B']
-    const total     = mktReg.reduce((a,b)=>a+b,0)
-    mktTbody.innerHTML = mktNames.map((n,i) => {
-      const pct = ((mktReg[i]/total)*100).toFixed(1)
-      return `<tr>
-        <td>${n}</td>
-        <td class="num-orange">${mktReg[i].toLocaleString()}</td>
-        <td>${pct}%</td>
-        <td style="min-width:120px;">
-          <div style="height:6px; background:#1A1A1A; border-radius:3px;">
-            <div style="height:6px; width:${pct}%; background:${mktColors[i]}; border-radius:3px;"></div>
-          </div>
-        </td>
-      </tr>`
-    }).join('')
+    // 마켓 계정 기반 등록 현황 집계
+    const regMap = {}
+    const accountList = (typeof accountManager !== 'undefined') ? accountManager.accounts : []
+
+    if (accountList.length > 0) {
+      // 마켓 계정이 있으면 계정별로 전송된 상품 수 집계
+      for (const acc of accountList) {
+        const label = acc.accountLabel || `${acc.marketName} - ${acc.sellerName || acc.id}`
+        const count = collectedProducts.filter(p =>
+          (p.registeredAccounts || []).includes(acc.id)
+        ).length
+        regMap[label] = count
+      }
+    } else {
+      // 계정 없으면 collectedProducts의 registeredAccounts 기반
+      collectedProducts.forEach(p => {
+        (p.registeredAccounts || []).forEach(accId => {
+          regMap[accId] = (regMap[accId] || 0) + 1
+        })
+      })
+    }
+
+    const regNames = Object.keys(regMap)
+    const regCounts = Object.values(regMap)
+    const total = regCounts.reduce((a, b) => a + b, 0)
+    const regColors = ['#4C9AFF','#74C0FC','#51CF66','#FF6B6B','#FFB84D','#FF8C00','#A9E34B','#CC5DE8','#E599F7','#20C997']
+
+    if (regNames.length > 0) {
+      mktTbody.innerHTML = regNames.map((n, i) => {
+        const pct = total > 0 ? ((regCounts[i] / total) * 100).toFixed(1) : '0.0'
+        return `<tr>
+          <td>${n}</td>
+          <td class="num-orange">${regCounts[i].toLocaleString()}</td>
+          <td>${pct}%</td>
+          <td style="min-width:120px;">
+            <div style="height:6px; background:#1A1A1A; border-radius:3px;">
+              <div style="height:6px; width:${pct}%; background:${regColors[i % regColors.length]}; border-radius:3px;"></div>
+            </div>
+          </td>
+        </tr>`
+      }).join('')
+    } else {
+      mktTbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#555;">등록된 상품이 없습니다</td></tr>'
+    }
   }
 }
 
@@ -663,6 +803,10 @@ function switchSettingsTab(market, clickedBtn) {
   if (panel) panel.style.display = ''
   if (clickedBtn) clickedBtn.classList.add('stg-tab-on')
 
+  // MARKET_FIELD_MAP에 정의된 마켓은 공통 로드 함수 사용
+  if (typeof loadMarketSettings === 'function' && typeof MARKET_FIELD_MAP !== 'undefined' && MARKET_FIELD_MAP[market]) {
+    loadMarketSettings(market)
+  }
   // 롯데홈쇼핑 탭 진입 시 저장된 설정 로드
   if (market === 'lottehome' && typeof loadLotteHomeSettings === 'function') {
     loadLotteHomeSettings()

@@ -26,7 +26,9 @@ class AccountManager {
             { id: 'lazada', name: 'Lazada', group: '해외', apiFields: ['appKey', 'appSecret', 'accessToken'] },
             { id: 'shopee', name: 'Shopee', group: '해외', apiFields: ['partnerId', 'shopId', 'accessToken'] },
             { id: 'qoo10', name: 'Qoo10', group: '해외', apiFields: ['apiKey', 'userId'] },
-            { id: 'quten', name: '큐텐', group: '해외', apiFields: ['apiKey', 'qUserId'] }
+            { id: 'quten', name: '큐텐', group: '해외', apiFields: ['apiKey', 'qUserId'] },
+            // 리셀
+            { id: 'kream', name: 'KREAM', group: '리셀', apiFields: ['email', 'password'] }
         ]
     }
 
@@ -38,6 +40,16 @@ class AccountManager {
 
     async loadAccounts() {
         this.accounts = await storage.getAll('marketAccounts')
+        // 기존 데이터 accountLabel 정규화 (사업자명-ID 형식으로 통일)
+        for (const acc of this.accounts) {
+            const market = this.supportedMarkets.find(m => m.id === acc.marketType)
+            const marketName = market ? market.name : acc.marketType
+            const expectedLabel = `${acc.businessName || marketName}-${acc.sellerId}`
+            if (acc.accountLabel !== expectedLabel) {
+                acc.accountLabel = expectedLabel
+                await storage.save('marketAccounts', acc)
+            }
+        }
         return this.accounts
     }
 
@@ -47,7 +59,7 @@ class AccountManager {
             id: 'ma_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8),
             marketType: data.marketType || '',
             marketName: market ? market.name : data.marketType,
-            accountLabel: data.accountLabel || `${market ? market.name : data.marketType}-${data.sellerId || ''}`,
+            accountLabel: data.accountLabel || `${data.businessName || (market ? market.name : data.marketType)}-${data.sellerId || ''}`,
             sellerId: data.sellerId || '',
             businessName: data.businessName || '',
             apiKey: data.apiKey || '',
@@ -107,7 +119,7 @@ class AccountManager {
     formatAccountLabel(account) {
         const market = this.supportedMarkets.find(m => m.id === account.marketType)
         const marketName = market ? market.name : account.marketType
-        return account.accountLabel || `${marketName}-${account.sellerId}`
+        return `${account.businessName || marketName}-${account.sellerId}`
     }
 }
 

@@ -45,6 +45,25 @@ class KreamManager {
     }
 
     async login(email, password) {
+        // 브라우저 로그인 우선 시도 (KREAM 봇 차단 우회)
+        try {
+            const browserRes = await fetch(`${KREAM_PROXY_URL}/api/kream/browser-login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            })
+            const browserData = await browserRes.json()
+            if (browserData.success) {
+                this.isLoggedIn = true
+                console.log('[KREAM] 브라우저 로그인 성공')
+                return browserData
+            }
+            console.log('[KREAM] 브라우저 로그인 실패, API 로그인 시도:', browserData.message)
+        } catch (e) {
+            console.log('[KREAM] 브라우저 로그인 에러:', e.message)
+        }
+
+        // API 토큰 로그인 fallback
         const res = await fetch(`${KREAM_PROXY_URL}/api/kream/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -56,6 +75,18 @@ class KreamManager {
             this.userId = data.userId || ''
         }
         return data
+    }
+
+    // 브라우저 로그인 상태 확인
+    async checkBrowserLogin() {
+        try {
+            const res = await fetch(`${KREAM_PROXY_URL}/api/kream/browser-status`)
+            const data = await res.json()
+            this.isLoggedIn = data.isLoggedIn || false
+            return data
+        } catch {
+            return { isLoggedIn: false }
+        }
     }
 
     async logout() {

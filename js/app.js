@@ -177,26 +177,81 @@ class SambaWaveApp {
 
     /**
      * 알림 표시
+     * @param {string} message - 메시지
+     * @param {string} type - 'info' | 'success' | 'warning' | 'error'
+     * @param {boolean} persistent - true이면 확인 버튼 클릭 전까지 유지 + 소리 알람
      */
-    showNotification(message, type = 'info') {
-        const notification = document.createElement('div')
-        notification.className = 'fixed top-4 right-4 px-6 py-3 rounded-lg text-white font-medium shadow-lg z-50'
-
+    showNotification(message, type = 'info', persistent = false) {
         const colorMap = {
             'success': { bg: '#2A7A45', text: '#fff' },
             'error':   { bg: '#C0392B', text: '#fff' },
             'warning': { bg: '#E67E00', text: '#fff' },
             'info':    { bg: '#1A65C0', text: '#fff' },
         }
-        const { bg, text } = colorMap[type] || colorMap['info']
+        const { bg } = colorMap[type] || colorMap['info']
 
-        notification.style.background = bg
-        notification.style.color = text
-        notification.style.fontWeight = '600'
-        notification.textContent = message
+        const notification = document.createElement('div')
+        notification.style.cssText = `
+            position: fixed; top: 1rem; right: 1rem; z-index: 9999;
+            background: ${bg}; color: #fff; font-weight: 600;
+            border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            max-width: 360px; min-width: 220px; overflow: hidden;
+        `
+
+        if (persistent) {
+            // 확인 버튼 포함 레이아웃
+            notification.innerHTML = `
+                <div style="padding: 14px 16px 10px; font-size: 0.875rem; line-height: 1.5;">${message}</div>
+                <div style="padding: 0 12px 12px; text-align: right;">
+                    <button style="
+                        background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4);
+                        color: #fff; font-size: 0.8rem; font-weight: 700;
+                        padding: 4px 14px; border-radius: 6px; cursor: pointer;
+                    ">확인</button>
+                </div>
+            `
+            notification.querySelector('button').addEventListener('click', () => notification.remove())
+            // 소리 알람 (Web Audio API - 외부 파일 불필요)
+            this._playAlertSound(type)
+        } else {
+            notification.style.padding = '12px 20px'
+            notification.style.fontSize = '0.875rem'
+            notification.textContent = message
+            setTimeout(() => notification.remove(), 3000)
+        }
+
         document.body.appendChild(notification)
+    }
 
-        setTimeout(() => notification.remove(), 3000)
+    /**
+     * Web Audio API로 알람음 생성 (외부 파일 없음)
+     * @param {string} type - 알람 타입별 다른 음
+     */
+    _playAlertSound(type) {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)()
+            const sequences = {
+                'warning': [{ f: 880, t: 0.0, d: 0.15 }, { f: 660, t: 0.18, d: 0.2 }],
+                'error':   [{ f: 440, t: 0.0, d: 0.12 }, { f: 330, t: 0.15, d: 0.12 }, { f: 220, t: 0.3, d: 0.2 }],
+                'info':    [{ f: 660, t: 0.0, d: 0.1 }, { f: 880, t: 0.12, d: 0.15 }],
+                'success': [{ f: 660, t: 0.0, d: 0.1 }, { f: 880, t: 0.12, d: 0.1 }, { f: 1100, t: 0.25, d: 0.15 }],
+            }
+            const notes = sequences[type] || sequences['info']
+            notes.forEach(({ f, t, d }) => {
+                const osc = ctx.createOscillator()
+                const gain = ctx.createGain()
+                osc.connect(gain)
+                gain.connect(ctx.destination)
+                osc.frequency.value = f
+                osc.type = 'sine'
+                gain.gain.setValueAtTime(0.3, ctx.currentTime + t)
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + d)
+                osc.start(ctx.currentTime + t)
+                osc.stop(ctx.currentTime + t + d + 0.05)
+            })
+        } catch (e) {
+            // 소리 재생 실패 시 무시
+        }
     }
 
     /**
@@ -226,11 +281,11 @@ const app = new SambaWaveApp()
 
 // 공유 마켓 목록 (설정/매출통계/상품전송 공통)
 // 판매마켓 ID와 표시명: SSG→신세계몰, 롯데온→롯데ON, GS샵→GS샵 으로 통일
-const MARKET_LIST = ['쿠팡','신세계몰','스마트스토어','11번가','지마켓','옥션','GS샵','롯데ON','롯데홈쇼핑','홈앤쇼핑','HMALL']
+const MARKET_LIST = ['쿠팡','신세계몰','스마트스토어','11번가','지마켓','옥션','GS샵','롯데ON','롯데홈쇼핑','홈앤쇼핑','HMALL','KREAM']
 
-// 공유 소싱사이트 목록 (상품관리/정책적용/주문목록 공통) - 9개
+// 공유 소싱사이트 목록 (상품관리/정책적용/주문목록 공통) - 10개
 // 소싱처 식별명 (판매마켓 ID와 별도): SSG=소싱처명, LOTTEON=소싱처명, GSShop=소싱처명
-const SITE_LIST = ['ABCmart','FOLDERStyle','GrandStage','GSShop','LOTTEON','MUSINSA','Nike','OliveYoung','SSG']
+const SITE_LIST = ['ABCmart','FOLDERStyle','GrandStage','GSShop','KREAM','LOTTEON','MUSINSA','Nike','OliveYoung','SSG']
 
 // URL 기반 페이지 복원
 window.addEventListener('load', async () => {
@@ -369,5 +424,50 @@ async function initializeDummyData() {
     // 초기화 완료 플래그 저장 (이후 재삽입 방지)
     await storage.save('settings', { key: 'dummyDataInitialized', value: true })
     console.log('더미 데이터 초기화 완료')
+}
+
+// KREAM 브라우저 로그인
+async function kreamBrowserLogin() {
+  const email = document.getElementById('kr-email')?.value || ''
+  const password = document.getElementById('kr-password')?.value || ''
+  const statusEl = document.getElementById('kr-browser-status')
+  if (!email || !password) {
+    if (statusEl) statusEl.innerHTML = '<span style="color:#FF6B6B;">이메일과 비밀번호를 입력해주세요.</span>'
+    return
+  }
+  if (statusEl) statusEl.innerHTML = '<span style="color:#FFB84D;">브라우저 로그인 시도 중...</span>'
+  try {
+    const res = await fetch('http://localhost:3001/api/kream/browser-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    })
+    const data = await res.json()
+    if (data.success) {
+      if (statusEl) statusEl.innerHTML = '<span style="color:#51CF66;">브라우저 로그인 성공</span>'
+      app.showNotification('KREAM 브라우저 로그인 성공', 'success')
+    } else {
+      if (statusEl) statusEl.innerHTML = `<span style="color:#FF6B6B;">${data.message}</span>`
+    }
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = '<span style="color:#FF6B6B;">프록시 서버 연결 실패. 서버가 실행 중인지 확인하세요.</span>'
+  }
+}
+
+// KREAM 브라우저 상태 확인
+async function kreamCheckBrowserStatus() {
+  const statusEl = document.getElementById('kr-browser-status')
+  if (statusEl) statusEl.innerHTML = '<span style="color:#FFB84D;">확인 중...</span>'
+  try {
+    const res = await fetch('http://localhost:3001/api/kream/browser-status')
+    const data = await res.json()
+    if (data.isLoggedIn) {
+      if (statusEl) statusEl.innerHTML = '<span style="color:#51CF66;">로그인 상태 (세션 유지 중)</span>'
+    } else {
+      if (statusEl) statusEl.innerHTML = '<span style="color:#FF6B6B;">로그인 안됨. "브라우저 로그인" 버튼을 클릭하거나, 열린 Chrome 창에서 직접 로그인하세요.</span>'
+    }
+  } catch {
+    if (statusEl) statusEl.innerHTML = '<span style="color:#FF6B6B;">프록시 서버 연결 실패</span>'
+  }
 }
 

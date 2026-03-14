@@ -3,6 +3,16 @@
  * 모달, 테이블, 폼 렌더링 및 이벤트 처리
  */
 
+/** HTML 특수문자 이스케이프 (XSS 방어용) */
+function escapeHtml(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#x27;')
+}
+
 class UIManager {
     constructor() {
         this.currentProductEditId = null
@@ -209,6 +219,12 @@ class UIManager {
         if (typeof categoryManager !== 'undefined') await categoryManager.init()
         if (typeof shipmentManager !== 'undefined') await shipmentManager.init()
         if (typeof forbiddenManager !== 'undefined') await forbiddenManager.init()
+        if (typeof kreamManager !== 'undefined') kreamManager.init().catch(() => {})
+
+        // 서브에이전트 모니터링 시작 (재고/가격 자동 감지)
+        if (typeof agentMonitor !== 'undefined') {
+            agentMonitor.start({ stockIntervalMin: 30, priceIntervalMin: 60 })
+        }
 
         this.renderDashboard()
         this.renderProducts()
@@ -228,6 +244,7 @@ class UIManager {
         setTimeout(() => this.refreshProxyStatusUI(), 2500)
         this.renderPolicyList()
         this.renderAccountCheckboxes()
+        if (typeof renderDynamicMarketFilters === 'function') renderDynamicMarketFilters()
         this.renderAnalyticsMarkets()
         this.renderAccountDashboard()
         await this.renderSearchFilterTable()
@@ -753,7 +770,7 @@ class UIManager {
                 '쿠팡': 'coupang', '신세계몰': 'ssg', '스마트스토어': 'smartstore',
                 '11번가': '11st', '지마켓': 'gmarket', '옥션': 'auction',
                 'GS샵': 'gsshop', '롯데ON': 'lotteon', '롯데홈쇼핑': 'lottehome',
-                '홈앤쇼핑': 'homeand', 'HMALL': 'hmall'
+                '홈앤쇼핑': 'homeand', 'HMALL': 'hmall', 'KREAM': 'kream'
             }
             const markets = (typeof MARKET_LIST !== 'undefined' && MARKET_LIST.length > 0)
                 ? MARKET_LIST.map(m => ({ id: MARKET_ID_MAP[m] || m.toLowerCase(), name: m }))
@@ -782,8 +799,8 @@ class UIManager {
                 ? forbiddenManager.getDeletionMarkedHtml(product.name)
                 : product.name
 
-            // 원 상품명 표시: 항상 원본 그대로 표시
-            const productNameHtml = `<span style="color:#D1D9EE; font-weight:500;">${product.name}</span>`
+            // 원 상품명 표시: 항상 원본 그대로 표시 (XSS 방어)
+            const productNameHtml = `<span style="color:#D1D9EE; font-weight:500;">${escapeHtml(product.name)}</span>`
 
             // 인라인 수정 모드 여부
             const isEditing = this._editingProductIds?.has(product.id) || false
@@ -1942,7 +1959,7 @@ class UIManager {
         }
 
         if (orders.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" style="padding:2rem; text-align:center; color:#666;">주문이 없습니다</td></tr>'
+            tbody.innerHTML = '<tr><td colspan="5" style="padding:2rem; text-align:center; color:#666;">주문이 없습니다</td></tr>'
             return
         }
 
@@ -1984,7 +2001,7 @@ class UIManager {
 
         tbody.innerHTML = orders.map((order) => {
             const channel = channelManager.channels.find(c => c.id === order.channelId)
-            const channelName = channel ? channel.name : '마켓'
+            const channelName = escapeHtml(channel ? channel.name : '마켓')
             const orderDate = order.createdAt ? new Date(order.createdAt) : null
             const dateStr   = orderDate ? orderDate.toLocaleDateString('ko-KR') : '-'
             const timeStr   = orderDate ? orderDate.toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit', hour12: false }) : ''
@@ -2000,7 +2017,7 @@ class UIManager {
             const profitColor     = realProfit >= 0 ? '#6EE7A0' : '#FC8181'
             const origColor       = origProfit === null ? '#555' : (origProfit >= 0 ? '#6EE7A0' : '#FC8181')
             const bgColor         = statusColor[order.status] || '#374151'
-            const productName     = order.productName || '-'
+            const productName     = escapeHtml(order.productName || '-')
             const imgSrc          = order.imageUrl || ''
 
             const statusOptsHtml = statusOptions.map(s =>
@@ -2088,6 +2105,11 @@ class UIManager {
                             </div>
                         </div>
                     </div>
+                </td>
+
+                <!-- 소싱사이트 -->
+                <td style="${S.cell} text-align:center; vertical-align:middle;">
+                    <span style="padding:2px 8px; font-size:0.72rem; border-radius:3px; white-space:nowrap; background:#1C2035; color:#9AA5C0; border:1px solid #2D3A55;">${escapeHtml(order.sourceSite || '-')}</span>
                 </td>
 
                 <!-- 결제금액 -->
@@ -2769,11 +2791,11 @@ class UIManager {
                 <tr style="border-bottom:1px solid #1A1A1A; vertical-align:top;">
                     <td style="padding:0.65rem 0.75rem; font-size:0.8rem; color:#888; font-family:monospace;">${cs.id.slice(-8)}</td>
                     <td style="padding:0.65rem 0.75rem; font-size:0.8rem; color:#C5C5C5;">${cs.orderNumber || '-'}</td>
-                    <td style="padding:0.65rem 0.75rem; font-size:0.8rem; color:#C5C5C5;">${cs.customerName || '-'}</td>
+                    <td style="padding:0.65rem 0.75rem; font-size:0.8rem; color:#C5C5C5;">${escapeHtml(cs.customerName || '-')}</td>
                     <td style="padding:0.65rem 0.75rem;">
-                        <span style="padding:2px 8px; border-radius:4px; font-size:0.75rem; background:rgba(255,140,0,0.15); color:#FFB84D; border:1px solid rgba(255,140,0,0.3);">${typeTxt}</span>
+                        <span style="padding:2px 8px; border-radius:4px; font-size:0.75rem; background:rgba(255,140,0,0.15); color:#FFB84D; border:1px solid rgba(255,140,0,0.3);">${escapeHtml(typeTxt)}</span>
                     </td>
-                    <td style="padding:0.65rem 0.75rem; font-size:0.8rem; color:#C5C5C5; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${cs.content}</td>
+                    <td style="padding:0.65rem 0.75rem; font-size:0.8rem; color:#C5C5C5; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(cs.content)}</td>
                     <td style="padding:0.65rem 0.75rem; text-align:center;">
                         <span style="padding:2px 8px; border-radius:4px; font-size:0.75rem; background:rgba(0,0,0,0.3); color:${sColor}; border:1px solid ${sColor}40;">${statusTxt}</span>
                     </td>
@@ -2838,7 +2860,7 @@ class UIManager {
     }
 
     updateContactRecipient() {
-        const orderId = document.querySelector('select[name="orderId"]').value
+        const orderId = document.getElementById('contact-order-select')?.value
         const order = orderManager.orders.find(o => o.id === orderId)
 
         if (order) {
@@ -3539,7 +3561,20 @@ class UIManager {
                         </div>
                     </td>
                     <td style="padding:0.75rem 0.5rem; text-align:right; white-space:nowrap;">
-                        <span style="font-size:0.9rem; color:#FFB84D; font-weight:600;">₩${this.formatNumber(p.salePrice)}</span>
+                        ${p.sourceSite === 'KREAM' && p.kreamData ? (() => {
+                            // KREAM 사이즈별 대표 가격 (첫번째 옵션 기준)
+                            const firstOpt = (p.options || [])[0]
+                            if (!firstOpt) return `<span style="font-size:0.9rem; color:#FFB84D; font-weight:600;">₩${this.formatNumber(p.salePrice)}</span>`
+                            const generalPrice = firstOpt.kreamGeneralPrice || firstOpt.kreamAsk || 0
+                            const fastPrice = firstOpt.kreamFastPrice || 0
+                            return `<div style="display:flex; flex-direction:column; gap:2px; align-items:flex-end;">
+                                <span style="font-size:0.7rem; color:#888;">일반배송</span>
+                                <span style="font-size:0.875rem; color:#FFB84D; font-weight:700;">₩${this.formatNumber(generalPrice)}</span>
+                                <span style="font-size:0.7rem; color:#888; margin-top:2px;">빠른배송</span>
+                                <span style="font-size:0.8rem; color:#4C9AFF; font-weight:600;">${fastPrice > 0 ? `₩${this.formatNumber(fastPrice)}` : '-'}</span>
+                                <button onclick="ui.showKreamSizePriceTable('${p.id}')" style="margin-top:4px; font-size:0.68rem; color:#FF8C00; background:rgba(255,140,0,0.1); border:1px solid rgba(255,140,0,0.3); border-radius:4px; padding:1px 6px; cursor:pointer; white-space:nowrap;">사이즈별 시세</button>
+                            </div>`
+                        })() : `<span style="font-size:0.9rem; color:#FFB84D; font-weight:600;">₩${this.formatNumber(p.salePrice)}</span>`}
                     </td>
                     <td style="padding:0.75rem 0.5rem; font-size:0.8125rem; color:#888;">${p.category || '-'}</td>
                     <td style="padding:0.75rem 0.5rem; text-align:center; font-size:0.875rem; color:#C5C5C5;">${optionCount}개</td>
@@ -3616,6 +3651,67 @@ class UIManager {
                 await storage.save('collectedProducts', { ...stored, [field]: value, updatedAt: new Date().toISOString() })
             }
         }
+    }
+
+    /**
+     * KREAM 사이즈별 시세 테이블 팝업 표시
+     */
+    async showKreamSizePriceTable(productId) {
+        // 메모리 우선 → DB 폴백
+        let product = collectorManager?.collectResults?.find(p => p.id === productId) || null
+        if (!product && typeof storage !== 'undefined') {
+            product = await storage.get('collectedProducts', productId).catch(() => null)
+        }
+        if (!product || !product.kreamData) return
+
+        const opts = product.options || []
+        const kd = product.kreamData
+
+        const rows = opts.map(opt => {
+            const generalPrice = opt.kreamGeneralPrice || opt.kreamAsk || 0
+            const fastPrice = opt.kreamFastPrice || 0
+
+            return `<tr style="border-bottom:1px solid #1A1A1A;">
+                <td style="padding:6px 10px; font-size:0.8rem; color:#C5C5C5; font-weight:600;">${opt.name}</td>
+                <td style="padding:6px 10px; text-align:right; font-size:0.8rem; color:#FFB84D; font-weight:600;">${generalPrice > 0 ? `₩${this.formatNumber(generalPrice)}` : '-'}</td>
+                <td style="padding:6px 10px; text-align:right; font-size:0.8rem; color:#4C9AFF; font-weight:600;">${fastPrice > 0 ? `₩${this.formatNumber(fastPrice)}` : '-'}</td>
+            </tr>`
+        }).join('')
+
+        const modalHtml = `
+            <div id="kream-price-modal" onclick="if(event.target.id==='kream-price-modal')this.remove()" style="position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:9999; display:flex; align-items:center; justify-content:center; padding:1rem;">
+                <div style="background:#111; border:1px solid #2D2D2D; border-radius:12px; max-width:680px; width:100%; max-height:80vh; overflow:auto;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid #2D2D2D;">
+                        <div>
+                            <span style="font-size:0.9375rem; font-weight:700; color:#E5E5E5;">KREAM 사이즈별 시세</span>
+                            <span style="font-size:0.75rem; color:#888; margin-left:8px;">${product.name}</span>
+                        </div>
+                        <button onclick="document.getElementById('kream-price-modal').remove()" style="color:#888; font-size:1.25rem; background:none; border:none; cursor:pointer;">✕</button>
+                    </div>
+                    <div style="padding:12px 18px;">
+                        <div style="display:flex; gap:16px; margin-bottom:12px; flex-wrap:wrap;">
+                            <div style="font-size:0.8rem; color:#888;">발매가: <span style="color:#C5C5C5; font-weight:600;">₩${this.formatNumber(kd.retailPrice)}</span></div>
+                            <div style="font-size:0.8rem; color:#888;">거래량: <span style="color:#C5C5C5; font-weight:600;">${(kd.tradeVolume || 0).toLocaleString()}건</span></div>
+                            <div style="font-size:0.8rem; color:#888;">관심: <span style="color:#C5C5C5; font-weight:600;">${(kd.wishCount || 0).toLocaleString()}명</span></div>
+                            ${kd.modelNo ? `<div style="font-size:0.8rem; color:#888;">모델번호: <span style="color:#C5C5C5; font-family:monospace;">${kd.modelNo}</span></div>` : ''}
+                        </div>
+                        <table style="width:100%; border-collapse:collapse;">
+                            <thead>
+                                <tr style="border-bottom:1px solid #2D2D2D;">
+                                    <th style="padding:6px 10px; text-align:left; font-size:0.75rem; color:#888; font-weight:500;">사이즈</th>
+                                    <th style="padding:6px 10px; text-align:right; font-size:0.75rem; color:#FFB84D; font-weight:500;">일반배송</th>
+                                    <th style="padding:6px 10px; text-align:right; font-size:0.75rem; color:#4C9AFF; font-weight:500;">빠른배송</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`
+
+        // 기존 팝업 제거 후 추가
+        document.getElementById('kream-price-modal')?.remove()
+        document.body.insertAdjacentHTML('beforeend', modalHtml)
     }
 
     /**
@@ -3742,7 +3838,7 @@ class UIManager {
                 + accountManager.accounts.map(acc => `
                     <label style="${labelStyle}">
                         <input type="checkbox" class="shipment-account-cb" value="${acc.id}" style="${cbStyle}">
-                        <span style="color:#C5C5C5; font-size:0.875rem;">${acc.accountLabel} (${acc.marketName})</span>
+                        <span style="color:#C5C5C5; font-size:0.875rem;">${acc.accountLabel}</span>
                     </label>
                 `).join('')
         } else {
@@ -3757,9 +3853,20 @@ class UIManager {
     renderAnalyticsMarkets() {
         const container = document.querySelector('.af-cb-items.af-mkt-items')
         if (!container) return
-        const markets = (typeof MARKET_LIST !== 'undefined') ? MARKET_LIST : []
-        const existing = container.querySelector('#af-all-mkt')?.parentElement?.outerHTML || ''
-        const divider = container.querySelector('.af-cb-divider')?.outerHTML || '<div class="af-cb-divider"></div>'
+        const divider = '<div class="af-cb-divider"></div>'
+
+        // 등록 계정이 있으면 계정 기반 유니크 마켓, 없으면 MARKET_LIST fallback
+        let markets = []
+        if (typeof accountManager !== 'undefined' && accountManager.accounts && accountManager.accounts.length > 0) {
+            const seen = new Set()
+            accountManager.accounts.forEach(a => {
+                const name = a.marketName || a.marketType
+                if (!seen.has(name)) { seen.add(name); markets.push(name) }
+            })
+        } else {
+            markets = (typeof MARKET_LIST !== 'undefined') ? MARKET_LIST : []
+        }
+
         container.innerHTML = `<label class="af-cb"><input type="checkbox" id="af-all-mkt" onchange="afToggleAll('mkt',this)"> <span>전체</span></label>${divider}`
             + markets.map(m => `<label class="af-cb"><input type="checkbox" class="af-mkt" value="${m}" checked> <span>${m}</span></label>`).join('')
     }
@@ -3791,13 +3898,15 @@ class UIManager {
             homeand:    { color:'#4CAF50', label:'H&' },
             hmall:      { color:'#C62828', label:'HM' },
             playauto:   { color:'#6B48FF', label:'P' },
-            ebay:       { color:'#E43137', label:'e' }
+            ebay:       { color:'#E43137', label:'e' },
+            kream:      { color:'#1A1A1A', label:'KR' }
         }
         const marketNames = {
             smartstore:'스마트스토어', gmarket:'지마켓', auction:'옥션',
             coupang:'쿠팡', lotteon:'롯데온', '11st':'11번가',
             ssg:'SSG', gsshop:'GSSHOP', lottehome:'롯데홈쇼핑',
-            homeand:'홈앤쇼핑', hmall:'HMALL', playauto:'플레이오토', ebay:'eBay'
+            homeand:'홈앤쇼핑', hmall:'HMALL', playauto:'플레이오토', ebay:'eBay',
+            kream:'KREAM'
         }
 
         const grouped = {}
@@ -3813,7 +3922,7 @@ class UIManager {
             const accountItems = accs.map(acc => `
                 <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 10px; border:1px solid #2A2A2A; border-radius:6px; background:#111;">
                     <div style="overflow:hidden; min-width:0; flex:1;">
-                        <div style="font-size:0.8rem; color:#C5C5C5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${acc.sellerId || acc.accountLabel || '-'}</div>
+                        <div style="font-size:0.8rem; color:#C5C5C5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${acc.accountLabel || acc.sellerId || '-'}</div>
                         ${acc.businessName ? `<div style="font-size:0.72rem; color:#FF8C00; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px;">${acc.businessName}</div>` : ''}
                     </div>
                     <div style="display:flex; gap:4px; flex-shrink:0; margin-left:6px;">
@@ -4195,15 +4304,29 @@ class UIManager {
     }
 
     async editAccount(id) {
+        // 계정이 메모리에 없을 경우 대비해 명시적 로드
+        if (typeof accountManager !== 'undefined') await accountManager.loadAccounts()
         const acc = accountManager.accounts.find(a => a.id === id)
         if (!acc) return
-        const newLabel = await this.showPrompt('계정 라벨을 수정하세요', { title: '계정 수정', defaultValue: acc.accountLabel || acc.sellerId })
-        if (newLabel === null) return
-        await accountManager.updateAccount(id, { accountLabel: newLabel.trim() })
-        this.renderAccountList()
-        this.renderAccountCheckboxes()
-        this.renderAccountDashboard()
-        app.showNotification('계정이 수정되었습니다', 'success')
+
+        // 설정 페이지로 이동
+        if (typeof app !== 'undefined') app.navigateTo('settings')
+
+        // 패널 직접 활성화 (switchSettingsTab 비동기 충돌 방지)
+        document.querySelectorAll('.stg-panel').forEach(p => { p.style.display = 'none' })
+        document.querySelectorAll('.stg-tab').forEach(t => t.classList.remove('stg-tab-on'))
+        const panel = document.getElementById(`stg-${acc.marketType}`)
+        if (panel) panel.style.display = ''
+        const tabBtn = document.querySelector(`.stg-tab[onclick*="${acc.marketType}"]`)
+        if (tabBtn) tabBtn.classList.add('stg-tab-on')
+
+        // 드롭다운 렌더링 후 해당 계정 선택
+        renderSettingsAccountDropdown(acc.marketType)
+        const dropdown = document.getElementById(`stg-acc-dropdown-${acc.marketType}`)
+        if (dropdown) dropdown.value = acc.id
+
+        // 폼에 데이터 채움
+        onAccountDropdownChange(acc.marketType, acc.id)
     }
 
     async deleteAccount(id) {
@@ -4212,6 +4335,7 @@ class UIManager {
         this.renderAccountList()
         this.renderAccountCheckboxes()
         this.renderAccountDashboard()
+        renderDynamicMarketFilters()
         app.showNotification('계정이 삭제되었습니다', 'success')
     }
 
@@ -4805,21 +4929,21 @@ class UIManager {
             storage.save('settings', { key: 'smsSettings', fromPhone: from })
         }
 
-        // 발송 완료 처리
+        // 발송 완료 처리 (시뮬레이션 - 실제 API 미호출)
         const modal = document.getElementById('sms-modal')
         const orderId = modal?.dataset.orderId
         if (orderId) {
             this.smsSentOrders.add(orderId)
-            // 주문 행의 버튼 즉시 업데이트
+            // 주문 행의 버튼 즉시 업데이트 (시뮬레이션 상태 표시)
             const btn = document.getElementById(`sms-btn-${orderId}`)
             if (btn) {
-                btn.textContent = '메시지 발송후'
-                btn.style.background = '#0D1E14'
-                btn.style.border = '1px solid #1B5C38'
-                btn.style.color = '#4CAF8A'
+                btn.textContent = '발송준비완료(미전송)'
+                btn.style.background = '#1A1A1A'
+                btn.style.border = '1px solid #444'
+                btn.style.color = '#888'
             }
         }
-        app.showNotification(`${to} 로 SMS 발송 완료 (시뮬레이션)`, 'success')
+        app.showNotification(`[시뮬레이션] ${escapeHtml(to)} 으로 SMS 발송 준비 완료 — 실제 발송은 알리고 API 연동 후 동작합니다`, 'warning')
         this.closeSmsModal()
     }
 
@@ -5137,14 +5261,98 @@ class UIManager {
             return
         }
 
-        // 무신사 상품만 실제 보강 가능
-        if (product.sourceSite !== 'MUSINSA' || !product.siteProductId) {
-            app.showNotification('무신사 상품만 업데이트 가능합니다', 'warning')
+        // 무신사/KREAM 상품만 실제 보강 가능
+        if (!['MUSINSA', 'KREAM'].includes(product.sourceSite) || !product.siteProductId) {
+            app.showNotification('무신사/KREAM 상품만 업데이트 가능합니다', 'warning')
             return
         }
 
         this.setProductLog(`[${product.name?.slice(0, 20)}] 업데이트 시작...`, 'info')
         app.showNotification('상세 정보 수집 중...', 'info')
+
+        // KREAM 상품 업데이트 분기
+        if (product.sourceSite === 'KREAM') {
+            try {
+                this.setProductLog(`KREAM 프록시 서버 호출 중 (productId: ${product.siteProductId})...`, 'info')
+                const kr = await fetch(`http://localhost:3001/api/kream/products/${product.siteProductId}`)
+                if (!kr.ok) throw new Error(`HTTP ${kr.status}`)
+                const kd = await kr.json()
+                if (!kd.success || !kd.data) throw new Error(kd.message || 'KREAM 수집 실패')
+
+                const detail = kd.data
+                const prevPrice = product.salePrice || 0
+                const newPrice = detail.salePrice || 0
+                const priceHistory = [...(product.priceHistory || [])]
+
+                // 옵션별 스냅샷
+                const latestOptions = (detail.options && detail.options.length > 0) ? detail.options : (product.options || [])
+                const optionSnapshot = latestOptions.map(o => ({
+                    name: o.name || '',
+                    price: o.kreamGeneralPrice || o.kreamAsk || o.price || 0,
+                    kreamGeneralPrice: o.kreamGeneralPrice || 0,
+                    kreamFastPrice: o.kreamFastPrice || 0
+                }))
+
+                const changeAmt = newPrice - prevPrice
+                const changePct = prevPrice > 0 ? ((changeAmt / prevPrice) * 100).toFixed(1) : '0'
+                priceHistory.push({
+                    date: new Date().toISOString(),
+                    price: newPrice || prevPrice,
+                    prevPrice,
+                    changeAmount: changeAmt,
+                    changePercent: parseFloat(changePct),
+                    options: optionSnapshot
+                })
+
+                if (changeAmt !== 0 && prevPrice > 0) {
+                    this.setProductLog(`가격 변경: ₩${this.formatNumber(prevPrice)} → ₩${this.formatNumber(newPrice)} (${changeAmt > 0 ? '+' : ''}${changePct}%)`, changeAmt > 0 ? 'warning' : 'success')
+                } else {
+                    this.setProductLog(`가격 변동 없음 (₩${this.formatNumber(newPrice || prevPrice)}) | 옵션 ${optionSnapshot.length}개 기록 완료`, 'success')
+                }
+
+                // 카테고리 파싱
+                const catParts = (detail.category || product.category || '').split(/\s*>\s*/)
+
+                const updates = {
+                    name: detail.name || product.name || '',
+                    options: latestOptions,
+                    images: (detail.images && detail.images.length > 0) ? detail.images : product.images || [],
+                    salePrice: newPrice || prevPrice,
+                    category: detail.category || product.category || '',
+                    category1: catParts[0] || product.category1 || '',
+                    category2: catParts[1] || product.category2 || '',
+                    category3: catParts[2] || product.category3 || '',
+                    category4: catParts[3] || product.category4 || '',
+                    kreamData: detail.kreamData || product.kreamData || {},
+                    priceHistory,
+                    updatedAt: new Date().toISOString()
+                }
+
+                // collectedProducts 업데이트
+                if (isCollectedOnly) {
+                    Object.assign(product, updates)
+                    await storage.save('collectedProducts', product)
+                }
+
+                // products 스토어 업데이트 (bridge 상품)
+                const bridgeProduct = typeof productManager !== 'undefined'
+                    ? productManager.products.find(p => p.collectedProductId === productId || p.id === productId)
+                    : null
+                if (bridgeProduct) {
+                    Object.assign(bridgeProduct, updates)
+                    await storage.save('products', bridgeProduct)
+                }
+
+                this.setProductLog(`KREAM 업데이트 완료`, 'success')
+                app.showNotification('KREAM 상품 업데이트 완료!', 'success')
+                this.renderCollectedList()
+                return
+            } catch (e) {
+                this.setProductLog(`KREAM 업데이트 실패: ${e.message}`, 'error')
+                app.showNotification(`업데이트 실패: ${e.message}`, 'error')
+                return
+            }
+        }
 
         try {
             this.setProductLog(`프록시 서버 호출 중 (goodsNo: ${product.siteProductId})...`, 'info')
@@ -5310,6 +5518,11 @@ const MARKET_FIELD_MAP = {
     marketName: 'HMALL',
     sellerIdField: 'apiId',
     fields: { businessName: 'hm-business-name', apiId: 'hm-api-id', apiKey: 'hm-api-key', storeId: 'hm-store-id', maxCount: 'hm-max-count' }
+  },
+  kream: {
+    marketName: 'KREAM',
+    sellerIdField: 'email',
+    fields: { businessName: 'kr-business-name', email: 'kr-email', password: 'kr-password', saleType: 'kr-sale-type', maxCount: 'kr-max-count' }
   }
 }
 
@@ -5324,28 +5537,60 @@ async function saveMarketSettings(marketType) {
     data[key] = el?.value?.trim() || ''
   }
 
-  await storage.save('settings', { key: `market_${marketType}`, ...data })
-
   const sellerId = data[cfg.sellerIdField] || ''
-  if (typeof accountManager !== 'undefined' && sellerId) {
+  if (!sellerId) {
+    if (typeof app !== 'undefined') app.showNotification(`${cfg.marketName} 계정(ID)을 입력해주세요.`, 'warning')
+    return
+  }
+
+  if (typeof accountManager !== 'undefined') {
     await accountManager.loadAccounts()
-    const existing = accountManager.accounts.find(a => a.marketType === marketType && a.sellerId === sellerId)
-    if (existing) {
-      await accountManager.updateAccount(existing.id, {
-        accountLabel: `${cfg.marketName}-${sellerId}`,
-        businessName: data.businessName || '',
-        apiKey: data.apiKey || data.accessKey || ''
-      })
-    } else {
-      await accountManager.addAccount({
-        marketType,
+
+    // 드롭다운 선택값으로 등록/수정 분기
+    const dropdown = document.getElementById(`stg-acc-dropdown-${marketType}`)
+    const selectedId = dropdown?.value || ''
+
+    if (selectedId) {
+      // 기존 계정 수정
+      const existingAcc = accountManager.accounts.find(a => a.id === selectedId)
+      const existingExtra = existingAcc?.additionalFields || {}
+      await accountManager.updateAccount(selectedId, {
         sellerId,
-        accountLabel: `${cfg.marketName}-${sellerId}`,
+        accountLabel: `${data.businessName || cfg.marketName}-${sellerId}`,
         businessName: data.businessName || '',
         apiKey: data.apiKey || data.accessKey || '',
-        apiSecret: data.secretKey || ''
+        apiSecret: data.secretKey || '',
+        additionalFields: { ...existingExtra, ...data }
       })
+    } else {
+      // 신규 등록 — 동일 sellerId 존재 시 자동 update로 전환
+      const duplicate = accountManager.accounts.find(a => a.marketType === marketType && a.sellerId === sellerId)
+      if (duplicate) {
+        const existingExtra = duplicate.additionalFields || {}
+        await accountManager.updateAccount(duplicate.id, {
+          sellerId,
+          accountLabel: `${data.businessName || cfg.marketName}-${sellerId}`,
+          businessName: data.businessName || '',
+          apiKey: data.apiKey || data.accessKey || '',
+          apiSecret: data.secretKey || '',
+          additionalFields: { ...existingExtra, ...data }
+        })
+      } else {
+        await accountManager.addAccount({
+          marketType,
+          sellerId,
+          accountLabel: `${data.businessName || cfg.marketName}-${sellerId}`,
+          businessName: data.businessName || '',
+          apiKey: data.apiKey || data.accessKey || '',
+          apiSecret: data.secretKey || '',
+          additionalFields: data
+        })
+      }
     }
+
+    clearMarketForm(marketType)
+    renderSettingsAccountDropdown(marketType)
+    renderDynamicMarketFilters()
     if (typeof ui !== 'undefined') {
       ui.renderAccountDashboard()
       ui.renderAccountList()
@@ -5356,19 +5601,206 @@ async function saveMarketSettings(marketType) {
   if (typeof app !== 'undefined') app.showNotification(`${cfg.marketName} 설정이 저장되었습니다.`, 'success')
 }
 
-/** 마켓 공통 설정 로드 */
+/** 마켓 공통 설정 로드 — 등록+수정 겸용 (폼 비움 + 드롭다운 표시) */
 async function loadMarketSettings(marketType) {
   const cfg = MARKET_FIELD_MAP[marketType]
   if (!cfg) return
   try {
-    const data = await storage.get('settings', `market_${marketType}`)
-    if (!data) return
-    for (const [key, elId] of Object.entries(cfg.fields)) {
-      const el = document.getElementById(elId)
-      if (el && data[key] !== undefined) el.value = data[key]
+    if (typeof accountManager !== 'undefined') {
+      await accountManager.loadAccounts()
     }
   } catch (e) {
     console.warn(`[${cfg.marketName}] 설정 로드 실패:`, e.message)
+  }
+  clearMarketForm(marketType)
+  renderSettingsAccountDropdown(marketType)
+}
+
+/** 마켓 폼 초기화 */
+function clearMarketForm(marketType) {
+  const cfg = MARKET_FIELD_MAP[marketType]
+  if (!cfg) return
+  for (const elId of Object.values(cfg.fields)) {
+    const el = document.getElementById(elId)
+    if (el) el.value = ''
+  }
+}
+
+/** 설정 탭 마켓 계정 선택 드롭다운 렌더링 (모든 마켓 공통) */
+function renderSettingsAccountDropdown(marketType) {
+  const panel = document.getElementById(`stg-${marketType}`)
+  if (!panel) return
+
+  // 기존 드롭다운/배지 제거
+  panel.querySelector('.stg-account-dropdown-bar')?.remove()
+  panel.querySelector('.market-account-badge')?.remove()
+  panel.querySelector('.market-account-selector-bar')?.remove()
+
+  const accounts = (typeof accountManager !== 'undefined')
+    ? accountManager.accounts.filter(a => a.marketType === marketType)
+    : []
+
+  const bar = document.createElement('div')
+  bar.className = 'stg-account-dropdown-bar'
+  bar.style.cssText = 'margin-bottom:1rem;display:flex;align-items:center;gap:8px;'
+
+  const sStyle = 'flex:1;padding:0.4rem 0.5rem;background:#0F0F0F;border:1px solid #2D2D2D;border-radius:6px;color:#E5E5E5;font-size:0.8125rem;outline:none;cursor:pointer;'
+  const opts = accounts.map(a => `<option value="${a.id}">${a.accountLabel}</option>`).join('')
+  bar.innerHTML = `<select id="stg-acc-dropdown-${marketType}" style="${sStyle}" onchange="onAccountDropdownChange('${marketType}',this.value)"><option value="">+ 신규 등록</option>${opts}</select>`
+
+  const title = panel.querySelector('.stg-panel-title')
+  if (title) {
+    title.after(bar)
+  } else {
+    panel.prepend(bar)
+  }
+}
+
+/** 드롭다운 변경 핸들러 — 계정 선택 시 폼에 데이터 채움 */
+function onAccountDropdownChange(marketType, accountId) {
+  if (!accountId) {
+    // 신규 등록 선택 → 폼 초기화
+    if (marketType === 'gsshop') clearGsShopForm()
+    else if (marketType === 'lottehome') clearLotteHomeForm()
+    else clearMarketForm(marketType)
+    return
+  }
+  const acc = (typeof accountManager !== 'undefined')
+    ? accountManager.accounts.find(a => a.id === accountId)
+    : null
+  if (!acc) return
+
+  if (marketType === 'gsshop') fillGsShopForm(acc)
+  else if (marketType === 'lottehome') fillLotteHomeForm(acc)
+  else fillMarketForm(marketType, acc)
+}
+
+/** 공통 마켓 폼에 계정 데이터 채움 */
+function fillMarketForm(marketType, account) {
+  const cfg = MARKET_FIELD_MAP[marketType]
+  if (!cfg) return
+  const data = account.additionalFields || {}
+  for (const [key, elId] of Object.entries(cfg.fields)) {
+    const el = document.getElementById(elId)
+    if (el) el.value = data[key] !== undefined ? data[key] : (account[key] || '')
+  }
+}
+
+/** GS샵 폼에 계정 데이터 채움 */
+function fillGsShopForm(account) {
+  const f = account.additionalFields || {}
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || '' }
+  set('gs-api-key-dev', f.apiKeyDev || account.apiKey || '')
+  set('gs-api-key-prod', f.apiKeyProd || '')
+  set('gs-vendor-id', f.vendorId || account.sellerId || '')
+  set('gs-business-name', f.businessName || account.businessName || '')
+  set('gs-max-count', f.maxCount || '')
+  set('gs-ship-fee', f.shipFee || '')
+  set('gs-margin', f.margin || '')
+  set('gs-release-place', f.releasePlace || '')
+  set('gs-return-place', f.returnPlace || '')
+  set('gs-md-id', f.mdId || '')
+  const setSelect = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val }
+  setSelect('gs-dlv-type', f.dlvType)
+  setSelect('gs-tax-type', f.taxType)
+  setSelect('gs-ship-fee-type', f.shipFeeType)
+  // gsShopApi 자격증명 동기화 (키테스트 즉시 가능)
+  if (typeof gsShopApi !== 'undefined') {
+    const activeKey = f.apiKeyProd || f.apiKeyDev || account.apiKey || ''
+    const activeEnv = f.apiKeyProd ? 'prod' : 'dev'
+    gsShopApi.updateCredentials({ aesKey: activeKey, supCd: f.vendorId || account.sellerId, env: activeEnv })
+  }
+}
+
+/** 롯데홈쇼핑 폼에 계정 데이터 채움 */
+function fillLotteHomeForm(account) {
+  const f = account.additionalFields || {}
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || '' }
+  set('lh-user-id', f.userId || account.sellerId || '')
+  set('lh-password', f.password || account.apiSecret || '')
+  set('lh-agnc-no', f.agncNo || '')
+  set('lh-business-name', f.businessName || account.businessName || '')
+  set('lh-max-count', f.maxCount || '')
+  const envRadio = document.querySelector(`input[name="lh-env"][value="${f.env || 'test'}"]`)
+  if (envRadio) envRadio.checked = true
+  const fields = ['pur-shp-cd', 'sale-shp-cd', 'tdf-sct-cd', 'mrgn-rt', 'dlv-polc-no',
+                  'corp-rls-pl-sn', 'corp-dlvp-sn', 'dlv-mean-cd', 'dlv-dday',
+                  'inv-mgmt-yn', 'gift-pkg-yn', 'sum-pkg-psb-yn']
+  for (const field of fields) {
+    const key = field.replace(/-/g, '_')
+    set(`lh-${field}`, f[key])
+  }
+}
+
+/** 롯데홈쇼핑 폼 초기화 */
+function clearLotteHomeForm() {
+  const set = (id) => { const el = document.getElementById(id); if (el) el.value = '' }
+  set('lh-user-id'); set('lh-password'); set('lh-agnc-no'); set('lh-business-name'); set('lh-max-count')
+  const envRadio = document.querySelector('input[name="lh-env"][value="test"]')
+  if (envRadio) envRadio.checked = true
+  // 기본설정 필드도 초기화
+  const extraFields = ['pur-shp-cd', 'sale-shp-cd', 'tdf-sct-cd', 'mrgn-rt', 'dlv-polc-no',
+                       'corp-rls-pl-sn', 'corp-dlvp-sn', 'dlv-mean-cd', 'dlv-dday',
+                       'inv-mgmt-yn', 'gift-pkg-yn', 'sum-pkg-psb-yn']
+  extraFields.forEach(f => set(`lh-${f}`))
+}
+
+/** 계정 목록에서 <option> HTML 생성 */
+function buildAccountOptions(includeAll = true) {
+  if (typeof accountManager === 'undefined') return ''
+  const accounts = accountManager.accounts || []
+  const allOpt = includeAll ? '<option value="">전체마켓보기</option>' : ''
+  return allOpt + accounts.map(a => `<option value="${a.id}">${a.accountLabel}</option>`).join('')
+}
+
+/** 모든 하드코딩 셀렉트/필터를 동적으로 갱신 */
+function renderDynamicMarketFilters() {
+  if (typeof accountManager === 'undefined') return
+  const accounts = accountManager.accounts || []
+
+  // 주문 탭 마켓 필터
+  const orderFilter = document.getElementById('order-market-filter')
+  if (orderFilter) orderFilter.innerHTML = buildAccountOptions(true)
+
+  // CS 탭 계정 필터
+  const csFilter = document.getElementById('cs-account-filter')
+  if (csFilter) {
+    csFilter.innerHTML = accounts.length > 0
+      ? accounts.map(a => `<option value="${a.id}">${a.accountLabel} (주문내역 / 클레임내역 / 문의내역)</option>`).join('')
+      : '<option>마켓 계정을 등록해주세요</option>'
+  }
+
+  // 전송 탭 마켓등록 필터
+  const shipFilter = document.getElementById('ship-market-filter')
+  if (shipFilter) {
+    shipFilter.innerHTML = '<option value="">마켓 계정을 선택해주세요.</option>'
+      + accounts.map(a => `<option value="${a.id}">${a.accountLabel}</option>`).join('')
+  }
+
+  // 마켓정책 탭 버튼 동적 생성
+  const policyTabs = document.getElementById('market-policy-tabs')
+  if (policyTabs && accounts.length > 0) {
+    const seen = new Set()
+    const uniqueMarkets = accounts.filter(a => {
+      const name = a.marketName || a.marketType
+      if (seen.has(name)) return false
+      seen.add(name)
+      return true
+    })
+    policyTabs.innerHTML = uniqueMarkets.map((a, i) => {
+      const name = a.marketName || a.marketType
+      return `<button class="market-tab${i === 0 ? ' active' : ''}" onclick="ui.selectMarketTab(this)">${name}</button>`
+    }).join('')
+  }
+
+  // 매출통계 탭 마켓 체크박스 갱신
+  if (typeof ui !== 'undefined' && typeof ui.renderAnalyticsMarkets === 'function') {
+    ui.renderAnalyticsMarkets()
+  }
+
+  // 전송 탭 계정 체크박스 갱신
+  if (typeof ui !== 'undefined' && typeof ui.renderAccountCheckboxes === 'function') {
+    ui.renderAccountCheckboxes()
   }
 }
 
@@ -5651,25 +6083,48 @@ async function saveLotteHomeSettings() {
     lotteHomeApi.updateCredentials({ userId, password, agncNo, env })
   }
 
-  // accountManager에 롯데홈쇼핑 계정 동기화 (userId 기준으로 구분)
+  // accountManager에 롯데홈쇼핑 계정 동기화 (드롭다운 기반 등록/수정 분기)
   if (typeof accountManager !== 'undefined' && userId) {
     await accountManager.loadAccounts()
-    const existing = accountManager.accounts.find(a => a.marketType === 'lottehome' && a.sellerId === userId)
-    if (existing) {
-      await accountManager.updateAccount(existing.id, {
-        accountLabel: `롯데홈쇼핑 (${env === 'prod' ? '운영' : '테스트'})`,
-        businessName
+
+    const dropdown = document.getElementById('stg-acc-dropdown-lottehome')
+    const selectedId = dropdown?.value || ''
+    const additionalFields = { userId, password, agncNo, businessName, env, maxCount }
+
+    if (selectedId) {
+      // 기존 계정 수정
+      const existingAcc = accountManager.accounts.find(a => a.id === selectedId)
+      const existingExtra = existingAcc?.additionalFields || {}
+      await accountManager.updateAccount(selectedId, {
+        sellerId: userId,
+        accountLabel: `${businessName || '롯데홈쇼핑'}-${userId}`,
+        businessName,
+        additionalFields: { ...existingExtra, ...additionalFields }
       })
     } else {
-      await accountManager.addAccount({
-        marketType: 'lottehome',
-        sellerId: userId,
-        accountLabel: `롯데홈쇼핑 (${env === 'prod' ? '운영' : '테스트'})`,
-        businessName,
-        apiKey: '',
-        apiSecret: ''
-      })
+      // 신규 등록 또는 기존 userId와 일치하는 계정 자동 수정
+      const existing = accountManager.accounts.find(a => a.marketType === 'lottehome' && a.sellerId === userId)
+      if (existing) {
+        await accountManager.updateAccount(existing.id, {
+          accountLabel: `${businessName || '롯데홈쇼핑'}-${userId}`,
+          businessName,
+          additionalFields: { ...(existing.additionalFields || {}), ...additionalFields }
+        })
+      } else {
+        await accountManager.addAccount({
+          marketType: 'lottehome',
+          sellerId: userId,
+          accountLabel: `${businessName || '롯데홈쇼핑'}-${userId}`,
+          businessName,
+          apiKey: '',
+          apiSecret: '',
+          additionalFields
+        })
+      }
     }
+
+    renderSettingsAccountDropdown('lottehome')
+    renderDynamicMarketFilters()
     if (typeof ui !== 'undefined') {
       ui.renderAccountDashboard()
       ui.renderAccountList()
@@ -5747,24 +6202,30 @@ function showAppModal(title, content, type = 'info') {
 // GS샵 설정 UI 전역 함수
 // ═══════════════════════════════════════════════════════════
 
-/** GS샵 인증 테스트 */
-async function testGsShopAuth() {
-  const btn = document.getElementById('gs-auth-btn')
-  const statusEl = document.getElementById('gs-auth-status')
-  const apiKey = document.getElementById('gs-api-key')?.value?.trim()
-  const vendorId = document.getElementById('gs-vendor-id')?.value?.trim()
-  const env = document.querySelector('input[name="gs-env"]:checked')?.value || 'dev'
+/** GS샵 인증 테스트
+ * @param {string} env - 'dev' | 'prod'
+ * @param {Object} opts - { apiKey, vendorId, btnId, statusId } (모달에서 직접 값 전달 시)
+ */
+async function testGsShopAuth(env = 'dev', opts = {}) {
+  const {
+    apiKey: directApiKey,
+    vendorId: directVendorId,
+    btnId = `gs-auth-btn-${env}`,
+    statusId = `gs-auth-status-${env}`
+  } = opts
+
+  const apiKey = directApiKey ?? document.getElementById(`gs-api-key-${env}`)?.value?.trim()
+  const vendorId = directVendorId ?? document.getElementById('gs-vendor-id')?.value?.trim()
+  const btn = document.getElementById(btnId)
+  const statusEl = document.getElementById(statusId)
 
   if (!apiKey) {
-    statusEl.textContent = 'API Key를 입력해주세요.'
-    statusEl.style.color = '#FF6B6B'
+    if (statusEl) { statusEl.textContent = 'API Key를 입력해주세요.'; statusEl.style.color = '#FF6B6B' }
     return
   }
 
-  btn.disabled = true
-  btn.textContent = '확인 중...'
-  statusEl.textContent = '인증 확인 중...'
-  statusEl.style.color = '#FFD93D'
+  if (btn) { btn.disabled = true; btn.textContent = '확인 중...' }
+  if (statusEl) { statusEl.textContent = '인증 확인 중...'; statusEl.style.color = '#FFD93D' }
 
   try {
     const res = await fetch('http://localhost:3001/api/gsshop/auth/check', {
@@ -5777,29 +6238,25 @@ async function testGsShopAuth() {
     const data = await res.json()
 
     if (data.success && data.authenticated) {
-      statusEl.textContent = `✓ ${data.message}`
-      statusEl.style.color = '#51CF66'
-      if (typeof gsShopApi !== 'undefined') {
-        gsShopApi.updateCredentials({ aesKey: apiKey, supCd: vendorId, env })
-      }
+      if (statusEl) { statusEl.textContent = `✓ ${data.message}`; statusEl.style.color = '#51CF66' }
+      if (typeof gsShopApi !== 'undefined') gsShopApi.updateCredentials({ aesKey: apiKey, supCd: vendorId, env })
     } else {
-      statusEl.textContent = `✗ 인증 실패: ${data.message}`
-      statusEl.style.color = '#FF6B6B'
+      if (statusEl) { statusEl.textContent = `✗ 인증 실패: ${data.message}`; statusEl.style.color = '#FF6B6B' }
     }
   } catch (e) {
-    statusEl.textContent = '✗ 서버 연결 실패 (프록시 서버를 시작하세요)'
-    statusEl.style.color = '#FF6B6B'
+    if (statusEl) { statusEl.textContent = '✗ 서버 연결 실패 (프록시 서버를 시작하세요)'; statusEl.style.color = '#FF6B6B' }
   } finally {
-    btn.disabled = false
-    btn.textContent = '인증 테스트'
+    if (btn) { btn.disabled = false; btn.textContent = '테스트' }
   }
 }
 
 /** 기초정보 API에서 출고지/반품지/MDID 불러오기 */
 async function loadGsShopDefaults() {
-  const apiKey = document.getElementById('gs-api-key')?.value?.trim()
+  const prodKey = document.getElementById('gs-api-key-prod')?.value?.trim()
+  const devKey = document.getElementById('gs-api-key-dev')?.value?.trim()
+  const apiKey = prodKey || devKey
+  const env = prodKey ? 'prod' : 'dev'
   const vendorId = document.getElementById('gs-vendor-id')?.value?.trim()
-  const env = document.querySelector('input[name="gs-env"]:checked')?.value || 'dev'
 
   if (!apiKey || !vendorId) {
     showAppModal('입력 필요', 'AES256 인증키와 협력사코드를 먼저 입력하세요.', 'warning')
@@ -5889,13 +6346,16 @@ async function loadGsShopDefaults() {
 
 /** GS샵 설정 저장 */
 async function saveGsShopSettings() {
-  const env = document.querySelector('input[name="gs-env"]:checked')?.value || 'dev'
-  const apiKey = document.getElementById('gs-api-key')?.value?.trim() || ''
+  const apiKeyDev = document.getElementById('gs-api-key-dev')?.value?.trim() || ''
+  const apiKeyProd = document.getElementById('gs-api-key-prod')?.value?.trim() || ''
   const vendorId = document.getElementById('gs-vendor-id')?.value?.trim() || ''
   const businessName = document.getElementById('gs-business-name')?.value?.trim() || ''
   const maxCount = document.getElementById('gs-max-count')?.value || ''
 
-  await storage.save('settings', { key: 'gsshop_credentials', apiKey, vendorId, businessName, env, maxCount })
+  if (!vendorId) {
+    if (typeof app !== 'undefined') app.showNotification('GS샵 협력사코드(supCd)를 입력해주세요.', 'warning')
+    return
+  }
 
   const defaults = {
     key: 'gsshop_defaults',
@@ -5908,35 +6368,70 @@ async function saveGsShopSettings() {
     mdId: document.getElementById('gs-md-id')?.value?.trim() || '',
     margin: document.getElementById('gs-margin')?.value || ''
   }
-  await storage.save('settings', defaults)
 
+  // 활성키: 운영키 우선, 없으면 개발키
+  const activeKey = apiKeyProd || apiKeyDev
+  const activeEnv = apiKeyProd ? 'prod' : 'dev'
   if (typeof gsShopApi !== 'undefined') {
-    gsShopApi.updateCredentials({ aesKey: apiKey, supCd: vendorId, env })
+    gsShopApi.updateCredentials({ aesKey: activeKey, supCd: vendorId, env: activeEnv })
   }
 
-  // accountManager에 GS샵 계정 동기화 (vendorId 기준으로 구분)
-  if (typeof accountManager !== 'undefined' && vendorId) {
+  if (typeof accountManager !== 'undefined') {
     await accountManager.loadAccounts()
-    const existing = accountManager.accounts.find(a => a.marketType === 'gsshop' && a.sellerId === vendorId)
-    if (existing) {
-      await accountManager.updateAccount(existing.id, {
-        accountLabel: `GS샵 (${env === 'prod' ? '운영' : '테스트'})`,
+    const additionalFields = { apiKeyDev, apiKeyProd, vendorId, businessName, maxCount, ...defaults }
+
+    // 드롭다운 선택값으로 등록/수정 분기
+    const dropdown = document.getElementById('stg-acc-dropdown-gsshop')
+    const selectedId = dropdown?.value || ''
+
+    if (selectedId) {
+      // 기존 계정 수정
+      const existingAcc = accountManager.accounts.find(a => a.id === selectedId)
+      const existingExtra = existingAcc?.additionalFields || {}
+      await accountManager.updateAccount(selectedId, {
+        sellerId: vendorId,
+        accountLabel: `${businessName}-${vendorId}`,
         businessName,
-        apiKey
+        apiKey: activeKey,
+        additionalFields: { ...existingExtra, ...additionalFields }
       })
     } else {
-      await accountManager.addAccount({
-        marketType: 'gsshop',
-        sellerId: vendorId,
-        accountLabel: `GS샵 (${env === 'prod' ? '운영' : '테스트'})`,
-        businessName,
-        apiKey,
-        apiSecret: ''
-      })
+      // 신규 등록 — 동일 vendorId 존재 시 자동 update로 전환
+      const duplicate = accountManager.accounts.find(a => a.marketType === 'gsshop' && a.sellerId === vendorId)
+      if (duplicate) {
+        const existingExtra = duplicate.additionalFields || {}
+        await accountManager.updateAccount(duplicate.id, {
+          sellerId: vendorId,
+          accountLabel: `${businessName}-${vendorId}`,
+          businessName,
+          apiKey: activeKey,
+          additionalFields: { ...existingExtra, ...additionalFields }
+        })
+      } else {
+        await accountManager.addAccount({
+          marketType: 'gsshop',
+          sellerId: vendorId,
+          accountLabel: `${businessName}-${vendorId}`,
+          businessName,
+          apiKey: activeKey,
+          apiSecret: '',
+          additionalFields
+        })
+      }
     }
-    ui.renderAccountDashboard()
-    ui.renderAccountList()
-    ui.renderAccountCheckboxes()
+
+    // settings DB 동기화 (gsShopApi 하위호환)
+    await storage.save('settings', { key: 'gsshop_credentials', apiKeyDev, apiKeyProd, vendorId, businessName, maxCount })
+    await storage.save('settings', defaults)
+
+    clearGsShopForm()
+    renderSettingsAccountDropdown('gsshop')
+    renderDynamicMarketFilters()
+    if (typeof ui !== 'undefined') {
+      ui.renderAccountDashboard()
+      ui.renderAccountList()
+      ui.renderAccountCheckboxes()
+    }
   }
 
   if (typeof app !== 'undefined') {
@@ -5944,83 +6439,46 @@ async function saveGsShopSettings() {
   }
 }
 
-/** GS샵 설정 로드 (설정 탭 진입 시 호출) */
+/** GS샵 폼 초기화 */
+function clearGsShopForm() {
+  const fields = ['gs-api-key-dev', 'gs-api-key-prod', 'gs-vendor-id', 'gs-business-name', 'gs-max-count',
+                  'gs-ship-fee', 'gs-margin']
+  fields.forEach(id => { const el = document.getElementById(id); if (el) el.value = '' })
+  const sels = ['gs-dlv-type', 'gs-tax-type', 'gs-ship-fee-type']
+  sels.forEach(id => { const el = document.getElementById(id); if (el) el.selectedIndex = 0 })
+}
+
+/** GS샵 설정 로드 — 등록+수정 겸용 (폼 비움 + 드롭다운 표시) */
 async function loadGsShopSettings() {
   try {
-    const creds = await storage.get('settings', 'gsshop_credentials')
-    const defaults = await storage.get('settings', 'gsshop_defaults')
-
-    if (creds) {
-      if (document.getElementById('gs-api-key')) document.getElementById('gs-api-key').value = creds.apiKey || ''
-      if (document.getElementById('gs-vendor-id')) document.getElementById('gs-vendor-id').value = creds.vendorId || ''
-      if (document.getElementById('gs-business-name')) document.getElementById('gs-business-name').value = creds.businessName || ''
-      if (document.getElementById('gs-max-count')) document.getElementById('gs-max-count').value = creds.maxCount || ''
-      const envRadio = document.querySelector(`input[name="gs-env"][value="${creds.env || 'dev'}"]`)
-      if (envRadio) envRadio.checked = true
-      if (typeof gsShopApi !== 'undefined') gsShopApi.updateCredentials({ aesKey: creds.apiKey, supCd: creds.vendorId, env: creds.env })
-    }
-
-    if (defaults) {
-      // 일반 input 필드
-      const map = { dlvType: 'gs-dlv-type', taxType: 'gs-tax-type', shipFeeType: 'gs-ship-fee-type',
-                    shipFee: 'gs-ship-fee', margin: 'gs-margin' }
-      for (const [key, elId] of Object.entries(map)) {
-        const el = document.getElementById(elId)
-        if (el && defaults[key] !== undefined) el.value = defaults[key]
+    if (typeof accountManager !== 'undefined') {
+      await accountManager.loadAccounts()
+      // gsShopApi 자격증명 초기화 (첫 번째 등록 계정에서)
+      const activeAcct = accountManager.accounts.find(a => a.marketType === 'gsshop')
+      if (activeAcct) {
+        const f = activeAcct.additionalFields || {}
+        const activeKey = f.apiKeyProd || f.apiKeyDev || activeAcct.apiKey || ''
+        const activeEnv = f.apiKeyProd ? 'prod' : 'dev'
+        if (typeof gsShopApi !== 'undefined') gsShopApi.updateCredentials({ aesKey: activeKey, supCd: f.vendorId || activeAcct.sellerId, env: activeEnv })
       }
-      // select 필드: 저장된 값이 없으면 임시 option 추가
-      const selects = [
-        { id: 'gs-release-place', val: defaults.releasePlace },
-        { id: 'gs-return-place',  val: defaults.returnPlace },
-        { id: 'gs-md-id',         val: defaults.mdId }
-      ]
-      selects.forEach(({ id, val }) => {
-        if (!val) return
-        const el = document.getElementById(id)
-        if (!el) return
-        if (!Array.from(el.options).find(o => o.value === val)) {
-          const opt = document.createElement('option')
-          opt.value = val
-          opt.textContent = val
-          el.appendChild(opt)
-        }
-        el.value = val
-      })
     }
   } catch (e) {
     console.warn('[GS샵] 설정 로드 실패:', e.message)
   }
+  clearGsShopForm()
+  renderSettingsAccountDropdown('gsshop')
 }
 
 /** 롯데홈쇼핑 설정 로드 (설정 탭 진입 시 호출) */
 async function loadLotteHomeSettings() {
   try {
-    const creds = await storage.get('settings', 'lottehome_credentials')
-    const defaults = await storage.get('settings', 'lottehome_defaults')
-
-    if (creds) {
-      if (document.getElementById('lh-user-id')) document.getElementById('lh-user-id').value = creds.userId || ''
-      if (document.getElementById('lh-password')) document.getElementById('lh-password').value = creds.password || ''
-      if (document.getElementById('lh-agnc-no')) document.getElementById('lh-agnc-no').value = creds.agncNo || ''
-      if (document.getElementById('lh-business-name')) document.getElementById('lh-business-name').value = creds.businessName || ''
-      if (document.getElementById('lh-max-count')) document.getElementById('lh-max-count').value = creds.maxCount || ''
-      const envRadio = document.querySelector(`input[name="lh-env"][value="${creds.env || 'test'}"]`)
-      if (envRadio) envRadio.checked = true
-
-      // lotteHomeApi 자격증명 동기화
-      if (typeof lotteHomeApi !== 'undefined') {
-        lotteHomeApi.updateCredentials(creds)
-      }
-    }
-
-    if (defaults) {
-      const fields = ['pur-shp-cd', 'sale-shp-cd', 'tdf-sct-cd', 'mrgn-rt', 'dlv-polc-no',
-                      'corp-rls-pl-sn', 'corp-dlvp-sn', 'dlv-mean-cd', 'dlv-dday',
-                      'inv-mgmt-yn', 'gift-pkg-yn', 'sum-pkg-psb-yn']
-      for (const f of fields) {
-        const el = document.getElementById(`lh-${f}`)
-        const key = f.replace(/-/g, '_')
-        if (el && defaults[key] !== undefined) el.value = defaults[key]
+    // lotteHomeApi 자격증명 초기화 (첫 번째 등록 계정에서)
+    if (typeof accountManager !== 'undefined') {
+      await accountManager.loadAccounts()
+      const activeAcct = accountManager.accounts.find(a => a.marketType === 'lottehome')
+      if (activeAcct && typeof lotteHomeApi !== 'undefined') {
+        const f = activeAcct.additionalFields || {}
+        lotteHomeApi.updateCredentials({ userId: f.userId, password: f.password, agncNo: f.agncNo, env: f.env })
       }
     }
 
@@ -6045,4 +6503,6 @@ async function loadLotteHomeSettings() {
   } catch (e) {
     console.warn('[롯데홈쇼핑] 설정 로드 실패:', e.message)
   }
+  clearLotteHomeForm()
+  renderSettingsAccountDropdown('lottehome')
 }

@@ -2092,7 +2092,7 @@
                             </div>
                             <select id="product-source-site" onchange="ui.renderProducts()" style="padding:0.375rem 0.625rem; font-size:0.8125rem; width:auto;">
                                 <option value="">소싱사이트</option>
-                                <option value="ABCmart">ABCmart</option><option value="FOLDERStyle">FOLDERStyle</option><option value="GrandStage">GrandStage</option><option value="GSShop">GSShop</option><option value="LOTTEON">LOTTEON</option><option value="MUSINSA">MUSINSA</option><option value="Nike">Nike</option><option value="OliveYoung">OliveYoung</option><option value="SSG">SSG</option>
+                                <option value="ABCmart">ABCmart</option><option value="FOLDERStyle">FOLDERStyle</option><option value="GrandStage">GrandStage</option><option value="GSShop">GSShop</option><option value="KREAM">KREAM</option><option value="LOTTEON">LOTTEON</option><option value="MUSINSA">MUSINSA</option><option value="Nike">Nike</option><option value="OliveYoung">OliveYoung</option><option value="SSG">SSG</option>
                             </select>
                             <select id="product-status" style="padding:0.375rem 0.625rem; font-size:0.8125rem; width:auto;">
                                 <option value="">판매현황</option>
@@ -2218,12 +2218,8 @@
 
                     <!-- 필터 바 -->
                     <div style="background:rgba(18,18,18,0.98); border:1px solid #232323; border-radius:10px; padding:0.75rem 1rem; margin-bottom:1rem; display:flex; align-items:center; gap:6px; flex-wrap:nowrap;">
-                        <select style="width:118px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
-                            <option>전체마켓보기</option>
-                            <option>쿠팡</option><option>스마트스토어</option><option>11번가</option>
-                            <option>쿠팡 A사업자</option><option>쿠팡 B사업자</option>
-                            <option>스마트스토어 A사업자</option><option>스마트스토어 B사업자</option>
-                            <option>11번가 A사업자</option>
+                        <select id="order-market-filter" style="width:118px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                            <option value="">전체마켓보기</option>
                         </select>
                         <select style="width:110px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
                             <option value="">전체사이트보기</option><option>ABCmart</option><option>FOLDERStyle</option><option>GrandStage</option><option>GSShop</option><option>LOTTEON</option><option>MUSINSA</option><option>Nike</option><option>OliveYoung</option><option>SSG</option>
@@ -2270,6 +2266,7 @@
                                 <tr style="background:#0D1117; border-bottom:2px solid #1C2333;">
                                     <th style="width:36px; padding:0.5rem; text-align:center; border-right:1px solid #1C2333;"><input type="checkbox" style="accent-color:#F59E0B; width:13px; height:13px;"></th>
                                     <th style="padding:0.6rem 0.75rem; text-align:center; font-size:0.75rem; font-weight:600; color:#94A3B8; letter-spacing:0.5px; border-right:1px solid #1C2333;">주문정보</th>
+                                    <th style="padding:0.6rem 0.75rem; text-align:center; font-size:0.75rem; font-weight:600; color:#94A3B8; letter-spacing:0.5px; border-right:1px solid #1C2333; width:80px;">소싱사이트</th>
                                     <th style="padding:0.6rem 0.75rem; text-align:center; font-size:0.75rem; font-weight:600; color:#94A3B8; letter-spacing:0.5px; border-right:1px solid #1C2333; width:143px;">금액</th>
                                     <th style="padding:0.6rem 0.75rem; text-align:center; font-size:0.75rem; font-weight:600; color:#94A3B8; letter-spacing:0.5px; width:320px;">주문상태</th>
                                 </tr>
@@ -2343,6 +2340,7 @@
                                 <label class="af-cb"><input type="checkbox" class="af-site" value="FOLDERStyle" checked> <span>FOLDERStyle</span></label>
                                 <label class="af-cb"><input type="checkbox" class="af-site" value="GrandStage" checked> <span>GrandStage</span></label>
                                 <label class="af-cb"><input type="checkbox" class="af-site" value="GSShop" checked> <span>GSShop</span></label>
+                                <label class="af-cb"><input type="checkbox" class="af-site" value="KREAM" checked> <span>KREAM</span></label>
                                 <label class="af-cb"><input type="checkbox" class="af-site" value="LOTTEON" checked> <span>LOTTEON</span></label>
                                 <label class="af-cb"><input type="checkbox" class="af-site" value="MUSINSA" checked> <span>MUSINSA</span></label>
                                 <label class="af-cb"><input type="checkbox" class="af-site" value="Nike" checked> <span>Nike</span></label>
@@ -3503,8 +3501,8 @@
                                 <select style="padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#B0BAD0; border-radius:4px; outline:none; cursor:pointer; width:100px;">
                                     <option>전체</option><option>등록</option><option>미등록</option>
                                 </select>
-                                <select style="padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#B0BAD0; border-radius:4px; outline:none; cursor:pointer; width:160px;">
-                                    <option>마켓 계정을 선택해주세요.</option><option>11번가-A</option><option>스마트스토어-A</option><option>쿠팡-A</option><option>롯데ON-A</option>
+                                <select id="ship-market-filter" style="padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#B0BAD0; border-radius:4px; outline:none; cursor:pointer; width:160px;">
+                                    <option value="">마켓 계정을 선택해주세요.</option>
                                 </select>
                             </div>
                             <!-- 등록일자 -->
@@ -3550,6 +3548,7 @@
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>FOLDERStyle</span></label>
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>GrandStage</span></label>
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>GSShop</span></label>
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>KREAM</span></label>
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>LOTTEON</span></label>
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>MUSINSA</span></label>
                                 <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>Nike</span></label>
@@ -3578,20 +3577,7 @@
                         <!-- 마켓 -->
                         <div style="padding:10px 16px 12px;">
                             <div style="font-size:0.85rem; font-weight:600; color:#C5C5C5; margin-bottom:8px; padding-bottom:6px; border-bottom:1px solid #1C1E2A;">마켓</div>
-                            <div id="shipment-account-checkboxes" style="display:flex; flex-wrap:wrap; gap:6px 20px;">
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" id="ship-market-all" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;" onchange="document.querySelectorAll('.ship-market-cb').forEach(c=>c.checked=this.checked)"> 전체</label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 쿠팡</label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> SSG</label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 스마트스토어</label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 11번가</label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 지마켓</label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 옥션</label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> GS샵</label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 롯데온</label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 롯데홈쇼핑</label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> 홈앤쇼핑</label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer; white-space:nowrap;"><input type="checkbox" class="ship-market-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"> HMALL</label>
-                            </div>
+                            <div id="shipment-account-checkboxes" style="display:flex; flex-wrap:wrap; gap:6px 20px;"></div>
                         </div>
                     </div>
 
@@ -3713,9 +3699,8 @@
                             onkeydown="if(event.key==='Enter') document.getElementById('cs-search-btn').click()">
                         <button id="cs-search-btn" style="padding:0.28rem 0.75rem; font-size:0.8rem; background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; border:none; border-radius:4px; white-space:nowrap; cursor:pointer; flex-shrink:0;">검색</button>
                         <span style="width:1px; background:#333; height:18px; flex-shrink:0;"></span>
-                        <select style="flex:2; min-width:0; padding:0.28rem 0.4rem; font-size:0.75rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
-                            <option>G0마켓2.0-bonol06 (주문내역 / 클레임내역 / 문의내역)</option>
-                            <option>G0마켓2.0-bonol07 (주문내역 / 클레임내역 / 문의내역)</option>
+                        <select id="cs-account-filter" style="flex:2; min-width:0; padding:0.28rem 0.4rem; font-size:0.75rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
+                            <option>마켓 계정을 등록해주세요</option>
                         </select>
                         <button style="padding:0.28rem 0.6rem; font-size:0.8rem; background:rgba(50,50,50,0.9); border:1px solid #3D3D3D; color:#C5C5C5; border-radius:4px; white-space:nowrap; cursor:pointer; flex-shrink:0;">가져오기</button>
                         <button style="padding:0.28rem 0.6rem; font-size:0.8rem; background:#8B1A1A; border:1px solid #C0392B; color:#fff; border-radius:4px; white-space:nowrap; cursor:pointer; flex-shrink:0;">전체마켓</button>
@@ -3827,6 +3812,7 @@
                             <button class="stg-tab" data-market="lottehome" onclick="switchSettingsTab('lottehome',this)">롯데홈쇼핑</button>
                             <button class="stg-tab" data-market="homeand" onclick="switchSettingsTab('homeand',this)">홈앤쇼핑</button>
                             <button class="stg-tab" data-market="hmall" onclick="switchSettingsTab('hmall',this)">HMALL</button>
+                            <button class="stg-tab" data-market="kream" onclick="switchSettingsTab('kream',this)">KREAM</button>
                         </div>
 
                         <!-- 탭 패널 공통 래퍼 -->
@@ -3947,32 +3933,25 @@
                             <div class="stg-panel" id="stg-gsshop" style="display:none;">
                                 <div class="stg-panel-title">GS샵 설정</div>
                                 <div class="stg-form">
-                                    <!-- 환경 선택 -->
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="gs-business-name" placeholder="계정 구분용 사업자명 (예: A사업자)"></div>
                                     <div class="stg-row">
-                                        <label>API 환경</label>
-                                        <div style="display:flex; gap:1rem; align-items:center;">
-                                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                                <input type="radio" name="gs-env" id="gs-env-dev" value="dev" checked>
-                                                <span style="color:#FFD93D;">개발</span>
-                                            </label>
-                                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                                                <input type="radio" name="gs-env" id="gs-env-prod" value="prod">
-                                                <span style="color:#51CF66;">운영</span>
-                                            </label>
+                                        <label>개발 AES256 인증키</label>
+                                        <div style="display:flex; gap:6px; align-items:center; flex:1;">
+                                            <input type="password" id="gs-api-key-dev" placeholder="개발키 (withgs.gsshop.com에서 확인)" style="flex:1; min-width:0;">
+                                            <button id="gs-auth-btn-dev" onclick="testGsShopAuth('dev')" style="padding:6px 12px; background:#006EBD; color:#fff; border:none; border-radius:5px; font-size:12px; cursor:pointer; white-space:nowrap;">테스트</button>
+                                            <span id="gs-auth-status-dev" style="font-size:11px; color:#888; white-space:nowrap;">미인증</span>
                                         </div>
                                     </div>
-                                    <div class="stg-row"><label>사업자명</label><input type="text" id="gs-business-name" placeholder="계정 구분용 사업자명 (예: A사업자)"></div>
-                                    <div class="stg-row"><label>AES256 인증키</label><input type="password" id="gs-api-key" placeholder="개발키 또는 운영키 (withgs.gsshop.com에서 확인)"></div>
+                                    <div class="stg-row">
+                                        <label>운영 AES256 인증키</label>
+                                        <div style="display:flex; gap:6px; align-items:center; flex:1;">
+                                            <input type="password" id="gs-api-key-prod" placeholder="운영키 (withgs.gsshop.com에서 확인)" style="flex:1; min-width:0;">
+                                            <button id="gs-auth-btn-prod" onclick="testGsShopAuth('prod')" style="padding:6px 12px; background:#28a745; color:#fff; border:none; border-radius:5px; font-size:12px; cursor:pointer; white-space:nowrap;">테스트</button>
+                                            <span id="gs-auth-status-prod" style="font-size:11px; color:#888; white-space:nowrap;">미인증</span>
+                                        </div>
+                                    </div>
                                     <div class="stg-row"><label>협력사코드(supCd)</label><input type="text" id="gs-vendor-id" placeholder="GS샵 협력사코드 (예: 91000000)"></div>
                                     <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="gs-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
-                                </div>
-
-                                <!-- 인증 테스트 -->
-                                <div style="margin-top:1.25rem; padding:1rem; background:rgba(0,110,189,0.08); border:1px solid rgba(0,110,189,0.3); border-radius:8px;">
-                                    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-                                        <button id="gs-auth-btn" onclick="testGsShopAuth()" style="padding:8px 18px; background:#006EBD; color:#fff; border:none; border-radius:6px; font-weight:700; cursor:pointer; font-size:13px;">인증 테스트</button>
-                                        <span id="gs-auth-status" style="font-size:13px; color:#888;">미인증</span>
-                                    </div>
                                 </div>
 
                                 <!-- 기본 설정 -->
@@ -4195,6 +4174,32 @@
                                 <div class="stg-actions" style="margin-top:2rem;">
 <button class="stg-btn-save" onclick="saveMarketSettings('hmall')">설정</button>
                                 </div>
+                            </div>
+
+                            <!-- KREAM -->
+                            <div class="stg-panel" id="stg-kream" style="display:none;">
+                                <div class="stg-panel-title">KREAM 설정</div>
+                                <div style="font-size:0.8125rem; color:#666; margin-bottom:1rem;">리셀 플랫폼 KREAM 계정을 연결합니다. 소싱처(시세 조회) + 판매처(매도 입찰)로 모두 활용 가능합니다.</div>
+                                <div class="stg-form">
+                                    <div class="stg-row"><label>사업자명</label><input type="text" id="kr-business-name" placeholder="상호명 입력"></div>
+                                    <div class="stg-row"><label>이메일</label><input type="text" id="kr-email" placeholder="KREAM 로그인 이메일"></div>
+                                    <div class="stg-row"><label>비밀번호</label><input type="password" id="kr-password" placeholder="KREAM 비밀번호"></div>
+                                    <div class="stg-row">
+                                        <label>판매유형</label>
+                                        <select id="kr-sale-type" style="padding:0.25rem 0.5rem; background:#1A1A1A; border:1px solid #2D2D2D; color:#E5E5E5; border-radius:4px; font-size:0.8125rem; min-width:0;">
+                                            <option value="general">일반판매</option>
+                                            <option value="storage">보관판매</option>
+                                            <option value="grade95">95점판매</option>
+                                        </select>
+                                    </div>
+                                    <div class="stg-row"><label>최대 등록 갯수</label><input type="number" id="kr-max-count" min="1" placeholder="∞ 무제한" style="width:140px;"></div>
+                                </div>
+                                <div class="stg-actions" style="margin-top:2rem; gap:0.5rem;">
+                                    <button class="stg-btn-save" onclick="saveMarketSettings('kream')">설정</button>
+                                    <button class="stg-btn-save" style="background:#2D7D46;" onclick="kreamBrowserLogin()">브라우저 로그인</button>
+                                    <button class="stg-btn-save" style="background:#333;" onclick="kreamCheckBrowserStatus()">상태 확인</button>
+                                </div>
+                                <div id="kr-browser-status" style="margin-top:0.75rem; font-size:0.75rem; color:#666;"></div>
                             </div>
 
 
@@ -4856,8 +4861,10 @@
     <script src="js/modules/category.js"></script>
     <script src="js/modules/lottehome-api.js"></script>
     <script src="js/modules/gsshop-api.js"></script>
+    <script src="js/modules/kream.js"></script>
     <script src="js/modules/shipment-manager.js"></script>
     <script src="js/modules/analytics-ui.js"></script>
+    <script src="js/modules/agent-monitor.js"></script>
     <script src="js/app.js"></script>
     <script src="js/ui.js"></script>
 </body>
