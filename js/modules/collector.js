@@ -13,12 +13,13 @@ class CollectorManager {
         this.collectDetailImages = false   // 상세페이지 이미지 수집 여부
         this._proxyChecked = false         // 프록시 확인 완료 여부
 
-        // 지원 소싱사이트 목록 (9개)
+        // 지원 소싱사이트 목록 (10개)
         this.supportedSites = [
             { id: 'abcmart', name: 'ABCmart', domain: 'a-rt.com', label: 'ABCmart' },
             { id: 'folderstyle', name: 'FOLDERStyle', domain: 'folderstyle.com', label: 'FOLDERStyle' },
             { id: 'grandstage', name: 'GrandStage', domain: 'a-rt.com/grand', label: 'GrandStage' },
             { id: 'gsshop', name: 'GSShop', domain: 'gsshop.com', label: 'GSShop' },
+            { id: 'kream', name: 'KREAM', domain: 'kream.co.kr', label: 'KREAM' },
             { id: 'lotteon', name: 'LOTTEON', domain: 'lotteon.com', label: 'LOTTEON' },
             { id: 'musinsa', name: 'MUSINSA', domain: 'musinsa.com', label: 'MUSINSA' },
             { id: 'nike', name: 'Nike', domain: 'nike.com', label: 'Nike' },
@@ -103,6 +104,77 @@ class CollectorManager {
     _extractMusinsaGoodsNo(url) {
         const match = url.match(/\/(?:app\/)?(?:goods|products)\/(\d{5,8})/)
         return match ? match[1] : null
+    }
+
+    /**
+     * KREAM URL 여부 확인
+     */
+    _isKreamUrl(url) {
+        return url && url.includes('kream.co.kr')
+    }
+
+    /**
+     * KREAM URL에서 상품 ID 추출
+     * /products/12345 패턴 지원
+     */
+    _extractKreamProductId(url) {
+        const match = url.match(/\/products\/(\d+)/)
+        return match ? match[1] : null
+    }
+
+    /**
+     * KREAM 실제 단일 상품 수집 (프록시 서버 사용)
+     */
+    async _collectKreamSingle(url) {
+        const productId = this._extractKreamProductId(url)
+        if (!productId) throw new Error('KREAM 상품 URL에서 상품ID를 찾을 수 없습니다.')
+
+        const res = await fetch(`${MUSINSA_PROXY_URL}/api/kream/products/${productId}`)
+        if (!res.ok) throw new Error(`프록시 응답 오류: ${res.status}`)
+        const data = await res.json()
+        if (!data.success) throw new Error(data.message || 'KREAM 상품 수집 실패')
+        return data.data
+    }
+
+    /**
+     * KREAM 실제 대량 수집 (프록시 서버 사용)
+     * 키워드 기반 검색 → 상품 목록 수집
+     */
+    async _collectKreamBulk(url, options = {}) {
+        const count = options.count || 30
+        const keyword = this._extractKeywordFromUrl(url) || options.keyword || ''
+        const productId = this._extractKreamProductId(url)
+
+        const log = (msg, type = 'info') => {
+            console.log(`[KREAM수집] ${msg}`)
+            if (this.onLog) this.onLog(msg, type)
+        }
+
+        // 단일 상품 URL이면 단건 수집
+        if (productId) {
+            log(`단일 상품 수집: ${productId}`)
+            try {
+                const product = await this._collectKreamSingle(url)
+                return product ? [product] : []
+            } catch (e) {
+                log(`단일 수집 실패: ${e.message}`, 'error')
+                return []
+            }
+        }
+
+        // 키워드 검색 기반 수집
+        if (keyword) {
+            log(`KREAM 검색 수집: "${keyword}" (${count}개 요청)`)
+            const params = new URLSearchParams({ keyword, size: String(count) })
+            const searchRes = await fetch(`${MUSINSA_PROXY_URL}/api/kream/search?${params}`)
+            if (!searchRes.ok) throw new Error(`KREAM 검색 실패: HTTP ${searchRes.status}`)
+            const searchData = await searchRes.json()
+            if (!searchData.success) throw new Error(searchData.message || 'KREAM 검색 실패')
+            return searchData.data || []
+        }
+
+        log('KREAM URL에서 키워드를 추출할 수 없습니다. 시뮬레이션으로 대체합니다.', 'warning')
+        return []
     }
 
     /**
@@ -374,6 +446,7 @@ class CollectorManager {
         if (lower.includes('oliveyoung') || lower.includes('olive')) return this.supportedSites.find(s => s.id === 'oliveyoung')
         if (lower.includes('gsshop') || lower.includes('gs25')) return this.supportedSites.find(s => s.id === 'gsshop')
         if (lower.includes('abc') || lower.includes('a-rt')) return this.supportedSites.find(s => s.id === 'abcmart')
+        if (lower.includes('kream')) return this.supportedSites.find(s => s.id === 'kream')
         return null
     }
 
@@ -395,6 +468,22 @@ class CollectorManager {
         this.isCollecting = true
 
         try {
+            // KREAM URL + 실제 수집 모드 + 프록시 가용
+            if (this.realModeEnabled && this._isKreamUrl(url) && this.proxyAvailable) {
+                console.log('[Collector] KREAM 실제 수집 시작...')
+                let products = await this._collectKreamBulk(url, { ...options, count })
+
+                if (typeof forbiddenManager !== 'undefined') {
+                    products = forbiddenManager.filterProducts(products)
+                    products = products.map(p => ({ ...p, name: forbiddenManager.cleanProductName(p.name) }))
+                }
+
+                this.collectResults = products
+                this.currentPage = 1
+                console.log(`[Collector] KREAM 실제 수집 완료: ${products.length}개`)
+                return products
+            }
+
             // 무신사 URL + 실제 수집 모드 + 프록시 가용
             if (this.realModeEnabled && this._isMusinsaUrl(url) && this.proxyAvailable) {
                 // 로그인 안 된 상태면 자동 로그인 재시도
@@ -492,6 +581,27 @@ class CollectorManager {
 
             const productName = (keyword ? keyword + ' ' : '') + baseProduct.name + variation
 
+            // KREAM은 시세 기반 가격이므로 랜덤 가격 변형 적용하지 않음
+            const isKream = siteName === 'KREAM'
+            const options = baseProduct.options.map(opt => {
+                const mapped = {
+                    ...opt,
+                    originalStock: opt.stock,
+                    stockStatus: opt.stockStatus || (opt.stock > 0 ? '재고' : '품절'),
+                    isSoldOut: opt.stockStatus === '품절' || opt.stock === 0
+                }
+                if (isKream) {
+                    // KREAM: kreamAsk/kreamBid/kreamLastSale 보존, price = kreamAsk
+                    mapped.price = opt.kreamAsk || opt.price
+                } else {
+                    mapped.price = Math.max(9900, basePrice + Math.floor(Math.random() * 5000))
+                }
+                return mapped
+            })
+            const salePrice = isKream
+                ? (Math.min(...options.map(o => o.price || Infinity)) || baseProduct.price)
+                : Math.max(9900, basePrice)
+
             products.push({
                 id: 'col_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substring(2, 6),
                 sourceSite: siteName,
@@ -507,15 +617,9 @@ class CollectorManager {
                 images: [this._genPlaceholderImg(baseProduct.brand)],
                 detailImages: [],
                 detailHtml: '',
-                options: baseProduct.options.map(opt => ({
-                    ...opt,
-                    originalStock: opt.stock,
-                    stockStatus: opt.stockStatus || (opt.stock > 0 ? '재고' : '품절'),
-                    isSoldOut: opt.stockStatus === '품절' || opt.stock === 0,
-                    price: Math.max(9900, basePrice + Math.floor(Math.random() * 5000))
-                })),
-                originalPrice: Math.max(9900, basePrice),
-                salePrice: Math.max(9900, basePrice),
+                options,
+                originalPrice: isKream ? (baseProduct.kreamData?.retailPrice || baseProduct.price) : Math.max(9900, basePrice),
+                salePrice,
                 discountRate: 0,
                 origin: baseProduct.origin || '대한민국',
                 material: baseProduct.material || '',
@@ -532,6 +636,8 @@ class CollectorManager {
                 stockUpdateEnabled: true,
                 marketTransmitEnabled: true,
                 registeredAccounts: [],
+                // KREAM 전용 필드 보존
+                ...(isKream && baseProduct.kreamData ? { kreamData: baseProduct.kreamData } : {}),
                 collectedAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             })
@@ -684,6 +790,152 @@ class CollectorManager {
             ],
             'GrandStage': [
                 { name: '프리미엄 드레스 슈즈', brand: 'GrandStage', category: '패션잡화 > 신발 > 드레스화 > 옥스포드', price: 159000, origin: '이탈리아', material: '천연가죽, 고무', season: '2025 S/S', options: [{name: '255', price: 159000, stock: 3, stockStatus: '재고'},{name: '260', price: 159000, stock: 5, stockStatus: '재고'}] }
+            ],
+            'KREAM': [
+                {
+                    name: '나이키 에어 조던 1 레트로 하이 OG "시카고"',
+                    brand: 'Nike',
+                    category: '패션잡화 > 신발 > 스니커즈 > 농구화',
+                    price: 219000,
+                    origin: '인도네시아',
+                    material: '천연가죽, 합성가죽, 고무',
+                    season: '2024 F/W',
+                    styleCode: 'DZ5485-612',
+                    kreamData: {
+                        modelNo: 'DZ5485-612',
+                        releaseDate: '2024-11-01',
+                        retailPrice: 219000,
+                        askPrices: { '250': { general: 328000, storage: 315000, grade95: 290000 }, '255': { general: 322000, storage: 308000, grade95: 283000 }, '260': { general: 318000, storage: 305000, grade95: 279000 }, '265': { general: 325000, storage: 311000, grade95: 285000 }, '270': { general: 335000, storage: 320000, grade95: 295000 } },
+                        bidPrices: { '250': { general: 305000 }, '255': { general: 299000 }, '260': { general: 295000 }, '265': { general: 302000 }, '270': { general: 312000 } },
+                        lastSalePrices: { '250': { price: 316000, date: '2026-03-12' }, '255': { price: 310000, date: '2026-03-13' }, '260': { price: 305000, date: '2026-03-14' }, '265': { price: 312000, date: '2026-03-12' }, '270': { price: 322000, date: '2026-03-11' } },
+                        tradeVolume: 4821,
+                        wishCount: 18432,
+                        saleTypes: { general: true, storage: true, grade95: true },
+                        fetchedAt: new Date().toISOString()
+                    },
+                    options: [
+                        { name: '250', price: 328000, stock: 1, isSoldOut: false, kreamAsk: 328000, kreamBid: 305000, kreamLastSale: 316000 },
+                        { name: '255', price: 322000, stock: 1, isSoldOut: false, kreamAsk: 322000, kreamBid: 299000, kreamLastSale: 310000 },
+                        { name: '260', price: 318000, stock: 1, isSoldOut: false, kreamAsk: 318000, kreamBid: 295000, kreamLastSale: 305000 },
+                        { name: '265', price: 325000, stock: 1, isSoldOut: false, kreamAsk: 325000, kreamBid: 302000, kreamLastSale: 312000 },
+                        { name: '270', price: 335000, stock: 1, isSoldOut: false, kreamAsk: 335000, kreamBid: 312000, kreamLastSale: 322000 }
+                    ]
+                },
+                {
+                    name: '나이키 덩크 로우 레트로 "판다"',
+                    brand: 'Nike',
+                    category: '패션잡화 > 신발 > 스니커즈 > 라이프스타일',
+                    price: 119000,
+                    origin: '베트남',
+                    material: '천연가죽, 고무',
+                    season: '2025 S/S',
+                    styleCode: 'DD1391-100',
+                    kreamData: {
+                        modelNo: 'DD1391-100',
+                        releaseDate: '2023-01-15',
+                        retailPrice: 119000,
+                        askPrices: { '250': { general: 142000, storage: 135000, grade95: 122000 }, '255': { general: 139000, storage: 132000, grade95: 118000 }, '260': { general: 136000, storage: 130000, grade95: 115000 }, '265': { general: 140000, storage: 133000, grade95: 119000 }, '270': { general: 148000, storage: 140000, grade95: 126000 } },
+                        bidPrices: { '250': { general: 128000 }, '255': { general: 125000 }, '260': { general: 122000 }, '265': { general: 126000 }, '270': { general: 134000 } },
+                        lastSalePrices: { '250': { price: 135000, date: '2026-03-13' }, '255': { price: 132000, date: '2026-03-14' }, '260': { price: 128000, date: '2026-03-14' }, '265': { price: 133000, date: '2026-03-12' }, '270': { price: 140000, date: '2026-03-11' } },
+                        tradeVolume: 12543,
+                        wishCount: 45210,
+                        saleTypes: { general: true, storage: true, grade95: true },
+                        fetchedAt: new Date().toISOString()
+                    },
+                    options: [
+                        { name: '250', price: 142000, stock: 1, isSoldOut: false, kreamAsk: 142000, kreamBid: 128000, kreamLastSale: 135000 },
+                        { name: '255', price: 139000, stock: 1, isSoldOut: false, kreamAsk: 139000, kreamBid: 125000, kreamLastSale: 132000 },
+                        { name: '260', price: 136000, stock: 1, isSoldOut: false, kreamAsk: 136000, kreamBid: 122000, kreamLastSale: 128000 },
+                        { name: '265', price: 140000, stock: 1, isSoldOut: false, kreamAsk: 140000, kreamBid: 126000, kreamLastSale: 133000 },
+                        { name: '270', price: 148000, stock: 1, isSoldOut: false, kreamAsk: 148000, kreamBid: 134000, kreamLastSale: 140000 }
+                    ]
+                },
+                {
+                    name: '아디다스 삼바 OG "화이트/블랙"',
+                    brand: 'adidas',
+                    category: '패션잡화 > 신발 > 스니커즈 > 라이프스타일',
+                    price: 129000,
+                    origin: '인도',
+                    material: '천연가죽, 합성가죽, 고무',
+                    season: '2025 S/S',
+                    styleCode: 'B75806',
+                    kreamData: {
+                        modelNo: 'B75806',
+                        releaseDate: '2023-03-01',
+                        retailPrice: 129000,
+                        askPrices: { '250': { general: 185000, storage: 175000, grade95: 158000 }, '255': { general: 179000, storage: 169000, grade95: 152000 }, '260': { general: 174000, storage: 165000, grade95: 148000 }, '265': { general: 182000, storage: 172000, grade95: 155000 }, '270': { general: 192000, storage: 181000, grade95: 163000 } },
+                        bidPrices: { '250': { general: 165000 }, '255': { general: 160000 }, '260': { general: 155000 }, '265': { general: 162000 }, '270': { general: 172000 } },
+                        lastSalePrices: { '250': { price: 175000, date: '2026-03-13' }, '255': { price: 169000, date: '2026-03-14' }, '260': { price: 164000, date: '2026-03-14' }, '265': { price: 171000, date: '2026-03-12' }, '270': { price: 181000, date: '2026-03-13' } },
+                        tradeVolume: 8932,
+                        wishCount: 32105,
+                        saleTypes: { general: true, storage: true, grade95: false },
+                        fetchedAt: new Date().toISOString()
+                    },
+                    options: [
+                        { name: '250', price: 185000, stock: 1, isSoldOut: false, kreamAsk: 185000, kreamBid: 165000, kreamLastSale: 175000 },
+                        { name: '255', price: 179000, stock: 1, isSoldOut: false, kreamAsk: 179000, kreamBid: 160000, kreamLastSale: 169000 },
+                        { name: '260', price: 174000, stock: 1, isSoldOut: false, kreamAsk: 174000, kreamBid: 155000, kreamLastSale: 164000 },
+                        { name: '265', price: 182000, stock: 1, isSoldOut: false, kreamAsk: 182000, kreamBid: 162000, kreamLastSale: 171000 },
+                        { name: '270', price: 192000, stock: 1, isSoldOut: false, kreamAsk: 192000, kreamBid: 172000, kreamLastSale: 181000 }
+                    ]
+                },
+                {
+                    name: '슈프림 박스 로고 후디 "레드"',
+                    brand: 'Supreme',
+                    category: '패션의류 > 남성의류 > 상의 > 후디/집업',
+                    price: 258000,
+                    origin: '미국',
+                    material: '면 100%',
+                    season: '2024 F/W',
+                    styleCode: 'SUP-BLH-FW24',
+                    kreamData: {
+                        modelNo: 'SUP-BLH-FW24',
+                        releaseDate: '2024-09-05',
+                        retailPrice: 258000,
+                        askPrices: { 'S': { general: 485000, storage: 462000, grade95: 415000 }, 'M': { general: 468000, storage: 445000, grade95: 400000 }, 'L': { general: 472000, storage: 449000, grade95: 403000 }, 'XL': { general: 495000, storage: 470000, grade95: 422000 } },
+                        bidPrices: { 'S': { general: 440000 }, 'M': { general: 425000 }, 'L': { general: 430000 }, 'XL': { general: 450000 } },
+                        lastSalePrices: { 'S': { price: 462000, date: '2026-03-12' }, 'M': { price: 445000, date: '2026-03-13' }, 'L': { price: 450000, date: '2026-03-11' }, 'XL': { price: 472000, date: '2026-03-10' } },
+                        tradeVolume: 2341,
+                        wishCount: 9823,
+                        saleTypes: { general: true, storage: false, grade95: false },
+                        fetchedAt: new Date().toISOString()
+                    },
+                    options: [
+                        { name: 'S', price: 485000, stock: 1, isSoldOut: false, kreamAsk: 485000, kreamBid: 440000, kreamLastSale: 462000 },
+                        { name: 'M', price: 468000, stock: 1, isSoldOut: false, kreamAsk: 468000, kreamBid: 425000, kreamLastSale: 445000 },
+                        { name: 'L', price: 472000, stock: 1, isSoldOut: false, kreamAsk: 472000, kreamBid: 430000, kreamLastSale: 450000 },
+                        { name: 'XL', price: 495000, stock: 1, isSoldOut: false, kreamAsk: 495000, kreamBid: 450000, kreamLastSale: 472000 }
+                    ]
+                },
+                {
+                    name: '뉴발란스 990v6 "그레이"',
+                    brand: 'New Balance',
+                    category: '패션잡화 > 신발 > 스니커즈 > 라이프스타일',
+                    price: 239000,
+                    origin: '미국',
+                    material: '메쉬, 합성가죽, 고무',
+                    season: '2025 S/S',
+                    styleCode: 'M990GL6',
+                    kreamData: {
+                        modelNo: 'M990GL6',
+                        releaseDate: '2024-04-20',
+                        retailPrice: 239000,
+                        askPrices: { '250': { general: 315000, storage: 299000, grade95: 268000 }, '255': { general: 308000, storage: 292000, grade95: 262000 }, '260': { general: 299000, storage: 284000, grade95: 255000 }, '265': { general: 305000, storage: 290000, grade95: 260000 }, '270': { general: 320000, storage: 304000, grade95: 273000 } },
+                        bidPrices: { '250': { general: 285000 }, '255': { general: 279000 }, '260': { general: 272000 }, '265': { general: 278000 }, '270': { general: 290000 } },
+                        lastSalePrices: { '250': { price: 299000, date: '2026-03-13' }, '255': { price: 292000, date: '2026-03-14' }, '260': { price: 285000, date: '2026-03-14' }, '265': { price: 291000, date: '2026-03-12' }, '270': { price: 305000, date: '2026-03-11' } },
+                        tradeVolume: 3215,
+                        wishCount: 12450,
+                        saleTypes: { general: true, storage: true, grade95: true },
+                        fetchedAt: new Date().toISOString()
+                    },
+                    options: [
+                        { name: '250', price: 315000, stock: 1, isSoldOut: false, kreamAsk: 315000, kreamBid: 285000, kreamLastSale: 299000 },
+                        { name: '255', price: 308000, stock: 1, isSoldOut: false, kreamAsk: 308000, kreamBid: 279000, kreamLastSale: 292000 },
+                        { name: '260', price: 299000, stock: 1, isSoldOut: false, kreamAsk: 299000, kreamBid: 272000, kreamLastSale: 285000 },
+                        { name: '265', price: 305000, stock: 1, isSoldOut: false, kreamAsk: 305000, kreamBid: 278000, kreamLastSale: 291000 },
+                        { name: '270', price: 320000, stock: 1, isSoldOut: false, kreamAsk: 320000, kreamBid: 290000, kreamLastSale: 305000 }
+                    ]
+                }
             ]
         }
         // 기본 데이터 (사이트 미매핑 시)
