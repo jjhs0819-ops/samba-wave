@@ -2090,9 +2090,7 @@
                                 <span style="color:#888;">~</span>
                                 <input type="date" style="width:140px; padding:0.375rem 0.5rem; font-size:0.8125rem;">
                             </div>
-                            <select id="product-source-site" onchange="ui.renderProducts()" style="padding:0.375rem 0.625rem; font-size:0.8125rem; width:auto;">
-                                <option value="">소싱사이트</option>
-                                <option value="ABCmart">ABCmart</option><option value="FOLDERStyle">FOLDERStyle</option><option value="GrandStage">GrandStage</option><option value="GSShop">GSShop</option><option value="KREAM">KREAM</option><option value="LOTTEON">LOTTEON</option><option value="MUSINSA">MUSINSA</option><option value="Nike">Nike</option><option value="OliveYoung">OliveYoung</option><option value="SSG">SSG</option>
+                            <select id="product-source-site" onchange="ui.renderProducts()" style="padding:0.375rem 0.625rem; font-size:0.8125rem; width:auto;" data-site-select data-site-placeholder="소싱사이트">
                             </select>
                             <select id="product-status" style="padding:0.375rem 0.625rem; font-size:0.8125rem; width:auto;">
                                 <option value="">판매현황</option>
@@ -2221,8 +2219,7 @@
                         <select id="order-market-filter" style="width:118px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
                             <option value="">전체마켓보기</option>
                         </select>
-                        <select style="width:110px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
-                            <option value="">전체사이트보기</option><option>ABCmart</option><option>FOLDERStyle</option><option>GrandStage</option><option>GSShop</option><option>LOTTEON</option><option>MUSINSA</option><option>Nike</option><option>OliveYoung</option><option>SSG</option>
+                        <select style="width:110px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;" data-site-select data-site-placeholder="전체사이트보기">
                         </select>
                         <select style="width:112px; padding:0.28rem 0.4rem; font-size:0.8125rem; background:#1E1E1E; border:1px solid #3D3D3D; border-radius:4px; color:#C5C5C5;">
                             <option>마켓상태 보기</option><option>일반</option><option>송장전송완료</option><option>송장전송실패</option>
@@ -2333,19 +2330,7 @@
                         <!-- 소싱사이트 선택 -->
                         <div class="af-cb-group">
                             <div class="af-cb-label">소싱사이트</div>
-                            <div class="af-cb-items">
-                                <label class="af-cb"><input type="checkbox" id="af-all-site" onchange="afToggleAll('site',this)"> <span>전체</span></label>
-                                <div class="af-cb-divider"></div>
-                                <label class="af-cb"><input type="checkbox" class="af-site" value="ABCmart" checked> <span>ABCmart</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-site" value="FOLDERStyle" checked> <span>FOLDERStyle</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-site" value="GrandStage" checked> <span>GrandStage</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-site" value="GSShop" checked> <span>GSShop</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-site" value="KREAM" checked> <span>KREAM</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-site" value="LOTTEON" checked> <span>LOTTEON</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-site" value="MUSINSA" checked> <span>MUSINSA</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-site" value="Nike" checked> <span>Nike</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-site" value="OliveYoung" checked> <span>OliveYoung</span></label>
-                                <label class="af-cb"><input type="checkbox" class="af-site" value="SSG" checked> <span>SSG</span></label>
+                            <div class="af-cb-items" data-site-checkboxes data-site-class="af-site" data-site-all-id="af-all-site" data-site-all-onchange="afToggleAll('site',this)" data-site-divider>
                             </div>
                         </div>
 
@@ -2490,17 +2475,7 @@
                         <div id="ac-tbl-site" class="ac-card" style="display:none; overflow-x:auto;">
                             <table class="ac-data-table" style="min-width:1000px;">
                                 <thead>
-                                    <tr>
-                                        <th></th>
-                                        <th>ABCmart</th>
-                                        <th>FOLDERStyle</th>
-                                        <th>GrandStage</th>
-                                        <th>GSShop</th>
-                                        <th>LOTTEON</th>
-                                        <th>MUSINSA</th>
-                                        <th>Nike</th>
-                                        <th>SSG</th>
-                                        <th style="color:#FF8C00;">합계</th>
+                                    <tr data-site-thead>
                                     </tr>
                                 </thead>
                                 <tbody id="acTblSiteBody"></tbody>
@@ -3294,7 +3269,7 @@
                     <div id="cat-panel-list" style="display:none;">
                         <!-- 필터 -->
                         <div class="bg-white rounded-lg shadow p-3 mb-4 flex flex-wrap gap-3 items-center">
-                            <select style="width:160px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option value="">전체 사이트</option><option>ABCmart</option><option>FOLDERStyle</option><option>GrandStage</option><option>GSShop</option><option>LOTTEON</option><option>MUSINSA</option><option>Nike</option><option>OliveYoung</option><option>SSG</option></select>
+                            <select style="width:160px; padding:0.5rem 0.75rem; font-size:0.875rem;" data-site-select data-site-placeholder="전체 사이트"></select>
                             <select style="width:160px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>전체 대분류</option><option>가방</option><option>바지</option><option>상의</option><option>신발</option></select>
                             <input type="text" placeholder="카테고리 검색" style="width:200px; padding:0.5rem 0.75rem; font-size:0.875rem;">
                             <button style="background:linear-gradient(135deg,#FF8C00,#FFB84D); color:#fff; padding:0.5rem 1rem; border-radius:6px; font-size:0.875rem;">검색</button>
@@ -3379,7 +3354,7 @@
                             </div>
                         </div>
                         <div class="flex flex-wrap gap-3">
-                            <select style="width:140px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>소싱사이트</option><option>THE MANGO</option><option>ABCmart</option><option>MUSINSA</option></select>
+                            <select style="width:140px; padding:0.5rem 0.75rem; font-size:0.875rem;" data-site-select data-site-placeholder="소싱사이트"></select>
                             <select style="width:120px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>정책</option><option>기본정책</option><option>마진정책A</option></select>
                             <select style="width:130px; padding:0.5rem 0.75rem; font-size:0.875rem;"><option>변동유형</option><option>가격변동</option><option>재고변동</option><option>옵션변동</option><option>정책변경</option></select>
                             <input type="text" placeholder="키워드 검색" style="width:200px; padding:0.5rem 0.75rem; font-size:0.875rem;">
@@ -3491,8 +3466,7 @@
                             <!-- 소싱사이트 -->
                             <div style="display:flex; align-items:center; padding:8px 16px; border-bottom:1px solid #181C28; gap:8px;">
                                 <span style="min-width:72px; color:#666; font-size:0.78rem;">소싱사이트</span>
-                                <select style="padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#B0BAD0; border-radius:4px; outline:none; cursor:pointer; width:140px;">
-                                    <option>전체</option><option>ABCmart</option><option>FOLDERStyle</option><option>GrandStage</option><option>GSShop</option><option>LOTTEON</option><option>MUSINSA</option><option>Nike</option><option>OliveYoung</option><option>SSG</option>
+                                <select style="padding:4px 8px; font-size:0.78rem; background:#111520; border:1px solid #2A3040; color:#B0BAD0; border-radius:4px; outline:none; cursor:pointer; width:140px;" data-site-select data-site-placeholder="전체">
                                 </select>
                             </div>
                             <!-- 마켓등록 -->
@@ -3542,18 +3516,7 @@
                         <!-- 소싱사이트 -->
                         <div style="padding:10px 16px 12px; border-bottom:1px solid #181C28;">
                             <div style="font-size:0.85rem; font-weight:600; color:#C5C5C5; margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid #1C1E2A;">소싱사이트</div>
-                            <div style="display:flex; flex-wrap:wrap; gap:8px 24px;">
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#9AA5C0; cursor:pointer; white-space:nowrap; font-weight:600;"><input type="checkbox" id="ship-site-all" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;" onchange="var v=this.checked;document.querySelectorAll('.ship-site-cb').forEach(c=>c.checked=v)"><span>전체</span></label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>ABCmart</span></label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>FOLDERStyle</span></label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>GrandStage</span></label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>GSShop</span></label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>KREAM</span></label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>LOTTEON</span></label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>MUSINSA</span></label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>Nike</span></label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>OliveYoung</span></label>
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;"><input type="checkbox" class="ship-site-cb" style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;"><span>SSG</span></label>
+                            <div style="display:flex; flex-wrap:wrap; gap:8px 24px;" data-site-checkboxes data-site-class="ship-site-cb" data-site-all-id="ship-site-all" data-site-all-onchange="var v=this.checked;document.querySelectorAll('.ship-site-cb').forEach(c=>c.checked=v)" data-site-label-style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#9AA5C0; cursor:pointer; white-space:nowrap; font-weight:600;" data-site-item-style="display:inline-flex; align-items:center; gap:5px; font-size:0.8rem; color:#8A95B0; cursor:pointer;" data-site-input-style="accent-color:#FF8C00; flex-shrink:0; width:14px; height:14px;">
                             </div>
                         </div>
 

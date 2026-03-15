@@ -13,15 +13,15 @@ class CollectorManager {
         this.collectDetailImages = false   // 상세페이지 이미지 수집 여부
         this._proxyChecked = false         // 프록시 확인 완료 여부
 
-        // 지원 소싱사이트 목록 (10개)
+        // 지원 소싱사이트 목록 (10개) — 단일 소스: 모든 UI가 이 목록을 참조
         this.supportedSites = [
             { id: 'abcmart', name: 'ABCmart', domain: 'a-rt.com', label: 'ABCmart' },
             { id: 'folderstyle', name: 'FOLDERStyle', domain: 'folderstyle.com', label: 'FOLDERStyle' },
             { id: 'grandstage', name: 'GrandStage', domain: 'a-rt.com/grand', label: 'GrandStage' },
             { id: 'gsshop', name: 'GSShop', domain: 'gsshop.com', label: 'GSShop' },
-            { id: 'kream', name: 'KREAM', domain: 'kream.co.kr', label: 'KREAM' },
+            { id: 'kream', name: 'KREAM', domain: 'kream.co.kr', label: 'KREAM', urlPattern: 'https://kream.co.kr/products/{id}' },
             { id: 'lotteon', name: 'LOTTEON', domain: 'lotteon.com', label: 'LOTTEON' },
-            { id: 'musinsa', name: 'MUSINSA', domain: 'musinsa.com', label: 'MUSINSA' },
+            { id: 'musinsa', name: 'MUSINSA', domain: 'musinsa.com', label: 'MUSINSA', urlPattern: 'https://www.musinsa.com/products/{id}' },
             { id: 'nike', name: 'Nike', domain: 'nike.com', label: 'Nike' },
             { id: 'oliveyoung', name: 'OliveYoung', domain: 'oliveyoung.co.kr', label: 'OliveYoung' },
             { id: 'ssg', name: 'SSG', domain: 'ssg.com', label: 'SSG' }
@@ -133,7 +133,7 @@ class CollectorManager {
         if (!res.ok) throw new Error(`프록시 응답 오류: ${res.status}`)
         const data = await res.json()
         if (!data.success) throw new Error(data.message || 'KREAM 상품 수집 실패')
-        return data.data
+        return data.product || data.data
     }
 
     /**
@@ -164,13 +164,29 @@ class CollectorManager {
 
         // 키워드 검색 기반 수집
         if (keyword) {
-            log(`KREAM 검색 수집: "${keyword}" (${count}개 요청)`)
+            log(`KREAM 검색 수집: "${keyword}" (${count}개 검색)`)
             const params = new URLSearchParams({ keyword, size: String(count) })
             const searchRes = await fetch(`${MUSINSA_PROXY_URL}/api/kream/search?${params}`)
             if (!searchRes.ok) throw new Error(`KREAM 검색 실패: HTTP ${searchRes.status}`)
             const searchData = await searchRes.json()
             if (!searchData.success) throw new Error(searchData.message || 'KREAM 검색 실패')
-            return searchData.data || []
+            const searchItems = searchData.data || []
+
+            // 검색 결과의 각 상품 ID → 단건 수집 (옵션 포함)
+            log(`검색 ${searchItems.length}개 → 개별 수집 시작`)
+            const results = []
+            for (const item of searchItems) {
+                if (results.length >= count) break
+                try {
+                    const productUrl = `https://kream.co.kr/products/${item.siteProductId}`
+                    const product = await this._collectKreamSingle(productUrl)
+                    if (product) results.push(product)
+                } catch (e) {
+                    log(`단건 수집 실패 (${item.siteProductId}): ${e.message}`, 'warn')
+                }
+            }
+            log(`개별 수집 완료: ${results.length}개`)
+            return results
         }
 
         log('KREAM URL에서 키워드를 추출할 수 없습니다. 시뮬레이션으로 대체합니다.', 'warning')
@@ -606,7 +622,9 @@ class CollectorManager {
                 id: 'col_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substring(2, 6),
                 sourceSite: siteName,
                 siteProductId: String(Math.floor(Math.random() * 9000000) + 1000000),
-                sourceUrl: `https://www.${site ? site.domain : 'example.com'}/product/${Math.floor(Math.random() * 999999)}`,
+                sourceUrl: site?.urlPattern
+                    ? site.urlPattern.replace('{id}', Math.floor(Math.random() * 999999))
+                    : `https://www.${site ? site.domain : 'example.com'}/product/${Math.floor(Math.random() * 999999)}`,
                 searchFilterId: null,
                 name: productName,
                 nameEn: '',
@@ -614,7 +632,9 @@ class CollectorManager {
                 brand: baseProduct.brand,
                 category: baseProduct.category,
                 ...this._parseCategoryLevels(baseProduct.category),
-                images: [this._genPlaceholderImg(baseProduct.brand)],
+                images: [baseProduct.imageUrl
+                    ? `http://localhost:3001/api/image-proxy?url=${encodeURIComponent(baseProduct.imageUrl)}`
+                    : this._genPlaceholderImg(baseProduct.brand)],
                 detailImages: [],
                 detailHtml: '',
                 options,
@@ -799,6 +819,7 @@ class CollectorManager {
                     price: 219000,
                     origin: '인도네시아',
                     material: '천연가죽, 합성가죽, 고무',
+                    imageUrl: 'https://kream-phinf.pstatic.net/MjAyNDA4MDdfMjMx/MDAxNzIzMDI1MjU0NDky.DZ5485-612.jpg',
                     season: '2024 F/W',
                     styleCode: 'DZ5485-612',
                     kreamData: {
@@ -829,6 +850,7 @@ class CollectorManager {
                     origin: '베트남',
                     material: '천연가죽, 고무',
                     season: '2025 S/S',
+                    imageUrl: 'https://kream-phinf.pstatic.net/MjAyMzAxMTVfMTIz/MDAxNjczNzY1NDMyMzQ1.DD1391-100.jpg',
                     styleCode: 'DD1391-100',
                     kreamData: {
                         modelNo: 'DD1391-100',
@@ -858,6 +880,7 @@ class CollectorManager {
                     origin: '인도',
                     material: '천연가죽, 합성가죽, 고무',
                     season: '2025 S/S',
+                    imageUrl: 'https://kream-phinf.pstatic.net/MjAyMzAzMDFfMjAx/MDAxNjc3NjM5NjAwMDAw.B75806.jpg',
                     styleCode: 'B75806',
                     kreamData: {
                         modelNo: 'B75806',
@@ -1277,8 +1300,9 @@ class CollectorManager {
         const existingIds = new Set(existingList.map(p => p.siteProductId))
         if (existingIds.size > 0) log(`기존 저장 ${existingIds.size}개 (중복 체크용)`)
 
-        // 수집 실행 — 중복 여유분 포함하여 넉넉히 요청
-        const collectTarget = Math.min(Math.ceil(needed * 1.5), needed + 50)
+        // KREAM 실제 수집은 개별 단건 수집이라 중복 없음 → needed 그대로
+        const isKreamReal = this.realModeEnabled && this._isKreamUrl(filter.searchUrl || '') && this.proxyAvailable
+        const collectTarget = isKreamReal ? needed : Math.min(Math.ceil(needed * 1.5), needed + 50)
         const products = await this.collectFromUrl(filter.searchUrl, { count: collectTarget })
         log(`수집 결과: ${products.length}개 → 저장 시작`)
 

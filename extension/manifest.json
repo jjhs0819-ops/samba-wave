@@ -1,16 +1,21 @@
 {
   "manifest_version": 3,
   "name": "SAMBA-WAVE",
-  "version": "1.4.0",
-  "description": "무재고 위탁판매 솔루션 - 무신사 수집 + 롯데홈쇼핑 OpenAPI 연동",
+  "version": "2.0.1",
+  "description": "무재고 위탁판매 솔루션 - 무신사/KREAM 수집 연동",
   "permissions": [
     "cookies",
     "storage",
     "tabs",
-    "webRequest"
+    "webRequest",
+    "scripting",
+    "activeTab",
+    "alarms"
   ],
   "host_permissions": [
     "https://*.musinsa.com/*",
+    "https://kream.co.kr/*",
+    "https://*.kream.co.kr/*",
     "http://localhost:3001/*"
   ],
   "action": {
@@ -24,6 +29,13 @@
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": ["https://kream.co.kr/products/*", "https://www.kream.co.kr/products/*"],
+      "js": ["kream-collect.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "icons": {
     "16": "icon16.png",
     "48": "icon48.png",

@@ -4,12 +4,16 @@
       "Bash",
       "WebFetch",
       "WebSearch",
-      "mcp__memory__create_entities"
+      "mcp__memory__create_entities",
+      "mcp__sequential-thinking__sequentialthinking"
     ]
   },
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "context7"
   ],
-  "outputStyle": "Teacher"
+  "outputStyle": "Teacher",
+  "permissions": {
+    "defaultMode": "plan"
+  }
 }

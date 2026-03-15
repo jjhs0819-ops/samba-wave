@@ -47,6 +47,8 @@ app.use(cors({
 }))
 app.use(express.json())
 
+// 헬스체크는 하단의 /api/health 엔드포인트(isLoggedIn 포함)에서 처리
+
 // ─────────────────────────────────────────────
 // 무신사 인증 쿠키 관리 (로그인 기반 최대혜택가용)
 // ─────────────────────────────────────────────
@@ -2330,13 +2332,13 @@ function transformKreamToProduct(item) {
     return {
       name,
       price: ask,
-      stock: s.is_sold_out ? 0 : 1,
+      stock: (s.is_sold_out || ask === 0) ? 0 : 1,
       isSoldOut: s.is_sold_out || false,
+      kreamFastPrice: 0,
+      kreamNormalPrice: 0,
       kreamAsk: ask,
       kreamBid: bid,
-      kreamLastSale: lastSale,
-      kreamGeneralPrice: ask,
-      kreamFastPrice: 0
+      kreamLastSale: lastSale
     }
   }).filter(o => o.name)
 
@@ -2390,7 +2392,7 @@ function transformKreamToProduct(item) {
       modelNo: item.style_code || item.model_no || '',
       releaseDate: item.release_date || '',
       retailPrice: item.retail_price || 0,
-      askPrices: options.reduce((acc, o) => { acc[o.name] = { general: o.kreamAsk }; return acc }, {}),
+      askPrices: options.reduce((acc, o) => { acc[o.name] = { fast: o.kreamFastPrice || 0, normal: o.kreamNormalPrice || 0, general: o.kreamAsk }; return acc }, {}),
       bidPrices: options.reduce((acc, o) => { acc[o.name] = { general: o.kreamBid }; return acc }, {}),
       lastSalePrices: options.reduce((acc, o) => { acc[o.name] = { price: o.kreamLastSale, date: new Date().toISOString().slice(0, 10) }; return acc }, {}),
       tradeVolume: item.trade_count || item.total_trades || 0,
@@ -2647,496 +2649,173 @@ app.post('/api/kream/set-token', (req, res) => {
 })
 
 // ─────────────────────────────────────────────
+// KREAM 확장앱 연동: 수집 큐 + 쿠키 수신
+// ─────────────────────────────────────────────
+let kreamCookieStr = ''
+const kreamCollectQueue = []
+const kreamCollectResolvers = new Map()
+
+// 서버 시작 시 캐시된 KREAM 쿠키 복원
+try {
+  if (existsSync(join(__dirname, '.kream-cookie.json'))) {
+    const cached = JSON.parse(readFileSync(join(__dirname, '.kream-cookie.json'), 'utf8'))
+    if (cached.cookie) {
+      kreamCookieStr = cached.cookie
+      console.log(`[KREAM] 캐시된 쿠키 복원: ${kreamCookieStr.split(';').length}개`)
+    }
+  }
+} catch {}
+
+// 확장앱에서 KREAM 쿠키 수신
+app.post('/api/kream/set-cookie', (req, res) => {
+  const { cookie } = req.body
+  if (!cookie) return res.status(400).json({ success: false, message: '쿠키가 필요합니다.' })
+  kreamCookieStr = cookie
+  try {
+    writeFileSync(join(__dirname, '.kream-cookie.json'), JSON.stringify({ cookie, savedAt: new Date().toISOString() }))
+  } catch {}
+  console.log(`[KREAM] 확장앱에서 쿠키 수신: ${cookie.split(';').length}개`)
+  return res.json({ success: true, cookieCount: cookie.split(';').length })
+})
+
+// 확장앱이 폴링: 대기 중인 수집 요청 가져가기
+app.get('/api/kream/collect-queue', (req, res) => {
+  const job = kreamCollectQueue.shift()
+  if (!job) return res.json({ hasJob: false })
+  return res.json({ hasJob: true, ...job })
+})
+
+// 확장앱이 수집 완료 후 결과 전달
+app.post('/api/kream/collect-result', (req, res) => {
+  const { requestId, data } = req.body
+  const resolver = kreamCollectResolvers.get(requestId)
+  if (resolver) {
+    resolver(data)
+    kreamCollectResolvers.delete(requestId)
+    console.log(`[KREAM] 확장앱 수집 결과 수신: ${requestId}`)
+  }
+  return res.json({ success: true })
+})
+
+// ─────────────────────────────────────────────
+// KREAM 검색 큐 (확장앱 폴링 방식)
+// ─────────────────────────────────────────────
+const kreamSearchQueue = []
+const kreamSearchResolvers = new Map()
+
+// 확장앱이 3초마다 폴링: 대기 중인 검색 요청 가져가기
+app.get('/api/kream/search-queue', (req, res) => {
+  const job = kreamSearchQueue.shift()
+  if (!job) return res.json({ hasJob: false })
+  return res.json({ hasJob: true, ...job })
+})
+
+// 확장앱이 검색 완료 후 결과 전달
+app.post('/api/kream/search-result', (req, res) => {
+  const { requestId, data } = req.body
+  const resolver = kreamSearchResolvers.get(requestId)
+  if (resolver) {
+    resolver(data)
+    kreamSearchResolvers.delete(requestId)
+    console.log(`[KREAM] 확장앱 검색 결과 수신: ${requestId}`)
+  }
+  return res.json({ success: true })
+})
+
+// ─────────────────────────────────────────────
 // KREAM API: 상품 상세 조회
 // GET /api/kream/products/:id
+// 확장앱 큐에 넣고 결과 대기 (최대 60초)
 // ─────────────────────────────────────────────
 app.get('/api/kream/products/:id', async (req, res) => {
   const { id } = req.params
   if (!id) return res.status(400).json({ success: false, message: '상품 ID가 필요합니다.' })
 
-  try {
-    const page = await getKreamPage()
-    const productUrl = `https://kream.co.kr/products/${id}`
-    console.log(`[KREAM] 상품 페이지 이동: ${productUrl}`)
-    // ── 네트워크 응답 캡처 (API JSON에서 정확한 데이터 추출) ──
-    const capturedApi = { product: null, images: [], sizesPrices: null }
-    const responseHandler = async (response) => {
-      const url = response.url()
-      const ct = response.headers()['content-type'] || ''
-      // content-type 필터 제거: KREAM은 JSON을 다양한 content-type으로 반환
-      if (response.status() !== 200) return
-      if (!url.includes('kream.co.kr')) return
-      try {
-        const json = await response.json()
-        const p = json?.result || json?.data || json
+  // 확장앱 수집 모드: 큐에 넣고 결과 대기
+  const requestId = crypto.randomUUID()
+  kreamCollectQueue.push({
+    requestId,
+    productId: id,
+    url: `https://kream.co.kr/products/${id}`
+  })
+  console.log(`[KREAM] 수집 요청 큐 등록: ${id} (${requestId})`)
 
-        // 상품 기본 정보 캡처
-        if (p && (p.background_image_url || p.original_price !== undefined || p.release_price !== undefined)) {
-          capturedApi.product = p
-          if (p.background_image_url) capturedApi.images.push(p.background_image_url)
-          if (Array.isArray(p.image_urls)) capturedApi.images.push(...p.image_urls)
-          if (Array.isArray(p.images)) capturedApi.images.push(...p.images.map(i => typeof i === 'string' ? i : i.url).filter(Boolean))
-          // KREAM 상품 API에서 직접 사이즈 데이터 추출
-          const salesOpts = p.sales_options || p.product_options || p.sizes || p.options
-          if (Array.isArray(salesOpts) && salesOpts.length > 0 && !capturedApi.sizesPrices) {
-            capturedApi.sizesPrices = salesOpts
-            console.log(`[KREAM] 상품 API에서 사이즈 ${salesOpts.length}개 캡처`)
-          }
-        }
-
-        // 사이즈별 가격 전용 API 캡처 (별도 엔드포인트)
-        if (!capturedApi.sizesPrices) {
-          const sizesArr = p?.sales_options || p?.sizes || p?.product_options || p?.options
-          if (Array.isArray(sizesArr) && sizesArr.length > 0) {
-            const hasPrice = sizesArr.some(s =>
-              s.price !== undefined || s.buy_price !== undefined ||
-              s.ask !== undefined || s.lowest_ask !== undefined ||
-              s.buy_now_price !== undefined || s.immediate_purchase_price !== undefined
-            )
-            if (hasPrice) {
-              capturedApi.sizesPrices = sizesArr
-              console.log(`[KREAM] 가격 API에서 사이즈 ${sizesArr.length}개 캡처`)
-            }
-          }
-        }
-
-        // 배열 자체가 응답인 경우 (사이즈 목록 직접 반환)
-        if (!capturedApi.sizesPrices && Array.isArray(json) && json.length > 0) {
-          const hasSize = json.some(s => s.option || s.size || s.name)
-          if (hasSize) {
-            capturedApi.sizesPrices = json
-            console.log(`[KREAM] 배열 응답에서 사이즈 ${json.length}개 캡처`)
-          }
-        }
-      } catch (e) {
-        console.debug('[KREAM] response JSON 파싱 스킵:', e.message)
-      }
-    }
-    page.on('response', responseHandler)
-
-    await page.goto(productUrl, { waitUntil: 'networkidle2', timeout: 30000 })
-
-    // ── __NEXT_DATA__ 직접 추출 (Next.js SSR 데이터) ──
-    const nextData = await page.evaluate(() => {
-      const el = document.getElementById('__NEXT_DATA__')
-      if (!el) return null
-      try { return JSON.parse(el.textContent) } catch { return null }
+  // 확장앱 결과 대기 (최대 90초 — alarm 최소 주기 30초 감안)
+  const result = await new Promise(resolve => {
+    const timer = setTimeout(() => {
+      kreamCollectResolvers.delete(requestId)
+      resolve(null)
+    }, 90000)
+    kreamCollectResolvers.set(requestId, (data) => {
+      clearTimeout(timer)
+      resolve(data)
     })
-    if (nextData) {
-      console.log('[KREAM] __NEXT_DATA__: found')
-      const pageProps = nextData.props?.pageProps || {}
-      // 상품 데이터 탐색 (다양한 경로)
-      const product = pageProps.product || pageProps.data?.product || pageProps.dehydratedState?.queries?.[0]?.state?.data?.product || null
-      if (product) {
-        if (!capturedApi.product) capturedApi.product = product
-        // 이미지 추출
-        if (product.background_image_url) capturedApi.images.push(product.background_image_url)
-        if (Array.isArray(product.image_urls)) capturedApi.images.push(...product.image_urls)
-        if (Array.isArray(product.images)) capturedApi.images.push(...product.images.map(i => typeof i === 'string' ? i : i.url).filter(Boolean))
-        // 사이즈/가격 추출
-        const salesOpts = product.sales_options || product.product_options || product.sizes || product.options || []
-        if (Array.isArray(salesOpts) && salesOpts.length > 0 && !capturedApi.sizesPrices) {
-          capturedApi.sizesPrices = salesOpts
-          console.log(`[KREAM] __NEXT_DATA__에서 사이즈 ${salesOpts.length}개 추출`)
-        }
-      }
-      // __NEXT_DATA__ 재귀 탐색 (product를 못 찾은 경우)
-      if (!capturedApi.sizesPrices) {
-        const findSalesOptions = (obj, depth = 0) => {
-          if (depth > 5 || !obj || typeof obj !== 'object') return null
-          for (const key of ['sales_options', 'product_options', 'sizes', 'options']) {
-            if (Array.isArray(obj[key]) && obj[key].length > 0) {
-              const hasSizeData = obj[key].some(s => s.option || s.size || s.name || s.price || s.buy_now_price)
-              if (hasSizeData) return obj[key]
-            }
-          }
-          for (const val of Object.values(obj)) {
-            if (val && typeof val === 'object') {
-              const found = findSalesOptions(val, depth + 1)
-              if (found) return found
-            }
-          }
-          return null
-        }
-        const found = findSalesOptions(nextData)
-        if (found) {
-          capturedApi.sizesPrices = found
-          console.log(`[KREAM] __NEXT_DATA__ 재귀 탐색에서 사이즈 ${found.length}개 추출`)
-        }
-      }
-    } else {
-      console.log('[KREAM] __NEXT_DATA__: not found')
-    }
+  })
 
-    // ── 이미지 추출: API 응답 → DOM fallback ──
-    let productImages = [...new Set(capturedApi.images)].filter(Boolean)
-    if (productImages.length === 0) {
-      productImages = await page.evaluate(() => {
-        return [...new Set(
-          Array.from(document.querySelectorAll('img'))
-            .map(img => img.src || img.getAttribute('data-src') || '')
-            .filter(src => src.includes('kream-phinf.pstatic.net'))
-            .map(src => src.split('?')[0])
-        )]
-      })
-    }
-    console.log(`[KREAM] 이미지 ${productImages.length}개 수집`)
+  if (result) return res.json(result)
 
-    // ── 상품명/브랜드: API → DOM fallback ──
-    const apiInfo = capturedApi.product
-    const basicInfo = apiInfo ? {
-      name: apiInfo.translated_name || apiInfo.name || '',
-      brand: apiInfo.brand?.name || apiInfo.brand_name || ''
-    } : await page.evaluate(() => {
-      const texts = Array.from(document.querySelectorAll('*'))
-        .filter(el => el.children.length === 0)
-        .map(el => el.textContent.trim())
-        .filter(t => t.length > 1)
-      return {
-        name: texts.find(t => t.length > 5 && !/^\d/.test(t) && !t.includes('원') && !t.includes('%')) || '',
-        brand: ''
-      }
-    })
-
-    // ── 구매 버튼 클릭 (여러 텍스트 패턴 지원) ──
-    const buyClicked = await page.evaluate(() => {
-      const buyPatterns = ['구매하기', '구매', '즉시 구매', '즉시구매', 'Buy Now', 'Buy']
-      const allClickable = Array.from(document.querySelectorAll('button, a, [role="button"]'))
-      for (const pattern of buyPatterns) {
-        const btn = allClickable.find(b => {
-          const t = b.textContent.trim()
-          return t === pattern || t.startsWith(pattern)
-        })
-        if (btn) {
-          btn.click()
-          return pattern
-        }
-      }
-      return false
-    })
-    console.log(`[KREAM] 구매 버튼 클릭: ${buyClicked || '없음'}`)
-
-    // 구매 버튼 없어도 API 데이터가 이미 캡처됐을 수 있으므로 계속 진행
-    if (buyClicked) {
-      await new Promise(r => setTimeout(r, 2000))
-    }
-
-    // ── 전략: API 인터셉트 우선 + 모달 DOM fallback ──
-    let options = []
-
-    // API 캡처 대기 (최대 5초, 200ms 간격으로 폴링)
-    const waitStart = Date.now()
-    while (Date.now() - waitStart < 5000) {
-      if (capturedApi.sizesPrices) break
-      await new Promise(r => setTimeout(r, 200))
-    }
-
-    if (capturedApi.sizesPrices && capturedApi.sizesPrices.length > 0) {
-      // ─── 방법 1: API 인터셉트 데이터 사용 ───
-      console.log(`[KREAM] API 데이터로 옵션 생성 (${capturedApi.sizesPrices.length}개)`)
-      console.log(`[KREAM] 샘플 데이터:`, JSON.stringify(capturedApi.sizesPrices[0]).slice(0, 300))
-      options = capturedApi.sizesPrices.map(s => {
-        // KREAM 필드명: option(사이즈), buy_now_price(즉시구매가), sell_now_price(즉시판매가)
-        const name = s.option || s.size || s.name || s.option_name || ''
-        const parseNum = v => typeof v === 'number' ? v : parseInt(String(v || '0').replace(/,/g, '')) || 0
-        const price = parseNum(s.buy_now_price || s.immediate_purchase_price || s.price || s.buy_price || s.ask || s.lowest_ask || 0)
-        const bid = parseNum(s.sell_now_price || s.immediate_sell_price || s.bid || s.highest_bid || s.sell_price || 0)
-        const lastSale = parseNum(s.last_sale_price || s.last_sale || s.last_price || 0)
-        return {
-          name,
-          price,
-          stock: s.is_sold_out ? 0 : 1,
-          kreamAsk: price,
-          kreamBid: bid,
-          kreamLastSale: lastSale,
-          kreamGeneralPrice: price,
-          kreamFastPrice: 0,
-          kreamOverseasPrice: 0
-        }
-      }).filter(o => o.name)
-    }
-
-    if (options.length === 0) {
-      // ─── 방법 2: 모달 DOM fallback (버튼 단위 탐색) ───
-      console.log('[KREAM] API 캡처 실패 → 모달 DOM fallback 시도')
-      options = await page.evaluate(() => {
-        // 신발: 220~320, W260 등 / 의류: XS~XXXL / 기타: ONE SIZE, FREE, ALL
-        const sizePattern = /^(W?\d{2,3}(\.\d)?|XXS|XS|S|M|L|XL|XXL|XXXL|ONE\s?SIZE|FREE|ALL)$/i
-        // 가격: "150,000원" 또는 "150,000" (원 없이도 매칭)
-        const priceWithWon = /([0-9,]+)원/
-        const priceStandalone = /^([0-9]{1,3}(,[0-9]{3})+)$/
-        const results = []
-
-        // 모달/바텀시트/오버레이 탐색
-        const modal = document.querySelector(
-          '[class*="modal"], [class*="dialog"], [class*="layer"], [class*="bottom-sheet"], [class*="overlay"], [class*="select_area"], [role="dialog"]'
-        )
-        const searchRoot = modal || document.body
-        // table 내부 사이즈차트 제외, 클릭 가능한 요소만 탐색
-        const clickables = Array.from(searchRoot.querySelectorAll('a, button, [role="button"]')).filter(el => !el.closest('table'))
-
-        for (const el of clickables) {
-          const childTexts = Array.from(el.querySelectorAll('*'))
-            .filter(c => c.children.length === 0)
-            .map(c => c.textContent.trim())
-            .filter(t => t.length > 0)
-
-          const directText = el.textContent.trim()
-          const allTexts = [...new Set([...childTexts, directText])]
-
-          // 사이즈명 찾기
-          let sizeName = childTexts.find(t => sizePattern.test(t))
-          if (!sizeName) {
-            const lines = directText.split(/[\n\r]+/).map(l => l.trim()).filter(Boolean)
-            sizeName = lines.find(t => sizePattern.test(t))
-          }
-          if (!sizeName) continue
-
-          // 가격 찾기: "원" 포함 → 숫자만(콤마 포함) → 5자리+ 숫자
-          let price = 0
-          for (const t of allTexts) {
-            const m1 = t.match(priceWithWon)
-            if (m1) { price = parseInt(m1[1].replace(/,/g, '')); break }
-            const m2 = t.match(priceStandalone)
-            if (m2 && parseInt(t.replace(/,/g, '')) >= 10000) { price = parseInt(t.replace(/,/g, '')); break }
-          }
-          // "-" 표시는 가격 없음 (구매 불가)
-          if (!price && allTexts.some(t => t === '-')) price = 0
-
-          if (!results.find(r => r.name === sizeName)) {
-            results.push({
-              name: sizeName, price, stock: price > 0 ? 1 : 0,
-              kreamAsk: price, kreamBid: 0, kreamLastSale: 0,
-              kreamGeneralPrice: price, kreamFastPrice: 0, kreamOverseasPrice: 0
-            })
-          }
-        }
-
-        return results
-      })
-      console.log(`[KREAM] 모달 DOM에서 ${options.length}개 사이즈 추출`)
-    }
-
-    if (options.length === 0) {
-      console.log('[KREAM] 사이즈/가격 추출 실패 - 옵션 없이 기본 상품 정보만 반환')
-    }
-
-    options.forEach(o => {
-      console.log(`[KREAM] ${o.name}: 가격=${o.price} Ask=${o.kreamAsk}`)
-    })
-
-    page.off('response', responseHandler)
-
-    // ── 이미지 프록시 URL 변환 ──
-    const proxyImages = productImages
-      .filter(Boolean)
-      .map(img => `http://localhost:3001/api/image-proxy?url=${encodeURIComponent(img)}`)
-
-    const salePrice = options.length > 0
-      ? Math.min(...options.map(o => o.kreamGeneralPrice || o.kreamFastPrice || 0).filter(p => p > 0))
-      : 0
-
-    // 카테고리 파싱 (API 데이터 우선, DOM 시도, 마지막 기본값)
-    let categoryStr = ''
-    if (apiInfo) {
-      categoryStr = apiInfo.category_path
-        || (apiInfo.category && typeof apiInfo.category === 'string' ? apiInfo.category : '')
-        || apiInfo.category?.name
-        || (apiInfo.category?.parent ? `${apiInfo.category.parent.name} > ${apiInfo.category.name}` : '')
-        || ''
-    }
-    if (!categoryStr) {
-      // DOM에서 카테고리 breadcrumb 추출 시도
-      categoryStr = await page.evaluate(() => {
-        const breadcrumb = document.querySelector('[class*="breadcrumb"], [class*="category"], nav[aria-label]')
-        if (breadcrumb) return breadcrumb.textContent.replace(/[>\s]+/g, ' > ').trim()
-        return ''
-      }).catch(() => '')
-    }
-    if (!categoryStr) categoryStr = '패션잡화 > 신발 > 스니커즈'
-    const catParts = categoryStr.split(/\s*>\s*/)
-
-    const product = {
-      id: `col_kream_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      sourceSite: 'KREAM',
-      siteProductId: id,
-      sourceUrl: productUrl,
-      name: basicInfo.name,
-      brand: basicInfo.brand,
-      category: categoryStr,
-      category1: catParts[0] || '',
-      category2: catParts[1] || '',
-      category3: catParts[2] || '',
-      category4: catParts[3] || '',
-      images: proxyImages,
-      detailImages: [],
-      options,
-      originalPrice: apiInfo?.release_price || 0,
-      salePrice,
-      discountRate: 0,
-      status: 'collected',
-      appliedPolicyId: null,
-      marketPrices: {},
-      kreamData: {
-        sizeOptions: options,
-        fetchedAt: new Date().toISOString()
-      },
-      collectedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    }
-
-    console.log(`[KREAM] 상품 수집 완료: ${id} - 사이즈 ${options.length}개, 이미지 ${proxyImages.length}개`)
-    return res.json({ success: true, data: product })
-  } catch (err) {
-    // 에러 발생 시에도 responseHandler 제거 보장
-    try { const page = await getKreamPage(); page.off('response', responseHandler) } catch {}
-    console.log(`[KREAM] 상품 조회 실패: ${err.message}`)
-    return res.status(500).json({ success: false, message: err.message })
-  }
+  // 타임아웃: 확장앱 미연결 안내
+  return res.status(504).json({
+    success: false,
+    message: '수집 타임아웃. 웨일 브라우저가 열려있고 KREAM에 로그인되어 있는지 확인해주세요. 확장앱을 재활성화(chrome://extensions → 다시 로드)해 주세요.'
+  })
 })
 
+// (puppeteer fallback 제거됨 — 확장앱 전용으로 변경)
+
 // ─────────────────────────────────────────────
-// KREAM API: 상품 검색
+// KREAM API: 상품 검색 (확장앱 큐 방식)
 // GET /api/kream/search?keyword=나이키&size=30
 // ─────────────────────────────────────────────
 app.get('/api/kream/search', async (req, res) => {
   const keyword = req.query.keyword || ''
-  const size = Math.min(parseInt(req.query.size) || 30, 100)
-
   if (!keyword) return res.status(400).json({ success: false, message: '검색 키워드를 입력해주세요.' })
 
-  try {
-    const page = await getKreamPage()
-    const searchUrl = `https://kream.co.kr/search?keyword=${encodeURIComponent(keyword)}`
-    console.log(`[KREAM] 검색 페이지 이동: ${searchUrl}`)
+  const searchUrl = `https://kream.co.kr/search?keyword=${encodeURIComponent(keyword)}`
+  const requestId = crypto.randomUUID()
 
-    // 네트워크 응답 캡처
-    const capturedResponses = []
-    const responseHandler = async (response) => {
-      const url = response.url()
-      const ct = response.headers()['content-type'] || ''
-      if (response.status() !== 200) return
-      if (!ct.includes('application/json')) return
-      if (!url.includes('kream')) return
-      try {
-        const data = await response.json()
-        capturedResponses.push({ url, data })
-      } catch {}
-    }
-    page.on('response', responseHandler)
+  // 검색 큐에 등록
+  kreamSearchQueue.push({ requestId, keyword, url: searchUrl })
+  console.log(`[KREAM] 검색 큐 등록: "${keyword}" (${requestId})`)
 
-    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 30000 })
-
-    // SPA 렌더링 완료 대기
-    try {
-      await page.waitForSelector('a[href*="/products/"]', { timeout: 8000 })
-      console.log('[KREAM] 상품 링크 감지 완료')
-    } catch {
-      console.log('[KREAM] 상품 링크 대기 타임아웃')
-    }
-
-    page.off('response', responseHandler)
-    console.log(`[KREAM] 캡처된 JSON 응답: ${capturedResponses.length}개`)
-
-    // JSON 응답에서 상품 데이터 추출 시도
-    const searchResponse = capturedResponses.find(r =>
-      r.url.includes('search') || r.url.includes('product') || r.url.includes('query')
-    )
-    if (searchResponse?.data) {
-      // 응답 구조 디버깅 (첫 번째 아이템 키 확인)
-      const rawData = searchResponse.data
-      const topKeys = Object.keys(rawData || {}).join(', ')
-      console.log(`[KREAM] JSON 응답 최상위 키: ${topKeys}`)
-      const items = rawData?.data?.products?.items
-        || rawData?.data?.items
-        || rawData?.result?.items
-        || rawData?.result?.products
-        || rawData?.products?.items
-        || rawData?.products
-        || rawData?.results
-        || rawData?.items
-        || (Array.isArray(rawData?.result) ? rawData.result : [])
-        || []
-      if (items.length > 0) {
-        const firstRaw = items[0]?.product || items[0]
-        console.log(`[KREAM] 첫 아이템 샘플:`, JSON.stringify({ name: firstRaw?.name, brand: firstRaw?.brand, thumbnail: firstRaw?.thumbnail_url }).substring(0, 200))
-        const products = items.map(item => transformKreamToProduct(item.product || item))
-        console.log(`[KREAM] 검색 완료 (JSON): "${keyword}" → ${products.length}개`)
-        return res.json({ success: true, data: products, total: products.length })
-      }
-    }
-
-    // DOM 파싱 fallback
-    console.log('[KREAM] DOM 파싱 시도...')
-    const domItems = await page.evaluate(() => {
-      const seen = new Set()
-      const results = []
-      document.querySelectorAll('a[href*="/products/"]').forEach(link => {
-        const idMatch = link.href.match(/\/products\/(\d+)/)
-        if (!idMatch || seen.has(idMatch[1])) return
-        seen.add(idMatch[1])
-        const texts = Array.from(link.querySelectorAll('*'))
-          .filter(el => el.children.length === 0)
-          .map(el => el.textContent.trim())
-          .filter(t => t.length > 1)
-        const imgEl = link.querySelector('img')
-        const brand = texts[0] || ''
-        const name = texts[1] || texts[0] || ''
-        const priceText = texts.find(t => t.includes('원')) || ''
-        const discountText = texts.find(t => /^\d+%$/.test(t)) || ''
-        const rawImg = imgEl?.src || imgEl?.currentSrc || imgEl?.getAttribute('data-src') || ''
-        results.push({
-          id: idMatch[1], name, brand,
-          price: priceText.replace(/[^0-9]/g, ''),
-          discount: parseInt(discountText) || 0,
-          image: rawImg.split('?')[0]
-        })
-      })
-      return results
+  // 확장앱 결과 대기 (최대 90초 — alarm 최소 주기 30초 감안)
+  const result = await new Promise(resolve => {
+    const timer = setTimeout(() => {
+      kreamSearchResolvers.delete(requestId)
+      resolve(null)
+    }, 90000)
+    kreamSearchResolvers.set(requestId, (data) => {
+      clearTimeout(timer)
+      resolve(data)
     })
+  })
 
-    console.log(`[KREAM] DOM 파싱: ${domItems.length}개`)
-    if (domItems.length > 0) {
-      const products = domItems.filter(it => it.id && it.name).map(it => ({
-        id: `col_kream_${it.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        sourceSite: 'KREAM',
-        siteProductId: it.id,
-        sourceUrl: `https://kream.co.kr/products/${it.id}`,
-        name: it.name, brand: it.brand,
-        category: '패션잡화 > 신발 > 스니커즈',
-        images: it.image ? [`http://localhost:3001/api/image-proxy?url=${encodeURIComponent(it.image)}`] : [],
-        detailImages: [], options: [],
-        originalPrice: 0, salePrice: parseInt(it.price) || 0,
-        discountRate: it.discount || 0, status: 'collected',
-        appliedPolicyId: null, marketPrices: {},
-        kreamData: { fetchedAt: new Date().toISOString() },
-        collectedAt: new Date().toISOString(), updatedAt: new Date().toISOString()
-      }))
-      console.log(`[KREAM] 검색 완료 (DOM): "${keyword}" → ${products.length}개`)
-      return res.json({ success: true, data: products, total: products.length })
-    }
+  if (result) return res.json(result)
 
-    return res.json({ success: true, data: [], total: 0 })
-  } catch (err) {
-    console.log(`[KREAM] 검색 실패: ${err.message}`)
-    return res.status(500).json({ success: false, message: err.message })
-  }
+  return res.status(504).json({
+    success: false,
+    message: '검색 타임아웃. 웨일 브라우저가 열려있고 KREAM에 로그인되어 있는지 확인해주세요. 확장앱을 재활성화(chrome://extensions → 다시 로드)해 주세요.'
+  })
 })
 
 // ─────────────────────────────────────────────
 // KREAM API: 사이즈별 시세 조회
 // GET /api/kream/products/:id/prices
+// kreamCookieStr로 KREAM API 직접 호출
 // ─────────────────────────────────────────────
 app.get('/api/kream/products/:id/prices', async (req, res) => {
   const { id } = req.params
+  if (!kreamCookieStr) return res.status(401).json({ success: false, message: 'KREAM 쿠키가 없습니다.' })
   try {
-    const page = await getKreamPage()
-    const pricesData = await page.evaluate(async (productId) => {
-      const r = await fetch(`/api/products/${productId}/prices`)
-      if (!r.ok) return null
-      return await r.json()
-    }, id)
-    if (!pricesData) return res.status(404).json({ success: false, message: `사이즈 정보 없음: ${id}` })
+    const r = await fetch(`https://kream.co.kr/api/products/${id}/prices`, {
+      headers: {
+        'Cookie': kreamCookieStr,
+        'Referer': `https://kream.co.kr/products/${id}`,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    })
+    if (!r.ok) return res.status(r.status).json({ success: false, message: `KREAM API 오류: ${r.status}` })
+    const pricesData = await r.json()
     return res.json({ success: true, data: pricesData.data || pricesData })
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message })
@@ -3274,9 +2953,10 @@ server.listen(PORT, () => {
 ║   GET  /api/musinsa/goods/:id   상품+옵션 수집   ║
 ║   GET  /api/musinsa/search-api  검색 API         ║
 ║   POST /api/musinsa/login       ID/PW 로그인     ║
-║   [KREAM 리셀]                                   ║
-║   POST /api/kream/login         로그인           ║
-║   GET  /api/kream/auth/status   로그인 상태 확인 ║
+║   [KREAM 리셀] (확장앱 연동)                      ║
+║   POST /api/kream/set-cookie    쿠키 수신(확장앱)║
+║   GET  /api/kream/collect-queue 수집큐(확장앱폴링)║
+║   POST /api/kream/collect-result수집결과(확장앱)  ║
 ║   GET  /api/kream/products/:id  상품 상세 조회   ║
 ║   GET  /api/kream/search        상품 검색        ║
 ║   POST /api/kream/sell/bid      매도 입찰 등록   ║

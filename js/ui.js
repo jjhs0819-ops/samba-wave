@@ -1028,7 +1028,8 @@ class UIManager {
                         <button onclick="ui.renameOptionModal('${product.id}')" style="margin-left:0.4rem; font-size:0.7rem; padding:1px 6px; background:rgba(255,140,0,0.15); color:#FF8C00; border:1px solid rgba(255,140,0,0.3); border-radius:3px; cursor:pointer;">옵션명변경</button>
                         <button onclick="ui.addOption('${product.id}')" style="margin-left:0.3rem; font-size:0.7rem; padding:1px 6px; background:rgba(255,255,255,0.05); color:#C5C5C5; border:1px solid #3D3D3D; border-radius:3px; cursor:pointer;">옵션추가</button>
                     </th>
-                    <th style="padding:0.5rem; text-align:right; font-size:0.8rem; color:#999; font-weight:500;">원가</th>
+                    <th style="padding:0.5rem; text-align:right; font-size:0.8rem; color:#999; font-weight:500;">원가<br><span style="font-size:0.7rem; color:#555; font-weight:400;">(일반배송)</span></th>
+                    ${product.sourceSite === 'KREAM' ? `<th style="padding:0.5rem; text-align:right; font-size:0.8rem; color:#4C9AFF; font-weight:500;">빠른배송<br><span style="font-size:0.7rem; color:#555; font-weight:400;">(KREAM)</span></th>` : ''}
                     <th style="padding:0.5rem; text-align:right; font-size:0.8rem; color:#999; font-weight:500;">
                         상품가
                         <button onclick="ui.bulkPriceEdit('${product.id}')" style="margin-left:0.3rem; font-size:0.7rem; padding:1px 6px; background:rgba(255,255,255,0.05); color:#C5C5C5; border:1px solid #3D3D3D; border-radius:3px; cursor:pointer;">가격수정</button>
@@ -1043,8 +1044,6 @@ class UIManager {
 
         // 행 생성
         const rows = options.map((o, idx) => {
-            const optionCost = o.price || product.bestBenefitPrice || basePrice
-            const optionSalePrice = product.salePrice || Math.ceil(optionCost * (1 + (product.marginRate || 15) / 100))
             const origStock = o.originalStock ?? o.stock
             const currentStock = o.stock ?? origStock
             const stockUnknown = currentStock === null || currentStock === undefined || currentStock === -1
@@ -1052,6 +1051,10 @@ class UIManager {
             // 품절 판정: isSoldOut 또는 stockStatus 또는 stock === 0
             const isBrandDelivery = o.isBrandDelivery === true
             const isSoldOut = !isBrandDelivery && (o.isSoldOut || o.stockStatus === '품절' || currentStock === 0)
+
+            // 품절 옵션은 원가 0 (품절인데 원가가 있으면 대표가격 오산정)
+            const optionCost = isSoldOut ? 0 : (o.price || product.bestBenefitPrice || basePrice)
+            const optionSalePrice = product.salePrice || Math.ceil(optionCost * (1 + (product.marginRate || 15) / 100))
             let stockDisplay
             if (isBrandDelivery) {
                 stockDisplay = '<span style="color:#6B8AFF; font-weight:600; font-size:0.78rem;">브랜드배송</span>'
@@ -1089,7 +1092,8 @@ class UIManager {
                         <input type="checkbox" class="opt-cb-${product.id}" data-idx="${idx}" ${isChecked ? 'checked' : ''} style="cursor:pointer; accent-color:#FF8C00;">
                     </td>
                     <td style="padding:0.5rem; font-size:0.875rem; color:#E5E5E5;">${o.name}</td>
-                    <td style="padding:0.5rem; text-align:right; font-size:0.875rem; color:#C5C5C5;">₩${optionCost.toLocaleString()}</td>
+                    <td style="padding:0.5rem; text-align:right; font-size:0.875rem; color:#C5C5C5;">${optionCost > 0 ? '₩' + optionCost.toLocaleString() : '-'}</td>
+                    ${product.sourceSite === 'KREAM' ? `<td style="padding:0.5rem; text-align:right; font-size:0.875rem; color:#4C9AFF;">${o.kreamFastPrice > 0 ? '₩' + o.kreamFastPrice.toLocaleString() : '-'}</td>` : ''}
                     <td style="padding:0.5rem; text-align:right; font-size:0.875rem; color:#E5E5E5;">
                         <input type="number" value="${optionSalePrice}" data-field="price" data-idx="${idx}" data-pid="${product.id}"
                             style="width:100px; background:rgba(255,255,255,0.05); border:1px solid #3D3D3D; color:#E5E5E5; border-radius:4px; padding:2px 6px; text-align:right; font-size:0.875rem;">원
@@ -3012,7 +3016,7 @@ class UIManager {
         if (collectorManager.proxyAvailable) {
             dot.style.background = '#51CF66'
             text.style.color = '#51CF66'
-            text.textContent = '실제수집 모드 활성화 — 무신사 실제 상품 데이터 수집 가능'
+            text.textContent = '실제수집 모드 활성화'
         } else {
             dot.style.background = '#888'
             text.style.color = '#888'
@@ -3561,7 +3565,7 @@ class UIManager {
                         </div>
                     </td>
                     <td style="padding:0.75rem 0.5rem; text-align:right; white-space:nowrap;">
-                        ${p.sourceSite === 'KREAM' && p.kreamData ? (() => {
+                        ${p.sourceSite === 'KREAM' && p.options?.length > 0 ? (() => {
                             // KREAM 사이즈별 대표 가격 (첫번째 옵션 기준)
                             const firstOpt = (p.options || [])[0]
                             if (!firstOpt) return `<span style="font-size:0.9rem; color:#FFB84D; font-weight:600;">₩${this.formatNumber(p.salePrice)}</span>`
@@ -3662,10 +3666,10 @@ class UIManager {
         if (!product && typeof storage !== 'undefined') {
             product = await storage.get('collectedProducts', productId).catch(() => null)
         }
-        if (!product || !product.kreamData) return
+        if (!product) return
 
         const opts = product.options || []
-        const kd = product.kreamData
+        const kd = product.kreamData || {}
 
         const rows = opts.map(opt => {
             const generalPrice = opt.kreamGeneralPrice || opt.kreamAsk || 0
@@ -3690,10 +3694,10 @@ class UIManager {
                     </div>
                     <div style="padding:12px 18px;">
                         <div style="display:flex; gap:16px; margin-bottom:12px; flex-wrap:wrap;">
-                            <div style="font-size:0.8rem; color:#888;">발매가: <span style="color:#C5C5C5; font-weight:600;">₩${this.formatNumber(kd.retailPrice)}</span></div>
-                            <div style="font-size:0.8rem; color:#888;">거래량: <span style="color:#C5C5C5; font-weight:600;">${(kd.tradeVolume || 0).toLocaleString()}건</span></div>
-                            <div style="font-size:0.8rem; color:#888;">관심: <span style="color:#C5C5C5; font-weight:600;">${(kd.wishCount || 0).toLocaleString()}명</span></div>
-                            ${kd.modelNo ? `<div style="font-size:0.8rem; color:#888;">모델번호: <span style="color:#C5C5C5; font-family:monospace;">${kd.modelNo}</span></div>` : ''}
+                            ${(kd.retailPrice || product.originalPrice) ? `<div style="font-size:0.8rem; color:#888;">발매가: <span style="color:#C5C5C5; font-weight:600;">₩${this.formatNumber(kd.retailPrice || product.originalPrice)}</span></div>` : ''}
+                            ${kd.tradeVolume ? `<div style="font-size:0.8rem; color:#888;">거래량: <span style="color:#C5C5C5; font-weight:600;">${kd.tradeVolume.toLocaleString()}건</span></div>` : ''}
+                            ${kd.wishCount ? `<div style="font-size:0.8rem; color:#888;">관심: <span style="color:#C5C5C5; font-weight:600;">${kd.wishCount.toLocaleString()}명</span></div>` : ''}
+                            ${(kd.modelNo || product.styleCode) ? `<div style="font-size:0.8rem; color:#888;">모델번호: <span style="color:#C5C5C5; font-family:monospace;">${kd.modelNo || product.styleCode}</span></div>` : ''}
                         </div>
                         <table style="width:100%; border-collapse:collapse;">
                             <thead>
