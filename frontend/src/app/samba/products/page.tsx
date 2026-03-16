@@ -152,7 +152,8 @@ export default function ProductsPage() {
 
   const handleEnrich = async (productId: string) => {
     try {
-      const res = await fetch(`http://localhost:28080/api/v1/samba/collector/enrich/${productId}`, { method: "POST" });
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'production' ? 'https://samba-wave-production.up.railway.app' : 'http://localhost:28080')
+      const res = await fetch(`${apiBase}/api/v1/samba/collector/enrich/${productId}`, { method: "POST" });
       const data = await res.json();
       if (res.ok && data.success) {
         load();

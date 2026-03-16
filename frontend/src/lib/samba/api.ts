@@ -2,10 +2,10 @@
  * SambaWave API client - 인증 없이 접근
  */
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_ENV === "development"
-    ? (process.env.NEXT_PUBLIC_API_URL_DEV || "http://localhost:28080")
-    : (process.env.NEXT_PUBLIC_API_URL_PROD || "http://localhost:28080");
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === 'production'
+    ? 'https://samba-wave-production.up.railway.app'
+    : 'http://localhost:28080')
 
 const SAMBA_PREFIX = `${API_BASE}/api/v1/samba`;
 
