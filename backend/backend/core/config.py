@@ -59,40 +59,32 @@ class BackendSettings(BaseSettings):
     # ===========================================
     # CORS Configuration
     # ===========================================
+
+    # 추가 허용 origin (콤마 구분, Railway 환경변수로 주입)
+    cors_extra_origins: str = ""
+
     @computed_field
     @property
     def cors_origins(self) -> list[str]:
         """Get allowed CORS origins based on environment."""
-        dev_origins = [
+        origins = [
             "http://localhost:3000",
             "http://localhost:3001",
             "http://localhost:3002",
             "http://localhost:3003",
             "http://127.0.0.1:3000",
-            "http://127.0.0.1:3001",
-            "http://127.0.0.1:3002",
-            "http://127.0.0.1:3003",
-        ]
-
-        prod_origins: list[str] = [
             "https://samba-wave-1zm6k4gb4-sbk0674-2598s-projects.vercel.app",
         ]
-
-        if self.environment == "development":
-            return dev_origins
-        elif self.environment == "staging":
-            return dev_origins + prod_origins
-        else:
-            return prod_origins
+        if self.cors_extra_origins:
+            extras = [o.strip() for o in self.cors_extra_origins.split(",") if o.strip()]
+            origins.extend(extras)
+        return origins
 
     @computed_field
     @property
     def cors_origin_regex(self) -> str | None:
-        """Get CORS origin regex based on environment."""
-        if self.environment == "development":
-            return r"https?://(.+\.localhost(:\d+)?|localhost(:\d+)?)"
-        # production/staging: vercel.app 전체 허용
-        return r"https://.*\.vercel\.app"
+        """모든 환경에서 localhost + vercel.app 허용."""
+        return r"https?://(localhost(:\d+)?|127\.0\.0\.1(:\d+)?|.*\.vercel\.app)"
 
     # ===========================================
     # Computed Properties
