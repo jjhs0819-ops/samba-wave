@@ -91,7 +91,8 @@ class BackendSettings(BaseSettings):
         """Get CORS origin regex based on environment."""
         if self.environment == "development":
             return r"https?://(.+\.localhost(:\d+)?|localhost(:\d+)?)"
-        return None
+        # production/staging: vercel.app 전체 허용
+        return r"https://.*\.vercel\.app"
 
     # ===========================================
     # Computed Properties
