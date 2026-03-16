@@ -241,7 +241,9 @@
       "Bash(do echo \"=== $f ===\")",
       "Bash(ffprobe:*)",
       "Bash(afplay:*)",
-      "Bash(ngrok version:*)"
+      "Bash(ngrok version:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
