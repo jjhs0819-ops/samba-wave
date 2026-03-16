@@ -1,0 +1,25 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.env*
+*.egg-info/
+dist/
+build/
+
+# IDE / OS files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+backend/.venv

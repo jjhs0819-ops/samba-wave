@@ -1,0 +1,44 @@
+name: little-boy
+
+# ---------------------------------------------------------------------------
+#  Common settings (DRY) -----------------------------------------------------
+# ---------------------------------------------------------------------------
+x-common: &common
+  restart: unless-stopped
+  env_file:
+    - .env
+  networks:
+    - admin-backend-net
+
+# ---------------------------------------------------------------------------
+#  Services -----------------------------------------------------------------
+# ---------------------------------------------------------------------------
+services:
+  # ------------------------
+  # PostgreSQL Test DB
+  # ------------------------
+  test-db:
+    image: pgvector/pgvector:pg16
+    container_name: ygs-test-db
+    environment:
+      - POSTGRES_USER=test_user
+      - POSTGRES_PASSWORD=test_password
+      - POSTGRES_DB=test_little_boy
+    ports:
+      - "5433:5432" # Use different port (5433) to avoid conflicts with local PostgreSQL
+    networks:
+      - admin-backend-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d test_little_boy"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - test-db-data:/var/lib/postgresql/data
+
+networks:
+  admin-backend-net:
+    driver: bridge
+
+volumes:
+  test-db-data:

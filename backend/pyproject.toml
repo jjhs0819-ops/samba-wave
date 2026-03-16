@@ -1,0 +1,105 @@
+[project]
+name = "samba-wave-backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "==3.12.3"
+dependencies = [
+    "aiohttp>=3.12.15",
+    "anthropic>=0.52.0",
+    "anyio>=4.10.0",
+    "asyncpg>=0.30.0",
+    "bcrypt>=4.2.1",
+    "boto3>=1.40.39",
+    "email-validator>=2.2.0",
+    "fastapi>=0.116.1",
+    "fastapi-cache2>=0.2.0",
+    "fastapi-health>=0.4.0",
+    "greenlet>=3.2.4",
+    "gunicorn>=23.0.0",
+    "openai>=1.57.4",
+    "pgvector>=0.3.6",
+    "pydantic>=2.11.9",
+    "pydantic-ai>=1.0.15",
+    "pydantic-settings>=2.10.1",
+    "pyjwt>=2.10.1",
+    "python-ulid>=3.1.0",
+    "pytz>=2025.2",
+    "reportlab>=4.2.5",
+    "sqlalchemy>=2.0.43",
+    "sqlglot>=27.29.0",
+    "sqlmodel>=0.0.25",
+    "sse-starlette>=3.0.2",
+    "google-genai>=1.0.0",
+    "playwright>=1.49.0",
+    "fal-client>=0.5.0",
+    "pillow>=11.0.0",
+    "httpx>=0.27.0",
+    "firebase-admin>=6.0.0",
+    "openpyxl>=3.1.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["backend"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "security: marks tests as security tests (SQL injection, etc.)",
+    "performance: marks tests as performance benchmarks",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = [
+    "--cov=backend",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-fail-under=80",
+]
+
+[tool.coverage.run]
+source = ["backend"]
+omit = [
+    "backend/__init__.py",
+    "*/tests/*",
+    "tests/*",
+    "**/tests/*",
+    "conftest.py",
+    "*/conftest.py",
+    "**/conftest.py",
+    "backend/utils/pdf/*",
+    "backend/utils/s3.py",
+    "backend/api/v1/routers/*",
+    "backend/main.py",
+    "backend/domain/auth/*",
+    "backend/domain/curai/*",
+    "backend/domain/admin/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]
+
+[dependency-groups]
+dev = [
+    "alembic>=1.17.0",
+    "black>=25.9.0",
+    "isort>=6.0.1",
+    "mypy>=1.18.2",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.14.3",
+    "types-reportlab>=4.4.4.20250926",
+]
