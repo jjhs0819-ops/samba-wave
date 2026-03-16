@@ -382,7 +382,7 @@ async def collect_by_url(
             # 검색그룹에 최근수집일 업데이트
             from datetime import datetime, timezone
             await svc.update_filter(filter_id, {
-                "last_collected_at": datetime.now(timezone.utc).isoformat(),
+                "last_collected_at": datetime.now(timezone.utc),
             })
 
             return {
@@ -504,7 +504,7 @@ async def collect_by_url(
             # 검색그룹에 최근수집일 업데이트
             from datetime import datetime, timezone
             await svc.update_filter(filter_id, {
-                "last_collected_at": datetime.now(timezone.utc).isoformat(),
+                "last_collected_at": datetime.now(timezone.utc),
             })
 
             return {
@@ -655,7 +655,7 @@ async def collect_by_filter(
 
         from datetime import datetime, timezone
         await svc.update_filter(filter_id, {
-            "last_collected_at": datetime.now(timezone.utc).isoformat(),
+            "last_collected_at": datetime.now(timezone.utc),
         })
 
         return {
@@ -716,7 +716,7 @@ async def collect_by_filter(
 
         from datetime import datetime, timezone
         await svc.update_filter(filter_id, {
-            "last_collected_at": datetime.now(timezone.utc).isoformat(),
+            "last_collected_at": datetime.now(timezone.utc),
         })
 
         return {

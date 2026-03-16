@@ -4,11 +4,7 @@
  * Handles all API requests with automatic token management.
  */
 
-// Environment-based API URL selection
-const isDev = process.env.NEXT_PUBLIC_ENV === "development";
-const API_BASE_URL = isDev
-  ? (process.env.NEXT_PUBLIC_API_URL_DEV || "http://localhost:28080")
-  : (process.env.NEXT_PUBLIC_API_URL_PROD || "http://localhost:28080");
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:28080'
 
 export interface LoginResponse {
   user_id: string;

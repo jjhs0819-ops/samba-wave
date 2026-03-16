@@ -13,6 +13,16 @@ const nextConfig: NextConfig = {
         hostname: 'prod-apne2-ygs.s3.amazonaws.com',
         pathname: '/**',
       },
+      {
+        protocol: 'https',
+        hostname: '*.ngrok-free.app',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.ngrok.io',
+        pathname: '/**',
+      },
     ],
     formats: ['image/avif', 'image/webp'],
     minimumCacheTTL: 31536000,

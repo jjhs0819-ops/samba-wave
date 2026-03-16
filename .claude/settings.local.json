@@ -240,7 +240,8 @@
       "Bash(env)",
       "Bash(do echo \"=== $f ===\")",
       "Bash(ffprobe:*)",
-      "Bash(afplay:*)"
+      "Bash(afplay:*)",
+      "Bash(ngrok version:*)"
     ],
     "deny": [],
     "ask": []
