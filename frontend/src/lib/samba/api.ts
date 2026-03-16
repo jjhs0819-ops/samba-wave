@@ -205,6 +205,8 @@ export interface SambaCollectedProduct {
   category?: string;
   status: string;
   applied_policy_id?: string;
+  market_prices?: Record<string, number>;
+  market_enabled?: Record<string, boolean>;
   registered_accounts?: string[];
   is_sold_out: boolean;
   created_at: string;

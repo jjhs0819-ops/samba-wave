@@ -13,8 +13,6 @@ Node.js proxy-server.mjs를 대체하는 통합 프록시 라우터.
 
 from __future__ import annotations
 
-import asyncio
-import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -250,11 +248,9 @@ async def musinsa_price_monitor(
 # KREAM endpoints
 # ═══════════════════════════════════════════════
 
-# 확장앱 큐 (in-memory, 서버 재시작 시 초기화)
-_kream_collect_queue: list[dict[str, Any]] = []
-_kream_collect_resolvers: dict[str, asyncio.Future[Any]] = {}
-_kream_search_queue: list[dict[str, Any]] = []
-_kream_search_resolvers: dict[str, asyncio.Future[Any]] = {}
+# 확장앱 큐: KreamClient 클래스 레벨 큐 사용 (collector.py와 공유)
+# KreamClient.collect_queue, KreamClient.collect_resolvers
+# KreamClient.search_queue, KreamClient.search_resolvers
 
 
 class KreamLoginRequest(BaseModel):
@@ -335,9 +331,9 @@ async def kream_set_cookie(
 @router.get("/kream/collect-queue")
 async def kream_collect_queue_poll() -> dict[str, Any]:
     """확장앱이 폴링: 대기 중인 수집 요청 가져가기."""
-    if not _kream_collect_queue:
+    if not KreamClient.collect_queue:
         return {"hasJob": False}
-    job = _kream_collect_queue.pop(0)
+    job = KreamClient.collect_queue.pop(0)
     return {"hasJob": True, **job}
 
 
@@ -349,10 +345,10 @@ class KreamCollectResultRequest(BaseModel):
 @router.post("/kream/collect-result")
 async def kream_collect_result(body: KreamCollectResultRequest) -> dict[str, Any]:
     """확장앱이 수집 완료 후 결과 전달."""
-    future = _kream_collect_resolvers.get(body.requestId)
+    future = KreamClient.collect_resolvers.get(body.requestId)
     if future and not future.done():
         future.set_result(body.data)
-        _kream_collect_resolvers.pop(body.requestId, None)
+        KreamClient.collect_resolvers.pop(body.requestId, None)
         logger.info(f"[KREAM] 확장앱 수집 결과 수신: {body.requestId}")
     return {"success": True}
 
@@ -363,32 +359,11 @@ async def kream_product_detail(product_id: str) -> dict[str, Any]:
     if not product_id:
         raise HTTPException(status_code=400, detail="상품 ID가 필요합니다.")
 
-    request_id = str(uuid.uuid4())
-    _kream_collect_queue.append(
-        {
-            "requestId": request_id,
-            "productId": product_id,
-            "url": f"https://kream.co.kr/products/{product_id}",
-        }
-    )
-    logger.info(f"[KREAM] 수집 요청 큐 등록: {product_id} ({request_id})")
-
-    loop = asyncio.get_event_loop()
-    future: asyncio.Future[Any] = loop.create_future()
-    _kream_collect_resolvers[request_id] = future
-
+    client = KreamClient()
     try:
-        result = await asyncio.wait_for(future, timeout=90.0)
-        return result
-    except asyncio.TimeoutError:
-        _kream_collect_resolvers.pop(request_id, None)
-        raise HTTPException(
-            status_code=504,
-            detail=(
-                "수집 타임아웃. 웨일 브라우저가 열려있고 KREAM에 로그인되어 있는지 "
-                "확인해주세요. 확장앱을 재활성화해 주세요."
-            ),
-        )
+        return await client.get_product(product_id)
+    except Exception as exc:
+        raise HTTPException(status_code=504, detail=str(exc))
 
 
 # -- 확장앱 큐 방식 (검색) --
@@ -397,9 +372,9 @@ async def kream_product_detail(product_id: str) -> dict[str, Any]:
 @router.get("/kream/search-queue")
 async def kream_search_queue_poll() -> dict[str, Any]:
     """확장앱이 3초마다 폴링: 대기 중인 검색 요청 가져가기."""
-    if not _kream_search_queue:
+    if not KreamClient.search_queue:
         return {"hasJob": False}
-    job = _kream_search_queue.pop(0)
+    job = KreamClient.search_queue.pop(0)
     return {"hasJob": True, **job}
 
 
@@ -411,10 +386,10 @@ class KreamSearchResultRequest(BaseModel):
 @router.post("/kream/search-result")
 async def kream_search_result(body: KreamSearchResultRequest) -> dict[str, Any]:
     """확장앱이 검색 완료 후 결과 전달."""
-    future = _kream_search_resolvers.get(body.requestId)
+    future = KreamClient.search_resolvers.get(body.requestId)
     if future and not future.done():
         future.set_result(body.data)
-        _kream_search_resolvers.pop(body.requestId, None)
+        KreamClient.search_resolvers.pop(body.requestId, None)
         logger.info(f"[KREAM] 확장앱 검색 결과 수신: {body.requestId}")
     return {"success": True}
 
@@ -427,32 +402,12 @@ async def kream_search(
     if not keyword:
         raise HTTPException(status_code=400, detail="검색 키워드를 입력해주세요.")
 
-    from urllib.parse import quote
-
-    search_url = f"https://kream.co.kr/search?keyword={quote(keyword)}"
-    request_id = str(uuid.uuid4())
-
-    _kream_search_queue.append(
-        {"requestId": request_id, "keyword": keyword, "url": search_url}
-    )
-    logger.info(f'[KREAM] 검색 큐 등록: "{keyword}" ({request_id})')
-
-    loop = asyncio.get_event_loop()
-    future: asyncio.Future[Any] = loop.create_future()
-    _kream_search_resolvers[request_id] = future
-
+    client = KreamClient()
     try:
-        result = await asyncio.wait_for(future, timeout=90.0)
-        return result
-    except asyncio.TimeoutError:
-        _kream_search_resolvers.pop(request_id, None)
-        raise HTTPException(
-            status_code=504,
-            detail=(
-                "검색 타임아웃. 웨일 브라우저가 열려있고 KREAM에 로그인되어 있는지 "
-                "확인해주세요. 확장앱을 재활성화해 주세요."
-            ),
-        )
+        items = await client.search(keyword)
+        return {"success": True, "data": items}
+    except Exception as exc:
+        raise HTTPException(status_code=504, detail=str(exc))
 
 
 @router.get("/kream/products/{product_id}/prices")

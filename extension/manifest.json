@@ -16,7 +16,7 @@
     "https://*.musinsa.com/*",
     "https://kream.co.kr/*",
     "https://*.kream.co.kr/*",
-    "http://localhost:3001/*"
+    "http://localhost:28080/*"
   ],
   "action": {
     "default_popup": "popup.html",

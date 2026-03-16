@@ -1,6 +1,7 @@
 // 삼바웨이브 쿠키 연동 - 백그라운드 서비스 워커
 
-const PROXY_URL = 'http://localhost:3001'
+const PROXY_URL = 'http://localhost:28080'
+const API_PREFIX = '/api/v1/samba/proxy'
 
 // ==================== 무신사 쿠키 ====================
 
@@ -99,7 +100,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 // ==================== 프록시 전송 함수 ====================
 
 async function sendCookiesToProxy(cookieStr) {
-  const res = await fetch(`${PROXY_URL}/api/musinsa/set-cookie`, {
+  const res = await fetch(`${PROXY_URL}${API_PREFIX}/musinsa/set-cookie`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cookie: cookieStr })
@@ -108,7 +109,7 @@ async function sendCookiesToProxy(cookieStr) {
 }
 
 async function sendKreamCookiesToProxy(cookieStr) {
-  const res = await fetch(`${PROXY_URL}/api/kream/set-cookie`, {
+  const res = await fetch(`${PROXY_URL}${API_PREFIX}/kream/set-cookie`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cookie: cookieStr })
@@ -163,7 +164,7 @@ async function getMusinsaCookies() {
 // 1회성 수집 폴링 — job 있으면 true 반환
 async function pollCollectOnce() {
   try {
-    const res = await fetch(`${PROXY_URL}/api/kream/collect-queue`)
+    const res = await fetch(`${PROXY_URL}${API_PREFIX}/kream/collect-queue`)
     const job = await res.json()
     if (job.hasJob) {
       console.log(`[KREAM] 수집 요청: ${job.url}`)
@@ -380,7 +381,7 @@ async function handleCollectJob(job) {
     if (response?.success) {
       const proxyImages = (response.data.images || [])
         .filter(Boolean)
-        .map(img => `${PROXY_URL}/api/image-proxy?url=${encodeURIComponent(img)}`)
+        .map(img => `${PROXY_URL}${API_PREFIX}/kream/image-proxy?url=${encodeURIComponent(img)}`)
 
       const catParts = (response.data.category || '').split(/\s*>\s*/)
       const options = response.data.options || []
@@ -418,14 +419,14 @@ async function handleCollectJob(job) {
         status: 'collected'
       }
 
-      await fetch(`${PROXY_URL}/api/kream/collect-result`, {
+      await fetch(`${PROXY_URL}${API_PREFIX}/kream/collect-result`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId: job.requestId, data: { success: true, product } })
       })
       console.log(`[KREAM] 수집 완료: ${response.data.name} (사이즈 ${options.length}개, 이미지 ${proxyImages.length}개)`)
     } else {
-      await fetch(`${PROXY_URL}/api/kream/collect-result`, {
+      await fetch(`${PROXY_URL}${API_PREFIX}/kream/collect-result`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId: job.requestId, data: { success: false, message: response?.message || '수집 실패' } })
@@ -437,7 +438,7 @@ async function handleCollectJob(job) {
       try { await chrome.tabs.remove(tabId) } catch {}
     }
     try {
-      await fetch(`${PROXY_URL}/api/kream/collect-result`, {
+      await fetch(`${PROXY_URL}${API_PREFIX}/kream/collect-result`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId: job.requestId, data: { success: false, message: err.message } })
@@ -471,7 +472,7 @@ function wait(ms) {
 // 1회성 검색 폴링 — job 있으면 true 반환
 async function pollSearchOnce() {
   try {
-    const res = await fetch(`${PROXY_URL}/api/kream/search-queue`)
+    const res = await fetch(`${PROXY_URL}${API_PREFIX}/kream/search-queue`)
     const job = await res.json()
     if (job.hasJob) {
       console.log(`[KREAM] 검색 요청: "${job.keyword}"`)
@@ -545,7 +546,7 @@ async function handleSearchJob(job) {
       name: it.name,
       brand: it.brand,
       category: '패션잡화 > 신발 > 스니커즈',
-      images: it.image ? [`${PROXY_URL}/api/image-proxy?url=${encodeURIComponent(it.image)}`] : [],
+      images: it.image ? [`${PROXY_URL}${API_PREFIX}/kream/image-proxy?url=${encodeURIComponent(it.image)}`] : [],
       detailImages: [],
       options: [],
       originalPrice: 0,
@@ -559,7 +560,7 @@ async function handleSearchJob(job) {
       updatedAt: new Date().toISOString()
     }))
 
-    await fetch(`${PROXY_URL}/api/kream/search-result`, {
+    await fetch(`${PROXY_URL}${API_PREFIX}/kream/search-result`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -572,7 +573,7 @@ async function handleSearchJob(job) {
     console.error('[KREAM] 검색 오류:', err)
     if (tabId) try { await chrome.tabs.remove(tabId) } catch {}
     try {
-      await fetch(`${PROXY_URL}/api/kream/search-result`, {
+      await fetch(`${PROXY_URL}${API_PREFIX}/kream/search-result`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

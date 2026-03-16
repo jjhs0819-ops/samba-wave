@@ -10,9 +10,11 @@ proxy-server.mjs의 KREAM 관련 로직을 Python으로 포팅.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -20,7 +22,11 @@ from backend.utils.logger import logger
 
 
 class KreamClient:
-    """KREAM API 클라이언트 (검색, 상세, 시세, 매도 입찰)."""
+    """KREAM API 클라이언트 (검색, 상세, 시세, 매도 입찰).
+
+    검색/상세는 확장앱 큐 방식으로 동작한다.
+    확장앱이 큐를 폴링 → 브라우저에서 KREAM 페이지를 열어 데이터 추출 → 결과 전달.
+    """
 
     BASE = "https://kream.co.kr"
     API_BASE = "https://kream.co.kr/api"
@@ -36,6 +42,12 @@ class KreamClient:
         "Referer": "https://kream.co.kr/",
         "Origin": "https://kream.co.kr",
     }
+
+    # ── 확장앱 큐 (클래스 레벨, 서버 재시작 시 초기화) ──
+    collect_queue: list[dict[str, Any]] = []
+    collect_resolvers: dict[str, asyncio.Future[Any]] = {}
+    search_queue: list[dict[str, Any]] = []
+    search_resolvers: dict[str, asyncio.Future[Any]] = {}
 
     def __init__(self, token: str = "", cookie: str = "") -> None:
         self.token = token
@@ -287,6 +299,210 @@ class KreamClient:
 
     # ------------------------------------------------------------------
     # Products
+    # ------------------------------------------------------------------
+
+    async def search(self, keyword: str, size: int = 50) -> list[dict[str, Any]]:
+        """KREAM 상품 검색 — SSR HTML 파싱 방식 (확장앱 불필요).
+
+        KREAM 검색 페이지를 직접 HTTP GET → HTML에서 상품 데이터를 추출한다.
+        """
+        import re as _re
+        import html as _html
+
+        search_url = f"https://kream.co.kr/search?keyword={quote(keyword)}&tab=products"
+        timeout = httpx.Timeout(20.0, connect=10.0)
+
+        logger.info(f'[KREAM] 검색 시작 (HTTP 파싱): "{keyword}"')
+
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            resp = await client.get(
+                search_url,
+                headers={
+                    "User-Agent": self.HEADERS["User-Agent"],
+                    "Accept": "text/html,application/xhtml+xml",
+                    "Accept-Language": "ko-KR,ko;q=0.9",
+                },
+            )
+            if resp.status_code != 200:
+                raise Exception(f"KREAM 검색 페이지 요청 실패: HTTP {resp.status_code}")
+
+        text = resp.text
+        products: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        # <a href="/products/ID"> 블록에서 상품 정보 추출
+        pattern = r'<a[^>]*href="/products/(\d+)"[^>]*>(.*?)</a>'
+        matches = _re.findall(pattern, text, _re.DOTALL)
+
+        for pid, content in matches:
+            if pid in seen:
+                continue
+            seen.add(pid)
+
+            # 텍스트 노드 추출
+            texts = _re.findall(r">([^<]+)<", content)
+            texts = [t.strip() for t in texts if t.strip() and len(t.strip()) > 1]
+
+            # 이미지 추출
+            img_match = _re.search(r'<img[^>]+src="([^"]+)"', content)
+            raw_img = img_match.group(1).split("?")[0] if img_match else ""
+
+            # 브랜드/상품명
+            brand = _html.unescape(texts[0]) if texts else ""
+            name = _html.unescape(texts[1]) if len(texts) > 1 else brand
+
+            # 가격 (숫자+원 또는 순수 숫자)
+            price = 0
+            for t in texts:
+                if "원" in t or (_re.match(r"^[\d,]+$", t) and len(t) > 3):
+                    price = int(_re.sub(r"[^\d]", "", t))
+                    break
+
+            products.append({
+                "id": pid,
+                "siteProductId": pid,
+                "name": name,
+                "brand": brand,
+                "salePrice": price,
+                "originalPrice": 0,
+                "retailPrice": 0,
+                "images": [raw_img] if raw_img else [],
+                "imageUrl": raw_img,
+                "sourceUrl": f"https://kream.co.kr/products/{pid}",
+            })
+
+        logger.info(f'[KREAM] 검색 완료: "{keyword}" → {len(products)}개')
+        return products
+
+    async def search_via_extension(self, keyword: str) -> list[dict[str, Any]]:
+        """KREAM 상품 검색 (확장앱 큐 방식, 최대 90초 대기).
+
+        브라우저 확장앱이 실제 KREAM 검색 페이지를 열어 결과를 스크래핑한다.
+        SSR 파싱이 불가능한 경우 fallback으로 사용.
+        """
+        request_id = str(uuid.uuid4())
+        search_url = f"https://kream.co.kr/search?keyword={quote(keyword)}"
+
+        KreamClient.search_queue.append(
+            {"requestId": request_id, "keyword": keyword, "url": search_url}
+        )
+        logger.info(f'[KREAM] 검색 큐 등록 (확장앱): "{keyword}" ({request_id})')
+
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future[Any] = loop.create_future()
+        KreamClient.search_resolvers[request_id] = future
+
+        try:
+            result = await asyncio.wait_for(future, timeout=90.0)
+            if isinstance(result, list):
+                return result
+            if isinstance(result, dict):
+                return result.get("items", result.get("data", []))
+            return []
+        except asyncio.TimeoutError:
+            KreamClient.search_resolvers.pop(request_id, None)
+            raise Exception(
+                "KREAM 검색 타임아웃 (90초). "
+                "웨일 브라우저가 열려있고 KREAM 확장앱이 활성화되어 있는지 확인해주세요."
+            )
+
+    async def get_product(self, product_id: str) -> dict[str, Any]:
+        """KREAM 상품 상세 조회 — SSR HTML 파싱 (확장앱 불필요).
+
+        KREAM 상품 페이지를 직접 HTTP GET → HTML에서 기본 데이터를 추출한다.
+        """
+        import re as _re
+        import html as _html
+
+        url = f"https://kream.co.kr/products/{product_id}"
+        timeout = httpx.Timeout(20.0, connect=10.0)
+
+        logger.info(f"[KREAM] 상품 상세 조회 (HTTP 파싱): {product_id}")
+
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            resp = await client.get(
+                url,
+                headers={
+                    "User-Agent": self.HEADERS["User-Agent"],
+                    "Accept": "text/html,application/xhtml+xml",
+                    "Accept-Language": "ko-KR,ko;q=0.9",
+                },
+            )
+            if resp.status_code != 200:
+                raise Exception(f"KREAM 상품 페이지 요청 실패: HTTP {resp.status_code}")
+
+        text = resp.text
+
+        # og:title에서 상품명 추출
+        og_title = ""
+        m = _re.search(r'<meta[^>]+property="og:title"[^>]+content="([^"]*)"', text)
+        if m:
+            og_title = _html.unescape(m.group(1))
+
+        # og:image에서 이미지 추출
+        og_image = ""
+        m = _re.search(r'<meta[^>]+property="og:image"[^>]+content="([^"]*)"', text)
+        if m:
+            og_image = m.group(1).split("?")[0]
+
+        # 브랜드 추출 (title에서)
+        brand = ""
+        name = og_title
+        # KREAM 타이틀 형식: "브랜드 상품명 | KREAM"
+        if " | " in og_title:
+            name = og_title.split(" | ")[0].strip()
+
+        # 가격 추출 (JSON-LD 또는 meta 태그)
+        price = 0
+        price_match = _re.search(r'"price"\s*:\s*"?(\d+)"?', text)
+        if price_match:
+            price = int(price_match.group(1))
+
+        # 추가 이미지 추출
+        images = [og_image] if og_image else []
+
+        return {
+            "name": name,
+            "brand": brand,
+            "salePrice": price,
+            "originalPrice": price,
+            "images": images,
+            "options": [],
+            "category": "",
+        }
+
+    async def get_product_via_extension(self, product_id: str) -> dict[str, Any]:
+        """KREAM 상품 상세 조회 (확장앱 큐 방식, 최대 90초 대기).
+
+        브라우저 확장앱으로 옵션/사이즈 등 세부 데이터까지 수집.
+        """
+        request_id = str(uuid.uuid4())
+
+        KreamClient.collect_queue.append(
+            {
+                "requestId": request_id,
+                "productId": product_id,
+                "url": f"https://kream.co.kr/products/{product_id}",
+            }
+        )
+        logger.info(f"[KREAM] 수집 요청 큐 등록 (확장앱): {product_id} ({request_id})")
+
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future[Any] = loop.create_future()
+        KreamClient.collect_resolvers[request_id] = future
+
+        try:
+            result = await asyncio.wait_for(future, timeout=90.0)
+            return result if isinstance(result, dict) else {}
+        except asyncio.TimeoutError:
+            KreamClient.collect_resolvers.pop(request_id, None)
+            raise Exception(
+                "KREAM 상품 조회 타임아웃 (90초). "
+                "웨일 브라우저가 열려있고 KREAM 확장앱이 활성화되어 있는지 확인해주세요."
+            )
+
+    # ------------------------------------------------------------------
+    # Prices
     # ------------------------------------------------------------------
 
     async def get_prices(self, product_id: str) -> dict[str, Any]:
