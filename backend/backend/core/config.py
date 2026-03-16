@@ -75,7 +75,7 @@ class BackendSettings(BaseSettings):
         ]
 
         prod_origins: list[str] = [
-            # Add production domains here
+            "https://samba-wave-1zm6k4gb4-sbk0674-2598s-projects.vercel.app",
         ]
 
         if self.environment == "development":
