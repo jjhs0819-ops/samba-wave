@@ -22,6 +22,7 @@ class SearchFilterCreate(BaseModel):
     min_price: Optional[float] = None
     max_price: Optional[float] = None
     exclude_sold_out: bool = True
+    requested_count: int = 100
 
 
 class SearchFilterUpdate(BaseModel):
@@ -32,6 +33,7 @@ class SearchFilterUpdate(BaseModel):
     max_price: Optional[float] = None
     exclude_sold_out: Optional[bool] = None
     is_active: Optional[bool] = None
+    requested_count: Optional[int] = None
 
 
 class CollectedProductCreate(BaseModel):
@@ -794,16 +796,46 @@ async def enrich_product(
             raise HTTPException(502, "무신사 상세 조회 실패: 데이터 없음")
 
         # get_goods_detail은 { category: "키즈 > ...", category1: "키즈", ... } 형태로 반환
+        from datetime import datetime, timezone
+
+        # 가격 0 허용: None이 아닌 경우에만 업데이트, 0도 유효한 값으로 처리
+        api_sale = detail.get("salePrice")
+        api_original = detail.get("originalPrice")
+        new_sale_price = api_sale if api_sale is not None else product.sale_price
+        new_original_price = api_original if api_original is not None else product.original_price
+
         updates = {
             "category": detail.get("category") or product.category,
             "category1": detail.get("category1") or product.category1,
             "category2": detail.get("category2") or product.category2,
             "category3": detail.get("category3") or product.category3,
             "category4": detail.get("category4") or product.category4,
-            "original_price": detail.get("originalPrice") or product.original_price,
-            "sale_price": detail.get("salePrice") or product.sale_price,
+            "original_price": new_original_price,
+            "sale_price": new_sale_price,
             "brand": detail.get("brand") or product.brand,
+            "detail_html": detail.get("detailHtml") or product.detail_html,
+            "manufacturer": detail.get("manufacturer") or product.manufacturer,
+            "origin": detail.get("origin") or product.origin,
+            "name_en": detail.get("nameEn") or product.name_en,
+            # 재고 정보 반영 (isOutOfStock, isSoldOut 둘 다 체크)
+            "is_sold_out": bool(detail.get("isOutOfStock", False) or detail.get("isSoldOut", False)),
         }
+
+        # 가격 변동 추적
+        if new_sale_price != product.sale_price:
+            updates["price_before_change"] = product.sale_price
+            updates["price_changed_at"] = datetime.now(timezone.utc)
+
+        # 가격/옵션 이력 스냅샷 추가 (최신순, 최대 200건)
+        snapshot = {
+            "date": datetime.now(timezone.utc).isoformat(),
+            "sale_price": new_sale_price,
+            "original_price": new_original_price,
+            "options": detail.get("options", []),
+        }
+        history = list(product.price_history or [])
+        history.insert(0, snapshot)
+        updates["price_history"] = history[:200]
 
         # 옵션 보강
         if detail.get("options"):

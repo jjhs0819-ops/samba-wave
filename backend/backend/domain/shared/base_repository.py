@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from typing import Any, Dict, Generic, List, Optional, Type, TypeVar, TYPE_CHECKING
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, func, select
 
@@ -149,6 +150,9 @@ class BaseRepository(Generic[ModelType]):
             for key, value in kwargs.items():
                 if hasattr(entity, key):
                     setattr(entity, key, value)
+                    # JSON/list/dict 필드는 SQLAlchemy가 변경 감지 못할 수 있어 명시적 표시
+                    if isinstance(value, (list, dict)):
+                        flag_modified(entity, key)
 
             # Update timestamp if model has it
             if hasattr(entity, "updated_at"):

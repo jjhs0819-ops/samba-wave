@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import {
   collectorApi,
   policyApi,
   type SambaCollectedProduct,
   type SambaPolicy,
+  type SambaSearchFilter,
 } from "@/lib/samba/api";
 
 const MARKETS = [
@@ -28,9 +30,17 @@ function fmt(n: number): string {
 }
 
 export default function ProductsPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // URL searchParams에서 그룹 필터 읽기
+  const filterByGroupId = searchParams.get("search_filter_id") || "";
+  const filterGroupName = searchParams.get("group_name") || "";
+
   const [allProducts, setAllProducts] = useState<SambaCollectedProduct[]>([]);
   const [products, setProducts] = useState<SambaCollectedProduct[]>([]);
   const [policies, setPolicies] = useState<SambaPolicy[]>([]);
+  const [filterNameMap, setFilterNameMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
   // Filters
@@ -52,13 +62,17 @@ export default function ProductsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [p, pol] = await Promise.all([
+      const [p, pol, filters] = await Promise.all([
         collectorApi.listProducts(0, 500).catch((e) => { console.error("listProducts error:", e); return []; }),
         policyApi.list().catch((e) => { console.error("listPolicies error:", e); return []; }),
+        collectorApi.listFilters().catch(() => [] as SambaSearchFilter[]),
       ]);
       console.log("loaded products:", p.length, "policies:", pol.length);
       setAllProducts(p);
       setPolicies(pol);
+      const nameMap: Record<string, string> = {};
+      filters.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name; });
+      setFilterNameMap(nameMap);
     } catch (e) {
       console.error("load error:", e);
     }
@@ -70,6 +84,11 @@ export default function ProductsPage() {
   // Apply filters / sort / pagination whenever dependencies change
   useEffect(() => {
     let filtered = [...allProducts];
+
+    // URL에서 넘어온 그룹 필터
+    if (filterByGroupId) {
+      filtered = filtered.filter((p) => p.search_filter_id === filterByGroupId);
+    }
 
     // Search
     if (searchQ.trim()) {
@@ -108,10 +127,11 @@ export default function ProductsPage() {
     if (pageSize > 0) filtered = filtered.slice(0, pageSize);
 
     setProducts(filtered);
-  }, [allProducts, searchQ, searchType, siteFilter, statusFilter, sortBy, pageSize, policies]);
+  }, [allProducts, searchQ, searchType, siteFilter, statusFilter, sortBy, pageSize, policies, filterByGroupId]);
 
   const totalCount = (() => {
     let filtered = [...allProducts];
+    if (filterByGroupId) filtered = filtered.filter((p) => p.search_filter_id === filterByGroupId);
     if (searchQ.trim()) {
       const q = searchQ.toLowerCase();
       if (searchType === "name") filtered = filtered.filter((p) => p.name.toLowerCase().includes(q));
@@ -151,17 +171,25 @@ export default function ProductsPage() {
   };
 
   const handleEnrich = async (productId: string) => {
+    const product = allProducts.find((p) => p.id === productId)
+    const productName = (product?.name || productId).slice(0, 25)
+    setLogLine(`[업데이트 중] ${productName}...`)
     try {
       const apiBase = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'production' ? 'https://samba-wave-production.up.railway.app' : 'http://localhost:28080')
       const res = await fetch(`${apiBase}/api/v1/samba/collector/enrich/${productId}`, { method: "POST" });
       const data = await res.json();
       if (res.ok && data.success) {
+        const p = data.product
+        const priceStr = p?.sale_price != null ? `₩${Number(p.sale_price).toLocaleString()}` : '-'
+        const stockStr = p?.is_sold_out ? '품절' : '재고있음'
+        const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        setLogLine(`[${now}] ${productName} → ${priceStr} | ${stockStr}`)
         load();
       } else {
-        alert(data.detail || "상세 보강 실패");
+        setLogLine(`[실패] ${productName} → ${data.detail || '상세 보강 실패'}`)
       }
     } catch {
-      alert("상세 보강 실패");
+      setLogLine(`[오류] ${productName} → 서버 연결 실패`)
     }
   };
 
@@ -200,6 +228,34 @@ export default function ProductsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+      {/* 그룹 필터 배지 */}
+      {filterByGroupId && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: "8px",
+          padding: "6px 12px", marginBottom: "12px", borderRadius: "8px",
+          background: "rgba(255,140,0,0.08)", border: "1px solid rgba(255,140,0,0.3)",
+          fontSize: "0.82rem",
+        }}>
+          <span style={{ color: "#888" }}>검색그룹:</span>
+          <span style={{
+            color: "#FF8C00", fontWeight: 600,
+            background: "rgba(255,140,0,0.12)", border: "1px solid rgba(255,140,0,0.4)",
+            padding: "1px 8px", borderRadius: "4px",
+          }}>
+            {filterGroupName || filterByGroupId}
+          </span>
+          <button
+            onClick={() => router.push("/samba/products")}
+            style={{
+              marginLeft: "auto", background: "transparent", border: "1px solid #3D3D3D",
+              color: "#888", padding: "2px 10px", borderRadius: "4px",
+              fontSize: "0.75rem", cursor: "pointer",
+            }}
+          >
+            전체보기
+          </button>
+        </div>
+      )}
       {/* KPI stat cards */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.25rem" }}>
         <div style={{
@@ -463,6 +519,7 @@ export default function ProductsPage() {
               idx={idx}
               policies={policies}
               selectedIds={selectedIds}
+              filterNameMap={filterNameMap}
               onCheckboxToggle={handleCheckboxToggle}
               onDelete={handleDelete}
               onPolicyChange={handlePolicyChange}
@@ -483,6 +540,7 @@ interface ProductCardProps {
   idx: number;
   policies: SambaPolicy[];
   selectedIds: Set<string>;
+  filterNameMap: Record<string, string>;
   onCheckboxToggle: (id: string, checked: boolean) => void;
   onDelete: (id: string) => void;
   onPolicyChange: (productId: string, policyId: string) => void;
@@ -490,10 +548,20 @@ interface ProductCardProps {
   onEnrich: (productId: string) => void;
 }
 
+function getSourceUrl(sourceSite: string, siteProductId: string | undefined): string {
+  if (!siteProductId) return ''
+  if (sourceSite === 'MUSINSA') return `https://www.musinsa.com/products/${siteProductId}`
+  if (sourceSite === 'KREAM') return `https://kream.co.kr/products/${siteProductId}`
+  return ''
+}
+
 function ProductCard({
-  product: p, idx, policies, selectedIds,
+  product: p, idx, policies, selectedIds, filterNameMap,
   onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich,
 }: ProductCardProps) {
+  const [showPriceHistoryModal, setShowPriceHistoryModal] = useState(false)
+  const [showImageModal, setShowImageModal] = useState(false)
+  const [productImages, setProductImages] = useState<string[]>(p.images || [])
   const cost = p.sale_price || p.original_price || 0;
   const policy = policies.find((pol) => pol.id === p.applied_policy_id);
   const pricing = (policy?.pricing || {}) as Record<string, number>;
@@ -544,6 +612,211 @@ function ProductCard({
       background: "rgba(22,22,22,0.9)", border: "1px solid #2A2A2A", borderRadius: "10px",
       overflow: "hidden",
     }}>
+      {/* 가격변경이력 모달 */}
+      {showPriceHistoryModal && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 9999,
+            background: "rgba(0,0,0,0.75)", display: "flex",
+            alignItems: "center", justifyContent: "center",
+          }}
+          onClick={() => setShowPriceHistoryModal(false)}
+        >
+          <div
+            style={{
+              background: "#1A1A1A", border: "1px solid #2D2D2D", borderRadius: "12px",
+              width: "min(800px, 95vw)", maxHeight: "80vh", overflow: "hidden",
+              display: "flex", flexDirection: "column",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 모달 헤더 */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "14px 20px", borderBottom: "1px solid #2D2D2D",
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "0.9rem", fontWeight: 600, color: "#E5E5E5" }}>가격변경이력</h3>
+                <p style={{ margin: 0, fontSize: "0.75rem", color: "#666" }}>{p.name}</p>
+              </div>
+              <button
+                onClick={() => setShowPriceHistoryModal(false)}
+                style={{ background: "transparent", border: "none", color: "#888", fontSize: "1.2rem", cursor: "pointer" }}
+              >✕</button>
+            </div>
+            {/* 모달 내용 */}
+            <div style={{ overflowY: "auto", padding: "16px 20px" }}>
+              {(!p.price_history || p.price_history.length === 0) ? (
+                <div style={{ padding: "2rem", textAlign: "center", color: "#555", fontSize: "0.85rem" }}>
+                  가격 변동 이력 없음<br />
+                  <span style={{ fontSize: "0.75rem", color: "#444" }}>업데이트 버튼으로 최신화 시 이력이 기록됩니다</span>
+                </div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #2D2D2D" }}>
+                      <th style={{ padding: "8px 10px", textAlign: "left", color: "#888", fontWeight: 500 }}>날짜</th>
+                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#888", fontWeight: 500 }}>판매가</th>
+                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#888", fontWeight: 500 }}>원가</th>
+                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#888", fontWeight: 500 }}>옵션 수</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {p.price_history.map((h, i) => {
+                      const prev = p.price_history![i + 1]
+                      const change = prev ? ((h.sale_price - prev.sale_price) / prev.sale_price * 100) : null
+                      return (
+                        <tr key={i} style={{ borderBottom: "1px solid #1E1E1E" }}>
+                          <td style={{ padding: "8px 10px", color: "#888", fontSize: "0.75rem" }}>
+                            {new Date(h.date).toLocaleString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right", color: i === 0 ? "#51CF66" : "#C5C5C5", fontWeight: i === 0 ? 600 : 400 }}>
+                            ₩{h.sale_price.toLocaleString()}
+                            {change !== null && (
+                              <span style={{ fontSize: "0.7rem", color: change > 0 ? "#FF6B6B" : change < 0 ? "#51CF66" : "#666", marginLeft: "6px" }}>
+                                {change > 0 ? "▲" : change < 0 ? "▼" : ""}
+                                {change !== 0 ? `${Math.abs(change).toFixed(1)}%` : ""}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right", color: "#888" }}>
+                            ₩{h.original_price.toLocaleString()}
+                          </td>
+                          <td style={{ padding: "8px 10px", textAlign: "right", color: "#666" }}>
+                            {h.options ? h.options.length : "-"}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 이미지 변경 모달 */}
+      {showImageModal && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 9999,
+            background: "rgba(0,0,0,0.75)", display: "flex",
+            alignItems: "center", justifyContent: "center",
+          }}
+          onClick={() => setShowImageModal(false)}
+        >
+          <div
+            style={{
+              background: "#1A1A1A", border: "1px solid #2D2D2D", borderRadius: "12px",
+              width: "min(700px, 95vw)", maxHeight: "80vh", overflow: "hidden",
+              display: "flex", flexDirection: "column",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 헤더 */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "14px 20px", borderBottom: "1px solid #2D2D2D",
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "0.9rem", fontWeight: 600, color: "#E5E5E5" }}>이미지 관리</h3>
+                <p style={{ margin: 0, fontSize: "0.75rem", color: "#666" }}>{p.name}</p>
+              </div>
+              <button
+                onClick={() => setShowImageModal(false)}
+                style={{ background: "transparent", border: "none", color: "#888", fontSize: "1.2rem", cursor: "pointer" }}
+              >✕</button>
+            </div>
+            {/* 이미지 목록 */}
+            <div style={{ overflowY: "auto", padding: "16px 20px" }}>
+              {productImages.length === 0 ? (
+                <div style={{ padding: "2rem", textAlign: "center", color: "#555" }}>이미지 없음</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {productImages.map((img, i) => (
+                    <div key={i} style={{
+                      display: "flex", alignItems: "center", gap: "12px",
+                      padding: "8px", borderRadius: "8px",
+                      background: i === 0 ? "rgba(255,140,0,0.06)" : "rgba(30,30,30,0.5)",
+                      border: i === 0 ? "1px solid rgba(255,140,0,0.2)" : "1px solid #2D2D2D",
+                    }}>
+                      <img src={img} alt={`이미지 ${i + 1}`} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        style={{ width: 64, height: 64, objectFit: "cover", borderRadius: "6px", border: "1px solid #2D2D2D", flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {i === 0 && <span style={{ fontSize: "0.7rem", color: "#FF8C00", fontWeight: 600 }}>대표이미지</span>}
+                        <p style={{ margin: 0, fontSize: "0.7rem", color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{img}</p>
+                      </div>
+                      <div style={{ display: "flex", gap: "4px", flexShrink: 0 }}>
+                        <button
+                          disabled={i === 0}
+                          onClick={() => {
+                            const arr = [...productImages]
+                            ;[arr[i - 1], arr[i]] = [arr[i], arr[i - 1]]
+                            setProductImages(arr)
+                          }}
+                          style={{
+                            padding: "3px 8px", fontSize: "0.7rem", borderRadius: "4px", cursor: i === 0 ? "default" : "pointer",
+                            border: "1px solid #2D2D2D", background: "transparent",
+                            color: i === 0 ? "#333" : "#888",
+                          }}
+                        >▲</button>
+                        <button
+                          disabled={i === productImages.length - 1}
+                          onClick={() => {
+                            const arr = [...productImages]
+                            ;[arr[i + 1], arr[i]] = [arr[i], arr[i + 1]]
+                            setProductImages(arr)
+                          }}
+                          style={{
+                            padding: "3px 8px", fontSize: "0.7rem", borderRadius: "4px", cursor: i === productImages.length - 1 ? "default" : "pointer",
+                            border: "1px solid #2D2D2D", background: "transparent",
+                            color: i === productImages.length - 1 ? "#333" : "#888",
+                          }}
+                        >▼</button>
+                        <button
+                          onClick={() => setProductImages(productImages.filter((_, j) => j !== i))}
+                          style={{
+                            padding: "3px 8px", fontSize: "0.7rem", borderRadius: "4px", cursor: "pointer",
+                            border: "1px solid rgba(255,107,107,0.3)", background: "rgba(255,107,107,0.08)",
+                            color: "#FF6B6B",
+                          }}
+                        >삭제</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* 푸터 */}
+            <div style={{
+              padding: "12px 20px", borderTop: "1px solid #2D2D2D",
+              display: "flex", justifyContent: "flex-end", gap: "8px",
+            }}>
+              <button
+                onClick={() => setShowImageModal(false)}
+                style={{
+                  padding: "6px 16px", fontSize: "0.8rem", borderRadius: "6px", cursor: "pointer",
+                  border: "1px solid #3D3D3D", background: "transparent", color: "#888",
+                }}
+              >취소</button>
+              <button
+                onClick={async () => {
+                  await import('@/lib/samba/api').then(({ collectorApi }) =>
+                    collectorApi.updateProduct(p.id, { images: productImages } as Partial<import('@/lib/samba/api').SambaCollectedProduct>)
+                  ).catch(() => {})
+                  setShowImageModal(false)
+                }}
+                style={{
+                  padding: "6px 16px", fontSize: "0.8rem", borderRadius: "6px", cursor: "pointer",
+                  border: "1px solid #FF8C00", background: "rgba(255,140,0,0.15)", color: "#FF8C00",
+                }}
+              >저장</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Card header */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -605,11 +878,13 @@ function ProductCard({
           alignItems: "center", gap: "8px", paddingRight: "14px", borderRight: "1px solid #222",
         }}>
           <ProductImage src={p.images?.[0]} name={p.name} size={110} />
-          <button style={{
-            fontSize: "0.68rem", color: "#666", background: "transparent",
-            border: "1px solid #2D2D2D", borderRadius: "4px", padding: "3px 10px",
-            cursor: "pointer", width: "100%",
-          }}>이미지 변경</button>
+          <button
+            onClick={() => { setProductImages(p.images || []); setShowImageModal(true); }}
+            style={{
+              fontSize: "0.68rem", color: "#666", background: "transparent",
+              border: "1px solid #2D2D2D", borderRadius: "4px", padding: "3px 10px",
+              cursor: "pointer", width: "100%",
+            }}>이미지 변경</button>
           {p.source_site && (
             <span style={{
               fontSize: "0.7rem", color: "#FF8C00", background: "rgba(255,140,0,0.1)",
@@ -624,14 +899,23 @@ function ProductCard({
         <div style={{ flex: 1, paddingLeft: "16px" }}>
           {/* Action button bar */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: "3px", marginBottom: "8px" }}>
-            <button style={{
-              fontSize: "0.72rem", padding: "3px 9px", background: "#1E1E1E",
-              color: "#999", border: "1px solid #2D2D2D", borderRadius: "3px", cursor: "pointer", whiteSpace: "nowrap",
-            }}>가격변경이력</button>
-            <button style={{
-              fontSize: "0.72rem", padding: "3px 9px", background: "#1E1E1E",
-              color: "#999", border: "1px solid #2D2D2D", borderRadius: "3px", cursor: "pointer", whiteSpace: "nowrap",
-            }}>원문링크</button>
+            <button
+              onClick={() => setShowPriceHistoryModal(true)}
+              style={{
+                fontSize: "0.72rem", padding: "3px 9px", background: "#1E1E1E",
+                color: "#999",
+                border: "1px solid #2D2D2D",
+                borderRadius: "3px", cursor: "pointer", whiteSpace: "nowrap",
+              }}>가격변경이력</button>
+            <button
+              onClick={() => {
+                const url = getSourceUrl(p.source_site, p.site_product_id)
+                if (url) window.open(url, '_blank')
+              }}
+              style={{
+                fontSize: "0.72rem", padding: "3px 9px", background: "#1E1E1E",
+                color: "#999", border: "1px solid #2D2D2D", borderRadius: "3px", cursor: "pointer", whiteSpace: "nowrap",
+              }}>원문링크</button>
             <button
               onClick={() => onEnrich(p.id)}
               style={{
@@ -754,7 +1038,7 @@ function ProductCard({
                 <td style={tdVal}>
                   {p.search_filter_id ? (
                     <span style={{ background: "rgba(255,140,0,0.08)", border: "1px solid rgba(255,140,0,0.25)", color: "rgba(255,180,100,0.85)", fontSize: "0.72rem", padding: "1px 8px", borderRadius: "10px" }}>
-                      {p.search_filter_id}
+                      {filterNameMap[p.search_filter_id] || p.search_filter_id}
                     </span>
                   ) : <span style={{ color: "#444", fontSize: "0.75rem" }}>-</span>}
                 </td>

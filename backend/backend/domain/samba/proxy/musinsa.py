@@ -271,7 +271,14 @@ class MusinsaClient:
                 "sex": d.get("sex", []),
                 "storeCodes": d.get("storeCodes", []),
                 "isOutlet": d.get("isOutlet", False),
-                "isOutOfStock": d.get("isOutOfStock", False),
+                # 품절 판단: isSale=False(판매안함/판매예정) + soldOut + 모든옵션품절
+                "isOutOfStock": bool(
+                    gp.get("isSale") is False  # 판매중 아님 (판매예정, 판매종료 등)
+                    or d.get("isSoldOut")
+                    or (d.get("goodsPrice") or {}).get("isSoldOut")
+                    or d.get("isOutOfStock", False)
+                    or (bool(options) and all(opt.get("isSoldOut", False) for opt in options))
+                ),
                 "isSale": gp.get("isSale", False),
                 "collectedAt": now_iso,
                 "updatedAt": now_iso,
