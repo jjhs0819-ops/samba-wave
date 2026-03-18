@@ -19,12 +19,16 @@ from backend.api.v1.routers.samba.contact import router as samba_contact_router
 from backend.api.v1.routers.samba.returns import router as samba_returns_router
 from backend.api.v1.routers.samba.analytics import router as samba_analytics_router
 from backend.api.v1.routers.samba.proxy import router as samba_proxy_router
+from backend.api.v1.routers.samba.warroom import router as samba_warroom_router
 from backend.middleware.error_handler import register_exception_handlers
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown validation."""
+    # 앱 시작 시 DB 마이그레이션 자동 적용 (별도 프로세스 또는 수동 실행 권장)
+    # 로컬 개발: cd backend && alembic upgrade head
+
     # Startup validation
     if settings.mock_auth_enabled and settings.environment == "production":
         raise RuntimeError(
@@ -88,6 +92,7 @@ def create_application() -> FastAPI:
     app.include_router(samba_returns_router, prefix="/api/v1/samba")
     app.include_router(samba_analytics_router, prefix="/api/v1/samba")
     app.include_router(samba_proxy_router, prefix="/api/v1/samba")
+    app.include_router(samba_warroom_router, prefix="/api/v1/samba")
 
     @app.get("/")
     async def root() -> dict[str, str]:

@@ -50,21 +50,26 @@ class SambaForbiddenService:
 
     # ==================== Settings CRUD ====================
 
-    async def get_settings(self, key: str) -> Optional[SambaSettings]:
-        return await self.settings_repo.find_by_async(key=key)
+    async def get_setting(self, key: str) -> Any:
+        """설정값 조회 - .value만 반환."""
+        row = await self.settings_repo.find_by_async(key=key)
+        return row.value if row else None
 
-    async def save_settings(self, key: str, value: Any) -> SambaSettings:
+    async def save_setting(self, key: str, value: Any) -> SambaSettings:
+        """설정값 upsert."""
+        from datetime import UTC, datetime
+
         existing = await self.settings_repo.find_by_async(key=key)
         if existing:
-            from datetime import UTC, datetime
-
             existing.value = value
             existing.updated_at = datetime.now(UTC)
             self.settings_repo.session.add(existing)
             await self.settings_repo.session.commit()
             await self.settings_repo.session.refresh(existing)
             return existing
-        return await self.settings_repo.create_async(key=key, value=value)
+        return await self.settings_repo.create_async(
+            key=key, value=value, updated_at=datetime.now(UTC)
+        )
 
     # ==================== Filtering Logic ====================
     # Ported from js/modules/forbidden.js
@@ -132,7 +137,8 @@ class SambaForbiddenService:
 
         forbidden_found: List[str] = []
         deletion_found: List[str] = []
-        name = (product.get("name") or "").lower()
+        raw_name = product.get("name", "")
+        name = (raw_name or "").lower()
 
         for fw in all_active:
             word = fw.word.lower()
@@ -144,7 +150,16 @@ class SambaForbiddenService:
                 else:
                     deletion_found.append(fw.word)
 
-        clean_name = await self.clean_product_name(product.get("name", ""))
+        # 이미 조회한 all_active로 직접 clean 처리 (중복 DB 조회 방지)
+        cleaned = raw_name or ""
+        deletion_words = [
+            w for w in all_active
+            if w.type == "deletion" and w.scope in ("title", "both")
+        ]
+        for dw in deletion_words:
+            pattern = re.escape(dw.word)
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+        clean_name = re.sub(r"\s+", " ", cleaned).strip()
 
         return {
             "is_valid": len(forbidden_found) == 0,

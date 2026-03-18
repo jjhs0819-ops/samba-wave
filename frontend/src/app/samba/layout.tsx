@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import SambaModal from "@/components/samba/Modal";
 
 interface NavItem {
   href: string;
@@ -13,24 +14,13 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/samba/collector", label: "상품수집" },
   { href: "/samba/products", label: "상품관리" },
-  {
-    href: "/samba/policies",
-    label: "정책관리",
-    children: [
-      { href: "/samba/policies", label: "정책관리" },
-      { href: "/samba/categories", label: "카테고리 매핑" },
-    ],
-  },
+  { href: "/samba/policies", label: "정책관리" },
+  { href: "/samba/categories", label: "카테고리매핑" },
   { href: "/samba/shipments", label: "상품전송/삭제" },
   { href: "/samba/orders", label: "주문" },
   { href: "/samba/returns", label: "반품·교환·취소" },
-  {
-    href: "/samba/analytics",
-    label: "통계",
-    children: [
-      { href: "/samba/analytics", label: "매출통계" },
-    ],
-  },
+  { href: "/samba/analytics", label: "매출통계" },
+  { href: "/samba/warroom", label: "워룸" },
   { href: "/samba/settings", label: "설정" },
 ];
 
@@ -56,19 +46,7 @@ export default function SambaLayout({
         <div className="flex items-center justify-between px-8 py-3">
           {/* Logo */}
           <Link href="/samba" className="flex items-center gap-2 select-none" title="대시보드로 이동">
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="logoGrad" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
-                  <stop offset="0%" stopColor="#FF8C00"/>
-                  <stop offset="100%" stopColor="#FFB84D"/>
-                </linearGradient>
-              </defs>
-              <rect width="40" height="40" rx="10" fill="#1A1A1A" stroke="#2D2D2D" strokeWidth="1"/>
-              <path d="M4 16 Q10 12 16 16 Q22 20 28 16 Q34 12 38 16" stroke="#FF8C00" strokeOpacity="0.25" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-              <path d="M4 21 Q10 17 16 21 Q22 25 28 21 Q34 17 38 21" stroke="#FF8C00" strokeOpacity="0.55" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-              <path d="M4 26 Q10 22 16 26 Q22 30 28 26 Q34 22 38 26" stroke="url(#logoGrad)" strokeWidth="2" fill="none" strokeLinecap="round"/>
-              <text x="20" y="15" fontFamily="Arial Black, sans-serif" fontSize="7.5" fontWeight="900" fill="url(#logoGrad)" textAnchor="middle" dominantBaseline="middle" letterSpacing="0.5">SW</text>
-            </svg>
+            <img src="/logo.png" alt="SAMBA WAVE Logo" width={40} height={40} className="object-contain" style={{ borderRadius: "8.8px" }} />
             <div>
               <h1 style={{ fontSize: "0.9375rem", fontWeight: 800, color: "#E5E5E5", letterSpacing: "0.08em", lineHeight: 1.1, textTransform: "uppercase" }}>
                 SAMBA WAVE
@@ -166,24 +144,26 @@ export default function SambaLayout({
                   ? pathname === "/samba/products"
                   : pathname.startsWith(item.href);
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  style={{
-                    padding: "0.75rem 1.5rem",
-                    fontSize: "0.875rem",
-                    fontWeight: 500,
-                    color: isActive ? "#FF8C00" : "#E5E5E5",
-                    borderBottom: `2px solid ${isActive ? "#FF8C00" : "transparent"}`,
-                    transition: "all 0.3s",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.borderBottomColor = "#FF8C00"; }}
-                  onMouseLeave={(e) => {
-                    if (!isActive) { e.currentTarget.style.color = "#E5E5E5"; e.currentTarget.style.borderBottomColor = "transparent"; }
-                  }}
-                >
-                  {item.label}
-                </Link>
+                <div key={item.href} className="relative">
+                  <Link
+                    href={item.href}
+                    style={{
+                      display: "block",
+                      padding: "0.75rem 1.5rem",
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      color: isActive ? "#FF8C00" : "#E5E5E5",
+                      borderBottom: `2px solid ${isActive ? "#FF8C00" : "transparent"}`,
+                      transition: "all 0.3s",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.borderBottomColor = "#FF8C00"; }}
+                    onMouseLeave={(e) => {
+                      if (!isActive) { e.currentTarget.style.color = "#E5E5E5"; e.currentTarget.style.borderBottomColor = "transparent"; }
+                    }}
+                  >
+                    {item.label}
+                  </Link>
+                </div>
               );
             })}
           </nav>
@@ -195,17 +175,6 @@ export default function SambaLayout({
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
               </svg>
             </button>
-            <Link href="/samba/accounts" className="p-2 transition" style={{ color: "#888" }} title="마켓계정">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
-              </svg>
-            </Link>
-            <Link href="/samba/settings" className="p-2 transition" style={{ color: "#888" }} title="설정">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-              </svg>
-            </Link>
-            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold cursor-pointer" style={{ background: "linear-gradient(135deg, #FF8C00, #E07B00)" }} />
           </div>
         </div>
       </header>
@@ -222,6 +191,7 @@ export default function SambaLayout({
           {children}
         </div>
       </main>
+      <SambaModal />
     </div>
   );
 }

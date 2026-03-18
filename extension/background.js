@@ -1,50 +1,78 @@
 // 삼바웨이브 쿠키 연동 - 백그라운드 서비스 워커
 
-const PROXY_URL = 'http://localhost:28080'
+let PROXY_URL = 'http://localhost:28080'
+const DEFAULT_PROXY_URL = 'http://localhost:28080'
 const API_PREFIX = '/api/v1/samba/proxy'
+
+// ==================== KREAM 셀렉터 설정 (서버에서 동적 변경 가능) ====================
+
+const DEFAULT_SELECTORS = {
+  kream_size_items: '.select_item',
+  kream_bottom_sheet: '.layer_bottom_sheet--open',
+  kream_buy_button_text: '구매하기',
+  kream_fast_delivery: '빠른배송',
+  kream_normal_delivery: '일반배송',
+}
+
+// 서버에서 최신 셀렉터 설정 fetch (실패 시 기본값 유지)
+let selectors = { ...DEFAULT_SELECTORS }
+fetch(`${PROXY_URL}${API_PREFIX}/extension-config`)
+  .then(r => r.ok ? r.json() : null)
+  .then(config => {
+    if (config?.selectors) {
+      selectors = { ...DEFAULT_SELECTORS, ...config.selectors }
+      console.log('[설정] 서버 셀렉터 로드 완료:', Object.keys(config.selectors).length + '개 오버라이드')
+    }
+  })
+  .catch(() => { console.log('[설정] 서버 셀렉터 로드 실패 (기본값 사용)') })
+
+// ==================== 쿠키 동기화 공용 함수 ====================
+
+function makeScheduleSync(label, getCookie, sendFn) {
+  let timer = null
+  return function () {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(async () => {
+      timer = null
+      const cookie = getCookie()
+      if (!cookie) return
+      try {
+        await sendFn(cookie)
+        console.log(`[자동동기화] ${label} 쿠키 프록시 전송 완료`)
+      } catch {
+        console.log('[자동동기화] 프록시 미실행 (무시)')
+      }
+    }, 3000)
+  }
+}
 
 // ==================== 무신사 쿠키 ====================
 
 let capturedCookie = ''
 let capturedAt = 0
 
-let syncTimer = null
-function scheduleCookieSync() {
-  if (syncTimer) clearTimeout(syncTimer)
-  syncTimer = setTimeout(async () => {
-    syncTimer = null
-    if (!capturedCookie) return
-    try {
-      await sendCookiesToProxy(capturedCookie)
-      console.log('[자동동기화] 무신사 쿠키 프록시 전송 완료')
-    } catch (e) {
-      console.log('[자동동기화] 프록시 미실행 (무시)')
-    }
-  }, 3000)
-}
-
 // ==================== KREAM 쿠키 ====================
 
 let kreamCookie = ''
-let kreamCapturedAt = 0
 
-let kreamSyncTimer = null
-function scheduleKreamCookieSync() {
-  if (kreamSyncTimer) clearTimeout(kreamSyncTimer)
-  kreamSyncTimer = setTimeout(async () => {
-    kreamSyncTimer = null
-    if (!kreamCookie) return
-    try {
-      await sendKreamCookiesToProxy(kreamCookie)
-      console.log('[자동동기화] KREAM 쿠키 프록시 전송 완료')
-    } catch (e) {
-      console.log('[자동동기화] 프록시 미실행 (무시)')
-    }
-  }, 3000)
-}
+// 동기화 스케줄러 (sendCookiesToProxy 정의 후 초기화)
+let scheduleCookieSync
+let scheduleKreamCookieSync
 
-// Service Worker 시작 시 저장된 쿠키 복원
-chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'kreamCapturedAt']).then(async data => {
+// 백엔드 URL 변경 감지
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.proxyUrl) {
+    PROXY_URL = changes.proxyUrl.newValue || DEFAULT_PROXY_URL
+    console.log(`[설정] 백엔드 URL 변경: ${PROXY_URL}`)
+  }
+})
+
+// Service Worker 시작 시 저장된 쿠키 + 설정 복원
+chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'proxyUrl']).then(async data => {
+  if (data.proxyUrl) {
+    PROXY_URL = data.proxyUrl
+    console.log(`[복원] 백엔드 URL: ${PROXY_URL}`)
+  }
   // 무신사
   if (data.capturedCookie) {
     capturedCookie = data.capturedCookie
@@ -55,7 +83,6 @@ chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'kreamC
   // KREAM
   if (data.kreamCookie) {
     kreamCookie = data.kreamCookie
-    kreamCapturedAt = data.kreamCapturedAt || 0
     console.log(`[복원] KREAM 쿠키 복원: ${kreamCookie.split(';').length}개`)
     try { await sendKreamCookiesToProxy(kreamCookie) } catch {}
   }
@@ -67,11 +94,11 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     const cookieHeader = details.requestHeaders?.find(
       h => h.name.toLowerCase() === 'cookie'
     )
-    if (cookieHeader?.value && cookieHeader.value.length > capturedCookie.length) {
+    if (cookieHeader?.value && cookieHeader.value !== capturedCookie) {
       capturedCookie = cookieHeader.value
       capturedAt = Date.now()
       chrome.storage.local.set({ capturedCookie, capturedAt })
-      console.log(`[캡처] 무신사 쿠키 ${capturedCookie.split(';').length}개`)
+      console.log(`[캡처] 무신사 쿠키 변경감지 ${capturedCookie.split(';').length}개`)
       scheduleCookieSync()
     }
   },
@@ -85,17 +112,27 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     const cookieHeader = details.requestHeaders?.find(
       h => h.name.toLowerCase() === 'cookie'
     )
-    if (cookieHeader?.value && cookieHeader.value.length > kreamCookie.length) {
+    if (cookieHeader?.value && cookieHeader.value !== kreamCookie) {
       kreamCookie = cookieHeader.value
-      kreamCapturedAt = Date.now()
-      chrome.storage.local.set({ kreamCookie, kreamCapturedAt })
-      console.log(`[캡처] KREAM 쿠키 ${kreamCookie.split(';').length}개`)
+      chrome.storage.local.set({ kreamCookie })
+      console.log(`[캡처] KREAM 쿠키 변경감지 ${kreamCookie.split(';').length}개`)
       scheduleKreamCookieSync()
     }
   },
   { urls: ['https://*.kream.co.kr/*'] },
   ['requestHeaders', 'extraHeaders']
 )
+
+// ==================== 공용 결과 전송 함수 ====================
+
+async function postResult(endpoint, body) {
+  const res = await fetch(`${PROXY_URL}${API_PREFIX}/${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  if (!res.ok) console.warn(`[결과전송] ${endpoint} 실패: HTTP ${res.status}`)
+}
 
 // ==================== 프록시 전송 함수 ====================
 
@@ -105,6 +142,7 @@ async function sendCookiesToProxy(cookieStr) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cookie: cookieStr })
   })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
 
@@ -114,8 +152,13 @@ async function sendKreamCookiesToProxy(cookieStr) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cookie: cookieStr })
   })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
+
+// 동기화 스케줄러 초기화
+scheduleCookieSync = makeScheduleSync('무신사', () => capturedCookie, sendCookiesToProxy)
+scheduleKreamCookieSync = makeScheduleSync('KREAM', () => kreamCookie, sendKreamCookiesToProxy)
 
 // ==================== 무신사 쿠키 조회 ====================
 
@@ -161,21 +204,27 @@ async function getMusinsaCookies() {
 
 // ==================== KREAM 수집 큐 폴링 ====================
 
-// 1회성 수집 폴링 — job 있으면 true 반환
-async function pollCollectOnce() {
+// 공용 폴링 함수
+async function pollOnce(endpoint, handler, label, logField) {
   try {
-    const res = await fetch(`${PROXY_URL}${API_PREFIX}/kream/collect-queue`)
+    const res = await fetch(`${PROXY_URL}${API_PREFIX}/${endpoint}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const job = await res.json()
     if (job.hasJob) {
-      console.log(`[KREAM] 수집 요청: ${job.url}`)
-      await handleCollectJob(job)
+      console.log(`[${label}] ${logField ? job[logField] : '작업 수신'}`)
+      await handler(job)
       return true
     }
     return false
   } catch (e) {
-    console.log('[KREAM] collect-queue 폴링 오류:', e.message)
+    console.log(`[${label}] 폴링 오류:`, e.message)
     return false
   }
+}
+
+// 1회성 수집 폴링 — job 있으면 true 반환
+function pollCollectOnce() {
+  return pollOnce('kream/collect-queue', handleCollectJob, 'KREAM', 'url')
 }
 
 // 수집 작업 처리 — CDP(chrome.debugger) 진짜 클릭으로 옵션 수집
@@ -222,13 +271,14 @@ async function handleCollectJob(job) {
       const [clickResult] = await chrome.scripting.executeScript({
         target: { tabId },
         world: 'MAIN',
-        func: () => {
-          // 구매하기 버튼 클릭
-          const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '구매하기')
+        func: (buyBtnText) => {
+          // 구매하기 버튼 클릭 (셀렉터 외부화)
+          const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === buyBtnText)
           if (!btn) return false
           btn.click()
           return true
-        }
+        },
+        args: [selectors.kream_buy_button_text]
       })
       const clicked = clickResult?.result
       if (clicked) {
@@ -239,8 +289,8 @@ async function handleCollectJob(job) {
         const [sizeResult] = await chrome.scripting.executeScript({
           target: { tabId },
           world: 'MAIN',
-          func: () => {
-            const items = document.querySelectorAll('.select_item')
+          func: (sizeSelector) => {
+            const items = document.querySelectorAll(sizeSelector)
             return Array.from(items).map(el => {
               const ps = el.querySelectorAll('p')
               return {
@@ -248,7 +298,8 @@ async function handleCollectJob(job) {
                 priceText: ps[1]?.textContent?.trim() || ''
               }
             }).filter(o => o.name)
-          }
+          },
+          args: [selectors.kream_size_items]
         })
         const rawOptions = sizeResult?.result || []
         console.log(`[KREAM] .select_item 읽기: ${rawOptions.length}개`)
@@ -277,64 +328,98 @@ async function handleCollectJob(job) {
           // 1) 해당 .select_item 클릭
           await chrome.scripting.executeScript({
             target: { tabId }, world: 'MAIN',
-            func: (idx) => document.querySelectorAll('.select_item')[idx]?.click(),
-            args: [i]
+            func: (idx, sel) => document.querySelectorAll(sel)[idx]?.click(),
+            args: [i, selectors.kream_size_items]
           })
-          await wait(1200)
+          // 바텀시트 열림 대기 — 폴링 (최대 5초)
+          for (let pollWait = 0; pollWait < 10; pollWait++) {
+            const [sheetCheck] = await chrome.scripting.executeScript({
+              target: { tabId }, world: 'MAIN',
+              func: (sel) => !!document.querySelector(sel),
+              args: [selectors.kream_bottom_sheet]
+            })
+            if (sheetCheck?.result) break
+            await wait(500)
+          }
 
-          // 2) 배송옵션 바텀시트에서 빠른배송/일반배송 가격 읽기
+          // 2) 배송옵션 바텀시트에서 빠른배송/일반배송 가격 읽기 (텍스트 기반 탐색)
           const [deliveryResult] = await chrome.scripting.executeScript({
             target: { tabId }, world: 'MAIN',
-            func: () => {
-              const sheet = document.querySelector(
-                '.layer_bottom_sheet--open .bottomsheet__content > div:first-child'
-              )
+            func: (fastText, generalText, sheetSel) => {
+              // fallback 체인: 여러 셀렉터 시도 (셀렉터 외부화)
+              const sheet = document.querySelector(sheetSel + ' .bottomsheet__content')
+                || document.querySelector(sheetSel + ' [class*="content"]')
+                || document.querySelector(sheetSel)
               if (!sheet) return null
               const result = { fast: 0, general: 0 }
-              Array.from(sheet.children).forEach(section => {
-                const pTexts = Array.from(section.querySelectorAll('p'))
-                  .map(p => p.textContent.trim())
-                if (pTexts.some(t => t.includes('일반배송'))) {
-                  // 일반배송: 정확히 "숫자,원" 형태만 (~ 붙은 하자가격 제외)
-                  const priceText = pTexts.find(t => /^\d[\d,]*원$/.test(t))
-                  if (priceText) result.general = parseInt(priceText.replace(/[^0-9]/g, ''))
-                }
-                if (pTexts.some(t => t.includes('빠른배송'))) {
-                  // 빠른배송: "숫자,원" 정확히 끝나야 정상 상품 (95점 하자는 "원~"으로 끝남)
-                  // 추가로 "95점" 텍스트가 포함된 섹션 내 가격도 모두 제외
-                  const has95 = pTexts.some(t => t.includes('95점'))
-                  const priceText = pTexts.find(t => /^\d[\d,]*원$/.test(t))
-                  if (priceText && !has95) {
-                    result.fast = parseInt(priceText.replace(/[^0-9]/g, ''))
-                  } else if (priceText && has95) {
-                    // 95점과 함께 있지만 정상 가격도 있는 경우: 95점 이전 가격만 취득
-                    const idx95 = pTexts.findIndex(t => t.includes('95점'))
-                    const beforeIdx = pTexts.slice(0, idx95).findIndex(t => /^\d[\d,]*원$/.test(t))
-                    if (beforeIdx !== -1) {
-                      result.fast = parseInt(pTexts.slice(0, idx95)[beforeIdx].replace(/[^0-9]/g, ''))
-                    }
-                    // 95점 앞에 정상 가격 없으면 fast=0 (95점만 있는 사이즈)
-                  }
+
+              // 모든 텍스트 노드를 포함하는 요소 순회 — 텍스트 기반 탐색
+              const allElements = sheet.querySelectorAll('*')
+              const sections = []
+              // 배송 유형별 섹션을 그룹화
+              allElements.forEach(el => {
+                const text = el.textContent?.trim() || ''
+                if (text === fastText || text === generalText) {
+                  // 이 요소의 가장 가까운 클릭 가능한 부모 (섹션)
+                  const section = el.closest('[class*="item"]') || el.closest('[class*="option"]') || el.closest('li') || el.parentElement?.parentElement
+                  if (section) sections.push({ type: text, section })
                 }
               })
+
+              sections.forEach(({ type, section }) => {
+                const sectionTexts = Array.from(section.querySelectorAll('*'))
+                  .map(el => el.textContent?.trim() || '')
+                // 해외배송 제외
+                if (sectionTexts.some(t => t.includes('해외배송'))) return
+                // 95점(하자상품) 제외
+                if (sectionTexts.some(t => t.includes('95점'))) return
+                // 가격 텍스트 찾기: "숫자,숫자원" 패턴
+                const priceText = sectionTexts.find(t => /^\d[\d,]*원$/.test(t))
+                if (!priceText) return
+                const price = parseInt(priceText.replace(/[^0-9]/g, ''))
+                if (type === fastText && price > 0) result.fast = price
+                if (type === generalText && price > 0) result.general = price
+              })
+
+              // fallback: 섹션 그룹화 실패 시 기존 children 순회
+              if (result.fast === 0 && result.general === 0) {
+                const firstChild = sheet.querySelector(':scope > div:first-child') || sheet
+                Array.from(firstChild.children || []).forEach(child => {
+                  const pTexts = Array.from(child.querySelectorAll('p, span, div'))
+                    .map(p => p.textContent?.trim() || '')
+                  if (pTexts.some(t => t.includes('해외배송'))) return
+                  if (pTexts.some(t => t.includes('95점'))) return
+                  const priceText = pTexts.find(t => /^\d[\d,]*원$/.test(t))
+                  if (!priceText) return
+                  const price = parseInt(priceText.replace(/[^0-9]/g, ''))
+                  if (pTexts.some(t => t.includes(fastText)) && price > 0) result.fast = price
+                  if (pTexts.some(t => t.includes(generalText)) && price > 0) result.general = price
+                })
+              }
+
               return result
-            }
+            },
+            args: [selectors.kream_fast_delivery, selectors.kream_normal_delivery, selectors.kream_bottom_sheet]
           })
 
           if (deliveryResult?.result) {
             sizeOptions[i].kreamFastPrice = deliveryResult.result.fast || 0
             sizeOptions[i].kreamGeneralPrice = deliveryResult.result.general || 0
+            console.log(`[KREAM] ${sizeOptions[i].name}: 빠른 ${deliveryResult.result.fast}, 일반 ${deliveryResult.result.general}`)
+          } else {
+            console.log(`[KREAM] ${sizeOptions[i].name}: 배송시트 데이터 없음`)
           }
 
           // 3) 배송시트 닫기 → 사이즈 목록으로 복귀
           await chrome.scripting.executeScript({
             target: { tabId }, world: 'MAIN',
-            func: () => {
-              const sheet = document.querySelector('.layer_bottom_sheet--open')
+            func: (sel) => {
+              const sheet = document.querySelector(sel)
               const closeBtn = sheet?.querySelector('[class*="close"]')
               if (closeBtn) closeBtn.click()
               else sheet?.querySelector('.bottomsheet__background')?.click()
-            }
+            },
+            args: [selectors.kream_bottom_sheet]
           })
           await wait(300)
         }
@@ -419,18 +504,10 @@ async function handleCollectJob(job) {
         status: 'collected'
       }
 
-      await fetch(`${PROXY_URL}${API_PREFIX}/kream/collect-result`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId: job.requestId, data: { success: true, product } })
-      })
+      await postResult('kream/collect-result', { requestId: job.requestId, data: { success: true, product } })
       console.log(`[KREAM] 수집 완료: ${response.data.name} (사이즈 ${options.length}개, 이미지 ${proxyImages.length}개)`)
     } else {
-      await fetch(`${PROXY_URL}${API_PREFIX}/kream/collect-result`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId: job.requestId, data: { success: false, message: response?.message || '수집 실패' } })
-      })
+      await postResult('kream/collect-result', { requestId: job.requestId, data: { success: false, message: response?.message || '수집 실패' } })
     }
   } catch (err) {
     console.error('[KREAM] 수집 오류:', err)
@@ -438,11 +515,7 @@ async function handleCollectJob(job) {
       try { await chrome.tabs.remove(tabId) } catch {}
     }
     try {
-      await fetch(`${PROXY_URL}${API_PREFIX}/kream/collect-result`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId: job.requestId, data: { success: false, message: err.message } })
-      })
+      await postResult('kream/collect-result', { requestId: job.requestId, data: { success: false, message: err.message } })
     } catch {}
   }
 }
@@ -469,21 +542,9 @@ function wait(ms) {
 
 // ==================== KREAM 검색 큐 폴링 ====================
 
-// 1회성 검색 폴링 — job 있으면 true 반환
-async function pollSearchOnce() {
-  try {
-    const res = await fetch(`${PROXY_URL}${API_PREFIX}/kream/search-queue`)
-    const job = await res.json()
-    if (job.hasJob) {
-      console.log(`[KREAM] 검색 요청: "${job.keyword}"`)
-      await handleSearchJob(job)
-      return true
-    }
-    return false
-  } catch (e) {
-    console.log('[KREAM] search-queue 폴링 오류:', e.message)
-    return false
-  }
+// 1회성 검색 폴링
+function pollSearchOnce() {
+  return pollOnce('kream/search-queue', handleSearchJob, 'KREAM', 'keyword')
 }
 
 // 검색 작업 처리 — 탭 열고 → DOM에서 상품 목록 추출 → 결과 proxy에 반환
@@ -560,26 +621,18 @@ async function handleSearchJob(job) {
       updatedAt: new Date().toISOString()
     }))
 
-    await fetch(`${PROXY_URL}${API_PREFIX}/kream/search-result`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestId: job.requestId,
-        data: { success: true, data: products, total: products.length }
-      })
+    await postResult('kream/search-result', {
+      requestId: job.requestId,
+      data: { success: true, data: products, total: products.length }
     })
     console.log(`[KREAM] 검색 완료: "${job.keyword}" → ${products.length}개`)
   } catch (err) {
     console.error('[KREAM] 검색 오류:', err)
     if (tabId) try { await chrome.tabs.remove(tabId) } catch {}
     try {
-      await fetch(`${PROXY_URL}${API_PREFIX}/kream/search-result`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestId: job.requestId,
-          data: { success: false, message: err.message }
-        })
+      await postResult('kream/search-result', {
+        requestId: job.requestId,
+        data: { success: false, message: err.message }
       })
     } catch {}
   }
@@ -597,7 +650,8 @@ async function runFocusPoll() {
   while (emptyCount < 20) {
     const hadCollect = await pollCollectOnce()
     const hadSearch = await pollSearchOnce()
-    if (hadCollect || hadSearch) {
+    const hadSourcing = await pollSourcingOnce()
+    if (hadCollect || hadSearch || hadSourcing) {
       emptyCount = 0
     } else {
       emptyCount++
@@ -612,7 +666,8 @@ async function runFocusPoll() {
 async function runPollCycle() {
   const hadCollect = await pollCollectOnce()
   const hadSearch = await pollSearchOnce()
-  if (hadCollect || hadSearch) {
+  const hadSourcing = await pollSourcingOnce()
+  if (hadCollect || hadSearch || hadSourcing) {
     runFocusPoll()
   }
 }
@@ -646,9 +701,230 @@ chrome.runtime.onStartup.addListener(() => {
   runPollCycle()
 })
 
-// Service Worker 활성화 시 즉시 실행
+// Service Worker 활성화 시 alarm만 설정 (중복 폴링 방지)
 setupAlarm()
-runPollCycle()
+
+// ==================== 통합 소싱 큐 폴링 (ABCmart, GrandStage, OKmall, 롯데ON, GSShop) ====================
+
+function pollSourcingOnce() {
+  return pollOnce('sourcing/collect-queue', handleSourcingJob, '소싱', 'url')
+}
+
+// 소싱 작업 처리 — 탭 열기 → DOM 파싱 → 결과 전송
+async function handleSourcingJob(job) {
+  let tabId = null
+  try {
+    const tab = await chrome.tabs.create({ url: job.url, active: false })
+    tabId = tab.id
+    await waitForTabLoad(tabId, 30000)
+    await wait(4000) // SPA 렌더링 대기
+
+    let result = null
+    if (job.type === 'search') {
+      result = await extractSearchResults(tabId, job.site)
+    } else if (job.type === 'detail') {
+      result = await extractDetailData(tabId, job.site, job.productId)
+    }
+
+    try { await chrome.tabs.remove(tabId) } catch {}
+
+    await postResult('sourcing/collect-result', { requestId: job.requestId, data: result || { success: false, message: '파싱 실패' } })
+    console.log(`[소싱] ${job.site} 완료: ${result?.products?.length || 0}건`)
+  } catch (err) {
+    console.error(`[소싱] ${job.site} 오류:`, err)
+    if (tabId) try { await chrome.tabs.remove(tabId) } catch {}
+    try {
+      await postResult('sourcing/collect-result', { requestId: job.requestId, data: { success: false, message: err.message } })
+    } catch {}
+  }
+}
+
+// 검색 결과 DOM 파싱 — 범용 상품 카드 추출
+async function extractSearchResults(tabId, site) {
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: (siteName) => {
+      const products = []
+      const seen = new Set()
+
+      // 범용 상품 링크 추출 (a 태그 기반)
+      const linkPatterns = {
+        'ABCmart': /\/product\?prdtNo=(\d+)/,
+        'GrandStage': /\/product\?prdtNo=(\d+)/,
+        'OKmall': /\/products\/detail\/(\d+)/,
+        'LOTTEON': /\/product\/productDetail[^"]*spdNo=(\d+)/,
+        'GSShop': /\/prd\/prd\.gs\?prdid=(\d+)/,
+        'ElandMall': /\/goods\/goods\.action\?goodsNo=(\d+)/,
+        'SSF': /\/goods\/([A-Z0-9]+)/,
+      }
+      const pattern = linkPatterns[siteName]
+      if (!pattern) return { success: false, products: [], total: 0 }
+
+      // 모든 a 태그에서 상품 링크 찾기
+      document.querySelectorAll('a[href]').forEach(link => {
+        const match = link.href.match(pattern)
+        if (!match || seen.has(match[1])) return
+        seen.add(match[1])
+
+        // 가장 가까운 상품 카드 컨테이너
+        const card = link.closest('[class*="product"]') || link.closest('[class*="item"]') || link.closest('li') || link
+
+        // 이미지
+        const imgEl = card.querySelector('img')
+        let image = imgEl?.src || imgEl?.currentSrc || imgEl?.getAttribute('data-src') || imgEl?.getAttribute('data-lazy') || ''
+        if (image.startsWith('//')) image = 'https:' + image
+
+        // 텍스트 노드들 (leaf 노드만)
+        const texts = Array.from(card.querySelectorAll('*'))
+          .filter(el => el.children.length === 0 && el.textContent.trim().length > 1)
+          .map(el => el.textContent.trim())
+
+        // 브랜드 (보통 첫번째 짧은 텍스트)
+        const brand = texts.find(t => t.length < 30 && t.length > 1 && !/[0-9,]+원/.test(t)) || ''
+
+        // 상품명 (가장 긴 텍스트)
+        const name = texts.reduce((a, b) => (b.length > a.length && !/[0-9,]+원/.test(b) ? b : a), '') || ''
+
+        // 가격 (숫자+원 패턴)
+        const priceTexts = texts.filter(t => /[\d,]+원/.test(t) || /^\d[\d,]+$/.test(t))
+        let salePrice = 0
+        let originalPrice = 0
+        for (const pt of priceTexts) {
+          const num = parseInt(pt.replace(/[^0-9]/g, ''))
+          if (num > 0) {
+            if (salePrice === 0) salePrice = num
+            else if (num > salePrice) originalPrice = num
+            else originalPrice = salePrice, salePrice = num
+          }
+        }
+        if (!originalPrice) originalPrice = salePrice
+
+        if (name || salePrice > 0) {
+          products.push({
+            site_product_id: match[1],
+            name: name || `${siteName} ${match[1]}`,
+            brand,
+            original_price: originalPrice,
+            sale_price: salePrice,
+            images: image ? [image] : [],
+            source_site: siteName,
+          })
+        }
+      })
+
+      return { success: true, products, total: products.length }
+    },
+    args: [site]
+  })
+
+  return result?.result || { success: false, products: [], total: 0 }
+}
+
+// 상품 상세 DOM 파싱 — 범용
+async function extractDetailData(tabId, site, productId) {
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: (siteName, prdId) => {
+      // JSON-LD 우선 추출
+      const jsonLdScripts = document.querySelectorAll('script[type="application/ld+json"]')
+      for (const script of jsonLdScripts) {
+        try {
+          let data = JSON.parse(script.textContent)
+          if (Array.isArray(data)) data = data.find(d => d['@type'] === 'Product') || data[0]
+          if (data && data['@type'] === 'Product') {
+            const offers = data.offers || {}
+            const price = Array.isArray(offers) ? parseInt(offers[0]?.price || 0) : parseInt(offers.price || 0)
+            const brandObj = data.brand || {}
+            const img = Array.isArray(data.image) ? data.image[0] : (data.image || '')
+            return {
+              success: true,
+              site_product_id: prdId,
+              name: data.name || '',
+              original_price: price,
+              sale_price: price,
+              images: img ? [img] : [],
+              brand: typeof brandObj === 'object' ? (brandObj.name || '') : String(brandObj),
+              source_site: siteName,
+              category: '', category1: '', category2: '', category3: '',
+              options: [], detail_html: '',
+            }
+          }
+        } catch {}
+      }
+
+      // og:태그 fallback
+      const ogTitle = document.querySelector('meta[property="og:title"]')?.content || ''
+      const ogImage = document.querySelector('meta[property="og:image"]')?.content || ''
+      const ogPrice = document.querySelector('meta[property="product:price:amount"]')?.content || ''
+
+      // DOM 텍스트 기반 추출
+      const allTexts = Array.from(document.querySelectorAll('*'))
+        .filter(el => el.children.length === 0)
+        .map(el => el.textContent.trim())
+        .filter(t => t.length > 1)
+
+      const priceTexts = allTexts.filter(t => /^\d[\d,]+원?$/.test(t))
+      let salePrice = ogPrice ? parseInt(ogPrice) : 0
+      let originalPrice = 0
+      for (const pt of priceTexts) {
+        const num = parseInt(pt.replace(/[^0-9]/g, ''))
+        if (num > 0) {
+          if (!salePrice) salePrice = num
+          else if (num > salePrice) originalPrice = num
+        }
+      }
+
+      // 이미지 (상품 관련)
+      const images = []
+      document.querySelectorAll('img').forEach(img => {
+        const src = img.src || img.currentSrc || img.getAttribute('data-src') || ''
+        if (src && (src.includes('product') || src.includes('goods') || src.includes('prd')) && !images.includes(src)) {
+          images.push(src.startsWith('//') ? 'https:' + src : src)
+        }
+      })
+
+      // 옵션 (사이즈/색상 select 또는 버튼)
+      const options = []
+      document.querySelectorAll('select option, [class*="option"] li, [class*="size"] button, [class*="size"] a').forEach(el => {
+        const text = el.textContent.trim()
+        if (text && text !== '선택' && text.length < 30) {
+          options.push({ name: text, stock: 999 })
+        }
+      })
+
+      // 카테고리 (breadcrumb)
+      const breadcrumb = document.querySelector('[class*="breadcrumb"], [class*="location"], nav[aria-label="breadcrumb"]')
+      let cats = []
+      if (breadcrumb) {
+        cats = Array.from(breadcrumb.querySelectorAll('a, span, li'))
+          .map(el => el.textContent.trim())
+          .filter(t => t.length > 1 && t !== '>' && t !== 'Home' && t !== '홈')
+      }
+
+      return {
+        success: true,
+        site_product_id: prdId,
+        name: ogTitle || document.title || `${siteName} ${prdId}`,
+        original_price: originalPrice || salePrice,
+        sale_price: salePrice,
+        images: images.length > 0 ? images.slice(0, 10) : (ogImage ? [ogImage] : []),
+        brand: '',
+        source_site: siteName,
+        category: cats.join(' > '),
+        category1: cats[0] || '',
+        category2: cats[1] || '',
+        category3: cats[2] || '',
+        options,
+        detail_html: '',
+      }
+    },
+    args: [site, productId]
+  })
+
+  return result?.result || { success: false, message: 'DOM 파싱 실패' }
+}
 
 // ==================== 메시지 리스너 ====================
 
@@ -677,10 +953,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({
         musinsa: { isLoggedIn, cookieCount: cookies.length },
         kream: { isLoggedIn: !!kreamCookie, cookieCount: kreamCookie ? kreamCookie.split(';').length : 0 },
-        polling: !!alarm
+        polling: !!alarm,
+        proxyUrl: PROXY_URL,
       })
     })
     return true
+  }
+
+  // 백엔드 URL 변경
+  if (msg.type === 'SET_PROXY_URL') {
+    const url = (msg.url || '').trim().replace(/\/$/, '')
+    if (url) {
+      PROXY_URL = url
+      chrome.storage.local.set({ proxyUrl: url })
+      console.log(`[설정] 백엔드 URL 저장: ${PROXY_URL}`)
+      sendResponse({ success: true })
+    } else {
+      sendResponse({ success: false })
+    }
+    return false
   }
 
   // KREAM 로그인 페이지 열기
@@ -688,5 +979,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.tabs.create({ url: 'https://kream.co.kr/login' })
     sendResponse({ success: true })
     return false
+  }
+
+  // 가격/재고 갱신 요청 (프론트에서 확장앱 경유 필요 상품 전달)
+  if (msg.type === 'REFRESH_PRODUCTS') {
+    const productIds = msg.product_ids || []
+    console.log(`[갱신] ${productIds.length}건 갱신 요청 수신`)
+    // 현재는 서버에 다시 전달 (KREAM 등 인증 필요 사이트 수집 트리거)
+    fetch(`${PROXY_URL}/api/v1/samba/collector/products/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_ids: productIds, auto_retransmit: true }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        console.log(`[갱신] 결과:`, data)
+        sendResponse({ success: true, ...data })
+      })
+      .catch(e => {
+        console.error(`[갱신] 실패:`, e)
+        sendResponse({ success: false, message: e.message })
+      })
+    return true
   }
 })

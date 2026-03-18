@@ -45,9 +45,16 @@ class SambaCollectorService:
         skip: int = 0,
         limit: int = 50,
         status: Optional[str] = None,
+        source_site: Optional[str] = None,
     ) -> List[SambaCollectedProduct]:
+        if status and source_site:
+            return await self.product_repo.list_by_filters(
+                status=status, source_site=source_site
+            )
         if status:
             return await self.product_repo.list_by_status(status)
+        if source_site:
+            return await self.product_repo.list_by_filters(source_site=source_site)
         return await self.product_repo.list_async(
             skip=skip, limit=limit, order_by="-created_at"
         )
@@ -79,3 +86,23 @@ class SambaCollectorService:
         self, items: List[Dict[str, Any]]
     ) -> List[SambaCollectedProduct]:
         return await self.product_repo.bulk_create_async(items)
+
+    async def apply_policy_to_filter_products(
+        self, filter_id: str, policy_id: str, policy_data: Optional[Dict[str, Any]] = None
+    ) -> int:
+        """그룹(필터)에 적용된 정책을 해당 그룹의 모든 상품에 전파."""
+        products = await self.product_repo.list_by_filter(filter_id)
+        updated = 0
+        for p in products:
+            update_data: Dict[str, Any] = {"applied_policy_id": policy_id}
+            # 정책 데이터가 있으면 market_prices 계산
+            if policy_data:
+                margin = policy_data.get("margin_rate", 15) / 100
+                shipping = policy_data.get("shipping_cost", 0)
+                extra = policy_data.get("extra_charge", 0)
+                base = p.sale_price or p.original_price or 0
+                calculated = int(base * (1 + margin) + shipping + extra)
+                update_data["market_prices"] = {"default": calculated}
+            await self.product_repo.update_async(p.id, **update_data)
+            updated += 1
+        return updated

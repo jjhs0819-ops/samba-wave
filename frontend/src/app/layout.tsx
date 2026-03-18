@@ -25,10 +25,10 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   title: {
-    default: "My App",
-    template: "%s | My App",
+    default: "SAMBA-WAVE",
+    template: "%s | SAMBA-WAVE",
   },
-  description: "A modern web application",
+  description: "Samba Wave Extension Web App",
 };
 
 export default function RootLayout({
@@ -37,7 +37,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${pretendard.variable} scroll-smooth`}>
+    <html lang="ko" className={`${pretendard.variable} scroll-smooth`} suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground font-sans antialiased">
         <AuthProvider>{children}</AuthProvider>
       </body>

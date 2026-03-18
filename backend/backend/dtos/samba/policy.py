@@ -10,6 +10,7 @@ class PolicyCreate(BaseModel):
     site_name: Optional[str] = None
     pricing: Optional[Any] = None
     market_policies: Optional[Any] = None
+    extras: Optional[Any] = None
 
 
 class PolicyUpdate(BaseModel):
@@ -17,6 +18,7 @@ class PolicyUpdate(BaseModel):
     site_name: Optional[str] = None
     pricing: Optional[Any] = None
     market_policies: Optional[Any] = None
+    extras: Optional[Any] = None
 
 
 class PriceCalculateRequest(BaseModel):

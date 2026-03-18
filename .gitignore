@@ -1,10 +1,17 @@
 .pnpm-store
+.worktrees/
+
+# 쿠키/토큰 파일 (민감정보)
+.kream-cookie.json
+.musinsa-cookie.json
+.smartstore-token.json
+*-cookie.json
+*-token.json
 
 *.tar.*
 *.tar
 *.pt
 *.backup
-*.tar
 # *.json
 *.csv
 *.jsonl

@@ -44,6 +44,19 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             status=status, order_by="created_at", order_by_desc=True
         )
 
+    async def list_by_filters(
+        self,
+        status: str | None = None,
+        source_site: str | None = None,
+    ) -> List[SambaCollectedProduct]:
+        """status, source_site 조합 필터링."""
+        kwargs: dict = {"order_by": "created_at", "order_by_desc": True}
+        if status:
+            kwargs["status"] = status
+        if source_site:
+            kwargs["source_site"] = source_site
+        return await self.filter_by_async(**kwargs)
+
     async def list_by_filter(
         self, search_filter_id: str, skip: int = 0, limit: int = 50
     ) -> List[SambaCollectedProduct]:

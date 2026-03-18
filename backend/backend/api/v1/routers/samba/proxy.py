@@ -13,8 +13,13 @@ Node.js proxy-server.mjs를 대체하는 통합 프록시 라우터.
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import time
 from typing import Any, Optional
 
+import bcrypt
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -44,17 +49,11 @@ async def _get_setting(session: AsyncSession, key: str) -> Any:
 
 
 async def _set_setting(session: AsyncSession, key: str, value: Any) -> None:
-    """samba_settings 테이블에 설정값 저장."""
-    repo = SambaSettingsRepository(session)
-    existing = await repo.find_by_async(key=key)
-    if existing:
-        existing.value = value
-        session.add(existing)
-        await session.commit()
-    else:
-        new_row = SambaSettings(key=key, value=value)
-        session.add(new_row)
-        await session.commit()
+    """samba_settings 테이블에 설정값 저장 (forbidden service 위임)."""
+    from backend.domain.samba.forbidden.service import SambaForbiddenService
+    from backend.domain.samba.forbidden.repository import SambaForbiddenWordRepository
+    svc = SambaForbiddenService(SambaForbiddenWordRepository(session), SambaSettingsRepository(session))
+    await svc.save_setting(key, value)
 
 
 async def _get_musinsa_client(session: AsyncSession) -> MusinsaClient:
@@ -90,6 +89,420 @@ async def _get_gs_client(session: AsyncSession) -> GsShopClient:
         sub_sup_cd=creds.get("subSupCd", ""),
         env=creds.get("env", "dev"),
     )
+
+
+# ═══════════════════════════════════════════════
+# 알리고 (Aligo) SMS 잔여건수 조회
+# ═══════════════════════════════════════════════
+
+
+@router.post("/aligo/remain")
+async def aligo_remain(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """알리고 SMS 잔여건수 조회."""
+    creds = await _get_setting(session, "aligo_sms")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "SMS 설정이 저장되지 않았습니다."}
+
+    api_key = creds.get("apiKey", "")
+    user_id = creds.get("userId", "")
+    if not api_key or not user_id:
+        return {"success": False, "message": "API Key 또는 Identifier가 비어있습니다."}
+
+    try:
+        async with httpx.AsyncClient(timeout=15, verify=True) as client:
+            resp = await client.post(
+                "https://apis.aligo.in/remain/",
+                data={"key": api_key, "user_id": user_id},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            data = resp.json()
+            # 알리고 응답: result_code == 1 이면 성공
+            if data.get("result_code") == 1 or str(data.get("result_code")) == "1":
+                return {
+                    "success": True,
+                    "message": "인증 성공",
+                    "SMS_CNT": data.get("SMS_CNT", 0),
+                    "LMS_CNT": data.get("LMS_CNT", 0),
+                    "MMS_CNT": data.get("MMS_CNT", 0),
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": data.get("message", "알리고 API 인증 실패"),
+                }
+    except Exception as exc:
+        logger.error(f"[알리고] 잔여건수 조회 실패: {exc}")
+        return {"success": False, "message": f"알리고 API 호출 실패: {exc}"}
+
+
+# ═══════════════════════════════════════════════
+# 스마트스토어 (SmartStore) 인증 테스트
+# ═══════════════════════════════════════════════
+
+
+@router.post("/smartstore/auth-test")
+async def smartstore_auth_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """스마트스토어 Commerce API 인증 테스트 — OAuth2 토큰 발급 시도."""
+    creds = await _get_setting(session, "store_smartstore")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "스마트스토어 설정이 저장되지 않았습니다."}
+
+    client_id = creds.get("clientId", "")
+    client_secret = creds.get("clientSecret", "")
+    if not client_id or not client_secret:
+        return {"success": False, "message": "Client ID 또는 Client Secret이 비어있습니다."}
+
+    try:
+        # bcrypt 서명 생성 (네이버 Commerce API 인증 방식)
+        timestamp = int(time.time() * 1000)
+        password = f"{client_id}_{timestamp}"
+        hashed = bcrypt.hashpw(
+            password.encode("utf-8"),
+            client_secret.encode("utf-8"),
+        )
+        client_secret_sign = base64.standard_b64encode(hashed).decode("utf-8")
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://api.commerce.naver.com/external/v1/oauth2/token",
+                data={
+                    "client_id": client_id,
+                    "timestamp": timestamp,
+                    "client_secret_sign": client_secret_sign,
+                    "grant_type": "client_credentials",
+                    "type": "SELF",
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                token = data.get("access_token", "")
+                expires = data.get("expires_in", 0)
+                return {
+                    "success": True,
+                    "message": f"인증 성공 (토큰 유효시간: {expires // 3600}시간)",
+                    "token_preview": f"{token[:12]}..." if len(token) > 12 else token,
+                }
+            else:
+                err = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                return {
+                    "success": False,
+                    "message": err.get("message") or err.get("error_description") or f"HTTP {resp.status_code}",
+                }
+    except Exception as exc:
+        logger.error(f"[스마트스토어] 인증 테스트 실패: {exc}")
+        return {"success": False, "message": f"API 호출 실패: {exc}"}
+
+
+# ═══════════════════════════════════════════════
+# 11번가 OpenAPI 인증 테스트
+# ═══════════════════════════════════════════════
+
+
+@router.post("/11st/auth-test")
+async def elevenst_auth_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """11번가 OpenAPI 인증 테스트 — 상품검색 API 호출로 Key 유효성 확인."""
+    creds = await _get_setting(session, "store_11st")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "11번가 설정이 저장되지 않았습니다."}
+
+    api_key = creds.get("apiKey", "")
+    if not api_key:
+        return {"success": False, "message": "Open API Key가 비어있습니다."}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                "http://openapi.11st.co.kr/openapi/OpenApiService.tmall",
+                params={
+                    "key": api_key,
+                    "apiCode": "ProductSearch",
+                    "keyword": "test",
+                    "pageSize": "1",
+                },
+            )
+            body = resp.text
+            # 에러코드 003 = 미등록 API Key
+            if "003" in body and "미등록" in body:
+                return {"success": False, "message": "등록되지 않은 API Key입니다."}
+            if "004" in body and "트래픽" in body:
+                return {"success": False, "message": "트래픽 초과입니다. 잠시 후 다시 시도해주세요."}
+            if resp.status_code == 200 and "<ProductSearchResponse>" in body:
+                return {"success": True, "message": "인증 성공 — API Key가 유효합니다."}
+            if resp.status_code == 200:
+                # XML 응답이지만 에러일 수 있음
+                if "<error>" in body.lower() or "<code>" in body:
+                    return {"success": False, "message": "API Key가 유효하지 않습니다."}
+                return {"success": True, "message": "인증 성공"}
+            return {"success": False, "message": f"HTTP {resp.status_code}"}
+    except Exception as exc:
+        logger.error(f"[11번가] 인증 테스트 실패: {exc}")
+        return {"success": False, "message": f"API 호출 실패: {exc}"}
+
+
+# ═══════════════════════════════════════════════
+# 쿠팡 Wing API 인증 테스트
+# ═══════════════════════════════════════════════
+
+
+@router.post("/coupang/auth-test")
+async def coupang_auth_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """쿠팡 Wing API 인증 테스트 — HMAC 서명으로 카테고리 조회."""
+    creds = await _get_setting(session, "store_coupang")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "쿠팡 설정이 저장되지 않았습니다."}
+
+    access_key = creds.get("accessKey", "")
+    secret_key = creds.get("secretKey", "")
+    if not access_key or not secret_key:
+        return {"success": False, "message": "Access Key 또는 Secret Key가 비어있습니다."}
+
+    try:
+        from backend.domain.samba.proxy.coupang import CoupangClient
+        client = CoupangClient(access_key, secret_key, creds.get("vendorId", ""))
+        # 간단한 API 호출로 인증 테스트
+        result = await client._call_api("GET", "/v2/providers/seller_api/apis/api/v1/vendor")
+        return {"success": True, "message": "인증 성공 — API Key가 유효합니다."}
+    except Exception as exc:
+        logger.error(f"[쿠팡] 인증 테스트 실패: {exc}")
+        return {"success": False, "message": f"인증 실패: {exc}"}
+
+
+# ═══════════════════════════════════════════════
+# 롯데ON Open API 인증 테스트
+# ═══════════════════════════════════════════════
+
+
+@router.post("/lotteon/auth-test")
+async def lotteon_auth_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """롯데ON Open API 인증 테스트 — 거래처 정보 조회."""
+    creds = await _get_setting(session, "store_lotteon")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "롯데ON 설정이 저장되지 않았습니다."}
+
+    api_key = creds.get("apiKey", "")
+    if not api_key:
+        return {"success": False, "message": "API Key가 비어있습니다."}
+
+    try:
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+        client = LotteonClient(api_key)
+        result = await client.test_auth()
+        data = result.get("data", {})
+        tr_info = f" (거래처: {data.get('trGrpCd', '')}-{data.get('trNo', '')})" if data else ""
+        return {"success": True, "message": f"인증 성공{tr_info}"}
+    except Exception as exc:
+        logger.error(f"[롯데ON] 인증 테스트 실패: {exc}")
+        return {"success": False, "message": f"인증 실패: {exc}"}
+
+
+# ═══════════════════════════════════════════════
+# SSG Open API 인증 테스트
+# ═══════════════════════════════════════════════
+
+
+@router.post("/ssg/auth-test")
+async def ssg_auth_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """SSG Open API 인증 테스트 — 브랜드 목록 조회."""
+    creds = await _get_setting(session, "store_ssg")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "SSG 설정이 저장되지 않았습니다."}
+
+    api_key = creds.get("apiKey", "")
+    if not api_key:
+        return {"success": False, "message": "인증키가 비어있습니다."}
+
+    try:
+        from backend.domain.samba.proxy.ssg import SSGClient
+        client = SSGClient(api_key)
+        await client.test_auth()
+        return {"success": True, "message": "인증 성공 — API Key가 유효합니다."}
+    except Exception as exc:
+        logger.error(f"[SSG] 인증 테스트 실패: {exc}")
+        return {"success": False, "message": f"인증 실패: {exc}"}
+
+
+# ═══════════════════════════════════════════════
+# 통합 마켓 인증 테스트 (범용)
+# ═══════════════════════════════════════════════
+
+
+@router.post("/market/auth-test/{market_key}")
+async def market_auth_test(
+    market_key: str,
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """범용 마켓 인증 테스트 — 설정값 존재 여부 확인."""
+    creds = await _get_setting(session, f"store_{market_key}")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": f"{market_key} 설정이 저장되지 않았습니다."}
+
+    # 빈 값 체크
+    has_value = any(v for v in creds.values() if v and str(v).strip())
+    if not has_value:
+        return {"success": False, "message": "설정값이 비어있습니다."}
+
+    return {"success": True, "message": "설정 저장됨 — 상품 전송 시 연동됩니다."}
+
+
+# ═══════════════════════════════════════════════
+# Claude AI API 인증 테스트
+# ═══════════════════════════════════════════════
+
+
+@router.post("/claude/test")
+async def claude_api_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """Claude API 키 유효성 검증 — 최소 메시지 전송 테스트."""
+    creds = await _get_setting(session, "claude")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "Claude API 설정이 저장되지 않았습니다."}
+
+    api_key = creds.get("apiKey", "")
+    model = creds.get("model", "claude-sonnet-4-6")
+    if not api_key:
+        return {"success": False, "message": "API Key가 비어있습니다."}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": 5,
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                used_model = data.get("model", model)
+                return {
+                    "success": True,
+                    "message": f"인증 성공 (모델: {used_model})",
+                }
+            else:
+                err = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                err_msg = err.get("error", {}).get("message", "") if isinstance(err.get("error"), dict) else str(err.get("error", ""))
+                return {
+                    "success": False,
+                    "message": err_msg or f"HTTP {resp.status_code}",
+                }
+    except Exception as exc:
+        logger.error(f"[Claude] API 테스트 실패: {exc}")
+        return {"success": False, "message": f"API 호출 실패: {exc}"}
+
+
+# ═══════════════════════════════════════════════
+# ═══════════════════════════════════════════════
+# 통합 소싱 (패션플러스: 직접 API / 나머지 5개: 확장앱 큐)
+# ═══════════════════════════════════════════════
+
+EXTENSION_SITES = {"ABCmart", "GrandStage", "OKmall", "LOTTEON", "GSShop", "ElandMall", "SSF"}
+
+
+def _get_sourcing_client(site: str):
+    """직접 API 클라이언트 반환."""
+    s = site.lower()
+    if s in ("fashionplus", "fp"):
+        from backend.domain.samba.proxy.fashionplus import FashionPlusClient
+        return FashionPlusClient()
+    if s == "nike":
+        from backend.domain.samba.proxy.nike import NikeClient
+        return NikeClient()
+    if s == "adidas":
+        from backend.domain.samba.proxy.adidas import AdidasClient
+        return AdidasClient()
+    return None
+
+
+@router.get("/sourcing/collect-queue")
+async def sourcing_collect_queue() -> dict[str, Any]:
+    """확장앱이 폴링하는 소싱 수집 큐."""
+    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+    return SourcingQueue.get_next_job()
+
+
+@router.post("/sourcing/collect-result")
+async def sourcing_collect_result(body: dict[str, Any]) -> dict[str, Any]:
+    """확장앱이 수집 결과를 전달."""
+    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+    request_id = body.get("requestId", "")
+    data = body.get("data", {})
+    ok = SourcingQueue.resolve_job(request_id, data)
+    return {"success": ok}
+
+
+@router.get("/sourcing/{site}/search")
+async def sourcing_search(
+    site: str,
+    keyword: str = Query("", min_length=1),
+    page: int = Query(1, ge=1),
+) -> dict[str, Any]:
+    """소싱처 통합 검색 API."""
+    # 패션플러스: 직접 API
+    client = _get_sourcing_client(site)
+    if client:
+        return await client.search(keyword, page)
+
+    # 확장앱 기반 사이트
+    if site in EXTENSION_SITES:
+        from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+        try:
+            request_id, future = SourcingQueue.add_search_job(site, keyword)
+            result = await asyncio.wait_for(future, timeout=60)
+            return result
+        except asyncio.TimeoutError:
+            SourcingQueue.resolvers.pop(request_id, None)
+            return {"products": [], "total": 0, "error": "확장앱 응답 타임아웃 (60초)"}
+        except Exception as e:
+            return {"products": [], "total": 0, "error": str(e)}
+
+    raise HTTPException(400, f"지원하지 않는 소싱처: {site}")
+
+
+@router.get("/sourcing/{site}/detail/{product_id}")
+async def sourcing_detail(
+    site: str,
+    product_id: str,
+) -> dict[str, Any]:
+    """소싱처 상품 상세 조회 API."""
+    # 패션플러스: 직접 API
+    client = _get_sourcing_client(site)
+    if client:
+        return await client.get_detail(product_id)
+
+    # 확장앱 기반 사이트
+    if site in EXTENSION_SITES:
+        from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+        try:
+            request_id, future = SourcingQueue.add_detail_job(site, product_id)
+            result = await asyncio.wait_for(future, timeout=60)
+            return result
+        except asyncio.TimeoutError:
+            SourcingQueue.resolvers.pop(request_id, None)
+            return {"error": "확장앱 응답 타임아웃 (60초)"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    raise HTTPException(400, f"지원하지 않는 소싱처: {site}")
 
 
 # ═══════════════════════════════════════════════
@@ -1087,3 +1500,12 @@ async def gsshop_approve_promotion(
         return {"success": True, "data": result.get("data")}
     except GsShopApiError as exc:
         return {"success": False, "message": str(exc), "code": exc.code}
+
+
+@router.get("/extension-config")
+async def get_extension_config(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """확장앱에 전달할 최신 설정 (KREAM 셀렉터, 텍스트 패턴 등)."""
+    kream_selectors = await _get_setting(session, "kream_selectors")
+    return {"selectors": kream_selectors or {}}

@@ -1,171 +1,1233 @@
-"use client";
+"use client"
 
-import { useEffect, useState, useCallback } from "react";
-import { policyApi, type SambaPolicy, type PricePreview } from "@/lib/samba/api";
+import { useEffect, useState, useCallback, useRef } from "react"
+import { policyApi, forbiddenApi, accountApi, detailTemplateApi, nameRuleApi, collectorApi, type SambaPolicy, type SambaMarketAccount, type SambaDetailTemplate, type SambaNameRule, type SambaCollectedProduct } from "@/lib/samba/api"
+import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { card, inputStyle } from '@/lib/samba/styles'
+
+
+interface RangeMargin {
+  min: number
+  max: number
+  rate: number
+  amount: number
+}
+
+interface PricingForm {
+  marginRate: number
+  shippingCost: number
+  extraCharge: number
+  minMarginAmount: number
+  discountType: string
+  discountValue: number
+  useRangeMargin: boolean
+  rangeMargins: RangeMargin[]
+  customFormula: string
+  currency: string
+  customsIncluded: boolean
+}
+
+// 마켓정책
+interface MarketPolicyForm {
+  accountId: string
+  shipType: string
+  feeRate: number
+  shippingCost: number
+  shippingDays: number
+  marginRate: number
+  brand: string
+  // 옥션/지마켓 전용
+  bulkDiscountQty: number
+  bulkDiscountPrice: number
+  smileCashRate: number
+}
+
+// 금지어/삭제어 템플릿
+interface ForbiddenTemplate {
+  id: string
+  name: string
+  type: 'forbidden' | 'deletion'
+  words: string[]
+}
+
+// 마켓 key → label 맵핑
+const MARKET_KEY_MAP: Record<string, string> = {
+  '쿠팡': 'coupang',
+  '신세계몰': 'ssg',
+  '스마트스토어': 'smartstore',
+  '11번가': '11st',
+  '지마켓': 'gmarket',
+  '옥션': 'auction',
+  'GS샵': 'gsshop',
+  '롯데ON': 'lotteon',
+  '롯데홈쇼핑': 'lottehome',
+  '홈앤쇼핑': 'homeand',
+  'HMALL': 'hmall',
+  'KREAM': 'kream',
+}
+
+const POLICY_MARKETS = [
+  '쿠팡', '신세계몰', '스마트스토어', '11번가', '지마켓', '옥션', 'GS샵', '롯데ON', '롯데홈쇼핑', '홈앤쇼핑', 'HMALL', 'KREAM',
+]
+
+const defaultPricing: PricingForm = {
+  marginRate: 15,
+  shippingCost: 3000,
+  extraCharge: 0,
+  minMarginAmount: 1000,
+  discountType: 'none',
+  discountValue: 0,
+  useRangeMargin: false,
+  rangeMargins: [],
+  customFormula: '',
+  currency: 'KRW',
+  customsIncluded: false,
+}
+
+
+// 숫자 콤마 포맷
+const fmtNum = (v: number | string | null | undefined): string => {
+  if (v == null) return ''
+  const n = typeof v === 'string' ? parseFloat(v.replace(/,/g, '')) : v
+  if (isNaN(n) || n === 0) return ''
+  return n.toLocaleString()
+}
+
+// 콤마 제거 후 숫자 변환
+const parseNum = (s: string): number => {
+  const n = parseFloat(s.replace(/,/g, ''))
+  return isNaN(n) ? 0 : n
+}
+
+// 숫자 입력 컴포넌트 (콤마 서식 + 스피너 제거)
+function NumInput({ value, onChange, style, placeholder, suffix }: {
+  value: number
+  onChange: (v: number) => void
+  style?: React.CSSProperties
+  placeholder?: string
+  suffix?: string
+}) {
+  const [display, setDisplay] = useState(fmtNum(value))
+  const ref = useRef<HTMLInputElement>(null)
+
+  // 외부 value 변경 시 동기화 (포커스 중이 아닐 때만)
+  useEffect(() => {
+    if (document.activeElement !== ref.current) {
+      setDisplay(fmtNum(value))
+    }
+  }, [value])
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}>
+      <input
+        ref={ref}
+        type="text"
+        inputMode="numeric"
+        style={{ ...inputStyle, ...style }}
+        value={display}
+        placeholder={placeholder || '0'}
+        onChange={(e) => {
+          const raw = e.target.value.replace(/[^0-9.-]/g, '')
+          setDisplay(raw)
+        }}
+        onBlur={(e) => {
+          const n = parseNum(e.target.value)
+          setDisplay(fmtNum(n))
+          if (n !== value) onChange(n)
+        }}
+      />
+      {suffix && <span style={{ color: '#888', fontSize: '0.8125rem' }}>{suffix}</span>}
+    </span>
+  )
+}
 
 export default function PoliciesPage() {
-  const [policies, setPolicies] = useState<SambaPolicy[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "새 정책", site_name: "" });
+  const [policies, setPolicies] = useState<SambaPolicy[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showForm, setShowForm] = useState(true)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [name, setName] = useState("새 정책")
+  const [siteName, setSiteName] = useState("")
+  const [pricing, setPricing] = useState<PricingForm>({ ...defaultPricing })
 
-  // Price preview
-  const [previewPolicyId, setPreviewPolicyId] = useState<string | null>(null);
-  const [previewCost, setPreviewCost] = useState(100000);
-  const [previewFeeRate, setPreviewFeeRate] = useState(8.5);
-  const [preview, setPreview] = useState<PricePreview | null>(null);
+  // 정책 선택 드롭다운
+  const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null)
+
+  // 마켓정책 설정
+  const [marketPolicyTab, setMarketPolicyTab] = useState('쿠팡')
+  const [marketPolicies, setMarketPolicies] = useState<Record<string, MarketPolicyForm>>({})
+
+  // 상세페이지/상품명 템플릿
+  const [detailTemplates, setDetailTemplates] = useState<SambaDetailTemplate[]>([])
+  const [nameRules, setNameRules] = useState<SambaNameRule[]>([])
+  const [selectedDetailTemplateId, setSelectedDetailTemplateId] = useState('')
+  const [selectedNameRuleId, setSelectedNameRuleId] = useState('')
+  const [showTemplateEditor, setShowTemplateEditor] = useState(false)
+  const [dragIdx, setDragIdx] = useState<number | null>(null)
+  const [imgChecks, setImgChecks] = useState<Record<string, boolean>>({
+    main: true, sub: true, title: false, option: false, detail: false, topImg: false, bottomImg: false,
+  })
+  const [imgOrder, setImgOrder] = useState<string[]>(['topImg', 'main', 'sub', 'title', 'option', 'detail', 'bottomImg'])
+  const [imgSaving, setImgSaving] = useState<string>('')
+  const [previewProduct, setPreviewProduct] = useState<SambaCollectedProduct | null>(null)
+
+  // 마켓 계정 목록 (설정에서 등록한 계정)
+  const [storeAccounts, setStoreAccounts] = useState<Record<string, Record<string, string>>>({})
+
+  // 금지어·삭제어 템플릿
+  const [forbiddenTemplates, setForbiddenTemplates] = useState<ForbiddenTemplate[]>([])
+  const [activeTemplateId, setActiveTemplateId] = useState<Record<string, string>>({ forbidden: '', deletion: '' })
+  const [forbiddenText, setForbiddenText] = useState('')
+  const [deletionText, setDeletionText] = useState('')
+  const [newTemplateName, setNewTemplateName] = useState<Record<string, string>>({ forbidden: '', deletion: '' })
+
+  // 현재 마켓 정책 가져오기
+  const getCurrentMarketPolicy = useCallback((): MarketPolicyForm => {
+    return marketPolicies[marketPolicyTab] || { accountId: '', shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0 }
+  }, [marketPolicies, marketPolicyTab])
+
+  const setCurrentMarketPolicy = useCallback((mp: MarketPolicyForm) => {
+    setMarketPolicies(prev => ({ ...prev, [marketPolicyTab]: mp }))
+  }, [marketPolicyTab])
+
+  // 스토어 설정 로드 (설정탭에서 저장한 계정 정보)
+  const loadStoreAccounts = useCallback(async () => {
+    const loaded: Record<string, Record<string, string>> = {}
+    const keys = Object.values(MARKET_KEY_MAP)
+    for (const key of keys) {
+      try {
+        const data = await forbiddenApi.getSetting(`store_${key}`).catch(() => null) as Record<string, string> | null
+        if (data && data.businessName) {
+          loaded[key] = data
+        }
+      } catch { /* ignore */ }
+    }
+    setStoreAccounts(loaded)
+  }, [])
+
+  // 금지어/삭제어 템플릿 로드 (템플릿 목록만, 텍스트 영역은 채우지 않음)
+  const loadForbiddenTemplates = useCallback(async () => {
+    try {
+      const data = await forbiddenApi.getSetting('forbidden_templates').catch(() => null) as ForbiddenTemplate[] | null
+      if (data && Array.isArray(data)) {
+        setForbiddenTemplates(data)
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+
+  // 템플릿 저장
+  const saveTemplate = async (type: 'forbidden' | 'deletion') => {
+    const tplName = newTemplateName[type]?.trim()
+    if (!tplName) {
+      showAlert('템플릿 이름을 입력해주세요', 'error')
+      return
+    }
+    const text = type === 'forbidden' ? forbiddenText : deletionText
+    const words = text.split(';').map(w => w.trim()).filter(Boolean)
+    if (words.length === 0) {
+      showAlert('단어를 입력해주세요', 'error')
+      return
+    }
+    const newTpl: ForbiddenTemplate = {
+      id: `tpl_${Date.now()}`,
+      name: tplName,
+      type,
+      words,
+    }
+    const updated = [...forbiddenTemplates.filter(t => !(t.type === type && t.name === tplName)), newTpl]
+    await forbiddenApi.saveSetting('forbidden_templates', updated)
+    setForbiddenTemplates(updated)
+    setNewTemplateName(prev => ({ ...prev, [type]: '' }))
+    // DB에도 단어 벌크 저장
+    const result = await forbiddenApi.bulkSaveWords(type, words)
+    showAlert(`"${tplName}" ${result.created}개 단어 저장 완료`, 'success')
+  }
+
+  // 템플릿 불러오기
+  const loadTemplate = (tpl: ForbiddenTemplate) => {
+    const text = tpl.words.join(';')
+    if (tpl.type === 'forbidden') setForbiddenText(text)
+    else setDeletionText(text)
+    setActiveTemplateId(prev => ({ ...prev, [tpl.type]: tpl.id }))
+    setNewTemplateName(prev => ({ ...prev, [tpl.type]: tpl.name }))
+  }
+
+  // 템플릿 삭제
+  const deleteTemplate = async (tplId: string) => {
+    if (!await showConfirm('템플릿을 삭제하시겠습니까?')) return
+    const updated = forbiddenTemplates.filter(t => t.id !== tplId)
+    await forbiddenApi.saveSetting('forbidden_templates', updated)
+    setForbiddenTemplates(updated)
+    showAlert('템플릿이 삭제되었습니다', 'success')
+  }
 
   const loadPolicies = useCallback(async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      setPolicies(await policyApi.list());
+      setPolicies(await policyApi.list())
     } catch { /* ignore */ }
-    setLoading(false);
-  }, []);
+    setLoading(false)
+  }, [])
 
-  useEffect(() => { loadPolicies(); }, [loadPolicies]);
+  useEffect(() => {
+    loadPolicies(); loadForbiddenTemplates(); loadStoreAccounts()
+    detailTemplateApi.list().then(setDetailTemplates).catch(() => {})
+    nameRuleApi.list().then(setNameRules).catch(() => {})
+    // 미리보기용 최신 상품 1개 로드
+    collectorApi.listProducts(0, 1).then(list => {
+      if (list.length > 0) setPreviewProduct(list[0])
+    }).catch(() => {})
+  }, [loadPolicies, loadForbiddenTemplates, loadStoreAccounts])
+
+
+  // 템플릿 선택 시 imgChecks 초기화
+  useEffect(() => {
+    if (!selectedDetailTemplateId) return
+    const t = detailTemplates.find(x => x.id === selectedDetailTemplateId)
+    if (!t) return
+    setImgChecks({
+      main: true, sub: true, title: false, option: false, detail: false,
+      topImg: !!t.top_image_s3_key,
+      bottomImg: !!t.bottom_image_s3_key,
+    })
+  }, [selectedDetailTemplateId, detailTemplates])
+
+  const openEdit = (p: SambaPolicy) => {
+    setEditingId(p.id)
+    setName(p.name)
+    setSiteName(p.site_name || "")
+    const pr = (p.pricing || {}) as Record<string, unknown>
+    setPricing({
+      marginRate: Number(pr.marginRate ?? 15),
+      shippingCost: Number(pr.shippingCost ?? 3000),
+      extraCharge: Number(pr.extraCharge ?? 0),
+      minMarginAmount: Number(pr.minMarginAmount ?? 1000),
+      discountType: String(pr.discountType ?? 'none'),
+      discountValue: Number(pr.discountValue ?? 0),
+      useRangeMargin: Boolean(pr.useRangeMargin),
+      rangeMargins: Array.isArray(pr.rangeMargins) ? pr.rangeMargins as RangeMargin[] : [],
+      customFormula: String(pr.customFormula ?? ''),
+      currency: String(pr.currency ?? 'KRW'),
+      customsIncluded: Boolean(pr.customsIncluded),
+    })
+    // 마켓 정책 로드
+    const mp = (p.market_policies || {}) as Record<string, MarketPolicyForm>
+    setMarketPolicies(mp)
+    // extras에서 템플릿/금지어 설정 복원
+    setSelectedDetailTemplateId(p.extras?.detail_template_id || '')
+    setSelectedNameRuleId(p.extras?.name_rule_id || '')
+    setForbiddenText(p.extras?.forbidden_text || '')
+    setDeletionText(p.extras?.deletion_text || '')
+    setShowForm(true)
+  }
 
   const handleSubmit = async () => {
     try {
-      if (editingId) {
-        await policyApi.update(editingId, form);
-      } else {
-        await policyApi.create(form);
+      const payload = {
+        name,
+        site_name: siteName,
+        pricing: {
+          marginRate: pricing.marginRate,
+          shippingCost: pricing.shippingCost,
+          extraCharge: pricing.extraCharge,
+          minMarginAmount: pricing.minMarginAmount,
+          discountType: pricing.discountType,
+          discountValue: pricing.discountValue,
+          useRangeMargin: pricing.useRangeMargin,
+          rangeMargins: pricing.rangeMargins,
+          customFormula: pricing.customFormula,
+          currency: pricing.currency,
+          customsIncluded: pricing.customsIncluded,
+        },
+        market_policies: marketPolicies,
+        extras: {
+          detail_template_id: selectedDetailTemplateId || undefined,
+          name_rule_id: selectedNameRuleId || undefined,
+          forbidden_text: forbiddenText || undefined,
+          deletion_text: deletionText || undefined,
+        },
       }
-      setShowForm(false);
-      setEditingId(null);
-      loadPolicies();
+      if (editingId) {
+        await policyApi.update(editingId, payload)
+        // 리스트만 갱신 (편집 폼은 현재 상태 유지)
+        setPolicies(await policyApi.list().catch(() => []))
+        showAlert('정책이 저장되었습니다', 'success')
+      } else {
+        const created = await policyApi.create(payload)
+        setEditingId(created.id)
+        setSelectedPolicyId(created.id)
+        setPolicies(await policyApi.list().catch(() => []))
+        showAlert('정책이 생성되었습니다', 'success')
+      }
     } catch (e) {
-      alert(e instanceof Error ? e.message : "저장 실패");
+      showAlert(e instanceof Error ? e.message : '저장 실패', 'error')
     }
-  };
+  }
 
   const handleDelete = async (id: string) => {
-    if (!confirm("삭제하시겠습니까?")) return;
-    await policyApi.delete(id);
-    loadPolicies();
-  };
+    if (!await showConfirm('삭제하시겠습니까?')) return
+    await policyApi.delete(id)
+    setPolicies(await policyApi.list().catch(() => []))
+    setEditingId(null)
+    setSelectedPolicyId(null)
+    setShowForm(false)
+  }
 
-  const handlePreview = async () => {
-    if (!previewPolicyId) return;
-    try {
-      setPreview(await policyApi.calculatePrice(previewPolicyId, previewCost, previewFeeRate));
-    } catch {
-      setPreview(null);
-    }
-  };
+  // 자동저장 (debounce 800ms)
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latestPricingRef = useRef(pricing)
+  const latestMarketPoliciesRef = useRef(marketPolicies)
+  const latestExtrasRef = useRef({ detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId, forbidden_text: forbiddenText, deletion_text: deletionText })
+  latestPricingRef.current = pricing
+  latestMarketPoliciesRef.current = marketPolicies
+  latestExtrasRef.current = { detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId, forbidden_text: forbiddenText, deletion_text: deletionText }
+
+  const triggerAutoSave = useCallback(() => {
+    if (!editingId) return
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
+    autoSaveTimer.current = setTimeout(async () => {
+      try {
+        const ex = latestExtrasRef.current
+        await policyApi.update(editingId, {
+          name,
+          site_name: siteName,
+          pricing: { ...latestPricingRef.current },
+          market_policies: latestMarketPoliciesRef.current,
+          extras: {
+            detail_template_id: ex.detail_template_id || undefined,
+            name_rule_id: ex.name_rule_id || undefined,
+            forbidden_text: ex.forbidden_text || undefined,
+            deletion_text: ex.deletion_text || undefined,
+          },
+        })
+        // 리스트만 갱신 (현재 편집 폼은 유지)
+        const list = await policyApi.list().catch(() => [])
+        setPolicies(list)
+      } catch { /* 자동저장 실패 무시 */ }
+    }, 800)
+  }, [editingId, name, siteName])
+
+  // 범위 마진 행 추가/삭제
+  const addRangeMargin = () => {
+    const last = pricing.rangeMargins[pricing.rangeMargins.length - 1]
+    setPricing({
+      ...pricing,
+      rangeMargins: [...pricing.rangeMargins, { min: last ? last.max + 1 : 0, max: last ? last.max + 50000 : 50000, rate: 15, amount: 0 }]
+    })
+    triggerAutoSave()
+  }
+
+  const removeRangeMargin = (idx: number) => {
+    setPricing({ ...pricing, rangeMargins: pricing.rangeMargins.filter((_, i) => i !== idx) })
+    triggerAutoSave()
+  }
+
+  const updateRangeMargin = (idx: number, field: keyof RangeMargin, value: number) => {
+    const updated = [...pricing.rangeMargins]
+    updated[idx] = { ...updated[idx], [field]: value }
+    setPricing({ ...pricing, rangeMargins: updated })
+    triggerAutoSave()
+  }
+
+  // 현재 마켓 탭에 해당하는 스토어 계정 목록 가져오기
+  const currentMarketKey = MARKET_KEY_MAP[marketPolicyTab] || ''
+  const currentStoreAccount = storeAccounts[currentMarketKey]
+  const mp = getCurrentMarketPolicy()
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold">정책관리</h2>
-        <button
-          onClick={() => { setShowForm(true); setEditingId(null); setForm({ name: "새 정책", site_name: "" }); }}
-          className="px-4 py-2 bg-[#FF8C00] text-white text-sm rounded-lg font-medium hover:bg-[#E07B00]"
-        >
-          + 정책 추가
-        </button>
-      </div>
+    <div style={{ color: '#E5E5E5' }}>
+      {/* 헤더 */}
+      <div style={{ marginBottom: '1.5rem' }} />
 
-      {showForm && (
-        <div className="bg-[#111] border border-[#1A1A1A] rounded-lg p-4 space-y-3">
-          <h3 className="font-semibold text-sm">{editingId ? "정책 수정" : "정책 추가"}</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <FormInput label="정책명" value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
-            <FormInput label="소싱사이트" value={form.site_name} onChange={(v) => setForm({ ...form, site_name: v })} />
-          </div>
-          <div className="flex gap-2 justify-end">
-            <button onClick={() => setShowForm(false)} className="px-3 py-1.5 text-sm text-[#999]">취소</button>
-            <button onClick={handleSubmit} className="px-4 py-1.5 bg-[#FF8C00] text-white text-sm rounded-lg font-medium">저장</button>
-          </div>
+      {/* 정책 선택 */}
+      <div style={{ ...card, padding: '1rem 1.25rem', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+          <select
+            value={selectedPolicyId || ''}
+            onChange={async (e) => {
+              const id = e.target.value
+              if (id === '__new__') {
+                // 신규: DB 저장 없이 빈 폼만 열기 (저장 버튼 시 create)
+                setEditingId(null)
+                setSelectedPolicyId(null)
+                setName(`정책 ${policies.length + 1}`)
+                setSiteName('')
+                setPricing({ ...defaultPricing })
+                setMarketPolicies({})
+                setSelectedDetailTemplateId('')
+                setSelectedNameRuleId('')
+                setForbiddenText('')
+                setDeletionText('')
+                setShowForm(true)
+                return
+              }
+              setSelectedPolicyId(id || null)
+              if (id) {
+                const p = policies.find(p => p.id === id)
+                if (p) openEdit(p)
+              } else {
+                setEditingId(null)
+                setName("새 정책")
+                setSiteName("")
+                setPricing({ ...defaultPricing })
+                setMarketPolicies({})
+                setShowForm(false)
+              }
+            }}
+            style={{ ...inputStyle, width: '220px', cursor: 'pointer' }}
+          >
+            <option value="">정책 선택</option>
+            <option value="__new__">+ 신규정책</option>
+            {policies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          {/* 정책 복사 */}
+          <button onClick={async () => {
+            if (!editingId) { showAlert('복사할 정책을 선택하세요'); return }
+            const src = policies.find(p => p.id === editingId)
+            if (!src) return
+            const copied = await policyApi.create({
+              name: `${src.name} (복사)`,
+              site_name: src.site_name,
+              pricing: src.pricing as Record<string, unknown>,
+              market_policies: src.market_policies,
+              extras: src.extras,
+            })
+            setPolicies(await policyApi.list().catch(() => []))
+            setSelectedPolicyId(copied.id)
+            openEdit(copied)
+            showAlert('정책이 복사되었습니다', 'success')
+          }}
+            style={{ fontSize: '0.8125rem', padding: '0.4rem 1rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '8px', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap' }}
+          >정책 복사</button>
+          <button
+            onClick={() => showAlert('AI 정책 일괄 변경은 Claude API 연동 후 사용 가능합니다', 'info')}
+            style={{ fontSize: '0.8125rem', padding: '0.4rem 1rem', background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: '8px', color: '#A78BFA', cursor: 'pointer', whiteSpace: 'nowrap' }}
+          >✦ AI 정책일괄 변경시 사용</button>
         </div>
-      )}
-
-      {/* Price Calculator */}
-      <div className="bg-[#111] border border-[#1A1A1A] rounded-lg p-4">
-        <h3 className="font-semibold text-sm mb-3 text-[#999]">가격 계산 미리보기</h3>
-        <div className="flex items-end gap-3">
-          <div>
-            <label className="text-xs text-[#666] mb-1 block">정책 선택</label>
-            <select
-              value={previewPolicyId || ""}
-              onChange={(e) => setPreviewPolicyId(e.target.value || null)}
-              className="px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5]"
-            >
-              <option value="">선택</option>
-              {policies.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          </div>
-          <FormInput label="원가" value={String(previewCost)} onChange={(v) => setPreviewCost(Number(v))} type="number" />
-          <FormInput label="수수료율(%)" value={String(previewFeeRate)} onChange={(v) => setPreviewFeeRate(Number(v))} type="number" />
-          <button onClick={handlePreview} className="px-4 py-1.5 bg-[#4C9AFF] text-white text-sm rounded-lg font-medium mb-0.5">계산</button>
-        </div>
-        {preview && (
-          <div className="mt-3 flex gap-6 text-sm">
-            <div>원가: <span className="text-[#E5E5E5]">₩{preview.cost.toLocaleString()}</span></div>
-            <div>판매가: <span className="text-[#FF8C00] font-bold">₩{preview.market_price.toLocaleString()}</span></div>
-            <div>수익: <span className="text-[#51CF66]">₩{preview.profit.toLocaleString()}</span></div>
-            <div>수익률: <span className="text-[#51CF66]">{preview.profit_rate}%</span></div>
+        {/* 정책명 표시/수정 */}
+        {editingId && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.75rem' }}>
+            <span style={{ color: '#888', fontSize: '0.8125rem' }}>정책명</span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              style={{ ...inputStyle, flex: 1, maxWidth: '300px' }}
+            />
           </div>
         )}
       </div>
 
-      {/* Table */}
-      {loading ? (
-        <p className="text-sm text-[#666]">로딩 중...</p>
-      ) : (
-        <div className="bg-[#111] border border-[#1A1A1A] rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-[#666] border-b border-[#1A1A1A] bg-[#0E0E0E]">
-                <th className="text-left px-4 py-2.5">정책명</th>
-                <th className="text-left px-4 py-2.5">소싱사이트</th>
-                <th className="text-left px-4 py-2.5">마진율</th>
-                <th className="text-left px-4 py-2.5">추가요금</th>
-                <th className="text-left px-4 py-2.5">생성일</th>
-                <th className="text-right px-4 py-2.5">작업</th>
-              </tr>
-            </thead>
-            <tbody>
-              {policies.map((p) => {
-                const pricing = (p.pricing || {}) as Record<string, unknown>;
-                return (
-                  <tr key={p.id} className="border-b border-[#1A1A1A]/50 hover:bg-[#141414]">
-                    <td className="px-4 py-2.5 text-[#FF8C00]">{p.name}</td>
-                    <td className="px-4 py-2.5 text-[#888]">{p.site_name || "-"}</td>
-                    <td className="px-4 py-2.5 text-[#51CF66]">{String(pricing.marginRate ?? 15)}%</td>
-                    <td className="px-4 py-2.5">₩{Number(pricing.extraCharge ?? 0).toLocaleString()}</td>
-                    <td className="px-4 py-2.5 text-[#666]">{new Date(p.created_at).toLocaleDateString("ko-KR")}</td>
-                    <td className="px-4 py-2.5 text-right space-x-2">
-                      <button
-                        onClick={() => { setEditingId(p.id); setForm({ name: p.name, site_name: p.site_name || "" }); setShowForm(true); }}
-                        className="text-[#4C9AFF] hover:underline text-xs"
-                      >수정</button>
-                      <button onClick={() => handleDelete(p.id)} className="text-[#FF6B6B] hover:underline text-xs">삭제</button>
-                    </td>
-                  </tr>
-                );
-              })}
-              {policies.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-[#555]">정책이 없습니다</td></tr>
+      {/* 정책 생성/수정 폼 */}
+      {showForm && (
+        <div>
+          {/* 가격계산 정책 설정 */}
+          <div style={{ ...card, padding: '1.5rem', marginBottom: '1.25rem' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>가격계산 정책 설정</h3>
+            {/* 첫 번째 행: 체크박스 + 배송비 + 마진율 + 기준통화 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8125rem', color: '#C5C5C5', cursor: 'pointer' }}>
+                <input type="checkbox" checked={pricing.useRangeMargin} onChange={(e) => setPricing({ ...pricing, useRangeMargin: e.target.checked })} style={{ accentColor: '#FF8C00' }} />
+                상품가격별 범위 마진 설정
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>배송비</span>
+                <NumInput value={pricing.shippingCost} onChange={(v) => { setPricing({ ...pricing, shippingCost: v }); triggerAutoSave() }} style={{ width: '90px' }} suffix="원" />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>마진율</span>
+                <NumInput value={pricing.marginRate} onChange={(v) => { setPricing({ ...pricing, marginRate: v }); triggerAutoSave() }} style={{ width: '62px' }} suffix="%" />
+                <span style={{ color: '#555' }}>/</span>
+                <NumInput value={pricing.extraCharge} onChange={(v) => { setPricing({ ...pricing, extraCharge: v }); triggerAutoSave() }} style={{ width: '80px' }} suffix="원" />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>기준통화</span>
+                <select style={{ ...inputStyle, width: 'auto' }} value={pricing.currency} onChange={(e) => setPricing({ ...pricing, currency: e.target.value })}>
+                  <option value="KRW">KRW(원화)</option>
+                  <option value="USD">USD</option>
+                </select>
+              </div>
+            </div>
+
+            {/* 범위별 마진율 행들 */}
+            {pricing.useRangeMargin && (
+              <div style={{ marginBottom: '0.75rem' }}>
+                {pricing.rangeMargins.map((rm, idx) => (
+                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
+                    <NumInput value={rm.min} onChange={(v) => updateRangeMargin(idx, 'min', v)} style={{ width: '100px' }} />
+                    <span style={{ color: '#888', fontSize: '0.75rem' }}>~</span>
+                    <NumInput value={rm.max} onChange={(v) => updateRangeMargin(idx, 'max', v)} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: '#555', margin: '0 0.25rem' }}>│</span>
+                    <span style={{ color: '#888', fontSize: '0.75rem' }}>마진율</span>
+                    <NumInput value={rm.rate} onChange={(v) => updateRangeMargin(idx, 'rate', v)} style={{ width: '60px' }} suffix="%" />
+                    <span style={{ color: '#555' }}>/</span>
+                    <span style={{ color: '#888', fontSize: '0.75rem' }}>마진금액</span>
+                    <NumInput value={rm.amount} onChange={(v) => updateRangeMargin(idx, 'amount', v)} style={{ width: '90px' }} suffix="원" placeholder="선택" />
+                    <button onClick={() => removeRangeMargin(idx)} style={{ color: '#FF6B6B', background: 'transparent', fontSize: '0.75rem', cursor: 'pointer', border: 'none', marginLeft: '0.5rem' }}>삭제</button>
+                  </div>
+                ))}
+                <button onClick={addRangeMargin} style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#FF8C00', background: 'transparent', border: '1px dashed #FF8C00', borderRadius: '6px', padding: '0.25rem 0.75rem', cursor: 'pointer' }}>+ 가격범위 추가하기</button>
+              </div>
+            )}
+
+            {/* 추가요금 + 관세 + 최소마진 + 할인 */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>추가요금</span>
+                <NumInput value={pricing.extraCharge} onChange={(v) => { setPricing({ ...pricing, extraCharge: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>관세/부가세</span>
+                <select style={{ ...inputStyle, width: 'auto' }} value={pricing.customsIncluded ? 'Y' : 'N'} onChange={(e) => setPricing({ ...pricing, customsIncluded: e.target.value === 'Y' })}>
+                  <option value="N">N</option><option value="Y">Y</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>최소마진금액</span>
+                <NumInput value={pricing.minMarginAmount} onChange={(v) => { setPricing({ ...pricing, minMarginAmount: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>할인율/금액</span>
+                <NumInput value={pricing.discountType === 'rate' ? pricing.discountValue : 0} onChange={(v) => { setPricing({ ...pricing, discountType: 'rate', discountValue: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="%" />
+                <span style={{ color: '#555' }}>/</span>
+                <NumInput value={pricing.discountType === 'amount' ? pricing.discountValue : 0} onChange={(v) => { setPricing({ ...pricing, discountType: 'amount', discountValue: v }); triggerAutoSave() }} style={{ width: '90px' }} suffix="원" />
+              </div>
+            </div>
+
+            {/* 가격 계산 공식 */}
+            <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '0.75rem 1rem', border: '1px solid #2D2D2D', fontSize: '0.8rem', color: '#888' }}>
+              [상품금액] = [원가] + [마진] + [배송비] + [추가요금] + [관세] + [마켓 수수료]
+            </div>
+          </div>
+
+
+
+          {/* 마켓정책 설정 */}
+          <div style={{ ...card, padding: '1.5rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+              <h4 style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#FF8C00', textTransform: 'uppercase', letterSpacing: '0.05em' }}>마켓정책 설정</h4>
+              <span style={{ fontSize: '0.75rem', color: '#888' }}>** 마켓 선택 후 전송에 필요한 기본 설정값 입력</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginBottom: '1rem' }}>
+              {POLICY_MARKETS.map(m => (
+                <button key={m} onClick={() => setMarketPolicyTab(m)}
+                  style={{ padding: '0.375rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer', border: marketPolicyTab === m ? '1px solid #FF8C00' : '1px solid #2D2D2D', background: marketPolicyTab === m ? 'rgba(255,140,0,0.12)' : 'transparent', color: marketPolicyTab === m ? '#FF8C00' : '#888' }}
+                >{m}</button>
+              ))}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              {/* 연결 계정 선택 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', gridColumn: '1 / -1' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>연결 계정</span>
+                {currentStoreAccount ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
+                    <select
+                      style={{ ...inputStyle, flex: 1, maxWidth: '320px' }}
+                      value={mp.accountId || ''}
+                      onChange={(e) => { setCurrentMarketPolicy({ ...mp, accountId: e.target.value }); triggerAutoSave() }}
+                    >
+                      <option value="">계정 선택</option>
+                      <option value={currentMarketKey}>
+                        {currentStoreAccount.businessName || marketPolicyTab}({currentStoreAccount.storeId || currentStoreAccount.account || currentStoreAccount.vendorId || '-'})
+                      </option>
+                    </select>
+                    {mp.accountId && (
+                      <span style={{ fontSize: '0.75rem', color: '#51CF66', padding: '0.2rem 0.5rem', background: 'rgba(81,207,102,0.1)', borderRadius: '4px' }}>연결됨</span>
+                    )}
+                  </div>
+                ) : (
+                  <span style={{ fontSize: '0.8125rem', color: '#666' }}>설정 탭에서 {marketPolicyTab} 계정을 먼저 등록해주세요</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>배송형태</span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.8125rem', color: '#C5C5C5' }}>
+                  <input type="radio" name="ship-type" checked={mp.shipType === 'domestic'} onChange={() => { setCurrentMarketPolicy({ ...mp, shipType: 'domestic' }); triggerAutoSave() }} /> 국내배송
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.8125rem', color: '#C5C5C5' }}>
+                  <input type="radio" name="ship-type" checked={mp.shipType === 'overseas'} onChange={() => { setCurrentMarketPolicy({ ...mp, shipType: 'overseas' }); triggerAutoSave() }} /> 해외배송
+                </label>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>수수료</span>
+                <NumInput value={mp.feeRate} onChange={(v) => { setCurrentMarketPolicy({ ...mp, feeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>배송비</span>
+                <NumInput value={mp.shippingCost} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingCost: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>출고일</span>
+                <NumInput value={mp.shippingDays || 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingDays: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="일" />
+              </div>
+              {/* 신세계몰 전용: 마진율, 브랜드 */}
+              {marketPolicyTab === '신세계몰' && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>마진율</span>
+                    <NumInput value={mp.marginRate || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, marginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>브랜드</span>
+                    <select style={{ padding: '0.375rem 0.5rem', fontSize: '0.8125rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', outline: 'none' }}
+                      value={mp.brand || ''} onChange={(e) => { setCurrentMarketPolicy({ ...mp, brand: e.target.value }); triggerAutoSave() }}>
+                      <option value="">브랜드 선택</option>
+                      <option value="Nike">Nike</option>
+                      <option value="Adidas">Adidas</option>
+                      <option value="New Balance">New Balance</option>
+                      <option value="Converse">Converse</option>
+                      <option value="Vans">Vans</option>
+                      <option value="기타">기타 (직접입력)</option>
+                    </select>
+                  </div>
+                </>
               )}
-            </tbody>
-          </table>
+              {/* 옥션/지마켓 전용: 복수구매 할인, 스마일캐시 지급 */}
+              {(marketPolicyTab === '옥션' || marketPolicyTab === '지마켓') && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+                    <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>복수구매 할인</span>
+                    <NumInput value={mp.bulkDiscountQty || 2} onChange={(v) => { setCurrentMarketPolicy({ ...mp, bulkDiscountQty: v }); triggerAutoSave() }} style={{ width: '50px' }} suffix="개" />
+                    <span style={{ color: '#666', fontSize: '0.8rem' }}>이상</span>
+                    <NumInput value={mp.bulkDiscountPrice || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, bulkDiscountPrice: v }); triggerAutoSave() }} style={{ width: '80px' }} suffix="원" />
+                    <span style={{ color: '#666', fontSize: '0.8rem' }}>할인</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>스마일캐시</span>
+                    <NumInput value={mp.smileCashRate || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, smileCashRate: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="%" />
+                    <span style={{ color: '#666', fontSize: '0.8rem' }}>지급</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* 정책 선택 드롭다운 (테이블 대체) */}
+      {policies.length > 0 && !showForm && (
+        <div style={{ ...card, padding: '1rem 1.5rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <span style={{ color: '#888', fontSize: '0.8125rem' }}>저장된 정책</span>
+          <select style={{ padding: '0.375rem 0.75rem', fontSize: '0.8125rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', outline: 'none', flex: 1, maxWidth: '300px' }}
+            value={selectedPolicyId || ''} onChange={(e) => { const p = policies.find(x => x.id === e.target.value); if (p) openEdit(p) }}>
+            <option value="">정책 선택하여 수정</option>
+            {policies.map(p => <option key={p.id} value={p.id}>{p.name} ({p.site_name || '전체'})</option>)}
+          </select>
+          <button onClick={() => { const p = policies.find(x => x.id === selectedPolicyId); if (p) handleDelete(p.id) }}
+            style={{ padding: '0.375rem 0.875rem', fontSize: '0.8rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '6px', color: '#FF6B6B', cursor: 'pointer' }}>삭제</button>
+        </div>
+      )}
+
+      {/* 상세페이지 + 상품/옵션명 관리 (2컬럼) */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginTop: '1.5rem' }}>
+
+      {/* 상세페이지 */}
+      <div style={{ ...card, padding: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+          <span style={{ fontSize: '1rem', fontWeight: 700 }}>상세페이지</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ color: '#888', fontSize: '0.8125rem' }}>템플릿선택</span>
+            <select style={{ ...inputStyle, width: '200px' }} value={selectedDetailTemplateId} onChange={async (e) => {
+              if (e.target.value === '__new__') {
+                const t = await detailTemplateApi.create({ name: `템플릿 ${detailTemplates.length + 1}` })
+                setDetailTemplates(prev => [t, ...prev])
+                setSelectedDetailTemplateId(t.id)
+              } else {
+                setSelectedDetailTemplateId(e.target.value)
+              }
+            }}>
+              <option value="">선택하세요</option>
+              <option value="__new__">+ 신규생성</option>
+              {detailTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <button onClick={async () => {
+              if (!selectedDetailTemplateId) return
+              const t = detailTemplates.find(x => x.id === selectedDetailTemplateId)
+              if (!t) return
+              await detailTemplateApi.update(t.id, { name: t.name, main_image_index: t.main_image_index }).catch(() => {})
+              showAlert('템플릿이 저장되었습니다.', 'success')
+            }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '6px', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>저장</button>
+            <button onClick={async () => {
+              if (!selectedDetailTemplateId) return
+              await detailTemplateApi.delete(selectedDetailTemplateId).catch(() => {})
+              setDetailTemplates(prev => prev.filter(x => x.id !== selectedDetailTemplateId))
+              setSelectedDetailTemplateId('')
+            }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '6px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap' }}>설정 삭제</button>
+          </div>
+        </div>
+
+        {selectedDetailTemplateId && (() => {
+          const t = detailTemplates.find(x => x.id === selectedDetailTemplateId)
+          if (!t) return null
+
+          // 이미지 순서 state (템플릿별로 관리 — 간단하게 로컬)
+          const IMG_ITEMS = [
+            { id: 'topImg', label: '상단이미지', color: '#FF8C00', bg: 'rgba(255,140,0,0.05)', border: 'rgba(255,140,0,0.3)' },
+            { id: 'main', label: '대표이미지', color: '#4C9AFF', bg: 'rgba(76,154,255,0.05)', border: 'rgba(76,154,255,0.3)' },
+            { id: 'sub', label: '대표추가이미지', color: '#51CF66', bg: 'rgba(81,207,102,0.05)', border: 'rgba(81,207,102,0.3)' },
+            { id: 'title', label: '상품제목', color: '#FFD93D', bg: 'rgba(255,217,61,0.05)', border: 'rgba(255,217,61,0.3)' },
+            { id: 'option', label: '옵션이미지', color: '#888', bg: 'rgba(136,136,136,0.05)', border: 'rgba(136,136,136,0.3)' },
+            { id: 'detail', label: '상세이미지', color: '#CC5DE8', bg: 'rgba(204,93,232,0.05)', border: 'rgba(204,93,232,0.3)' },
+            { id: 'bottomImg', label: '하단이미지', color: '#FF8C00', bg: 'rgba(255,140,0,0.05)', border: 'rgba(255,140,0,0.3)' },
+          ]
+
+          // 외부 호스팅 이미지 URL 저장 핸들러
+          const handleImageUrlSave = async (position: 'top' | 'bottom', url: string) => {
+            const key = position === 'top' ? 'topImg' : 'bottomImg'
+            setImgSaving(key)
+            try {
+              const field = position === 'top' ? 'top_image_s3_key' : 'bottom_image_s3_key'
+              const updated = await detailTemplateApi.update(t.id, { [field]: url || null } as Partial<SambaDetailTemplate>)
+              setDetailTemplates(prev => prev.map(x => x.id === t.id ? { ...x, ...updated } : x))
+              if (url) showAlert(`${position === 'top' ? '상단' : '하단'} 이미지 저장 완료`, 'success')
+            } catch (e) {
+              showAlert(`저장 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`)
+            } finally {
+              setImgSaving('')
+            }
+          }
+
+          // 이미지 체크 토글 핸들러
+          const handleImgCheckToggle = (itemId: string, checked: boolean) => {
+            setImgChecks(prev => ({ ...prev, [itemId]: checked }))
+          }
+
+          // 체크된 항목만 imgOrder 순서대로 표시
+          const checkedItems = imgOrder
+            .map(id => IMG_ITEMS.find(item => item.id === id))
+            .filter((item): item is NonNullable<typeof item> => !!item && (imgChecks[item.id] ?? false))
+
+          return (
+            <div>
+              {/* 대표 이미지 설정 */}
+              <h4 style={{ fontSize: '0.9375rem', fontWeight: 700, marginBottom: '0.75rem' }}>대표 이미지 설정</h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', marginBottom: '1.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>템플릿명</span>
+                  <input value={t.name}
+                    onChange={(e) => setDetailTemplates(prev => prev.map(x => x.id === t.id ? { ...x, name: e.target.value } : x))}
+                    onBlur={() => detailTemplateApi.update(t.id, { name: t.name }).catch(() => {})}
+                    style={{ ...inputStyle, width: '300px' }} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>대표이미지</span>
+                  <input type="number" min={1} max={10} value={(t.main_image_index ?? 0) + 1}
+                    onChange={(e) => {
+                      const v = Math.max(0, Number(e.target.value) - 1)
+                      setDetailTemplates(prev => prev.map(x => x.id === t.id ? { ...x, main_image_index: v } : x))
+                      detailTemplateApi.update(t.id, { main_image_index: v }).catch(() => {})
+                    }}
+                    style={{ ...inputStyle, width: '50px', textAlign: 'center' }} />
+                  <span style={{ color: '#888', fontSize: '0.8125rem' }}>번 째 이미지 사용</span>
+                </div>
+                {/* 상단/하단 이미지 URL 입력 */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px', paddingTop: '0.5rem' }}>상단이미지</span>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        placeholder="https://gi.esmplus.com/... 외부 호스팅 이미지 URL"
+                        defaultValue={t.top_image_s3_key || ''}
+                        onBlur={(e) => {
+                          const url = e.target.value.trim()
+                          if (url !== (t.top_image_s3_key || '')) handleImageUrlSave('top', url)
+                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                        disabled={imgSaving === 'topImg'}
+                        style={{ ...inputStyle, flex: 1, fontSize: '0.8rem' }}
+                      />
+                      {t.top_image_s3_key && <span style={{ color: '#51CF66', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>등록됨</span>}
+                    </div>
+                    <span style={{ color: '#555', fontSize: '0.7rem' }}>ESM+ 등 외부 호스팅 이미지 주소를 입력하세요 (입력 후 Enter 또는 포커스 해제 시 저장)</span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px', paddingTop: '0.5rem' }}>하단이미지</span>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        placeholder="https://gi.esmplus.com/... 외부 호스팅 이미지 URL"
+                        defaultValue={t.bottom_image_s3_key || ''}
+                        onBlur={(e) => {
+                          const url = e.target.value.trim()
+                          if (url !== (t.bottom_image_s3_key || '')) handleImageUrlSave('bottom', url)
+                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                        disabled={imgSaving === 'bottomImg'}
+                        style={{ ...inputStyle, flex: 1, fontSize: '0.8rem' }}
+                      />
+                      {t.bottom_image_s3_key && <span style={{ color: '#51CF66', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>등록됨</span>}
+                    </div>
+                    <span style={{ color: '#555', fontSize: '0.7rem' }}>ESM+ 등 외부 호스팅 이미지 주소를 입력하세요 (입력 후 Enter 또는 포커스 해제 시 저장)</span>
+                  </div>
+                </div>
+              </div>
+              {/* 상세페이지 이미지 순서 설정 */}
+              <h4 style={{ fontSize: '0.9375rem', fontWeight: 700, marginBottom: '0.75rem', borderTop: '1px solid #2D2D2D', paddingTop: '1rem' }}>상세페이지 이미지 순서 설정</h4>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '65px' }}>기본 이미지</span>
+                {IMG_ITEMS.map(item => (
+                  <label key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', cursor: 'pointer', color: '#C5C5C5' }}>
+                    <input type="checkbox" checked={imgChecks[item.id] ?? false}
+                      onChange={(e) => handleImgCheckToggle(item.id, e.target.checked)}
+                      disabled={imgSaving === item.id}
+                      style={{ accentColor: '#FF8C00' }} />
+                    {item.label}
+                  </label>
+                ))}
+              </div>
+
+              {/* 미리보기 — 최신 상품 기준 + 드래그 순서 변경 */}
+              <div style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '1rem', minHeight: '200px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  {previewProduct ? (
+                    <span style={{ fontSize: '0.75rem', color: '#888' }}>예시: {previewProduct.name?.slice(0, 30)}{(previewProduct.name?.length || 0) > 30 ? '...' : ''}</span>
+                  ) : (
+                    <span style={{ fontSize: '0.75rem', color: '#555' }}>수집상품이 없습니다</span>
+                  )}
+                  <span style={{ fontSize: '0.75rem', color: '#666' }}>미리보기 (드래그로 순서변경)</span>
+                </div>
+                {checkedItems.length === 0 ? (
+                  <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.8rem' }}>체크박스에서 표시할 항목을 선택하세요</div>
+                ) : checkedItems.map((item, idx) => {
+                  const isTopImg = item.id === 'topImg'
+                  const isBottomImg = item.id === 'bottomImg'
+                  const isMain = item.id === 'main'
+                  const isSub = item.id === 'sub'
+                  const isDetail = item.id === 'detail'
+                  const hasImage = isTopImg ? !!t.top_image_s3_key : isBottomImg ? !!t.bottom_image_s3_key : false
+                  const imgUrl = isTopImg && t.top_image_s3_key ? t.top_image_s3_key : isBottomImg && t.bottom_image_s3_key ? t.bottom_image_s3_key : ''
+
+                  // 실제 상품 이미지
+                  const productImages = previewProduct?.images || []
+                  const mainIdx = t.main_image_index ?? 0
+                  const mainImgUrl = productImages[mainIdx] || productImages[0] || ''
+                  const subImgUrls = productImages.filter((_, i) => i !== mainIdx).slice(0, 3)
+
+                  return (
+                    <div key={item.id}
+                      draggable
+                      onDragStart={() => setDragIdx(idx)}
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        if (dragIdx === null || dragIdx === idx) return
+                        const checkedIds = checkedItems.map(i => i.id)
+                        const fromId = checkedIds[dragIdx]
+                        const toId = checkedIds[idx]
+                        const newOrder = [...imgOrder]
+                        const fromOrderIdx = newOrder.indexOf(fromId)
+                        const toOrderIdx = newOrder.indexOf(toId)
+                        newOrder.splice(fromOrderIdx, 1)
+                        newOrder.splice(toOrderIdx, 0, fromId)
+                        setImgOrder(newOrder)
+                        setDragIdx(idx)
+                      }}
+                      onDrop={() => setDragIdx(null)}
+                      onDragEnd={() => setDragIdx(null)}
+                      style={{
+                        background: item.bg, border: `1px dashed ${item.border}`, borderRadius: '4px',
+                        padding: '0.5rem',
+                        textAlign: 'center', marginBottom: '0.375rem', cursor: 'grab',
+                        opacity: dragIdx === idx ? 0.5 : 1, transition: 'opacity 0.15s',
+                      }}>
+                      {/* 상단/하단 이미지 */}
+                      {(isTopImg || isBottomImg) && hasImage ? (
+                        <img src={imgUrl} alt={item.label} style={{ width: '100%', borderRadius: '4px', maxHeight: '120px', objectFit: 'contain' }} />
+                      ) : (isTopImg || isBottomImg) ? (
+                        <span style={{ color: item.color, fontSize: '0.8rem', padding: '0.75rem 0', display: 'block' }}>{item.label} (URL 미등록)</span>
+                      ) : /* 대표이미지 */ isMain && mainImgUrl ? (
+                        <img src={mainImgUrl} alt="대표이미지" style={{ width: '100%', borderRadius: '4px', maxHeight: '120px', objectFit: 'contain' }} />
+                      ) : /* 서브이미지 */ isSub && subImgUrls.length > 0 ? (
+                        <div style={{ display: 'flex', gap: '0.375rem', justifyContent: 'center' }}>
+                          {subImgUrls.map((url, i) => (
+                            <img key={i} src={url} alt={`서브${i + 1}`} style={{ width: '60px', height: '60px', borderRadius: '4px', objectFit: 'cover' }} />
+                          ))}
+                        </div>
+                      ) : /* 상세이미지 */ isDetail && previewProduct?.detail_html ? (
+                        <span style={{ color: item.color, fontSize: '0.8rem', padding: '0.75rem 0', display: 'block' }}>상세이미지 ({(previewProduct.detail_html.match(/<img/gi) || []).length}장)</span>
+                      ) : (
+                        <span style={{ color: item.color, fontSize: '0.8rem', padding: '0.75rem 0', display: 'block' }}>{item.label}</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })()}
+
+        {!selectedDetailTemplateId && (
+          <p style={{ textAlign: 'center', color: '#555', padding: '2rem 0', fontSize: '0.875rem' }}>템플릿을 선택하거나 신규생성하세요</p>
+        )}
+      </div>
+
+      {/* 상품/옵션명 관리 */}
+      <div style={{ ...card, padding: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+          <span style={{ fontSize: '1rem', fontWeight: 700 }}>상품/옵션명</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ color: '#888', fontSize: '0.8125rem' }}>규칙선택</span>
+            <select style={{ ...inputStyle, width: '160px' }} value={selectedNameRuleId} onChange={async (e) => {
+              if (e.target.value === '__new__') {
+                const r = await nameRuleApi.create({ name: `규칙 ${nameRules.length + 1}` })
+                setNameRules(prev => [r, ...prev])
+                setSelectedNameRuleId(r.id)
+              } else {
+                setSelectedNameRuleId(e.target.value)
+              }
+            }}>
+              <option value="">선택하세요</option>
+              <option value="__new__">+ 신규생성</option>
+              {nameRules.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+            <button onClick={async () => {
+              if (!selectedNameRuleId) return
+              const r = nameRules.find(x => x.id === selectedNameRuleId)
+              if (!r) return
+              await nameRuleApi.update(r.id, { name: r.name, prefix: r.prefix, suffix: r.suffix, replacements: r.replacements, replace_mode: r.replace_mode, option_rules: r.option_rules, name_composition: r.name_composition, brand_display: r.brand_display, dedup_enabled: r.dedup_enabled }).catch(() => {})
+              showAlert('규칙이 저장되었습니다.', 'success')
+            }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '6px', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>저장</button>
+            <button onClick={async () => {
+              if (!selectedNameRuleId) return
+              await nameRuleApi.delete(selectedNameRuleId).catch(() => {})
+              setNameRules(prev => prev.filter(x => x.id !== selectedNameRuleId))
+              setSelectedNameRuleId('')
+            }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '6px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap' }}>삭제</button>
+          </div>
+        </div>
+
+        {selectedNameRuleId && (() => {
+          const r = nameRules.find(x => x.id === selectedNameRuleId)
+          if (!r) return null
+          const updateRule = (patch: Partial<typeof r>) => setNameRules(prev => prev.map(x => x.id === r.id ? { ...x, ...patch } : x))
+          const moveRep = (from: number, to: number) => {
+            const reps = [...(r.replacements || [])]
+            const [moved] = reps.splice(from, 1)
+            reps.splice(to, 0, moved)
+            updateRule({ replacements: reps })
+          }
+          const COMP_TAGS = ['{상품명}', '{브랜드명}', '{모델명}', '{사이트명}', '{상품번호}']
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {/* 규칙명 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '55px' }}>규칙명</span>
+                <input value={r.name}
+                  onChange={(e) => updateRule({ name: e.target.value })}
+                  style={{ ...inputStyle, flex: 1 }} />
+              </div>
+              {/* 접두어/접미어 */}
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', flex: 1 }}>
+                  <span style={{ color: '#888', fontSize: '0.78rem', minWidth: '40px' }}>접두어</span>
+                  <input value={r.prefix || ''} onChange={(e) => updateRule({ prefix: e.target.value })} style={{ ...inputStyle, flex: 1 }} placeholder="상품명 앞에 추가" />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', flex: 1 }}>
+                  <span style={{ color: '#888', fontSize: '0.78rem', minWidth: '40px' }}>접미어</span>
+                  <input value={r.suffix || ''} onChange={(e) => updateRule({ suffix: e.target.value })} style={{ ...inputStyle, flex: 1 }} placeholder="상품명 뒤에 추가" />
+                </div>
+              </div>
+
+              {/* ── 상품명 치환 정책 ── */}
+              <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FF8C00' }}>상품명 치환</span>
+                  <span style={{ fontSize: '0.72rem', color: '#666' }}>수집된 상품명의 텍스트를 치환합니다</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <span style={{ color: '#888', fontSize: '0.78rem' }}>치환방식</span>
+                  <select value={r.replace_mode || 'simultaneous'} onChange={(e) => updateRule({ replace_mode: e.target.value })} style={{ ...inputStyle, width: 'auto' }}>
+                    <option value="simultaneous">동시치환</option>
+                    <option value="sequential">순차치환</option>
+                  </select>
+                  <span style={{ fontSize: '0.68rem', color: '#555' }}>
+                    {(r.replace_mode || 'simultaneous') === 'simultaneous' ? '정의한 문자열을 동시에 치환 (겹치면 긴 문자열 우선)' : '위에서 아래로 순서대로 치환'}
+                  </span>
+                </div>
+                {/* 치환 조건 목록 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
+                  <span style={{ color: '#888', fontSize: '0.78rem' }}>치환조건</span>
+                  <button onClick={() => updateRule({ replacements: [...(r.replacements || []), { from: '', to: '', caseInsensitive: false }] })}
+                    style={{ fontSize: '0.68rem', color: '#4C9AFF', background: 'transparent', border: '1px dashed #4C9AFF', borderRadius: '4px', padding: '1px 8px', cursor: 'pointer' }}>+ 조건추가</button>
+                </div>
+                {(r.replacements || []).map((rep: {from: string; to: string; caseInsensitive?: boolean}, idx: number) => (
+                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.25rem' }}>
+                    <input value={rep.from} placeholder="변경전"
+                      onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], from: e.target.value }; updateRule({ replacements: reps }) }}
+                      style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} />
+                    <span style={{ color: '#555', fontSize: '0.75rem' }}>→</span>
+                    <input value={rep.to} placeholder="변경후"
+                      onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], to: e.target.value }; updateRule({ replacements: reps }) }}
+                      style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} />
+                    {idx > 0 && <button onClick={() => moveRep(idx, idx - 1)} style={{ color: '#888', background: 'none', border: '1px solid #2D2D2D', borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▲</button>}
+                    {idx < (r.replacements || []).length - 1 && <button onClick={() => moveRep(idx, idx + 1)} style={{ color: '#888', background: 'none', border: '1px solid #2D2D2D', borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▼</button>}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '0.65rem', color: '#888', whiteSpace: 'nowrap' }}>
+                      <input type="checkbox" checked={rep.caseInsensitive ?? false}
+                        onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], caseInsensitive: e.target.checked }; updateRule({ replacements: reps }) }}
+                        style={{ accentColor: '#FF8C00', width: '11px', height: '11px' }} />대소문자무시
+                    </label>
+                    <button onClick={() => updateRule({ replacements: (r.replacements || []).filter((_: unknown, i: number) => i !== idx) })}
+                      style={{ color: '#FF6B6B', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}>×</button>
+                  </div>
+                ))}
+              </div>
+
+              {/* ── 옵션명 치환 ── */}
+              <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#51CF66' }}>옵션명 치환</span>
+                  <span style={{ fontSize: '0.72rem', color: '#666' }}>옵션명 텍스트를 치환합니다</span>
+                  <button onClick={() => updateRule({ option_rules: [...(r.option_rules || []), { from: '', to: '' }] })}
+                    style={{ fontSize: '0.68rem', color: '#4C9AFF', background: 'transparent', border: '1px dashed #4C9AFF', borderRadius: '4px', padding: '1px 8px', cursor: 'pointer' }}>+ 추가</button>
+                </div>
+                {(r.option_rules || []).map((opt: {from: string; to: string}, idx: number) => (
+                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.25rem' }}>
+                    <input value={opt.from} placeholder="변경전"
+                      onChange={(e) => { const opts = [...(r.option_rules || [])]; opts[idx] = { ...opts[idx], from: e.target.value }; updateRule({ option_rules: opts }) }}
+                      style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} />
+                    <span style={{ color: '#555', fontSize: '0.75rem' }}>→</span>
+                    <input value={opt.to} placeholder="변경후"
+                      onChange={(e) => { const opts = [...(r.option_rules || [])]; opts[idx] = { ...opts[idx], to: e.target.value }; updateRule({ option_rules: opts }) }}
+                      style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} />
+                    <button onClick={() => updateRule({ option_rules: (r.option_rules || []).filter((_: unknown, i: number) => i !== idx) })}
+                      style={{ color: '#FF6B6B', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}>×</button>
+                  </div>
+                ))}
+              </div>
+
+              {/* ── 상품명 조합 정책 ── */}
+              <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#4C9AFF' }}>상품명 조합</span>
+                  <span style={{ fontSize: '0.72rem', color: '#666' }}>마켓에 전송될 상품명을 조합합니다</span>
+                </div>
+                {/* 태그 버튼 */}
+                <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                  {COMP_TAGS.map(tag => (
+                    <button key={tag} onClick={() => updateRule({ name_composition: [...(r.name_composition || []), tag] })}
+                      style={{ fontSize: '0.72rem', padding: '3px 10px', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '4px', color: '#4C9AFF', cursor: 'pointer' }}>{tag}</button>
+                  ))}
+                </div>
+                {/* 조합 미리보기 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', marginBottom: '0.375rem' }}>
+                  <span style={{ color: '#888', fontSize: '0.78rem' }}>조합결과</span>
+                  <div style={{ flex: 1, padding: '0.375rem 0.5rem', background: 'rgba(0,0,0,0.3)', border: '1px solid #2D2D2D', borderRadius: '4px', fontSize: '0.78rem', color: '#C5C5C5', minHeight: '28px' }}>
+                    {(r.name_composition || []).length > 0 ? (r.name_composition || []).map((t: string, i: number) => (
+                      <span key={i} style={{ color: COMP_TAGS.includes(t) ? '#4C9AFF' : '#E5E5E5' }}>{t} </span>
+                    )) : <span style={{ color: '#555' }}>태그를 클릭하여 조합하세요 (미설정 시 원본 상품명 사용)</span>}
+                  </div>
+                  {(r.name_composition || []).length > 0 && (
+                    <button onClick={() => updateRule({ name_composition: [] })}
+                      style={{ fontSize: '0.68rem', color: '#FF6B6B', background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer' }}>초기화</button>
+                  )}
+                </div>
+              </div>
+
+              {/* ── 중복단어 필터링 ── */}
+              <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#CC5DE8' }}>중복단어 필터링</span>
+                  <span style={{ fontSize: '0.72rem', color: '#666' }}>상품명에서 중복 단어를 제거합니다</span>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={r.dedup_enabled ?? false}
+                    onChange={(e) => updateRule({ dedup_enabled: e.target.checked })}
+                    style={{ accentColor: '#CC5DE8', width: '14px', height: '14px' }} />
+                  <span style={{ fontSize: '0.8rem', color: '#C5C5C5' }}>중복단어를 필터링합니다</span>
+                </label>
+                <div style={{ marginTop: '0.375rem', fontSize: '0.68rem', color: '#555' }}>
+                  * 띄어쓰기 기준 중복 단어 1개만 유지 / 치환 완료 후 적용 / 대소문자 구분
+                </div>
+              </div>
+            </div>
+          )
+        })()}
+
+        {!selectedNameRuleId && (
+          <p style={{ textAlign: 'center', color: '#555', padding: '2rem 0', fontSize: '0.875rem' }}>규칙을 선택하거나 신규생성하세요</p>
+        )}
+      </div>
+
+      </div>{/* 2컬럼 grid 닫기 */}
+
+      {/* 금지어 · 삭제어 설정 */}
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+          <span style={{ fontSize: '1rem', fontWeight: 700, color: '#FF6B6B' }}>금지어 · 삭제어 설정</span>
+          <span style={{ fontSize: '0.75rem', color: '#666' }}>수집 시 금지어 포함 상품 자동 제외, 삭제어는 상품명에서 자동 제거 (단어는 ;로 구분)</span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+          {/* 금지어 */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FF6B6B' }}>금지어 템플릿 관리</span>
+              <select style={{ ...inputStyle, flex: 1 }}
+                value={activeTemplateId.forbidden || ''}
+                onChange={(e) => {
+                  const tpl = forbiddenTemplates.find(t => t.id === e.target.value)
+                  if (tpl) loadTemplate(tpl)
+                }}>
+                <option value="">그룹 선택</option>
+                {forbiddenTemplates.filter(t => t.type === 'forbidden').map(tpl => (
+                  <option key={tpl.id} value={tpl.id}>{tpl.name} ({tpl.words.length})</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ border: '1px solid #2D2D2D', borderRadius: '8px', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '6px 12px', background: '#0D1117', borderBottom: '1px solid #2D2D2D' }}>
+                <input value={newTemplateName.forbidden} onChange={(e) => setNewTemplateName(prev => ({ ...prev, forbidden: e.target.value }))} placeholder="그룹 이름 입력" style={{ flex: 1, padding: '0.25rem 0.5rem', fontSize: '0.8rem', background: 'transparent', border: 'none', color: '#C5C5C5', outline: 'none' }} />
+                <button onClick={() => saveTemplate('forbidden')} style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>그룹저장</button>
+                <button onClick={() => { if (activeTemplateId.forbidden) deleteTemplate(activeTemplateId.forbidden) }} style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer' }}>그룹삭제</button>
+              </div>
+              <textarea value={forbiddenText} onChange={(e) => setForbiddenText(e.target.value)} placeholder={'단어를 ;로 구분해서 입력\n예) 나이키;아디다스;퓨마;리복;'} style={{ width: '100%', height: '160px', padding: '10px 12px', fontSize: '0.8125rem', background: '#080A10', border: 'none', color: '#D8DEE9', resize: 'vertical', outline: 'none', fontFamily: 'monospace', lineHeight: 1.6, boxSizing: 'border-box' }} />
+              <div style={{ background: '#0D1117', padding: '6px 12px', borderTop: '1px solid #2D2D2D' }}>
+                <span style={{ fontSize: '0.75rem', color: '#666' }}>( 금지어 {forbiddenText.split(';').filter(w => w.trim()).length}개 )</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 삭제어 */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FFB84D' }}>삭제어 템플릿 관리</span>
+              <select style={{ ...inputStyle, flex: 1 }}
+                value={activeTemplateId.deletion || ''}
+                onChange={(e) => {
+                  const tpl = forbiddenTemplates.find(t => t.id === e.target.value)
+                  if (tpl) loadTemplate(tpl)
+                }}>
+                <option value="">그룹 선택</option>
+                {forbiddenTemplates.filter(t => t.type === 'deletion').map(tpl => (
+                  <option key={tpl.id} value={tpl.id}>{tpl.name} ({tpl.words.length})</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ border: '1px solid #2D2D2D', borderRadius: '8px', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '6px 12px', background: '#0D1117', borderBottom: '1px solid #2D2D2D' }}>
+                <input value={newTemplateName.deletion} onChange={(e) => setNewTemplateName(prev => ({ ...prev, deletion: e.target.value }))} placeholder="그룹 이름 입력" style={{ flex: 1, padding: '0.25rem 0.5rem', fontSize: '0.8rem', background: 'transparent', border: 'none', color: '#C5C5C5', outline: 'none' }} />
+                <button onClick={() => saveTemplate('deletion')} style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>그룹저장</button>
+                <button onClick={() => { if (activeTemplateId.deletion) deleteTemplate(activeTemplateId.deletion) }} style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', background: 'rgba(255,184,77,0.1)', border: '1px solid rgba(255,184,77,0.3)', borderRadius: '4px', color: '#FFB84D', cursor: 'pointer' }}>그룹삭제</button>
+              </div>
+              <textarea value={deletionText} onChange={(e) => setDeletionText(e.target.value)} placeholder={'단어를 ;로 구분해서 입력\n예) [해외직구];정품보장;무료배송;'} style={{ width: '100%', height: '160px', padding: '10px 12px', fontSize: '0.8125rem', background: '#080A10', border: 'none', color: '#D8DEE9', resize: 'vertical', outline: 'none', fontFamily: 'monospace', lineHeight: 1.6, boxSizing: 'border-box' }} />
+              <div style={{ background: '#0D1117', padding: '6px 12px', borderTop: '1px solid #2D2D2D' }}>
+                <span style={{ fontSize: '0.75rem', color: '#666' }}>( 삭제어 {deletionText.split(';').filter(w => w.trim()).length}개 )</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 설정 저장/삭제 버튼 */}
+      {showForm && (
+        <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1.5rem' }}>
+          <button onClick={handleSubmit} style={{ padding: '0.625rem 2rem', background: 'linear-gradient(135deg, #FF8C00, #FFB84D)', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>정책 저장</button>
+          <button onClick={() => { if (editingId) { handleDelete(editingId); setEditingId(null); setName("새 정책"); setSiteName(""); setPricing({ ...defaultPricing }) } }} style={{ padding: '0.625rem 2rem', background: 'rgba(60,60,60,0.8)', border: '1px solid #3D3D3D', borderRadius: '8px', color: '#C5C5C5', fontSize: '0.875rem', cursor: 'pointer' }}>정책 삭제</button>
         </div>
       )}
     </div>
-  );
-}
-
-function FormInput({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (v: string) => void; type?: string }) {
-  return (
-    <div>
-      <label className="text-xs text-[#666] mb-1 block">{label}</label>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)}
-        className="w-full px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5] focus:outline-none focus:border-[#FF8C00]" />
-    </div>
-  );
+  )
 }

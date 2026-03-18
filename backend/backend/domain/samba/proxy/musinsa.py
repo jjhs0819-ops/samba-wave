@@ -16,6 +16,58 @@ import httpx
 from backend.utils.logger import logger
 
 
+class RateLimitError(Exception):
+    """소싱처 차단 감지 (429/403)."""
+    def __init__(self, status: int, retry_after: int = 0):
+        self.status = status
+        self.retry_after = retry_after
+        super().__init__(f"HTTP {status} (retry_after={retry_after})")
+
+
+# 무신사 API 필드 매핑 — 구조 변경 시 여기만 수정
+MUSINSA_FIELDS = {
+    "normal_price": ["goodsPrice.normalPrice"],
+    "sale_price": ["goodsPrice.immediateDiscountedPrice", "goodsPrice.salePrice"],
+    "member_discount_rate": [
+        "goodsPrice.memberDiscountRate",
+        "goodsPrice.gradeDiscountRate",
+        "goodsPrice.memberGradeDiscountRate",
+        "goodsPrice.gradeRate",
+    ],
+    "coupon_price": ["goodsPrice.couponPrice"],
+    "max_benefit_price": [
+        "goodsPrice.maxBenefitPrice",
+        "goodsPrice.benefitSalePrice",
+        "goodsPrice.bestBenefitPrice",
+    ],
+    "is_sold_out": ["isSoldOut", "goodsPrice.isSoldOut", "isOutOfStock"],
+    "product_name": ["goodsNm"],
+    "product_name_en": ["goodsNmEng"],
+    "brand_name": ["brandInfo.brandName", "brand"],
+    "thumbnail": ["thumbnailImageUrl"],
+    "discount_rate": ["goodsPrice.discountRate"],
+    "is_sale": ["goodsPrice.isSale"],
+    "grade_discount_rate": ["goodsPrice.memberDiscountRate"],
+    "sale_reserve_ymdt": ["goodsPrice.saleReserveYmdt", "saleReserveYmdt"],
+}
+
+
+def _resolve_field(data: dict, paths: list[str], default=None):
+    """경로 목록에서 첫 번째 존재하는 값 반환 (fallback 체인)."""
+    for path in paths:
+        value = data
+        for key in path.split("."):
+            if not isinstance(value, dict):
+                value = None
+                break
+            value = value.get(key)
+            if value is None:
+                break
+        if value is not None:
+            return value
+    return default
+
+
 class MusinsaClient:
     """무신사 API 클라이언트 (상품 상세, 검색, 로그인 상태 확인)."""
 
@@ -77,6 +129,10 @@ class MusinsaClient:
                 f"{self.BASE_DETAIL}/{goods_no}",
                 headers=self._headers(),
             )
+            # 429/403 차단 감지
+            if detail_resp.status_code in (429, 403):
+                retry_after = int(detail_resp.headers.get("Retry-After", "30"))
+                raise RateLimitError(detail_resp.status_code, retry_after)
             detail_resp.raise_for_status()
             detail_json = detail_resp.json()
             meta = detail_json.get("meta", {})
@@ -84,8 +140,8 @@ class MusinsaClient:
                 raise ValueError("상품 데이터 없음")
 
             d = detail_json["data"]
-            gp = d.get("goodsPrice", {})
-            cat = d.get("category", {})
+            gp = d.get("goodsPrice") or {}
+            cat = d.get("category") or {}  # None 방지
 
             # 2) 옵션 API + 재고 API
             options, option_value_no_map = await self._fetch_options(
@@ -152,66 +208,72 @@ class MusinsaClient:
                 or 0
             )
 
-            # API가 직접 제공하는 최대혜택가
+            # 최대혜택가 = 할인가 - 쿠폰 - 등급 - 적립금 - 선할인
+            # 1단계: 쿠폰 할인
+            coupon_price_raw = gp.get("couponPrice", 0) or 0
             api_best_benefit = (
                 gp.get("maxBenefitPrice")
                 or gp.get("benefitSalePrice")
                 or gp.get("bestBenefitPrice")
                 or 0
             )
-            coupon_price_raw = gp.get("couponPrice", 0) or 0
-            best_coupon_discount = (
-                (s_price - coupon_price_raw)
-                if (0 < coupon_price_raw < s_price)
-                else 0
-            )
+            best_coupon_discount = 0
+            if 0 < coupon_price_raw < s_price:
+                best_coupon_discount = s_price - coupon_price_raw
             if api_best_benefit and 0 < api_best_benefit < s_price:
                 api_discount = s_price - api_best_benefit
                 if api_discount > best_coupon_discount:
                     best_coupon_discount = api_discount
-
-            # 5) 쿠폰 API
             best_coupon_discount = await self._fetch_coupons(
                 client, goods_no, d, s_price, best_coupon_discount
             )
+            coupon_applied_price = s_price - best_coupon_discount if best_coupon_discount > 0 else s_price
 
-            # 5-2) benefit API (로그인 시)
-            direct_benefit_price = 0
-            if self.cookie:
-                direct_benefit_price, best_coupon_discount = await self._fetch_benefit(
-                    client, goods_no, s_price, best_coupon_discount
-                )
-
-            # 최대혜택가 계산
-            coupon_applied_price = (
-                coupon_price_raw if (0 < coupon_price_raw < s_price) else s_price
-            )
+            # 2단계: 등급할인 (쿠폰적용가 기준, 10원 절사)
             grade_discount_rate = gp.get("memberDiscountRate", 0) or 0
-            grade_discount = (
-                int(coupon_applied_price * grade_discount_rate / 100 / 10) * 10
-            )
-            price_after_grade = coupon_applied_price - grade_discount
+            grade_discount = int(coupon_applied_price * grade_discount_rate / 100 / 10) * 10
 
-            # 적립금 사용
-            min_point_balance = 5000
-            point_usage = 0
+            # 3단계: 적립금 사용 (쿠폰적용가 - 등급할인 기준, 10원 절사)
             is_point_restricted = d.get("isRestictedUsePoint") is True
-            max_use_point_rate = d.get("maxUsePointRate", 0) or 0
-            member_point = (d.get("point") or {}).get("memberPoint", 0) or 0
-            if (
-                not is_point_restricted
-                and max_use_point_rate > 0
-                and member_point >= min_point_balance
-            ):
-                max_usable = int(price_after_grade * max_use_point_rate / 10) * 10
-                point_usage = min(max_usable, member_point)
+            raw_point_rate = d.get("maxUsePointRate", 0) or 0
+            point_rate_pct = raw_point_rate * 100 if 0 < raw_point_rate < 1 else raw_point_rate
+            point_base = coupon_applied_price - grade_discount
+            point_usage = 0
+            if not is_point_restricted and point_rate_pct > 0:
+                point_usage = int(point_base * point_rate_pct / 100 / 10) * 10  # 10원 절사
 
-            if direct_benefit_price > 0:
-                best_benefit_price = direct_benefit_price
-            else:
-                best_benefit_price = price_after_grade - point_usage
+            # 4단계: 적립 선할인 (isPrePoint=True만, 잔액 기준 × 등급율, 10원 절사)
+            is_pre_point = d.get("isPrePoint") is True
+            remaining = s_price - best_coupon_discount - grade_discount - point_usage
+            pre_discount = int(remaining * grade_discount_rate / 100 / 10) * 10 if is_pre_point else 0
+
+            best_benefit_price = remaining - pre_discount
+
+            logger.info(
+                f"[무신사 혜택가] {goods_no}: "
+                f"할인가={s_price}, 쿠폰=-{best_coupon_discount}({coupon_applied_price}), "
+                f"등급({grade_discount_rate}%)=-{grade_discount}, "
+                f"적립금({point_rate_pct}%)=-{point_usage}(base={point_base}), "
+                f"선할인({grade_discount_rate}%,base={remaining + pre_discount})=-{pre_discount}, "
+                f"혜택가={best_benefit_price}"
+            )
 
             now_iso = datetime.now(tz=timezone.utc).isoformat()
+
+            # 판매 상태 관련 필드 디버그 로그
+            logger.info(
+                f"[무신사 상태 디버그] {goods_no}: "
+                f"isSale={gp.get('isSale')!r}, "
+                f"isSoldOut_gp={gp.get('isSoldOut')!r}, "
+                f"isSoldOut_d={d.get('isSoldOut')!r}, "
+                f"isOutOfStock={d.get('isOutOfStock')!r}, "
+                f"canBuy={d.get('canBuy')!r}, "
+                f"goodsTypeCode={d.get('goodsTypeCode')!r}, "
+                f"saleState={gp.get('saleState') or d.get('saleState')!r}, "
+                f"timeSale={d.get('timeSale')!r}, "
+                f"isTimeSale={d.get('isTimeSale')!r}, "
+                f"saleReserveYmdt={gp.get('saleReserveYmdt') or d.get('saleReserveYmdt')!r}"
+            )
 
             brand_info = d.get("brandInfo") or {}
             return {
@@ -271,15 +333,50 @@ class MusinsaClient:
                 "sex": d.get("sex", []),
                 "storeCodes": d.get("storeCodes", []),
                 "isOutlet": d.get("isOutlet", False),
+                # 부티끄 판별: goodsTypeCode 또는 saleType
+                "isBoutique": (
+                    str(d.get("goodsTypeCode", "")).upper() == "BOUTIQUE"
+                    or "부티크" in str(d.get("goodsTypeName", ""))
+                    or "부티끄" in str(d.get("goodsTypeName", ""))
+                    or any(
+                        str(sc).upper() in ("BOUTIQUE", "BTQSHOP")
+                        for sc in (d.get("storeCodes") or [])
+                    )
+                ),
                 # 품절 판단: isSale=False(판매안함/판매예정) + soldOut + 모든옵션품절
                 "isOutOfStock": bool(
-                    gp.get("isSale") is False  # 판매중 아님 (판매예정, 판매종료 등)
-                    or d.get("isSoldOut")
+                    d.get("isSoldOut")
                     or (d.get("goodsPrice") or {}).get("isSoldOut")
                     or d.get("isOutOfStock", False)
                     or (bool(options) and all(opt.get("isSoldOut", False) for opt in options))
                 ),
                 "isSale": gp.get("isSale", False),
+                # 판매 상태: sold_out(품절) → preorder(판매예정) → in_stock 순서로 판단
+                # sold_out을 먼저 체크해야 preorder 상태였다가 품절된 경우를 올바르게 처리
+                "saleStatus": (
+                    "sold_out"
+                    if bool(
+                        d.get("isSoldOut")
+                        or (d.get("goodsPrice") or {}).get("isSoldOut")
+                        or d.get("isOutOfStock", False)
+                        or (bool(options) and all(opt.get("isSoldOut", False) for opt in options))
+                    )
+                    else "preorder"
+                    if (
+                        # 판매 예약 날짜가 설정된 경우 (판매예정)
+                        bool(gp.get("saleReserveYmdt") or d.get("saleReserveYmdt"))
+                        # 예약/사전주문 배송 타입 옵션이 있는 경우
+                        or bool(
+                            options and any(
+                                str(opt.get("deliveryType", "")).upper()
+                                in ("RESERVATION", "PREORDER", "RESERVE", "SCHEDULED")
+                                for opt in options
+                            )
+                        )
+                        # isSale=False 조건 제거 — 무배당발 상품도 isSale=False일 수 있음
+                    )
+                    else "in_stock"
+                ),
                 "collectedAt": now_iso,
                 "updatedAt": now_iso,
             }
@@ -699,8 +796,12 @@ class MusinsaClient:
                         f"[재고] {goods_no} 재고 API 실패 (무시): {inv_err}"
                     )
 
-            # 옵션 정리
-            base_price = gp.get("immediateDiscountedPrice") or gp.get("salePrice", 0)
+            # 옵션 정리 — preorder 등 salePrice=0인 경우 normalPrice 폴백
+            base_price = (
+                gp.get("immediateDiscountedPrice")
+                or gp.get("salePrice")
+                or gp.get("normalPrice", 0)
+            )
             for item in items:
                 if not item.get("activated") or item.get("isDeleted"):
                     continue
@@ -827,73 +928,25 @@ class MusinsaClient:
                     for c in coupons:
                         actual_discount = 0
                         c_sale_price = c.get("salePrice", 0) or 0
+                        # salePrice 우선 처리
                         if 0 < c_sale_price < s_price:
                             if c_sale_price < s_price * 0.5:
-                                actual_discount = c_sale_price
+                                actual_discount = c_sale_price  # 작은 값 = 할인금액
                             else:
-                                actual_discount = s_price - c_sale_price
-                        elif c.get("discountPrice", 0) > 0:
-                            actual_discount = c["discountPrice"]
+                                actual_discount = s_price - c_sale_price  # 큰 값 = 적용가
+                        elif c.get("discountPrice", 0) and c["discountPrice"] > 0:
+                            dp = c["discountPrice"]
+                            # discountPrice도 적용가일 수 있으므로 가드 추가
+                            if dp < s_price * 0.5:
+                                actual_discount = dp  # 작은 값 = 할인금액
+                            elif dp < s_price:
+                                actual_discount = s_price - dp  # 큰 값 = 적용가
                         if actual_discount > best_coupon_discount:
                             best_coupon_discount = actual_discount
         except Exception as exc:
             logger.warning(f"[쿠폰] {goods_no} API 호출 실패: {exc}")
 
         return best_coupon_discount
-
-    async def _fetch_benefit(
-        self,
-        client: httpx.AsyncClient,
-        goods_no: str,
-        s_price: int,
-        best_coupon_discount: int,
-    ) -> tuple[int, int]:
-        """benefit API (로그인 시) 호출."""
-        direct_benefit_price = 0
-        try:
-            resp = await client.get(
-                f"{self.BASE_DETAIL}/{goods_no}/benefit",
-                headers=self._headers(),
-            )
-            if resp.status_code == 200:
-                b_json = resp.json()
-                bd = b_json.get("data") or {}
-
-                half = s_price * 0.5
-                # "가격" 필드들
-                candidates = [
-                    v
-                    for v in [
-                        bd.get("benefitSalePrice"),
-                        bd.get("maxBenefitSalePrice"),
-                    ]
-                    if v and v > half and v < s_price
-                ]
-                # "할인금액" 필드들
-                discount_fields = [
-                    v
-                    for v in [
-                        bd.get("maxBenefitPrice"),
-                        bd.get("totalBenefitPrice"),
-                    ]
-                    if v and v > 0 and v < half
-                ]
-
-                if candidates:
-                    direct_benefit_price = min(candidates)
-                    b_discount = s_price - direct_benefit_price
-                    if b_discount > best_coupon_discount:
-                        best_coupon_discount = b_discount
-                elif discount_fields:
-                    max_discount = max(discount_fields)
-                    direct_benefit_price = s_price - max_discount
-                    if max_discount > best_coupon_discount:
-                        best_coupon_discount = max_discount
-
-        except Exception as exc:
-            logger.warning(f"[benefit] {goods_no} benefit API 실패 (무시): {exc}")
-
-        return direct_benefit_price, best_coupon_discount
 
     @staticmethod
     def _extract_detail_images(desc_html: str) -> list[str]:

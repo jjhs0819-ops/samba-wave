@@ -1,139 +1,285 @@
-"use client";
+'use client'
 
-import { useEffect, useState, useCallback } from "react";
-import { categoryApi } from "@/lib/samba/api";
+import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+import { collectorApi, type SambaCollectedProduct } from '@/lib/samba/api'
+import { showAlert } from '@/components/samba/Modal'
 
-interface Mapping {
-  id: string;
-  source_site: string;
-  source_category: string;
-  target_mappings?: Record<string, string>;
-  created_at: string;
+const card = {
+  background: 'rgba(30,30,30,0.5)',
+  backdropFilter: 'blur(20px)',
+  border: '1px solid #2D2D2D',
+  borderRadius: '12px',
+}
+
+// 카테고리 계층 구조 타입
+interface CatLevel {
+  name: string
+  children: Record<string, CatLevel>
+  products: SambaCollectedProduct[]
 }
 
 export default function CategoriesPage() {
-  const [mappings, setMappings] = useState<Mapping[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ source_site: "", source_category: "" });
+  const router = useRouter()
+  const [products, setProducts] = useState<SambaCollectedProduct[]>([])
+  const [loading, setLoading] = useState(true)
 
-  // Suggest
-  const [suggestQuery, setSuggestQuery] = useState("");
-  const [suggestMarket, setSuggestMarket] = useState("smartstore");
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  // 사이트 목록
+  const [sites, setSites] = useState<string[]>([])
+  // 카테고리 트리 (사이트별)
+  const [catTree, setCatTree] = useState<Record<string, CatLevel>>({})
+
+  // 5단 드릴다운 선택 상태
+  const [selectedSite, setSelectedSite] = useState<string | null>(null)
+  const [selectedCat1, setSelectedCat1] = useState<string | null>(null)
+  const [selectedCat2, setSelectedCat2] = useState<string | null>(null)
+  const [selectedCat3, setSelectedCat3] = useState<string | null>(null)
+  const [selectedCat4, setSelectedCat4] = useState<string | null>(null)
+
+  // 선택된 카테고리의 상품들
+  const [selectedProducts, setSelectedProducts] = useState<SambaCollectedProduct[]>([])
+  const [selectedPath, setSelectedPath] = useState('')
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setMappings((await categoryApi.listMappings().catch(() => [])) as Mapping[]);
-    setLoading(false);
-  }, []);
+    setLoading(true)
+    try {
+      const all = await collectorApi.listProducts(0, 9999)
+      console.log('[카테고리] 상품 로드:', all?.length || 0, '건')
+      if (Array.isArray(all) && all.length > 0) {
+        setProducts(all)
+        buildTree(all)
+      } else {
+        console.warn('[카테고리] 상품 데이터 비어있음')
+        setProducts([])
+        setSites([])
+      }
+    } catch (e) {
+      console.error('[카테고리] 상품 로드 실패:', e)
+    }
+    setLoading(false)
+  }, [])
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load() }, [load])
 
-  const handleCreate = async () => {
-    await categoryApi.createMapping(form);
-    setShowForm(false);
-    setForm({ source_site: "", source_category: "" });
-    load();
-  };
+  const buildTree = (prods: SambaCollectedProduct[]) => {
+    const tree: Record<string, CatLevel> = {}
+    const siteSet = new Set<string>()
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("삭제?")) return;
-    await categoryApi.deleteMapping(id);
-    load();
-  };
+    prods.forEach(p => {
+      const site = p.source_site || '기타'
+      siteSet.add(site)
 
-  const handleSuggest = async () => {
-    if (!suggestQuery) return;
-    const result = await categoryApi.suggest(suggestQuery, suggestMarket).catch(() => []);
-    setSuggestions(result);
-  };
+      if (!tree[site]) tree[site] = { name: site, children: {}, products: [] }
+
+      const cats = [p.category1, p.category2, p.category3, p.category4].filter(Boolean) as string[]
+      if (cats.length === 0 && p.category) {
+        cats.push(...p.category.split('>').map(c => c.trim()).filter(Boolean))
+      }
+
+      let current = tree[site]
+      cats.forEach((cat, idx) => {
+        if (!current.children[cat]) {
+          current.children[cat] = { name: cat, children: {}, products: [] }
+        }
+        if (idx === cats.length - 1) {
+          current.children[cat].products.push(p)
+        }
+        current = current.children[cat]
+      })
+
+      // 카테고리 없는 상품은 사이트 루트에
+      if (cats.length === 0) {
+        tree[site].products.push(p)
+      }
+    })
+
+    setCatTree(tree)
+    setSites(Array.from(siteSet).sort())
+  }
+
+  const handleSiteClick = (site: string) => {
+    setSelectedSite(site)
+    setSelectedCat1(null); setSelectedCat2(null); setSelectedCat3(null); setSelectedCat4(null)
+    setSelectedProducts([]); setSelectedPath('')
+  }
+
+  const handleCat1Click = (cat: string) => {
+    setSelectedCat1(cat); setSelectedCat2(null); setSelectedCat3(null); setSelectedCat4(null)
+    updateSelectedProducts(cat, null, null, null)
+  }
+
+  const handleCat2Click = (cat: string) => {
+    setSelectedCat2(cat); setSelectedCat3(null); setSelectedCat4(null)
+    updateSelectedProducts(selectedCat1!, cat, null, null)
+  }
+
+  const handleCat3Click = (cat: string) => {
+    setSelectedCat3(cat); setSelectedCat4(null)
+    updateSelectedProducts(selectedCat1!, selectedCat2!, cat, null)
+  }
+
+  const handleCat4Click = (cat: string) => {
+    setSelectedCat4(cat)
+    updateSelectedProducts(selectedCat1!, selectedCat2!, selectedCat3!, cat)
+  }
+
+  const updateSelectedProducts = (c1: string, c2: string | null, c3: string | null, c4: string | null) => {
+    if (!selectedSite) return
+    let node = catTree[selectedSite]
+    const path = [selectedSite]
+
+    if (c1 && node.children[c1]) { node = node.children[c1]; path.push(c1) }
+    if (c2 && node.children[c2]) { node = node.children[c2]; path.push(c2) }
+    if (c3 && node.children[c3]) { node = node.children[c3]; path.push(c3) }
+    if (c4 && node.children[c4]) { node = node.children[c4]; path.push(c4) }
+
+    // 해당 노드 + 하위의 모든 상품 수집
+    const collectProducts = (n: CatLevel): SambaCollectedProduct[] => {
+      let result = [...n.products]
+      Object.values(n.children).forEach(child => { result = result.concat(collectProducts(child)) })
+      return result
+    }
+
+    const prods = collectProducts(node)
+    setSelectedProducts(prods)
+    setSelectedPath(path.join(' > '))
+  }
+
+  // 5단 드릴다운 데이터
+  const getCat1List = () => selectedSite && catTree[selectedSite] ? Object.keys(catTree[selectedSite].children) : []
+  const getCat2List = () => selectedSite && selectedCat1 && catTree[selectedSite]?.children[selectedCat1] ? Object.keys(catTree[selectedSite].children[selectedCat1].children) : []
+  const getCat3List = () => selectedSite && selectedCat1 && selectedCat2 && catTree[selectedSite]?.children[selectedCat1]?.children[selectedCat2] ? Object.keys(catTree[selectedSite].children[selectedCat1].children[selectedCat2].children) : []
+  const getCat4List = () => selectedSite && selectedCat1 && selectedCat2 && selectedCat3 && catTree[selectedSite]?.children[selectedCat1]?.children[selectedCat2]?.children[selectedCat3] ? Object.keys(catTree[selectedSite].children[selectedCat1].children[selectedCat2].children[selectedCat3].children) : []
+
+  const colStyle = {
+    flex: 1,
+    minWidth: '140px',
+    borderRight: '1px solid #2D2D2D',
+    maxHeight: '280px',
+    overflowY: 'auto' as const,
+  }
+
+  const itemStyle = (isSelected: boolean) => ({
+    padding: '0.5rem 0.75rem',
+    fontSize: '0.8125rem',
+    color: isSelected ? '#FF8C00' : '#C5C5C5',
+    cursor: 'pointer',
+    background: isSelected ? 'rgba(255,140,0,0.08)' : 'transparent',
+    transition: 'background 0.15s',
+  })
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold">카테고리 매핑</h2>
-        <button onClick={() => setShowForm(true)} className="px-4 py-2 bg-[#FF8C00] text-white text-sm rounded-lg font-medium hover:bg-[#E07B00]">+ 매핑 추가</button>
+    <div style={{ color: '#E5E5E5' }}>
+      {/* 헤더 */}
+      <div style={{ marginBottom: '1.25rem' }}>
+        <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>카테고리 매핑</h2>
       </div>
 
-      {showForm && (
-        <div className="bg-[#111] border border-[#1A1A1A] rounded-lg p-4 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <FI label="소싱사이트" value={form.source_site} onChange={(v) => setForm({ ...form, source_site: v })} />
-            <FI label="소싱 카테고리" value={form.source_category} onChange={(v) => setForm({ ...form, source_category: v })} />
-          </div>
-          <div className="flex gap-2 justify-end">
-            <button onClick={() => setShowForm(false)} className="px-3 py-1.5 text-sm text-[#999]">취소</button>
-            <button onClick={handleCreate} className="px-4 py-1.5 bg-[#FF8C00] text-white text-sm rounded-lg font-medium">저장</button>
-          </div>
-        </div>
-      )}
+      {/* AI 안내 */}
+      <div style={{ background: 'rgba(255,140,0,0.05)', border: '1px solid rgba(255,140,0,0.25)', borderRadius: '8px', padding: '0.875rem 1.25rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: '0.8125rem', color: '#888' }}>AI가 최하단 카테고리 기준으로 등록 마켓 카테고리를 선택합니다.</span>
+        <button onClick={() => showAlert('AI 카테고리 매핑은 Claude API 연동 후 사용 가능합니다', 'info')}
+          style={{ padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.12)', border: '1px solid rgba(255,140,0,0.35)', borderRadius: '8px', color: '#FF8C00', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+        >AI 카테고리 매핑</button>
+      </div>
 
-      {/* Category Suggestion */}
-      <div className="bg-[#111] border border-[#1A1A1A] rounded-lg p-4">
-        <h3 className="text-sm font-semibold mb-3 text-[#999]">카테고리 추천</h3>
-        <div className="flex items-end gap-3">
-          <FI label="소싱 카테고리" value={suggestQuery} onChange={setSuggestQuery} />
-          <div>
-            <label className="text-xs text-[#666] mb-1 block">마켓</label>
-            <select value={suggestMarket} onChange={(e) => setSuggestMarket(e.target.value)}
-              className="px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5]">
-              {["smartstore","gmarket","coupang","ssg","kream"].map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
-          <button onClick={handleSuggest} className="px-4 py-1.5 bg-[#4C9AFF] text-white text-sm rounded-lg font-medium mb-0.5">추천</button>
+      {/* 5단 드릴다운 테이블 (사이트 포함) */}
+      <div style={{ ...card, overflow: 'hidden', marginBottom: '1.25rem' }}>
+        {/* 헤더 */}
+        <div style={{ display: 'flex', borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
+          {['사이트', '대분류', '중분류', '소분류', '세분류'].map((h, i) => (
+            <div key={h} style={{ flex: 1, minWidth: '140px', padding: '0.625rem 0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#888', borderRight: i < 4 ? '1px solid #2D2D2D' : 'none' }}>{h}</div>
+          ))}
         </div>
-        {suggestions.length > 0 && (
-          <div className="mt-3 space-y-1">
-            {suggestions.map((s, i) => (
-              <div key={i} className="text-sm text-[#CCC] px-2 py-1 bg-[#0A0A0A] rounded">{s}</div>
-            ))}
+
+        {loading ? (
+          <div style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>카테고리 트리를 로딩 중...</div>
+        ) : (
+          <div style={{ display: 'flex' }}>
+            {/* 사이트 */}
+            <div style={colStyle}>
+              {sites.length === 0 ? (
+                <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>수집 상품이 없습니다</div>
+              ) : sites.map(site => (
+                <div key={site} style={itemStyle(selectedSite === site)} onClick={() => handleSiteClick(site)}
+                  onMouseEnter={e => { if (selectedSite !== site) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                  onMouseLeave={e => { if (selectedSite !== site) e.currentTarget.style.background = 'transparent' }}
+                >{site}</div>
+              ))}
+            </div>
+            {/* 대분류 */}
+            <div style={colStyle}>
+              {getCat1List().map(cat => (
+                <div key={cat} style={itemStyle(selectedCat1 === cat)} onClick={() => handleCat1Click(cat)}
+                  onMouseEnter={e => { if (selectedCat1 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                  onMouseLeave={e => { if (selectedCat1 !== cat) e.currentTarget.style.background = 'transparent' }}
+                >{cat}</div>
+              ))}
+            </div>
+            {/* 중분류 */}
+            <div style={colStyle}>
+              {getCat2List().map(cat => (
+                <div key={cat} style={itemStyle(selectedCat2 === cat)} onClick={() => handleCat2Click(cat)}
+                  onMouseEnter={e => { if (selectedCat2 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                  onMouseLeave={e => { if (selectedCat2 !== cat) e.currentTarget.style.background = 'transparent' }}
+                >{cat}</div>
+              ))}
+            </div>
+            {/* 소분류 */}
+            <div style={colStyle}>
+              {getCat3List().length > 0 ? getCat3List().map(cat => (
+                <div key={cat} style={itemStyle(selectedCat3 === cat)} onClick={() => handleCat3Click(cat)}
+                  onMouseEnter={e => { if (selectedCat3 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                  onMouseLeave={e => { if (selectedCat3 !== cat) e.currentTarget.style.background = 'transparent' }}
+                >{cat}</div>
+              )) : selectedCat2 && <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8125rem' }}>항목 없음</div>}
+            </div>
+            {/* 세분류 */}
+            <div style={{ ...colStyle, borderRight: 'none' }}>
+              {getCat4List().length > 0 ? getCat4List().map(cat => (
+                <div key={cat} style={itemStyle(selectedCat4 === cat)} onClick={() => handleCat4Click(cat)}
+                  onMouseEnter={e => { if (selectedCat4 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                  onMouseLeave={e => { if (selectedCat4 !== cat) e.currentTarget.style.background = 'transparent' }}
+                >{cat}</div>
+              )) : selectedCat3 && <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8125rem' }}>소분류 선택</div>}
+            </div>
           </div>
         )}
       </div>
 
-      {/* Mappings Table */}
-      {loading ? <p className="text-sm text-[#666]">로딩 중...</p> : (
-        <div className="bg-[#111] border border-[#1A1A1A] rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-[#666] border-b border-[#1A1A1A] bg-[#0E0E0E]">
-                <th className="text-left px-4 py-2.5">소싱사이트</th>
-                <th className="text-left px-4 py-2.5">소싱 카테고리</th>
-                <th className="text-left px-4 py-2.5">마켓 매핑</th>
-                <th className="text-right px-4 py-2.5">작업</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mappings.map((m) => (
-                <tr key={m.id} className="border-b border-[#1A1A1A]/50 hover:bg-[#141414]">
-                  <td className="px-4 py-2.5 text-[#4C9AFF]">{m.source_site}</td>
-                  <td className="px-4 py-2.5">{m.source_category}</td>
-                  <td className="px-4 py-2.5 text-xs text-[#888]">
-                    {m.target_mappings ? Object.entries(m.target_mappings).map(([k, v]) => `${k}: ${v}`).join(" | ") : "-"}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <button onClick={() => handleDelete(m.id)} className="text-[#FF6B6B] text-xs hover:underline">삭제</button>
-                  </td>
-                </tr>
+      {/* 선택 카테고리 + 상품 썸네일 */}
+      {selectedPath && (
+        <div>
+          <div style={{ marginBottom: '1rem', fontSize: '0.875rem' }}>
+            <span style={{ color: '#888' }}>[선택카테고리]</span>{' '}
+            <span style={{ color: '#FF8C00', fontWeight: 600 }}>{selectedPath}</span>{' '}
+            <span style={{ color: '#888' }}>상품 {selectedProducts.length}개</span>
+          </div>
+
+          {selectedProducts.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
+              {selectedProducts.slice(0, 100).map(p => (
+                <div key={p.id} style={{ ...card, overflow: 'hidden', cursor: 'pointer' }}
+                  onClick={() => router.push(`/samba/products?highlight=${p.id}`)}
+                >
+                  {/* 이미지 */}
+                  <div style={{ width: '100%', aspectRatio: '1', background: '#1A1A1A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                    {p.images && p.images.length > 0 ? (
+                      <img src={p.images[0]} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                    ) : (
+                      <span style={{ color: '#555', fontSize: '2rem' }}>🖼</span>
+                    )}
+                  </div>
+                  <div style={{ padding: '0.75rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.25rem' }}>{p.name}</p>
+                    <p style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FF8C00' }}>₩{(p.sale_price || 0).toLocaleString()}</p>
+                  </div>
+                </div>
               ))}
-              {mappings.length === 0 && (
-                <tr><td colSpan={4} className="px-4 py-8 text-center text-[#555]">카테고리 매핑이 없습니다</td></tr>
-              )}
-            </tbody>
-          </table>
+            </div>
+          )}
         </div>
       )}
     </div>
-  );
-}
-
-function FI({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <div>
-      <label className="text-xs text-[#666] mb-1 block">{label}</label>
-      <input type="text" value={value} onChange={(e) => onChange(e.target.value)}
-        className="w-full px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5] focus:outline-none focus:border-[#FF8C00]" />
-    </div>
-  );
+  )
 }

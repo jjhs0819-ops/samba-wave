@@ -57,8 +57,22 @@ class BackendSettings(BaseSettings):
     """Enable mock authentication for development."""
 
     # ===========================================
+    # S3 Configuration
+    # ===========================================
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = "ap-northeast-2"
+    s3_bucket_name: str = ""
+
+    # ===========================================
     # CORS Configuration
     # ===========================================
+
+    # ===========================================
+    # Scheduler Configuration
+    # ===========================================
+    scheduler_secret: str = ""
+    """스케줄러 tick 엔드포인트 인증 키."""
 
     # 추가 허용 origin (콤마 구분, Railway 환경변수로 주입)
     cors_extra_origins: str = ""
@@ -83,8 +97,8 @@ class BackendSettings(BaseSettings):
     @computed_field
     @property
     def cors_origin_regex(self) -> str | None:
-        """모든 환경에서 localhost + vercel.app 허용."""
-        return r"https?://(localhost(:\d+)?|127\.0\.0\.1(:\d+)?|.*\.vercel\.app)"
+        """모든 환경에서 localhost + 프로젝트 vercel.app 허용."""
+        return r"https?://(localhost(:\d+)?|127\.0\.0\.1(:\d+)?|samba-wave[a-z0-9-]*\.vercel\.app)"
 
     # ===========================================
     # Computed Properties

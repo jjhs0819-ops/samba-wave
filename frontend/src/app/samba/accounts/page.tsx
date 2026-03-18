@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { accountApi, type SambaMarketAccount } from "@/lib/samba/api";
+import { showAlert, showConfirm } from '@/components/samba/Modal'
 
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([]);
@@ -18,16 +19,22 @@ export default function AccountsPage() {
   useEffect(() => { load(); }, [load]);
 
   const handleSubmit = async () => {
-    await accountApi.create(form);
-    setShowForm(false);
-    setForm({ market_type: "coupang", seller_id: "", business_name: "" });
-    load();
+    try {
+      await accountApi.create(form);
+      setShowForm(false);
+      setForm({ market_type: "coupang", seller_id: "", business_name: "" });
+      load();
+    } catch (e) { showAlert(e instanceof Error ? e.message : '계정 저장 실패', 'error') }
   };
 
-  const handleToggle = async (id: string) => { await accountApi.toggle(id); load(); };
+  const handleToggle = async (id: string) => {
+    try { await accountApi.toggle(id); load(); }
+    catch (e) { showAlert(e instanceof Error ? e.message : '상태 변경 실패', 'error') }
+  };
   const handleDelete = async (id: string) => {
-    if (!confirm("삭제?")) return;
-    await accountApi.delete(id); load();
+    if (!await showConfirm('삭제하시겠습니까?')) return
+    try { await accountApi.delete(id); load(); }
+    catch (e) { showAlert(e instanceof Error ? e.message : '삭제 실패', 'error') }
   };
 
   return (
@@ -44,7 +51,7 @@ export default function AccountsPage() {
               <label className="text-xs text-[#666] mb-1 block">마켓</label>
               <select value={form.market_type} onChange={(e) => setForm({ ...form, market_type: e.target.value })}
                 className="w-full px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5]">
-                {["coupang","11st","gmarket","auction","smartstore","ssg","lotteon","lottehome","gsshop","kream","ebay","lazada","shopee","qoo10"].map((m) => (
+                {["smartstore","coupang","11st","gmarket","auction","ssg","lotteon","lottehome","gsshop","homeand","hmall","kream"].map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>

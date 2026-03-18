@@ -62,6 +62,31 @@ async def create_word(
     return await _get_service(session).create_word(body.model_dump(exclude_unset=True))
 
 
+class BulkWordsRequest(BaseModel):
+    type: str  # forbidden | deletion
+    words: list[str]
+
+
+@router.post("/words/bulk", status_code=201)
+async def bulk_save_words(
+    body: BulkWordsRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """기존 타입의 단어를 전부 삭제 후 새 단어 벌크 저장."""
+    svc = _get_service(session)
+    existing = await svc.list_by_type(body.type)
+    for w in existing:
+        await svc.delete_word(w.id)
+    created = 0
+    for word in body.words:
+        w = word.strip()
+        if not w:
+            continue
+        await svc.create_word({"word": w, "type": body.type, "scope": "all", "is_active": True})
+        created += 1
+    return {"ok": True, "created": created}
+
+
 @router.put("/words/{word_id}")
 async def update_word(
     word_id: str,
@@ -121,7 +146,9 @@ async def get_setting(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     svc = _get_service(session)
-    return await svc.get_setting(key)
+    result = await svc.get_setting(key)
+    # None이면 빈 dict 반환 (프론트에서 .catch(() => null) 호환)
+    return result if result is not None else {}
 
 
 @router.put("/settings/{key}")

@@ -3,7 +3,6 @@
 // 옵션(사이즈/가격)은 background.js에서 chrome.debugger CDP 클릭으로 이미 수집
 // → preCollectedOptions로 전달받아 그대로 사용
 
-const PROXY_URL = 'http://localhost:3001'
 const LOG_PREFIX = '[KREAM CS]'
 
 // background에서 수집 요청 수신
@@ -91,7 +90,7 @@ async function extractNuxtData() {
               for (let i = 0; i < keys.length; i++) {
                 const key = keys[i]
                 if (key.includes('product-detail') && data[key] && data[key].jsonLd) {
-                  result = { jsonLd: data[key].jsonLd, key: key }
+                  result = { jsonLd: data[key].jsonLd, key: key, raw: data[key] }
                   break
                 }
               }
@@ -99,7 +98,7 @@ async function extractNuxtData() {
                 for (let i = 0; i < keys.length; i++) {
                   const key = keys[i]
                   if (data[key] && data[key].jsonLd) {
-                    result = { jsonLd: data[key].jsonLd, key: key }
+                    result = { jsonLd: data[key].jsonLd, key: key, raw: data[key] }
                     break
                   }
                 }
@@ -137,13 +136,36 @@ async function extractNuxtData() {
 // ==================== __NUXT__ → basicInfo 병합 ====================
 
 function mergeNuxtData(info, nuxtData) {
-  const { jsonLd } = nuxtData
+  const { jsonLd, raw } = nuxtData
   if (!jsonLd) return
 
-  // 영문명 — __NUXT__가 있으면 항상 덮어씀 (DOM보다 정확), nameEn에도 저장
+  // __NUXT__ raw 데이터에서 한글명 추출 시도
+  // KREAM의 product-detail 데이터에 한글명이 별도 필드로 존재할 수 있음
+  if (raw) {
+    // product 객체에서 한글명 탐색 (wishTitle, translatedName, nameKo 등)
+    const product = raw.product || raw
+    const koNameCandidates = [
+      product.wishTitle,
+      product.translatedName,
+      product.nameKo,
+      product.name_ko,
+      product.koreanName,
+    ].filter(Boolean)
+    for (const candidate of koNameCandidates) {
+      if (/[가-힣]/.test(candidate)) {
+        info.nameKo = candidate
+        info.name = candidate
+        console.log(`${LOG_PREFIX} __NUXT__ raw에서 한글명 발견: ${candidate}`)
+        break
+      }
+    }
+  }
+
+  // 영문명 — __NUXT__의 jsonLd.name은 영문명이므로 nameEn에만 저장
   if (jsonLd.name) {
-    info.name = jsonLd.name
     info.nameEn = jsonLd.name
+    // name이 비어있을 때만 영문명 fallback
+    if (!info.name) info.name = jsonLd.name
   }
 
   // 브랜드
@@ -166,22 +188,80 @@ function mergeNuxtData(info, nuxtData) {
 
 function extractBasicInfo() {
   // 한글명 / 영문명 분리 수집
-  // p.text-lookup 중 한글 포함 → nameKo, 영문(알파벳) 위주 → nameEn 초기값
   let nameKo = ''
   let nameEn = ''
-  const textLookups = document.querySelectorAll('p.text-lookup.display_paragraph.text-element')
-  for (const el of textLookups) {
-    const t = el.textContent.trim()
-    if (t.length < 3) continue
-    if (/^\d/.test(t)) continue
-    if (/\d+명/.test(t)) continue                             // "N명이 보고..." 조회수 전부
-    if (/^(상품|리뷰|사이즈|상세|추천|발매가|관심)/.test(t)) continue
-    if (/^(구매|판매|즉시|입찰|체결)/.test(t)) continue       // 거래 관련 텍스트
-    if (/있어요$|있습니다$/.test(t)) continue                 // "~있어요/있습니다" 문장
-    if (/[가-힣]/.test(t) && !nameKo) nameKo = t      // 한글 포함 → 한글명
-    else if (!/[가-힣]/.test(t) && !nameEn) nameEn = t // 한글 없음 → 영문명 후보
+
+  // 방법 1: 상품 타이틀 영역에서 직접 추출 (가장 정확)
+  const titleArea = document.querySelector('[class*="title_txt"]') || document.querySelector('[class*="product_title"]')
+  if (titleArea) {
+    const spans = titleArea.querySelectorAll('span, p, em')
+    for (const el of spans) {
+      const t = el.textContent.trim()
+      if (t.length < 3) continue
+      // 경고/공지 문구 필터 (Method 2와 동일)
+      if (/주의사항|확인하세요|브랜드 거래|거래 주의|유의사항/.test(t)) continue
+      if (/배송|결제|환불|교환|반품/.test(t) && t.length > 20) continue
+      if (/[가-힣]/.test(t) && !nameKo) nameKo = t
+      else if (!/[가-힣]/.test(t) && !nameEn) nameEn = t
+    }
   }
-  // name 기본값: 한글명 우선 (mergeNuxtData에서 __NUXT__ 영문명으로 덮어씀)
+
+  // 방법 2: p.text-lookup 셀렉터 (fallback)
+  if (!nameKo && !nameEn) {
+    const textLookups = document.querySelectorAll('p.text-lookup, p[class*="display_paragraph"], [class*="detail_main"] p')
+    for (const el of textLookups) {
+      const t = el.textContent.trim()
+      if (t.length < 3 || t.length > 80) continue
+      if (/^\d/.test(t)) continue
+      if (/\d+명/.test(t)) continue
+      if (/^(상품|리뷰|사이즈|상세|추천|발매가|관심)/.test(t)) continue
+      if (/^(구매|판매|즉시|입찰|체결)/.test(t)) continue
+      if (/있어요$|있습니다$/.test(t)) continue
+      // 공지/경고 문구 필터
+      if (/주의사항|확인하세요|브랜드 거래|거래 주의|유의사항/.test(t)) continue
+      if (/배송|결제|환불|교환|반품/.test(t) && t.length > 20) continue
+      if (/[가-힣]/.test(t) && !nameKo) nameKo = t
+      else if (!/[가-힣]/.test(t) && !nameEn) nameEn = t
+    }
+  }
+
+  // 방법 3: 상세영역 내 한글명 탐색 (KREAM 레이아웃 변경 대응)
+  if (!nameKo) {
+    const detailSelectors = [
+      '[class*="detail_main"] [class*="title"]',
+      '[class*="product_info"] [class*="title"]',
+      '[class*="main_title"]',
+      'h1',
+    ]
+    for (const sel of detailSelectors) {
+      const el = document.querySelector(sel)
+      if (!el) continue
+      const t = el.textContent.trim()
+      if (t.length < 3 || t.length > 80) continue
+      if (/주의사항|확인하세요|브랜드 거래|거래 주의|유의사항/.test(t)) continue
+      if (/[가-힣]/.test(t)) { nameKo = t; break }
+    }
+  }
+
+  // 방법 4: og:title 메타태그 (최종 fallback)
+  if (!nameKo && !nameEn) {
+    const ogTitle = document.querySelector('meta[property="og:title"]')?.content || ''
+    if (ogTitle && ogTitle.length > 3) {
+      if (/[가-힣]/.test(ogTitle)) nameKo = ogTitle.replace(/\s*\|.*$/, '').trim()
+      else nameEn = ogTitle.replace(/\s*\|.*$/, '').trim()
+    }
+  }
+
+  // 방법 5: <title> 태그에서 한글명 추출
+  if (!nameKo) {
+    const title = document.title || ''
+    // KREAM 타이틀 형식: "상품명 | KREAM"
+    const cleaned = title.replace(/\s*\|.*$/, '').replace(/\s*-\s*KREAM.*$/, '').trim()
+    if (cleaned.length > 3 && /[가-힣]/.test(cleaned)) {
+      nameKo = cleaned
+    }
+  }
+
   let name = nameKo || nameEn || ''
 
   // 브랜드
