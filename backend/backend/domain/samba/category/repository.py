@@ -1,6 +1,6 @@
 """SambaWave Category repository."""
 
-from typing import Optional
+from typing import List, Optional
 
 from backend.domain.shared.base_repository import BaseRepository
 from backend.domain.samba.category.model import SambaCategoryMapping, SambaCategoryTree
@@ -16,6 +16,10 @@ class SambaCategoryMappingRepository(BaseRepository[SambaCategoryMapping]):
         return await self.find_by_async(
             source_site=source_site, source_category=source_category
         )
+
+    async def list_all(self) -> List[SambaCategoryMapping]:
+        """전체 매핑 목록 조회 (벌크 매핑용)."""
+        return await self.list_async()
 
 
 class SambaCategoryTreeRepository(BaseRepository[SambaCategoryTree]):

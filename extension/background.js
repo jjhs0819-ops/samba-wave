@@ -272,9 +272,19 @@ async function handleCollectJob(job) {
         target: { tabId },
         world: 'MAIN',
         func: (buyBtnText) => {
-          // 구매하기 버튼 클릭 (셀렉터 외부화)
-          const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === buyBtnText)
-          if (!btn) return false
+          // 구매하기 버튼 클릭 — 다중 매칭 (정확 → 부분)
+          const allBtns = Array.from(document.querySelectorAll('button'))
+          const btn = allBtns.find(b => b.textContent.trim() === buyBtnText)
+            || allBtns.find(b => {
+              const t = b.textContent.trim()
+              return t.includes('구매') && !t.includes('판매')
+            })
+          if (!btn) {
+            // 디버그: 페이지 내 모든 버튼 텍스트 로깅
+            const btnTexts = allBtns.map(b => b.textContent.trim()).filter(t => t)
+            console.log('[KREAM] 구매 버튼 매칭 실패. 페이지 버튼 목록:', btnTexts)
+            return false
+          }
           btn.click()
           return true
         },
@@ -559,6 +569,29 @@ async function handleSearchJob(job) {
     await waitForTabLoad(tabId, 30000)
     // SPA 렌더링 대기
     await wait(3000)
+
+    // 무한스크롤 — 목표 수량까지 스크롤 반복
+    const targetCount = job.count || 50
+    const maxScrolls = Math.min(Math.ceil(targetCount / 50), 10)
+    let prevCount = 0
+
+    for (let scroll = 0; scroll < maxScrolls; scroll++) {
+      const [countResult] = await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN',
+        func: () => document.querySelectorAll('a[href*="/products/"]').length
+      })
+      const currentCount = countResult?.result || 0
+      console.log(`[KREAM] 스크롤 ${scroll + 1}/${maxScrolls}: ${currentCount}개 로드됨`)
+
+      if (currentCount >= targetCount || (scroll > 0 && currentCount === prevCount)) break
+      prevCount = currentCount
+
+      await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN',
+        func: () => window.scrollTo(0, document.body.scrollHeight)
+      })
+      await wait(2000)
+    }
 
     // DOM에서 상품 목록 추출
     const results = await chrome.scripting.executeScript({

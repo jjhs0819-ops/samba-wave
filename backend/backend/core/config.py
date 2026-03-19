@@ -69,6 +69,12 @@ class BackendSettings(BaseSettings):
     # ===========================================
 
     # ===========================================
+    # AI / Anthropic Configuration
+    # ===========================================
+    anthropic_api_key: str = ""
+    """Claude API 키 (카테고리 AI 매핑 등)."""
+
+    # ===========================================
     # Scheduler Configuration
     # ===========================================
     scheduler_secret: str = ""

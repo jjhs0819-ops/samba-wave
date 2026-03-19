@@ -1,13 +1,22 @@
 """SambaWave Category service."""
 
+from __future__ import annotations
+
+import json
+import logging
 from datetime import UTC, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.domain.samba.category.model import SambaCategoryMapping, SambaCategoryTree
 from backend.domain.samba.category.repository import (
     SambaCategoryMappingRepository,
     SambaCategoryTreeRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 # Market category data ported from js/modules/category.js
 MARKET_CATEGORIES: Dict[str, List[str]] = {
@@ -175,3 +184,218 @@ class SambaCategoryService:
     @staticmethod
     def get_market_category_list(market: str) -> List[str]:
         return MARKET_CATEGORIES.get(market, [])
+
+    # ==================== AI Category Suggestion ====================
+
+    @staticmethod
+    async def ai_suggest_category(
+        source_site: str,
+        source_category: str,
+        sample_products: List[str],
+        target_markets: Optional[List[str]] = None,
+        api_key: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """Claude API를 사용하여 소싱 카테고리를 마켓별 카테고리로 매핑 추천.
+
+        Args:
+            source_site: 소싱사이트 (예: MUSINSA)
+            source_category: 소싱 카테고리 경로 (예: 스니커즈 > 러닝화)
+            sample_products: 해당 카테고리의 대표 상품명 목록
+            target_markets: 매핑할 마켓 목록 (미지정 시 전체)
+            api_key: Claude API 키 (DB에서 조회한 값). 미지정 시 env fallback.
+
+        Returns:
+            { market_name: suggested_category } 딕셔너리
+        """
+        from backend.core.config import settings
+
+        key = api_key or settings.anthropic_api_key
+        if not key:
+            raise ValueError("ANTHROPIC_API_KEY가 설정되지 않았습니다")
+
+        import anthropic
+
+        markets = target_markets or list(MARKET_CATEGORIES.keys())
+        # 요청 마켓 중 카테고리 목록이 있는 것만 필터
+        market_cats = {
+            m: MARKET_CATEGORIES[m]
+            for m in markets
+            if m in MARKET_CATEGORIES and MARKET_CATEGORIES[m]
+        }
+
+        if not market_cats:
+            return {}
+
+        # 프롬프트 구성
+        market_list_str = "\n".join(
+            f"- {market}: {json.dumps(cats, ensure_ascii=False)}"
+            for market, cats in market_cats.items()
+        )
+        sample_str = ", ".join(sample_products[:5]) if sample_products else "(없음)"
+
+        prompt = f"""소싱 상품의 카테고리를 각 판매 마켓의 카테고리에 매핑해주세요.
+
+[소싱 정보]
+- 사이트: {source_site}
+- 카테고리: {source_category}
+- 대표 상품: {sample_str}
+
+[마켓별 카테고리 목록]
+{market_list_str}
+
+규칙:
+1. 각 마켓에서 가장 적절한 카테고리를 정확히 1개만 선택하세요.
+2. 반드시 위 목록에 있는 카테고리 중에서만 선택하세요.
+3. 적절한 카테고리가 없으면 해당 마켓은 빈 문자열로 응답하세요.
+
+JSON만 응답하세요 (설명 불필요):
+{json.dumps({m: "" for m in market_cats}, ensure_ascii=False)}"""
+
+        client = anthropic.AsyncAnthropic(api_key=key)
+
+        try:
+            response = await client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}],
+            )
+
+            # 응답에서 JSON 추출
+            text = response.content[0].text.strip()
+            # ```json ... ``` 블록 제거
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+                if text.endswith("```"):
+                    text = text[:-3].strip()
+
+            result = json.loads(text)
+
+            # 응답 검증: 실제 카테고리 목록에 있는 값만 유지
+            validated: Dict[str, str] = {}
+            for market, suggested in result.items():
+                if market in market_cats and suggested in market_cats[market]:
+                    validated[market] = suggested
+                elif market in market_cats:
+                    # AI 응답이 목록에 없으면 빈 문자열
+                    validated[market] = ""
+                    logger.warning(
+                        "AI 추천 카테고리 '%s'가 %s 목록에 없음 — 무시",
+                        suggested, market,
+                    )
+
+            return validated
+
+        except json.JSONDecodeError as e:
+            logger.error("AI 응답 JSON 파싱 실패: %s", e)
+            raise ValueError(f"AI 응답 파싱 실패: {e}") from e
+        except anthropic.APIError as e:
+            logger.error("Claude API 오류: %s", e)
+            raise ValueError(f"Claude API 오류: {e}") from e
+
+    # ==================== Bulk AI Mapping ====================
+
+    async def bulk_ai_mapping(
+        self, api_key: str, session: "AsyncSession"
+    ) -> Dict[str, Any]:
+        """미매핑 카테고리 자동 매핑 + 기존 매핑 누락 마켓 보충.
+
+        1) 수집 상품 전체에서 고유 (site, leaf_category) 추출
+        2) 기존 매핑 전체 조회
+        3-A) 미매핑 → AI → 새 매핑 생성
+        3-B) 기존 매핑 중 MARKET_CATEGORIES 키 빠진 것 → AI → 매핑 업데이트
+        """
+        from sqlmodel import select
+        from backend.domain.samba.collector.model import SambaCollectedProduct
+
+        all_market_keys = set(MARKET_CATEGORIES.keys())
+
+        # 1) 수집 상품에서 고유 (site, leaf_category, 대표 상품명) 추출
+        stmt = select(SambaCollectedProduct)
+        result = await session.execute(stmt)
+        products = list(result.scalars().all())
+
+        # (site, leaf_path) → 대표 상품명 목록
+        cat_samples: Dict[tuple, List[str]] = {}
+        for p in products:
+            site = p.source_site or ""
+            if not site:
+                continue
+            cats = [p.category1, p.category2, p.category3, p.category4]
+            cats = [c for c in cats if c]
+            if not cats and p.category:
+                cats = [c.strip() for c in p.category.split(">") if c.strip()]
+            if not cats:
+                continue
+            leaf_path = " > ".join(cats)
+            key = (site, leaf_path)
+            if key not in cat_samples:
+                cat_samples[key] = []
+            if len(cat_samples[key]) < 5:
+                cat_samples[key].append(p.name)
+
+        if not cat_samples:
+            return {"mapped": 0, "updated": 0, "skipped": 0, "errors": []}
+
+        # 2) 기존 매핑 전체 조회
+        existing_mappings = await self.mapping_repo.list_all()
+        existing_map: Dict[tuple, SambaCategoryMapping] = {}
+        for m in existing_mappings:
+            existing_map[(m.source_site, m.source_category)] = m
+
+        mapped = 0
+        updated = 0
+        skipped = 0
+        errors: List[str] = []
+
+        for (site, leaf_path), samples in cat_samples.items():
+            existing = existing_map.get((site, leaf_path))
+
+            if existing:
+                # 3-B) 기존 매핑에서 누락 마켓 확인
+                current_targets = existing.target_mappings or {}
+                missing_markets = all_market_keys - set(current_targets.keys())
+                if not missing_markets:
+                    skipped += 1
+                    continue
+
+                # 누락 마켓만 AI 추천
+                try:
+                    ai_result = await self.ai_suggest_category(
+                        source_site=site,
+                        source_category=leaf_path,
+                        sample_products=samples,
+                        target_markets=list(missing_markets),
+                        api_key=api_key,
+                    )
+                    # 기존 매핑에 추가
+                    new_targets = {**current_targets}
+                    for market, cat in ai_result.items():
+                        if cat:
+                            new_targets[market] = cat
+                    await self.update_mapping(existing.id, {"target_mappings": new_targets})
+                    updated += 1
+                except Exception as e:
+                    errors.append(f"[보충] {site} > {leaf_path}: {e}")
+            else:
+                # 3-A) 미매핑 → AI → 새 매핑 생성
+                try:
+                    ai_result = await self.ai_suggest_category(
+                        source_site=site,
+                        source_category=leaf_path,
+                        sample_products=samples,
+                        api_key=api_key,
+                    )
+                    target_mappings = {m: c for m, c in ai_result.items() if c}
+                    if target_mappings:
+                        await self.create_mapping({
+                            "source_site": site,
+                            "source_category": leaf_path,
+                            "target_mappings": target_mappings,
+                        })
+                        mapped += 1
+                    else:
+                        skipped += 1
+                except Exception as e:
+                    errors.append(f"[신규] {site} > {leaf_path}: {e}")
+
+        return {"mapped": mapped, "updated": updated, "skipped": skipped, "errors": errors}

@@ -128,6 +128,7 @@
 }
 
 @layer utilities {
+
   /* 연결사 브랜드 스타일 - 노란색 하이라이트 */
   .brand-text {
     @apply text-primary font-bold;
@@ -159,8 +160,13 @@
   }
 
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
   }
 
   @keyframes slideUp {
@@ -168,6 +174,7 @@
       opacity: 0;
       transform: translateY(30px);
     }
+
     to {
       opacity: 1;
       transform: translateY(0);
@@ -243,11 +250,14 @@
 }
 
 /* Form inputs */
-input, select, textarea {
+input,
+select,
+textarea {
   @apply font-sans;
 }
 
-input::placeholder, textarea::placeholder {
+input::placeholder,
+textarea::placeholder {
   @apply text-gray-400;
 }
 

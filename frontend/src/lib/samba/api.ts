@@ -468,6 +468,11 @@ export const categoryApi = {
     request<unknown>(`${SAMBA_PREFIX}/categories/tree/${siteName}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteTree: (siteName: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/categories/tree/${siteName}`, { method: "DELETE" }),
+  aiSuggest: (data: { source_site: string; source_category: string; sample_products: string[]; target_markets?: string[] }) =>
+    request<Record<string, string>>(`${SAMBA_PREFIX}/categories/ai-suggest`, { method: "POST", body: JSON.stringify(data) }),
+  aiSuggestBulk: () =>
+    request<{ mapped: number; updated: number; skipped: number; errors: string[] }>(
+      `${SAMBA_PREFIX}/categories/ai-suggest-bulk`, { method: 'POST' }),
 };
 
 // ── Contacts ──
@@ -696,6 +701,25 @@ export interface DashboardStats {
   hourly_changes: number[]
 }
 
+export interface RefreshLogEntry {
+  ts: string
+  site: string
+  product_id: string
+  name: string
+  msg: string
+  level: string
+}
+
+export interface RefreshLogsResponse {
+  logs: RefreshLogEntry[]
+  current_idx: number
+  intervals: {
+    intervals: Record<string, number>
+    errors: Record<string, number>
+    safe_intervals: Record<string, number>
+  }
+}
+
 export const monitorApi = {
   dashboard: () =>
     request<DashboardStats>(`${SAMBA_PREFIX}/monitor/dashboard`),
@@ -714,6 +738,8 @@ export const monitorApi = {
     request<{ sources: DashboardStats['site_health']; markets: DashboardStats['market_health'] }>(
       `${SAMBA_PREFIX}/monitor/site-health`,
     ),
+  refreshLogs: (sinceIdx = 0) =>
+    request<RefreshLogsResponse>(`${SAMBA_PREFIX}/monitor/refresh-logs?since_idx=${sinceIdx}`),
 }
 
 // ── S3 이미지 헬퍼 ──
