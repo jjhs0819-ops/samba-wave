@@ -246,6 +246,58 @@ async def elevenst_auth_test(
         return {"success": False, "message": f"API 호출 실패: {exc}"}
 
 
+@router.post("/11st/seller-info")
+async def elevenst_seller_info(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """11번가 출고지/반품교환지 주소 조회.
+
+    GET /rest/areaservice/outboundarea (출고지)
+    GET /rest/areaservice/inboundarea (반품/교환지)
+    """
+    from backend.domain.samba.proxy.elevenst import ElevenstClient
+
+    creds = await _get_setting(session, "store_11st")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "11번가 설정이 저장되지 않았습니다."}
+    api_key = creds.get("apiKey", "")
+    if not api_key:
+        return {"success": False, "message": "Open API Key가 비어있습니다."}
+
+    try:
+        client = ElevenstClient(api_key)
+
+        # 출고지 + 반품/교환지 동시 조회
+        outbound = await client.get_outbound_addresses()
+        inbound = await client.get_inbound_addresses()
+
+        if not outbound and not inbound:
+            return {"success": False, "message": "출고지/반품지 정보가 없습니다. 11번가 셀러오피스에서 먼저 등록해주세요."}
+
+        result: dict[str, Any] = {}
+        # 첫 번째 출고지 주소 사용
+        if outbound:
+            first_out = outbound[0]
+            result["shipFromAddress"] = first_out.get("addr", "")
+            result["shipFromAddrSeq"] = first_out.get("addrSeq", "")
+            result["shipFromName"] = first_out.get("addrNm", "")
+        # 첫 번째 반품/교환지 주소 사용
+        if inbound:
+            first_in = inbound[0]
+            result["returnAddress"] = first_in.get("addr", "")
+            result["returnAddrSeq"] = first_in.get("addrSeq", "")
+            result["returnName"] = first_in.get("addrNm", "")
+
+        # 전체 목록도 함께 반환
+        result["outboundList"] = outbound
+        result["inboundList"] = inbound
+
+        return {"success": True, "message": "출고지/반품지 조회 성공", "data": result}
+    except Exception as exc:
+        logger.error(f"[11번가] 출고지/반품지 조회 실패: {exc}")
+        return {"success": False, "message": f"출고지/반품지 조회 실패: {exc}"}
+
+
 # ═══════════════════════════════════════════════
 # 쿠팡 Wing API 인증 테스트
 # ═══════════════════════════════════════════════
@@ -265,11 +317,15 @@ async def coupang_auth_test(
     if not access_key or not secret_key:
         return {"success": False, "message": "Access Key 또는 Secret Key가 비어있습니다."}
 
+    vendor_id = creds.get("vendorId", "")
+    if not vendor_id:
+        return {"success": False, "message": "Vendor ID가 비어있습니다."}
+
     try:
         from backend.domain.samba.proxy.coupang import CoupangClient
-        client = CoupangClient(access_key, secret_key, creds.get("vendorId", ""))
-        # 간단한 API 호출로 인증 테스트
-        result = await client._call_api("GET", "/v2/providers/seller_api/apis/api/v1/vendor")
+        client = CoupangClient(access_key, secret_key, vendor_id)
+        # 카테고리 조회 API로 인증 테스트 (유효한 엔드포인트)
+        await client.get_categories()
         return {"success": True, "message": "인증 성공 — API Key가 유효합니다."}
     except Exception as exc:
         logger.error(f"[쿠팡] 인증 테스트 실패: {exc}")
@@ -285,7 +341,7 @@ async def coupang_auth_test(
 async def lotteon_auth_test(
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict[str, Any]:
-    """롯데ON Open API 인증 테스트 — 거래처 정보 조회."""
+    """롯데ON Open API 인증 테스트 — 거래처 정보 조회 + 배송인프라 검증."""
     creds = await _get_setting(session, "store_lotteon")
     if not creds or not isinstance(creds, dict):
         return {"success": False, "message": "롯데ON 설정이 저장되지 않았습니다."}
@@ -300,7 +356,33 @@ async def lotteon_auth_test(
         result = await client.test_auth()
         data = result.get("data", {})
         tr_info = f" (거래처: {data.get('trGrpCd', '')}-{data.get('trNo', '')})" if data else ""
-        return {"success": True, "message": f"인증 성공{tr_info}"}
+
+        # 배송인프라 입력 여부 확인
+        dv_cst_pol = creds.get("dvCstPolNo", "")
+        owhp = creds.get("owhpNo", "")
+        rtrp = creds.get("rtrpNo", "")
+        missing = []
+        if not dv_cst_pol:
+            missing.append("배송정책번호")
+        if not owhp:
+            missing.append("출고지번호")
+        if not rtrp:
+            missing.append("회수지번호")
+
+        infra_msg = ""
+        if missing:
+            infra_msg = f" ⚠ 미입력: {', '.join(missing)}"
+
+        return {
+            "success": True,
+            "message": f"인증 성공{tr_info}{infra_msg}",
+            "data": {
+                **(data or {}),
+                "dvCstPolNo": dv_cst_pol,
+                "owhpNo": owhp,
+                "rtrpNo": rtrp,
+            },
+        }
     except Exception as exc:
         logger.error(f"[롯데ON] 인증 테스트 실패: {exc}")
         return {"success": False, "message": f"인증 실패: {exc}"}
@@ -332,6 +414,62 @@ async def ssg_auth_test(
     except Exception as exc:
         logger.error(f"[SSG] 인증 테스트 실패: {exc}")
         return {"success": False, "message": f"인증 실패: {exc}"}
+
+
+# ═══════════════════════════════════════════════
+# GS샵 인증 테스트 (개발/운영)
+# ═══════════════════════════════════════════════
+
+
+@router.post("/gsshop/auth-test")
+async def gsshop_auth_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """GS샵 AES256 인증 테스트 — 개발/운영 환경 모두 검증."""
+    creds = await _get_setting(session, "store_gsshop")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "GS샵 설정이 저장되지 않았습니다."}
+
+    sup_cd = creds.get("storeId", "")
+    api_key_dev = creds.get("apiKeyDev", "")
+    api_key_prod = creds.get("apiKeyProd", "")
+
+    if not sup_cd:
+        return {"success": False, "message": "스토어 ID(협력사코드)가 비어있습니다."}
+    if not api_key_dev and not api_key_prod:
+        return {"success": False, "message": "개발 또는 운영 AES256 인증키를 입력해주세요."}
+
+    results: list[str] = []
+    any_ok = False
+
+    # 개발 환경 테스트
+    if api_key_dev:
+        try:
+            dev_client = GsShopClient(sup_cd=sup_cd, aes_key=api_key_dev, env="dev")
+            dev_result = await dev_client.check_auth()
+            if dev_result.get("authenticated"):
+                results.append("개발: 인증 성공")
+                any_ok = True
+            else:
+                results.append(f"개발: {dev_result.get('message', '인증 실패')}")
+        except Exception as exc:
+            results.append(f"개발: {exc}")
+
+    # 운영 환경 테스트
+    if api_key_prod:
+        try:
+            prod_client = GsShopClient(sup_cd=sup_cd, aes_key=api_key_prod, env="prod")
+            prod_result = await prod_client.check_auth()
+            if prod_result.get("authenticated"):
+                results.append("운영: 인증 성공")
+                any_ok = True
+            else:
+                results.append(f"운영: {prod_result.get('message', '인증 실패')}")
+        except Exception as exc:
+            results.append(f"운영: {exc}")
+
+    msg = " / ".join(results)
+    return {"success": any_ok, "message": msg}
 
 
 # ═══════════════════════════════════════════════

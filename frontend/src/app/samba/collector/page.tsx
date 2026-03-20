@@ -84,6 +84,8 @@ export default function CollectorPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null)
   const [showRefreshModal, setShowRefreshModal] = useState(false)
+  // AI 비용 추적
+  const [lastAiUsage, setLastAiUsage] = useState<{ calls: number; tokens: number; cost: number; date: string } | null>(null)
 
   // Proxy & auth status
   const [proxyStatus, setProxyStatus] = useState<"checking" | "ok" | "error">("checking");
@@ -268,6 +270,15 @@ export default function CollectorPage() {
 
         if (finalData) {
           addLog(`[${f.name}] 수집 완료: ${finalData.saved || 0}건 저장, ${finalData.enriched || 0}건 보강`);
+          const enrichedCount = finalData.enriched || 0
+          if (enrichedCount > 0) {
+            setLastAiUsage(prev => ({
+              calls: (prev?.calls || 0) + enrichedCount,
+              tokens: (prev?.tokens || 0) + enrichedCount * 1800,
+              cost: (prev?.cost || 0) + enrichedCount * 15,
+              date: new Date().toLocaleTimeString(),
+            }))
+          }
         }
       } catch (e) {
         if ((e as Error).name === 'AbortError') {
@@ -605,6 +616,14 @@ export default function CollectorPage() {
             >
               {refreshing ? '갱신중...' : '일괄 갱신'}
             </button>
+            {/* AI 비용 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.25rem 0.625rem', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.2)', borderRadius: '6px' }}>
+              <span style={{ fontSize: '0.72rem', color: '#A78BFA', fontWeight: 600 }}>AI 비용</span>
+              <span style={{ fontSize: '0.72rem', color: '#E5E5E5' }}>
+                예상 <span style={{ color: '#FFB84D', fontWeight: 700 }}>₩15</span>
+                <span style={{ color: '#888' }}> (1회)</span>
+              </span>
+            </div>
             <button style={{
               background: "rgba(81,207,102,0.1)", border: "1px solid rgba(81,207,102,0.3)",
               color: "#51CF66", padding: "0.3rem 0.75rem", borderRadius: "6px", fontSize: "0.8rem", cursor: "pointer",

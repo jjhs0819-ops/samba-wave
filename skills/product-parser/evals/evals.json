@@ -1,0 +1,129 @@
+{
+  "skill_name": "product-parser",
+  "description": "소싱처 상품 정보를 마켓 등록 형식에 맞춰 수집·정돈하는 스킬 평가셋",
+  "evals": [
+    {
+      "id": 1,
+      "name": "normal-options",
+      "prompt": "무신사 상품 3347848 (르무통 메이트 블랙)을 수집해줘. 사이즈 옵션이 있는 신발 상품이야.",
+      "source_url": "https://www.musinsa.com/products/3347848",
+      "input_file": "eval-1-normal-options-input.json",
+      "expected_output_file": "eval-1-normal-options-expected.json",
+      "expected_output": "6개 사이즈 옵션(230~280), 이미지 5장+상세 3장, 혜택가 4단계 계산, 고시정보 7개 필드 추출",
+      "tags": ["일반옵션", "신발", "다중사이즈", "혜택가계산", "고시정보"],
+      "assertions": [
+        { "name": "옵션개수", "type": "exact_match", "field": "options.length", "expected": 6 },
+        { "name": "이미지_최대9장", "type": "max_count", "field": "images.length", "max": 9 },
+        { "name": "상세이미지추출", "type": "min_count", "field": "detailImages.length", "min": 1 },
+        { "name": "혜택가_정가미만", "type": "less_than", "field": "bestBenefitPrice", "compare_field": "salePrice" },
+        { "name": "원산지존재", "type": "not_empty", "field": "origin" },
+        { "name": "소재존재", "type": "not_empty", "field": "material" },
+        { "name": "제조사존재", "type": "not_empty", "field": "manufacturer" },
+        { "name": "카테고리체인", "type": "contains", "field": "category", "expected": " > " },
+        { "name": "판매상태_in_stock", "type": "exact_match", "field": "saleStatus", "expected": "in_stock" },
+        { "name": "이미지URL_https", "type": "all_start_with", "field": "images", "prefix": "https://" }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "single-option",
+      "prompt": "무신사 상품 3138771 (비플레인 녹두 클렌징 폼)을 수집해줘. 옵션이 없는 단일 상품이야.",
+      "source_url": "https://www.musinsa.com/products/3138771",
+      "input_file": "eval-2-single-option-input.json",
+      "expected_output_file": "eval-2-single-option-expected.json",
+      "expected_output": "옵션 빈 배열, 이미지 4장+상세 4장, 시즌정보 필터링(0000→빈값), 화장품 고시정보 처리",
+      "tags": ["단일옵션", "뷰티", "옵션없음", "시즌필터링", "화장품고시"],
+      "assertions": [
+        { "name": "옵션_빈배열", "type": "exact_match", "field": "options.length", "expected": 0 },
+        { "name": "이미지존재", "type": "min_count", "field": "images.length", "min": 1 },
+        { "name": "시즌_빈값", "type": "exact_match", "field": "season", "expected": "" },
+        { "name": "판매상태_in_stock", "type": "exact_match", "field": "saleStatus", "expected": "in_stock" },
+        { "name": "원산지존재", "type": "not_empty", "field": "origin" },
+        { "name": "소재_빈값_화장품", "type": "exact_match", "field": "material", "expected": "" },
+        { "name": "할인율_25", "type": "exact_match", "field": "discountRate", "expected": 25 },
+        { "name": "상세이미지_프로토콜", "type": "all_start_with", "field": "detailImages", "prefix": "https://" }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "soldout-options",
+      "prompt": "무신사 상품 4293381 (더엣지 [3PACK] 링클프리 와이드 팬츠)을 수집해줘. 일부 사이즈가 품절된 상품이야.",
+      "source_url": "https://www.musinsa.com/products/4293381",
+      "input_file": "eval-3-soldout-options-input.json",
+      "expected_output_file": "eval-3-soldout-options-expected.json",
+      "expected_output": "5개 옵션(삭제된 3XL 제외), S/L/XL 품절, M 재고3, XXL 브랜드직배, 전체 품절 아님",
+      "tags": ["품절옵션", "의류", "브랜드직배", "삭제옵션", "부분품절"],
+      "assertions": [
+        { "name": "옵션개수_삭제제외", "type": "exact_match", "field": "options.length", "expected": 5 },
+        { "name": "품절옵션3개", "type": "count_where", "field": "options", "condition": "isSoldOut===true", "expected": 3 },
+        { "name": "브랜드직배1개", "type": "count_where", "field": "options", "condition": "isBrandDelivery===true", "expected": 1 },
+        { "name": "전체품절아님", "type": "exact_match", "field": "isOutOfStock", "expected": false },
+        { "name": "판매상태_in_stock", "type": "exact_match", "field": "saleStatus", "expected": "in_stock" },
+        { "name": "할인없음", "type": "exact_match", "field": "discountRate", "expected": 0 },
+        { "name": "소재존재", "type": "not_empty", "field": "material" },
+        { "name": "색상존재", "type": "not_empty", "field": "color" },
+        { "name": "3XL미포함", "type": "none_match", "field": "options", "condition": "name==='3XL'" }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "kream-normal",
+      "prompt": "KREAM 상품 12345 (나이키 에어맥스 97 실버 불렛)를 수집해줘. 사이즈별 즉시구매가가 있는 일반 상품이야.",
+      "source_url": "https://kream.co.kr/products/12345",
+      "input_file": "eval-4-kream-normal-input.json",
+      "expected_output_file": "eval-4-kream-normal-expected.json",
+      "expected_output": "9개 사이즈 옵션(250~290), 2개 사이즈 ask=0 품절, salePrice=min(ask)=189000, kreamData 포함, 상세이미지 빈배열",
+      "tags": ["KREAM", "리셀", "신발", "부분품절", "즉시구매가", "kreamData"],
+      "assertions": [
+        { "name": "소싱사이트_KREAM", "type": "exact_match", "field": "sourceSite", "expected": "KREAM" },
+        { "name": "옵션개수", "type": "exact_match", "field": "options.length", "expected": 9 },
+        { "name": "salePrice_최소ask", "type": "exact_match", "field": "salePrice", "expected": 189000 },
+        { "name": "originalPrice_정가", "type": "exact_match", "field": "originalPrice", "expected": 199000 },
+        { "name": "상세이미지_빈배열", "type": "exact_match", "field": "detailImages.length", "expected": 0 },
+        { "name": "상세HTML_빈문자열", "type": "exact_match", "field": "detailHtml", "expected": "" },
+        { "name": "원산지_빈문자열", "type": "exact_match", "field": "origin", "expected": "" },
+        { "name": "소재_빈문자열", "type": "exact_match", "field": "material", "expected": "" },
+        { "name": "kreamData존재", "type": "not_empty", "field": "kreamData" },
+        { "name": "kreamData_askPrices존재", "type": "not_empty", "field": "kreamData.askPrices" },
+        { "name": "kreamData_bidPrices존재", "type": "not_empty", "field": "kreamData.bidPrices" },
+        { "name": "kreamData_lastSalePrices존재", "type": "not_empty", "field": "kreamData.lastSalePrices" },
+        { "name": "이미지_thumbnail포함", "type": "contains_item", "field": "images", "expected": "https://kream-phinf.pstatic.net/MjAyMzA1MTBfMjYy/abc123.png" },
+        { "name": "품절옵션2개_ask0", "type": "count_where", "field": "options", "condition": "stock===0", "expected": 2 },
+        { "name": "재고옵션7개_ask양수", "type": "count_where", "field": "options", "condition": "stock===1", "expected": 7 },
+        { "name": "할인율_0", "type": "exact_match", "field": "discountRate", "expected": 0 },
+        { "name": "브랜드_Nike", "type": "exact_match", "field": "brand", "expected": "Nike" },
+        { "name": "styleCode존재", "type": "exact_match", "field": "styleCode", "expected": "DM0028-002" }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "kream-soldout",
+      "prompt": "KREAM 상품 67890 (뉴발란스 993 메이드 인 USA 그레이)을 수집해줘. 모든 사이즈가 품절된 상품이야.",
+      "source_url": "https://kream.co.kr/products/67890",
+      "input_file": "eval-5-kream-soldout-input.json",
+      "expected_output_file": "eval-5-kream-soldout-expected.json",
+      "expected_output": "7개 사이즈 옵션 전체 ask=0, salePrice=retail_price(259000) fallback, 전체 stock=0, kreamData 포함",
+      "tags": ["KREAM", "리셀", "신발", "전체품절", "가격fallback", "kreamData"],
+      "assertions": [
+        { "name": "소싱사이트_KREAM", "type": "exact_match", "field": "sourceSite", "expected": "KREAM" },
+        { "name": "옵션개수", "type": "exact_match", "field": "options.length", "expected": 7 },
+        { "name": "salePrice_fallback_정가", "type": "exact_match", "field": "salePrice", "expected": 259000 },
+        { "name": "originalPrice_정가", "type": "exact_match", "field": "originalPrice", "expected": 259000 },
+        { "name": "전체옵션_stock0", "type": "count_where", "field": "options", "condition": "stock===0", "expected": 7 },
+        { "name": "재고옵션_없음", "type": "count_where", "field": "options", "condition": "stock===1", "expected": 0 },
+        { "name": "상세이미지_빈배열", "type": "exact_match", "field": "detailImages.length", "expected": 0 },
+        { "name": "상세HTML_빈문자열", "type": "exact_match", "field": "detailHtml", "expected": "" },
+        { "name": "원산지_빈문자열", "type": "exact_match", "field": "origin", "expected": "" },
+        { "name": "소재_빈문자열", "type": "exact_match", "field": "material", "expected": "" },
+        { "name": "kreamData존재", "type": "not_empty", "field": "kreamData" },
+        { "name": "kreamData_askPrices_전체0", "type": "all_match", "field": "kreamData.askPrices", "condition": "general===0" },
+        { "name": "kreamData_bidPrices존재", "type": "not_empty", "field": "kreamData.bidPrices" },
+        { "name": "이미지_thumbnail포함", "type": "contains_item", "field": "images", "expected": "https://kream-phinf.pstatic.net/MjAyMzA4MjJfMTk0/nb993grey.png" },
+        { "name": "할인율_0", "type": "exact_match", "field": "discountRate", "expected": 0 },
+        { "name": "브랜드_NewBalance", "type": "exact_match", "field": "brand", "expected": "New Balance" },
+        { "name": "카테고리_3depth", "type": "exact_match", "field": "category3", "expected": "라이프스타일" },
+        { "name": "styleCode존재", "type": "exact_match", "field": "styleCode", "expected": "MR993GL" }
+      ]
+    }
+  ]
+}

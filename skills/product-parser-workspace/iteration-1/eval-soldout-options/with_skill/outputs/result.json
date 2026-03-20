@@ -1,0 +1,95 @@
+{
+  "id": "col_musinsa_4293381_1710892800000",
+  "sourceSite": "MUSINSA",
+  "siteProductId": "4293381",
+  "sourceUrl": "https://www.musinsa.com/products/4293381",
+  "name": "[3PACK] 링클프리 와이드 팬츠",
+  "nameEn": "",
+  "brand": "더엣지",
+  "brandCode": "theatg",
+  "category": "바지 > 슈트 팬츠/슬랙스",
+  "category1": "바지",
+  "category2": "슈트 팬츠/슬랙스",
+  "category3": null,
+  "category4": null,
+  "categoryCode": "004005",
+  "images": [
+    "https://image.msscdn.net/images/goods_img/20240802/4293381/4293381_17549680630454_500.jpg",
+    "https://image.msscdn.net/images/prd_img/20240802/4293381/detail_4293381_17549680630455_500.jpg",
+    "https://image.msscdn.net/images/prd_img/20240802/4293381/detail_4293381_17549680630456_500.jpg"
+  ],
+  "detailImages": [
+    "https://image.msscdn.net/images/prd_img/20240802/4293381/desc_wrinkle_01.jpg",
+    "https://image.msscdn.net/images/prd_img/20240802/4293381/desc_wrinkle_02.jpg"
+  ],
+  "detailHtml": "<div class='product-detail'><img src='/images/prd_img/20240802/4293381/desc_wrinkle_01.jpg'/><p>[3PACK] 링클프리 와이드 팬츠는 구김 없는 소재로 제작된 슈트 팬츠입니다.</p><img src='/images/prd_img/20240802/4293381/desc_wrinkle_02.jpg'/></div>",
+  "options": [
+    {
+      "no": 501,
+      "name": "S",
+      "price": 79900,
+      "stock": 0,
+      "isSoldOut": true,
+      "isBrandDelivery": false,
+      "deliveryType": "GENERAL",
+      "managedCode": "THEATG-WP-S"
+    },
+    {
+      "no": 502,
+      "name": "M",
+      "price": 79900,
+      "stock": 3,
+      "isSoldOut": false,
+      "isBrandDelivery": false,
+      "deliveryType": "GENERAL",
+      "managedCode": "THEATG-WP-M"
+    },
+    {
+      "no": 503,
+      "name": "L",
+      "price": 79900,
+      "stock": 0,
+      "isSoldOut": true,
+      "isBrandDelivery": false,
+      "deliveryType": "GENERAL",
+      "managedCode": "THEATG-WP-L"
+    },
+    {
+      "no": 504,
+      "name": "XL",
+      "price": 79900,
+      "stock": 0,
+      "isSoldOut": true,
+      "isBrandDelivery": false,
+      "deliveryType": "GENERAL",
+      "managedCode": "THEATG-WP-XL"
+    },
+    {
+      "no": 505,
+      "name": "XXL",
+      "price": 79900,
+      "stock": null,
+      "isSoldOut": false,
+      "isBrandDelivery": true,
+      "deliveryType": "GENERAL",
+      "managedCode": "THEATG-WP-XXL"
+    }
+  ],
+  "originalPrice": 79900,
+  "salePrice": 79900,
+  "couponPrice": 79900,
+  "bestBenefitPrice": 74310,
+  "discountRate": 0,
+  "memberDiscountRate": 0,
+  "origin": "중국",
+  "material": "폴리에스터 95%, 스판덱스 5%",
+  "manufacturer": "(주)더엣지",
+  "color": "블랙/네이비/그레이",
+  "sizeInfo": "S(25)/M(26)/L(27-28)/XL(29-30)/XXL(31-32)",
+  "careInstructions": "단독세탁, 표백제 사용 금지, 드라이클리닝 가능",
+  "qualityGuarantee": "관련 법령 및 소비자분쟁해결기준에 따름",
+  "saleStatus": "in_stock",
+  "isOutOfStock": false,
+  "isBoutique": false,
+  "status": "collected"
+}

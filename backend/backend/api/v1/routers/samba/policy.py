@@ -241,6 +241,146 @@ async def delete_name_rule(
     return {"ok": True}
 
 
+# ── AI 정책 변경 (정적 경로 — /{policy_id} 보다 앞에 등록) ─────────────────────
+
+class AiPolicyCommandRequest(BaseModel):
+    """AI 정책 일괄 변경 요청 — 자연어 명령."""
+    command: str
+
+
+@router.post("/ai-change")
+async def ai_change_policy(
+    body: AiPolicyCommandRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """자연어 명령으로 관련 마켓의 모든 정책을 일괄 변경."""
+    from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+    settings_repo = SambaSettingsRepository(session)
+    row = await settings_repo.find_by_async(key="claude")
+    api_key = ""
+    if row and isinstance(row.value, dict):
+        api_key = row.value.get("apiKey", "")
+    if not api_key:
+        from backend.core.config import settings as app_settings
+        api_key = app_settings.anthropic_api_key
+    if not api_key:
+        raise HTTPException(400, "Claude API Key가 설정되지 않았습니다")
+
+    import anthropic
+    import json
+
+    svc = _get_service(session)
+    all_policies = await svc.list_policies(skip=0, limit=200)
+
+    policies_summary = []
+    for p in all_policies:
+        mp = p.market_policies or {}
+        pr = p.pricing or {}
+        policies_summary.append({
+            "id": p.id,
+            "name": p.name,
+            "pricing": {
+                "marginRate": pr.get("marginRate", 15),
+                "shippingCost": pr.get("shippingCost", 0),
+                "extraCharge": pr.get("extraCharge", 0),
+                "minMarginAmount": pr.get("minMarginAmount", 0),
+            },
+            "market_policies": {
+                mk: {
+                    "marginRate": mv.get("marginRate", 0) if isinstance(mv, dict) else 0,
+                    "feeRate": mv.get("feeRate", 0) if isinstance(mv, dict) else 0,
+                    "shippingCost": mv.get("shippingCost", 0) if isinstance(mv, dict) else 0,
+                }
+                for mk, mv in (mp.items() if isinstance(mp, dict) else [])
+            },
+        })
+
+    prompt = f"""위탁판매 솔루션의 가격정책 관리자입니다.
+사용자의 명령을 분석하여 해당 마켓이 설정된 모든 정책을 일괄 변경해주세요.
+
+[사용자 명령]
+"{body.command}"
+
+[현재 전체 정책 목록]
+{json.dumps(policies_summary, ensure_ascii=False, indent=2)}
+
+[마켓 키 매핑]
+smartstore=스마트스토어, coupang=쿠팡, gmarket=G마켓/지마켓, auction=옥션,
+11st=11번가, ssg=SSG/신세계, lotteon=롯데ON, lottehome=롯데홈쇼핑,
+gsshop=GS샵, homeand=홈앤쇼핑, hmall=HMALL/현대, kream=KREAM/크림
+
+[정책 구조]
+- pricing: 공통 가격정책 (marginRate, shippingCost, extraCharge, minMarginAmount)
+- market_policies.{{마켓키}}: 마켓별 개별정책 (marginRate, feeRate, shippingCost)
+- market_policies의 marginRate가 0이면 공통 pricing의 marginRate를 사용
+
+규칙:
+1. 명령에서 언급된 마켓이 market_policies에 있는 정책만 변경 대상
+2. "마진율 1% 올려" = 해당 마켓의 marginRate에 +1
+3. "배송비 500원 내려" = 해당 마켓의 shippingCost에 -500
+4. "수수료 2% 낮춰" = 해당 마켓의 feeRate에 -2
+5. 마켓 미지정 시 공통 pricing을 변경
+6. 변경할 정책이 없으면 빈 배열 반환
+
+JSON만 응답:
+{{
+  "changes": [
+    {{
+      "policy_id": "정책ID",
+      "policy_name": "정책명",
+      "field": "변경 필드명",
+      "market": "마켓키 또는 common",
+      "before": 이전값,
+      "after": 변경값
+    }}
+  ]
+}}"""
+
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+    try:
+        response = await client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text[:-3].strip()
+        result = json.loads(text)
+        changes = result.get("changes", [])
+
+        applied = 0
+        for ch in changes:
+            pid = ch.get("policy_id")
+            policy = await svc.get_policy(pid)
+            if not policy:
+                continue
+
+            market = ch.get("market", "common")
+            field = ch.get("field", "")
+            after = ch.get("after")
+
+            if market == "common":
+                updated_pricing = dict(policy.pricing or {})
+                updated_pricing[field] = after
+                await svc.update_policy(pid, {"pricing": updated_pricing})
+            else:
+                updated_mp = dict(policy.market_policies or {})
+                if market in updated_mp and isinstance(updated_mp[market], dict):
+                    updated_mp[market] = dict(updated_mp[market])
+                    updated_mp[market][field] = after
+                    await svc.update_policy(pid, {"market_policies": updated_mp})
+            applied += 1
+
+        return {"ok": True, "applied": applied, "changes": changes}
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"AI 응답 파싱 실패: {e}") from e
+    except anthropic.APIError as e:
+        raise HTTPException(400, f"Claude API 오류: {e}") from e
+
+
 # ── Policy CRUD (파라미터 경로는 정적 경로 뒤에 등록) ─────────────────────────
 
 @router.get("/{policy_id}", response_model=SambaPolicy)

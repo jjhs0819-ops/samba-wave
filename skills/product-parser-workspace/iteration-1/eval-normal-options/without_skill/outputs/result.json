@@ -1,0 +1,133 @@
+{
+  "source": "musinsa",
+  "sourceProductId": 3347848,
+  "sourceUrl": "https://www.musinsa.com/products/3347848",
+  "styleNo": "5009530523",
+  "name": "메이트 블랙",
+  "nameEng": "Mate Black",
+  "brand": {
+    "code": "lemouton",
+    "name": "르무통",
+    "nameEng": "LEMOUTON",
+    "nation": "한국"
+  },
+  "category": {
+    "depth1": { "code": "003", "name": "신발" },
+    "depth2": { "code": "003002", "name": "스니커즈" },
+    "depth3": { "code": "003002006", "name": "라이프스타일화" },
+    "depth4": null
+  },
+  "images": {
+    "thumbnail": "https://image.msscdn.net/images/goods_img/20230605/3347848/3347848_17091845426736_500.jpg",
+    "product": [
+      "https://image.msscdn.net/images/prd_img/20230605/3347848/detail_3347848_17091865662241_500.jpg",
+      "https://image.msscdn.net/images/prd_img/20230605/3347848/detail_3347848_17091865662242_500.jpg",
+      "https://image.msscdn.net/images/prd_img/20230605/3347848/detail_3347848_17091865662243_500.jpg",
+      "https://image.msscdn.net/images/prd_img/20230605/3347848/detail_3347848_17091865662244_500.jpg"
+    ],
+    "detail": [
+      "https://image.msscdn.net/images/prd_img/20230605/3347848/desc_01.jpg",
+      "https://image.msscdn.net/images/prd_img/20230605/3347848/desc_02.jpg",
+      "https://image.msscdn.net/images/prd_img/20230605/3347848/desc_03.jpg"
+    ]
+  },
+  "price": {
+    "original": 149000,
+    "sale": 116900,
+    "discountRate": 22,
+    "couponPrice": 105210,
+    "couponDiscount": 11690,
+    "maxBenefitPrice": 99800,
+    "memberDiscountRate": 2
+  },
+  "options": [
+    {
+      "optionNo": 101,
+      "name": "230",
+      "managedCode": "LMT-BLK-230",
+      "additionalPrice": 0,
+      "stock": 15,
+      "isSoldOut": false,
+      "isActive": true,
+      "deliveryType": "GENERAL"
+    },
+    {
+      "optionNo": 102,
+      "name": "240",
+      "managedCode": "LMT-BLK-240",
+      "additionalPrice": 0,
+      "stock": 8,
+      "isSoldOut": false,
+      "isActive": true,
+      "deliveryType": "GENERAL"
+    },
+    {
+      "optionNo": 103,
+      "name": "250",
+      "managedCode": "LMT-BLK-250",
+      "additionalPrice": 0,
+      "stock": 22,
+      "isSoldOut": false,
+      "isActive": true,
+      "deliveryType": "GENERAL"
+    },
+    {
+      "optionNo": 104,
+      "name": "260",
+      "managedCode": "LMT-BLK-260",
+      "additionalPrice": 0,
+      "stock": 30,
+      "isSoldOut": false,
+      "isActive": true,
+      "deliveryType": "GENERAL"
+    },
+    {
+      "optionNo": 105,
+      "name": "270",
+      "managedCode": "LMT-BLK-270",
+      "additionalPrice": 0,
+      "stock": 12,
+      "isSoldOut": false,
+      "isActive": true,
+      "deliveryType": "GENERAL"
+    },
+    {
+      "optionNo": 106,
+      "name": "280",
+      "managedCode": "LMT-BLK-280",
+      "additionalPrice": 0,
+      "stock": 5,
+      "isSoldOut": false,
+      "isActive": true,
+      "deliveryType": "GENERAL"
+    }
+  ],
+  "notification": {
+    "material": "메리노 울 70%, 재활용 폴리에스터 30%",
+    "color": "블랙",
+    "size": "230~280 (5mm 단위)",
+    "manufacturer": "주식회사 우주텍",
+    "origin": "베트남",
+    "washingCare": "찬물 손세탁 권장, 드라이클리닝 금지",
+    "qualityGuarantee": "관련 법 및 소비자분쟁해결기준에 따름"
+  },
+  "materials": [
+    { "name": "메리노 울", "rate": 70 },
+    { "name": "재활용 폴리에스터", "rate": 30 }
+  ],
+  "saleStatus": {
+    "isSoldOut": false,
+    "isOutOfStock": false,
+    "isSale": true,
+    "isOutlet": false,
+    "totalStock": 92
+  },
+  "attributes": {
+    "season": "2023 SS",
+    "gender": ["male", "female"],
+    "goodsType": "GENERAL",
+    "goodsTypeName": "일반배송",
+    "storeCodes": ["sneaker"],
+    "maxUsePointRate": 0.07
+  }
+}

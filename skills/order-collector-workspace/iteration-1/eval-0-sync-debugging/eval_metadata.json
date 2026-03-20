@@ -1,0 +1,12 @@
+{
+  "eval_id": 0,
+  "eval_name": "sync-debugging",
+  "prompt": "스마트스토어 주문 동기화 후 주문이 0건 들어온다. 원인과 해결 방법 분석.",
+  "assertions": [
+    {"id": "auth-check", "text": "인증 실패(clientId/clientSecret) 가능성 설명", "keywords": ["clientId", "clientSecret"]},
+    {"id": "days-param", "text": "days 파라미터/90일 제한 설명", "keywords": ["days", "89"]},
+    {"id": "account-active", "text": "활성 마켓 계정 조회 로직 설명", "keywords": ["account"]},
+    {"id": "dedup-logic", "text": "order_number 중복 체크 로직 설명", "keywords": ["order_number"]},
+    {"id": "market-branch", "text": "smartstore만 구현, 다른 마켓은 skip됨을 명시", "keywords": ["smartstore"]}
+  ]
+}

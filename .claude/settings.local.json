@@ -22,8 +22,8 @@
       "Skill(reel-creator)",
       "mcp__playwright__browser_tabs",
       "Skill(generate-image)",
-      "Bash(python -c \"import ast; ast.parse\\(open\\(''backend/domain/samba/forbidden/service.py'', encoding=''utf-8''\\).read\\(\\)\\); ast.parse\\(open\\(''backend/api/v1/routers/samba/forbidden.py'', encoding=''utf-8''\\).read\\(\\)\\); ast.parse\\(open\\(''backend/api/v1/routers/samba/proxy.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''OK''\\)\")",
-      "WebFetch(domain:www.musinsa.com)"
+      "Bash()",
+      "WebFetch()",
     ],
     "deny": [],
     "ask": []

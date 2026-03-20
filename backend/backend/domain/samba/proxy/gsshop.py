@@ -56,7 +56,9 @@ class GsShopClient:
         proxy-server.mjs ``generateGsToken()`` 포팅.
         token = AES256_CBC(yyyyMMddHHmmss + supCd, aesKey) → Base64
         """
-        now = datetime.now(tz=timezone.utc)
+        # GS샵은 KST(UTC+9) 기준 시각을 요구
+        from zoneinfo import ZoneInfo
+        now = datetime.now(tz=ZoneInfo("Asia/Seoul"))
         sysdate = now.strftime("%Y%m%d%H%M%S")
         plain_text = sysdate + self.sup_cd
 
@@ -169,13 +171,23 @@ class GsShopClient:
             result = await self._call_api(
                 "/api/v3/products/getSupMdidList.gs", "GET"
             )
+            # GS샵은 HTTP 200이지만 body에 fail 반환할 수 있음
+            data = result.get("data", {})
+            if isinstance(data, dict) and data.get("result") == "fail":
+                return {
+                    "success": False,
+                    "authenticated": False,
+                    "env": self.env,
+                    "message": data.get("message", "") or data.get("code", "인증 실패"),
+                    "data": data,
+                }
             env_label = "운영" if self.env == "prod" else "테스트"
             return {
                 "success": True,
                 "authenticated": True,
                 "env": self.env,
                 "message": f"인증 성공 ({env_label})",
-                "data": result.get("data"),
+                "data": data,
             }
         except GsShopApiError as exc:
             return {

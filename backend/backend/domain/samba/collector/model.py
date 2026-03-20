@@ -109,6 +109,7 @@ class SambaCollectedProduct(SQLModel, table=True):
 
     # 이미지/옵션 (JSON)
     images: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    detail_images: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
     options: Optional[List[Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # 상세 설명
@@ -132,6 +133,10 @@ class SambaCollectedProduct(SQLModel, table=True):
     market_prices: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
     market_enabled: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
     registered_accounts: Optional[List[str]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    # 마켓별 등록된 상품번호: { "account_id": "product_no", ... }
+    market_product_nos: Optional[Any] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
 
@@ -181,9 +186,11 @@ class SambaCollectedProduct(SQLModel, table=True):
     # KREAM 특화 데이터
     kream_data: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
-    # 제조사/원산지
+    # 제조사/원산지/소재/색상
     manufacturer: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     origin: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    material: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    color: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # Timestamps
     created_at: datetime = Field(

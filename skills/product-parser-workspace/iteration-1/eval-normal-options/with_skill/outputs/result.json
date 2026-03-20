@@ -1,0 +1,108 @@
+{
+  "id": "col_musinsa_3347848_1710892800",
+  "sourceSite": "MUSINSA",
+  "siteProductId": "3347848",
+  "sourceUrl": "https://www.musinsa.com/products/3347848",
+  "name": "메이트 블랙",
+  "nameEn": "Mate Black",
+  "brand": "르무통",
+  "brandCode": "lemouton",
+  "category": "신발 > 스니커즈 > 라이프스타일화",
+  "category1": "신발",
+  "category2": "스니커즈",
+  "category3": "라이프스타일화",
+  "category4": null,
+  "categoryCode": "003002006",
+  "images": [
+    "https://image.msscdn.net/images/goods_img/20230605/3347848/3347848_17091845426736_500.jpg",
+    "https://image.msscdn.net/images/prd_img/20230605/3347848/detail_3347848_17091865662241_500.jpg",
+    "https://image.msscdn.net/images/prd_img/20230605/3347848/detail_3347848_17091865662242_500.jpg",
+    "https://image.msscdn.net/images/prd_img/20230605/3347848/detail_3347848_17091865662243_500.jpg",
+    "https://image.msscdn.net/images/prd_img/20230605/3347848/detail_3347848_17091865662244_500.jpg"
+  ],
+  "detailImages": [
+    "https://image.msscdn.net/images/prd_img/20230605/3347848/desc_01.jpg",
+    "https://image.msscdn.net/images/prd_img/20230605/3347848/desc_02.jpg",
+    "https://image.msscdn.net/images/prd_img/20230605/3347848/desc_03.jpg"
+  ],
+  "detailHtml": "<div class='product-detail'><img src='https://image.msscdn.net/images/prd_img/20230605/3347848/desc_01.jpg'/><p>르무통 메이트 블랙은 메리노 울 소재의 라이프스타일 스니커즈입니다.</p><img src='https://image.msscdn.net/images/prd_img/20230605/3347848/desc_02.jpg'/><img src='https://image.msscdn.net/images/prd_img/20230605/3347848/desc_03.jpg'/></div>",
+  "options": [
+    {
+      "no": 101,
+      "name": "230",
+      "price": 116900,
+      "stock": 15,
+      "isSoldOut": false,
+      "isBrandDelivery": false,
+      "deliveryType": "GENERAL",
+      "managedCode": "LMT-BLK-230"
+    },
+    {
+      "no": 102,
+      "name": "240",
+      "price": 116900,
+      "stock": 8,
+      "isSoldOut": false,
+      "isBrandDelivery": false,
+      "deliveryType": "GENERAL",
+      "managedCode": "LMT-BLK-240"
+    },
+    {
+      "no": 103,
+      "name": "250",
+      "price": 116900,
+      "stock": 22,
+      "isSoldOut": false,
+      "isBrandDelivery": false,
+      "deliveryType": "GENERAL",
+      "managedCode": "LMT-BLK-250"
+    },
+    {
+      "no": 104,
+      "name": "260",
+      "price": 116900,
+      "stock": 30,
+      "isSoldOut": false,
+      "isBrandDelivery": false,
+      "deliveryType": "GENERAL",
+      "managedCode": "LMT-BLK-260"
+    },
+    {
+      "no": 105,
+      "name": "270",
+      "price": 116900,
+      "stock": 12,
+      "isSoldOut": false,
+      "isBrandDelivery": false,
+      "deliveryType": "GENERAL",
+      "managedCode": "LMT-BLK-270"
+    },
+    {
+      "no": 106,
+      "name": "280",
+      "price": 116900,
+      "stock": 5,
+      "isSoldOut": false,
+      "isBrandDelivery": false,
+      "deliveryType": "GENERAL",
+      "managedCode": "LMT-BLK-280"
+    }
+  ],
+  "originalPrice": 149000,
+  "salePrice": 116900,
+  "discountRate": 22,
+  "couponPrice": 105210,
+  "bestBenefitPrice": 93990,
+  "memberDiscountRate": 2,
+  "origin": "베트남",
+  "material": "메리노 울 70%, 재활용 폴리에스터 30%",
+  "manufacturer": "주식회사 우주텍",
+  "color": "블랙",
+  "sizeInfo": "230~280 (5mm 단위)",
+  "careInstructions": "찬물 손세탁 권장, 드라이클리닝 금지",
+  "qualityGuarantee": "관련 법 및 소비자분쟁해결기준에 따름",
+  "saleStatus": "in_stock",
+  "isOutOfStock": false,
+  "isBoutique": false,
+  "status": "collected"
+}

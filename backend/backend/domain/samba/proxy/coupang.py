@@ -40,8 +40,8 @@ class CoupangClient:
   def _generate_signature(self, method: str, path: str, query: str = "") -> tuple[str, str]:
     """HMAC-SHA256 서명 생성. (authorization_header, datetime) 반환."""
     dt = datetime.now(timezone.utc).strftime("%y%m%dT%H%M%SZ")
-    # 메시지: datetime\nmethod\npath\nquery (줄바꿈 구분)
-    message = f"{dt}\n{method}\n{path}\n{query}"
+    # 메시지: datetime + method + path + query (단순 연결, 구분자 없음)
+    message = f"{dt}{method}{path}{query}"
     signature = hmac.new(
       self.secret_key.encode("utf-8"),
       message.encode("utf-8"),
@@ -98,7 +98,93 @@ class CoupangClient:
         msg = data.get("message", "") or data.get("reason", "") or resp.text[:200]
         raise CoupangApiError(f"HTTP {resp.status_code}: {msg}")
 
+      # 쿠팡 API는 HTTP 200이지만 body에 code=ERROR 반환하는 경우 있음
+      if isinstance(data, dict) and data.get("code") == "ERROR":
+        msg = data.get("message", "") or "알 수 없는 오류"
+        raise CoupangApiError(f"API ERROR: {msg}")
+
       return data
+
+  # ------------------------------------------------------------------
+  # 카테고리 조회
+  # ------------------------------------------------------------------
+
+  async def get_categories(self) -> dict[str, Any]:
+    """전체 카테고리 조회 (display category 기반)."""
+    return await self._call_api(
+      "GET",
+      "/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories",
+    )
+
+  async def resolve_category_code(self, category_path: str) -> int:
+    """카테고리 경로 문자열 → displayItemCategoryCode 변환.
+
+    카테고리 트리를 조회하여 경로의 마지막 키워드와 가장 잘 매칭되는 리프 노드 반환.
+    """
+    try:
+      result = await self.get_categories()
+      root = result.get("data", result) if isinstance(result, dict) else {}
+      if not isinstance(root, dict):
+        return 0
+
+      # 트리 평탄화: (경로, 코드) 리스트 생성
+      def flatten(node: dict, path: str = "") -> list[tuple[str, int]]:
+        code = node.get("displayItemCategoryCode", 0)
+        name = node.get("name", "")
+        current = f"{path} > {name}" if path else name
+        entries: list[tuple[str, int]] = []
+        children = node.get("child", [])
+        if not children and code:
+          entries.append((current, code))
+        for c in children:
+          entries.extend(flatten(c, current))
+        return entries
+
+      all_cats = flatten(root)
+
+      # 경로에서 키워드 추출 (예: "패션의류 > 남성의류 > 아우터 > 코트" → ["패션의류", "남성의류", ...])
+      keywords = [k.strip() for k in category_path.replace(">", "/").split("/") if k.strip()]
+
+      # 가중치 매칭: 상위 카테고리(성별 등)에 높은 가중치 부여
+      # 예: ["패션의류", "남성의류", "아우터", "코트"] → 가중치 [4, 3, 2, 1]
+      full_matches: list[tuple[str, int, int]] = []
+      partial_matches: list[tuple[str, int, int]] = []
+      for cat_path, code in all_cats:
+        score = 0
+        match_count = 0
+        for i, kw in enumerate(keywords):
+          if kw in cat_path:
+            score += len(keywords) - i  # 상위 키워드일수록 높은 가중치
+            match_count += 1
+        if match_count == len(keywords):
+          full_matches.append((cat_path, code, score))
+        elif match_count > 0:
+          partial_matches.append((cat_path, code, score))
+
+      # 전체 매칭 → 가중치 합계 높은 순, 동점이면 경로 짧은 순
+      best_code = 0
+      if full_matches:
+        full_matches.sort(key=lambda x: (-x[2], len(x[0])))
+        best_code = full_matches[0][1]
+        logger.info(f"[쿠팡] 카테고리 전체매칭: '{category_path}' → {best_code} ({full_matches[0][0]})")
+      elif partial_matches:
+        partial_matches.sort(key=lambda x: (-x[2], len(x[0])))
+        best_code = partial_matches[0][1]
+        logger.info(f"[쿠팡] 카테고리 부분매칭: '{category_path}' → {best_code} ({partial_matches[0][0]})")
+
+      if best_code:
+        logger.info(f"[쿠팡] 카테고리 매핑: '{category_path}' → {best_code}")
+      return best_code
+    except Exception as exc:
+      logger.warning(f"[쿠팡] 카테고리 코드 조회 실패: {exc}")
+      return 0
+
+  async def get_category_by_id(self, category_id: str) -> dict[str, Any]:
+    """특정 카테고리 상세 조회."""
+    return await self._call_api(
+      "GET",
+      f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories/{category_id}",
+    )
 
   # ------------------------------------------------------------------
   # 상품 등록/수정
@@ -145,12 +231,88 @@ class CoupangClient:
     return_center_code: str = "",
     outbound_shipping_place_code: str = "",
   ) -> dict[str, Any]:
-    """SambaCollectedProduct → 쿠팡 상품 등록 데이터 변환."""
+    """SambaCollectedProduct → 쿠팡 상품 등록 데이터 변환.
+
+    쿠팡 Wing API 공식 스펙 기준 전체 필수필드 포함.
+    """
+    from datetime import datetime as dt, timezone as tz
+
     images_raw = product.get("images") or []
-    vendor_image_urls = [
-      {"imageOrder": i, "imageUrl": url}
-      for i, url in enumerate(images_raw[:10])
+    color = product.get("color", "") or "상세 이미지 참조"
+    detail_html = product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>"
+
+    # 카테고리 코드 (숫자만 허용)
+    display_category = int(category_id) if category_id and str(category_id).isdigit() else 0
+
+    # 판매기간
+    now = dt.now(tz.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+    # 고시정보 — 의류 기본값 (카테고리 메타정보 API 기준 상세명 정확히 일치해야 함)
+    notices = [
+      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "제품 소재", "content": product.get("material", "") or "상세페이지 참조"},
+      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "색상", "content": color},
+      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "치수", "content": "상세페이지 참조"},
+      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "제조자(수입자)", "content": product.get("manufacturer", "") or "상세페이지 참조"},
+      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "제조국", "content": product.get("origin", "") or "상세페이지 참조"},
+      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "세탁방법 및 취급시 주의사항", "content": "상세페이지 참조"},
+      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "제조연월", "content": "상세페이지 참조"},
+      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "품질보증기준", "content": "제품 이상 시 공정거래위원회 고시 소비자분쟁해결기준에 의거 보상합니다."},
+      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "A/S 책임자와 전화번호", "content": "상세페이지 참조"},
     ]
+
+    # 아이템별 공통 필드 생성 함수
+    def _build_item(item_name: str, stock: int, size_val: str) -> dict[str, Any]:
+      # 아이템별 이미지 (대표 + 상세)
+      item_images: list[dict[str, Any]] = []
+      if images_raw:
+        item_images.append({
+          "imageOrder": 0,
+          "imageType": "REPRESENTATION",
+          "vendorPath": images_raw[0],
+        })
+        for idx, url in enumerate(images_raw[1:10], start=1):
+          item_images.append({
+            "imageOrder": idx,
+            "imageType": "DETAIL",
+            "vendorPath": url,
+          })
+
+      return {
+        "itemName": item_name,
+        "originalPrice": int(product.get("original_price", 0)),
+        "salePrice": int(product.get("sale_price", 0)),
+        "maximumBuyCount": min(stock, 99999),
+        "maximumBuyForPerson": 0,
+        "maximumBuyForPersonPeriod": 1,
+        "outboundShippingTimeDay": 3,
+        "unitCount": 1,
+        "adultOnly": "EVERYONE",
+        "taxType": "TAX",
+        "parallelImported": "NOT_PARALLEL_IMPORTED",
+        "overseasPurchased": "NOT_OVERSEAS_PURCHASED",
+        "pccNeeded": False,
+        "barcode": "",
+        "emptyBarcode": True,
+        "emptyBarcodeReason": "바코드 없음",
+        "offerCondition": "NEW",
+        "attributes": [
+          {"attributeTypeName": "패션의류/잡화 사이즈", "attributeValueName": size_val},
+          {"attributeTypeName": "색상", "attributeValueName": color},
+        ],
+        "contents": [
+          {
+            "contentsType": "HTML",
+            "contentDetails": [
+              {"content": detail_html, "detailType": "TEXT"}
+            ],
+          }
+        ],
+        "notices": notices,
+        "images": item_images,
+        "certifications": [
+          {"certificationType": "NOT_REQUIRED", "certificationCode": ""}
+        ],
+      }
 
     # 옵션 처리
     options = product.get("options") or []
@@ -159,74 +321,43 @@ class CoupangClient:
       for opt in options:
         opt_name = opt.get("name", "") or opt.get("size", "") or "기본"
         opt_stock = opt.get("stock", 999)
-        items.append({
-          "itemName": opt_name,
-          "originalPrice": int(product.get("original_price", 0)),
-          "salePrice": int(product.get("sale_price", 0)),
-          "maximumBuyCount": 999,
-          "maximumBuyForPerson": 0,
-          "outboundShippingTimeDay": 3,
-          "unitCount": 1,
-          "adultOnly": "EVERYONE",
-          "taxType": "TAX",
-          "vendorInventoryItemList": [
-            {"quantity": opt_stock}
-          ],
-        })
+        size_val = opt_name.split("/")[-1] if "/" in opt_name else opt_name
+        items.append(_build_item(opt_name, opt_stock, size_val))
     else:
-      items.append({
-        "itemName": product.get("name", "기본"),
-        "originalPrice": int(product.get("original_price", 0)),
-        "salePrice": int(product.get("sale_price", 0)),
-        "maximumBuyCount": 999,
-        "maximumBuyForPerson": 0,
-        "outboundShippingTimeDay": 3,
-        "unitCount": 1,
-        "adultOnly": "EVERYONE",
-        "taxType": "TAX",
-        "vendorInventoryItemList": [
-          {"quantity": 999}
-        ],
-      })
+      items.append(_build_item(product.get("name", "기본"), 999, "FREE"))
 
     return {
-      "displayCategoryCode": category_id or 0,
-      "sellerProductName": product.get("name", ""),
-      "vendorId": "",  # 런타임에 채움
-      "saleStartedAt": "",
-      "saleEndedAt": "",
-      "displayProductName": product.get("name", ""),
+      "displayCategoryCode": display_category,
+      "sellerProductName": product.get("name", "")[:100],
+      "vendorId": "",  # 런타임에 디스패처에서 채움
+      "saleStartedAt": now,
+      "saleEndedAt": "2099-01-01T23:59:59",
+      "displayProductName": product.get("name", "")[:100],
       "brand": product.get("brand", ""),
-      "generalProductName": product.get("name", ""),
+      "generalProductName": product.get("name", "")[:100],
       "productGroup": "",
-      "deliveryMethod": "PARCEL",
+      "deliveryMethod": "SEQUENCIAL",
       "deliveryCompanyCode": "CJGLS",
       "deliveryChargeType": "FREE",
       "deliveryCharge": 0,
       "freeShipOverAmount": 0,
-      "deliveryChargeOnReturn": 5000,
+      "deliveryChargeOnReturn": 2500,
       "remoteAreaDeliverable": "N",
       "unionDeliveryType": "NOT_UNION_DELIVERY",
-      "returnCenterCode": return_center_code,
-      "returnChargeName": "반품배송비",
+      "returnCenterCode": return_center_code or "NO_RETURN_CENTERCODE",
+      "returnChargeName": "반품지",
       "companyContactNumber": "02-0000-0000",
-      "returnChargeVendor": "VENDOR",
-      "afterServiceContactNumber": "02-0000-0000",
-      "afterServiceGuideContent": "상세페이지 참조",
-      "outboundShippingPlaceCode": outbound_shipping_place_code,
-      "vendorUserId": "",
-      "requested": False,
+      "returnZipCode": "00000",
+      "returnAddress": "상세페이지 참조",
+      "returnAddressDetail": "상세페이지 참조",
+      "returnCharge": 2500,
+      "outboundShippingPlaceCode": int(outbound_shipping_place_code) if outbound_shipping_place_code else 0,
+      "vendorUserId": "",  # 런타임에 디스패처에서 채움
+      "requested": True,
       "items": items,
       "requiredDocuments": [],
       "extraInfoMessage": "",
-      "manufacture": product.get("manufacturer", ""),
-      "vendorImageUrls": vendor_image_urls,
-      "contentDetails": [
-        {
-          "content": product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>",
-          "detailType": "HTML",
-        }
-      ],
+      "manufacture": product.get("manufacturer", "") or product.get("brand", ""),
     }
 
 

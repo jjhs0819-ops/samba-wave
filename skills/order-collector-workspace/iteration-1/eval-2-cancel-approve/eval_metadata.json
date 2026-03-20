@@ -1,0 +1,12 @@
+{
+  "eval_id": 2,
+  "eval_name": "cancel-approve",
+  "prompt": "취소승인을 쿠팡/11번가까지 확장하는 코드 변경안.",
+  "assertions": [
+    {"id": "coupang-cancel-api", "text": "쿠팡 취소승인 API 엔드포인트 포함", "keywords": ["cancellation", "approve"]},
+    {"id": "elevenst-cancel-api", "text": "11번가 취소승인 API 포함", "keywords": ["cancel"]},
+    {"id": "source-branch", "text": "source별 분기 로직 (smartstore/coupang/11st)", "keywords": ["source"]},
+    {"id": "proxy-method", "text": "프록시에 approve_cancel 메서드 추가", "keywords": ["approve_cancel", "def "]},
+    {"id": "status-update", "text": "승인 후 shipping_status 취소완료로 업데이트", "keywords": ["취소완료"]}
+  ]
+}

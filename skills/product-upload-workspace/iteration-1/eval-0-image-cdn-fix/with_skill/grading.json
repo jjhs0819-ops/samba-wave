@@ -1,0 +1,34 @@
+{
+  "eval_id": "eval-0-image-cdn-fix",
+  "variant": "with_skill",
+  "total_assertions": 5,
+  "passed": 5,
+  "pass_rate": 100.0,
+  "expectations": [
+    {
+      "text": "msscdn.net에 대한 Referer가 musinsa.com으로 설정됨을 명시",
+      "passed": true,
+      "evidence": "[musinsa.com] found: ...       referer = \"https://www.musinsa.com/\"\n\n    async with httpx.Async... | [Referer] found: ...et`)은 핫링크 방지 정책이 적용되어 있어, 올바른 Referer 없이 이미지를 요청하면 차단 이미지(1x1 투명 GI..."
+    },
+    {
+      "text": "1000B 미만 CDN 차단 감지 로직 설명",
+      "passed": true,
+      "evidence": "[1000] found: ...지\n        if len(img_bytes) < 1000:\n            raise SmartStore..."
+    },
+    {
+      "text": "상세 HTML 이미지 URL 치환 과정 설명",
+      "passed": true,
+      "evidence": "[치환] found: ...tstore()` — 상세 HTML 내 이미지 URL 치환 |\n| `backend/backend/domain/s..."
+    },
+    {
+      "text": "_handle_smartstore 이미지 업로드 흐름 설명",
+      "passed": true,
+      "evidence": "[_handle_smartstore] found: ...ba/shipment/dispatcher.py` | `_handle_smartstore()` — 상세 HTML 내 이미지 URL 치환 |\n|..."
+    },
+    {
+      "text": "Content-Type 검증 미구현 문제 지적",
+      "passed": true,
+      "evidence": "[Content-Type] found: ...등)이 정상 이미지인데 차단으로 오인될 가능성 |\n| Content-Type 미검증 | **위험** | `text/html` 응답..."
+    }
+  ]
+}

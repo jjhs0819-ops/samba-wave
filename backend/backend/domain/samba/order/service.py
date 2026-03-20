@@ -26,7 +26,7 @@ class SambaOrderService:
         cost = float(data.get("cost", 0))
         fee_rate = float(data.get("fee_rate", 0))
 
-        revenue = sale_price * (1 - fee_rate / 100)
+        revenue = data.get("revenue") or (sale_price * (1 - fee_rate / 100))
         profit = revenue - cost
         profit_rate = f"{(profit / revenue * 100):.2f}" if revenue > 0 else "0.00"
 

@@ -1,0 +1,37 @@
+{
+  "eval_id": 2,
+  "eval_name": "error-debugging",
+  "prompt": "스마트스토어 상품 등록 시 'HTTP 400: InvalidInputs [originProduct.leafCategoryId: 유효하지 않은 카테고리입니다]' 에러가 나.",
+  "assertions": [
+    {
+      "id": "error-classification",
+      "text": "이 에러가 schema_changed 타입으로 분류됨을 명시",
+      "type": "contains_keyword",
+      "keywords": ["schema_changed"]
+    },
+    {
+      "id": "root-cause-path-string",
+      "text": "경로 문자열(예: '상의 > 맨투맨')을 숫자 코드 대신 전달한 것이 원인임을 설명",
+      "type": "contains_keyword",
+      "keywords": ["isdigit"]
+    },
+    {
+      "id": "invalid-inputs-parsing",
+      "text": "네이버 API의 invalidInputs 배열 파싱 로직을 설명",
+      "type": "contains_keyword",
+      "keywords": ["invalidInputs"]
+    },
+    {
+      "id": "category-mapping-solution",
+      "text": "카테고리 매핑 테이블 확인 또는 _resolve_category_mappings 사용을 해결책으로 제시",
+      "type": "contains_keyword",
+      "keywords": ["매핑"]
+    },
+    {
+      "id": "error-types-overview",
+      "text": "4가지 에러 분류 체계(auth_failed, schema_changed, network, unknown)를 설명",
+      "type": "contains_keyword",
+      "keywords": ["auth_failed", "network"]
+    }
+  ]
+}

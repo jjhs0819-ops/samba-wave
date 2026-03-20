@@ -1,0 +1,34 @@
+{
+  "eval_id": "eval-2-error-debugging",
+  "variant": "without_skill",
+  "total_assertions": 5,
+  "passed": 5,
+  "pass_rate": 100.0,
+  "expectations": [
+    {
+      "text": "schema_changed 타입으로 분류됨을 명시",
+      "passed": true,
+      "evidence": "[schema_changed] found: ...orized`, `인증` 포함 | 인증 실패 |\n| `schema_changed` | `400`, `422`, `필수`, `requi..."
+    },
+    {
+      "text": "isdigit() 검증 로직 설명",
+      "passed": true,
+      "evidence": "[isdigit] found: ...tegory_id and not category_id.isdigit():\n    logger.warning(f\"[스마트스..."
+    },
+    {
+      "text": "invalidInputs 배열 파싱 설명",
+      "passed": true,
+      "evidence": "[invalidInputs] found: ...리포트\n\n## 에러 메시지\n\n```\nHTTP 400: InvalidInputs [originProduct.leafCategoryId..."
+    },
+    {
+      "text": "카테고리 매핑 해결책 제시",
+      "passed": true,
+      "evidence": "[매핑] found: ...: \"스마트스토어 카테고리 코드가 없습니다. 카테고리 매핑을 설정해주세요.\"}\n```\n\n이 검증은 **형식(숫자..."
+    },
+    {
+      "text": "4가지 에러 분류 체계 설명",
+      "passed": true,
+      "evidence": "[auth_failed] found: ...r 기준) | 의미 |\n|---|---|---|\n| `auth_failed` | `401`, `403`, `unauthorize..."
+    }
+  ]
+}

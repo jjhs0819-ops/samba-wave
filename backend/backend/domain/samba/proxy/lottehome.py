@@ -144,6 +144,7 @@ class LotteHomeClient:
             "strtoken",
             "sessionkey",
             "session_key",
+            "subscriptionid",
         ]
 
         for k, v in obj.items():

@@ -10,6 +10,7 @@ class OrderCreate(BaseModel):
     channel_name: Optional[str] = None
     product_id: Optional[str] = None
     product_name: Optional[str] = None
+    product_image: Optional[str] = None
     source_site: Optional[str] = None
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
@@ -17,6 +18,7 @@ class OrderCreate(BaseModel):
     quantity: int = 1
     sale_price: float = 0
     cost: float = 0
+    shipping_fee: float = 0
     fee_rate: float = 0
     notes: Optional[str] = None
     source: Optional[str] = None
@@ -25,13 +27,16 @@ class OrderCreate(BaseModel):
 
 class OrderUpdate(BaseModel):
     channel_name: Optional[str] = None
+    product_id: Optional[str] = None
     product_name: Optional[str] = None
+    product_image: Optional[str] = None
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
     customer_address: Optional[str] = None
     quantity: Optional[int] = None
     sale_price: Optional[float] = None
     cost: Optional[float] = None
+    shipping_fee: Optional[float] = None
     fee_rate: Optional[float] = None
     shipping_company: Optional[str] = None
     tracking_number: Optional[str] = None
@@ -40,3 +45,7 @@ class OrderUpdate(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: str
+
+
+class FetchProductImageRequest(BaseModel):
+    url: str

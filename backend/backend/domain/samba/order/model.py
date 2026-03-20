@@ -40,6 +40,7 @@ class SambaOrder(SQLModel, table=True):
     channel_name: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     product_id: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True, index=True))
     product_name: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    product_image: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     source_site: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 고객 정보
@@ -51,6 +52,7 @@ class SambaOrder(SQLModel, table=True):
     quantity: int = Field(default=1)
     sale_price: float = Field(default=0)
     cost: float = Field(default=0)
+    shipping_fee: float = Field(default=0)
     fee_rate: float = Field(default=0)
     revenue: float = Field(default=0)
     profit: float = Field(default=0)

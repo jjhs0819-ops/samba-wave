@@ -1,0 +1,81 @@
+{
+  "skill_name": "product-upload",
+  "iteration": 1,
+  "configurations": [
+    {
+      "name": "with_skill",
+      "label": "스킬 사용",
+      "pass_rate": {
+        "mean": 100.0,
+        "stddev": 0.0,
+        "per_eval": {
+          "eval-0-image-cdn-fix": 100.0,
+          "eval-1-shoes-notice-type": 100.0,
+          "eval-2-error-debugging": 100.0
+        }
+      },
+      "time_seconds": {
+        "mean": 119.4,
+        "stddev": 16.1,
+        "per_eval": {
+          "eval-0-image-cdn-fix": 138.9,
+          "eval-1-shoes-notice-type": 100.1,
+          "eval-2-error-debugging": 119.1
+        }
+      },
+      "total_tokens": {
+        "mean": 64421,
+        "stddev": 13931,
+        "per_eval": {
+          "eval-0-image-cdn-fix": 82355,
+          "eval-1-shoes-notice-type": 48615,
+          "eval-2-error-debugging": 62294
+        }
+      }
+    },
+    {
+      "name": "without_skill",
+      "label": "스킬 미사용 (베이스라인)",
+      "pass_rate": {
+        "mean": 100.0,
+        "stddev": 0.0,
+        "per_eval": {
+          "eval-0-image-cdn-fix": 100.0,
+          "eval-1-shoes-notice-type": 100.0,
+          "eval-2-error-debugging": 100.0
+        }
+      },
+      "time_seconds": {
+        "mean": 108.2,
+        "stddev": 13.2,
+        "per_eval": {
+          "eval-0-image-cdn-fix": 116.4,
+          "eval-1-shoes-notice-type": 90.0,
+          "eval-2-error-debugging": 118.1
+        }
+      },
+      "total_tokens": {
+        "mean": 48673,
+        "stddev": 10700,
+        "per_eval": {
+          "eval-0-image-cdn-fix": 56627,
+          "eval-1-shoes-notice-type": 33350,
+          "eval-2-error-debugging": 56043
+        }
+      }
+    }
+  ],
+  "delta": {
+    "pass_rate": 0.0,
+    "time_seconds": 11.2,
+    "total_tokens": 15748,
+    "notes": "스킬 사용 시 평균 11초 더 소요, 15.7K 토큰 더 사용. 키워드 어설션 기준 동일 점수지만 정성적 차이 존재."
+  },
+  "analyst_observations": [
+    "키워드 기반 어설션이 비차별적(non-discriminating) — 양쪽 모두 100% 통과. 코드베이스 자체가 충분한 정보를 제공하므로 스킬 없이도 핵심 키워드를 모두 포함할 수 있음.",
+    "with_skill 버전은 평균 32% 더 많은 토큰을 사용하지만, 이는 스킬 문서를 읽는 오버헤드.",
+    "정성적 차이: with_skill 버전은 체크리스트 항목(C1 등)을 참조하고, 알려진 제한사항을 인용하며, 파이프라인 전체 흐름(service → dispatcher → proxy)을 체계적으로 설명.",
+    "eval-1(SHOES 분기)에서 with_skill은 field-mapping.md의 SHOES/COSMETIC 필드 구조를 정확히 반영. without_skill도 유사한 구조를 독립적으로 도출했으나, COSMETIC의 필드명이 다름(specification vs mainIngredient).",
+    "eval-2(에러 디버깅)에서 with_skill은 retransmit 카테고리 빈값 문제(알려진 제한사항 #6)를 명시적으로 언급. without_skill도 이를 발견했지만 스킬의 컨텍스트 없이 독립적으로 찾아냄."
+  ]
+}

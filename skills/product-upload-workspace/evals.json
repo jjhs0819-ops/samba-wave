@@ -1,0 +1,26 @@
+{
+  "skill_name": "product-upload",
+  "evals": [
+    {
+      "id": 0,
+      "name": "image-cdn-fix",
+      "prompt": "스마트스토어에 무신사 상품을 등록하면 이미지가 안 보여. msscdn.net 이미지가 마켓에서 차단되는 것 같은데, smartstore.py의 upload_image_from_url 함수를 분석하고 CDN 차단 감지 로직이 제대로 되어 있는지 확인해줘. 현재 Referer 설정이 올바른지, 1000B 미만 감지가 적절한지 코드 리뷰 결과를 outputs/review.md에 저장해.",
+      "expected_output": "msscdn.net → Referer: https://www.musinsa.com/ 설정 확인, 1000B CDN 차단 감지 로직 설명, 상세HTML 내 이미지 URL 치환 흐름 분석이 포함된 코드 리뷰",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "shoes-notice-type",
+      "prompt": "transform_product()에서 신발 카테고리일 때 고시정보 타입을 SHOES로 분기하는 코드를 작성해줘. 현재 smartstore.py에서 WEAR로 하드코딩된 부분을 카테고리 기반으로 WEAR/SHOES/COSMETIC을 분기하도록 수정하는 코드 변경안을 outputs/code_change.md에 저장해.",
+      "expected_output": "category 필드에서 '신발' 키워드 감지 → SHOES 타입 분기, shoes 필드 구조(material/color/size/height/manufacturer 등) 포함, 기존 WEAR 로직 유지하면서 분기 추가",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "error-debugging",
+      "prompt": "스마트스토어 상품 등록 시 'HTTP 400: InvalidInputs [originProduct.leafCategoryId: 유효하지 않은 카테고리입니다]' 에러가 나. dispatcher.py의 에러 분류 체계와 _handle_smartstore의 카테고리 검증 로직을 분석하고, 이 에러의 원인과 해결 방법을 outputs/debug_report.md에 정리해줘.",
+      "expected_output": "에러 분류: schema_changed, 원인: 경로 문자열을 숫자 코드 대신 전달, 해결: category_id.isdigit() 검증 + 카테고리 매핑 테이블 확인, invalidInputs 파싱 로직 설명",
+      "files": []
+    }
+  ]
+}

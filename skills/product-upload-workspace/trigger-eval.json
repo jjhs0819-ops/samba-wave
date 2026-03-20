@@ -1,0 +1,82 @@
+[
+  {
+    "query": "스마트스토어에 무신사에서 수집한 나이키 에어포스 상품을 등록하려는데 이미지가 계속 안 보여. msscdn.net 이미지가 차단되는 것 같은데 smartstore.py 확인해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "transform_product에서 신발 카테고리일 때 고시정보를 SHOES로 바꿔야 하는데, 현재 WEAR로 하드코딩돼있어. 분기 로직 추가해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "쿠팡 상품 등록 시 returnCenterCode가 빈값이라 에러가 나. coupang.py의 transform_product 수정해야 할 것 같아",
+    "should_trigger": true
+  },
+  {
+    "query": "dispatcher.py에서 스마트스토어 등록 실패 시 에러가 schema_changed로 분류되는데, 실제로는 카테고리 코드 문제야. 에러 분류 로직 개선해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "11번가에 상품 올리면 옵션값에 & 기호가 들어가서 XML 파싱 에러가 나. elevenst.py의 이스케이프 처리 확인해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "shipment/service.py의 _build_detail_html에서 상단/하단 템플릿 이미지가 안 들어가. 정책 템플릿 조회 로직 디버깅해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "마켓 전송 후 market_product_nos에 상품번호가 안 저장돼. originProductNo가 응답에 없는 것 같은데 service.py 확인해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "상품 전송할 때 정책에 설정된 계정만 필터링되어야 하는데, MARKET_TYPE_TO_POLICY_KEY에 새로 추가한 마켓이 없어서 전부 제외돼. 매핑 추가해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "스마트스토어 상세페이지에서 소싱처 CDN 이미지가 깨져 보여. _handle_smartstore에서 URL 치환이 안 되는 이미지가 있는 것 같아",
+    "should_trigger": true
+  },
+  {
+    "query": "품절 감지 후 스마트스토어에서 상품 판매중지가 안 돼. delete_from_market 쪽 statusType SUSPENSION 로직 확인해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "무신사에서 상품 수집할 때 옵션 사이즈가 안 가져와져. musinsa.py의 옵션 파싱 로직 확인해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "KREAM에서 수집한 상품의 material이 빈값이야. 확장앱에서 고시정보를 못 가져오는 것 같은데 background.js 확인해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "프론트엔드 주문 페이지에서 주문 목록이 안 떠. orders/page.tsx에서 API 호출 부분 확인해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "수집된 상품의 bestBenefitPrice 계산이 틀려. 무신사 혜택가 5단계 할인 로직 수정해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "워룸 대시보드에 실시간 품절 모니터링 차트를 추가하고 싶어. warroom/page.tsx 수정해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "새로운 소싱사이트 올리브영을 추가하려고 해. collector.js에 수집 모듈을 만들어줘",
+    "should_trigger": false
+  },
+  {
+    "query": "IndexedDB 스키마를 v4로 업그레이드하고 translationCache 스토어를 추가해야 해",
+    "should_trigger": false
+  },
+  {
+    "query": "로그인 페이지에서 JWT 토큰 만료 시 자동 로그아웃이 안 돼. serverAuth.ts 확인해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "정책 생성 페이지에서 마진율 계산 공식이 틀려. policies/page.tsx의 가격 계산 로직 수정해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "alembic 마이그레이션 파일을 생성해서 samba_collected_product 테이블에 shipping_fee 컬럼을 추가해줘",
+    "should_trigger": false
+  }
+]

@@ -1,0 +1,36 @@
+{
+  "eval_id": 0,
+  "eval_name": "image-cdn-fix",
+  "prompt": "스마트스토어에 무신사 상품을 등록하면 이미지가 안 보여. msscdn.net 이미지가 마켓에서 차단되는 것 같은데, smartstore.py의 upload_image_from_url 함수를 분석하고 CDN 차단 감지 로직이 제대로 되어 있는지 확인해줘.",
+  "assertions": [
+    {
+      "id": "referer-musinsa",
+      "text": "msscdn.net 도메인에 대한 Referer가 https://www.musinsa.com/으로 설정됨을 명시",
+      "type": "contains_keyword",
+      "keywords": ["musinsa.com", "Referer"]
+    },
+    {
+      "id": "cdn-detection-1000b",
+      "text": "1000 바이트 미만 응답을 CDN 차단으로 감지하는 로직을 설명",
+      "type": "contains_keyword",
+      "keywords": ["1000"]
+    },
+    {
+      "id": "detail-html-replacement",
+      "text": "상세 HTML 내부 이미지 URL을 네이버 CDN으로 치환하는 과정을 설명",
+      "type": "contains_keyword",
+      "keywords": ["치환", "naver"]
+    },
+    {
+      "id": "dispatcher-image-flow",
+      "text": "_handle_smartstore에서 이미지 업로드 후 product_copy에 반영하는 흐름 설명",
+      "type": "contains_keyword",
+      "keywords": ["_handle_smartstore", "naver_images"]
+    },
+    {
+      "id": "improvement-suggestions",
+      "text": "개선 제안 포함 (병렬 업로드, 재시도 등)",
+      "type": "subjective"
+    }
+  ]
+}

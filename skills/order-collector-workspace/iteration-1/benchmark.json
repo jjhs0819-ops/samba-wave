@@ -1,0 +1,31 @@
+{
+  "skill_name": "order-collector",
+  "iteration": 1,
+  "configurations": [
+    {
+      "name": "with_skill",
+      "label": "스킬 사용",
+      "pass_rate": {"mean": 86.7, "per_eval": {"eval-0": 80.0, "eval-1": 100.0, "eval-2": 80.0}},
+      "time_seconds": {"mean": 135.5, "per_eval": {"eval-0": 112.7, "eval-1": 165.2, "eval-2": 128.7}},
+      "total_tokens": {"mean": 54348, "per_eval": {"eval-0": 52968, "eval-1": 50727, "eval-2": 59350}}
+    },
+    {
+      "name": "without_skill",
+      "label": "스킬 미사용",
+      "pass_rate": {"mean": 86.7, "per_eval": {"eval-0": 100.0, "eval-1": 100.0, "eval-2": 60.0}},
+      "time_seconds": {"mean": 120.6, "per_eval": {"eval-0": 145.9, "eval-1": 124.1, "eval-2": 91.8}},
+      "total_tokens": {"mean": 48067, "per_eval": {"eval-0": 50246, "eval-1": 46522, "eval-2": 47433}}
+    }
+  ],
+  "delta": {
+    "pass_rate": 0.0,
+    "notes": "평균 동일하나 분포 다름: with_skill은 eval-2(취소승인 확장)에서 우위, without_skill은 eval-0(동기화 디버깅)에서 우위"
+  },
+  "analyst_observations": [
+    "eval-0(동기화 디버깅): without_skill이 5/5, with_skill이 4/5. with_skill에서 '89' 또는 '90' 키워드가 소문자 매칭에서 누락된 것으로 보임 (days 제한 설명은 있으나 정확한 숫자 키워드 불일치).",
+    "eval-1(쿠팡 구현): 양쪽 모두 5/5. with_skill은 스킬의 coupang.md 레퍼런스에서 API 엔드포인트와 상태 매핑을 참조하여 정확한 코드 생성. without_skill도 독립적으로 유사한 코드 작성.",
+    "eval-2(취소승인 확장): with_skill 4/5 vs without_skill 3/5. with_skill이 cs-guide.md의 마켓별 취소승인 API 정보를 활용하여 더 완전한 코드 생성. without_skill은 'source' 키워드 또는 'cancellation' 키워드 누락.",
+    "with_skill은 eval-1에서 체크리스트 자체 검증(20항목 중 17항목 85점)을 수행 — 스킬의 품질 체크리스트가 실제로 활용됨.",
+    "토큰/시간: with_skill이 평균 13% 더 많은 토큰 사용, 12% 더 느림. 스킬 문서 읽기 오버헤드."
+  ]
+}

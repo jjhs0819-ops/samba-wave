@@ -20,6 +20,7 @@ from backend.api.v1.routers.samba.returns import router as samba_returns_router
 from backend.api.v1.routers.samba.analytics import router as samba_analytics_router
 from backend.api.v1.routers.samba.proxy import router as samba_proxy_router
 from backend.api.v1.routers.samba.warroom import router as samba_warroom_router
+from backend.api.v1.routers.samba.user import router as samba_user_router
 from backend.middleware.error_handler import register_exception_handlers
 
 
@@ -93,6 +94,7 @@ def create_application() -> FastAPI:
     app.include_router(samba_analytics_router, prefix="/api/v1/samba")
     app.include_router(samba_proxy_router, prefix="/api/v1/samba")
     app.include_router(samba_warroom_router, prefix="/api/v1/samba")
+    app.include_router(samba_user_router, prefix="/api/v1/samba")
 
     @app.get("/")
     async def root() -> dict[str, str]:

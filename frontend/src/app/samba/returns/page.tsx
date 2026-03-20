@@ -137,8 +137,8 @@ export default function ReturnsPage() {
       {/* 헤더 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>반품·교환·취소</h2>
-          <p style={{ fontSize: '0.875rem', color: '#888' }}>반품/교환/취소 요청을 관리합니다</p>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>반품교환</h2>
+          <p style={{ fontSize: '0.875rem', color: '#888' }}>반품교환 요청을 관리합니다</p>
         </div>
         <button
           onClick={() => setShowForm(true)}

@@ -6,8 +6,18 @@ uvicorn CLI의 모듈 import 이슈 방지를 위해
 사용법: python run.py [--port PORT]
 """
 import argparse
+import signal
+import sys
 
 import uvicorn
+
+
+def _handle_exit(sig, frame):
+  """Windows에서 Ctrl+C 시 즉시 종료."""
+  sys.exit(0)
+
+signal.signal(signal.SIGINT, _handle_exit)
+signal.signal(signal.SIGTERM, _handle_exit)
 
 from backend.main import app  # noqa: F401 - 앱 직접 임포트
 

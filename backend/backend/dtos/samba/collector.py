@@ -71,5 +71,7 @@ class CollectedProductUpdate(BaseModel):
     applied_policy_id: Optional[str] = None
     market_prices: Optional[Any] = None
     market_enabled: Optional[Any] = None
+    registered_accounts: Optional[List[str]] = None
+    market_product_nos: Optional[Any] = None
     is_sold_out: Optional[bool] = None
     kream_data: Optional[Any] = None

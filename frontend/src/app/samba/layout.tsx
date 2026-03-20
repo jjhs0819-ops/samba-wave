@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import SambaModal from "@/components/samba/Modal";
+import type { SambaUser } from "@/lib/samba/api";
 
 interface NavItem {
   href: string;
@@ -17,10 +18,11 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/samba/policies", label: "정책관리" },
   { href: "/samba/categories", label: "카테고리매핑" },
   { href: "/samba/shipments", label: "상품전송/삭제" },
-  { href: "/samba/orders", label: "주문" },
-  { href: "/samba/returns", label: "반품·교환·취소" },
-  { href: "/samba/analytics", label: "매출통계" },
   { href: "/samba/warroom", label: "워룸" },
+  { href: "/samba/orders", label: "주문" },
+  { href: "/samba/returns", label: "반품교환" },
+  { href: "/samba/cs", label: "CS" },
+  { href: "/samba/analytics", label: "매출통계" },
   { href: "/samba/settings", label: "설정" },
 ];
 
@@ -30,7 +32,51 @@ export default function SambaLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<SambaUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  // 로그인 페이지는 인증 체크 없이 렌더링
+  const isLoginPage = pathname === "/samba/login";
+
+  useEffect(() => {
+    if (isLoginPage) {
+      setAuthChecked(true);
+      return;
+    }
+    const raw = localStorage.getItem("samba_user");
+    if (raw) {
+      try {
+        setCurrentUser(JSON.parse(raw) as SambaUser);
+      } catch {
+        localStorage.removeItem("samba_user");
+        router.replace("/samba/login");
+      }
+    } else {
+      router.replace("/samba/login");
+    }
+    setAuthChecked(true);
+  }, [isLoginPage, router]);
+
+  // 로그인 페이지면 레이아웃 헤더 없이 바로 렌더링
+  if (isLoginPage) {
+    return <>{children}</>;
+  }
+
+  // 인증 체크 중이거나 미로그인이면 빈 화면 (리다이렉트 중)
+  if (!authChecked || !currentUser) {
+    return (
+      <div className="flex items-center justify-center min-h-screen" style={{ background: "#0F0F0F" }}>
+        <p style={{ color: "#555", fontSize: "0.875rem" }}>로딩 중...</p>
+      </div>
+    );
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem("samba_user");
+    router.replace("/samba/login");
+  };
 
   return (
     <div className="flex flex-col min-h-screen" style={{ background: "#0F0F0F", color: "#E5E5E5" }}>
@@ -168,12 +214,83 @@ export default function SambaLayout({
             })}
           </nav>
 
-          {/* Right icons */}
-          <div className="flex items-center gap-4">
-            <button className="p-2 transition" style={{ color: "#888" }} title="알림">
+          {/* 알림 + 계정관리 + 사용자 정보 + 로그아웃 */}
+          <div className="flex items-center gap-3">
+            {/* 알림 아이콘 */}
+            <button
+              title="알림"
+              style={{
+                width: "32px",
+                height: "32px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "transparent",
+                border: "none",
+                borderRadius: "6px",
+                cursor: "pointer",
+                color: "#888",
+                fontSize: "1.125rem",
+                transition: "all 0.2s",
+                position: "relative",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.background = "rgba(255,140,0,0.08)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = "#888"; e.currentTarget.style.background = "transparent"; }}
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
               </svg>
+            </button>
+            {/* 계정관리 아이콘 */}
+            <Link
+              href="/samba/users"
+              title="계정관리"
+              style={{
+                width: "32px",
+                height: "32px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: pathname.startsWith("/samba/users") ? "rgba(255,140,0,0.12)" : "transparent",
+                border: "none",
+                borderRadius: "6px",
+                cursor: "pointer",
+                color: pathname.startsWith("/samba/users") ? "#FF8C00" : "#888",
+                fontSize: "1.125rem",
+                transition: "all 0.2s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.background = "rgba(255,140,0,0.08)"; }}
+              onMouseLeave={(e) => {
+                if (!pathname.startsWith("/samba/users")) { e.currentTarget.style.color = "#888"; e.currentTarget.style.background = "transparent"; }
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
+            </Link>
+            {/* 구분선 */}
+            <div style={{ width: "1px", height: "20px", background: "#333" }} />
+            <span style={{ fontSize: "0.8125rem", color: "#AAA" }}>
+              {currentUser.name || currentUser.email}
+            </span>
+            <button
+              onClick={handleLogout}
+              style={{
+                padding: "0.375rem 0.75rem",
+                fontSize: "0.75rem",
+                color: "#888",
+                background: "transparent",
+                border: "1px solid #333",
+                borderRadius: "6px",
+                cursor: "pointer",
+                transition: "all 0.2s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = "#FF6B6B"; e.currentTarget.style.borderColor = "#FF6B6B"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "#333"; }}
+            >
+              로그아웃
             </button>
           </div>
         </div>

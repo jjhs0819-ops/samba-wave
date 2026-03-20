@@ -79,6 +79,7 @@ export interface SambaOrder {
   channel_name?: string;
   product_id?: string;
   product_name?: string;
+  product_image?: string;
   source_site?: string;
   customer_name?: string;
   customer_phone?: string;
@@ -86,6 +87,7 @@ export interface SambaOrder {
   quantity: number;
   sale_price: number;
   cost: number;
+  shipping_fee: number;
   fee_rate: number;
   revenue: number;
   profit: number;
@@ -96,6 +98,8 @@ export interface SambaOrder {
   shipping_company?: string;
   tracking_number?: string;
   notes?: string;
+  source?: string;
+  shipment_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -116,6 +120,15 @@ export const orderApi = {
     request<SambaOrder>(`${SAMBA_PREFIX}/orders/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
   delete: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/orders/${id}`, { method: "DELETE" }),
+  syncFromMarkets: (days = 7, accountId?: string) =>
+    request<{ total_synced: number; results: { account: string; status: string; message?: string; fetched?: number; synced?: number }[] }>(
+      `${SAMBA_PREFIX}/orders/sync-from-markets`, { method: "POST", body: JSON.stringify({ days, account_id: accountId || undefined }) }),
+  approveCancel: (id: string) =>
+    request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/approve-cancel`, { method: "POST" }),
+  fetchProductImage: (url: string) =>
+    request<{ image_url: string }>(`${SAMBA_PREFIX}/orders/fetch-product-image`, {
+      method: "POST", body: JSON.stringify({ url }),
+    }),
 };
 
 // ── Channels ──
@@ -184,6 +197,10 @@ export const policyApi = {
       method: "POST",
       body: JSON.stringify({ cost, fee_rate: feeRate }),
     }),
+  aiChange: (command: string) =>
+    request<{ ok: boolean; applied: number; changes: { policy_id: string; policy_name: string; field: string; market: string; before: number; after: number }[] }>(
+      `${SAMBA_PREFIX}/policies/ai-change`,
+      { method: "POST", body: JSON.stringify({ command }) }),
 };
 
 // ── Collector (수집 필터 + 수집 상품) ──
@@ -224,13 +241,17 @@ export interface SambaCollectedProduct {
   category3?: string;
   category4?: string;
   detail_html?: string;
+  detail_images?: string[];
   manufacturer?: string;
   origin?: string;
+  material?: string;
+  color?: string;
   status: string;
   applied_policy_id?: string;
   market_prices?: Record<string, number>;
   market_enabled?: Record<string, boolean>;
   registered_accounts?: string[];
+  market_product_nos?: Record<string, string>;
   is_sold_out: boolean;
   sale_status?: string;
   kream_data?: Record<string, unknown>;
@@ -293,6 +314,8 @@ export const collectorApi = {
     request<SambaCollectedProduct>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteProduct: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: "DELETE" }),
+  resetRegistration: (id: string) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}/reset-registration`, { method: "POST" }),
 
   // 재고/가격 갱신
   refresh: (productIds?: string[], autoRetransmit = true) =>
@@ -313,6 +336,12 @@ export const collectorApi = {
     request<Record<string, unknown>>(`${SAMBA_PREFIX}/collector/probe/status`),
   probeRun: () =>
     request<Record<string, unknown>>(`${SAMBA_PREFIX}/collector/probe/run`, { method: 'POST' }),
+  autotuneStart: () =>
+    request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/start`, { method: 'POST' }),
+  autotuneStop: () =>
+    request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/stop`, { method: 'POST' }),
+  autotuneStatus: () =>
+    request<{ running: boolean; last_tick: string | null; cycle_count: number }>(`${SAMBA_PREFIX}/collector/autotune/status`),
 }
 
 // ── Market Accounts ──
@@ -367,12 +396,29 @@ export const shipmentApi = {
     request<SambaShipment[]>(`${SAMBA_PREFIX}/shipments/product/${productId}`),
   get: (id: string) => request<SambaShipment>(`${SAMBA_PREFIX}/shipments/${id}`),
   start: (productIds: string[], updateItems: string[], targetAccountIds: string[], skipUnchanged = false) =>
-    request<{ processed: number }>(`${SAMBA_PREFIX}/shipments/start`, {
+    request<{
+      processed: number
+      skipped: number
+      results: {
+        product_id: string
+        status: string
+        transmit_result?: Record<string, string>
+        transmit_error?: Record<string, string>
+        error?: string
+      }[]
+    }>(`${SAMBA_PREFIX}/shipments/start`, {
       method: "POST",
       body: JSON.stringify({ product_ids: productIds, update_items: updateItems, target_account_ids: targetAccountIds, skip_unchanged: skipUnchanged }),
     }),
   retry: (id: string) =>
     request<SambaShipment>(`${SAMBA_PREFIX}/shipments/${id}/retry`, { method: "POST" }),
+  marketDelete: (productIds: string[], targetAccountIds: string[]) =>
+    request<{ processed: number; results: { product_id: string; delete_results: Record<string, string>; success_count: number }[] }>(
+      `${SAMBA_PREFIX}/shipments/market-delete`, {
+        method: "POST",
+        body: JSON.stringify({ product_ids: productIds, target_account_ids: targetAccountIds }),
+      }
+    ),
 };
 
 // ── Forbidden Words ──
@@ -425,15 +471,21 @@ export const proxyApi = {
   elevenstAuthTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/11st/auth-test`, { method: 'POST' }),
+  elevenstSellerInfo: () =>
+    request<{ success: boolean; message: string; data?: Record<string, string> }>(
+      `${SAMBA_PREFIX}/proxy/11st/seller-info`, { method: 'POST' }),
   coupangAuthTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/coupang/auth-test`, { method: 'POST' }),
   lotteonAuthTest: () =>
-    request<{ success: boolean; message: string }>(
+    request<{ success: boolean; message: string; data?: Record<string, string> }>(
       `${SAMBA_PREFIX}/proxy/lotteon/auth-test`, { method: 'POST' }),
   ssgAuthTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/ssg/auth-test`, { method: 'POST' }),
+  gsshopAuthTest: () =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/gsshop/auth-test`, { method: 'POST' }),
   marketAuthTest: (marketKey: string) =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/market/auth-test/${marketKey}`, { method: 'POST' }),
@@ -473,6 +525,37 @@ export const categoryApi = {
   aiSuggestBulk: () =>
     request<{ mapped: number; updated: number; skipped: number; errors: string[] }>(
       `${SAMBA_PREFIX}/categories/ai-suggest-bulk`, { method: 'POST' }),
+  seedMarketCategories: () =>
+    request<{ ok: boolean; markets: Record<string, number> }>(
+      `${SAMBA_PREFIX}/categories/markets/seed`, { method: 'POST' }),
+  checkMarketRegistered: (market: string, mappingIds: string[]) =>
+    request<{ registered_count: number }>(
+      `${SAMBA_PREFIX}/categories/mappings/check-registered`,
+      { method: 'POST', body: JSON.stringify({ market, mapping_ids: mappingIds }) }),
+  checkAllMarketsRegistered: (mappingIds: string[]) =>
+    request<{ blocked: Record<string, number> }>(
+      `${SAMBA_PREFIX}/categories/mappings/check-registered-all`,
+      { method: 'POST', body: JSON.stringify({ mapping_ids: mappingIds }) }),
+  bulkDeleteMappings: (mappingIds: string[]) =>
+    request<{ ok: boolean; deleted: number }>(
+      `${SAMBA_PREFIX}/categories/mappings/bulk-delete`,
+      { method: 'POST', body: JSON.stringify({ mapping_ids: mappingIds }) }),
+  clearMarketColumn: (market: string, mappingIds: string[]) =>
+    request<{ ok: boolean; cleared: number }>(
+      `${SAMBA_PREFIX}/categories/mappings/clear-market`,
+      { method: 'POST', body: JSON.stringify({ market, mapping_ids: mappingIds }) }),
+  aiSeedMarket: (marketType: string) =>
+    request<{ ok: boolean; market: string; count: number }>(
+      `${SAMBA_PREFIX}/categories/markets/ai-seed/${marketType}`, { method: 'POST' }),
+  aiSeedAll: () =>
+    request<{ ok: boolean; results: Record<string, { ok: boolean; count?: number; error?: string }> }>(
+      `${SAMBA_PREFIX}/categories/markets/ai-seed-all`, { method: 'POST' }),
+  syncMarket: (marketType: string) =>
+    request<{ ok: boolean; market: string; count: number }>(
+      `${SAMBA_PREFIX}/categories/markets/sync/${marketType}`, { method: 'POST' }),
+  syncAll: () =>
+    request<{ ok: boolean; results: Record<string, unknown> }>(
+      `${SAMBA_PREFIX}/categories/markets/sync-all`, { method: 'POST' }),
 };
 
 // ── Contacts ──
@@ -760,4 +843,31 @@ export async function uploadToS3(presignedUrl: string, file: File): Promise<void
     body: file,
   })
   if (!res.ok) throw new Error(`S3 업로드 실패: ${res.status}`)
+}
+
+// ── 사용자(로그인 계정) 관리 ──
+
+export interface SambaUser {
+  id: string
+  email?: string
+  name?: string
+  is_admin: boolean
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export const userApi = {
+  list: (skip = 0, limit = 50) =>
+    request<SambaUser[]>(`${SAMBA_PREFIX}/users?skip=${skip}&limit=${limit}`),
+  create: (data: { email: string; password: string; name: string; is_admin?: boolean }) =>
+    request<SambaUser>(`${SAMBA_PREFIX}/users`, { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: { name?: string; email?: string; password?: string; is_admin?: boolean; status?: string }) =>
+    request<SambaUser>(`${SAMBA_PREFIX}/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/users/${id}`, { method: 'DELETE' }),
+  login: (email: string, password: string) =>
+    request<SambaUser>(
+      `${SAMBA_PREFIX}/users/login`, { method: 'POST', body: JSON.stringify({ email, password }) }
+    ),
 }

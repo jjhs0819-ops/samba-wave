@@ -62,16 +62,16 @@ class SambaShipmentService:
     update_items: List[str],
     target_account_ids: List[str],
     skip_unchanged: bool = False,
-  ) -> int:
-    """여러 상품을 대상 마켓 계정으로 실제 전송."""
+  ) -> Dict[str, Any]:
+    """여러 상품을 대상 마켓 계정으로 실제 전송. 마켓별 결과 반환."""
     from backend.domain.samba.collector.repository import SambaCollectedProductRepository
 
     processed = 0
     skipped = 0
+    results: List[Dict[str, Any]] = []
     product_repo = SambaCollectedProductRepository(self.session) if skip_unchanged else None
     for product_id in product_ids:
       try:
-        # 스킵 로직: 가격 변동 없으면 건너뜀
         if skip_unchanged and product_repo:
           product = await product_repo.get_async(product_id)
           if product and product.price_history:
@@ -79,23 +79,31 @@ class SambaShipmentService:
             if len(history) >= 2:
               latest = history[0] if isinstance(history[0], dict) else {}
               prev = history[1] if isinstance(history[1], dict) else {}
-              # 원가, 판매가 모두 동일하면 스킵
               if (latest.get("sale_price") == prev.get("sale_price")
                   and latest.get("cost") == prev.get("cost")):
                 skipped += 1
-                logger.info(f"스킵: {product_id} (가격 변동 없음)")
+                results.append({"product_id": product_id, "status": "skipped"})
                 continue
 
-        await self._transmit_product(
+        shipment = await self._transmit_product(
           product_id, target_account_ids, update_items
         )
+        results.append({
+          "product_id": product_id,
+          "status": shipment.status,
+          "transmit_result": shipment.transmit_result or {},
+          "transmit_error": shipment.transmit_error or {},
+        })
         processed += 1
       except Exception as exc:
         logger.error(f"상품 {product_id} 전송 실패: {exc}")
+        results.append({
+          "product_id": product_id,
+          "status": "failed",
+          "error": str(exc),
+        })
 
-    if skipped > 0:
-      logger.info(f"전송 완료: {processed}건 처리, {skipped}건 스킵")
-    return processed
+    return {"processed": processed, "skipped": skipped, "results": results}
 
   async def _transmit_product(
     self,
@@ -132,10 +140,32 @@ class SambaShipmentService:
 
     product_dict = product_row.model_dump()
 
-    # 3. 카테고리 매핑 자동 조회
+    # 2-1. 정책의 상세 템플릿으로 detail_html 항상 재생성
+    # (수집된 detail_html은 소싱처 CDN URL이 포함되어 있어 마켓에서 핫링크 차단됨)
+    product_dict["detail_html"] = await self._build_detail_html(product_dict)
+
+    # 3. 카테고리 매핑 자동 조회 (성별 + category1~4 조합)
+    # 성별 정보를 카테고리 앞에 추가 (kream_data.sex → "남성의류" / "여성의류")
+    sex_prefix = ""
+    kream = product_row.kream_data if hasattr(product_row, "kream_data") else None
+    if isinstance(kream, dict):
+      sex_list = kream.get("sex", [])
+      if isinstance(sex_list, list) and sex_list:
+        sex = sex_list[0]  # "남성" or "여성"
+        if "남" in sex:
+          sex_prefix = "남성의류"
+        elif "여" in sex:
+          sex_prefix = "여성의류"
+
+    cat_parts = [
+      product_row.category1, product_row.category2,
+      product_row.category3, product_row.category4,
+    ]
+    raw_category = " > ".join(c for c in cat_parts if c) or product_row.category or ""
+    source_category = f"{sex_prefix} > {raw_category}" if sex_prefix and raw_category else raw_category
     mapped_categories = await self._resolve_category_mappings(
       product_row.source_site or "",
-      product_row.category or "",
+      source_category,
       target_account_ids,
     )
     await self.repo.update_async(shipment.id, mapped_categories=mapped_categories)
@@ -151,6 +181,56 @@ class SambaShipmentService:
 
     # 5. 계정 정보 조회 및 마켓별 전송
     account_repo = SambaMarketAccountRepository(self.session)
+
+    # 정책 기반 계정 필터링: 정책이 있으면 참조하되, 사용자 선택 계정은 보존
+    policy = None
+    policy_market_data: Dict[str, Any] = {}
+    MARKET_TYPE_TO_POLICY_KEY = {
+      'coupang': '쿠팡', 'ssg': '신세계몰', 'smartstore': '스마트스토어',
+      '11st': '11번가', 'gmarket': '지마켓', 'auction': '옥션',
+      'gsshop': 'GS샵', 'lotteon': '롯데ON', 'lottehome': '롯데홈쇼핑',
+      'homeand': '홈앤쇼핑', 'hmall': 'HMALL', 'kream': 'KREAM',
+      'ebay': 'eBay', 'lazada': 'Lazada', 'qoo10': 'Qoo10',
+      'shopee': 'Shopee', 'shopify': 'Shopify', 'zoom': 'Zum(줌)',
+    }
+    if product_row.applied_policy_id:
+      from backend.domain.samba.policy.repository import SambaPolicyRepository
+      policy_repo = SambaPolicyRepository(self.session)
+      policy = await policy_repo.get_async(product_row.applied_policy_id)
+      if policy and policy.market_policies:
+        policy_market_data = policy.market_policies
+    else:
+      logger.warning(f"[전송] 상품 {product_id} 정책 미설정 — 전체 선택 계정으로 전송")
+
+    # 정책이 있으면 계정 필터링, 없으면 사용자 선택 전체 유지
+    if policy_market_data:
+      filtered_ids = []
+      for aid in target_account_ids:
+        acc = await account_repo.get_async(aid)
+        if not acc:
+          continue
+        policy_key = MARKET_TYPE_TO_POLICY_KEY.get(acc.market_type)
+        if not policy_key:
+          # 정책 키 매핑 안 되는 마켓 → 그대로 허용
+          filtered_ids.append(aid)
+          continue
+        mp = policy_market_data.get(policy_key, {})
+        if not mp:
+          # 정책에 이 마켓이 없음 → 그대로 허용 (사용자가 직접 선택)
+          filtered_ids.append(aid)
+          continue
+        policy_acc_ids = mp.get("accountIds", [])
+        if not policy_acc_ids and mp.get("accountId"):
+          policy_acc_ids = [mp["accountId"]]
+        # 정책에 계정 목록이 있으면 해당 계정만, 없으면 모두 허용
+        if policy_acc_ids and aid not in policy_acc_ids:
+          continue
+        filtered_ids.append(aid)
+      target_account_ids = filtered_ids
+      logger.info(
+        f"[전송] 정책 필터링 후 계정: {len(target_account_ids)}개"
+      )
+
     transmit_result: Dict[str, str] = {}
     transmit_error: Dict[str, str] = {}
 
@@ -163,16 +243,39 @@ class SambaShipmentService:
           continue
 
         market_type = account.market_type
-        # 카테고리 매핑에서 대상 카테고리 조회
         category_id = mapped_categories.get(market_type, "")
 
-        # 실제 마켓 API 호출
+        # 실제 마켓 API 호출 (계정 정보 직접 전달)
         result = await dispatch_to_market(
-          self.session, market_type, product_dict, category_id
+          self.session, market_type, product_dict, category_id,
+          account=account,
         )
 
         if result.get("success"):
           transmit_result[account_id] = "success"
+          # 마켓 상품번호 추출 (API 응답에서)
+          result_data = result.get("data", {})
+          if isinstance(result_data, dict):
+            api_data = result_data.get("data", result_data)
+            # 마켓별 상품번호 키 추출
+            product_no = (
+              api_data.get("originProductNo")
+              or api_data.get("productNo")
+              or api_data.get("smartstoreChannelProductNo")
+              or api_data.get("sellerProductId")  # 쿠팡
+              or api_data.get("prdNo")       # GS샵
+              or api_data.get("goodsNo")     # GS샵/롯데홈
+              or api_data.get("product_id")
+              or api_data.get("productId")
+              or ""
+            )
+            if product_no:
+              existing_nos = product_row.market_product_nos or {}
+              existing_nos[account_id] = str(product_no)
+              await product_repo.update_async(
+                product_id, market_product_nos=existing_nos
+              )
+              logger.info(f"[전송] {market_type} 상품번호 저장: {product_no}")
           logger.info(
             f"[전송] {market_type} 성공 - 상품: {product_id}, 계정: {account_id}"
           )
@@ -209,17 +312,28 @@ class SambaShipmentService:
     )
 
     # 6. 상품 상태 업데이트 (등록된 계정 목록)
+    # 성공한 계정은 추가, 실패한 계정은 제거
     success_accounts = [
       aid for aid, status in transmit_result.items() if status == "success"
     ]
-    if success_accounts:
-      existing = product_row.registered_accounts or []
-      new_accounts = list(set(existing + success_accounts))
-      await product_repo.update_async(
-        product_id,
-        registered_accounts=new_accounts,
-        status="registered" if new_accounts else product_row.status,
-      )
+    failed_accounts = [
+      aid for aid, status in transmit_result.items() if status != "success"
+    ]
+    existing = product_row.registered_accounts or []
+    existing_nos = product_row.market_product_nos or {}
+    # 성공 추가 + 실패 제거
+    new_accounts = list(set(
+      [a for a in existing if a not in failed_accounts] + success_accounts
+    ))
+    # 실패한 계정의 상품번호도 제거
+    new_nos = {k: v for k, v in existing_nos.items() if k not in failed_accounts}
+    # 성공한 계정의 상품번호 유지 (transmit_result에서 product_no 추출 안 하므로 기존 값 보존)
+    update_data: Dict[str, Any] = {
+      "registered_accounts": new_accounts if new_accounts else None,
+      "market_product_nos": new_nos if new_nos else None,
+      "status": "registered" if new_accounts else "collected",
+    }
+    await product_repo.update_async(product_id, **update_data)
 
     logger.info(
       f"Shipment {shipment.id} 완료 status={final_status} "
@@ -229,6 +343,71 @@ class SambaShipmentService:
       logger.warning(f"Shipment {shipment.id} 업데이트 실패, DB 재조회")
       updated = await self.repo.get_async(shipment.id)
     return updated or shipment
+
+  # ==================== 상세페이지 HTML 생성 ====================
+
+  async def _build_detail_html(self, product: Dict[str, Any]) -> str:
+    """정책의 상세 템플릿(상단/하단 이미지)과 상품 이미지를 조합하여 상세 HTML 생성.
+
+    구조: 상단이미지 → 대표이미지 → 추가이미지 → 하단이미지
+    """
+    from backend.domain.samba.policy.repository import SambaPolicyRepository
+    from backend.domain.samba.policy.model import SambaDetailTemplate
+    from backend.domain.shared.base_repository import BaseRepository
+
+    parts: list[str] = []
+
+    # 정책에서 상세 템플릿 조회
+    policy_id = product.get("applied_policy_id")
+    top_img = ""
+    bottom_img = ""
+
+    if policy_id:
+      policy_repo = SambaPolicyRepository(self.session)
+      policy = await policy_repo.get_async(policy_id)
+      if policy and policy.extras:
+        template_id = policy.extras.get("detail_template_id")
+        logger.info(f"[상세HTML] 정책 {policy_id} 템플릿ID: {template_id}")
+        if template_id:
+          tpl_repo = BaseRepository(self.session, SambaDetailTemplate)
+          tpl = await tpl_repo.get_async(template_id)
+          if tpl:
+            top_img = tpl.top_image_s3_key or ""
+            bottom_img = tpl.bottom_image_s3_key or ""
+            logger.info(f"[상세HTML] 템플릿 로드 완료 — 상단: {bool(top_img)}, 하단: {bool(bottom_img)}")
+          else:
+            logger.warning(f"[상세HTML] 템플릿 {template_id} 조회 실패")
+      else:
+        logger.info(f"[상세HTML] 정책 {policy_id} extras 없음 또는 정책 조회 실패")
+    else:
+      logger.info("[상세HTML] applied_policy_id 없음 — 템플릿 미적용")
+
+    # 상단이미지
+    if top_img:
+      parts.append(f'<div style="text-align:center;"><img src="{top_img}" style="max-width:860px;width:100%;" /></div>')
+
+    # 대표이미지
+    images = product.get("images") or []
+    if images:
+      parts.append(f'<div style="text-align:center;"><img src="{images[0]}" style="max-width:860px;width:100%;" /></div>')
+
+    # 대표추가이미지
+    for img in images[1:]:
+      parts.append(f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>')
+
+    # 상세페이지 이미지 (소싱처에서 수집한 상세 이미지)
+    detail_images = product.get("detail_images") or []
+    for img in detail_images:
+      parts.append(f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>')
+
+    # 하단이미지
+    if bottom_img:
+      parts.append(f'<div style="text-align:center;"><img src="{bottom_img}" style="max-width:860px;width:100%;" /></div>')
+
+    if not parts:
+      return f"<p>{product.get('name', '')}</p>"
+
+    return "\n".join(parts)
 
   # ==================== 카테고리 매핑 자동 조회 ====================
 
@@ -264,6 +443,9 @@ class SambaShipmentService:
       if acc:
         market_types.add(acc.market_type)
 
+    # cat2 코드맵이 있는 모든 마켓에서 경로 → 숫자 코드 변환 시도
+    code_required_markets = market_types  # 전체 대상 마켓
+
     for market_type in market_types:
       # DB 매핑에 있으면 사용
       if mapping and mapping.target_mappings:
@@ -273,11 +455,25 @@ class SambaShipmentService:
           continue
 
       # 없으면 키워드 기반 자동 제안
-      suggestions = SambaCategoryService.suggest_category(
+      from backend.domain.samba.category.repository import SambaCategoryTreeRepository
+      category_svc = SambaCategoryService(mapping_repo, SambaCategoryTreeRepository(self.session))
+      suggestions = await category_svc.suggest_category(
         source_category, market_type
       )
       if suggestions:
         result[market_type] = suggestions[0]
+
+    # 경로 문자열 → 숫자 코드 변환 (11번가 등)
+    from backend.domain.samba.category.repository import SambaCategoryTreeRepository
+    category_svc = SambaCategoryService(mapping_repo, SambaCategoryTreeRepository(self.session))
+    for market_type in code_required_markets:
+      if market_type in result:
+        cat_path = result[market_type]
+        if cat_path and not cat_path.isdigit():
+          code = await category_svc.resolve_category_code(market_type, cat_path)
+          if code:
+            logger.info("[카테고리 코드 변환] %s: '%s' → %s", market_type, cat_path, code)
+            result[market_type] = code
 
     return result
 
@@ -345,6 +541,88 @@ class SambaShipmentService:
       completed_at=datetime.now(UTC),
     )
     return updated or shipment
+
+  # ==================== 마켓 상품 삭제 ====================
+
+  async def delete_from_markets(
+    self,
+    product_ids: List[str],
+    target_account_ids: List[str],
+  ) -> Dict[str, Any]:
+    """선택된 상품을 대상 마켓에서 판매중지/삭제."""
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+    from backend.domain.samba.shipment.dispatcher import delete_from_market
+
+    product_repo = SambaCollectedProductRepository(self.session)
+    account_repo = SambaMarketAccountRepository(self.session)
+
+    results: List[Dict[str, Any]] = []
+
+    for product_id in product_ids:
+      product_row = await product_repo.get_async(product_id)
+      if not product_row:
+        results.append({"product_id": product_id, "status": "failed", "error": "상품 없음"})
+        continue
+
+      product_dict = product_row.model_dump()
+      market_product_nos = product_row.market_product_nos or {}
+      reg_accounts = product_row.registered_accounts or []
+      delete_results: Dict[str, str] = {}
+
+      for account_id in target_account_ids:
+        # 이 상품에 등록된 계정만 삭제 대상
+        if account_id not in reg_accounts:
+          continue
+
+        account = await account_repo.get_async(account_id)
+        if not account:
+          delete_results[account_id] = "계정 없음"
+          continue
+
+        # 상품번호를 product_dict에 주입 (디스패처가 사용)
+        product_no = market_product_nos.get(account_id, "")
+        product_dict["market_product_no"] = {account.market_type: product_no}
+
+        result = await delete_from_market(
+          self.session, account.market_type, product_dict, account=account
+        )
+
+        if result.get("success"):
+          delete_results[account_id] = "success"
+          logger.info(
+            f"[마켓삭제] {account.market_type} 성공 - 상품: {product_id}"
+          )
+        else:
+          delete_results[account_id] = result.get("message", "실패")
+          logger.warning(
+            f"[마켓삭제] {account.market_type} 실패 - {result.get('message')}"
+          )
+
+      # 삭제 요청한 계정은 성공/실패 관계없이 registered_accounts에서 제거
+      # (마켓에서 이미 삭제됐거나, 상품번호 없는 경우에도 등록 기록 정리)
+      processed_ids = list(delete_results.keys())
+      if processed_ids:
+        new_reg = [a for a in reg_accounts if a not in processed_ids]
+        new_nos = {k: v for k, v in market_product_nos.items() if k not in processed_ids}
+        update_data: Dict[str, Any] = {
+          "registered_accounts": new_reg if new_reg else None,
+          "market_product_nos": new_nos if new_nos else None,
+        }
+        if not new_reg:
+          update_data["status"] = "collected"
+        await product_repo.update_async(product_id, **update_data)
+
+      results.append({
+        "product_id": product_id,
+        "delete_results": delete_results,
+        "success_count": len([v for v in delete_results.values() if v == "success"]),
+      })
+
+    return {
+      "processed": len(results),
+      "results": results,
+    }
 
   @staticmethod
   def get_status_label(status: str) -> str:

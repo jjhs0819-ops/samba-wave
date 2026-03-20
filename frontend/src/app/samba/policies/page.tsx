@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback, useRef } from "react"
+import { useSearchParams } from "next/navigation"
 import { policyApi, forbiddenApi, accountApi, detailTemplateApi, nameRuleApi, collectorApi, type SambaPolicy, type SambaMarketAccount, type SambaDetailTemplate, type SambaNameRule, type SambaCollectedProduct } from "@/lib/samba/api"
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle } from '@/lib/samba/styles'
@@ -30,6 +31,7 @@ interface PricingForm {
 // 마켓정책
 interface MarketPolicyForm {
   accountId: string
+  accountIds?: string[] // 복수 계정 지원
   shipType: string
   feeRate: number
   shippingCost: number
@@ -40,6 +42,8 @@ interface MarketPolicyForm {
   bulkDiscountQty: number
   bulkDiscountPrice: number
   smileCashRate: number
+  // GS샵 전용
+  gsMarginRate: number
 }
 
 // 금지어/삭제어 템플릿
@@ -64,10 +68,17 @@ const MARKET_KEY_MAP: Record<string, string> = {
   '홈앤쇼핑': 'homeand',
   'HMALL': 'hmall',
   'KREAM': 'kream',
+  'eBay': 'ebay',
+  'Lazada': 'lazada',
+  'Qoo10': 'qoo10',
+  'Shopee': 'shopee',
+  'Shopify': 'shopify',
+  'Zum(줌)': 'zoom',
 }
 
 const POLICY_MARKETS = [
   '쿠팡', '신세계몰', '스마트스토어', '11번가', '지마켓', '옥션', 'GS샵', '롯데ON', '롯데홈쇼핑', '홈앤쇼핑', 'HMALL', 'KREAM',
+  'eBay', 'Lazada', 'Qoo10', 'Shopee', 'Shopify', 'Zum(줌)',
 ]
 
 const defaultPricing: PricingForm = {
@@ -142,6 +153,7 @@ function NumInput({ value, onChange, style, placeholder, suffix }: {
 }
 
 export default function PoliciesPage() {
+  const searchParams = useSearchParams()
   const [policies, setPolicies] = useState<SambaPolicy[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(true)
@@ -171,8 +183,19 @@ export default function PoliciesPage() {
   const [imgSaving, setImgSaving] = useState<string>('')
   const [previewProduct, setPreviewProduct] = useState<SambaCollectedProduct | null>(null)
 
+  // AI 정책 변경
+  const [aiPolicyLoading, setAiPolicyLoading] = useState(false)
+  const [aiPolicyModalOpen, setAiPolicyModalOpen] = useState(false)
+  const [aiPolicyCommand, setAiPolicyCommand] = useState('')
+  const [aiPolicyChanges, setAiPolicyChanges] = useState<{ policy_id: string; policy_name: string; field: string; market: string; before: number; after: number }[]>([])
+  const [aiPolicyApplied, setAiPolicyApplied] = useState(0)
+  // AI 비용 추적 (1회 호출 ≈ ₩15: Sonnet4 ~1,500in + ~300out)
+  const [lastAiUsage, setLastAiUsage] = useState<{ calls: number; tokens: number; cost: number; date: string } | null>(null)
+
   // 마켓 계정 목록 (설정에서 등록한 계정)
   const [storeAccounts, setStoreAccounts] = useState<Record<string, Record<string, string>>>({})
+  // 실제 마켓 계정 목록 (DB에서 로드 — 다중 계정 지원)
+  const [marketAccounts, setMarketAccounts] = useState<SambaMarketAccount[]>([])
 
   // 금지어·삭제어 템플릿
   const [forbiddenTemplates, setForbiddenTemplates] = useState<ForbiddenTemplate[]>([])
@@ -183,7 +206,7 @@ export default function PoliciesPage() {
 
   // 현재 마켓 정책 가져오기
   const getCurrentMarketPolicy = useCallback((): MarketPolicyForm => {
-    return marketPolicies[marketPolicyTab] || { accountId: '', shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0 }
+    return marketPolicies[marketPolicyTab] || { accountId: '', accountIds: [], shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0 }
   }, [marketPolicies, marketPolicyTab])
 
   const setCurrentMarketPolicy = useCallback((mp: MarketPolicyForm) => {
@@ -272,6 +295,7 @@ export default function PoliciesPage() {
 
   useEffect(() => {
     loadPolicies(); loadForbiddenTemplates(); loadStoreAccounts()
+    accountApi.listActive().then(setMarketAccounts).catch(() => {})
     detailTemplateApi.list().then(setDetailTemplates).catch(() => {})
     nameRuleApi.list().then(setNameRules).catch(() => {})
     // 미리보기용 최신 상품 1개 로드
@@ -280,6 +304,15 @@ export default function PoliciesPage() {
     }).catch(() => {})
   }, [loadPolicies, loadForbiddenTemplates, loadStoreAccounts])
 
+
+  // URL highlight 파라미터로 정책 자동 선택
+  useEffect(() => {
+    const highlightId = searchParams.get('highlight')
+    if (highlightId && policies.length > 0 && !editingId) {
+      const target = policies.find(p => p.id === highlightId)
+      if (target) openEdit(target)
+    }
+  }, [policies, searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 템플릿 선택 시 imgChecks 초기화
   useEffect(() => {
@@ -440,6 +473,26 @@ export default function PoliciesPage() {
       {/* 헤더 */}
       <div style={{ marginBottom: '1.5rem' }} />
 
+      {/* AI 비용 (SMS 잔여량 스타일) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.2)', borderRadius: '8px', marginBottom: '0.75rem' }}>
+        <span style={{ fontSize: '0.8125rem', color: '#A78BFA', fontWeight: 600 }}>AI 비용</span>
+        <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
+          예상 <span style={{ color: '#FFB84D', fontWeight: 700 }}>₩15</span>
+          <span style={{ color: '#888' }}> (1회)</span>
+        </span>
+        {lastAiUsage && (
+          <>
+            <span style={{ color: '#2D2D2D' }}>|</span>
+            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
+              최근 <span style={{ color: '#51CF66', fontWeight: 700 }}>₩{lastAiUsage.cost.toLocaleString()}</span>
+              <span style={{ color: '#888' }}> ({lastAiUsage.calls}회 / ~{lastAiUsage.tokens.toLocaleString()}토큰)</span>
+            </span>
+            <span style={{ fontSize: '0.6875rem', color: '#555' }}>{lastAiUsage.date}</span>
+          </>
+        )}
+        <span style={{ fontSize: '0.625rem', color: '#555', marginLeft: 'auto', cursor: 'help' }} title={'산정 근거: Sonnet4 $3/M in + $15/M out × ₩1,450\n1회: ~1,500 in + ~300 out = ~₩15'}>근거</span>
+      </div>
+
       {/* 정책 선택 */}
       <div style={{ ...card, padding: '1rem 1.25rem', marginBottom: '1.5rem' }}>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -501,9 +554,14 @@ export default function PoliciesPage() {
             style={{ fontSize: '0.8125rem', padding: '0.4rem 1rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '8px', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >정책 복사</button>
           <button
-            onClick={() => showAlert('AI 정책 일괄 변경은 Claude API 연동 후 사용 가능합니다', 'info')}
+            onClick={() => {
+              setAiPolicyModalOpen(true)
+              setAiPolicyChanges([])
+              setAiPolicyApplied(0)
+              setAiPolicyCommand('')
+            }}
             style={{ fontSize: '0.8125rem', padding: '0.4rem 1rem', background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: '8px', color: '#A78BFA', cursor: 'pointer', whiteSpace: 'nowrap' }}
-          >✦ AI 정책일괄 변경시 사용</button>
+          >✦ AI정책변경</button>
         </div>
         {/* 정책명 표시/수정 */}
         {editingId && (
@@ -619,25 +677,35 @@ export default function PoliciesPage() {
               {/* 연결 계정 선택 */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', gridColumn: '1 / -1' }}>
                 <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>연결 계정</span>
-                {currentStoreAccount ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
-                    <select
-                      style={{ ...inputStyle, flex: 1, maxWidth: '320px' }}
-                      value={mp.accountId || ''}
-                      onChange={(e) => { setCurrentMarketPolicy({ ...mp, accountId: e.target.value }); triggerAutoSave() }}
-                    >
-                      <option value="">계정 선택</option>
-                      <option value={currentMarketKey}>
-                        {currentStoreAccount.businessName || marketPolicyTab}({currentStoreAccount.storeId || currentStoreAccount.account || currentStoreAccount.vendorId || '-'})
-                      </option>
-                    </select>
-                    {mp.accountId && (
-                      <span style={{ fontSize: '0.75rem', color: '#51CF66', padding: '0.2rem 0.5rem', background: 'rgba(81,207,102,0.1)', borderRadius: '4px' }}>연결됨</span>
-                    )}
-                  </div>
-                ) : (
-                  <span style={{ fontSize: '0.8125rem', color: '#666' }}>설정 탭에서 {marketPolicyTab} 계정을 먼저 등록해주세요</span>
-                )}
+                {(() => {
+                  const accsForMarket = marketAccounts.filter(a => a.market_type === currentMarketKey)
+                  // 현재 존재하는 계정 ID만 필터 (삭제된 계정의 오래된 ID 제거)
+                  const rawIds = mp.accountIds?.length ? mp.accountIds : (mp.accountId ? [mp.accountId] : [])
+                  const linkedIds = rawIds.filter((id: string) => accsForMarket.some(a => a.id === id))
+                  const toggleAccLink = (accId: string) => {
+                    const next = linkedIds.includes(accId) ? linkedIds.filter(x => x !== accId) : [...linkedIds, accId]
+                    setCurrentMarketPolicy({ ...mp, accountIds: next, accountId: next[0] || '' })
+                    triggerAutoSave()
+                  }
+                  return accsForMarket.length > 0 ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flex: 1, flexWrap: 'wrap' }}>
+                      {accsForMarket.map(acc => {
+                        const linked = linkedIds.includes(acc.id)
+                        return (
+                          <label key={acc.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.8125rem', color: linked ? '#E5E5E5' : '#666' }}>
+                            <input type="checkbox" checked={linked} onChange={() => toggleAccLink(acc.id)} style={{ accentColor: '#51CF66' }} />
+                            {acc.business_name || acc.market_name}({acc.seller_id || acc.account_label || '-'})
+                          </label>
+                        )
+                      })}
+                      {linkedIds.length > 0 && (
+                        <span style={{ fontSize: '0.7rem', color: '#51CF66', padding: '0.15rem 0.4rem', background: 'rgba(81,207,102,0.1)', borderRadius: '4px' }}>{linkedIds.length}개 연결</span>
+                      )}
+                    </div>
+                  ) : (
+                    <span style={{ fontSize: '0.8125rem', color: '#666' }}>설정 탭에서 {marketPolicyTab} 계정을 먼저 등록해주세요</span>
+                  )
+                })()}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>배송형태</span>
@@ -681,6 +749,14 @@ export default function PoliciesPage() {
                     </select>
                   </div>
                 </>
+              )}
+              {/* GS샵 전용: MD 협의 마진율 */}
+              {marketPolicyTab === 'GS샵' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>마켓마진율</span>
+                  <NumInput value={mp.gsMarginRate || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, gsMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                  <span style={{ color: '#666', fontSize: '0.75rem' }}>MD 협의 필수항목</span>
+                </div>
               )}
               {/* 옥션/지마켓 전용: 복수구매 할인, 스마일캐시 지급 */}
               {(marketPolicyTab === '옥션' || marketPolicyTab === '지마켓') && (
@@ -1226,6 +1302,171 @@ export default function PoliciesPage() {
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1.5rem' }}>
           <button onClick={handleSubmit} style={{ padding: '0.625rem 2rem', background: 'linear-gradient(135deg, #FF8C00, #FFB84D)', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>정책 저장</button>
           <button onClick={() => { if (editingId) { handleDelete(editingId); setEditingId(null); setName("새 정책"); setSiteName(""); setPricing({ ...defaultPricing }) } }} style={{ padding: '0.625rem 2rem', background: 'rgba(60,60,60,0.8)', border: '1px solid #3D3D3D', borderRadius: '8px', color: '#C5C5C5', fontSize: '0.875rem', cursor: 'pointer' }}>정책 삭제</button>
+        </div>
+      )}
+      {/* AI 정책 변경 모달 */}
+      {aiPolicyModalOpen && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 99998, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => { if (!aiPolicyLoading) setAiPolicyModalOpen(false) }}
+        >
+          <div
+            style={{ background: '#1E1E1E', border: '1px solid #3D3D3D', borderRadius: '12px', width: 'min(600px, 92vw)', maxHeight: '80vh', overflow: 'auto' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* 헤더 */}
+            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #2D2D2D', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>AI 정책 일괄 변경</h3>
+                <p style={{ fontSize: '0.75rem', color: '#888' }}>자연어로 명령하면 관련 마켓의 모든 정책을 자동 수정합니다</p>
+              </div>
+              {!aiPolicyLoading && (
+                <button onClick={() => setAiPolicyModalOpen(false)}
+                  style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
+              )}
+            </div>
+
+            {/* 본문 */}
+            <div style={{ padding: '1.25rem 1.5rem' }}>
+              {/* 명령 입력 */}
+              {aiPolicyChanges.length === 0 && !aiPolicyLoading && (
+                <div>
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <input
+                      autoFocus
+                      value={aiPolicyCommand}
+                      onChange={e => setAiPolicyCommand(e.target.value)}
+                      onKeyDown={async e => {
+                        if (e.key === 'Enter' && aiPolicyCommand.trim()) {
+                          setAiPolicyLoading(true)
+                          try {
+                            const result = await policyApi.aiChange(aiPolicyCommand.trim())
+                            setAiPolicyChanges(result.changes)
+                            setAiPolicyApplied(result.applied)
+                            setLastAiUsage({ calls: 1, tokens: 1800, cost: 15, date: new Date().toLocaleTimeString() })
+                            setPolicies(await policyApi.list().catch(() => []))
+                          } catch (err) {
+                            const msg = err instanceof Error ? err.message : '실패'
+                            showAlert(`AI 정책 변경 실패: ${msg}`, 'error')
+                          } finally {
+                            setAiPolicyLoading(false)
+                          }
+                        }
+                      }}
+                      placeholder="예: 지마켓 마진율 1% 올려, 쿠팡 배송비 500원 내려"
+                      style={{
+                        width: '100%', padding: '0.75rem 1rem',
+                        background: '#1A1A1A', border: '1px solid #3D3D3D', borderRadius: '8px',
+                        color: '#E5E5E5', fontSize: '0.875rem', outline: 'none',
+                      }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', marginBottom: '0.5rem' }}>
+                    {['지마켓 마진율 1% 올려', '쿠팡 배송비 500원 내려', '옥션 수수료 2% 낮춰', '전체 마진율 2% 올려'].map(ex => (
+                      <button key={ex} onClick={() => setAiPolicyCommand(ex)}
+                        style={{ padding: '0.25rem 0.5rem', background: 'rgba(255,255,255,0.04)', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#666', fontSize: '0.6875rem', cursor: 'pointer' }}
+                        onMouseEnter={e => { e.currentTarget.style.color = '#A78BFA'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.3)' }}
+                        onMouseLeave={e => { e.currentTarget.style.color = '#666'; e.currentTarget.style.borderColor = '#2D2D2D' }}
+                      >{ex}</button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!aiPolicyCommand.trim()) return
+                      setAiPolicyLoading(true)
+                      try {
+                        const result = await policyApi.aiChange(aiPolicyCommand.trim())
+                        setAiPolicyChanges(result.changes)
+                        setAiPolicyApplied(result.applied)
+                        setLastAiUsage({ calls: 1, tokens: 1800, cost: 15, date: new Date().toLocaleTimeString() })
+                        setPolicies(await policyApi.list().catch(() => []))
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : '실패'
+                        showAlert(`AI 정책 변경 실패: ${msg}`, 'error')
+                      } finally {
+                        setAiPolicyLoading(false)
+                      }
+                    }}
+                    disabled={!aiPolicyCommand.trim()}
+                    style={{
+                      width: '100%', padding: '0.625rem', borderRadius: '8px', border: 'none',
+                      background: aiPolicyCommand.trim() ? '#A78BFA' : '#2D2D2D',
+                      color: aiPolicyCommand.trim() ? '#FFF' : '#555',
+                      fontSize: '0.875rem', fontWeight: 600, cursor: aiPolicyCommand.trim() ? 'pointer' : 'not-allowed',
+                    }}
+                  >실행</button>
+                </div>
+              )}
+
+              {/* 로딩 */}
+              {aiPolicyLoading && (
+                <div style={{ textAlign: 'center', padding: '2rem 0', color: '#888' }}>
+                  <div style={{ fontSize: '1.5rem', marginBottom: '0.75rem' }}>🤖</div>
+                  <p style={{ fontSize: '0.875rem' }}>Claude가 정책을 분석하고 변경 중...</p>
+                  <p style={{ fontSize: '0.75rem', color: '#555', marginTop: '0.25rem' }}>"{aiPolicyCommand}"</p>
+                </div>
+              )}
+
+              {/* 결과 */}
+              {!aiPolicyLoading && aiPolicyChanges.length > 0 && (
+                <div>
+                  <div style={{ padding: '0.75rem 1rem', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: '8px', marginBottom: '1rem', textAlign: 'center' }}>
+                    <span style={{ fontSize: '1.25rem', fontWeight: 700, color: '#22C55E' }}>{aiPolicyApplied}</span>
+                    <span style={{ fontSize: '0.8125rem', color: '#888', marginLeft: '0.375rem' }}>건 정책 변경 완료</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {aiPolicyChanges.map((ch, i) => {
+                      const fieldLabels: Record<string, string> = { marginRate: '마진율', shippingCost: '배송비', feeRate: '수수료', extraCharge: '추가요금', minMarginAmount: '최소마진' }
+                      const isRate = ch.field.includes('Rate') || ch.field.includes('rate')
+                      const prefix = isRate ? '' : '₩'
+                      const suffix = isRate ? '%' : ''
+                      const diff = ch.after - ch.before
+                      return (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.02)', borderRadius: '6px', border: '1px solid #2D2D2D' }}>
+                          <div>
+                            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>{ch.policy_name}</span>
+                            <span style={{ fontSize: '0.6875rem', color: '#888', marginLeft: '0.5rem' }}>
+                              {ch.market === 'common' ? '공통' : ch.market}
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{ fontSize: '0.75rem', color: '#888' }}>{fieldLabels[ch.field] || ch.field}</span>
+                            <span style={{ fontSize: '0.8125rem', color: '#666' }}>{prefix}{ch.before.toLocaleString()}{suffix}</span>
+                            <span style={{ color: '#555' }}>→</span>
+                            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FF8C00' }}>{prefix}{ch.after.toLocaleString()}{suffix}</span>
+                            <span style={{ fontSize: '0.6875rem', color: diff > 0 ? '#22C55E' : '#EF4444' }}>
+                              ({diff > 0 ? '+' : ''}{prefix}{diff.toLocaleString()}{suffix})
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {!aiPolicyLoading && aiPolicyChanges.length === 0 && aiPolicyApplied === 0 && aiPolicyCommand && (
+                <p style={{ color: '#888', textAlign: 'center', padding: '1rem' }}>변경할 정책이 없습니다</p>
+              )}
+            </div>
+
+            {/* 하단 */}
+            {!aiPolicyLoading && aiPolicyChanges.length > 0 && (
+              <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #2D2D2D', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => {
+                    setAiPolicyModalOpen(false)
+                    // 현재 편집 중인 정책 갱신
+                    if (editingId) {
+                      const updated = policies.find(p => p.id === editingId)
+                      if (updated) openEdit(updated)
+                    }
+                  }}
+                  style={{ padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px', border: 'none', background: '#FF8C00', color: '#FFF', cursor: 'pointer', fontWeight: 600 }}
+                >확인</button>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

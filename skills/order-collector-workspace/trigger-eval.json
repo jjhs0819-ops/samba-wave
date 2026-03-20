@@ -1,0 +1,82 @@
+[
+  {
+    "query": "스마트스토어 주문 동기화가 안 돼. sync-from-markets 호출하면 0건이야. order.py 라우터 확인해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "쿠팡 주문 수집 기능을 추가해야 해. coupang.py에 get_orders 메서드 구현해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "취소요청 들어온 주문 승인하려는데 approve_cancel이 스마트스토어만 돼. 쿠팡도 취소승인 구현해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "_parse_smartstore_order에서 claimType이 RETURN인데 shipping_status가 안 바뀌어. 클레임 매핑 확인해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "주문 동기화 후 profit 계산이 틀려. create_order랑 sync에서 shipping_fee 차감 로직이 다른 것 같아",
+    "should_trigger": true
+  },
+  {
+    "query": "11번가 주문 조회 API를 elevenst.py에 추가하려고 해. XML 응답 파싱해서 SambaOrder로 변환해야 해",
+    "should_trigger": true
+  },
+  {
+    "query": "주문 목록에서 발주미확인 건이 자동 발주확인되는데 품절 상품도 확인돼버려. confirm_product_orders 로직 수정해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "반품요청 상태인 주문을 반품완료로 바꾸려는데 approve_return API가 없어. 반품승인 엔드포인트 추가해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "orders/page.tsx에서 마켓별 주문 필터링이 안 돼. source 필드로 필터 추가해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "Shopee 주문 수집을 구현해야 해. /api/v2/order/get_order_list 연동하고 _parse_shopee_order 작성해줘",
+    "should_trigger": true
+  },
+  {
+    "query": "무신사에서 상품 수집할 때 이미지가 안 가져와져. musinsa.py의 _to_image_url 확인해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "스마트스토어에 상품 등록하면 고시정보 타입이 WEAR로 하드코딩돼있어. SHOES 분기 추가해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "transform_product에서 이미지 업로드 시 CDN 차단돼. Referer 설정 확인해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "워룸 대시보드에 실시간 매출 차트를 추가하고 싶어. warroom/page.tsx 수정해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "새로운 소싱사이트 올리브영 수집 모듈을 만들어줘. collector.js에 추가해야 해",
+    "should_trigger": false
+  },
+  {
+    "query": "정책 생성 페이지에서 마진율 계산 공식이 틀려. policies/page.tsx 수정해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "KREAM에서 수집한 상품의 bestBenefitPrice 5단계 할인 계산이 잘못됐어. 무신사 혜택가 로직 확인해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "alembic 마이그레이션으로 collected_product에 shipping_fee 컬럼 추가해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "카테고리 매핑 페이지에서 소싱처 카테고리를 마켓 카테고리에 연결하는 UI 수정해줘",
+    "should_trigger": false
+  },
+  {
+    "query": "로그인 페이지에서 JWT 토큰 갱신이 안 돼. serverAuth.ts 확인해줘",
+    "should_trigger": false
+  }
+]

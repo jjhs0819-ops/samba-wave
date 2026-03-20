@@ -309,6 +309,23 @@ async def update_collected_product(
     return result
 
 
+@router.post("/products/{product_id}/reset-registration")
+async def reset_product_registration(
+    product_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """상품의 마켓 등록 정보(registered_accounts, market_product_nos) 초기화."""
+    svc = _get_services(session)
+    result = await svc.update_collected_product(product_id, {
+        "registered_accounts": None,
+        "market_product_nos": None,
+        "status": "collected",
+    })
+    if not result:
+        raise HTTPException(404, "상품을 찾을 수 없습니다")
+    return {"ok": True}
+
+
 @router.delete("/products/{product_id}")
 async def delete_collected_product(
     product_id: str,
@@ -527,6 +544,11 @@ async def collect_by_url(
                             "brand": detail.get("brand") or product.brand,
                             "manufacturer": detail.get("manufacturer"),
                             "origin": detail.get("origin"),
+                            "images": detail.get("images") or product.images,
+                            "detail_images": detail.get("detailImages") or None,
+                            "material": detail.get("material"),
+                            "color": detail.get("color"),
+                            "detail_html": detail.get("detailHtml") or None,
                             "options": detail.get("options", []),
                             "is_sold_out": detail.get("saleStatus") == "sold_out",
                             "sale_status": detail.get("saleStatus", "in_stock"),
@@ -590,6 +612,17 @@ async def collect_by_url(
                 "options": data.get("options", []),
             }
             sale_status = data.get("saleStatus", "in_stock")
+            # 상세 HTML: 수집 데이터의 detailHtml 사용
+            raw_detail_html = data.get("detailHtml", "")
+            if not raw_detail_html:
+                # 상세 이미지가 있으면 이미지로 HTML 생성
+                detail_imgs = data.get("detailImages") or []
+                if detail_imgs:
+                    raw_detail_html = "\n".join(
+                        f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                        for img in detail_imgs
+                    )
+
             collected = await svc.create_collected_product({
                 "source_site": "MUSINSA",
                 "site_product_id": goods_no,
@@ -599,6 +632,7 @@ async def collect_by_url(
                 "sale_price": data.get("salePrice", 0),
                 "cost": data.get("bestBenefitPrice") or None,
                 "images": data.get("images", []),
+                "detail_images": data.get("detailImages") or [],
                 "options": data.get("options", []),
                 "category": data.get("category", ""),
                 "category1": data.get("category1", ""),
@@ -607,6 +641,9 @@ async def collect_by_url(
                 "category4": data.get("category4", ""),
                 "manufacturer": data.get("manufacturer", ""),
                 "origin": data.get("origin", ""),
+                "material": data.get("material", ""),
+                "color": data.get("color", ""),
+                "detail_html": raw_detail_html,
                 "status": "collected",
                 "is_sold_out": sale_status == "sold_out",
                 "sale_status": sale_status,
@@ -932,6 +969,10 @@ async def collect_by_filter(
                             "cost": new_cost,
                             "brand": detail.get("brand") or product.brand,
                             "manufacturer": detail.get("manufacturer"), "origin": detail.get("origin"),
+                            "images": detail.get("images") or product.images,
+                            "detail_images": detail.get("detailImages") or None,
+                            "material": detail.get("material"),
+                            "color": detail.get("color"),
                             "options": detail.get("options", []),
                             # 확장 상품정보 (kream_data 필드에 JSON으로 저장)
                             "kream_data": {
@@ -1745,6 +1786,16 @@ async def refresh_products(
         history.insert(0, snapshot)
         updates["price_history"] = history[:200]
 
+        # 이미지/소재/색상 — 기존에 비어있으면 갱신 (재수집 시 자동 보충)
+        if r.new_images and not product.images:
+            updates["images"] = r.new_images
+        if r.new_detail_images and not getattr(product, "detail_images", None):
+            updates["detail_images"] = r.new_detail_images
+        if r.new_material and not getattr(product, "material", None):
+            updates["material"] = r.new_material
+        if r.new_color and not getattr(product, "color", None):
+            updates["color"] = r.new_color
+
         if r.changed:
             if r.new_sale_price is not None:
                 updates["sale_price"] = r.new_sale_price
@@ -1839,8 +1890,11 @@ async def refresh_products(
                         account = await account_repo.get_async(account_id)
                         if not account:
                             continue
+                        # 상품번호 주입
+                        m_nos = product.market_product_nos or {}
+                        product_dict["market_product_no"] = {account.market_type: m_nos.get(account_id, "")}
                         result = await delete_from_market(
-                            session, account.market_type, product_dict
+                            session, account.market_type, product_dict, account=account
                         )
                         if result.get("success"):
                             logger.info(f"[refresh] {pid} → {account.market_type} 판매중지 완료")
@@ -2049,6 +2103,172 @@ async def scheduler_tick(
         "refreshed": summary.refreshed,
         "changed": summary.changed,
         "sold_out": summary.sold_out,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# 오토튠 백그라운드 루프 (무한 반복)
+# ══════════════════════════════════════════════════════════════
+
+import asyncio as _asyncio
+
+_autotune_task: Optional[_asyncio.Task] = None
+_autotune_running = False
+_autotune_last_tick: Optional[str] = None
+_autotune_cycle_count = 0
+
+
+async def _autotune_loop():
+    """오토튠 무한 루프 — tick 완료 즉시 다음 tick 시작."""
+    global _autotune_running, _autotune_last_tick, _autotune_cycle_count
+    import logging
+    log = logging.getLogger("autotune")
+    log.info("[오토튠] 루프 시작")
+
+    while _autotune_running:
+        try:
+            from backend.db.orm import get_write_session
+            async with get_write_session() as session:
+                from backend.domain.samba.collector.scheduler import get_refresh_candidates
+                from backend.domain.samba.collector.refresher import refresh_products_bulk
+                from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+                from backend.domain.samba.warroom.service import SambaMonitorService
+
+                now = datetime.now(timezone.utc)
+                candidates = await get_refresh_candidates(session, now)
+
+                if candidates:
+                    repo = SambaCollectedProductRepository(session)
+                    products = []
+                    for pid in candidates:
+                        p = await repo.get_async(pid)
+                        if p:
+                            products.append(p)
+
+                    results, summary = await refresh_products_bulk(products)
+
+                    # DB 업데이트
+                    for r in results:
+                        if r.error:
+                            product = await repo.get_async(r.product_id)
+                            if product:
+                                await repo.update_async(
+                                    r.product_id,
+                                    refresh_error_count=(product.refresh_error_count or 0) + 1,
+                                    last_refreshed_at=now,
+                                )
+                            continue
+                        if r.needs_extension:
+                            continue
+
+                        product = await repo.get_async(r.product_id)
+                        if not product:
+                            continue
+
+                        updates: dict = {
+                            "last_refreshed_at": now,
+                            "refresh_error_count": 0,
+                        }
+
+                        snapshot: dict = {
+                            "date": now.isoformat(),
+                            "source": "autotune",
+                            "sale_price": r.new_sale_price if r.new_sale_price is not None else product.sale_price,
+                            "original_price": r.new_original_price if r.new_original_price is not None else product.original_price,
+                            "cost": r.new_cost if r.new_cost is not None else product.cost,
+                            "sale_status": r.new_sale_status,
+                            "changed": r.changed,
+                        }
+                        if r.new_options:
+                            snapshot["options"] = r.new_options
+                        history = list(product.price_history or [])
+                        history.insert(0, snapshot)
+                        updates["price_history"] = history[:200]
+
+                        if r.changed:
+                            if r.new_sale_price is not None:
+                                updates["sale_price"] = r.new_sale_price
+                            if r.new_original_price is not None:
+                                updates["original_price"] = r.new_original_price
+                            if r.new_cost is not None:
+                                updates["cost"] = r.new_cost
+                            if r.new_options is not None:
+                                updates["options"] = r.new_options
+                            updates["sale_status"] = r.new_sale_status
+                            updates["is_sold_out"] = r.new_sale_status == "sold_out"
+                            old_price = product.sale_price or 0
+                            new_price = r.new_sale_price or 0
+                            if new_price != old_price:
+                                updates["price_before_change"] = old_price
+                                updates["price_changed_at"] = now
+
+                        await repo.update_async(r.product_id, **updates)
+
+                    await session.commit()
+
+                    monitor = SambaMonitorService(session)
+                    await monitor.emit(
+                        "scheduler_tick", "info",
+                        summary=f"오토튠 — {len(candidates)}건 후보, {summary.refreshed}건 갱신, {summary.changed}건 변동",
+                        detail={
+                            "candidates": len(candidates),
+                            "refreshed": summary.refreshed,
+                            "changed": summary.changed,
+                            "sold_out": summary.sold_out,
+                        },
+                    )
+                    await session.commit()
+                    log.info("[오토튠] tick 완료: %d건 후보, %d건 갱신", len(candidates), summary.refreshed)
+                else:
+                    # 갱신 대상 없으면 5초 대기 후 재확인
+                    await _asyncio.sleep(5)
+
+                _autotune_last_tick = now.isoformat()
+                _autotune_cycle_count += 1
+
+        except _asyncio.CancelledError:
+            log.info("[오토튠] 루프 취소됨")
+            break
+        except Exception as e:
+            log.error("[오토튠] tick 오류: %s", e, exc_info=True)
+            # 에러 시 10초 대기 후 재시도
+            await _asyncio.sleep(10)
+
+    log.info("[오토튠] 루프 종료")
+
+
+@router.post("/autotune/start")
+async def autotune_start():
+    """오토튠 무한 루프 시작."""
+    global _autotune_task, _autotune_running, _autotune_cycle_count
+    if _autotune_running:
+        return {"ok": True, "status": "already_running"}
+    _autotune_running = True
+    _autotune_cycle_count = 0
+    _autotune_task = _asyncio.create_task(_autotune_loop())
+    return {"ok": True, "status": "started"}
+
+
+@router.post("/autotune/stop")
+async def autotune_stop():
+    """오토튠 무한 루프 정지."""
+    global _autotune_task, _autotune_running
+    if not _autotune_running:
+        return {"ok": True, "status": "already_stopped"}
+    _autotune_running = False
+    if _autotune_task and not _autotune_task.done():
+        _autotune_task.cancel()
+    _autotune_task = None
+    return {"ok": True, "status": "stopped"}
+
+
+@router.get("/autotune/status")
+async def autotune_status():
+    """오토튠 상태 조회."""
+    return {
+        "running": _autotune_running,
+        "last_tick": _autotune_last_tick,
+        "cycle_count": _autotune_cycle_count,
     }
 
 

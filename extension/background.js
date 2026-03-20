@@ -263,6 +263,12 @@ async function handleCollectJob(job) {
     // 원인: Chrome 레벨에서 탭이 active여야만 KREAM 팝업이 열림
     // visibilityState JS 스푸핑만으로는 부족 — chrome.tabs.update(active:true) 필요
     let sizeOptions = []
+    // 현재 활성 탭 기억 (작업 후 복원용)
+    let previousTabId = null
+    try {
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      previousTabId = activeTab?.id || null
+    } catch { /* ignore */ }
     try {
       // active로 전환하여 Chrome 레벨 visibilityState visible 만들기
       await chrome.tabs.update(tabId, { active: true })
@@ -449,6 +455,13 @@ async function handleCollectJob(job) {
       }
     } catch (e) {
       console.log('[KREAM] 옵션 수집 실패:', e.message)
+    }
+
+    // 원래 활성 탭으로 복원 (창 빼앗김 방지)
+    if (previousTabId) {
+      try {
+        await chrome.tabs.update(previousTabId, { active: true })
+      } catch { /* 탭이 닫혔을 수 있음 */ }
     }
 
     // 4. content script로 기본 정보 수집 (사이즈는 이미 수집함)

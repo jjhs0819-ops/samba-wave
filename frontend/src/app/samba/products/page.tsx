@@ -6,29 +6,67 @@ import {
   collectorApi,
   policyApi,
   forbiddenApi,
+  accountApi,
+  shipmentApi,
   type SambaCollectedProduct,
   type SambaPolicy,
   type SambaSearchFilter,
+  type SambaMarketAccount,
 } from "@/lib/samba/api";
-import { showAlert } from '@/components/samba/Modal'
+import { showAlert, showConfirm } from '@/components/samba/Modal'
 
+// 마켓별 상품 검색 URL (구매페이지 바로가기용)
 const MARKETS = [
-  { id: "coupang", name: "쿠팡" },
-  { id: "ssg", name: "신세계몰" },
-  { id: "smartstore", name: "스마트스토어" },
-  { id: "11st", name: "11번가" },
-  { id: "gmarket", name: "지마켓" },
-  { id: "auction", name: "옥션" },
-  { id: "gsshop", name: "GS샵" },
-  { id: "lotteon", name: "롯데ON" },
-  { id: "lottehome", name: "롯데홈쇼핑" },
-  { id: "homeand", name: "홈앤쇼핑" },
-  { id: "hmall", name: "HMALL" },
-  { id: "kream", name: "KREAM" },
+  { id: "coupang", name: "쿠팡", url: "https://wing.coupang.com", searchUrl: "https://www.coupang.com/np/search?q=" },
+  { id: "ssg", name: "신세계몰", url: "https://sellerpick.ssg.com", searchUrl: "https://www.ssg.com/search.ssg?query=" },
+  { id: "smartstore", name: "스마트스토어", url: "https://sell.smartstore.naver.com", searchUrl: "https://search.shopping.naver.com/search/all?query=" },
+  { id: "11st", name: "11번가", url: "https://spc.11st.co.kr", searchUrl: "https://search.11st.co.kr/Search.tmall?kwd=" },
+  { id: "gmarket", name: "지마켓", url: "https://www.esmplus.com", searchUrl: "https://browse.gmarket.co.kr/search?keyword=" },
+  { id: "auction", name: "옥션", url: "https://www.esmplus.com", searchUrl: "https://browse.auction.co.kr/search?keyword=" },
+  { id: "gsshop", name: "GS샵", url: "https://partner.gsshop.com", searchUrl: "https://www.gsshop.com/shop/search/totalSearch.gs?tq=" },
+  { id: "lotteon", name: "롯데ON", url: "https://partner.lotteon.com", searchUrl: "https://www.lotteon.com/search/search/search.ecn?render=search&platform=pc&q=" },
+  { id: "lottehome", name: "롯데홈쇼핑", url: "https://partner.lottehome.com", searchUrl: "https://www.lotteimall.com/search/searchMain.lotte?searchKeyword=" },
+  { id: "homeand", name: "홈앤쇼핑", url: "https://partner.homeandshopping.com", searchUrl: "https://www.hnsmall.com/search?keyword=" },
+  { id: "hmall", name: "HMALL", url: "https://partner.hmall.com", searchUrl: "https://www.hmall.com/search?searchTerm=" },
+  { id: "kream", name: "KREAM", url: "https://kream.co.kr", searchUrl: "https://kream.co.kr/search?keyword=" },
+  { id: "ebay", name: "eBay", url: "https://www.ebay.com/sh/ovw", searchUrl: "https://www.ebay.com/sch/i.html?_nkw=" },
+  { id: "lazada", name: "Lazada", url: "https://sellercenter.lazada.com", searchUrl: "https://www.lazada.com/catalog/?q=" },
+  { id: "qoo10", name: "Qoo10", url: "https://qsm.qoo10.com", searchUrl: "https://www.qoo10.com/s?keyword=" },
+  { id: "shopee", name: "Shopee", url: "https://seller.shopee.com", searchUrl: "https://shopee.com/search?keyword=" },
+  { id: "shopify", name: "Shopify", url: "https://admin.shopify.com", searchUrl: "" },
+  { id: "zoom", name: "Zum(줌)", url: "https://zum.com", searchUrl: "https://search.zum.com/search.zum?method=uni&query=" },
 ];
 
 function fmt(n: number): string {
   return n.toLocaleString();
+}
+
+// 마켓별 상품 구매페이지 URL 생성 (상품번호가 있을 때만)
+function buildMarketProductUrl(marketType: string, sellerId: string, productNo: string, storeSlug?: string): string {
+  if (!productNo) return ''
+  switch (marketType) {
+    case 'smartstore':
+      // 스토어 슬러그 우선 사용 (seller_id는 이메일일 수 있음)
+      return `https://smartstore.naver.com/${storeSlug || sellerId}/products/${productNo}`
+    case 'coupang':
+      return `https://www.coupang.com/vp/products/${productNo}`
+    case '11st':
+      return `https://www.11st.co.kr/products/${productNo}`
+    case 'gmarket':
+      return `https://item.gmarket.co.kr/Item?goodscode=${productNo}`
+    case 'auction':
+      return `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${productNo}`
+    case 'ssg':
+      return `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`
+    case 'lotteon':
+      return `https://www.lotteon.com/p/product/${productNo}`
+    case 'kream':
+      return `https://kream.co.kr/products/${productNo}`
+    case 'ebay':
+      return `https://www.ebay.com/itm/${productNo}`
+    default:
+      return ''
+  }
 }
 
 export default function ProductsPage() {
@@ -43,6 +81,7 @@ export default function ProductsPage() {
   const [allProducts, setAllProducts] = useState<SambaCollectedProduct[]>([]);
   const [products, setProducts] = useState<SambaCollectedProduct[]>([]);
   const [policies, setPolicies] = useState<SambaPolicy[]>([]);
+  const [accounts, setAccounts] = useState<SambaMarketAccount[]>([]);
   const [filterNameMap, setFilterNameMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
@@ -62,6 +101,8 @@ export default function ProductsPage() {
 
   // 상품별 로그 (업데이트 버튼 클릭 시 해당 상품 위에 표시)
   const [activeLog, setActiveLog] = useState<{ productId: string; message: string } | null>(null);
+  // AI 비용 추적
+  const [lastAiUsage, setLastAiUsage] = useState<{ calls: number; tokens: number; cost: number; date: string } | null>(null);
 
   // 삭제 확인 모달
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: string[]; label: string } | null>(null);
@@ -76,15 +117,17 @@ export default function ProductsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [p, pol, filters, words] = await Promise.all([
+      const [p, pol, filters, words, accs] = await Promise.all([
         collectorApi.listProducts(0, 500).catch((e) => { console.error("listProducts error:", e); return []; }),
         policyApi.list().catch((e) => { console.error("listPolicies error:", e); return []; }),
         collectorApi.listFilters().catch(() => [] as SambaSearchFilter[]),
         forbiddenApi.listWords('deletion').catch(() => []),
+        accountApi.listActive().catch(() => [] as SambaMarketAccount[]),
       ]);
       console.log("loaded products:", p.length, "policies:", pol.length);
       setAllProducts(p);
       setPolicies(pol);
+      setAccounts(accs);
       setDeletionWords(words.filter(w => w.is_active).map(w => w.word));
       const nameMap: Record<string, string> = {};
       filters.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name; });
@@ -290,6 +333,12 @@ export default function ProductsPage() {
         const stockStr = p?.sale_status === 'preorder' ? '판매예정' : p?.sale_status === 'sold_out' || p?.is_sold_out ? '품절' : '재고있음'
         const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
         setActiveLog({ productId, message: `[${now}] ${productName} → ${priceStr} | ${stockStr}` })
+        setLastAiUsage(prev => {
+          const prevCalls = prev?.calls || 0
+          const prevTokens = prev?.tokens || 0
+          const prevCost = prev?.cost || 0
+          return { calls: prevCalls + 1, tokens: prevTokens + 1800, cost: prevCost + 15, date: new Date().toLocaleTimeString() }
+        })
         // 해당 상품만 갱신 (전체 새로고침 없음)
         if (p) {
           setAllProducts(prev => prev.map(item => item.id === productId ? { ...item, ...p } : item))
@@ -301,6 +350,28 @@ export default function ProductsPage() {
       setActiveLog({ productId, message: `[오류] ${productName} → 서버 연결 실패` })
     }
   };
+
+  const handleMarketDelete = async (productId: string) => {
+    const p = allProducts.find(x => x.id === productId)
+    const regAccIds = p?.registered_accounts ?? []
+    if (!regAccIds.length) {
+      showAlert('마켓에 등록된 계정이 없습니다.')
+      return
+    }
+    if (!await showConfirm('마켓에서 상품을 삭제(판매중지)하시겠습니까?')) return
+    try {
+      const res = await shipmentApi.marketDelete([productId], regAccIds)
+      const result = res?.results?.[0]
+      if (result && result.success_count > 0) {
+        showAlert(`마켓삭제 완료 (${result.success_count}개 마켓)`, 'success')
+      } else {
+        showAlert('마켓삭제 처리 완료 (일부 실패할 수 있음)')
+      }
+      load()
+    } catch {
+      showAlert('마켓삭제 중 오류가 발생했습니다.', 'error')
+    }
+  }
 
   const handleToggleMarket = async (productId: string, marketId: string) => {
     const product = allProducts.find((p) => p.id === productId);
@@ -584,47 +655,93 @@ export default function ProductsPage() {
           <span style={{ fontSize: "0.875rem", color: "#E5E5E5", fontWeight: 600, whiteSpace: "nowrap" }}>
             상품관리 <span style={{ color: "#FF8C00" }}>( 총 <span>{totalCount}</span>개 검색 )</span>
           </span>
-          <button style={{
-            fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid rgba(81,207,102,0.35)", borderRadius: "5px",
-            color: "#51CF66", background: "rgba(81,207,102,0.08)", cursor: "pointer", whiteSpace: "nowrap",
-          }}>AI이미지 변경</button>
-          <button style={{
-            fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid rgba(81,207,102,0.35)", borderRadius: "5px",
-            color: "#51CF66", background: "rgba(81,207,102,0.08)", cursor: "pointer", whiteSpace: "nowrap",
-          }}>AI상품명변경</button>
-          <button style={{
-            fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid rgba(76,154,255,0.35)", borderRadius: "5px",
-            color: "#4C9AFF", background: "rgba(76,154,255,0.08)", cursor: "pointer", whiteSpace: "nowrap",
-          }}>AI태그</button>
+          {/* AI 비용 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.25rem 0.625rem', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.2)', borderRadius: '5px' }}>
+            <span style={{ fontSize: '0.72rem', color: '#A78BFA', fontWeight: 600 }}>AI 비용</span>
+            <span style={{ fontSize: '0.72rem', color: '#E5E5E5' }}>
+              예상 <span style={{ color: '#FFB84D', fontWeight: 700 }}>₩15</span>
+              <span style={{ color: '#888' }}> (1회)</span>
+            </span>
+          </div>
+          {[
+            { label: 'AI이미지 변경', onClick: undefined },
+            { label: 'AI상품명변경', onClick: undefined },
+            { label: 'AI태그', onClick: undefined },
+          ].map(btn => (
+            <button key={btn.label} onClick={btn.onClick} style={{
+              fontSize: "0.78rem", padding: "4px 12px",
+              border: "1px solid #3D3D3D", borderRadius: "5px",
+              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+            }}>{btn.label}</button>
+          ))}
           <button onClick={() => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
             setShowBulkTag(true)
           }} style={{
             fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid rgba(255,211,61,0.35)", borderRadius: "5px",
-            color: "#FFD93D", background: "rgba(255,211,61,0.08)", cursor: "pointer", whiteSpace: "nowrap",
+            border: "1px solid #3D3D3D", borderRadius: "5px",
+            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
           }}>태그 일괄입력</button>
-          <button style={{
-            fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid rgba(76,154,255,0.35)", borderRadius: "5px",
-            color: "#4C9AFF", background: "rgba(76,154,255,0.08)", cursor: "pointer", whiteSpace: "nowrap",
-          }}>상품전송</button>
+          <button
+            onClick={() => {
+              if (selectedIds.size === 0) { showAlert('전송할 상품을 선택해주세요'); return }
+              const ids = Array.from(selectedIds).join(',')
+              const sites = [...new Set(
+                Array.from(selectedIds).map(id => products.find(p => p.id === id)?.source_site).filter(Boolean)
+              )].join(',')
+              router.push(`/samba/shipments?selected=${encodeURIComponent(ids)}&sites=${encodeURIComponent(sites)}&autoAll=1`)
+            }}
+            style={{
+              fontSize: "0.78rem", padding: "4px 12px",
+              border: "1px solid #3D3D3D", borderRadius: "5px",
+              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+            }}>상품전송</button>
           <button
             onClick={handleBulkDelete}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid rgba(255,107,107,0.35)", borderRadius: "5px",
-              color: "#FF6B6B", background: "rgba(255,107,107,0.08)", cursor: "pointer", whiteSpace: "nowrap",
+              border: "1px solid #3D3D3D", borderRadius: "5px",
+              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}
           >상품삭제</button>
-          <button style={{
+          <button
+            onClick={async () => {
+              if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
+              // 선택된 상품 중 등록된 계정이 있는 것만 대상
+              const targets = allProducts.filter(p => selectedIds.has(p.id) && (p.registered_accounts?.length ?? 0) > 0)
+              if (!targets.length) { showAlert('마켓에 등록된 상품이 없습니다.'); return }
+              if (!await showConfirm(`${targets.length}개 상품을 마켓에서 삭제(판매중지)하시겠습니까?`)) return
+              try {
+                const productIds = targets.map(p => p.id)
+                const allAccIds = [...new Set(targets.flatMap(p => p.registered_accounts ?? []))]
+                await shipmentApi.marketDelete(productIds, allAccIds)
+                showAlert(`${targets.length}개 상품 마켓삭제 완료`, 'success')
+                load()
+              } catch {
+                showAlert('마켓삭제 중 오류가 발생했습니다.', 'error')
+              }
+            }}
+            style={{
             fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid rgba(204,93,232,0.35)", borderRadius: "5px",
-            color: "#CC5DE8", background: "rgba(204,93,232,0.08)", cursor: "pointer", whiteSpace: "nowrap",
+            border: "1px solid #3D3D3D", borderRadius: "5px",
+            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
           }}>마켓삭제</button>
+          <button
+            onClick={async () => {
+              if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
+              if (!await showConfirm(`${selectedIds.size}개 상품의 마켓 등록 정보를 초기화하시겠습니까?\n(마켓에서 이미 삭제된 상품의 등록 상태만 정리합니다)`)) return
+              for (const id of selectedIds) {
+                await collectorApi.resetRegistration(id).catch(() => {})
+              }
+              showAlert(`${selectedIds.size}개 상품 마켓 등록 정보 초기화 완료`, 'success')
+              load()
+            }}
+            style={{
+              fontSize: "0.78rem", padding: "4px 12px",
+              border: "1px solid #3D3D3D", borderRadius: "5px",
+              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+            }}
+          >강제삭제</button>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <button
@@ -706,6 +823,7 @@ export default function ProductsPage() {
               product={p}
               idx={idx}
               policies={policies}
+              accounts={accounts}
               selectedIds={selectedIds}
               filterNameMap={filterNameMap}
               deletionWords={deletionWords}
@@ -715,6 +833,7 @@ export default function ProductsPage() {
               onToggleMarket={handleToggleMarket}
               onEnrich={handleEnrich}
               onLockToggle={handleLockToggle}
+              onMarketDelete={handleMarketDelete}
               onTagUpdate={async (productId, tags) => {
                 // 낙관적 업데이트 (새로고침 없이 즉시 반영)
                 setAllProducts(prev => prev.map(p =>
@@ -806,6 +925,7 @@ interface ProductCardProps {
   product: SambaCollectedProduct;
   idx: number;
   policies: SambaPolicy[];
+  accounts: SambaMarketAccount[];
   selectedIds: Set<string>;
   filterNameMap: Record<string, string>;
   deletionWords: string[];
@@ -816,6 +936,7 @@ interface ProductCardProps {
   onEnrich: (productId: string) => void;
   onLockToggle: (productId: string, field: 'lock_delete' | 'lock_stock', value: boolean) => void;
   onTagUpdate: (productId: string, tags: string[]) => void;
+  onMarketDelete: (productId: string) => void;
   logMessage?: string;
 }
 
@@ -844,8 +965,8 @@ function renderRegisteredName(name: string, deletionWords: string[]): React.Reac
 }
 
 function ProductCard({
-  product: p, idx, policies, selectedIds, filterNameMap, deletionWords,
-  onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onTagUpdate, logMessage,
+  product: p, idx, policies, accounts, selectedIds, filterNameMap, deletionWords,
+  onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onTagUpdate, onMarketDelete, logMessage,
 }: ProductCardProps) {
   const [showPriceHistoryModal, setShowPriceHistoryModal] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)
@@ -928,6 +1049,29 @@ function ProductCard({
     })
 
   const marketEnabled = ((p as unknown as Record<string, unknown>).market_enabled as Record<string, boolean>) || {};
+
+  // 등록된 계정 기반 마켓 정보 (등록한 마켓만 표시용)
+  const regAccIds = p.registered_accounts ?? []
+  const marketProductNos = p.market_product_nos || {}
+  const registeredMarkets = useMemo(() => {
+    return regAccIds
+      .map(aid => accounts.find(a => a.id === aid))
+      .filter((a): a is SambaMarketAccount => !!a)
+      .map(acc => {
+        const market = MARKETS.find(m => m.id === acc.market_type)
+        const productNo = marketProductNos[acc.id] || ''
+        // 마켓 상품번호가 있으면 구매페이지 직접 링크, 없으면 검색 URL
+        const extras = (acc.additional_fields || {}) as Record<string, string>
+        const url = buildMarketProductUrl(acc.market_type, acc.seller_id || '', productNo, extras.storeSlug)
+          || (market?.searchUrl ? market.searchUrl + encodeURIComponent(p.name) : market?.url || '')
+        return {
+          marketId: acc.market_type,
+          label: `${acc.market_name}(${acc.seller_id || acc.account_label || acc.business_name || '-'})`,
+          url,
+          accId: acc.id,
+        }
+      })
+  }, [regAccIds, accounts, p.name, marketProductNos]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const tdLabel: React.CSSProperties = { padding: "6px 8px", color: "#555", fontSize: "0.75rem", whiteSpace: "nowrap", verticalAlign: "middle" };
   const tdVal: React.CSSProperties = { padding: "6px 8px", verticalAlign: "middle" };
@@ -1148,10 +1292,12 @@ function ProductCard({
         // 대표이미지: 첫번째, 추가이미지: 나머지
         const mainImg = productImages[0] || ''
         const extraImgs = productImages.slice(1)
-        // 상세페이지 이미지: detail_html에서 추출
-        const detailImgs = (p.detail_html || '').match(/src=["']([^"']+)["']/gi)
-          ?.map(m => m.replace(/src=["']/i, '').replace(/["']$/, ''))
-          ?.map(url => url.startsWith('//') ? `https:${url}` : url) || []
+        // 상세페이지 이미지: detail_images 필드 우선, 없으면 detail_html에서 추출
+        const detailImgs = (p.detail_images && p.detail_images.length > 0)
+          ? p.detail_images
+          : (p.detail_html || '').match(/src=["']([^"']+)["']/gi)
+            ?.map((m: string) => m.replace(/src=["']/i, '').replace(/["']$/, ''))
+            ?.map((url: string) => url.startsWith('//') ? `https:${url}` : url) || []
 
         const tabStyle = (active: boolean) => ({
           padding: '8px 16px', fontSize: '0.8rem', fontWeight: active ? 600 : 400,
@@ -1441,10 +1587,26 @@ function ProductCard({
               fontSize: "0.72rem", padding: "3px 9px", background: "#1E1E1E",
               color: "#999", border: "1px solid #2D2D2D", borderRadius: "3px", cursor: "pointer", whiteSpace: "nowrap",
             }}>가격재고업데이트</button>
-            <button style={{
+            <button
+              onClick={() => onMarketDelete(p.id)}
+              style={{
               fontSize: "0.72rem", padding: "3px 9px", background: "#1E1E1E",
               color: "#FF6B6B", border: "1px solid rgba(255,107,107,0.2)", borderRadius: "3px", cursor: "pointer", whiteSpace: "nowrap",
             }}>마켓삭제</button>
+            {/* 등록된 마켓 바로가기 — 등록한 계정만 표시 */}
+            {p.status === "registered" && registeredMarkets.map(rm => (
+              <button key={rm.accId}
+                onClick={() => window.open(rm.url, '_blank')}
+                style={{
+                  fontSize: "0.65rem", padding: "2px 6px", background: "rgba(81,207,102,0.08)",
+                  color: "#51CF66", border: "1px solid rgba(81,207,102,0.25)", borderRadius: "3px",
+                  cursor: "pointer", whiteSpace: "nowrap",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
+                title={`${rm.label} 상품 구매페이지 열기`}
+              >{rm.label}</button>
+            ))}
           </div>
 
           {/* Detail table */}
@@ -1458,14 +1620,14 @@ function ProductCard({
               <tr style={{ borderBottom: "1px solid #1E1E1E" }}>
                 <td style={tdLabel}>원 상품명</td>
                 <td style={tdVal}>
-                  <span style={{ color: "#D1D9EE", fontWeight: 500 }}>{p.name}</span>
+                  <span style={{ color: "#FFFFFF", fontWeight: 500 }}>{p.name}</span>
                 </td>
               </tr>
               {/* 등록 상품명 (삭제어 취소선 적용) */}
               <tr style={{ borderBottom: "1px solid #1E1E1E" }}>
                 <td style={tdLabel}>등록 상품명</td>
                 <td style={tdVal}>
-                  <span style={{ color: "#D1D9EE", fontSize: "0.8rem" }}>{renderRegisteredName(p.name, deletionWords)}</span>
+                  <span style={{ color: "#FFFFFF", fontSize: "0.8rem" }}>{renderRegisteredName(p.name, deletionWords)}</span>
                 </td>
               </tr>
               {/* 영문 상품명 */}
@@ -1557,8 +1719,8 @@ function ProductCard({
                     const items = [
                       p.origin && ['제조국', p.origin],
                       p.manufacturer && ['제조사', p.manufacturer],
-                      kd.color && ['색상', String(kd.color)],
-                      kd.material && ['재질', String(kd.material)],
+                      (p.color || kd.color) && ['색상', String(p.color || kd.color)],
+                      (p.material || kd.material) && ['재질', String(p.material || kd.material)],
                       kd.sizeInfo && ['크기', String(kd.sizeInfo)],
                       kd.season && ['시즌', String(kd.season)],
                       kd.styleCode && ['스타일코드', String(kd.styleCode)],
@@ -1643,20 +1805,35 @@ function ProductCard({
               <tr style={{ borderBottom: "1px solid #1E1E1E" }}>
                 <td style={tdLabel}>적용정책</td>
                 <td style={tdVal}>
-                  <select
-                    value={p.applied_policy_id || ""}
-                    onChange={(e) => onPolicyChange(p.id, e.target.value)}
-                    style={{
-                      background: "rgba(22,22,22,0.9)", border: "1px solid #2D2D2D",
-                      color: "#C5C5C5", borderRadius: "4px", padding: "2px 6px",
-                      fontSize: "0.75rem", outline: "none",
-                    }}
-                  >
-                    <option value="">정책 선택</option>
-                    {policies.map((pol) => (
-                      <option key={pol.id} value={pol.id}>{pol.name}</option>
-                    ))}
-                  </select>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.375rem" }}>
+                    <select
+                      value={p.applied_policy_id || ""}
+                      onChange={(e) => onPolicyChange(p.id, e.target.value)}
+                      style={{
+                        background: "rgba(22,22,22,0.9)", border: "1px solid #2D2D2D",
+                        color: "#C5C5C5", borderRadius: "4px", padding: "2px 6px",
+                        fontSize: "0.75rem", outline: "none",
+                      }}
+                    >
+                      <option value="">정책 선택</option>
+                      {policies.map((pol) => (
+                        <option key={pol.id} value={pol.id}>{pol.name}</option>
+                      ))}
+                    </select>
+                    {p.applied_policy_id && (
+                      <button
+                        onClick={() => window.location.href = `/samba/policies?highlight=${p.applied_policy_id}`}
+                        style={{
+                          background: "none", border: "1px solid #2D2D2D", borderRadius: "4px",
+                          color: "#888", fontSize: "0.625rem", padding: "2px 6px",
+                          cursor: "pointer", whiteSpace: "nowrap",
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.borderColor = "rgba(255,140,0,0.4)" }}
+                        onMouseLeave={e => { e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "#2D2D2D" }}
+                        title="정책 페이지로 이동"
+                      >이동</button>
+                    )}
+                  </div>
                 </td>
               </tr>
               {/* Options */}
@@ -1675,30 +1852,36 @@ function ProductCard({
                 <td style={tdLabel}>ON-OFF</td>
                 <td style={tdVal}>
                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center" }}>
-                    {MARKETS.map((m) => {
-                      const on = marketEnabled[m.id] !== false;
-                      return (
-                        <span key={m.id} style={{ display: "inline-flex", alignItems: "center", gap: "4px", marginRight: "10px", marginBottom: "2px" }}>
-                          <button
-                            onClick={() => onToggleMarket(p.id, m.id)}
-                            style={{
-                              width: "32px", height: "18px", borderRadius: "9px",
-                              border: "none", cursor: "pointer", position: "relative",
-                              background: on ? "#FF8C00" : "#333", transition: "background 0.2s",
-                              padding: 0,
-                            }}
-                          >
-                            <span style={{
-                              position: "absolute", top: "2px",
-                              left: on ? "14px" : "2px",
-                              width: "14px", height: "14px", borderRadius: "50%",
-                              background: "#fff", transition: "left 0.2s",
-                            }} />
-                          </button>
-                          <span style={{ fontSize: "0.7rem", color: on ? "#C5C5C5" : "#555" }}>{m.name}</span>
-                        </span>
-                      );
-                    })}
+                    {(() => {
+                      // 등록된 마켓 타입만 ON-OFF 토글 표시
+                      const regMarketTypes = new Set(registeredMarkets.map(rm => rm.marketId))
+                      const visibleMarkets = MARKETS.filter(m => regMarketTypes.has(m.id))
+                      if (visibleMarkets.length === 0) return <span style={{ color: '#555', fontSize: '0.72rem' }}>등록된 마켓이 없습니다</span>
+                      return visibleMarkets.map((m) => {
+                        const on = marketEnabled[m.id] !== false;
+                        return (
+                          <span key={m.id} style={{ display: "inline-flex", alignItems: "center", gap: "4px", marginRight: "10px", marginBottom: "2px" }}>
+                            <button
+                              onClick={() => onToggleMarket(p.id, m.id)}
+                              style={{
+                                width: "32px", height: "18px", borderRadius: "9px",
+                                border: "none", cursor: "pointer", position: "relative",
+                                background: on ? "#FF8C00" : "#333", transition: "background 0.2s",
+                                padding: 0,
+                              }}
+                            >
+                              <span style={{
+                                position: "absolute", top: "2px",
+                                left: on ? "14px" : "2px",
+                                width: "14px", height: "14px", borderRadius: "50%",
+                                background: "#fff", transition: "left 0.2s",
+                              }} />
+                            </button>
+                            <span style={{ fontSize: "0.7rem", color: on ? "#C5C5C5" : "#555" }}>{m.name}</span>
+                          </span>
+                        );
+                      })
+                    })()}
                   </div>
                 </td>
               </tr>

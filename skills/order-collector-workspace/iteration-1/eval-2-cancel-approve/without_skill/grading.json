@@ -1,0 +1,34 @@
+{
+  "eval_id": "eval-2-cancel-approve",
+  "variant": "without_skill",
+  "total_assertions": 5,
+  "passed": 3,
+  "pass_rate": 60.0,
+  "expectations": [
+    {
+      "text": "coupang-cancel-api",
+      "passed": false,
+      "evidence": "keyword check"
+    },
+    {
+      "text": "elevenst-cancel-api",
+      "passed": true,
+      "evidence": "keyword check"
+    },
+    {
+      "text": "source-branch",
+      "passed": false,
+      "evidence": "keyword check"
+    },
+    {
+      "text": "proxy-method",
+      "passed": true,
+      "evidence": "keyword check"
+    },
+    {
+      "text": "status-update",
+      "passed": true,
+      "evidence": "keyword check"
+    }
+  ]
+}

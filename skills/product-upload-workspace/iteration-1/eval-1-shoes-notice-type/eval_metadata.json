@@ -1,0 +1,37 @@
+{
+  "eval_id": 1,
+  "eval_name": "shoes-notice-type",
+  "prompt": "transform_product()에서 신발 카테고리일 때 고시정보 타입을 SHOES로 분기하는 코드를 작성해줘.",
+  "assertions": [
+    {
+      "id": "shoes-type-branch",
+      "text": "카테고리에 '신발' 키워드가 있을 때 SHOES 타입으로 분기하는 코드 포함",
+      "type": "contains_keyword",
+      "keywords": ["SHOES", "신발"]
+    },
+    {
+      "id": "cosmetic-type-branch",
+      "text": "화장품 카테고리에 대한 COSMETIC 타입 분기도 포함",
+      "type": "contains_keyword",
+      "keywords": ["COSMETIC"]
+    },
+    {
+      "id": "shoes-fields-correct",
+      "text": "SHOES 고시정보에 height(굽높이) 필드가 포함",
+      "type": "contains_keyword",
+      "keywords": ["height"]
+    },
+    {
+      "id": "wear-preserved",
+      "text": "기존 WEAR 로직이 기본값(else)으로 유지됨",
+      "type": "contains_keyword",
+      "keywords": ["WEAR"]
+    },
+    {
+      "id": "actual-code-provided",
+      "text": "설명만이 아닌 실제 Python 코드 블록이 포함됨",
+      "type": "contains_keyword",
+      "keywords": ["def ", "productInfoProvidedNoticeType"]
+    }
+  ]
+}

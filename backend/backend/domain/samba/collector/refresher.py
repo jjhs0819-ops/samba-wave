@@ -77,6 +77,10 @@ class RefreshResult:
     new_cost: Optional[float] = None
     new_sale_status: str = "in_stock"  # in_stock / sold_out
     new_options: Optional[list] = None
+    new_images: Optional[list] = None
+    new_detail_images: Optional[list] = None
+    new_material: Optional[str] = None
+    new_color: Optional[str] = None
     changed: bool = False
     needs_extension: bool = False
     error: Optional[str] = None
@@ -246,6 +250,12 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
             f"변동 감지: 가격 {old_sale}→{new_sale_price}, 상태 {old_status}→{new_sale_status}",
         )
 
+    # 이미지/소재/색상 (빈 값이 아닌 경우만 업데이트)
+    new_images = detail.get("images") or None
+    new_detail_images = detail.get("detailImages") or None
+    new_material = detail.get("material") or None
+    new_color = detail.get("color") or None
+
     return RefreshResult(
         product_id=product.id,
         new_sale_price=new_sale_price,
@@ -253,6 +263,10 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         new_cost=new_cost,
         new_sale_status=new_sale_status,
         new_options=new_options,
+        new_images=new_images,
+        new_detail_images=new_detail_images,
+        new_material=new_material,
+        new_color=new_color,
         changed=changed,
         warnings=warnings,
     )

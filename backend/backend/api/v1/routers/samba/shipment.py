@@ -18,6 +18,11 @@ class ShipmentStartRequest(BaseModel):
   skip_unchanged: bool = False  # 가격 변동 없으면 스킵
 
 
+class MarketDeleteRequest(BaseModel):
+  product_ids: list[str]
+  target_account_ids: list[str]
+
+
 def _get_service(session: AsyncSession):
   from backend.domain.samba.shipment.repository import SambaShipmentRepository
   from backend.domain.samba.shipment.service import SambaShipmentService
@@ -66,7 +71,19 @@ async def start_shipment(
     body.product_ids, body.update_items, body.target_account_ids,
     skip_unchanged=body.skip_unchanged,
   )
-  return {"processed": result}
+  return result
+
+
+@router.post("/market-delete")
+async def market_delete(
+  body: MarketDeleteRequest,
+  session: AsyncSession = Depends(get_write_session_dependency),
+):
+  """선택된 상품을 대상 마켓에서 판매중지/삭제."""
+  svc = _get_service(session)
+  return await svc.delete_from_markets(
+    body.product_ids, body.target_account_ids
+  )
 
 
 @router.post("/{shipment_id}/retry")

@@ -1,0 +1,25 @@
+{
+  "order_number": "2024032099999999",
+  "channel_id": "acc_smartstore_001",
+  "channel_name": "내스토어",
+  "product_name": "아디다스 울트라부스트 22 (260)",
+  "product_image": "https://shop-phinf.pstatic.net/20230101/product_ultra.jpg",
+  "quantity": 1,
+  "sale_price": 189000,
+  "shipping_fee": 0,
+  "revenue": 170100,
+  "fee_rate": 10.0,
+  "customer_name": "김철수",
+  "customer_phone": "010-9876-5432",
+  "customer_address": "경기도 성남시 분당구 판교로 123",
+  "status": "cancel_requested",
+  "shipping_status": "취소요청",
+  "shipment_id": "2024032000002",
+  "source": "smartstore",
+  "_checklist_score": {
+    "total": 20,
+    "passed": 20,
+    "score_percent": 100,
+    "note": "취소요청 주문 — claimType=CANCEL이 일반 상태(DELIVERING)보다 우선 적용됨. productOrderStatus는 DELIVERING이지만 shipping_status는 '취소요청'"
+  }
+}

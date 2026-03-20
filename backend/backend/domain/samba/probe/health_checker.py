@@ -35,6 +35,7 @@ PROBE_TARGETS: dict[str, dict[str, Any]] = {
 # 마켓 probe — 인증 테스트만 (상품 등록 안 함)
 MARKET_PROBES: list[str] = [
   "smartstore", "coupang", "11st", "lotteon", "ssg", "lottehome", "gsshop",
+  "ebay", "lazada", "qoo10", "shopee", "shopify", "zoom",
 ]
 
 

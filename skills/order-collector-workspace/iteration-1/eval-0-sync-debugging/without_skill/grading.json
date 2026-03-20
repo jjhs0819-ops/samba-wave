@@ -1,0 +1,34 @@
+{
+  "eval_id": "eval-0-sync-debugging",
+  "variant": "without_skill",
+  "total_assertions": 5,
+  "passed": 5,
+  "pass_rate": 100.0,
+  "expectations": [
+    {
+      "text": "auth-check",
+      "passed": true,
+      "evidence": "keyword check"
+    },
+    {
+      "text": "days-param",
+      "passed": true,
+      "evidence": "keyword check"
+    },
+    {
+      "text": "account-active",
+      "passed": true,
+      "evidence": "keyword check"
+    },
+    {
+      "text": "dedup-logic",
+      "passed": true,
+      "evidence": "keyword check"
+    },
+    {
+      "text": "market-branch",
+      "passed": true,
+      "evidence": "keyword check"
+    }
+  ]
+}

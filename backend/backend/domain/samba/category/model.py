@@ -54,7 +54,9 @@ class SambaCategoryTree(SQLModel, table=True):
     # 카테고리 계층 (JSON)
     # cat1: ["대분류1", "대분류2", ...]
     cat1: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
-    # cat2: { "대분류1": ["중분류1", "중분류2"], ... }
+    # cat2: 마켓별 용도 다름
+    # - 11st: {경로문자열: 숫자코드} 매핑 딕셔너리 (예: {"패션 > 남성의류": "12345"})
+    # - 기타: { "대분류1": ["중분류1", "중분류2"], ... }
     cat2: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
     # cat3: { "중분류1": ["소분류1", "소분류2"], ... }
     cat3: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))

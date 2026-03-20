@@ -1,0 +1,34 @@
+{
+  "eval_id": "eval-1-shoes-notice-type",
+  "variant": "with_skill",
+  "total_assertions": 5,
+  "passed": 5,
+  "pass_rate": 100.0,
+  "expectations": [
+    {
+      "text": "SHOES 타입 분기 코드 포함",
+      "passed": true,
+      "evidence": "[SHOES] found: ...변경안: 고시정보 타입 카테고리 기반 분기 (WEAR/SHOES/COSMETIC)\n\n## 변경 대상 파일\n\n`back... | [신발] found: ...고시정보 타입이 `\"WEAR\"`로 하드코딩되어 있다.\n신발 카테고리 상품을 등록하면 스마트스토어에서 고시정보 타..."
+    },
+    {
+      "text": "COSMETIC 타입 분기 포함",
+      "passed": true,
+      "evidence": "[COSMETIC] found: ...시정보 타입 카테고리 기반 분기 (WEAR/SHOES/COSMETIC)\n\n## 변경 대상 파일\n\n`backend/backe..."
+    },
+    {
+      "text": "SHOES에 height(굽높이) 필드 포함",
+      "passed": true,
+      "evidence": "[height] found: ... 타입 불일치로 경고가 발생하거나,\n신발 전용 필드(`height` 등)가 누락된다.\n\n**현재 코드 (라인 508~5..."
+    },
+    {
+      "text": "기존 WEAR 로직 기본값으로 유지",
+      "passed": true,
+      "evidence": "[WEAR] found: ...# 코드 변경안: 고시정보 타입 카테고리 기반 분기 (WEAR/SHOES/COSMETIC)\n\n## 변경 대상 파일\n..."
+    },
+    {
+      "text": "실제 Python 코드 블록 포함",
+      "passed": true,
+      "evidence": "[def ] found: ...\n\n```python\n  @staticmethod\n  def transform_product(\n    product... | [productInfoProvidedNoticeType] found: ...ctInfoProvidedNotice\": {\n    \"productInfoProvidedNoticeType\": \"WEAR\",\n    \"wear\": {\n     ..."
+    }
+  ]
+}

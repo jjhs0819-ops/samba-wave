@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Optional
 from xml.etree import ElementTree as ET
 
@@ -30,7 +31,7 @@ class ElevenstClient:
   def _headers(self) -> dict[str, str]:
     return {
       "openapikey": self.api_key,
-      "Content-Type": "application/xml;charset=UTF-8",
+      "Content-Type": "text/xml; charset=UTF-8",
       "Accept": "application/xml",
     }
 
@@ -74,11 +75,14 @@ class ElevenstClient:
         raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
 
       logger.info(f"[11번가] {method} {path} → {resp.status_code}")
+      if body:
+        logger.info(f"[11번가] 요청 XML: {body[:800]}")
+      logger.info(f"[11번가] 응답 본문: {resp.text[:800]}")
 
       data = self._parse_xml(resp.text)
 
       if not resp.is_success:
-        msg = data.get("message", "") or data.get("raw", resp.text[:200])
+        msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
         raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
 
       # 에러코드 체크
@@ -87,6 +91,37 @@ class ElevenstClient:
         msg = data.get("resultMessage", "") or data.get("message", "")
         raise ElevenstApiError(f"API 에러 ({result_code}): {msg}")
 
+      return data
+
+  # ------------------------------------------------------------------
+  # 카테고리 조회
+  # ------------------------------------------------------------------
+
+  async def get_categories(self) -> dict[str, Any]:
+    """전체 카테고리 조회. (cateservice 엔드포인트 사용)"""
+    url = "https://api.11st.co.kr/rest/cateservice/category"
+    headers = self._headers()
+    async with httpx.AsyncClient(timeout=30) as client:
+      resp = await client.get(url, headers=headers)
+      logger.info(f"[11번가] GET /cateservice/category → {resp.status_code}")
+      logger.debug(f"[11번가] 카테고리 응답: {resp.text[:500]}")
+      data = self._parse_xml(resp.text)
+      if not resp.is_success:
+        msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
+        raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
+      return data
+
+  async def get_category_by_id(self, category_id: str) -> dict[str, Any]:
+    """특정 카테고리 하위 조회. (cateservice 엔드포인트 사용)"""
+    url = f"https://api.11st.co.kr/rest/cateservice/category/{category_id}"
+    headers = self._headers()
+    async with httpx.AsyncClient(timeout=30) as client:
+      resp = await client.get(url, headers=headers)
+      logger.info(f"[11번가] GET /cateservice/category/{category_id} → {resp.status_code}")
+      data = self._parse_xml(resp.text)
+      if not resp.is_success:
+        msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
+        raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
       return data
 
   # ------------------------------------------------------------------
@@ -110,6 +145,58 @@ class ElevenstClient:
     """상품 조회."""
     return await self._call_api("GET", f"/product/{prd_no}")
 
+  async def get_outbound_addresses(self) -> list[dict[str, str]]:
+    """출고지 주소 목록 조회. GET /rest/areaservice/outboundarea"""
+    return await self._get_area_addresses("outboundarea")
+
+  async def get_inbound_addresses(self) -> list[dict[str, str]]:
+    """반품/교환지 주소 목록 조회. GET /rest/areaservice/inboundarea"""
+    return await self._get_area_addresses("inboundarea")
+
+  async def _get_area_addresses(self, area_type: str) -> list[dict[str, str]]:
+    """출고지/반품지 주소 조회 공통 메서드."""
+    from xml.etree import ElementTree as ET
+
+    url = f"https://api.11st.co.kr/rest/areaservice/{area_type}"
+    headers = self._headers()
+    async with httpx.AsyncClient(timeout=15) as client:
+      resp = await client.get(url, headers=headers)
+      logger.info("[11번가] GET /areaservice/%s → %s", area_type, resp.status_code)
+
+    if not resp.is_success:
+      logger.warning("[11번가] %s 조회 실패: HTTP %s", area_type, resp.status_code)
+      return []
+
+    # XML 파싱 (네임스페이스 제거)
+    xml_text = resp.text.replace("ns2:", "")
+    try:
+      root = ET.fromstring(xml_text)
+    except ET.ParseError:
+      logger.error("[11번가] %s XML 파싱 실패", area_type)
+      return []
+
+    # result_message 확인
+    result_msg = root.findtext("result_message", "")
+    if result_msg and result_msg != "SUCCESS":
+      logger.warning("[11번가] %s 결과: %s", area_type, result_msg)
+      return []
+
+    addresses = []
+    for addr_el in root.findall("inOutAddress"):
+      addr = {
+        "addr": (addr_el.findtext("addr") or "").strip(),
+        "addrNm": (addr_el.findtext("addrNm") or "").strip(),
+        "addrSeq": (addr_el.findtext("addrSeq") or "").strip(),
+        "rcvrNm": (addr_el.findtext("rcvrNm") or "").strip(),
+        "gnrlTlphnNo": (addr_el.findtext("gnrlTlphnNo") or "").strip(),
+        "prtblTlphnNo": (addr_el.findtext("prtblTlphnNo") or "").strip(),
+      }
+      if addr["addr"]:
+        addresses.append(addr)
+
+    logger.info("[11번가] %s 조회 완료: %d건", area_type, len(addresses))
+    return addresses
+
   # ------------------------------------------------------------------
   # 상품 데이터 변환 (수집 상품 → 11번가 XML 형식)
   # ------------------------------------------------------------------
@@ -118,13 +205,31 @@ class ElevenstClient:
   def transform_product(
     product: dict[str, Any],
     category_code: str = "",
+    settings: Optional[dict[str, Any]] = None,
   ) -> str:
-    """SambaCollectedProduct → 11번가 상품 등록 XML 변환."""
+    """SambaCollectedProduct → 11번가 상품 등록 XML 변환.
+
+    settings: 계정의 additional_fields (배송비, 출고지, 반품지 등)
+    """
+    cfg = settings or {}
     name = product.get("name", "")
     sale_price = int(product.get("sale_price", 0))
     detail_html = product.get("detail_html", "") or f"<p>{name}</p>"
     images = product.get("images") or []
     brand = product.get("brand", "")
+
+    # 계정 설정값 (없으면 기본값)
+    tax_type = cfg.get("taxType", "01")
+    delivery_type = cfg.get("deliveryType", "DV_FREE")
+    delivery_fee = int(cfg.get("deliveryFee", 0) or 0)
+    return_fee = int(cfg.get("returnFee", 4000) or 4000)
+    exchange_fee = int(cfg.get("exchangeFee", 8000) or 8000)
+    ship_from = cfg.get("shipFromAddress", "")
+    return_addr = cfg.get("returnAddress", "")
+    origin = cfg.get("origin", "") or product.get("origin", "") or "기타"
+    as_message = cfg.get("asMessage", "") or "상세페이지 참조"
+    return_exchange = cfg.get("returnExchangeGuide", "") or "상세페이지 참조"
+    minor_restrict = cfg.get("minorRestrict", "N")
 
     # 이미지 XML
     image_xml = ""
@@ -157,15 +262,25 @@ class ElevenstClient:
   <dispCtgrNo>{category_code}</dispCtgrNo>
   <brand>{_escape_xml(brand)}</brand>
   <selPrc>{sale_price}</selPrc>
+  <selMthdCd>01</selMthdCd>
+  <aplBgnDy>{datetime.now().strftime('%Y%m%d')}</aplBgnDy>
+  <aplEndDy>{(datetime.now().replace(year=datetime.now().year + 1)).strftime('%Y%m%d')}</aplEndDy>
   <prdWeight>0</prdWeight>
-  <dlvCnFee>0</dlvCnFee>
+  <dlvCnFee>{delivery_fee}</dlvCnFee>
   <dlvGrntYn>Y</dlvGrntYn>
-  <minorSelCnYn>N</minorSelCnYn>
+  <dlvCstInstBasiCd>{delivery_type}</dlvCstInstBasiCd>
+  <rtngdDlvCst>{return_fee}</rtngdDlvCst>
+  <exchDlvCst>{exchange_fee}</exchDlvCst>
+  <dlvBsPlc>{_escape_xml(ship_from)}</dlvBsPlc>
+  <rtngBsPlc>{_escape_xml(return_addr)}</rtngBsPlc>
+  <orgnNm>{_escape_xml(origin)}</orgnNm>
+  <taxTypCd>{tax_type}</taxTypCd>
+  <minorSelCnYn>{minor_restrict}</minorSelCnYn>
   <htmlDetail><![CDATA[{detail_html}]]></htmlDetail>
   {image_xml}
   {option_xml}
-  <asDetail>상세페이지 참조</asDetail>
-  <rtngExchDetail>상세페이지 참조</rtngExchDetail>
+  <asDetail>{_escape_xml(as_message)}</asDetail>
+  <rtngExchDetail>{_escape_xml(return_exchange)}</rtngExchDetail>
 </Product>"""
     return xml
 

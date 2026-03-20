@@ -1,0 +1,12 @@
+{
+  "eval_id": 1,
+  "eval_name": "coupang-implementation",
+  "prompt": "쿠팡 주문 수집 기능 구현. get_orders + _parse_coupang_order + 라우터 분기.",
+  "assertions": [
+    {"id": "get-orders-method", "text": "CoupangClient에 get_orders 메서드 코드 포함", "keywords": ["get_orders", "def "]},
+    {"id": "hmac-auth", "text": "HMAC-SHA256 인증 사용", "keywords": ["HMAC", "_generate_signature"]},
+    {"id": "parse-function", "text": "_parse_coupang_order 파서 함수 포함", "keywords": ["_parse_coupang_order"]},
+    {"id": "router-branch", "text": "order.py 라우터에 coupang 분기 추가", "keywords": ["coupang"]},
+    {"id": "status-mapping", "text": "쿠팡 상태코드 → SambaOrder status 매핑 포함", "keywords": ["DEPARTURE", "FINAL_DELIVERY"]}
+  ]
+}

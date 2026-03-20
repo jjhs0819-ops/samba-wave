@@ -162,13 +162,26 @@ class MusinsaClient:
             detail_images = self._extract_detail_images(desc_html)
 
             # 이미지: 썸네일 + 상품이미지 최대 8장
-            all_images = [self._to_image_url(d.get("thumbnailImageUrl", ""))]
-            for img in d.get("goodsImages", []):
+            thumbnail_url = d.get("thumbnailImageUrl", "")
+            goods_images_raw = d.get("goodsImages") or []
+            logger.info(
+                f"[무신사 이미지] {goods_no}: "
+                f"thumbnail={thumbnail_url!r}, "
+                f"goodsImages={len(goods_images_raw)}개, "
+                f"goodsContents길이={len(desc_html)}, "
+                f"detailImages={len(detail_images)}개"
+            )
+            if goods_images_raw:
+                logger.info(f"[무신사 이미지 상세] goodsImages 샘플: {goods_images_raw[:3]}")
+
+            all_images = [self._to_image_url(thumbnail_url)]
+            for img in goods_images_raw:
                 all_images.append(
                     self._to_image_url(img.get("imageUrl") or img.get("url", ""))
                 )
             all_images = [i for i in all_images if i]
             unique_images = list(dict.fromkeys(all_images))[:9]
+            logger.info(f"[무신사 이미지 최종] {goods_no}: images={len(unique_images)}개, detail_images={len(detail_images)}개")
 
             # 소재 정보
             materials = (d.get("goodsMaterial") or {}).get("materials", [])

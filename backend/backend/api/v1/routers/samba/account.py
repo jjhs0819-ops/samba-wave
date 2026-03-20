@@ -71,7 +71,9 @@ async def create_account(
     body: AccountCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    return await _get_service(session).create_account(body.model_dump(exclude_unset=True))
+    data = body.model_dump(exclude_unset=True)
+    await _enrich_store_slug(data)
+    return await _get_service(session).create_account(data)
 
 
 @router.put("/{account_id}")
@@ -80,10 +82,58 @@ async def update_account(
     body: AccountUpdate,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    result = await _get_service(session).update_account(account_id, body.model_dump(exclude_unset=True))
+    data = body.model_dump(exclude_unset=True)
+    svc = _get_service(session)
+    # 기존 계정의 market_type 조회
+    existing = await svc.get_account(account_id)
+    if not existing:
+        raise HTTPException(404, "계정을 찾을 수 없습니다")
+    data.setdefault("_market_type", existing.market_type)
+    await _enrich_store_slug(data)
+    data.pop("_market_type", None)
+    result = await svc.update_account(account_id, data)
     if not result:
         raise HTTPException(404, "계정을 찾을 수 없습니다")
     return result
+
+
+async def _enrich_store_slug(data: dict[str, Any]) -> None:
+    """스마트스토어 계정이면 API로 스토어 슬러그를 자동 조회하여 additional_fields에 저장."""
+    from backend.utils.logger import logger
+
+    market_type = data.get("market_type") or data.get("_market_type", "")
+    if market_type != "smartstore":
+        return
+
+    extras = data.get("additional_fields") or {}
+    if not isinstance(extras, dict):
+        return
+
+    client_id = extras.get("clientId", "") or data.get("api_key", "")
+    client_secret = extras.get("clientSecret", "") or data.get("api_secret", "")
+    if not client_id or not client_secret:
+        return
+
+    try:
+        from backend.domain.samba.proxy.smartstore import SmartStoreClient
+        client = SmartStoreClient(client_id, client_secret)
+        info = await client.get_channel_info()
+        if info.get("storeSlug"):
+            extras["storeSlug"] = info["storeSlug"]
+            data["additional_fields"] = extras
+            logger.info(f"[계정] 스토어 슬러그 자동 조회: {info['storeSlug']}")
+        else:
+            # fallback: 등록된 상품에서 슬러그 추출
+            logger.info("[계정] 채널 API에서 슬러그 없음 — fallback 시도")
+            slug = await client.get_store_slug_fallback()
+            if slug:
+                extras["storeSlug"] = slug
+                data["additional_fields"] = extras
+                logger.info(f"[계정] 스토어 슬러그 fallback 성공: {slug}")
+            else:
+                logger.warning("[계정] 스토어 슬러그 fallback도 실패")
+    except Exception as e:
+        logger.warning(f"[계정] 스토어 슬러그 조회 실패 (무시): {e}")
 
 
 @router.put("/{account_id}/toggle")

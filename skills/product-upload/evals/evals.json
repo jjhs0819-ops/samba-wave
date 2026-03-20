@@ -1,0 +1,88 @@
+{
+  "skill_name": "product-upload",
+  "description": "수집 상품(CollectedProduct)을 스마트스토어 API 형식으로 변환하는 스킬 평가셋",
+  "evals": [
+    {
+      "id": 1,
+      "name": "wear-complete-input",
+      "prompt": "무신사에서 수집한 의류 상품(고시정보 완비)을 스마트스토어에 등록해줘. material/color/origin/manufacturer 모두 있는 상품이야.",
+      "input_file": "eval-1-wear-complete-input.json",
+      "expected_output_file": "eval-1-wear-complete-expected.json",
+      "expected_output": "25항목 모두 통과 (100%). 폴백값 사용 없이 원본 데이터 그대로 매핑",
+      "tags": ["의류", "고시정보완비", "폴백없음", "스마트스토어"],
+      "assertions": [
+        { "name": "상품명_존재", "type": "not_empty", "field": "originProduct.name" },
+        { "name": "가격_양수정수", "type": "greater_than", "field": "originProduct.salePrice", "expected": 0 },
+        { "name": "상태_SALE", "type": "exact_match", "field": "originProduct.statusType", "expected": "SALE" },
+        { "name": "판매유형_NEW", "type": "exact_match", "field": "originProduct.saleType", "expected": "NEW" },
+        { "name": "대표이미지_존재", "type": "not_empty", "field": "originProduct.images.representativeImage.url" },
+        { "name": "상세내용_존재", "type": "not_empty", "field": "originProduct.detailContent" },
+        { "name": "추가이미지_4장이하", "type": "max_count", "field": "originProduct.images.optionalImages.length", "max": 4 },
+        { "name": "소재_원본값", "type": "exact_match", "field": "originProduct.detailAttribute.productInfoProvidedNotice.wear.material", "expected": "면 100%" },
+        { "name": "색상_원본값", "type": "exact_match", "field": "originProduct.detailAttribute.productInfoProvidedNotice.wear.color", "expected": "블랙" },
+        { "name": "제조사_원본값", "type": "exact_match", "field": "originProduct.detailAttribute.productInfoProvidedNotice.wear.manufacturer", "expected": "나이키코리아" },
+        { "name": "원산지_원본값", "type": "exact_match", "field": "originProduct.detailAttribute.originAreaInfo.content", "expected": "베트남" },
+        { "name": "카테고리_숫자", "type": "matches_regex", "field": "originProduct.leafCategoryId", "pattern": "^\\d+$" },
+        { "name": "재고_양수", "type": "greater_than", "field": "originProduct.stockQuantity", "expected": 0 },
+        { "name": "채널상품명_존재", "type": "not_empty", "field": "smartstoreChannelProduct.channelProductName" },
+        { "name": "배송사_CJGLS", "type": "exact_match", "field": "originProduct.deliveryInfo.deliveryCompany", "expected": "CJGLS" },
+        { "name": "반품비_양수", "type": "greater_than", "field": "originProduct.deliveryInfo.claimDeliveryInfo.returnDeliveryFee", "expected": 0 },
+        { "name": "교환비_양수", "type": "greater_than", "field": "originProduct.deliveryInfo.claimDeliveryInfo.exchangeDeliveryFee", "expected": 0 },
+        { "name": "AS정보_존재", "type": "not_empty", "field": "originProduct.detailAttribute.afterServiceInfo.afterServiceTelephoneNumber" }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "fallback-input",
+      "prompt": "KREAM에서 수집한 신발 상품을 스마트스토어에 등록해줘. material/color/manufacturer가 모두 빈값이야.",
+      "input_file": "eval-2-fallback-input.json",
+      "expected_output_file": "eval-2-fallback-expected.json",
+      "expected_output": "고시정보 폴백값 정상 적용. material='상세 이미지 참조', manufacturer=brand, color='상세 이미지 참조'",
+      "tags": ["신발", "고시정보누락", "폴백검증", "KREAM"],
+      "assertions": [
+        { "name": "상품명_존재", "type": "not_empty", "field": "originProduct.name" },
+        { "name": "가격_폴백적용", "type": "greater_than", "field": "originProduct.salePrice", "expected": 0 },
+        { "name": "소재_폴백", "type": "exact_match", "field": "originProduct.detailAttribute.productInfoProvidedNotice.wear.material", "expected": "상세 이미지 참조" },
+        { "name": "색상_폴백", "type": "exact_match", "field": "originProduct.detailAttribute.productInfoProvidedNotice.wear.color", "expected": "상세 이미지 참조" },
+        { "name": "제조사_브랜드폴백", "type": "exact_match", "field": "originProduct.detailAttribute.productInfoProvidedNotice.wear.manufacturer", "expected": "Nike" },
+        { "name": "원산지_폴백", "type": "exact_match", "field": "originProduct.detailAttribute.originAreaInfo.content", "expected": "해외" },
+        { "name": "사이즈_옵션반영", "type": "contains", "field": "originProduct.detailAttribute.productInfoProvidedNotice.wear.size", "expected": "260" },
+        { "name": "상세내용_폴백", "type": "not_empty", "field": "originProduct.detailContent" },
+        { "name": "대표이미지_존재", "type": "not_empty", "field": "originProduct.images.representativeImage.url" },
+        { "name": "채널상품명_존재", "type": "not_empty", "field": "smartstoreChannelProduct.channelProductName" }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "image-cdn-input",
+      "prompt": "무신사 CDN(msscdn.net) 이미지가 포함된 상품을 스마트스토어에 등록해줘. 이미지 업로드 및 URL 치환을 검증해야 해.",
+      "input_file": "eval-3-image-cdn-input.json",
+      "expected_output_file": "eval-3-image-cdn-expected.json",
+      "expected_output": "Referer 설정 확인, 이미지 5장 제한, 상세HTML 내 CDN URL 잔존 확인",
+      "tags": ["이미지", "CDN치환", "무신사", "Referer"],
+      "assertions": [
+        { "name": "대표이미지_존재", "type": "not_empty", "field": "originProduct.images.representativeImage.url" },
+        { "name": "추가이미지_4장이하", "type": "max_count", "field": "originProduct.images.optionalImages.length", "max": 4 },
+        { "name": "상세내용_존재", "type": "not_empty", "field": "originProduct.detailContent" },
+        { "name": "가격_정수", "type": "is_integer", "field": "originProduct.salePrice" },
+        { "name": "고시정보타입_WEAR", "type": "exact_match", "field": "originProduct.detailAttribute.productInfoProvidedNotice.productInfoProvidedNoticeType", "expected": "WEAR" },
+        { "name": "상품명_존재", "type": "not_empty", "field": "originProduct.name" },
+        { "name": "재고_999", "type": "exact_match", "field": "originProduct.stockQuantity", "expected": 999 },
+        { "name": "배송유형_FREE", "type": "exact_match", "field": "originProduct.deliveryInfo.deliveryFee.deliveryFeeType", "expected": "FREE" }
+      ]
+    }
+  ],
+  "checklist": {
+    "total_items": 25,
+    "categories": {
+      "A_API_필수필드": { "items": ["A1", "A2", "A3", "A4", "A5", "A6"], "count": 6 },
+      "B_이미지처리": { "items": ["B1", "B2", "B3", "B4", "B5"], "count": 5 },
+      "C_고시정보변환": { "items": ["C1", "C2", "C3", "C4", "C5"], "count": 5 },
+      "D_가격배송": { "items": ["D1", "D2", "D3", "D4"], "count": 4 },
+      "E_카테고리옵션": { "items": ["E1", "E2", "E3"], "count": 3 },
+      "F_마켓호환": { "items": ["F1", "F2"], "count": 2 }
+    },
+    "transform_only_exemptions": ["B1", "B3", "B4", "B5"],
+    "pass_threshold": 95
+  }
+}

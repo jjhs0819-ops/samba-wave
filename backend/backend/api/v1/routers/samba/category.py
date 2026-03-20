@@ -117,7 +117,7 @@ async def suggest_category(
     target_market: str = Query(...),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    return _get_service(session).suggest_category(source_category, target_market)
+    return await _get_service(session).suggest_category(source_category, target_market)
 
 
 @router.post("/ai-suggest")
@@ -125,12 +125,11 @@ async def ai_suggest_category(
     body: AiSuggestRequest,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """Claude API를 사용한 카테고리 매핑 추천."""
-    from backend.domain.samba.category.service import SambaCategoryService
-
+    """Claude API를 사용한 카테고리 매핑 추천 (DB 카테고리 우선)."""
     api_key = await _get_claude_api_key(session)
+    svc = _get_service(session)
     try:
-        result = await SambaCategoryService.ai_suggest_category(
+        result = await svc.ai_suggest_category(
             source_site=body.source_site,
             source_category=body.source_category,
             sample_products=body.sample_products,
@@ -155,6 +154,154 @@ async def ai_suggest_bulk(
         return await svc.bulk_ai_mapping(api_key, session)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+
+
+class MarketCheckRequest(BaseModel):
+    """마켓 등록 상품 확인 요청."""
+    market: str
+    mapping_ids: List[str]
+
+
+class BulkMarketCheckRequest(BaseModel):
+    """전체 마켓 등록 상품 일괄 확인."""
+    mapping_ids: List[str]
+
+
+class MarketColumnDeleteRequest(BaseModel):
+    """특정 마켓 카테고리 일괄 삭제 요청."""
+    market: str
+    mapping_ids: List[str]
+
+
+class BulkDeleteRequest(BaseModel):
+    """매핑 일괄 삭제 요청."""
+    mapping_ids: List[str]
+
+
+@router.post("/mappings/check-registered")
+async def check_market_registered(
+    body: MarketCheckRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """매핑 대상 카테고리의 상품이 해당 마켓에 등록되어 있는지 확인."""
+    svc = _get_service(session)
+    count = await svc.check_market_registered(body.mapping_ids, body.market, session)
+    return {"registered_count": count}
+
+
+@router.post("/mappings/check-registered-all")
+async def check_all_markets_registered(
+    body: BulkMarketCheckRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """모든 마켓에 대해 등록 상품 일괄 확인."""
+    from backend.domain.samba.category.service import MARKET_CATEGORIES
+
+    svc = _get_service(session)
+    blocked: dict[str, int] = {}
+    for market in MARKET_CATEGORIES:
+        count = await svc.check_market_registered(body.mapping_ids, market, session)
+        if count > 0:
+            blocked[market] = count
+    return {"blocked": blocked}
+
+
+@router.post("/mappings/bulk-delete")
+async def bulk_delete_mappings(
+    body: BulkDeleteRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """매핑 일괄 삭제."""
+    svc = _get_service(session)
+    deleted = 0
+    for mid in body.mapping_ids:
+        if await svc.delete_mapping(mid):
+            deleted += 1
+    return {"ok": True, "deleted": deleted}
+
+
+@router.post("/mappings/clear-market")
+async def clear_market_column(
+    body: MarketColumnDeleteRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """특정 마켓의 카테고리 매핑을 일괄 삭제 (target_mappings에서 해당 키 제거)."""
+    svc = _get_service(session)
+    cleared = 0
+    for mid in body.mapping_ids:
+        mapping = await svc.mapping_repo.get_async(mid)
+        if mapping and mapping.target_mappings and body.market in mapping.target_mappings:
+            updated = {k: v for k, v in mapping.target_mappings.items() if k != body.market}
+            await svc.update_mapping(mid, {"target_mappings": updated})
+            cleared += 1
+    return {"ok": True, "cleared": cleared}
+
+
+# ── Market Category Seed ──
+
+@router.post("/markets/seed")
+async def seed_market_categories(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """마켓 카테고리 데이터를 DB에 동기화 (하드코딩 → DB)."""
+    svc = _get_service(session)
+    result = await svc.seed_market_categories()
+    return {"ok": True, "markets": result}
+
+
+@router.post("/markets/sync/{market_type}")
+async def sync_market_categories(
+    market_type: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """마켓 API에서 실시간 카테고리를 조회하여 DB에 동기화."""
+    from backend.domain.samba.category.service import SambaCategoryService
+    svc = _get_service(session)
+    try:
+        result = await svc.sync_market_from_api(market_type, session)
+        return {"ok": True, "market": market_type, **result}
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@router.post("/markets/sync-all")
+async def sync_all_market_categories(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """모든 마켓의 카테고리를 API에서 조회하여 일괄 동기화."""
+    svc = _get_service(session)
+    results = await svc.sync_all_markets(session)
+    return {"ok": True, "results": results}
+
+
+@router.post("/markets/ai-seed/{market_type}")
+async def ai_seed_market_categories(
+    market_type: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """AI로 마켓 카테고리 전체 목록을 생성하여 DB에 저장 (계정 없이 사용 가능)."""
+    api_key = await _get_claude_api_key(session)
+    if not api_key:
+        raise HTTPException(400, "Claude API Key가 설정되지 않았습니다")
+    svc = _get_service(session)
+    try:
+        result = await svc.seed_market_via_ai(market_type, api_key)
+        return {"ok": True, **result}
+    except Exception as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@router.post("/markets/ai-seed-all")
+async def ai_seed_all_market_categories(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """모든 마켓의 카테고리를 AI로 일괄 생성 (계정 없이 사용 가능)."""
+    api_key = await _get_claude_api_key(session)
+    if not api_key:
+        raise HTTPException(400, "Claude API Key가 설정되지 않았습니다")
+    svc = _get_service(session)
+    results = await svc.seed_all_markets_via_ai(api_key)
+    return {"ok": True, "results": results}
 
 
 # ── Category Tree ──
