@@ -67,12 +67,58 @@ class SambaCollectorService:
     async def create_collected_product(
         self, data: Dict[str, Any]
     ) -> SambaCollectedProduct:
+        self._sanitize_kream_data(data)
+        self._fill_optional_images(data)
         return await self.product_repo.create_async(**data)
 
     async def update_collected_product(
         self, product_id: str, data: Dict[str, Any]
     ) -> Optional[SambaCollectedProduct]:
+        self._sanitize_kream_data(data)
+        self._fill_optional_images(data)
+        # tags가 None으로 전달되면 기존 태그를 덮어쓰지 않도록 제거
+        # (명시적으로 빈 리스트 []를 보내면 태그 초기화 허용)
+        if "tags" in data and data["tags"] is None:
+            del data["tags"]
         return await self.product_repo.update_async(product_id, **data)
+
+    @staticmethod
+    def _sanitize_kream_data(data: Dict[str, Any]) -> None:
+        """비-KREAM 상품의 kream_data 오염 방지.
+
+        확장앱이 무신사 고시정보를 kream_data로 보내는 경우,
+        올바른 필드(material, color 등)로 분리하고 kream_data를 제거한다.
+        """
+        if data.get("source_site") == "KREAM":
+            return
+        kd = data.get("kream_data")
+        if not isinstance(kd, dict):
+            return
+        field_map = {
+            "color": "color",
+            "material": "material",
+            "brandNation": "origin",
+        }
+        for kd_key, field in field_map.items():
+            if kd.get(kd_key) and not data.get(field):
+                data[field] = kd[kd_key]
+        data.pop("kream_data", None)
+
+    @staticmethod
+    def _fill_optional_images(data: Dict[str, Any]) -> None:
+        """추가이미지가 부족하면 상세이미지로 보충 (최대 9장)."""
+        images = data.get("images")
+        detail_images = data.get("detail_images")
+        if not isinstance(images, list) or not isinstance(detail_images, list):
+            return
+        if len(images) >= 9:
+            return
+        existing = set(images)
+        for di in detail_images:
+            if di not in existing and len(images) < 9:
+                images.append(di)
+                existing.add(di)
+        data["images"] = images
 
     async def delete_collected_product(self, product_id: str) -> bool:
         return await self.product_repo.delete_async(product_id)

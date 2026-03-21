@@ -58,6 +58,12 @@ class SambaSearchFilter(SQLModel, table=True):
         default=None, sa_column=Column(Text, nullable=True)
     )
 
+    # 스마트스토어 브랜드/제조사 ID 매핑
+    ss_brand_id: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
+    ss_brand_name: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    ss_manufacturer_id: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
+    ss_manufacturer_name: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+
     # 마지막 수집 시각
     last_collected_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
@@ -110,6 +116,7 @@ class SambaCollectedProduct(SQLModel, table=True):
     # 이미지/옵션 (JSON)
     images: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
     detail_images: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    video_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     options: Optional[List[Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # 상세 설명
@@ -191,6 +198,13 @@ class SambaCollectedProduct(SQLModel, table=True):
     origin: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     material: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     color: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    # 품번/성별/시즌
+    style_code: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    sex: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    season: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    # 취급주의사항/품질보증기준
+    care_instructions: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    quality_guarantee: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # Timestamps
     created_at: datetime = Field(

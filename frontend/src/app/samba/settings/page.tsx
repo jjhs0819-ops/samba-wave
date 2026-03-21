@@ -94,7 +94,36 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'storeId', label: '스토어 ID', type: 'text' },
     { name: 'clientId', label: 'Client ID', type: 'text' },
     { name: 'clientSecret', label: 'Client Secret', type: 'password' },
+    { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '010-1234-5678' },
+    { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '상세페이지 참조' },
+    { name: 'discountRate', label: '즉시할인율(%)', type: 'number', placeholder: '0 (미설정)' },
+    { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '3000' },
+    { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '6000' },
+    { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
+    { name: 'returnSafeguard', label: '반품안심케어', type: 'select', options: [
+      { value: '', label: '설정안함' },
+      { value: 'true', label: '설정함' },
+    ]},
+    { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
+    { name: 'naverShopping', label: '가격비교 사이트 등록', type: 'checkbox', placeholder: '네이버쇼핑에 상품 노출' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
+    { name: '_divider_purchase', label: '구매/리뷰 혜택 조건', type: 'divider' },
+    { name: 'multiPurchaseDiscount', label: '복수구매할인', type: 'select', options: [
+      { value: '', label: '설정안함' },
+      { value: 'true', label: '설정함' },
+    ]},
+    { name: 'multiPurchaseQty', label: '복수구매 수량 (N개 이상)', type: 'number', placeholder: '2' },
+    { name: 'multiPurchaseRate', label: '복수구매 할인율 (%)', type: 'number', placeholder: '1' },
+    { name: '_divider_point', label: '포인트', type: 'divider' },
+    { name: 'purchasePointEnabled', label: '상품 구매 시 지급', type: 'checkbox' },
+    { name: 'purchasePointRate', label: '구매 적립률 (%)', type: 'number', placeholder: '1' },
+    { name: '_divider_review', label: '상품리뷰 작성시 지급', type: 'divider' },
+    { name: 'reviewPointEnabled', label: '리뷰 포인트 지급', type: 'checkbox' },
+    { name: 'reviewTextPoint', label: '텍스트 리뷰 작성', type: 'number', placeholder: '원' },
+    { name: 'reviewPhotoPoint', label: '포토/동영상 리뷰 작성', type: 'number', placeholder: '원' },
+    { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
+    { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
+    { name: '_info_storeMember', label: '알림받기 동의고객 포인트는 셀러센터에서 직접 설정', type: 'info' },
   ]},
   { key: 'gmarket', label: '지마켓', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
@@ -106,15 +135,16 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'storeId', label: '스토어 ID', type: 'text' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
-  { key: 'coupang', label: '쿠팡', authField: 'secretKey', fields: [
+  { key: 'coupang', label: '쿠팡', authField: 'secretKey', guideUrl: 'https://wing.coupang.com/vendor/openapi/application', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
     { name: 'vendorId', label: 'Vendor 업체코드', type: 'text', placeholder: 'Wing 판매자 업체코드' },
     { name: 'accessKey', label: 'Access key', type: 'text' },
     { name: 'secretKey', label: 'Secret key', type: 'password' },
+    { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '0507-1234-5678' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
-  { key: 'lotteon', label: '롯데ON', authField: 'apiKey', fields: [
+  { key: 'lotteon', label: '롯데ON', authField: 'apiKey', guideUrl: 'https://openapi.lotteon.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
     { name: 'apiKey', label: '롯데ON API key', type: 'text' },
@@ -157,7 +187,7 @@ const STORE_MARKETS: MarketConfig[] = [
     ]},
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
-  { key: 'ssg', label: 'SSG', authField: 'apiKey', fields: [
+  { key: 'ssg', label: 'SSG', authField: 'apiKey', guideUrl: 'https://opn-ssg.ssgadm.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
     { name: 'apiId', label: 'API ID', type: 'text' },
@@ -171,28 +201,28 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'apiKeyProd', label: '운영 AES256 인증키', type: 'password' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
-  { key: 'lottehome', label: '롯데홈쇼핑', authField: 'password', fields: [
+  { key: 'lottehome', label: '롯데홈쇼핑', authField: 'password', guideUrl: 'https://partner.lottehomeshopping.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '로그인 ID', type: 'text', placeholder: '롯데홈쇼핑 로그인 ID' },
     { name: 'agncNo', label: '업체번호', type: 'text', placeholder: '예: 037800LT' },
     { name: 'password', label: '비밀번호', type: 'password' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
-  { key: 'homeand', label: '홈앤쇼핑', authField: 'apiKey', fields: [
+  { key: 'homeand', label: '홈앤쇼핑', authField: 'apiKey', guideUrl: 'https://partner.home-and.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
     { name: 'apiId', label: 'API ID', type: 'text' },
     { name: 'apiKey', label: 'API KEY', type: 'text' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
-  { key: 'hmall', label: 'HMALL', authField: 'apiKey', fields: [
+  { key: 'hmall', label: 'HMALL', authField: 'apiKey', guideUrl: 'https://partner.hmall.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
     { name: 'apiId', label: 'API ID', type: 'text' },
     { name: 'apiKey', label: 'API KEY', type: 'text' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
-  { key: 'kream', label: 'KREAM', fields: [
+  { key: 'kream', label: 'KREAM', guideUrl: 'https://kream.co.kr/login', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
     { name: 'saleType', label: '판매유형', type: 'select', options: [
@@ -252,7 +282,7 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'accessToken', label: 'Admin API Access Token', type: 'password' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
-  { key: 'zoom', label: 'Zum(줌)', authField: 'apiKey', fields: [
+  { key: 'zoom', label: 'Zum(줌)', authField: 'apiKey', guideUrl: 'https://shopping.zum.com/seller', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
     { name: 'apiKey', label: 'API Key', type: 'text' },
@@ -296,6 +326,27 @@ export default function SettingsPage() {
   const [claudeStatus, setClaudeStatus] = useState('')
   const [aiFeatures, setAiFeatures] = useState<Record<string, boolean>>({ productName: true })
 
+  // Gemini AI 설정
+  const [geminiApiKey, setGeminiApiKey] = useState('')
+  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash-image')
+  const [geminiStatus, setGeminiStatus] = useState('')
+
+  // 태그 금지어
+  const [tagBanned, setTagBanned] = useState<{ rejected: string[]; brands: string[]; source_sites: string[] }>({ rejected: [], brands: [], source_sites: [] })
+
+  // Fireworks AI 설정
+  const [fireworksApiKey, setFireworksApiKey] = useState('')
+  const [fireworksModel, setFireworksModel] = useState('accounts/fireworks/models/stable-diffusion-xl-1024-v1-0')
+  const [fireworksStatus, setFireworksStatus] = useState('')
+
+  // Cloudflare R2 설정
+  const [r2AccountId, setR2AccountId] = useState('')
+  const [r2AccessKey, setR2AccessKey] = useState('')
+  const [r2SecretKey, setR2SecretKey] = useState('')
+  const [r2BucketName, setR2BucketName] = useState('')
+  const [r2PublicUrl, setR2PublicUrl] = useState('')
+  const [r2Status, setR2Status] = useState('')
+
   const loadAccounts = useCallback(async () => {
     setAccountLoading(true)
     try { setAccounts(await accountApi.list()) } catch { /* ignore */ }
@@ -328,7 +379,10 @@ export default function SettingsPage() {
 
   const saveStoreSettings = async (marketKey: string) => {
     try {
-      const data = storeData[marketKey] || {}
+      // 기존 저장 데이터와 현재 입력 데이터 병합 (빈 문자열은 기존값 유지)
+      const current = storeData[marketKey] || {}
+      const filtered = Object.fromEntries(Object.entries(current).filter(([, v]) => v !== ''))
+      const data = { ...(savedStoreData[marketKey] || {}), ...filtered }
       await forbiddenApi.saveSetting(`store_${marketKey}`, data)
       const marketCfg = STORE_MARKETS.find(m => m.key === marketKey)
       const label = marketCfg?.label || marketKey
@@ -364,10 +418,11 @@ export default function SettingsPage() {
         }
         await loadAccounts()
       }
-      // 저장 후 savedStoreData 갱신 + 폼 비우기
+      // 저장 후 savedStoreData 갱신 + 폼에 저장된 값 유지
       setSavedStoreData(prev => ({ ...prev, [marketKey]: { ...data } }))
-      setStoreData(prev => { const next = { ...prev }; delete next[marketKey]; return next })
+      setStoreData(prev => ({ ...prev, [marketKey]: { ...data } }))
       setStoreStatus(prev => ({ ...prev, [marketKey]: '연결됨' }))
+      setEditingAccountId(null)
 
       showAlert(`${label} 설정이 저장되었습니다.`, 'success')
     } catch { showAlert('저장 실패', 'error') }
@@ -461,6 +516,33 @@ export default function SettingsPage() {
         }
       }
     } catch { /* ignore */ }
+    try {
+      const gm = await forbiddenApi.getSetting('gemini').catch(() => null) as Record<string, unknown> | null
+      if (gm) {
+        setGeminiApiKey(String(gm.apiKey || ''))
+        setGeminiModel(String(gm.model || 'gemini-2.5-flash-image'))
+        if (gm.apiKey) setGeminiStatus('저장됨')
+      }
+    } catch { /* ignore */ }
+    try {
+      const fw = await forbiddenApi.getSetting('fireworks').catch(() => null) as Record<string, unknown> | null
+      if (fw) {
+        setFireworksApiKey(String(fw.apiKey || ''))
+        setFireworksModel(String(fw.model || 'accounts/fireworks/models/stable-diffusion-xl-1024-v1-0'))
+        if (fw.apiKey) setFireworksStatus('저장됨')
+      }
+    } catch { /* ignore */ }
+    try {
+      const r2 = await forbiddenApi.getSetting('cloudflare_r2').catch(() => null) as Record<string, unknown> | null
+      if (r2) {
+        setR2AccountId(String(r2.accountId || ''))
+        setR2AccessKey(String(r2.accessKey || ''))
+        setR2SecretKey(String(r2.secretKey || ''))
+        setR2BucketName(String(r2.bucketName || ''))
+        setR2PublicUrl(String(r2.publicUrl || ''))
+        if (r2.accessKey) setR2Status('저장됨')
+      }
+    } catch { /* ignore */ }
   }, [])
 
   useEffect(() => { loadAccounts() }, [loadAccounts])
@@ -485,6 +567,11 @@ export default function SettingsPage() {
   }
 
   useEffect(() => { loadExternalSettings(); loadStoreSettings(); loadProbeStatus() }, [loadExternalSettings, loadStoreSettings, loadProbeStatus])
+
+  // 태그 금지어 로드
+  useEffect(() => {
+    forbiddenApi.getTagBannedWords().then(setTagBanned).catch(() => {})
+  }, [])
 
   const handleAccountToggle = async (id: string) => { await accountApi.toggle(id); loadAccounts() }
   const handleAccountDelete = async (id: string) => {
@@ -597,6 +684,109 @@ export default function SettingsPage() {
     setAiFeatures(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
+  // Gemini AI 저장
+  const saveGeminiSettings = async () => {
+    if (!geminiApiKey) { showAlert('API Key를 입력해주세요', 'error'); return }
+    try {
+      await forbiddenApi.saveSetting('gemini', { apiKey: geminiApiKey, model: geminiModel, updatedAt: new Date().toISOString() })
+      setGeminiStatus(`저장 완료 (${new Date().toLocaleTimeString('ko-KR', { hour12: false })})`)
+      showAlert('Gemini AI 설정이 저장되었습니다', 'success')
+    } catch { showAlert('저장 실패', 'error') }
+  }
+
+  const testGeminiApi = async () => {
+    if (!geminiApiKey) { showAlert('API Key를 먼저 입력해주세요', 'error'); return }
+    setGeminiStatus('API 연결 확인 중...')
+    try {
+      await forbiddenApi.saveSetting('gemini', { apiKey: geminiApiKey, model: geminiModel, updatedAt: new Date().toISOString() })
+      const result = await proxyApi.geminiTest()
+      if (result.success) {
+        setGeminiStatus(`✓ ${result.message}`)
+        showAlert(result.message, 'success')
+      } else {
+        setGeminiStatus(`✗ ${result.message}`)
+        showAlert(result.message, 'error')
+      }
+    } catch (e) {
+      setGeminiStatus('연결 실패')
+      showAlert(`Gemini API 연결 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+    }
+  }
+
+  // Fireworks AI 저장
+  const saveFireworksSettings = async () => {
+    if (!fireworksApiKey) {
+      showAlert('API Key를 입력해주세요', 'error')
+      return
+    }
+    try {
+      await forbiddenApi.saveSetting('fireworks', { apiKey: fireworksApiKey, model: fireworksModel, updatedAt: new Date().toISOString() })
+      setFireworksStatus(`저장 완료 (${new Date().toLocaleTimeString('ko-KR', { hour12: false })})`)
+      showAlert('Fireworks AI 설정이 저장되었습니다', 'success')
+    } catch { showAlert('저장 실패', 'error') }
+  }
+
+  // Fireworks AI 테스트
+  const testFireworksApi = async () => {
+    if (!fireworksApiKey) {
+      showAlert('API Key를 먼저 입력해주세요', 'error')
+      return
+    }
+    setFireworksStatus('API 연결 확인 중...')
+    try {
+      await forbiddenApi.saveSetting('fireworks', { apiKey: fireworksApiKey, model: fireworksModel, updatedAt: new Date().toISOString() })
+      const result = await proxyApi.fireworksTest()
+      if (result.success) {
+        setFireworksStatus(`✓ ${result.message}`)
+        showAlert(result.message, 'success')
+      } else {
+        setFireworksStatus(`✗ ${result.message}`)
+        showAlert(result.message, 'error')
+      }
+    } catch (e) {
+      setFireworksStatus('연결 실패')
+      showAlert(`Fireworks API 연결 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+    }
+  }
+
+  // Cloudflare R2 저장
+  const saveR2Settings = async () => {
+    try {
+      await forbiddenApi.saveSetting('cloudflare_r2', {
+        accountId: r2AccountId, accessKey: r2AccessKey, secretKey: r2SecretKey,
+        bucketName: r2BucketName, publicUrl: r2PublicUrl, updatedAt: new Date().toISOString(),
+      })
+      setR2Status(`저장 완료 (${new Date().toLocaleTimeString('ko-KR', { hour12: false })})`)
+      showAlert('Cloudflare R2 설정이 저장되었습니다', 'success')
+    } catch { showAlert('저장 실패', 'error') }
+  }
+
+  // Cloudflare R2 테스트
+  const testR2 = async () => {
+    if (!r2AccessKey || !r2SecretKey || !r2BucketName) {
+      showAlert('Access Key, Secret Key, Bucket Name을 입력해주세요', 'error')
+      return
+    }
+    setR2Status('연결 확인 중...')
+    try {
+      await forbiddenApi.saveSetting('cloudflare_r2', {
+        accountId: r2AccountId, accessKey: r2AccessKey, secretKey: r2SecretKey,
+        bucketName: r2BucketName, publicUrl: r2PublicUrl, updatedAt: new Date().toISOString(),
+      })
+      const result = await proxyApi.r2Test()
+      if (result.success) {
+        setR2Status(`✓ ${result.message}`)
+        showAlert(result.message, 'success')
+      } else {
+        setR2Status(`✗ ${result.message}`)
+        showAlert(result.message, 'error')
+      }
+    } catch (e) {
+      setR2Status('연결 실패')
+      showAlert(`R2 연결 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+    }
+  }
+
   return (
     <div style={{ color: '#E5E5E5' }}>
       {/* 마켓 계정 */}
@@ -645,7 +835,15 @@ export default function SettingsPage() {
                   )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  {market.fields.map(field => (
+                  {market.fields.map(field => field.type === 'divider' ? (
+                    <div key={field.name} style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', marginTop: '0.25rem' }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FFB84D' }}>{field.label}</span>
+                    </div>
+                  ) : field.type === 'info' ? (
+                    <div key={field.name} style={{ padding: '0.4rem 0.6rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '4px' }}>
+                      <span style={{ fontSize: '0.75rem', color: '#FF8C00' }}>{field.label}</span>
+                    </div>
+                  ) : (
                     <div key={field.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                       <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>{field.label}</label>
                       {field.type === 'select' ? (
@@ -656,6 +854,16 @@ export default function SettingsPage() {
                         >
                           {field.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
+                      ) : field.type === 'checkbox' ? (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={storeData[market.key]?.[field.name] === 'true' || storeData[market.key]?.[field.name] === true}
+                            onChange={(e) => updateStoreField(market.key, field.name, e.target.checked ? 'true' : 'false')}
+                            style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }}
+                          />
+                          {field.placeholder && <span style={{ fontSize: '0.72rem', color: '#888' }}>({field.placeholder})</span>}
+                        </label>
                       ) : field.type === 'number' ? (
                         <NumInput
                           style={{ flex: 1 }}
@@ -673,7 +881,7 @@ export default function SettingsPage() {
                         />
                       )}
                       {/* API 인증 필드 우측에 인증 테스트 버튼 */}
-                      {market.authField === field.name && (
+                      {market.authField === field.name && !field.name.startsWith('_') && (
                         <>
                           <button
                             onClick={() => testStoreAuth(market.key)}
@@ -837,6 +1045,7 @@ export default function SettingsPage() {
             <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#4C9AFF' }}>SMS 설정</span>
             <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 알리고(ALIGO) 문자메세지 설정을 할 수 있습니다.</span>
             {smsStatus && <span style={{ fontSize: '0.8rem', color: smsStatus === '저장됨' || smsStatus.includes('유효') ? '#51CF66' : smsStatus.includes('오류') ? '#FF6B6B' : '#FFD93D' }}>{smsStatus === '저장됨' ? '✓ 저장됨' : smsStatus}</span>}
+            <a href="https://smartsms.aligo.in/admin/api/info.html" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
             <button onClick={saveSmsSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
@@ -861,6 +1070,7 @@ export default function SettingsPage() {
             <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#FFB84D' }}>카카오 알림톡 설정</span>
             <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 알리고(ALIGO) 카카오 알림톡 설정을 할 수 있습니다.</span>
             {kakaoStatus && <span style={{ fontSize: '0.8rem', color: kakaoStatus === '저장됨' || kakaoStatus.includes('유효') ? '#51CF66' : kakaoStatus.includes('오류') ? '#FF6B6B' : '#FFD93D' }}>{kakaoStatus === '저장됨' ? '✓ 저장됨' : kakaoStatus}</span>}
+            <a href="https://smartsms.aligo.in/admin/api/kakao.html" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
             <button onClick={saveKakaoSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
@@ -884,11 +1094,164 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {/* Gemini AI 연동 (이미지 변환 + AI 태그) */}
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#4285F4' }}>Gemini AI 연동</span>
+          <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 이미지 변환(모델컷/배경제거/연출컷) + AI 태그 통합</span>
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4285F4', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
+          <button onClick={saveGeminiSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
+        </div>
+        <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
+            <input type='password' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)} placeholder='AIzaSy...' />
+            <button onClick={testGeminiApi} style={{ background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.35)', color: '#4285F4', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>연결 테스트</button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델 선택</label>
+            <select style={{ ...inputStyle, width: '300px' }} value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}>
+              <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (권장)</option>
+              <option value="gemini-3.1-flash-image-preview">Gemini 3.1 Flash Image</option>
+              <option value="gemini-3-pro-image-preview">Gemini 3 Pro Image</option>
+            </select>
+          </div>
+          {geminiStatus && (
+            <div style={{ fontSize: '0.8125rem', color: geminiStatus.includes('저장') || geminiStatus.includes('✓') ? '#7BAF7E' : geminiStatus.includes('확인') ? '#FFB84D' : '#C4736E', padding: '0.4rem 0' }}>
+              {geminiStatus}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 태그 금지어 (스마트스토어 등록불가 단어) */}
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#C4736E' }}>태그 금지어</span>
+          <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 스마트스토어 등록 시 자동 제외되는 단어 (API 거부 + 소싱처 + 브랜드)</span>
+          <button onClick={() => forbiddenApi.getTagBannedWords().then(setTagBanned).catch(() => {})}
+            style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>새로고침</button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {/* API 거부 태그 */}
+          <div>
+            <div style={{ fontSize: '0.8125rem', color: '#C4736E', fontWeight: 600, marginBottom: '0.4rem' }}>
+              API 거부 태그 ({tagBanned.rejected.length}개)
+              <span style={{ fontWeight: 400, color: '#666', marginLeft: '0.5rem' }}>전송 실패 시 자동 누적</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+              {tagBanned.rejected.length === 0 && <span style={{ fontSize: '0.75rem', color: '#555' }}>아직 없음</span>}
+              {tagBanned.rejected.map((w, i) => (
+                <span key={i} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(196,115,110,0.12)', border: '1px solid rgba(196,115,110,0.3)', color: '#C4736E' }}>{w}</span>
+              ))}
+            </div>
+          </div>
+          {/* 수집 브랜드 */}
+          <div>
+            <div style={{ fontSize: '0.8125rem', color: '#FFB84D', fontWeight: 600, marginBottom: '0.4rem' }}>
+              수집 브랜드 ({tagBanned.brands.length}개)
+              <span style={{ fontWeight: 400, color: '#666', marginLeft: '0.5rem' }}>브랜드명 포함 태그 자동 제외</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', maxHeight: '80px', overflow: 'auto' }}>
+              {tagBanned.brands.map((w, i) => (
+                <span key={i} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(255,184,77,0.08)', border: '1px solid rgba(255,184,77,0.25)', color: '#FFB84D' }}>{w}</span>
+              ))}
+            </div>
+          </div>
+          {/* 소싱처 */}
+          <div>
+            <div style={{ fontSize: '0.8125rem', color: '#4C9AFF', fontWeight: 600, marginBottom: '0.4rem' }}>
+              소싱처 ({tagBanned.source_sites.length}개)
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+              {tagBanned.source_sites.map((w, i) => (
+                <span key={i} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(76,154,255,0.08)', border: '1px solid rgba(76,154,255,0.25)', color: '#4C9AFF' }}>{w}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Fireworks AI 연동 (이미지 변환) */}
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#F97316' }}>Fireworks AI 연동</span>
+          <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 이미지 변환(지재권 대응)을 위한 Fireworks AI API 설정</span>
+          <a href="https://fireworks.ai/account/api-keys" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
+          <button onClick={saveFireworksSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
+        </div>
+        <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
+            <input
+              type='password'
+              style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
+              value={fireworksApiKey}
+              onChange={(e) => setFireworksApiKey(e.target.value)}
+              placeholder='fw_...'
+            />
+            <button onClick={testFireworksApi} style={{ background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.35)', color: '#F97316', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>연결 테스트</button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델 선택</label>
+            <select style={{ ...inputStyle, width: '360px' }} value={fireworksModel} onChange={(e) => setFireworksModel(e.target.value)}>
+              <option value="accounts/fireworks/models/stable-diffusion-xl-1024-v1-0">SDXL 1.0 (권장)</option>
+              <option value="accounts/fireworks/models/playground-v2-5-1024px-aesthetic">Playground v2.5</option>
+              <option value="accounts/fireworks/models/SSD-1B">SSD-1B (빠름)</option>
+            </select>
+          </div>
+          {fireworksStatus && (
+            <div style={{ fontSize: '0.8125rem', color: fireworksStatus.includes('저장') || fireworksStatus.includes('✓') ? '#7BAF7E' : fireworksStatus.includes('확인') ? '#FFB84D' : '#C4736E', padding: '0.4rem 0' }}>
+              {fireworksStatus}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Cloudflare R2 연동 (이미지 저장) */}
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#F59E0B' }}>Cloudflare R2 연동</span>
+          <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 변환된 이미지 저장용 (미설정 시 서버 로컬 저장)</span>
+          <a href="https://dash.cloudflare.com/?to=/:account/r2/api-tokens" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
+          <button onClick={saveR2Settings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
+        </div>
+        <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: '#888', minWidth: '120px', fontSize: '0.875rem' }}>Account ID</label>
+            <input type='text' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={r2AccountId} onChange={(e) => setR2AccountId(e.target.value)} placeholder='Cloudflare Account ID' />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: '#888', minWidth: '120px', fontSize: '0.875rem' }}>Access Key ID</label>
+            <input type='text' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={r2AccessKey} onChange={(e) => setR2AccessKey(e.target.value)} placeholder='R2 Access Key ID' />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: '#888', minWidth: '120px', fontSize: '0.875rem' }}>Secret Access Key</label>
+            <input type='password' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={r2SecretKey} onChange={(e) => setR2SecretKey(e.target.value)} placeholder='R2 Secret Access Key' />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: '#888', minWidth: '120px', fontSize: '0.875rem' }}>Bucket Name</label>
+            <input type='text' style={{ ...inputStyle, flex: 1 }} value={r2BucketName} onChange={(e) => setR2BucketName(e.target.value)} placeholder='samba-images' />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: '#888', minWidth: '120px', fontSize: '0.875rem' }}>Public URL</label>
+            <input type='text' style={{ ...inputStyle, flex: 1 }} value={r2PublicUrl} onChange={(e) => setR2PublicUrl(e.target.value)} placeholder='https://pub-xxx.r2.dev' />
+            <button onClick={testR2} style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.35)', color: '#F59E0B', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>연결 테스트</button>
+          </div>
+          {r2Status && (
+            <div style={{ fontSize: '0.8125rem', color: r2Status.includes('저장') || r2Status.includes('✓') ? '#7BAF7E' : r2Status.includes('확인') ? '#FFB84D' : '#C4736E', padding: '0.4rem 0' }}>
+              {r2Status}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Claude AI API 연동 */}
       <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#A78BFA' }}>Claude AI API 연동</span>
           <span style={{ fontSize: '0.8125rem', color: '#666' }}>** Anthropic Claude API를 연결하면 상품명 가공, CS 자동 답변 등 AI 기능을 사용할 수 있습니다.</span>
+          <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
           <button onClick={saveClaudeSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
         </div>
         <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>

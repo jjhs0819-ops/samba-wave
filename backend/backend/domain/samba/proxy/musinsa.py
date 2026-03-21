@@ -113,6 +113,38 @@ class MusinsaClient:
             return f"https:{path}"
         return f"https://image.msscdn.net{path}"
 
+    # 무신사 회원 등급 → 할인율 매핑
+    GRADE_DISCOUNT_MAP: dict[str, float] = {
+        "일반": 1, "WELCOME": 1,
+        "브론즈": 2, "BRONZE": 2,
+        "실버": 3, "SILVER": 3,
+        "골드": 4, "GOLD": 4,
+        "플래티넘": 5, "PLATINUM": 5,
+        "다이아몬드": 5, "DIAMOND": 5,
+        "러버": 5, "LOVER": 5,
+        "무신사": 5, "MUSINSA": 5,
+    }
+
+    async def _get_member_grade_rate(self) -> float:
+        """로그인된 회원의 등급 할인율을 조회."""
+        if not self.cookie:
+            return 0
+        try:
+            timeout = httpx.Timeout(10.0, connect=5.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(
+                    self.BASE_MEMBER,
+                    headers={**self.HEADERS, "Cookie": self.cookie},
+                )
+                data = resp.json().get("data") or {}
+                grade_name = data.get("gradeName", "")
+                rate = self.GRADE_DISCOUNT_MAP.get(grade_name, 0)
+                logger.info(f"[무신사] 회원등급: {grade_name} → 할인율 {rate}%")
+                return rate
+        except Exception as exc:
+            logger.warning(f"[무신사] 회원등급 조회 실패: {exc}")
+            return 0
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -122,6 +154,14 @@ class MusinsaClient:
 
         proxy-server.mjs ``fetchMusinsaProduct()`` 전체 로직 포팅.
         """
+        # 무신사는 로그인(쿠키) 필수
+        if not self.cookie:
+            raise ValueError(
+                "무신사 수집은 로그인(쿠키)이 필요합니다. "
+                "확장앱에서 무신사 로그인 후 다시 시도하세요."
+            )
+        # 회원 등급 할인율 조회 (등급별 최대혜택가 계산에 필요)
+        member_grade_rate = await self._get_member_grade_rate()
         timeout = httpx.Timeout(30.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             # 1) 상품 상세 API
@@ -180,7 +220,15 @@ class MusinsaClient:
                     self._to_image_url(img.get("imageUrl") or img.get("url", ""))
                 )
             all_images = [i for i in all_images if i]
-            unique_images = list(dict.fromkeys(all_images))[:9]
+            unique_images = list(dict.fromkeys(all_images))
+            # 추가이미지 부족 시 상세페이지 이미지로 보충 (최대 9장)
+            if len(unique_images) < 9 and detail_images:
+                existing = set(unique_images)
+                for di in detail_images:
+                    if di not in existing and len(unique_images) < 9:
+                        unique_images.append(di)
+                        existing.add(di)
+            unique_images = unique_images[:9]
             logger.info(f"[무신사 이미지 최종] {goods_no}: images={len(unique_images)}개, detail_images={len(detail_images)}개")
 
             # 소재 정보
@@ -196,14 +244,16 @@ class MusinsaClient:
                 if (m.get("materialName") or m.get("name"))
             )
 
-            # 시즌 정보
+            # 시즌 정보 — 코드 → 텍스트 변환
+            _SEASON_MAP = {"1": "SS", "2": "FW", "3": "ALL SS", "4": "ALL FW", "0": ""}
             season_year = d.get("seasonYear", "")
             if season_year == "0000":
                 season_year = ""
-            season_code = d.get("season", "")
-            if season_code == "0":
-                season_code = ""
-            season = " ".join(filter(None, [season_year, season_code]))
+            season_code = str(d.get("season", ""))
+            season_text = _SEASON_MAP.get(season_code, season_code)
+            if not season_text and season_code not in ("0", ""):
+                season_text = season_code
+            season = " ".join(filter(None, [season_year, season_text]))
 
             # 4) 가격 계산
             normal_p = gp.get("normalPrice", 0) or 0
@@ -220,7 +270,6 @@ class MusinsaClient:
                 or gp.get("gradeRate")
                 or 0
             )
-
             # 최대혜택가 = 할인가 - 쿠폰 - 등급 - 적립금 - 선할인
             # 1단계: 쿠폰 할인
             coupon_price_raw = gp.get("couponPrice", 0) or 0
@@ -230,42 +279,59 @@ class MusinsaClient:
                 or gp.get("bestBenefitPrice")
                 or 0
             )
-            best_coupon_discount = 0
+            logger.info(f"[무신사 가격원본] {goods_no}: couponPrice={coupon_price_raw}, "
+                        f"api_best_benefit={api_best_benefit}, s_price={s_price}")
+            # 쿠폰할인: goodsPrice.couponPrice + 쿠폰 API 중 큰 할인 사용
+            # 로그인 상태에서는 쿠폰 API가 실제 적용 가능한 쿠폰을 반환
+            benefit_coupon_discount = 0
             if 0 < coupon_price_raw < s_price:
-                best_coupon_discount = s_price - coupon_price_raw
-            if api_best_benefit and 0 < api_best_benefit < s_price:
-                api_discount = s_price - api_best_benefit
-                if api_discount > best_coupon_discount:
-                    best_coupon_discount = api_discount
-            best_coupon_discount = await self._fetch_coupons(
-                client, goods_no, d, s_price, best_coupon_discount
+                benefit_coupon_discount = s_price - coupon_price_raw
+
+            # 쿠폰 API로 추가 쿠폰 탐색 (로그인 시 실제 적용 가능한 쿠폰)
+            benefit_coupon_discount = await self._fetch_coupons(
+                client, goods_no, d, s_price, benefit_coupon_discount
             )
-            coupon_applied_price = s_price - best_coupon_discount if best_coupon_discount > 0 else s_price
+            coupon_applied_price = s_price - benefit_coupon_discount if benefit_coupon_discount > 0 else s_price
 
-            # 2단계: 등급할인 (쿠폰적용가 기준, 10원 절사)
-            grade_discount_rate = gp.get("memberDiscountRate", 0) or 0
-            grade_discount = int(coupon_applied_price * grade_discount_rate / 100 / 10) * 10
+            # bestBenefitPrice 계산도 쿠폰 API 결과 포함
+            benefit_base = s_price - benefit_coupon_discount
 
-            # 3단계: 적립금 사용 (쿠폰적용가 - 등급할인 기준, 10원 절사)
+            # 2단계: 등급할인 (benefit_base 기준, 10원 절사)
+            # partnerDiscountOn=true일 때만 등급할인 적용
+            # 등급 할인율: goodsPrice에서 조회 (복수 키 탐색) → 없으면 회원등급 API 값 사용
+            grade_discount_rate = (
+                gp.get("memberDiscountRate")
+                or gp.get("gradeDiscountRate")
+                or gp.get("memberGradeDiscountRate")
+                or gp.get("gradeRate")
+                or member_grade_rate
+                or 0
+            )
+            is_grade_applicable = gp.get("partnerDiscountOn") is True
+            grade_discount = int(benefit_base * grade_discount_rate / 100 / 10) * 10 if is_grade_applicable else 0
+
+            # 3단계: 적립금 사용 (benefit_base - 등급할인 기준, 10원 절사)
             is_point_restricted = d.get("isRestictedUsePoint") is True
             raw_point_rate = d.get("maxUsePointRate", 0) or 0
             point_rate_pct = raw_point_rate * 100 if 0 < raw_point_rate < 1 else raw_point_rate
-            point_base = coupon_applied_price - grade_discount
+            point_base = benefit_base - grade_discount
             point_usage = 0
             if not is_point_restricted and point_rate_pct > 0:
                 point_usage = int(point_base * point_rate_pct / 100 / 10) * 10  # 10원 절사
 
             # 4단계: 적립 선할인 (isPrePoint=True만, 잔액 기준 × 등급율, 10원 절사)
+            # partnerDiscountOn과 무관하게 회원 등급 할인율 적용
             is_pre_point = d.get("isPrePoint") is True
-            remaining = s_price - best_coupon_discount - grade_discount - point_usage
+            remaining = benefit_base - grade_discount - point_usage
             pre_discount = int(remaining * grade_discount_rate / 100 / 10) * 10 if is_pre_point else 0
 
             best_benefit_price = remaining - pre_discount
 
             logger.info(
                 f"[무신사 혜택가] {goods_no}: "
-                f"할인가={s_price}, 쿠폰=-{best_coupon_discount}({coupon_applied_price}), "
-                f"등급({grade_discount_rate}%)=-{grade_discount}, "
+                f"할인가={s_price}, 쿠폰=-{benefit_coupon_discount}, "
+                f"benefit_base={benefit_base}, member_grade_rate={member_grade_rate}%, "
+                f"등급({grade_discount_rate}%,partnerDiscountOn={is_grade_applicable})=-{grade_discount}, "
                 f"적립금({point_rate_pct}%)=-{point_usage}(base={point_base}), "
                 f"선할인({grade_discount_rate}%,base={remaining + pre_discount})=-{pre_discount}, "
                 f"혜택가={best_benefit_price}"
@@ -328,11 +394,11 @@ class MusinsaClient:
                 "manufacturer": essential.get("manufacturer", ""),
                 "color": essential.get("color", ""),
                 "sizeInfo": essential.get("size", ""),
-                "careInstructions": essential.get("careInstructions", ""),
-                "qualityGuarantee": essential.get("qualityGuarantee", ""),
+                "care_instructions": essential.get("careInstructions", ""),
+                "quality_guarantee": essential.get("qualityGuarantee", ""),
                 "brandNation": brand_info.get("brandNationName", ""),
                 "season": season,
-                "styleCode": d.get("styleNo", ""),
+                "style_code": d.get("styleNo", ""),
                 "kcCert": "",
                 "tags": [],
                 "status": "collected",
@@ -343,7 +409,8 @@ class MusinsaClient:
                 "stockUpdateEnabled": True,
                 "marketTransmitEnabled": True,
                 "registeredAccounts": [],
-                "sex": d.get("sex", []),
+                # 성별: 배열 → 문자열 (예: ["남성", "여성"] → "남녀공용", ["남성"] → "남성")
+                "sex": (lambda s: "남녀공용" if len(s) > 1 else (s[0] if s else ""))(d.get("sex") or []),
                 "storeCodes": d.get("storeCodes", []),
                 "isOutlet": d.get("isOutlet", False),
                 # 부티끄 판별: goodsTypeCode 또는 saleType
@@ -939,6 +1006,10 @@ class MusinsaClient:
                 )
                 if isinstance(coupons, list):
                     for c in coupons:
+                        logger.debug(f"[쿠폰 상세] {goods_no}: salePrice={c.get('salePrice')}, "
+                                     f"discountPrice={c.get('discountPrice')}, "
+                                     f"discountRate={c.get('discountRate')}, "
+                                     f"couponNm={c.get('couponNm','')[:30]}")
                         actual_discount = 0
                         c_sale_price = c.get("salePrice", 0) or 0
                         # salePrice 우선 처리

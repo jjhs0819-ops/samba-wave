@@ -142,6 +142,48 @@ async def aligo_remain(
 # ═══════════════════════════════════════════════
 
 
+@router.get("/smartstore/search-brand")
+async def smartstore_search_brand(
+    name: str = Query(...),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> list[dict[str, Any]]:
+    """스마트스토어 브랜드 검색."""
+    client = await _get_ss_client(session)
+    if not client:
+      return []
+    result = await client._call_api("GET", "/v1/product-brands", params={"name": name})
+    return result if isinstance(result, list) else []
+
+
+@router.get("/smartstore/search-manufacturer")
+async def smartstore_search_manufacturer(
+    name: str = Query(...),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> list[dict[str, Any]]:
+    """스마트스토어 제조사 검색."""
+    client = await _get_ss_client(session)
+    if not client:
+      return []
+    result = await client._call_api("GET", "/v1/product-manufacturers", params={"name": name})
+    return result if isinstance(result, list) else []
+
+
+async def _get_ss_client(session: AsyncSession):
+    """스마트스토어 클라이언트 생성 헬퍼."""
+    from backend.domain.samba.proxy.smartstore import SmartStoreClient
+    from sqlalchemy import text
+    result = await session.exec(text("SELECT additional_fields FROM samba_market_account WHERE market_type='smartstore' LIMIT 1"))
+    row = result.first()
+    if not row or not row[0]:
+      return None
+    extras = row[0] if isinstance(row[0], dict) else {}
+    cid = extras.get("clientId", "")
+    csec = extras.get("clientSecret", "")
+    if not cid or not csec:
+      return None
+    return SmartStoreClient(cid, csec)
+
+
 @router.post("/smartstore/auth-test")
 async def smartstore_auth_test(
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -546,6 +588,373 @@ async def claude_api_test(
     except Exception as exc:
         logger.error(f"[Claude] API 테스트 실패: {exc}")
         return {"success": False, "message": f"API 호출 실패: {exc}"}
+
+
+@router.post("/fireworks/test")
+async def fireworks_api_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """Fireworks AI API 키 유효성 검증."""
+    creds = await _get_setting(session, "fireworks")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "Fireworks AI 설정이 저장되지 않았습니다."}
+
+    api_key = str(creds.get("apiKey", "")).strip().encode("ascii", "ignore").decode("ascii")
+    if not api_key:
+        return {"success": False, "message": "API Key is empty"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                "https://api.fireworks.ai/inference/v1/models",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Accept": "application/json",
+                },
+            )
+            if resp.status_code == 200:
+                return {"success": True, "message": "Fireworks AI connected"}
+            else:
+                body = resp.text[:200]
+                return {"success": False, "message": f"HTTP {resp.status_code}: {body}"}
+    except Exception as exc:
+        logger.error(f"[Fireworks] API test failed: {exc}")
+        return {"success": False, "message": f"Connection failed: {str(exc)[:200]}"}
+
+
+@router.post("/gemini/test")
+async def gemini_api_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """Gemini API 키 유효성 검증."""
+    creds = await _get_setting(session, "gemini")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "Gemini AI 설정이 저장되지 않았습니다."}
+
+    api_key = str(creds.get("apiKey", "")).strip()
+    if not api_key:
+        return {"success": False, "message": "API Key가 비어있습니다."}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+            )
+            if resp.status_code == 200:
+                models = resp.json().get("models", [])
+                image_models = [m["name"] for m in models if "image" in m.get("name", "").lower()]
+                return {"success": True, "message": f"Gemini 연결 성공 (이미지 모델 {len(image_models)}개)"}
+            else:
+                return {"success": False, "message": f"인증 실패 (HTTP {resp.status_code})"}
+    except Exception as exc:
+        logger.error(f"[Gemini] API test failed: {exc}")
+        return {"success": False, "message": f"연결 실패: {str(exc)[:200]}"}
+
+
+@router.post("/r2/test")
+async def r2_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """Cloudflare R2 연결 테스트."""
+    creds = await _get_setting(session, "cloudflare_r2")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "R2 settings not found"}
+
+    account_id = str(creds.get("accountId", "")).strip()
+    access_key = str(creds.get("accessKey", "")).strip()
+    secret_key = str(creds.get("secretKey", "")).strip()
+    bucket_name = str(creds.get("bucketName", "")).strip()
+
+    if not access_key or not secret_key or not bucket_name:
+        return {"success": False, "message": "Access Key, Secret Key, Bucket Name required"}
+
+    try:
+        import boto3
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name="auto",
+        )
+        s3.head_bucket(Bucket=bucket_name)
+        return {"success": True, "message": f"R2 connected (bucket: {bucket_name})"}
+    except Exception as exc:
+        logger.error(f"[R2] test failed: {exc}")
+        return {"success": False, "message": f"R2 connection failed: {str(exc)[:200]}"}
+
+
+@router.post("/fireworks/transform")
+async def fireworks_transform_images(
+    request: dict[str, Any],
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """Gemini AI로 이미지 변환 후 R2/로컬 저장."""
+    from backend.domain.samba.image.service import ImageTransformService
+
+    svc = ImageTransformService(session)
+    product_ids = request.get("product_ids", [])
+    group_ids = request.get("group_ids", [])
+    scope = request.get("scope", {"thumbnail": True, "additional": False, "detail": False})
+    mode = request.get("mode", "background")  # background | scene | model
+    model_preset = request.get("model_preset", "female_v1")
+
+    # 그룹 ID로 요청 시 해당 그룹의 상품 ID 조회
+    if group_ids and not product_ids:
+        from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+        repo = SambaCollectedProductRepository(session)
+        for gid in group_ids:
+            products = await repo.list_by_filter(gid, skip=0, limit=10000)
+            product_ids.extend([p.id for p in products])
+        product_ids = list(set(product_ids))
+
+    if not product_ids:
+        return {"success": False, "message": "No products selected"}
+
+    try:
+        result = await svc.transform_products(product_ids, scope, mode, model_preset)
+        return {"success": True, **result}
+    except Exception as exc:
+        logger.error(f"[Fireworks] transform failed: {exc}")
+        return {"success": False, "message": str(exc)[:300]}
+
+
+@router.post("/preset-images/sync-to-r2")
+async def sync_preset_images_to_r2(
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """로컬 프리셋 이미지를 R2에 일괄 업로드."""
+    from backend.domain.samba.image.service import ImageTransformService
+
+    svc = ImageTransformService(session)
+    return await svc.sync_presets_to_r2()
+
+
+@router.post("/ai-tags/generate")
+async def generate_ai_tags(
+    request: dict[str, Any],
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """선택 상품을 그룹별로 묶어 대표 1개로 Claude 태그 생성 후 그룹 전체에 적용."""
+    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+
+    product_ids = request.get("product_ids", [])
+    req_group_ids = request.get("group_ids", [])
+    logger.info(f"[AI태그] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}")
+
+    if not product_ids and not req_group_ids:
+        return {"success": False, "message": "상품 또는 그룹을 선택해주세요"}
+
+    # Claude API 키 조회
+    creds = await _get_setting(session, "claude")
+    if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
+        return {"success": False, "message": "Claude API 설정이 없습니다"}
+    api_key = str(creds["apiKey"]).strip()
+    model = str(creds.get("model", "claude-sonnet-4-6"))
+
+    repo = SambaCollectedProductRepository(session)
+
+    # 그룹 ID 직접 전달 시 바로 사용
+    group_ids: set[str] = set(req_group_ids)
+    ungrouped: list = []
+
+    # 상품 ID로 전달 시 그룹 추출
+    for pid in product_ids:
+        product = await repo.get_async(pid)
+        if not product:
+            continue
+        if product.search_filter_id:
+            group_ids.add(product.search_filter_id)
+        else:
+            ungrouped.append(product)
+
+    # 그룹별 전체 상품 조회
+    groups: dict[str, list] = {}
+    for gid in group_ids:
+        all_in_group = await repo.filter_by_async(search_filter_id=gid, limit=10000)
+        if all_in_group:
+            groups[gid] = list(all_in_group)
+    # 그룹 없는 상품은 개별 처리
+    for p in ungrouped:
+        groups[p.id] = [p]
+
+    if not groups:
+        return {"success": False, "message": "상품을 찾을 수 없습니다"}
+
+    total_tagged = 0
+    total_groups = len(groups)
+    api_calls = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+
+    for gid, products in groups.items():
+        # 대표 상품 선택 (첫 번째)
+        rep = products[0]
+        rep_name = rep.name or ""
+        cats = [rep.category1, rep.category2, rep.category3, rep.category4]
+        category = " > ".join(c for c in cats if c) or rep.category or ""
+        brand = rep.brand or ""
+        source_site = rep.source_site or ""
+
+        # Claude API 호출
+        prompt = (
+            f"상품 정보:\n"
+            f"- 상품명: {rep_name}\n"
+            f"- 브랜드: {brand}\n"
+            f"- 카테고리: {category}\n\n"
+            f"이 상품과 관련된 검색용 태그를 10개 생성해주세요.\n"
+            f"규칙:\n"
+            f"1. 상품명에 이미 포함된 단어는 절대 제외\n"
+            f"2. 브랜드명('{brand}')과 브랜드명이 포함된 단어는 절대 제외\n"
+            f"3. 소비자가 검색할 만한 키워드\n"
+            f"4. 한글로 작성\n"
+            f"5. 쉼표로 구분하여 태그만 출력 (번호/설명 없이)\n"
+            f"6. 수집사이트/소싱처 이름(MUSINSA, 무신사, KREAM, 크림, ABCmart 등)은 절대 포함하지 마세요\n"
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": 200,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                )
+                api_calls += 1
+                if resp.status_code != 200:
+                    logger.warning(f"[AI태그] Claude 호출 실패: {resp.status_code}")
+                    continue
+
+                data = resp.json()
+                usage = data.get("usage", {})
+                total_input_tokens += usage.get("input_tokens", 0)
+                total_output_tokens += usage.get("output_tokens", 0)
+                text = data.get("content", [{}])[0].get("text", "")
+                # 쉼표 구분 태그 파싱 + 금지어 필터링
+                _banned = {
+                    "musinsa", "무신사", "kream", "크림", "abcmart", "abc마트",
+                    "nike", "나이키", "adidas", "아디다스", "올리브영", "oliveyoung",
+                    "ssg", "신세계", "롯데온", "lotteon", "gsshop", "gs샵",
+                    "ebay", "이베이", "zara", "자라", "fashionplus", "패션플러스",
+                    "grandstage", "그랜드스테이지", "okmall", "elandmall", "이랜드몰",
+                    "ssf", "ssf샵",
+                }
+                # DB에서 스마트스토어 금지 태그 불러오기
+                try:
+                    from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+                    _settings_repo = SambaSettingsRepository(session)
+                    _banned_row = await _settings_repo.find_by_async(key="smartstore_banned_tags")
+                    if _banned_row and isinstance(_banned_row.value, list):
+                        _banned.update(w.lower() for w in _banned_row.value)
+                except Exception:
+                    pass
+                if source_site:
+                    _banned.add(source_site.lower())
+                # 브랜드명 + 상품명 단어도 금지 목록에 추가
+                if brand:
+                    _banned.add(brand.lower())
+                    # 브랜드 한/영 모두 추가
+                    for w in brand.split():
+                        if len(w) >= 2:
+                            _banned.add(w.lower())
+                # 상품명에서 2글자 이상 단어 추출 → 금지
+                import re
+                _name_words = set()
+                for w in re.split(r'[\s/\-_()]+', rep_name):
+                    clean = re.sub(r'[^가-힣a-zA-Z0-9]', '', w).lower()
+                    if len(clean) >= 2:
+                        _name_words.add(clean)
+
+                def _is_valid_tag(tag: str) -> bool:
+                    t = tag.strip().lower()
+                    if not t:
+                        return False
+                    # 정확 매칭 금지
+                    if t in _banned or t in _name_words:
+                        return False
+                    # 브랜드명이 태그에 포함되는 경우 금지
+                    if brand and brand.lower() in t:
+                        return False
+                    return True
+
+                tags = [
+                    t.strip() for t in text.split(",")
+                    if _is_valid_tag(t)
+                ][:10]
+
+                if not tags:
+                    continue
+
+                # 그룹 내 모든 상품에 태그 적용 (AI 마커 포함)
+                for p in products:
+                    existing = p.tags or []
+                    merged = list(set(existing + tags + ["__ai_tagged__"]))
+                    await repo.update_async(p.id, tags=merged)
+                    total_tagged += 1
+
+        except Exception as e:
+            logger.error(f"[AI태그] 그룹 {gid} 실패: {e}")
+            continue
+
+    await session.commit()
+    # 실비 계산 (Claude Sonnet 4.6: 입력 $3/1M, 출력 $15/1M, 환율 1400원)
+    input_cost = total_input_tokens * 3 / 1_000_000 * 1400
+    output_cost = total_output_tokens * 15 / 1_000_000 * 1400
+    total_cost = round(input_cost + output_cost, 1)
+    return {
+        "success": True,
+        "message": f"태그 생성 완료 — {total_groups}개 그룹, {total_tagged}개 상품에 복사 (₩{total_cost})",
+        "total_tagged": total_tagged,
+        "api_calls": api_calls,
+        "input_tokens": total_input_tokens,
+        "output_tokens": total_output_tokens,
+        "cost_krw": total_cost,
+    }
+
+
+# ═══════════════════════════════════════════════
+# 이미지 필터링 (모델컷/연출컷/배너 자동 제거)
+# ═══════════════════════════════════════════════
+
+
+@router.post("/image-filter/filter")
+async def filter_product_images(
+    request: dict[str, Any],
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """상품 이미지 자동 필터링 — 이미지컷만 남기고 모델컷/연출컷/배너 제거."""
+    from backend.domain.samba.image.image_filter_service import ImageFilterService
+
+    svc = ImageFilterService(session)
+    product_ids: list[str] = request.get("product_ids", [])
+    filter_id: str = request.get("filter_id", "")
+    scope: str = request.get("scope", "images")  # images | detail | all
+
+    # filter_id로 요청 시 해당 그룹의 상품 ID 조회 (product_ids 우선)
+    if filter_id and not product_ids:
+      try:
+        result = await svc.filter_by_group(filter_id)
+        return result
+      except Exception as exc:
+        logger.error(f"[이미지필터] 그룹 필터링 실패: {exc}")
+        return {"success": False, "message": str(exc)[:300]}
+
+    if not product_ids:
+      return {"success": False, "message": "product_ids 또는 filter_id를 입력하세요."}
+
+    try:
+      result = await svc.batch_filter(product_ids, scope=scope)
+      return result
+    except Exception as exc:
+      logger.error(f"[이미지필터] 배치 필터링 실패: {exc}")
+      return {"success": False, "message": str(exc)[:300]}
 
 
 # ═══════════════════════════════════════════════

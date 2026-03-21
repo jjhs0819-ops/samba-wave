@@ -1,1 +1,0 @@
-{"result":"fail","message":"키 인증 유효시간이 지났습니다.","code":"401 UNAUTHORIZED"}

@@ -44,6 +44,9 @@ interface MarketPolicyForm {
   smileCashRate: number
   // GS샵 전용
   gsMarginRate: number
+  // 스마트스토어 전용
+  discountRate: number  // 즉시할인율 (%)
+  maxStock: number      // 최대 재고수량 (0=무제한)
 }
 
 // 금지어/삭제어 템플릿
@@ -172,6 +175,8 @@ export default function PoliciesPage() {
   // 상세페이지/상품명 템플릿
   const [detailTemplates, setDetailTemplates] = useState<SambaDetailTemplate[]>([])
   const [nameRules, setNameRules] = useState<SambaNameRule[]>([])
+  const nameRulesRef = useRef<SambaNameRule[]>([])
+  nameRulesRef.current = nameRules
   const [selectedDetailTemplateId, setSelectedDetailTemplateId] = useState('')
   const [selectedNameRuleId, setSelectedNameRuleId] = useState('')
   const [showTemplateEditor, setShowTemplateEditor] = useState(false)
@@ -206,7 +211,7 @@ export default function PoliciesPage() {
 
   // 현재 마켓 정책 가져오기
   const getCurrentMarketPolicy = useCallback((): MarketPolicyForm => {
-    return marketPolicies[marketPolicyTab] || { accountId: '', accountIds: [], shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0 }
+    return marketPolicies[marketPolicyTab] || { accountId: '', accountIds: [], shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0, gsMarginRate: 0, discountRate: 0, maxStock: 0 }
   }, [marketPolicies, marketPolicyTab])
 
   const setCurrentMarketPolicy = useCallback((mp: MarketPolicyForm) => {
@@ -314,16 +319,23 @@ export default function PoliciesPage() {
     }
   }, [policies, searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 템플릿 선택 시 imgChecks 초기화
+  // 템플릿 선택 시 imgChecks/imgOrder를 DB 값으로 초기화
   useEffect(() => {
     if (!selectedDetailTemplateId) return
     const t = detailTemplates.find(x => x.id === selectedDetailTemplateId)
     if (!t) return
-    setImgChecks({
-      main: true, sub: true, title: false, option: false, detail: false,
-      topImg: !!t.top_image_s3_key,
-      bottomImg: !!t.bottom_image_s3_key,
-    })
+    if (t.img_checks) {
+      setImgChecks(t.img_checks)
+    } else {
+      setImgChecks({
+        main: true, sub: true, title: false, option: false, detail: false,
+        topImg: !!t.top_image_s3_key,
+        bottomImg: !!t.bottom_image_s3_key,
+      })
+    }
+    if (t.img_order) {
+      setImgOrder(t.img_order)
+    }
   }, [selectedDetailTemplateId, detailTemplates])
 
   const openEdit = (p: SambaPolicy) => {
@@ -352,6 +364,17 @@ export default function PoliciesPage() {
     setSelectedNameRuleId(p.extras?.name_rule_id || '')
     setForbiddenText(p.extras?.forbidden_text || '')
     setDeletionText(p.extras?.deletion_text || '')
+    // 금지어/삭제어 템플릿 그룹 ID 복원
+    setActiveTemplateId({
+      forbidden: p.extras?.forbidden_template_id || '',
+      deletion: p.extras?.deletion_template_id || '',
+    })
+    const fTpl = forbiddenTemplates.find(t => t.id === p.extras?.forbidden_template_id)
+    const dTpl = forbiddenTemplates.find(t => t.id === p.extras?.deletion_template_id)
+    setNewTemplateName({
+      forbidden: fTpl?.name || '',
+      deletion: dTpl?.name || '',
+    })
     setShowForm(true)
   }
 
@@ -379,20 +402,46 @@ export default function PoliciesPage() {
           name_rule_id: selectedNameRuleId || undefined,
           forbidden_text: forbiddenText || undefined,
           deletion_text: deletionText || undefined,
+          forbidden_template_id: activeTemplateId.forbidden || undefined,
+          deletion_template_id: activeTemplateId.deletion || undefined,
         },
       }
       if (editingId) {
         await policyApi.update(editingId, payload)
-        // 리스트만 갱신 (편집 폼은 현재 상태 유지)
         setPolicies(await policyApi.list().catch(() => []))
-        showAlert('정책이 저장되었습니다', 'success')
       } else {
         const created = await policyApi.create(payload)
         setEditingId(created.id)
         setSelectedPolicyId(created.id)
         setPolicies(await policyApi.list().catch(() => []))
-        showAlert('정책이 생성되었습니다', 'success')
       }
+
+      // 상품명 규칙 동시 저장
+      if (selectedNameRuleId) {
+        const rule = nameRulesRef.current.find(x => x.id === selectedNameRuleId)
+        if (rule) {
+          const saved = await nameRuleApi.update(rule.id, {
+            name: rule.name, prefix: rule.prefix, suffix: rule.suffix,
+            replacements: rule.replacements, replace_mode: rule.replace_mode,
+            option_rules: rule.option_rules, name_composition: rule.name_composition,
+            brand_display: rule.brand_display, dedup_enabled: rule.dedup_enabled,
+          }).catch(() => null)
+          if (saved) setNameRules(prev => prev.map(x => x.id === saved.id ? saved : x))
+        }
+      }
+
+      // 삭제어 동시 저장
+      const delWords = deletionText.split(';').map(w => w.trim()).filter(Boolean)
+      if (delWords.length > 0) {
+        await forbiddenApi.bulkSaveWords('deletion', delWords).catch(() => {})
+      }
+      // 금지어 동시 저장
+      const forbWords = forbiddenText.split(';').map(w => w.trim()).filter(Boolean)
+      if (forbWords.length > 0) {
+        await forbiddenApi.bulkSaveWords('forbidden', forbWords).catch(() => {})
+      }
+
+      showAlert('정책이 저장되었습니다', 'success')
     } catch (e) {
       showAlert(e instanceof Error ? e.message : '저장 실패', 'error')
     }
@@ -411,10 +460,10 @@ export default function PoliciesPage() {
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latestPricingRef = useRef(pricing)
   const latestMarketPoliciesRef = useRef(marketPolicies)
-  const latestExtrasRef = useRef({ detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId, forbidden_text: forbiddenText, deletion_text: deletionText })
+  const latestExtrasRef = useRef({ detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId, forbidden_text: forbiddenText, deletion_text: deletionText, forbidden_template_id: activeTemplateId.forbidden, deletion_template_id: activeTemplateId.deletion })
   latestPricingRef.current = pricing
   latestMarketPoliciesRef.current = marketPolicies
-  latestExtrasRef.current = { detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId, forbidden_text: forbiddenText, deletion_text: deletionText }
+  latestExtrasRef.current = { detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId, forbidden_text: forbiddenText, deletion_text: deletionText, forbidden_template_id: activeTemplateId.forbidden, deletion_template_id: activeTemplateId.deletion }
 
   const triggerAutoSave = useCallback(() => {
     if (!editingId) return
@@ -432,6 +481,8 @@ export default function PoliciesPage() {
             name_rule_id: ex.name_rule_id || undefined,
             forbidden_text: ex.forbidden_text || undefined,
             deletion_text: ex.deletion_text || undefined,
+            forbidden_template_id: ex.forbidden_template_id || undefined,
+            deletion_template_id: ex.deletion_template_id || undefined,
           },
         })
         // 리스트만 갱신 (현재 편집 폼은 유지)
@@ -750,6 +801,16 @@ export default function PoliciesPage() {
                   </div>
                 </>
               )}
+              {/* 스마트스토어 전용: 재고제한 */}
+              {marketPolicyTab === '스마트스토어' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginTop: '0.5rem', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                    <span style={{ color: '#888', fontSize: '0.8125rem' }}>재고제한</span>
+                    <NumInput value={mp.maxStock || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, maxStock: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="개" />
+                    <span style={{ color: '#555', fontSize: '0.72rem' }}>0=무제한</span>
+                  </div>
+                </div>
+              )}
               {/* GS샵 전용: MD 협의 마진율 */}
               {marketPolicyTab === 'GS샵' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -864,9 +925,15 @@ export default function PoliciesPage() {
             }
           }
 
-          // 이미지 체크 토글 핸들러
-          const handleImgCheckToggle = (itemId: string, checked: boolean) => {
-            setImgChecks(prev => ({ ...prev, [itemId]: checked }))
+          // 이미지 체크 토글 핸들러 — DB에도 저장
+          const handleImgCheckToggle = async (itemId: string, checked: boolean) => {
+            const next = { ...imgChecks, [itemId]: checked }
+            setImgChecks(next)
+            try {
+              await detailTemplateApi.update(t.id, { img_checks: next })
+            } catch (e) {
+              console.error('img_checks 저장 실패:', e)
+            }
           }
 
           // 체크된 항목만 imgOrder 순서대로 표시
@@ -1001,7 +1068,11 @@ export default function PoliciesPage() {
                         setImgOrder(newOrder)
                         setDragIdx(idx)
                       }}
-                      onDrop={() => setDragIdx(null)}
+                      onDrop={() => {
+                        setDragIdx(null)
+                        // 드래그 완료 시 순서 DB 저장
+                        detailTemplateApi.update(t.id, { img_order: imgOrder }).catch(e => console.error('img_order 저장 실패:', e))
+                      }}
                       onDragEnd={() => setDragIdx(null)}
                       style={{
                         background: item.bg, border: `1px dashed ${item.border}`, borderRadius: '4px',
@@ -1061,10 +1132,21 @@ export default function PoliciesPage() {
             </select>
             <button onClick={async () => {
               if (!selectedNameRuleId) return
-              const r = nameRules.find(x => x.id === selectedNameRuleId)
-              if (!r) return
-              await nameRuleApi.update(r.id, { name: r.name, prefix: r.prefix, suffix: r.suffix, replacements: r.replacements, replace_mode: r.replace_mode, option_rules: r.option_rules, name_composition: r.name_composition, brand_display: r.brand_display, dedup_enabled: r.dedup_enabled }).catch(() => {})
-              showAlert('규칙이 저장되었습니다.', 'success')
+              const latest = nameRulesRef.current.find(x => x.id === selectedNameRuleId)
+              if (!latest) return
+              console.log('[저장] name_composition:', JSON.stringify(latest.name_composition))
+              try {
+                const saved = await nameRuleApi.update(latest.id, {
+                  name: latest.name, prefix: latest.prefix, suffix: latest.suffix,
+                  replacements: latest.replacements, replace_mode: latest.replace_mode,
+                  option_rules: latest.option_rules, name_composition: latest.name_composition,
+                  brand_display: latest.brand_display, dedup_enabled: latest.dedup_enabled,
+                })
+                if (saved) {
+                  setNameRules(prev => prev.map(x => x.id === saved.id ? saved : x))
+                  showAlert('규칙이 저장되었습니다.', 'success')
+                }
+              } catch { showAlert('저장 실패', 'error') }
             }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '6px', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>저장</button>
             <button onClick={async () => {
               if (!selectedNameRuleId) return

@@ -86,6 +86,10 @@ class SambaDetailTemplate(SQLModel, table=True):
     # 상단/하단 이미지 S3 키
     top_image_s3_key: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     bottom_image_s3_key: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    # 상세페이지 이미지 체크 설정 (어떤 항목을 포함할지)
+    img_checks: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # 상세페이지 이미지 순서 설정
+    img_order: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # Timestamps
     created_at: datetime = Field(

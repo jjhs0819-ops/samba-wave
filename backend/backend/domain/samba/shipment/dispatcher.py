@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -60,8 +61,9 @@ async def dispatch_to_market(
   product: dict[str, Any],
   category_id: str = "",
   account: Any = None,
+  existing_product_no: str = "",
 ) -> dict[str, Any]:
-  """마켓 타입에 따라 실제 상품 등록 API를 호출.
+  """마켓 타입에 따라 상품 등록/수정 API를 호출.
 
   Args:
     session: DB 세션
@@ -69,6 +71,7 @@ async def dispatch_to_market(
     product: SambaCollectedProduct 딕셔너리
     category_id: 대상 마켓 카테고리 코드
     account: SambaMarketAccount 객체 (계정별 인증 정보)
+    existing_product_no: 기존 마켓 상품번호 (있으면 수정, 없으면 신규등록)
 
   Returns:
     {"success": bool, "message": str, "data": Any}
@@ -89,7 +92,7 @@ async def dispatch_to_market(
         "error_type": "unsupported",
         "message": f"지원하지 않는 마켓: {market_type}",
       }
-    return await handler(session, product, category_id, account=account)
+    return await handler(session, product, category_id, account=account, existing_product_no=existing_product_no)
   except Exception as exc:
     exc_str = str(exc).lower()
     # 에러 분류: 인증 실패 vs API 스펙 변경 vs 네트워크
@@ -115,9 +118,9 @@ async def dispatch_to_market(
 
 
 async def _handle_smartstore(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
-  """스마트스토어 상품 등록."""
+  """스마트스토어 상품 등록/수정."""
   from backend.domain.samba.proxy.smartstore import SmartStoreClient
 
   # 계정 객체에서 인증 정보 우선 사용
@@ -167,7 +170,6 @@ async def _handle_smartstore(
   # (소싱처 CDN URL 그대로 사용하면 핫링크 차단됨)
   detail_html = product.get("detail_html", "")
   if detail_html:
-    import re
     img_pattern = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.I)
     all_src_urls = img_pattern.findall(detail_html)
     # 외부 CDN URL만 업로드 (네이버 URL이나 S3 URL은 제외)
@@ -196,15 +198,179 @@ async def _handle_smartstore(
   if detail_html:
     product_copy["detail_html"] = detail_html
 
+  # 계정/정책 설정 주입
+  if account:
+    extras = account.additional_fields or {}
+    if extras.get("asPhone"):
+      product_copy["_as_phone"] = extras["asPhone"]
+    if extras.get("asMessage"):
+      product_copy["_as_message"] = extras["asMessage"]
+    if extras.get("returnSafeguard") in (True, "true", "True"):
+      product_copy["_return_safeguard"] = True
+    # 네이버쇼핑 가격비교 등록 (기본값: True)
+    naver_shopping = extras.get("naverShopping", "true")
+    product_copy["_naver_shopping"] = naver_shopping in (True, "true", "True")
+    # 반품/교환/제주 배송비
+    if extras.get("returnFee"):
+      product_copy["_return_fee"] = int(extras["returnFee"])
+    if extras.get("exchangeFee"):
+      product_copy["_exchange_fee"] = int(extras["exchangeFee"])
+    if extras.get("jejuFee"):
+      product_copy["_jeju_fee"] = int(extras["jejuFee"])
+    if extras.get("stockQuantity"):
+      product_copy["_stock_quantity"] = int(extras["stockQuantity"])
+    # 구매/리뷰 혜택 조건
+    if extras.get("multiPurchaseDiscount") in (True, "true"):
+      product_copy["_multi_purchase"] = True
+      if extras.get("multiPurchaseQty"):
+        product_copy["_multi_purchase_qty"] = int(extras["multiPurchaseQty"])
+      if extras.get("multiPurchaseRate"):
+        product_copy["_multi_purchase_rate"] = int(extras["multiPurchaseRate"])
+    product_copy["_purchase_point"] = extras.get("purchasePointEnabled") in (True, "true")
+    if extras.get("purchasePointRate"):
+      product_copy["_purchase_point_rate"] = int(extras["purchasePointRate"])
+    product_copy["_review_point"] = extras.get("reviewPointEnabled") in (True, "true")
+    if extras.get("reviewTextPoint"):
+      product_copy["_review_text_point"] = int(extras["reviewTextPoint"])
+    if extras.get("reviewPhotoPoint"):
+      product_copy["_review_photo_point"] = int(extras["reviewPhotoPoint"])
+    if extras.get("reviewMonthTextPoint"):
+      product_copy["_review_month_text_point"] = int(extras["reviewMonthTextPoint"])
+    if extras.get("reviewMonthPhotoPoint"):
+      product_copy["_review_month_photo_point"] = int(extras["reviewMonthPhotoPoint"])
+    if extras.get("reviewPhotoUrl"):
+      product_copy["_review_photo_url"] = extras["reviewPhotoUrl"]
+    # 알림받기 동의고객 포인트: Commerce API v2 미지원 → 셀러센터에서 직접 설정
+
+  # 즉시할인: 계정 설정에서 읽기
+  if account:
+    extras = account.additional_fields or {}
+    if extras.get("discountRate"):
+      product_copy["_discount_rate"] = int(extras["discountRate"])
+
+  # 재고제한: 정책에서 읽기
+  policy_id = product.get("applied_policy_id")
+  if policy_id:
+    from backend.domain.samba.policy.repository import SambaPolicyRepository
+    policy_repo = SambaPolicyRepository(session)
+    policy = await policy_repo.get_async(policy_id)
+    if policy and policy.market_policies:
+      ss_policy = policy.market_policies.get("스마트스토어", {})
+      if ss_policy.get("maxStock"):
+        product_copy["_max_stock"] = ss_policy["maxStock"]
+
+  # 브랜드/제조사 ID — 수집그룹 캐시 우선, 없으면 API 검색 후 수집그룹에 저장
+  filter_id = product_copy.get("search_filter_id", "")
+  sf = None
+  if filter_id:
+    from backend.domain.samba.collector.repository import SambaSearchFilterRepository
+    filter_repo = SambaSearchFilterRepository(session)
+    sf = await filter_repo.get_async(filter_id)
+    if sf and sf.ss_brand_id:
+      product_copy["_brand_id"] = sf.ss_brand_id
+    if sf and sf.ss_manufacturer_id:
+      product_copy["_manufacturer_id"] = sf.ss_manufacturer_id
+
+  if not product_copy.get("_brand_id"):
+    brand_name = product_copy.get("brand", "")
+    if brand_name:
+      brand_id = await client.search_brand(brand_name)
+      if brand_id:
+        product_copy["_brand_id"] = brand_id
+        # 수집그룹에 캐싱
+        if sf and filter_id:
+          await filter_repo.update_async(filter_id, ss_brand_id=brand_id, ss_brand_name=brand_name)
+          logger.info(f"[스마트스토어] 브랜드 자동매핑 → {brand_name}({brand_id}) 수집그룹 저장")
+  if not product_copy.get("_manufacturer_id"):
+    mfr_name = product_copy.get("manufacturer", "") or product_copy.get("brand", "")
+    if mfr_name:
+      mfr_id = await client.search_manufacturer(mfr_name)
+      if mfr_id:
+        product_copy["_manufacturer_id"] = mfr_id
+        if sf and filter_id:
+          await filter_repo.update_async(filter_id, ss_manufacturer_id=mfr_id, ss_manufacturer_name=mfr_name)
+          logger.info(f"[스마트스토어] 제조사 자동매핑 → {mfr_name}({mfr_id}) 수집그룹 저장")
+
+  # 카테고리별 상품속성 조회 → 성별(남녀공용) 기본 설정
+  cat_attrs = await client.get_category_attributes(category_id)
+  if cat_attrs:
+    product_copy["_category_attributes"] = cat_attrs
+
+  # DB에서 스마트스토어 금지 태그 불러와 사전 필터링
+  try:
+    banned_row = await _get_setting(session, "smartstore_banned_tags")
+    if banned_row and isinstance(banned_row, list):
+      banned_set = {w.lower() for w in banned_row}
+      raw_tags = product_copy.get("tags") or []
+      product_copy["tags"] = [t for t in raw_tags if t.startswith("__") or t.lower() not in banned_set]
+  except Exception:
+    pass
+
   data = SmartStoreClient.transform_product(product_copy, category_id)
-  result = await client.register_product(data)
-  return {"success": True, "message": "스마트스토어 등록 성공", "data": result}
+
+  # 전송 데이터 디버그 로깅
+  da = data.get("originProduct", {}).get("detailAttribute", {})
+  logger.info(f"[스마트스토어] 전송 detailAttribute — modelName={da.get('modelName')}, brandId={da.get('brandId')}, brandName={da.get('brandName')}, mfr={da.get('manufacturerName')}, attrs={len(da.get('productAttributes', []))}개, cancelGuide={da.get('cancelGuide')}")
+
+  # 기존 상품번호가 있으면 수정, 없으면 신규등록
+  async def _try_send(d: dict[str, Any]) -> dict[str, Any]:
+    if existing_product_no:
+      try:
+        r = await client.update_product(existing_product_no, d)
+        return {"success": True, "message": "스마트스토어 수정 성공", "data": r}
+      except Exception as e:
+        if "404" in str(e):
+          logger.warning(f"[스마트스토어] 상품 {existing_product_no} 404 → 신규등록 전환")
+          r = await client.register_product(d)
+          return {"success": True, "message": "스마트스토어 등록 성공 (신규 전환)", "data": r}
+        raise
+    else:
+      r = await client.register_product(d)
+      return {"success": True, "message": "스마트스토어 등록 성공", "data": r}
+
+  try:
+    return await _try_send(data)
+  except Exception as e:
+    err_msg = str(e)
+    # sellerTags 등록불가 단어 에러 → 해당 태그 제거 후 재시도
+    if "sellerTags" in err_msg and "등록불가" in err_msg:
+      import re as _re
+      # 에러에서 금지 단어 추출: "등록불가인 단어(A,B,C)가"
+      m = _re.search(r"등록불가인 단어\(([^)]+)\)", err_msg)
+      if m:
+        banned = {w.strip().lower() for w in m.group(1).split(",")}
+        seo = data.get("originProduct", {}).get("detailAttribute", {}).get("seoInfo", {})
+        old_tags = seo.get("sellerTags", [])
+        new_tags = [t for t in old_tags if t.get("text", "").lower() not in banned]
+        if new_tags:
+          data["originProduct"]["detailAttribute"]["seoInfo"]["sellerTags"] = new_tags
+        else:
+          data["originProduct"]["detailAttribute"].pop("seoInfo", None)
+        logger.info(f"[스마트스토어] 금지 태그 {banned} 제거 후 재시도 ({len(old_tags)}→{len(new_tags)}개)")
+        # 금지 태그를 DB에 누적 저장 (AI태그 생성 시 자동 제외)
+        try:
+          repo = SambaSettingsRepository(session)
+          row = await repo.find_by_async(key="smartstore_banned_tags")
+          existing_banned: list[str] = []
+          if row and isinstance(row.value, list):
+            existing_banned = row.value
+          merged = list(set(existing_banned + [w for w in banned]))
+          if row:
+            await repo.update_async(row.id, value=merged)
+          else:
+            await repo.create_async(key="smartstore_banned_tags", value=merged)
+          await session.commit()
+          logger.info(f"[스마트스토어] 금지 태그 DB 저장: +{banned} (총 {len(merged)}개)")
+        except Exception as save_err:
+          logger.warning(f"[스마트스토어] 금지 태그 저장 실패: {save_err}")
+        return await _try_send(data)
+    raise
 
 
 async def _handle_coupang(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
-  """쿠팡 상품 등록."""
+  """쿠팡 상품 등록/수정."""
   from backend.domain.samba.proxy.coupang import CoupangClient
 
   access_key = ""
@@ -271,8 +437,15 @@ async def _handle_coupang(
   except Exception:
     pass
 
+  # 계정 설정에서 AS 전화번호 주입
+  product_copy = dict(product)
+  if account:
+    extras = account.additional_fields or {}
+    if extras.get("asPhone"):
+      product_copy["_as_phone"] = extras["asPhone"]
+
   data = CoupangClient.transform_product(
-    product, category_id,
+    product_copy, category_id,
     return_center_code=return_center_code,
     outbound_shipping_place_code=outbound_code,
   )
@@ -288,28 +461,37 @@ async def _handle_coupang(
       data["returnAddress"] = addr.get("returnAddress", "")
       data["returnAddressDetail"] = addr.get("returnAddressDetail", "")
       data["companyContactNumber"] = addr.get("companyContactNumber", "")
-  result = await client.register_product(data)
+  # 기존 상품번호가 있으면 수정, 없으면 신규등록
+  if existing_product_no:
+    result = await client.update_product(existing_product_no, data)
+    return {
+      "success": True,
+      "message": "쿠팡 수정 성공",
+      "data": {"sellerProductId": existing_product_no},
+    }
+  else:
+    result = await client.register_product(data)
 
-  # 쿠팡 응답에서 sellerProductId 추출 (data 필드에 숫자로 반환)
-  seller_product_id = ""
-  if isinstance(result, dict):
-    inner = result.get("data", {})
-    if isinstance(inner, dict):
-      seller_product_id = str(inner.get("data", ""))
-    elif inner:
-      seller_product_id = str(inner)
+    # 쿠팡 응답에서 sellerProductId 추출 (data 필드에 숫자로 반환)
+    seller_product_id = ""
+    if isinstance(result, dict):
+      inner = result.get("data", {})
+      if isinstance(inner, dict):
+        seller_product_id = str(inner.get("data", ""))
+      elif inner:
+        seller_product_id = str(inner)
 
-  return {
-    "success": True,
-    "message": "쿠팡 등록 성공",
-    "data": {"sellerProductId": seller_product_id} if seller_product_id else result,
+    return {
+      "success": True,
+      "message": "쿠팡 등록 성공",
+      "data": {"sellerProductId": seller_product_id} if seller_product_id else result,
   }
 
 
 async def _handle_11st(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
-  """11번가 상품 등록."""
+  """11번가 상품 등록/수정."""
   from backend.domain.samba.proxy.elevenst import ElevenstClient
 
   # 계정 객체에서 인증 정보 우선 사용
@@ -337,14 +519,20 @@ async def _handle_11st(
   client = ElevenstClient(api_key)
   account_settings = (account.additional_fields or {}) if account else {}
   xml_data = ElevenstClient.transform_product(product, cat_code, settings=account_settings)
-  result = await client.register_product(xml_data)
-  return {"success": True, "message": "11번가 등록 성공", "data": result}
+
+  # 기존 상품번호가 있으면 수정, 없으면 신규등록
+  if existing_product_no:
+    result = await client.update_product(existing_product_no, xml_data)
+    return {"success": True, "message": "11번가 수정 성공", "data": result}
+  else:
+    result = await client.register_product(xml_data)
+    return {"success": True, "message": "11번가 등록 성공", "data": result}
 
 
 async def _handle_lotteon(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
-  """롯데ON 상품 등록 (롯데ON Open API)."""
+  """롯데ON 상품 등록/수정 (롯데ON Open API)."""
   from backend.domain.samba.proxy.lotteon import LotteonClient
 
   # 계정 객체에서 인증 정보 우선 사용
@@ -382,12 +570,22 @@ async def _handle_lotteon(
   data = LotteonClient.transform_product(
     product, category_id, client.tr_grp_cd or "SR", client.tr_no
   )
-  result = await client.register_product(data)
-  return {"success": True, "message": "롯데ON 등록 성공", "data": result}
+  # 기존 상품번호가 있으면 수정, 없으면 신규등록
+  try:
+    if existing_product_no:
+      data["selPrdNo"] = existing_product_no
+      result = await client.update_product(data)
+      return {"success": True, "message": "롯데ON 수정 성공", "data": result}
+    else:
+      result = await client.register_product(data)
+      return {"success": True, "message": "롯데ON 등록 성공", "data": result}
+  except Exception as e:
+    action = "수정" if existing_product_no else "등록"
+    return {"success": False, "message": f"롯데ON {action} 실패: {e}"}
 
 
 async def _handle_lottehome(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
   """롯데홈쇼핑 상품 등록."""
   from backend.domain.samba.proxy.lottehome import LotteHomeClient
@@ -410,7 +608,7 @@ async def _handle_lottehome(
 
 
 async def _handle_gsshop(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
   """GS샵 상품 등록."""
   from backend.domain.samba.proxy.gsshop import GsShopClient
@@ -465,9 +663,9 @@ async def _handle_gsshop(
 
 
 async def _handle_ssg(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
-  """SSG(신세계몰) 상품 등록."""
+  """SSG(신세계몰) 상품 등록/수정."""
   from backend.domain.samba.proxy.ssg import SSGClient
 
   creds = await _get_setting(session, "store_ssg")
@@ -486,7 +684,13 @@ async def _handle_ssg(
   logger.info(f"[SSG] 인프라 조회 완료: {list(infra.keys())}")
 
   data = client.transform_product(product, category_id, infra=infra)
-  result = await client.register_product(data)
+
+  # 기존 상품번호가 있으면 수정, 없으면 신규등록
+  if existing_product_no:
+    data["itemId"] = existing_product_no
+    result = await client.update_product(data)
+  else:
+    result = await client.register_product(data)
 
   # SSG API 응답 검증
   result_data = result.get("data", {})
@@ -499,11 +703,12 @@ async def _handle_ssg(
         msg = res.get("resultDesc", "") or res.get("resultMessage", "") or f"resultCode={code}"
         return {"success": False, "message": f"SSG 등록 실패: {msg}", "data": result_data}
 
-  return {"success": True, "message": "SSG 등록 성공", "data": result}
+  action = "수정" if existing_product_no else "등록"
+  return {"success": True, "message": f"SSG {action} 성공", "data": result}
 
 
 async def _handle_kream(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
   """KREAM 매도 입찰 등록."""
   from backend.domain.samba.proxy.kream import KreamClient
@@ -587,42 +792,42 @@ def _transform_for_gsshop(product: dict[str, Any], category_id: str, gs_margin_r
 
 
 async def _handle_ebay(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
   """eBay 상품 등록 (stub — API 연동 시 구현)."""
   return {"success": False, "message": "eBay API 연동이 아직 구현되지 않았습니다. 설정에서 API 키를 등록하면 자동으로 활성화됩니다."}
 
 
 async def _handle_lazada(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
   """Lazada 상품 등록 (stub)."""
   return {"success": False, "message": "Lazada API 연동이 아직 구현되지 않았습니다."}
 
 
 async def _handle_qoo10(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
   """Qoo10 상품 등록 (stub)."""
   return {"success": False, "message": "Qoo10 API 연동이 아직 구현되지 않았습니다."}
 
 
 async def _handle_shopee(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
   """Shopee 상품 등록 (stub)."""
   return {"success": False, "message": "Shopee API 연동이 아직 구현되지 않았습니다."}
 
 
 async def _handle_shopify(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
   """Shopify 상품 등록 (stub)."""
   return {"success": False, "message": "Shopify API 연동이 아직 구현되지 않았습니다."}
 
 
 async def _handle_zoom(
-  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None,
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
 ) -> dict[str, Any]:
   """Zum(줌) 상품 등록 (stub)."""
   return {"success": False, "message": "Zum(줌) API 연동이 아직 구현되지 않았습니다."}
@@ -684,7 +889,7 @@ async def delete_from_market(
 async def _delete_smartstore(
   session: AsyncSession, product: dict[str, Any], account: Any = None,
 ) -> dict[str, Any]:
-  """스마트스토어 상품 판매중지."""
+  """스마트스토어 상품 삭제."""
   from backend.domain.samba.proxy.smartstore import SmartStoreClient
 
   # 계정 객체에서 인증 정보 우선 사용
@@ -706,44 +911,56 @@ async def _delete_smartstore(
     return {"success": False, "message": "스마트스토어 인증 정보 없음"}
 
   client = SmartStoreClient(client_id, client_secret)
-  # 판매중지: statusType을 SUSPENSION으로 업데이트
   product_no = product.get("market_product_no", {}).get("smartstore", "")
   if product_no:
     try:
-      await client.update_product(product_no, {
-        "originProduct": {"statusType": "SUSPENSION"}
-      })
-      return {"success": True, "message": "스마트스토어 판매중지 완료"}
+      await client.delete_product(product_no)
+      return {"success": True, "message": "스마트스토어 삭제 완료"}
     except Exception as e:
-      return {"success": False, "message": f"판매중지 실패: {e}"}
+      return {"success": False, "message": f"삭제 실패: {e}"}
   return {"success": True, "message": "스마트스토어 상품번호 없음 (건너뜀)"}
 
 
 async def _delete_coupang(
   session: AsyncSession, product: dict[str, Any], account: Any = None,
 ) -> dict[str, Any]:
-  """쿠팡 상품 판매중지 (재고 0 업데이트)."""
+  """쿠팡 상품 삭제."""
   from backend.domain.samba.proxy.coupang import CoupangClient
 
-  creds = await _get_setting(session, "store_coupang")
-  if not creds or not isinstance(creds, dict):
-    return {"success": False, "message": "쿠팡 설정 없음"}
+  access_key = ""
+  secret_key = ""
+  vendor_id = ""
+  if account:
+    extras = getattr(account, "additional_fields", None) or {}
+    access_key = extras.get("accessKey", "") or getattr(account, "api_key", "") or ""
+    secret_key = extras.get("secretKey", "") or getattr(account, "api_secret", "") or ""
+    vendor_id = extras.get("vendorId", "") or getattr(account, "seller_id", "") or ""
+
+  if not access_key or not secret_key:
+    creds = await _get_setting(session, "store_coupang")
+    if creds and isinstance(creds, dict):
+      access_key = access_key or creds.get("accessKey", "")
+      secret_key = secret_key or creds.get("secretKey", "")
+      vendor_id = vendor_id or creds.get("vendorId", "")
+
+  if not access_key or not secret_key:
+    return {"success": False, "message": "쿠팡 인증 정보 없음"}
 
   product_no = product.get("market_product_no", {}).get("coupang", "")
   if product_no:
-    client = CoupangClient(creds.get("accessKey", ""), creds.get("secretKey", ""))
+    client = CoupangClient(access_key, secret_key, vendor_id)
     try:
-      await client.update_product(product_no, {"sellerProductName": product.get("name", ""), "statusType": "STOP"})
-      return {"success": True, "message": "쿠팡 판매중지 완료"}
+      await client.delete_product(product_no)
+      return {"success": True, "message": "쿠팡 삭제 완료"}
     except Exception as e:
-      return {"success": False, "message": f"판매중지 실패: {e}"}
+      return {"success": False, "message": f"삭제 실패: {e}"}
   return {"success": True, "message": "쿠팡 상품번호 없음 (건너뜀)"}
 
 
 async def _delete_lottehome(
   session: AsyncSession, product: dict[str, Any], account: Any = None,
 ) -> dict[str, Any]:
-  """롯데홈쇼핑 판매중지."""
+  """롯데홈쇼핑 상품 삭제 (영구중단)."""
   from backend.domain.samba.proxy.lottehome import LotteHomeClient
 
   creds = await _get_setting(session, "lottehome_credentials")
@@ -759,46 +976,141 @@ async def _delete_lottehome(
       creds.get("agncNo", ""), creds.get("env", "test"),
     )
     try:
-      await client.update_sale_status(product_no, "02")  # 02 = 판매중지
-      return {"success": True, "message": "롯데홈쇼핑 판매중지 완료"}
+      await client.update_sale_status(product_no, "30")  # 30 = 영구중단
+      return {"success": True, "message": "롯데홈쇼핑 삭제 완료"}
     except Exception as e:
-      return {"success": False, "message": f"판매중지 실패: {e}"}
+      return {"success": False, "message": f"삭제 실패: {e}"}
   return {"success": True, "message": "롯데홈쇼핑 상품번호 없음 (건너뜀)"}
 
 
 async def _delete_gsshop(
   session: AsyncSession, product: dict[str, Any], account: Any = None,
 ) -> dict[str, Any]:
-  """GS샵 판매중지."""
+  """GS샵 상품 삭제 (판매 종료)."""
+  from datetime import datetime, timezone
+
   from backend.domain.samba.proxy.gsshop import GsShopClient
 
   creds = await _get_setting(session, "gsshop_credentials")
   if not creds or not isinstance(creds, dict):
     creds = await _get_setting(session, "store_gsshop")
+  if (not creds or not isinstance(creds, dict)) and account:
+    extra = getattr(account, "additional_fields", None) or {}
+    if extra.get("supCd") or extra.get("aesKey") or extra.get("apiKeyProd") or extra.get("apiKeyDev"):
+      creds = extra
   if not creds or not isinstance(creds, dict):
     return {"success": False, "message": "GS샵 설정 없음"}
 
   product_no = product.get("market_product_no", {}).get("gsshop", "")
   if product_no:
+    sup_cd = creds.get("supCd", "") or creds.get("storeId", "") or creds.get("vendorId", "")
+    if not sup_cd and account:
+      sup_cd = getattr(account, "seller_id", "") or ""
     client = GsShopClient(
-      creds.get("supCd", "") or creds.get("storeId", "") or creds.get("vendorId", ""),
+      sup_cd,
       creds.get("aesKey", "") or creds.get("apiKeyProd", "") or creds.get("apiKeyDev", ""),
       creds.get("subSupCd", ""),
       "prod" if creds.get("apiKeyProd") else creds.get("env", "dev"),
     )
     try:
-      await client.update_sale_status(product_no, "02")  # 02 = 판매중지
-      return {"success": True, "message": "GS샵 판매중지 완료"}
+      # 판매 종료일을 과거로 설정하여 즉시 판매 종료
+      past = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+      await client.update_sale_status(product_no, past)
+      return {"success": True, "message": "GS샵 삭제 완료"}
     except Exception as e:
-      return {"success": False, "message": f"판매중지 실패: {e}"}
+      return {"success": False, "message": f"삭제 실패: {e}"}
   return {"success": True, "message": "GS샵 상품번호 없음 (건너뜀)"}
+
+
+async def _delete_11st(
+  session: AsyncSession, product: dict[str, Any], account: Any = None,
+) -> dict[str, Any]:
+  """11번가 상품 삭제."""
+  from backend.domain.samba.proxy.elevenst import ElevenstClient
+
+  api_key = ""
+  if account:
+    api_key = getattr(account, "api_key", "") or ""
+  if not api_key:
+    creds = await _get_setting(session, "store_11st")
+    if creds and isinstance(creds, dict):
+      api_key = creds.get("apiKey", "")
+  if not api_key:
+    return {"success": False, "message": "11번가 인증 정보 없음"}
+
+  product_no = product.get("market_product_no", {}).get("11st", "")
+  if product_no:
+    client = ElevenstClient(api_key)
+    try:
+      await client.delete_product(product_no)
+      return {"success": True, "message": "11번가 삭제 완료"}
+    except Exception as e:
+      return {"success": False, "message": f"삭제 실패: {e}"}
+  return {"success": True, "message": "11번가 상품번호 없음 (건너뜀)"}
+
+
+async def _delete_lotteon(
+  session: AsyncSession, product: dict[str, Any], account: Any = None,
+) -> dict[str, Any]:
+  """롯데ON 상품 삭제 (판매종료)."""
+  from backend.domain.samba.proxy.lotteon import LotteonClient
+
+  api_key = ""
+  if account:
+    extras = getattr(account, "additional_fields", None) or {}
+    api_key = extras.get("apiKey", "") or getattr(account, "api_key", "") or ""
+  if not api_key:
+    creds = await _get_setting(session, "store_lotteon")
+    if creds and isinstance(creds, dict):
+      api_key = creds.get("apiKey", "")
+  if not api_key:
+    return {"success": False, "message": "롯데ON 인증 정보 없음"}
+
+  product_no = product.get("market_product_no", {}).get("lotteon", "")
+  if product_no:
+    client = LotteonClient(api_key)
+    await client.test_auth()
+    try:
+      await client.delete_product(product_no)
+      return {"success": True, "message": "롯데ON 삭제 완료"}
+    except Exception as e:
+      return {"success": False, "message": f"삭제 실패: {e}"}
+  return {"success": True, "message": "롯데ON 상품번호 없음 (건너뜀)"}
+
+
+async def _delete_ssg(
+  session: AsyncSession, product: dict[str, Any], account: Any = None,
+) -> dict[str, Any]:
+  """SSG(신세계몰) 상품 삭제."""
+  from backend.domain.samba.proxy.ssg import SSGClient
+
+  creds = await _get_setting(session, "store_ssg")
+  if not creds or not isinstance(creds, dict):
+    return {"success": False, "message": "SSG 설정 없음"}
+
+  api_key = creds.get("apiKey", "")
+  if not api_key:
+    return {"success": False, "message": "SSG 인증키 없음"}
+
+  product_no = product.get("market_product_no", {}).get("ssg", "")
+  if product_no:
+    store_id = creds.get("storeId", "6004")
+    client = SSGClient(api_key, site_no=store_id)
+    try:
+      await client.delete_product(product_no)
+      return {"success": True, "message": "SSG 삭제 완료"}
+    except Exception as e:
+      return {"success": False, "message": f"삭제 실패: {e}"}
+  return {"success": True, "message": "SSG 상품번호 없음 (건너뜀)"}
 
 
 # 마켓별 삭제 핸들러 매핑
 MARKET_DELETE_HANDLERS: dict[str, Any] = {
   "smartstore": _delete_smartstore,
   "coupang": _delete_coupang,
+  "11st": _delete_11st,
+  "lotteon": _delete_lotteon,
+  "ssg": _delete_ssg,
   "lottehome": _delete_lottehome,
   "gsshop": _delete_gsshop,
-  # 11st, lotteon, ssg, kream — 삭제 API 미구현 (향후 추가)
 }

@@ -170,6 +170,8 @@ export interface SambaPolicy {
     name_rule_id?: string;
     forbidden_text?: string;
     deletion_text?: string;
+    forbidden_template_id?: string;
+    deletion_template_id?: string;
   };
   created_at: string;
   updated_at: string;
@@ -218,6 +220,10 @@ export interface SambaSearchFilter {
   requested_count?: number;
   applied_policy_id?: string;
   last_collected_at?: string;
+  ss_brand_id?: number;
+  ss_brand_name?: string;
+  ss_manufacturer_id?: number;
+  ss_manufacturer_name?: string;
   created_at: string;
 }
 
@@ -255,6 +261,11 @@ export interface SambaCollectedProduct {
   is_sold_out: boolean;
   sale_status?: string;
   kream_data?: Record<string, unknown>;
+  style_code?: string;
+  sex?: string;
+  season?: string;
+  care_instructions?: string;
+  quality_guarantee?: string;
   price_before_change?: number;
   price_changed_at?: string;
   price_history?: Array<{
@@ -303,6 +314,8 @@ export const collectorApi = {
     if (status) p.set("status", status);
     return request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products?${p}`);
   },
+  getProductIdsWithOrders: () =>
+    request<string[]>(`${SAMBA_PREFIX}/collector/products/with-orders`),
   searchProducts: (q: string) =>
     request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products/search?q=${encodeURIComponent(q)}`),
   getProduct: (id: string) => request<SambaCollectedProduct>(`${SAMBA_PREFIX}/collector/products/${id}`),
@@ -322,6 +335,13 @@ export const collectorApi = {
     request<RefreshResult>(`${SAMBA_PREFIX}/collector/products/refresh`, {
       method: 'POST',
       body: JSON.stringify({ product_ids: productIds, auto_retransmit: autoRetransmit }),
+    }),
+
+  // Ken Burns 영상 생성 (R2/로컬 저장 후 URL 반환)
+  generateVideo: (productId: string, maxImages = 3, durationPerImage = 1.0) =>
+    request<{ success: boolean, video_url: string }>(`${SAMBA_PREFIX}/collector/products/generate-video`, {
+      method: 'POST',
+      body: JSON.stringify({ product_id: productId, max_images: maxImages, duration_per_image: durationPerImage }),
     }),
 
   // 모니터링 우선순위 변경
@@ -457,6 +477,10 @@ export const forbiddenApi = {
   getSetting: (key: string) => request<unknown>(`${SAMBA_PREFIX}/forbidden/settings/${key}`),
   saveSetting: (key: string, value: unknown) =>
     request<unknown>(`${SAMBA_PREFIX}/forbidden/settings/${key}`, { method: "PUT", body: JSON.stringify({ value }) }),
+
+  // 태그 금지어 통합 조회
+  getTagBannedWords: () =>
+    request<{ rejected: string[]; brands: string[]; source_sites: string[] }>(`${SAMBA_PREFIX}/forbidden/tag-banned-words`),
 };
 
 // ── Proxy (외부 API 프록시) ──
@@ -492,6 +516,46 @@ export const proxyApi = {
   claudeTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/claude/test`, { method: 'POST' }),
+  fireworksTest: () =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/fireworks/test`, { method: 'POST' }),
+  geminiTest: () =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/gemini/test`, { method: 'POST' }),
+  r2Test: () =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/r2/test`, { method: 'POST' }),
+  transformImages: (productIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
+    request<{ success: boolean; message: string; total_transformed: number; total_failed: number }>(
+      `${SAMBA_PREFIX}/proxy/fireworks/transform`, {
+        method: 'POST',
+        body: JSON.stringify({ product_ids: productIds, scope, mode, model_preset: modelPreset }),
+      }),
+  transformByGroups: (groupIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
+    request<{ success: boolean; message: string; total_transformed: number; total_failed: number }>(
+      `${SAMBA_PREFIX}/proxy/fireworks/transform`, {
+        method: 'POST',
+        body: JSON.stringify({ group_ids: groupIds, scope, mode, model_preset: modelPreset }),
+      }),
+  generateAiTags: (productIds: string[]) =>
+    request<{ success: boolean; message: string; total_tagged: number; api_calls: number; input_tokens: number; output_tokens: number; cost_krw: number }>(
+      `${SAMBA_PREFIX}/proxy/ai-tags/generate`, {
+        method: 'POST',
+        body: JSON.stringify({ product_ids: productIds }),
+      }),
+  generateAiTagsByGroups: (groupIds: string[]) =>
+    request<{ success: boolean; message: string; total_tagged: number; api_calls: number; input_tokens: number; output_tokens: number; cost_krw: number }>(
+      `${SAMBA_PREFIX}/proxy/ai-tags/generate`, {
+        method: 'POST',
+        body: JSON.stringify({ group_ids: groupIds }),
+      }),
+  // 이미지 필터링 (모델컷/연출컷/배너 자동 제거)
+  filterProductImages: (productIds: string[], filterId?: string, scope?: string) =>
+    request<{ success: boolean; results: Record<string, { action: string; removed?: number; kept?: number; count?: number }>; total: number; errors: Record<string, string> }>(
+      `${SAMBA_PREFIX}/proxy/image-filter/filter`, {
+        method: 'POST',
+        body: JSON.stringify({ product_ids: productIds, filter_id: filterId || '', scope: scope || 'images' }),
+      }),
   // 소싱처 검색/상세
   sourcingSearch: (site: string, keyword: string, page = 1) =>
     request<{ products: SambaCollectedProduct[]; total: number }>(
@@ -654,6 +718,8 @@ export interface SambaDetailTemplate {
   bottom_html?: string;
   top_image_s3_key?: string;
   bottom_image_s3_key?: string;
+  img_checks?: Record<string, boolean>;
+  img_order?: string[];
   created_at: string;
   updated_at: string;
 }
