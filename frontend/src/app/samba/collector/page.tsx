@@ -8,12 +8,15 @@ import {
   proxyApi,
   shipmentApi,
   accountApi,
+  aiSourcingApi,
   API_BASE,
   type SambaSearchFilter,
   type SambaPolicy,
   type RefreshResult,
   type GroupPreviewResponse,
   type SambaMarketAccount,
+  type AISourcingResult,
+  type AISourcingCombination,
 } from "@/lib/samba/api";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 
@@ -97,6 +100,7 @@ export default function CollectorPage() {
   const [aiImgMode, setAiImgMode] = useState('background')
   const [aiModelPreset, setAiModelPreset] = useState('female_v1')
   const [aiImgTransforming, setAiImgTransforming] = useState(false)
+  const [presetZoomImg, setPresetZoomImg] = useState<string | null>(null)
 
   // 이미지 필터링 (모델컷/연출컷/배너 제거)
   const [imgFiltering, setImgFiltering] = useState(false)
@@ -126,6 +130,22 @@ export default function CollectorPage() {
   const [sortBy, setSortBy] = useState("lastCollectedAt_desc");
   const [selectAll, setSelectAll] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // AI 소싱기 상태
+  const [showAiSourcingModal, setShowAiSourcingModal] = useState(false)
+  const [aiSourcingStep, setAiSourcingStep] = useState<'config' | 'analyzing' | 'confirm'>('config')
+  const [aiUseMusinsa, setAiUseMusinsa] = useState(true)
+  const [aiUseNaver, setAiUseNaver] = useState(true)
+  const [aiUseExcel, setAiUseExcel] = useState(false)
+  const [aiExcelFile, setAiExcelFile] = useState<File | null>(null)
+  const [aiTargetCount, setAiTargetCount] = useState(10000)
+  const [aiMusinsaCats, setAiMusinsaCats] = useState<string[]>([])
+  const [aiNaverCats, setAiNaverCats] = useState<string[]>([])
+  const [aiAnalyzing, setAiAnalyzing] = useState(false)
+  const [aiLogs, setAiLogs] = useState<string[]>([])
+  const [aiResult, setAiResult] = useState<AISourcingResult | null>(null)
+  const [aiSelectedCombos, setAiSelectedCombos] = useState<Set<number>>(new Set())
+  const [aiCreating, setAiCreating] = useState(false)
 
   const logRef = useRef<HTMLDivElement>(null);
   const collectAbortRef = useRef<AbortController | null>(null);
@@ -593,9 +613,28 @@ export default function CollectorPage() {
             {collecting ? "생성중..." : "그룹 생성"}
           </button>
         </div>
-        <p style={{ fontSize: "0.8rem", color: "#888", marginTop: "4px" }}>
-          ** URL 입력 후 그룹 생성 → 하단 검색그룹에서 상품수집 실행
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '4px' }}>
+          <p style={{ fontSize: "0.8rem", color: "#888", margin: 0 }}>
+            ** URL 입력 후 그룹 생성 → 하단 검색그룹에서 상품수집 실행
+          </p>
+          <button
+            onClick={() => {
+              setShowAiSourcingModal(true)
+              setAiSourcingStep('config')
+              setAiResult(null)
+              setAiLogs([])
+              setAiSelectedCombos(new Set())
+            }}
+            style={{
+              marginLeft: 'auto', padding: '6px 16px', borderRadius: '8px',
+              background: 'linear-gradient(135deg, #6C5CE7, #A29BFE)',
+              color: '#fff', fontWeight: 600, fontSize: '0.82rem',
+              border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            AI 소싱기
+          </button>
+        </div>
       </div>
 
       {/* 수집 로그 */}
@@ -650,25 +689,12 @@ export default function CollectorPage() {
       {/* AI 이미지 변환 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', marginTop: '1.25rem', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-          <input type="checkbox" checked={aiImgScope.thumbnail} onChange={() => setAiImgScope(p => ({ ...p, thumbnail: !p.thumbnail }))} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
-          <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>대표이미지</span>
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-          <input type="checkbox" checked={aiImgScope.additional} onChange={() => setAiImgScope(p => ({ ...p, additional: !p.additional }))} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
-          <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>추가이미지</span>
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-          <input type="checkbox" checked={aiImgScope.detail} onChange={() => setAiImgScope(p => ({ ...p, detail: !p.detail }))} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
-          <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>상세이미지</span>
-        </label>
-        <span style={{ color: '#2D2D2D' }}>|</span>
         <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
           <option value="background">배경 제거</option>
           <option value="scene">연출컷</option>
           <option value="model">모델 착용</option>
         </select>
-        {aiImgMode === 'model' && (
+        {aiImgMode === 'model' && (<>
           <select value={aiModelPreset} onChange={e => setAiModelPreset(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
             <optgroup label="성인 여성">
               <option value="female_v1">청순 아이돌</option>
@@ -691,7 +717,14 @@ export default function CollectorPage() {
               <option value="kids_boy_v3">차분한</option>
             </optgroup>
           </select>
-        )}
+          <span
+            onClick={() => setPresetZoomImg(`/static/model_presets/${aiModelPreset}.png`)}
+            style={{
+              fontSize: '0.72rem', color: '#4C9AFF', cursor: 'pointer',
+              textDecoration: 'underline', textUnderlineOffset: '2px',
+            }}
+          >미리보기</span>
+        </>)}
         <span style={{ color: '#2D2D2D' }}>|</span>
         <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>
           <span style={{ color: '#888' }}>선택된 그룹: {selectedIds.size}개</span>
@@ -1055,6 +1088,40 @@ export default function CollectorPage() {
         })()}
       </div>
 
+      {/* 프리셋 이미지 확대 모달 */}
+      {presetZoomImg && (
+        <div
+          onClick={() => setPresetZoomImg(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 10000,
+            background: 'rgba(0,0,0,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer',
+          }}
+        >
+          <img
+            src={presetZoomImg}
+            alt="모델 프리셋"
+            onClick={e => e.stopPropagation()}
+            onError={e => { (e.target as HTMLImageElement).alt = '이미지 없음' }}
+            style={{
+              maxWidth: '90vw', maxHeight: '90vh',
+              objectFit: 'contain', borderRadius: '8px',
+              cursor: 'default',
+            }}
+          />
+          <button
+            onClick={() => setPresetZoomImg(null)}
+            style={{
+              position: 'absolute', top: '20px', right: '20px',
+              background: 'rgba(0,0,0,0.5)', border: '1px solid #555',
+              color: '#ccc', fontSize: '1.2rem', padding: '4px 10px',
+              borderRadius: '6px', cursor: 'pointer',
+            }}
+          >✕</button>
+        </div>
+      )}
+
       {/* 갱신 결과 모달 */}
       {showRefreshModal && refreshResult && (
         <div
@@ -1221,6 +1288,400 @@ export default function CollectorPage() {
                 {groupSending ? '전송중...' : `전송 (그룹 ${groupPreview.group_count}건 + 단일 ${groupPreview.single_count}건)`}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ AI 소싱기 모달 ═══ */}
+      {showAiSourcingModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => !aiAnalyzing && setShowAiSourcingModal(false)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px',
+            width: aiSourcingStep === 'confirm' ? '900px' : '560px',
+            maxHeight: '85vh', overflow: 'auto',
+          }}>
+            {/* 헤더 */}
+            <div style={{
+              padding: '16px 20px', borderBottom: '1px solid #2D2D2D',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '1.1rem' }}>🤖</span>
+                <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>AI 소싱기</span>
+                <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: '4px' }}>
+                  {aiSourcingStep === 'config' ? '1/3 데이터소스 설정' :
+                   aiSourcingStep === 'analyzing' ? '2/3 분석 중' : '3/3 결과 확인'}
+                </span>
+              </div>
+              {!aiAnalyzing && (
+                <button onClick={() => setShowAiSourcingModal(false)} style={{
+                  background: 'none', border: 'none', color: '#888', fontSize: '1.2rem', cursor: 'pointer',
+                }}>✕</button>
+              )}
+            </div>
+
+            {/* STEP 1: 데이터소스 설정 */}
+            {aiSourcingStep === 'config' && (
+              <div style={{ padding: '20px' }}>
+                {/* 목표 상품수 */}
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ fontSize: '0.82rem', color: '#C5C5C5', fontWeight: 600 }}>목표 상품수</label>
+                  <input
+                    type="number"
+                    value={aiTargetCount}
+                    onChange={e => setAiTargetCount(Number(e.target.value))}
+                    style={{
+                      display: 'block', width: '100%', marginTop: '6px',
+                      padding: '8px 12px', background: '#111', border: '1px solid #2D2D2D',
+                      borderRadius: '6px', color: '#E5E5E5', fontSize: '0.85rem',
+                    }}
+                  />
+                </div>
+
+                {/* 데이터소스 선택 */}
+                <div style={{ fontSize: '0.82rem', color: '#C5C5C5', fontWeight: 600, marginBottom: '10px' }}>근거 데이터 소스</div>
+
+                {/* 무신사 */}
+                <div style={{
+                  background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px',
+                  padding: '14px', marginBottom: '10px',
+                }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={aiUseMusinsa} onChange={e => setAiUseMusinsa(e.target.checked)}
+                      style={{ accentColor: '#4C9AFF' }} />
+                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>무신사 인기상품 랭킹</span>
+                    <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: 'auto' }}>자동 수집</span>
+                  </label>
+                  {aiUseMusinsa && (
+                    <div style={{ marginTop: '10px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {['상의','아우터','바지','신발','가방','원피스/스커트','패션소품','스포츠/레저'].map(cat => (
+                        <button key={cat}
+                          onClick={() => setAiMusinsaCats(prev =>
+                            prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
+                          )}
+                          style={{
+                            padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem',
+                            border: aiMusinsaCats.includes(cat) ? '1px solid #4C9AFF' : '1px solid #3D3D3D',
+                            background: aiMusinsaCats.includes(cat) ? 'rgba(76,154,255,0.15)' : 'transparent',
+                            color: aiMusinsaCats.includes(cat) ? '#4C9AFF' : '#888',
+                            cursor: 'pointer',
+                          }}
+                        >{cat}</button>
+                      ))}
+                      <span style={{ fontSize: '0.7rem', color: '#555', alignSelf: 'center' }}>
+                        {aiMusinsaCats.length === 0 ? '전체 카테고리' : `${aiMusinsaCats.length}개 선택`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 네이버 데이터랩 */}
+                <div style={{
+                  background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px',
+                  padding: '14px', marginBottom: '10px',
+                }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={aiUseNaver} onChange={e => setAiUseNaver(e.target.checked)}
+                      style={{ accentColor: '#51CF66' }} />
+                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>네이버 데이터랩 쇼핑인사이트</span>
+                    <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: 'auto' }}>자동 수집</span>
+                  </label>
+                  {aiUseNaver && (
+                    <div style={{ marginTop: '10px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {['패션의류','패션잡화','스포츠/레저'].map(cat => (
+                        <button key={cat}
+                          onClick={() => setAiNaverCats(prev =>
+                            prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
+                          )}
+                          style={{
+                            padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem',
+                            border: aiNaverCats.includes(cat) ? '1px solid #51CF66' : '1px solid #3D3D3D',
+                            background: aiNaverCats.includes(cat) ? 'rgba(81,207,102,0.15)' : 'transparent',
+                            color: aiNaverCats.includes(cat) ? '#51CF66' : '#888',
+                            cursor: 'pointer',
+                          }}
+                        >{cat}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 엑셀 */}
+                <div style={{
+                  background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px',
+                  padding: '14px', marginBottom: '16px',
+                }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={aiUseExcel} onChange={e => setAiUseExcel(e.target.checked)}
+                      style={{ accentColor: '#FFB84D' }} />
+                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>판매 엑셀 데이터</span>
+                    <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: 'auto' }}>파일 업로드</span>
+                  </label>
+                  {aiUseExcel && (
+                    <div style={{ marginTop: '10px' }}>
+                      <input type="file" accept=".xlsx,.xlsm,.xls,.csv"
+                        onChange={e => setAiExcelFile(e.target.files?.[0] || null)}
+                        style={{ fontSize: '0.8rem', color: '#888' }}
+                      />
+                      {aiExcelFile && (
+                        <span style={{ fontSize: '0.75rem', color: '#FFB84D', display: 'block', marginTop: '4px' }}>
+                          {aiExcelFile.name}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 시작 버튼 */}
+                <button
+                  onClick={async () => {
+                    setAiSourcingStep('analyzing')
+                    setAiAnalyzing(true)
+                    setAiLogs(['[시작] AI 소싱 분석을 시작합니다...'])
+                    try {
+                      const resp = await aiSourcingApi.analyzeFull({
+                        use_musinsa: aiUseMusinsa,
+                        use_naver: aiUseNaver,
+                        use_excel: aiUseExcel,
+                        musinsa_categories: aiMusinsaCats.join(','),
+                        naver_categories: aiNaverCats.join(','),
+                        target_count: aiTargetCount,
+                        file: aiExcelFile || undefined,
+                      })
+                      const reader = resp.body?.getReader()
+                      if (!reader) throw new Error('스트리밍 응답 없음')
+                      const decoder = new TextDecoder()
+                      let buffer = ''
+                      while (true) {
+                        const { done, value } = await reader.read()
+                        if (done) break
+                        buffer += decoder.decode(value, { stream: true })
+                        const lines = buffer.split('\n')
+                        buffer = lines.pop() || ''
+                        for (const line of lines) {
+                          if (line.startsWith('event: ')) {
+                            const evtType = line.slice(7).trim()
+                            continue
+                          }
+                          if (line.startsWith('data: ')) {
+                            try {
+                              const payload = JSON.parse(line.slice(6))
+                              if (typeof payload === 'string') {
+                                setAiLogs(prev => [...prev, payload])
+                              } else if (payload.message) {
+                                setAiLogs(prev => [...prev, payload.message])
+                              } else if (payload.brands && payload.combinations) {
+                                setAiResult(payload as AISourcingResult)
+                                // 전체 선택
+                                const all = new Set<number>()
+                                ;(payload as AISourcingResult).combinations.forEach((_: AISourcingCombination, i: number) => all.add(i))
+                                setAiSelectedCombos(all)
+                              } else if (payload.step) {
+                                setAiLogs(prev => [...prev, `[${payload.step}] ${payload.count}개 처리`])
+                              }
+                            } catch { /* JSON 파싱 실패 무시 */ }
+                          }
+                        }
+                      }
+                      setAiSourcingStep('confirm')
+                    } catch (err) {
+                      setAiLogs(prev => [...prev, `[오류] ${err instanceof Error ? err.message : '분석 실패'}`])
+                    }
+                    setAiAnalyzing(false)
+                  }}
+                  disabled={!aiUseMusinsa && !aiUseNaver && !aiUseExcel}
+                  style={{
+                    width: '100%', padding: '10px', borderRadius: '8px',
+                    background: 'linear-gradient(135deg, #6C5CE7, #A29BFE)',
+                    color: '#fff', fontWeight: 700, fontSize: '0.9rem',
+                    border: 'none', cursor: 'pointer',
+                    opacity: (!aiUseMusinsa && !aiUseNaver && !aiUseExcel) ? 0.5 : 1,
+                  }}
+                >
+                  AI 분석 시작
+                </button>
+              </div>
+            )}
+
+            {/* STEP 2: 분석 중 */}
+            {aiSourcingStep === 'analyzing' && (
+              <div style={{ padding: '20px' }}>
+                <div style={{
+                  background: '#080A10', borderRadius: '8px', padding: '14px',
+                  height: '300px', overflowY: 'auto', fontFamily: 'monospace',
+                  fontSize: '0.78rem', lineHeight: 1.6, color: '#8A95B0',
+                }}>
+                  {aiLogs.map((line, i) => (
+                    <p key={i} style={{
+                      margin: 0,
+                      color: line.includes('완료') || line.includes('성공') ? '#51CF66'
+                        : line.includes('오류') || line.includes('실패') ? '#FF6B6B'
+                        : line.includes('시작') ? '#4C9AFF' : '#8A95B0',
+                    }}>{line}</p>
+                  ))}
+                </div>
+                {!aiAnalyzing && (
+                  <div style={{ marginTop: '12px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                    {aiResult && (
+                      <button onClick={() => setAiSourcingStep('confirm')} style={{
+                        padding: '8px 20px', borderRadius: '6px',
+                        background: 'rgba(81,207,102,0.2)', border: '1px solid rgba(81,207,102,0.5)',
+                        color: '#51CF66', cursor: 'pointer', fontWeight: 600,
+                      }}>결과 확인 →</button>
+                    )}
+                    <button onClick={() => setShowAiSourcingModal(false)} style={{
+                      padding: '8px 20px', borderRadius: '6px',
+                      background: 'transparent', border: '1px solid #3D3D3D',
+                      color: '#888', cursor: 'pointer',
+                    }}>닫기</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* STEP 3: 결과 확인 + 컨펌 */}
+            {aiSourcingStep === 'confirm' && aiResult && (
+              <div style={{ padding: '20px' }}>
+                {/* 요약 */}
+                <div style={{
+                  display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px',
+                }}>
+                  {[
+                    { label: '발견 브랜드', value: aiResult.summary.total_brands_found, color: '#4C9AFF' },
+                    { label: 'IP안전', value: aiResult.summary.safe_brands, color: '#51CF66' },
+                    { label: '생성 그룹', value: aiResult.summary.total_combinations, color: '#FFB84D' },
+                    { label: '예상 상품', value: aiResult.summary.total_estimated_products.toLocaleString(), color: '#A29BFE' },
+                  ].map(s => (
+                    <div key={s.label} style={{
+                      background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px',
+                      padding: '10px', textAlign: 'center',
+                    }}>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 700, color: s.color }}>{s.value}</div>
+                      <div style={{ fontSize: '0.72rem', color: '#888' }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 조합 테이블 */}
+                <div style={{ maxHeight: '350px', overflowY: 'auto', marginBottom: '12px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #2D2D2D', position: 'sticky', top: 0, background: '#1A1A1A' }}>
+                        <th style={{ padding: '8px 6px', textAlign: 'left', width: '36px' }}>
+                          <input type="checkbox"
+                            checked={aiSelectedCombos.size === aiResult.combinations.length}
+                            onChange={e => {
+                              if (e.target.checked) {
+                                const all = new Set<number>()
+                                aiResult.combinations.forEach((_, i) => all.add(i))
+                                setAiSelectedCombos(all)
+                              } else {
+                                setAiSelectedCombos(new Set())
+                              }
+                            }}
+                            style={{ accentColor: '#FF8C00' }}
+                          />
+                        </th>
+                        <th style={{ padding: '8px 6px', textAlign: 'left', color: '#888' }}>소싱처</th>
+                        <th style={{ padding: '8px 6px', textAlign: 'left', color: '#888' }}>브랜드</th>
+                        <th style={{ padding: '8px 6px', textAlign: 'left', color: '#888' }}>카테고리</th>
+                        <th style={{ padding: '8px 6px', textAlign: 'right', color: '#888' }}>예상상품수</th>
+                        <th style={{ padding: '8px 6px', textAlign: 'center', color: '#888' }}>IP안전</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {aiResult.combinations.map((combo, idx) => (
+                        <tr key={idx} style={{
+                          borderBottom: '1px solid #1D1D1D',
+                          background: aiSelectedCombos.has(idx) ? 'rgba(108,92,231,0.06)' : 'transparent',
+                        }}>
+                          <td style={{ padding: '6px' }}>
+                            <input type="checkbox"
+                              checked={aiSelectedCombos.has(idx)}
+                              onChange={e => {
+                                const next = new Set(aiSelectedCombos)
+                                e.target.checked ? next.add(idx) : next.delete(idx)
+                                setAiSelectedCombos(next)
+                              }}
+                              style={{ accentColor: '#FF8C00' }}
+                            />
+                          </td>
+                          <td style={{ padding: '6px', color: SITE_COLORS[combo.source_site] || '#888' }}>
+                            {combo.source_site}
+                          </td>
+                          <td style={{ padding: '6px', color: '#E5E5E5', fontWeight: 500 }}>{combo.brand}</td>
+                          <td style={{ padding: '6px', color: '#C5C5C5' }}>{combo.category}</td>
+                          <td style={{ padding: '6px', textAlign: 'right', color: '#FFB84D', fontWeight: 600 }}>
+                            {combo.estimated_count.toLocaleString()}
+                          </td>
+                          <td style={{ padding: '6px', textAlign: 'center' }}>
+                            {combo.is_safe
+                              ? <span style={{ color: '#51CF66', fontSize: '0.85rem' }}>안전</span>
+                              : <span style={{ color: '#FF6B6B', fontSize: '0.85rem' }}>위험</span>
+                            }
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 선택 요약 + 버튼 */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '0.82rem', color: '#888' }}>
+                    {aiSelectedCombos.size}개 선택 / 예상{' '}
+                    {aiResult.combinations
+                      .filter((_, i) => aiSelectedCombos.has(i))
+                      .reduce((s, c) => s + c.estimated_count, 0)
+                      .toLocaleString()}개 상품
+                  </span>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={() => {
+                      setAiSourcingStep('config')
+                      setAiResult(null)
+                    }} style={{
+                      padding: '8px 16px', borderRadius: '6px',
+                      background: 'transparent', border: '1px solid #3D3D3D',
+                      color: '#888', cursor: 'pointer',
+                    }}>다시 설정</button>
+                    <button
+                      onClick={async () => {
+                        const selected = aiResult.combinations.filter((_, i) => aiSelectedCombos.has(i))
+                        if (selected.length === 0) return showAlert('조합을 선택해주세요', 'error')
+                        const totalEst = selected.reduce((s, c) => s + c.estimated_count, 0)
+                        const ok = await showConfirm(
+                          `${selected.length}개 검색그룹을 생성하시겠습니까?\n(예상 상품수: ${totalEst.toLocaleString()}개)`
+                        )
+                        if (!ok) return
+                        setAiCreating(true)
+                        try {
+                          const res = await aiSourcingApi.createGroups(selected)
+                          showAlert(`${res.created}개 검색그룹 생성 완료`, 'success')
+                          setShowAiSourcingModal(false)
+                          load(); loadTree()
+                        } catch (err) {
+                          showAlert(`그룹 생성 실패: ${err instanceof Error ? err.message : '오류'}`, 'error')
+                        }
+                        setAiCreating(false)
+                      }}
+                      disabled={aiCreating || aiSelectedCombos.size === 0}
+                      style={{
+                        padding: '8px 20px', borderRadius: '6px',
+                        background: aiCreating ? 'rgba(108,92,231,0.1)' : 'linear-gradient(135deg, #6C5CE7, #A29BFE)',
+                        color: '#fff', fontWeight: 700, fontSize: '0.85rem',
+                        border: 'none', cursor: aiCreating ? 'not-allowed' : 'pointer',
+                        opacity: aiSelectedCombos.size === 0 ? 0.5 : 1,
+                      }}
+                    >
+                      {aiCreating ? '생성중...' : `${aiSelectedCombos.size}개 그룹 생성`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
