@@ -15,11 +15,23 @@ from backend.utils.logger import logger
 # 그룹상품 동시성 제어 락 (account_id별)
 _group_locks: dict[str, asyncio.Lock] = {}
 
+# 상품별 전송 락 — 동일 상품 중복 전송 방지
+_transmitting_products: set[str] = set()
+
+# 계정별 세마포어 — API Rate Limit 방지 (계정당 동시 1건)
+_account_semaphores: dict[str, asyncio.Semaphore] = {}
+
 
 def _get_group_lock(account_id: str) -> asyncio.Lock:
   if account_id not in _group_locks:
     _group_locks[account_id] = asyncio.Lock()
   return _group_locks[account_id]
+
+
+def _get_account_semaphore(account_id: str) -> asyncio.Semaphore:
+  if account_id not in _account_semaphores:
+    _account_semaphores[account_id] = asyncio.Semaphore(1)
+  return _account_semaphores[account_id]
 
 
 STATUS_LABELS: dict[str, str] = {
@@ -318,6 +330,38 @@ class SambaShipmentService:
     from backend.domain.samba.collector.repository import SambaCollectedProductRepository
     from backend.domain.samba.shipment.dispatcher import dispatch_to_market
 
+    # 상품 전송 락 — 동일 상품 중복 전송 방지
+    if product_id in _transmitting_products:
+      shipment = await self.repo.create_async(
+        product_id=product_id, target_account_ids=target_account_ids,
+        update_items=update_items, status="failed",
+        update_result={}, transmit_result={},
+        transmit_error={"_all": "이미 전송 중인 상품입니다."},
+      )
+      return shipment
+    _transmitting_products.add(product_id)
+
+    try:
+      return await self._transmit_product_inner(
+        product_id, target_account_ids, update_items, skip_unchanged,
+      )
+    finally:
+      _transmitting_products.discard(product_id)
+
+  async def _transmit_product_inner(
+    self,
+    product_id: str,
+    target_account_ids: list[str],
+    update_items: list[str],
+    skip_unchanged: bool = False,
+  ) -> SambaShipment:
+    """상품 전송 실제 구현 (락 획득 후 호출)."""
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+    from backend.domain.samba.shipment.dispatcher import dispatch_to_market
+
     # 1. shipment 레코드 생성
     shipment = await self.repo.create_async(
       product_id=product_id,
@@ -606,12 +650,14 @@ class SambaShipmentService:
           update_mode_accounts.add(account_id)
           logger.info(f"[전송] 기존 상품번호 발견 → 수정 모드: {market_type} #{existing_product_no}")
 
-        # 실제 마켓 API 호출 (계정 정보 직접 전달)
-        result = await dispatch_to_market(
-          self.session, market_type, product_dict, category_id,
-          account=account,
-          existing_product_no=existing_product_no,
-        )
+        # 실제 마켓 API 호출 (계정별 세마포어로 Rate Limit 방지)
+        account_sem = _get_account_semaphore(account_id)
+        async with account_sem:
+          result = await dispatch_to_market(
+            self.session, market_type, product_dict, category_id,
+            account=account,
+            existing_product_no=existing_product_no,
+          )
 
         # 404 → 상품번호 초기화 처리
         if result.get("_clear_product_no"):
