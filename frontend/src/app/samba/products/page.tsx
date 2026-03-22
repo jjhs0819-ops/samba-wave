@@ -102,7 +102,8 @@ export default function ProductsPage() {
   const [sortBy, setSortBy] = useState("collect-desc");
   const [pageSize, setPageSize] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
-  const [viewMode, setViewMode] = useState<"card" | "image">("card");
+  const [viewMode, setViewMode] = useState<"card" | "compact" | "image">("card");
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [orderProductIds, setOrderProductIds] = useState<Set<string>>(new Set());
 
   // Selection
@@ -781,10 +782,6 @@ export default function ProductsPage() {
             <option value="">판매현황</option>
             <option value="registered">마켓등록</option>
             <option value="collected">미등록</option>
-            <option value="has_orders">판매이력</option>
-            <option value="free_ship">무료배송</option>
-            <option value="same_day">당일발송</option>
-            <option value="free_same">무배당발</option>
           </select>
           <select value={searchType} onChange={(e) => setSearchType(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px", color: "#C5C5C5", width: "90px" }}>
@@ -932,7 +929,7 @@ export default function ProductsPage() {
               try {
                 const r = await proxyApi.filterProductImages([ids[i]], '', imgFilterScope)
                 if (r.success) { success++; addLog(`[${i + 1}/${ids.length}] ${label} — 완료`) }
-                else { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 실패: ${r.message}`) }
+                else { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 실패`) }
               } catch (e) { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
             }
             addLog(`\n완료: 성공 ${success}개 / 실패 ${fail}개`)
@@ -1094,6 +1091,15 @@ export default function ProductsPage() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <button
+            onClick={() => { setViewMode("compact"); setExpandedIds(new Set()) }}
+            style={{
+              fontSize: "0.75rem", padding: "0.25rem 0.75rem", borderRadius: "6px", cursor: "pointer",
+              border: viewMode === "compact" ? "1px solid #FF8C00" : "1px solid #3D3D3D",
+              color: viewMode === "compact" ? "#FF8C00" : "#C5C5C5",
+              background: viewMode === "compact" ? "rgba(255,140,0,0.15)" : "transparent",
+            }}
+          >간단보기</button>
+          <button
             onClick={() => setViewMode("card")}
             style={{
               fontSize: "0.75rem", padding: "0.25rem 0.75rem", borderRadius: "6px", cursor: "pointer",
@@ -1184,10 +1190,10 @@ export default function ProductsPage() {
                 }}
               />
               <ProductImage src={p.images?.[0]} name={p.name} size={140} />
-              {((p as Record<string, unknown>).free_shipping || (p as Record<string, unknown>).same_day_delivery) && (
+              {(p.free_shipping || p.same_day_delivery) && (
                 <div style={{ display: 'flex', gap: '3px', padding: '3px 8px 0' }}>
-                  {(p as Record<string, unknown>).free_shipping && <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', background: 'rgba(76,154,255,0.15)', color: '#4C9AFF', fontWeight: 600 }}>무배</span>}
-                  {(p as Record<string, unknown>).same_day_delivery && <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600 }}>당발</span>}
+                  {p.free_shipping && <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', background: 'rgba(76,154,255,0.15)', color: '#4C9AFF', fontWeight: 600 }}>무배</span>}
+                  {p.same_day_delivery && <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600 }}>당발</span>}
                 </div>
               )}
               <div style={{ padding: "6px 8px" }}>
@@ -2128,12 +2134,12 @@ function ProductCard({
             </div>
           )}
           {/* 무배당발 배지 */}
-          {((p as Record<string, unknown>).free_shipping || (p as Record<string, unknown>).same_day_delivery) && (
+          {(p.free_shipping || p.same_day_delivery) && (
             <div style={{ display: 'flex', gap: '3px', width: '100%' }}>
-              {(p as Record<string, unknown>).free_shipping && (
+              {p.free_shipping && (
                 <span style={{ fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', background: 'transparent', color: '#4C9AFF', border: '1px solid rgba(76,154,255,0.3)', flex: 1, textAlign: 'center' }}>무배</span>
               )}
-              {(p as Record<string, unknown>).same_day_delivery && (
+              {p.same_day_delivery && (
                 <span style={{ fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', background: 'transparent', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.3)', flex: 1, textAlign: 'center' }}>당발</span>
               )}
             </div>
