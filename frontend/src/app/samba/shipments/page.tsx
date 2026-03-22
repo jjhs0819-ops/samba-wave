@@ -407,7 +407,9 @@ export default function ShipmentsPage() {
             return
           }
           if (r.status === 'skipped') {
-            addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel}: 스킵 (변동 없음)`)
+            const refreshInfo = (r as Record<string, unknown>).update_result as Record<string, string> | undefined
+            const refreshLabel = refreshInfo?.refresh ? ` [최신화:${refreshInfo.refresh}]` : ''
+            addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel}: 스킵${refreshLabel}`)
             skipCount++
             return
           }

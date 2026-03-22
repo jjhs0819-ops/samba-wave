@@ -104,6 +104,7 @@ class SambaShipmentService:
           "status": shipment.status,
           "transmit_result": shipment.transmit_result or {},
           "transmit_error": shipment.transmit_error or {},
+          "update_result": shipment.update_result or {},
         })
         processed += 1
       except Exception as exc:
@@ -386,11 +387,13 @@ class SambaShipmentService:
 
     # 업데이트 항목이 체크되어 있으면 소싱처 최신화 먼저 실행
     has_update = bool(update_items) and len(update_items) > 0
+    refresh_status = ""  # 프론트 로그용
     if has_update and product_row.source_site and product_row.site_product_id:
       try:
         from backend.domain.samba.collector.refresher import refresh_product
         refresh_result = await refresh_product(product_row)
         if refresh_result.error:
+          refresh_status = f"최신화실패:{refresh_result.error[:30]}"
           logger.warning(f"[전송] 소싱처 최신화 실패: {refresh_result.error}")
         else:
           # DB 반영
@@ -411,12 +414,16 @@ class SambaShipmentService:
           if refresh_result.new_images:
             refresh_updates["images"] = refresh_result.new_images
           await product_repo.update_async(product_id, **refresh_updates)
-          # product_dict도 갱신
           for k, v in refresh_updates.items():
             product_dict[k] = v
-          logger.info(f"[전송] 소싱처 최신화 완료 — 변동: {refresh_result.changed}")
+          refresh_status = "변동있음" if refresh_result.changed else "변동없음"
+          logger.info(f"[전송] 소싱처 최신화 완료 — {refresh_status}")
       except Exception as ref_e:
+        refresh_status = f"최신화예외:{str(ref_e)[:30]}"
         logger.warning(f"[전송] 소싱처 최신화 예외: {ref_e}")
+    # shipment에 최신화 상태 기록
+    if refresh_status:
+      await self.repo.update_async(shipment.id, update_result={"refresh": refresh_status})
 
     # 이미지/상세페이지 업데이트 필요 여부 판단
     needs_image = not update_items or "image" in update_items or "description" in update_items
