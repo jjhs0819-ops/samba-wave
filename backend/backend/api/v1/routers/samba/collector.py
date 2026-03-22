@@ -1,7 +1,6 @@
 """SambaWave Collector API router - 수집 필터 + 수집 상품."""
 
 import logging
-import os
 import re
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -15,6 +14,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.proxy.musinsa import RateLimitError
+from backend.domain.samba.collector.grouping import generate_group_key, parse_color_from_name
 from backend.domain.samba.collector.refresher import _site_intervals, _site_consecutive_errors
 
 router = APIRouter(prefix="/collector", tags=["samba-collector"])
@@ -66,6 +66,16 @@ class CollectedProductCreate(BaseModel):
 
 class CollectedProductUpdate(BaseModel):
     name: Optional[str] = None
+    brand: Optional[str] = None
+    manufacturer: Optional[str] = None
+    style_code: Optional[str] = None
+    origin: Optional[str] = None
+    sex: Optional[str] = None
+    season: Optional[str] = None
+    color: Optional[str] = None
+    material: Optional[str] = None
+    care_instructions: Optional[str] = None
+    quality_guarantee: Optional[str] = None
     sale_price: Optional[float] = None
     cost: Optional[float] = None
     status: Optional[str] = None
@@ -77,7 +87,9 @@ class CollectedProductUpdate(BaseModel):
     lock_delete: Optional[bool] = None
     lock_stock: Optional[bool] = None
     images: Optional[list] = None
+    detail_images: Optional[list] = None
     tags: Optional[list] = None
+    options: Optional[list] = None
 
 
 class BulkCreateRequest(BaseModel):
@@ -183,6 +195,14 @@ async def list_filters(session: AsyncSession = Depends(get_read_session_dependen
             filters={"search_filter_id": f.id}
         )
         data["collected_count"] = count
+        # AI 태그 적용된 상품 수
+        products_in_group = await svc.product_repo.filter_by_async(search_filter_id=f.id, limit=10000)
+        ai_count = sum(1 for p in products_in_group if p.tags and "__ai_tagged__" in p.tags)
+        data["ai_tagged_count"] = ai_count
+        ai_img_count = sum(1 for p in products_in_group if p.images and any(
+            "/transformed/" in u or "/static/images/ai_" in u for u in (p.images or [])
+        ))
+        data["ai_image_count"] = ai_img_count
         result.append(data)
     return result
 
@@ -252,6 +272,18 @@ async def list_collected_products(
 ):
     svc = _get_services(session)
     return await svc.list_collected_products(skip=skip, limit=limit, status=status, source_site=source_site)
+
+
+@router.get("/products/with-orders")
+async def get_product_ids_with_orders(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """주문 이력이 있는 상품 ID 목록 조회."""
+    from sqlmodel import text
+    result = await session.execute(text(
+        "SELECT DISTINCT product_id FROM samba_order WHERE product_id IS NOT NULL"
+    ))
+    return [row[0] for row in result.all()]
 
 
 @router.get("/products/search")
@@ -379,6 +411,15 @@ async def collect_by_url(
         import re
         from urllib.parse import urlparse, parse_qs
 
+        # 무신사 로그인(쿠키) 필수 체크
+        cookie_check = await _get_musinsa_cookie()
+        if not cookie_check:
+            raise HTTPException(
+                400,
+                "무신사 수집은 로그인(쿠키)이 필요합니다. "
+                "확장앱에서 무신사 로그인 후 다시 시도하세요.",
+            )
+
         parsed = urlparse(url)
         is_search_url = "/search" in parsed.path or "keyword" in parsed.query
 
@@ -452,126 +493,112 @@ async def collect_by_url(
             existing_result = await session.execute(existing_stmt)
             existing_ids = {row[0] for row in existing_result.all()}
 
-            # 일괄 저장 데이터 준비 (remaining 개수만큼만)
-            from datetime import datetime, timezone
+            # 중복/품절 필터링 → 수집 대상 상품번호 추출
             skipped_sold_out = 0
-            bulk_items = []
+            targets = []
             for item in all_items:
-                # 요청 상품수 도달 시 종료
-                if len(bulk_items) >= remaining:
+                if len(targets) >= remaining:
                     break
-
                 site_pid = str(item.get("siteProductId", item.get("goodsNo", "")))
                 if site_pid in existing_ids:
                     continue
-
-                # 품절 상품 수집 제외
                 if item.get("isSoldOut", False):
                     skipped_sold_out += 1
                     continue
+                targets.append(site_pid)
 
-                raw_cat = item.get("category", "") or ""
-                cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
-                _sale_price = item.get("salePrice", item.get("price", 0))
-                _original_price = item.get("originalPrice", item.get("normalPrice", 0))
+            # 각 상품 상세 수집 → 성공 시에만 저장 (완전한 데이터만)
+            saved = 0
+            skipped_preorder = 0
+            skipped_boutique = 0
+            for goods_no in targets:
+                try:
+                    detail = await client.get_goods_detail(goods_no)
+                    if not detail or not detail.get("name"):
+                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        continue
 
-                bulk_items.append({
-                    "source_site": "MUSINSA",
-                    "site_product_id": site_pid,
-                    "search_filter_id": filter_id,
-                    "name": item.get("name", item.get("goodsName", "")),
-                    "brand": item.get("brand", item.get("brandName", "")),
-                    "original_price": _original_price,
-                    "sale_price": _sale_price,
-                    "images": item.get("images", []),
-                    "options": item.get("options", []),
-                    "category": raw_cat,
-                    "category1": cat_parts[0] if len(cat_parts) > 0 else None,
-                    "category2": cat_parts[1] if len(cat_parts) > 1 else None,
-                    "category3": cat_parts[2] if len(cat_parts) > 2 else None,
-                    "category4": cat_parts[3] if len(cat_parts) > 3 else None,
-                    "status": "collected",
-                    "is_sold_out": item.get("isSoldOut", False),
-                    "sale_status": "sold_out" if item.get("isSoldOut", False) else "in_stock",
-                    "price_history": [{
+                    # 예약배송 수집제외
+                    if exclude_preorder and detail.get("saleStatus") == "preorder":
+                        skipped_preorder += 1
+                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        continue
+                    # 부티끄 수집제외
+                    if exclude_boutique and detail.get("isBoutique"):
+                        skipped_boutique += 1
+                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        continue
+
+                    # 최대혜택가 체크 시 bestBenefitPrice, 미체크 시 salePrice를 원가로 사용
+                    if use_max_discount:
+                        _raw_cost = detail.get("bestBenefitPrice")
+                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                    else:
+                        new_cost = detail.get("salePrice") or 0
+
+                    raw_cat = detail.get("category", "") or ""
+                    cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
+                    _sale_price = detail.get("salePrice", 0)
+                    _original_price = detail.get("originalPrice", 0)
+
+                    raw_detail_html = detail.get("detailHtml", "")
+                    if not raw_detail_html:
+                        detail_imgs = detail.get("detailImages") or []
+                        if detail_imgs:
+                            raw_detail_html = "\n".join(
+                                f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                                for img in detail_imgs
+                            )
+
+                    initial_snapshot = {
                         "date": datetime.now(timezone.utc).isoformat(),
                         "sale_price": _sale_price,
                         "original_price": _original_price,
-                        "cost": None,
-                        "options": [],
-                    }],
-                })
+                        "cost": new_cost,
+                        "options": detail.get("options", []),
+                    }
 
-            # 단일 트랜잭션 일괄 저장
-            created = []
-            if bulk_items:
-                created = await svc.bulk_create_collected_products(bulk_items)
-
-            # 새로 저장된 상품에 대해 상세 보강 (상품당 1초 대기)
-            enriched = 0
-            skipped_preorder = 0
-            skipped_boutique = 0
-            for product in created:
-                try:
-                    detail = await client.get_goods_detail(product.site_product_id)
-                    if detail and detail.get("name"):
-                        # 예약배송 수집제외
-                        if exclude_preorder and detail.get("saleStatus") == "preorder":
-                            await svc.delete_collected_product(product.id)
-                            skipped_preorder += 1
-                            continue
-                        # 부티끄 수집제외
-                        if exclude_boutique and detail.get("isBoutique"):
-                            await svc.delete_collected_product(product.id)
-                            skipped_boutique += 1
-                            continue
-
-                        # 최대혜택가 체크 시 bestBenefitPrice, 미체크 시 salePrice를 원가로 사용
-                        if use_max_discount:
-                            _raw_cost = detail.get("bestBenefitPrice")
-                            new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else None
-                        else:
-                            new_cost = detail.get("salePrice") or product.sale_price
-                        enrich_updates = {
-                            "category": detail.get("category") or product.category,
-                            "category1": detail.get("category1"),
-                            "category2": detail.get("category2"),
-                            "category3": detail.get("category3"),
-                            "category4": detail.get("category4"),
-                            "original_price": detail.get("originalPrice") if detail.get("originalPrice") is not None else product.original_price,
-                            "sale_price": detail.get("salePrice") if detail.get("salePrice") is not None else product.sale_price,
-                            "cost": new_cost,
-                            "brand": detail.get("brand") or product.brand,
-                            "manufacturer": detail.get("manufacturer"),
-                            "origin": detail.get("origin"),
-                            "images": detail.get("images") or product.images,
-                            "detail_images": detail.get("detailImages") or None,
-                            "material": detail.get("material"),
-                            "color": detail.get("color"),
-                            "detail_html": detail.get("detailHtml") or None,
-                            "options": detail.get("options", []),
-                            "is_sold_out": detail.get("saleStatus") == "sold_out",
-                            "sale_status": detail.get("saleStatus", "in_stock"),
-                        }
-                        # 상세 보강 시 가격/옵션 이력 스냅샷 추가
-                        enrich_snapshot = {
-                            "date": datetime.now(timezone.utc).isoformat(),
-                            "sale_price": detail.get("salePrice") or product.sale_price,
-                            "original_price": detail.get("originalPrice") or product.original_price,
-                            "cost": new_cost,
-                            "options": detail.get("options", []),
-                        }
-                        history = list(product.price_history or [])
-                        history.insert(0, enrich_snapshot)
-                        enrich_updates["price_history"] = history[:200]
-                        await svc.update_collected_product(product.id, enrich_updates)
-                        enriched += 1
+                    await svc.create_collected_product({
+                        "source_site": "MUSINSA",
+                        "site_product_id": goods_no,
+                        "search_filter_id": filter_id,
+                        "name": detail.get("name", ""),
+                        "brand": detail.get("brand", ""),
+                        "original_price": _original_price,
+                        "sale_price": _sale_price,
+                        "cost": new_cost,
+                        "images": detail.get("images", []),
+                        "detail_images": detail.get("detailImages") or [],
+                        "options": detail.get("options", []),
+                        "category": raw_cat,
+                        "category1": cat_parts[0] if len(cat_parts) > 0 else None,
+                        "category2": cat_parts[1] if len(cat_parts) > 1 else None,
+                        "category3": cat_parts[2] if len(cat_parts) > 2 else None,
+                        "category4": cat_parts[3] if len(cat_parts) > 3 else None,
+                        "manufacturer": detail.get("manufacturer"),
+                        "origin": detail.get("origin"),
+                        "material": detail.get("material"),
+                        "color": detail.get("color"),
+                        "style_code": detail.get("style_code", ""),
+                        "sex": detail.get("sex", ""),
+                        "season": detail.get("season", ""),
+                        "care_instructions": detail.get("care_instructions", ""),
+                        "quality_guarantee": detail.get("quality_guarantee", ""),
+                        "detail_html": raw_detail_html,
+                        "status": "collected",
+                        "is_sold_out": detail.get("saleStatus") == "sold_out",
+                        "sale_status": detail.get("saleStatus", "in_stock"),
+                        "price_history": [initial_snapshot],
+                    })
+                    saved += 1
+                except RateLimitError:
+                    logger.warning(f"[무신사] 요청 제한 감지 — 수집 중단 (수집완료: {saved}/{len(targets)})")
+                    break
                 except Exception as e:
-                    logger.warning(f"[상세보강 실패] {product.site_product_id}: {e}")
-                await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))  # 적응형 인터벌
+                    logger.warning(f"[수집 실패] {goods_no}: {e}")
+                await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
 
             # 검색그룹에 최근수집일 업데이트
-            from datetime import datetime, timezone
             await svc.update_filter(filter_id, {
                 "last_collected_at": datetime.now(timezone.utc),
             })
@@ -582,9 +609,9 @@ async def collect_by_url(
                 "filter_id": filter_id,
                 "filter_name": keyword,
                 "total_found": len(all_items),
-                "saved": len(created) - skipped_preorder - skipped_boutique,
-                "enriched": enriched,
-                "skipped_duplicates": len(all_items) - len(created) - skipped_sold_out,
+                "saved": saved,
+                "enriched": saved,
+                "skipped_duplicates": len(all_items) - len(targets) - skipped_sold_out,
                 "skipped_sold_out": skipped_sold_out,
                 "skipped_preorder": skipped_preorder,
                 "skipped_boutique": skipped_boutique,
@@ -623,7 +650,18 @@ async def collect_by_url(
                         for img in detail_imgs
                     )
 
-            collected = await svc.create_collected_product({
+            # 중복 체크: 기존 상품이 있으면 업데이트 (upsert)
+            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            existing_stmt = select(CPModel).where(
+                CPModel.source_site == "MUSINSA",
+                CPModel.site_product_id == goods_no,
+            )
+            existing_row = (await session.execute(existing_stmt)).scalar_one_or_none()
+
+            # 그룹상품용 similarNo 추출
+            similar_no = str(data.get("similarNo", "0"))
+
+            product_data = {
                 "source_site": "MUSINSA",
                 "site_product_id": goods_no,
                 "name": data.get("name", ""),
@@ -642,14 +680,35 @@ async def collect_by_url(
                 "manufacturer": data.get("manufacturer", ""),
                 "origin": data.get("origin", ""),
                 "material": data.get("material", ""),
-                "color": data.get("color", ""),
+                "color": data.get("color", "") or parse_color_from_name(data.get("name", "")),
+                "similar_no": similar_no,
+                "style_code": data.get("styleNo", ""),
+                "group_key": generate_group_key(
+                    brand=data.get("brand", ""),
+                    similar_no=similar_no,
+                    style_code=data.get("styleNo", ""),
+                    name=data.get("name", ""),
+                ),
                 "detail_html": raw_detail_html,
                 "status": "collected",
                 "is_sold_out": sale_status == "sold_out",
                 "sale_status": sale_status,
                 "price_history": [initial_snapshot],
-            })
-            return {"type": "single", "saved": 1, "product": collected}
+            }
+
+            if existing_row:
+                # 기존 상품 → 가격이력 누적 후 업데이트
+                history = list(existing_row.price_history or [])
+                history.insert(0, initial_snapshot)
+                product_data["price_history"] = history[:200]
+                # 재수집 시 기존 태그 보존 (확장앱은 tags를 보내지 않음)
+                if "tags" not in product_data or not product_data.get("tags"):
+                    product_data.pop("tags", None)
+                collected = await svc.update_collected_product(existing_row.id, product_data)
+                return {"type": "single", "saved": 1, "updated": True, "product": collected}
+            else:
+                collected = await svc.create_collected_product(product_data)
+                return {"type": "single", "saved": 1, "product": collected}
 
     elif site == "KREAM":
         import re
@@ -719,6 +778,13 @@ async def collect_by_url(
                     "original_price": item.get("originalPrice", item.get("retailPrice", 0)),
                     "sale_price": item.get("salePrice", item.get("retailPrice", 0)),
                     "images": item.get("images", [item.get("imageUrl", "")]) if (item.get("images") or item.get("imageUrl")) else [],
+                    "similar_no": None,
+                    "group_key": generate_group_key(
+                        brand=item.get("brand", ""),
+                        similar_no=None,
+                        style_code=item.get("styleCode", ""),
+                        name=item.get("name", ""),
+                    ),
                     "status": "collected",
                 })
 
@@ -769,7 +835,15 @@ async def collect_by_url(
             _opts = product_data.get("options", [])
             _snapshot = _build_kream_price_snapshot(_sp, _op, _sp, _opts)
 
-            collected = await svc.create_collected_product({
+            # 중복 체크: 기존 상품이 있으면 업데이트 (upsert)
+            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            existing_stmt = select(CPModel).where(
+                CPModel.source_site == "KREAM",
+                CPModel.site_product_id == product_id,
+            )
+            existing_row = (await session.execute(existing_stmt)).scalar_one_or_none()
+
+            kream_product_data = {
                 "source_site": "KREAM",
                 "site_product_id": product_id,
                 "name": product_data.get("name", ""),
@@ -782,10 +856,31 @@ async def collect_by_url(
                 "category1": product_data.get("category1", ""),
                 "category2": product_data.get("category2", ""),
                 "category3": product_data.get("category3", ""),
+                "similar_no": None,
+                "color": parse_color_from_name(product_data.get("name", "")),
+                "group_key": generate_group_key(
+                    brand=product_data.get("brand", ""),
+                    similar_no=None,
+                    style_code=product_data.get("styleCode", ""),
+                    name=product_data.get("name", ""),
+                ),
                 "status": "collected",
                 "price_history": [_snapshot],
-            })
-            return {"type": "single", "saved": 1, "product": collected}
+            }
+
+            if existing_row:
+                # 기존 상품 → 가격이력 누적 후 업데이트
+                history = list(existing_row.price_history or [])
+                history.insert(0, _snapshot)
+                kream_product_data["price_history"] = history[:200]
+                # 재수집 시 기존 태그 보존
+                if "tags" not in kream_product_data or not kream_product_data.get("tags"):
+                    kream_product_data.pop("tags", None)
+                collected = await svc.update_collected_product(existing_row.id, kream_product_data)
+                return {"type": "single", "saved": 1, "updated": True, "product": collected}
+            else:
+                collected = await svc.create_collected_product(kream_product_data)
+                return {"type": "single", "saved": 1, "product": collected}
 
     raise HTTPException(400, f"'{site}' 사이트 수집은 아직 지원하지 않습니다")
 
@@ -829,10 +924,61 @@ async def collect_by_filter(
     def _sse(event: str, data: dict) -> str:
         return f"data: {_json.dumps({**data, 'event': event}, ensure_ascii=False)}\n\n"
 
+    async def _auto_apply_policy() -> str:
+        """수집 완료 후 그룹에 정책이 설정되어 있으면 새 상품에 자동 전파."""
+        if not search_filter.applied_policy_id:
+            return ""
+        try:
+            from backend.domain.samba.policy.repository import SambaPolicyRepository
+            policy_repo = SambaPolicyRepository(session)
+            policy = await policy_repo.get_async(search_filter.applied_policy_id)
+            policy_data = None
+            if policy and policy.pricing:
+                pr = policy.pricing if isinstance(policy.pricing, dict) else {}
+                policy_data = {
+                    "margin_rate": pr.get("marginRate", 15),
+                    "shipping_cost": pr.get("shippingCost", 0),
+                    "extra_charge": pr.get("extraCharge", 0),
+                }
+            count = await svc.apply_policy_to_filter_products(
+                filter_id, search_filter.applied_policy_id, policy_data
+            )
+            return f"정책 자동 적용: {count}개 상품"
+        except Exception as e:
+            logger.error(f"[수집] 정책 자동 전파 실패: {e}")
+            return ""
+
+    async def _wrap_stream(inner_stream):
+        """수집 스트림 래퍼 — done 이벤트 직전에 정책 자동 전파.
+
+        새 소싱사이트를 추가해도 이 래퍼가 자동으로 정책 전파를 처리한다.
+        각 사이트별 스트림 함수에서는 정책 전파를 신경 쓸 필요 없음.
+        """
+        async for chunk in inner_stream:
+            # done 이벤트 감지 → 전송 전에 정책 전파 먼저 실행
+            if '"event": "done"' in chunk:
+                try:
+                    data_str = chunk.split("data: ", 1)[1].strip()
+                    data = _json.loads(data_str)
+                    saved = data.get("saved", 0)
+                    if saved and int(saved) > 0:
+                        policy_msg = await _auto_apply_policy()
+                        if policy_msg:
+                            yield _sse("log", {"message": policy_msg})
+                except Exception:
+                    pass
+            yield chunk
+
     async def _stream_musinsa():
         import asyncio as _asyncio
 
         cookie = await _get_musinsa_cookie()
+        if not cookie:
+            yield _sse("error", {
+                "message": "무신사 수집은 로그인(쿠키)이 필요합니다. "
+                           "확장앱에서 무신사 로그인 후 다시 시도하세요."
+            })
+            return
         client = MusinsaClient(cookie=cookie)
 
         # 요청 상품수 확인 + 기존 수집 수 차감
@@ -891,9 +1037,10 @@ async def collect_by_filter(
             existing_result = await session.execute(existing_stmt)
             existing_ids = {row[0] for row in existing_result.all()}
 
-            bulk_items = []
+            # 중복/품절 필터링 → 수집 대상 상품번호 추출
+            targets = []
             for item in search_items:
-                if total_enriched + len(bulk_items) >= remaining:
+                if total_saved + len(targets) >= remaining:
                     break
                 site_pid = str(item.get("siteProductId", item.get("goodsNo", "")))
                 if site_pid in existing_ids:
@@ -901,115 +1048,108 @@ async def collect_by_filter(
                 if item.get("isSoldOut", False):
                     total_skipped_sold_out += 1
                     continue
+                targets.append(site_pid)
 
-                raw_cat = item.get("category", "") or ""
-                cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
-                _sale_price = item.get("salePrice", item.get("price", 0))
-                _original_price = item.get("originalPrice", item.get("normalPrice", 0))
-                bulk_items.append({
-                    "source_site": "MUSINSA", "site_product_id": site_pid,
-                    "search_filter_id": filter_id,
-                    "name": item.get("name", item.get("goodsName", "")),
-                    "brand": item.get("brand", item.get("brandName", "")),
-                    "original_price": _original_price, "sale_price": _sale_price,
-                    "images": item.get("images", []), "options": item.get("options", []),
-                    "category": raw_cat,
-                    "category1": cat_parts[0] if len(cat_parts) > 0 else None,
-                    "category2": cat_parts[1] if len(cat_parts) > 1 else None,
-                    "category3": cat_parts[2] if len(cat_parts) > 2 else None,
-                    "category4": cat_parts[3] if len(cat_parts) > 3 else None,
-                    "status": "collected",
-                    "is_sold_out": item.get("isSoldOut", False),
-                    "sale_status": "sold_out" if item.get("isSoldOut", False) else "in_stock",
-                    "price_history": [{"date": datetime.now(timezone.utc).isoformat(), "sale_price": _sale_price, "original_price": _original_price, "cost": None, "options": []}],
-                })
-
-            if not bulk_items:
+            if not targets:
                 search_page += 1
                 continue
 
-            created = await svc.bulk_create_collected_products(bulk_items)
-            total_saved += len(created)
-            yield _sse("log", {"message": f"{len(created)}건 저장. 상세 보강 중..."})
+            yield _sse("log", {"message": f"수집 대상 {len(targets)}건. 상세 수집 중..."})
 
-            # 상세 보강 (개별 상품마다 로그)
-            for product in created:
+            # 각 상품 상세 수집 → 성공 시에만 저장 (완전한 데이터만)
+            rate_limited = False
+            for goods_no in targets:
                 try:
-                    detail = await client.get_goods_detail(product.site_product_id)
-                    if detail and detail.get("name"):
-                        p_name = detail.get("name", "")[:30]
+                    detail = await client.get_goods_detail(goods_no)
+                    if not detail or not detail.get("name"):
+                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        continue
 
-                        if _exclude_preorder and detail.get("saleStatus") == "preorder":
-                            await svc.delete_collected_product(product.id)
-                            total_skipped_preorder += 1
-                            total_saved -= 1
-                            yield _sse("log", {"message": f"  {p_name} — 예약배송 제외"})
-                            await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))  # 적응형 인터벌
-                            continue
-                        if _exclude_boutique and detail.get("isBoutique"):
-                            await svc.delete_collected_product(product.id)
-                            total_skipped_boutique += 1
-                            total_saved -= 1
-                            yield _sse("log", {"message": f"  {p_name} — 부티끄 제외"})
-                            await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))  # 적응형 인터벌
-                            continue
+                    p_name = detail.get("name", "")[:30]
 
-                        if _use_max_discount:
-                            _raw_cost = detail.get("bestBenefitPrice")
-                            new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else None
-                        else:
-                            new_cost = detail.get("salePrice") or product.sale_price
+                    if _exclude_preorder and detail.get("saleStatus") == "preorder":
+                        total_skipped_preorder += 1
+                        yield _sse("log", {"message": f"  {p_name} — 예약배송 제외"})
+                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        continue
+                    if _exclude_boutique and detail.get("isBoutique"):
+                        total_skipped_boutique += 1
+                        yield _sse("log", {"message": f"  {p_name} — 부티끄 제외"})
+                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        continue
 
-                        enrich_updates = {
-                            "category": detail.get("category") or product.category,
-                            "category1": detail.get("category1"), "category2": detail.get("category2"),
-                            "category3": detail.get("category3"), "category4": detail.get("category4"),
-                            "original_price": detail.get("originalPrice") if detail.get("originalPrice") is not None else product.original_price,
-                            "sale_price": detail.get("salePrice") if detail.get("salePrice") is not None else product.sale_price,
-                            "cost": new_cost,
-                            "brand": detail.get("brand") or product.brand,
-                            "manufacturer": detail.get("manufacturer"), "origin": detail.get("origin"),
-                            "images": detail.get("images") or product.images,
-                            "detail_images": detail.get("detailImages") or None,
-                            "material": detail.get("material"),
-                            "color": detail.get("color"),
-                            "options": detail.get("options", []),
-                            # 확장 상품정보 (kream_data 필드에 JSON으로 저장)
-                            "kream_data": {
-                                "color": detail.get("color", ""),
-                                "material": detail.get("material", ""),
-                                "sizeInfo": detail.get("sizeInfo", ""),
-                                "season": detail.get("season", ""),
-                                "styleCode": detail.get("styleCode", ""),
-                                "brandNation": detail.get("brandNation", ""),
-                                "sex": detail.get("sex", []),
-                                "qualityGuarantee": detail.get("qualityGuarantee", ""),
-                                "careInstructions": detail.get("careInstructions", ""),
-                            },
-                            "is_sold_out": detail.get("saleStatus") == "sold_out",
-                            "sale_status": detail.get("saleStatus", "in_stock"),
-                        }
-                        enrich_snapshot = {
-                            "date": datetime.now(timezone.utc).isoformat(),
-                            "sale_price": detail.get("salePrice") or product.sale_price,
-                            "original_price": detail.get("originalPrice") or product.original_price,
-                            "cost": new_cost, "options": detail.get("options", []),
-                        }
-                        history = list(product.price_history or [])
-                        history.insert(0, enrich_snapshot)
-                        enrich_updates["price_history"] = history[:200]
-                        await svc.update_collected_product(product.id, enrich_updates)
-                        total_enriched += 1
+                    if _use_max_discount:
+                        _raw_cost = detail.get("bestBenefitPrice")
+                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                    else:
+                        new_cost = detail.get("salePrice") or 0
 
-                        cost_str = f"₩{int(new_cost):,}" if new_cost else "-"
-                        yield _sse("product", {
-                            "message": f"  [{total_enriched}/{remaining}] {p_name} — 원가 {cost_str}",
-                            "index": total_enriched, "total": remaining,
-                        })
+                    raw_cat = detail.get("category", "") or ""
+                    cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
+                    _sale_price = detail.get("salePrice", 0)
+                    _original_price = detail.get("originalPrice", 0)
 
-                        # 목표 달성 시 즉시 종료
-                        if total_enriched >= remaining:
-                            break
+                    raw_detail_html = detail.get("detailHtml", "")
+                    if not raw_detail_html:
+                        detail_imgs = detail.get("detailImages") or []
+                        if detail_imgs:
+                            raw_detail_html = "\n".join(
+                                f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                                for img in detail_imgs
+                            )
+
+                    initial_snapshot = {
+                        "date": datetime.now(timezone.utc).isoformat(),
+                        "sale_price": _sale_price,
+                        "original_price": _original_price,
+                        "cost": new_cost,
+                        "options": detail.get("options", []),
+                    }
+
+                    await svc.create_collected_product({
+                        "source_site": "MUSINSA",
+                        "site_product_id": goods_no,
+                        "search_filter_id": filter_id,
+                        "name": detail.get("name", ""),
+                        "brand": detail.get("brand", ""),
+                        "original_price": _original_price,
+                        "sale_price": _sale_price,
+                        "cost": new_cost,
+                        "images": detail.get("images", []),
+                        "detail_images": detail.get("detailImages") or [],
+                        "options": detail.get("options", []),
+                        "category": raw_cat,
+                        "category1": cat_parts[0] if len(cat_parts) > 0 else None,
+                        "category2": cat_parts[1] if len(cat_parts) > 1 else None,
+                        "category3": cat_parts[2] if len(cat_parts) > 2 else None,
+                        "category4": cat_parts[3] if len(cat_parts) > 3 else None,
+                        "manufacturer": detail.get("manufacturer"),
+                        "origin": detail.get("origin"),
+                        "material": detail.get("material"),
+                        "color": detail.get("color"),
+                        "style_code": detail.get("style_code", ""),
+                        "sex": detail.get("sex", ""),
+                        "season": detail.get("season", ""),
+                        "care_instructions": detail.get("care_instructions", ""),
+                        "quality_guarantee": detail.get("quality_guarantee", ""),
+                        "detail_html": raw_detail_html,
+                        "status": "collected",
+                        "is_sold_out": detail.get("saleStatus") == "sold_out",
+                        "sale_status": detail.get("saleStatus", "in_stock"),
+                        "price_history": [initial_snapshot],
+                    })
+                    total_saved += 1
+                    total_enriched += 1
+
+                    cost_str = f"₩{int(new_cost):,}" if new_cost else "-"
+                    yield _sse("product", {
+                        "message": f"  [{total_enriched}/{remaining}] {p_name} — 원가 {cost_str}",
+                        "index": total_enriched, "total": remaining,
+                    })
+
+                    # 목표 달성 시 즉시 종료
+                    if total_enriched >= remaining:
+                        break
                 except RateLimitError as rle:
                     # 차단 감지 → 인터벌 증가 + SSE 경고
                     current = _site_intervals.get("MUSINSA", 1.0)
@@ -1017,6 +1157,7 @@ async def collect_by_filter(
                     _site_consecutive_errors["MUSINSA"] = _site_consecutive_errors.get("MUSINSA", 0) + 1
                     if _site_consecutive_errors["MUSINSA"] >= 5:
                         yield _sse("blocked", {"message": f"소싱처 차단으로 수집 일시 중단 (HTTP {rle.status}, 연속 {_site_consecutive_errors['MUSINSA']}회)"})
+                        rate_limited = True
                         break
                     yield _sse("warning", {"message": f"차단 감지(HTTP {rle.status}), 속도 조절 중... (인터벌 {_site_intervals['MUSINSA']}초)"})
                     if rle.retry_after > 0:
@@ -1025,10 +1166,12 @@ async def collect_by_filter(
                         await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                     continue
                 except Exception as e:
-                    logger.warning(f"[보강 실패] {product.site_product_id}: {e}")
-                    yield _sse("log", {"message": f"  {product.site_product_id} — 보강 실패"})
-                await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))  # 적응형 인터벌
+                    logger.warning(f"[수집 실패] {goods_no}: {e}")
+                    yield _sse("log", {"message": f"  {goods_no} — 수집 실패"})
+                await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
 
+            if rate_limited:
+                break
             search_page += 1
 
         await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
@@ -1042,7 +1185,7 @@ async def collect_by_filter(
         })
 
     if site == "MUSINSA":
-        return StreamingResponse(_stream_musinsa(), media_type="text/event-stream")
+        return StreamingResponse(_wrap_stream(_stream_musinsa()), media_type="text/event-stream")
 
     elif site == "KREAM":
         async def _stream_kream():
@@ -1081,11 +1224,12 @@ async def collect_by_filter(
 
                     snapshot = _build_kream_price_snapshot(sale_p, pd.get("originalPrice") or sale_p, cost_p, opts)
 
+                    _kream_name = pd.get("nameKo") or pd.get("name", "")
                     product_data = {
                         "source_site": "KREAM",
                         "site_product_id": single_pid,
                         "search_filter_id": filter_id,
-                        "name": pd.get("nameKo") or pd.get("name", ""),
+                        "name": _kream_name,
                         "name_en": pd.get("nameEn", ""),
                         "brand": pd.get("brand", ""),
                         "original_price": pd.get("originalPrice") or sale_p,
@@ -1098,6 +1242,14 @@ async def collect_by_filter(
                         "category2": cat_parts[1] if len(cat_parts) > 1 else "",
                         "category3": cat_parts[2] if len(cat_parts) > 2 else "",
                         "category4": cat_parts[3] if len(cat_parts) > 3 else "",
+                        "similar_no": None,
+                        "color": parse_color_from_name(_kream_name),
+                        "group_key": generate_group_key(
+                            brand=pd.get("brand", ""),
+                            similar_no=None,
+                            style_code=pd.get("styleCode", ""),
+                            name=_kream_name,
+                        ),
                         "status": "collected",
                         "kream_data": {
                             "styleCode": pd.get("styleCode", ""),
@@ -1179,6 +1331,13 @@ async def collect_by_filter(
                     "sale_price": sale_price,
                     "cost": sale_price,
                     "images": img_list,
+                    "similar_no": None,
+                    "group_key": generate_group_key(
+                        brand=item.get("brand", ""),
+                        similar_no=None,
+                        style_code=item.get("styleCode", ""),
+                        name=p_name,
+                    ),
                     "status": "collected",
                     "price_history": [{
                         "date": datetime.now(timezone.utc).isoformat(),
@@ -1275,7 +1434,7 @@ async def collect_by_filter(
             await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
             yield _sse("done", {"saved": saved, "total_found": len(items_list), "skipped_duplicates": len(existing_ids)})
 
-        return StreamingResponse(_stream_kream(), media_type="text/event-stream")
+        return StreamingResponse(_wrap_stream(_stream_kream()), media_type="text/event-stream")
 
     # ── 패션플러스 / Nike / Adidas (백엔드 직접 API) ──
     DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas"}
@@ -1371,6 +1530,13 @@ async def collect_by_filter(
                         "category2": item.get("category2", ""),
                         "category3": item.get("category3", ""),
                         "detail_html": item.get("detail_html", ""),
+                        "similar_no": None,
+                        "group_key": generate_group_key(
+                            brand=item.get("brand", ""),
+                            similar_no=None,
+                            style_code=item.get("style_code", ""),
+                            name=p_name,
+                        ),
                         "status": "collected",
                         "price_history": [{
                             "date": datetime.now(timezone.utc).isoformat(),
@@ -1396,7 +1562,7 @@ async def collect_by_filter(
             except Exception as e:
                 yield _sse("done", {"saved": 0, "message": f"수집 실패: {str(e)}"})
 
-        return StreamingResponse(_stream_generic(), media_type="text/event-stream")
+        return StreamingResponse(_wrap_stream(_stream_generic()), media_type="text/event-stream")
 
     return StreamingResponse(
         (f"data: {__import__('json').dumps({'event': 'done', 'saved': 0, 'message': f'{site} 수집 미지원'}, ensure_ascii=False)}\n\n" for _ in [1]),
@@ -1419,7 +1585,14 @@ async def collect_by_keyword(
         cookie_setting = await settings_repo.get_async("musinsa_cookie")
         cookie = cookie_setting.value if cookie_setting and hasattr(cookie_setting, 'value') else ""
 
-        client = MusinsaClient(cookie=cookie or "")
+        if not cookie:
+            raise HTTPException(
+                400,
+                "무신사 수집은 로그인(쿠키)이 필요합니다. "
+                "확장앱에서 무신사 로그인 후 다시 시도하세요.",
+            )
+
+        client = MusinsaClient(cookie=cookie)
         data = await client.search_products(
             keyword=body.keyword, page=body.page, size=body.size
         )
@@ -1672,6 +1845,7 @@ async def enrich_all_products(
 
 class RefreshRequest(BaseModel):
     product_ids: Optional[List[str]] = None
+    search_filter_ids: Optional[List[str]] = None  # 선택된 그룹(검색필터) ID
     priority: Optional[str] = None  # hot / warm / cold
     auto_retransmit: bool = True
 
@@ -1696,6 +1870,12 @@ async def refresh_products(
             p = await repo.get_async(pid)
             if p:
                 products.append(p)
+    elif body.search_filter_ids:
+        # 선택된 그룹의 상품만 조회
+        products = []
+        for sf_id in body.search_filter_ids:
+            group_products = await repo.filter_by_async(search_filter_id=sf_id, limit=10000)
+            products.extend(group_products)
     elif body.priority:
         # 우선순위 기반 조회
         from sqlmodel import select as sel
@@ -2343,3 +2523,104 @@ async def probe_run(
 
     await session.commit()
     return results
+
+
+# ══════════════════════════════════════════════════════════════
+# Ken Burns 영상 생성
+# ══════════════════════════════════════════════════════════════
+
+
+class VideoGenerateRequest(BaseModel):
+    product_id: str
+    max_images: int = 3
+    duration_per_image: float = 1.0
+
+
+@router.post("/products/generate-video")
+async def generate_product_video(
+    body: VideoGenerateRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """상품 이미지로 Ken Burns 효과 영상(2~3초) 생성 → R2/로컬 저장 → 상품에 매칭."""
+    from backend.domain.samba.video.kenburns import generate_kenburns_video
+    from backend.domain.samba.image.service import ImageTransformService
+    import uuid
+    from pathlib import Path
+
+    svc = _get_services(session)
+    product = await svc.get_collected_product(body.product_id)
+    if not product:
+        raise HTTPException(404, "상품을 찾을 수 없습니다")
+
+    images = product.images or []
+    if not images:
+        raise HTTPException(400, "상품 이미지가 없습니다")
+
+    # AI 변환 이미지가 없으면 자동 생성
+    ai_images = [u for u in images if '/transformed/' in u or '/ai_' in u]
+    if not ai_images:
+        logger.info(f"[영상생성] AI이미지 없음 — 자동 생성 시작 ({body.product_id})")
+        img_svc_auto = ImageTransformService(session)
+        try:
+            # 대표이미지는 건드리지 않고 별도 생성
+            ai_result = await img_svc_auto.transform_single_image(
+                body.product_id, images[0], "video",
+            )
+            if ai_result:
+                logger.info(f"[영상생성] AI이미지 자동 생성 완료")
+                # 추가이미지 마지막에 추가
+                updated_images = list(images)
+                updated_images.append(ai_result)
+                await svc.update_collected_product(body.product_id, {"images": updated_images})
+                images = updated_images
+                ai_images = [ai_result]
+        except Exception as e:
+            logger.warning(f"[영상생성] AI이미지 자동 생성 실패, 원본으로 진행: {e}")
+
+    source_images = ai_images if ai_images else images
+
+    try:
+        output_path = generate_kenburns_video(
+            image_urls=source_images,
+            duration_per_image=body.duration_per_image,
+            max_images=body.max_images,
+        )
+    except Exception as e:
+        raise HTTPException(500, f"영상 생성 실패: {str(e)}")
+
+    # R2/로컬 저장
+    filename = f"video_{product.site_product_id or uuid.uuid4().hex[:8]}_{uuid.uuid4().hex[:6]}.mp4"
+    video_bytes = Path(output_path).read_bytes()
+
+    img_svc = ImageTransformService(session)
+    r2 = await img_svc._get_r2_client()
+    if r2:
+        client, bucket_name, public_url = r2
+        try:
+            import io
+            client.upload_fileobj(
+                io.BytesIO(video_bytes),
+                bucket_name,
+                f"videos/{filename}",
+                ExtraArgs={"ContentType": "video/mp4"},
+            )
+            video_url = f"{public_url}/videos/{filename}"
+        except Exception:
+            # R2 실패 시 로컬 저장
+            local_dir = Path("static/videos")
+            local_dir.mkdir(parents=True, exist_ok=True)
+            (local_dir / filename).write_bytes(video_bytes)
+            video_url = f"/static/videos/{filename}"
+    else:
+        local_dir = Path("static/videos")
+        local_dir.mkdir(parents=True, exist_ok=True)
+        (local_dir / filename).write_bytes(video_bytes)
+        video_url = f"/static/videos/{filename}"
+
+    # 상품에 video_url 매칭
+    await svc.update_collected_product(body.product_id, {"video_url": video_url})
+
+    # 임시파일 삭제
+    Path(output_path).unlink(missing_ok=True)
+
+    return {"success": True, "video_url": video_url}
