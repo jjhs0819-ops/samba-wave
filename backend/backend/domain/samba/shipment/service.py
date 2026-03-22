@@ -796,12 +796,14 @@ class SambaShipmentService:
     ))
     # 신규등록 실패한 계정의 상품번호만 제거
     new_nos = {k: v for k, v in existing_nos.items() if k not in removable_failed}
-    update_data: dict[str, Any] = {
-      "registered_accounts": new_accounts if new_accounts else None,
-      "market_product_nos": new_nos if new_nos else None,
-      "status": "registered" if new_accounts else "collected",
-    }
-    await product_repo.update_async(product_id, **update_data)
+    # 전부 스킵이면 상품 데이터 변경하지 않음 (updated_at 유지)
+    if not all_skipped:
+      update_data: dict[str, Any] = {
+        "registered_accounts": new_accounts if new_accounts else None,
+        "market_product_nos": new_nos if new_nos else None,
+        "status": "registered" if new_accounts else "collected",
+      }
+      await product_repo.update_async(product_id, **update_data)
 
     logger.info(
       f"Shipment {shipment.id} 완료 status={final_status} "

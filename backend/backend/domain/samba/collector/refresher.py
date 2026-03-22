@@ -16,8 +16,24 @@ import httpx
 
 from backend.utils.logger import logger
 
-# 소싱처당 동시 요청 제한
+# 소싱처당 동시 요청 제한 (기본값)
 CONCURRENCY_PER_SITE = 5
+# 소싱처별 동시 요청 수 (개별 설정)
+SITE_CONCURRENCY: dict[str, int] = {
+    "MUSINSA": 8,
+}
+# 소싱처별 기본 인터벌 (초)
+SITE_BASE_INTERVAL: dict[str, float] = {
+    "MUSINSA": 0.5,
+}
+# 소싱처별 최소 인터벌 (초)
+SITE_MIN_INTERVAL: dict[str, float] = {
+    "MUSINSA": 0.3,
+}
+# 소싱처별 인터벌 복원 스텝 (성공 시 감소량)
+SITE_INTERVAL_STEP: dict[str, float] = {
+    "MUSINSA": 0.2,
+}
 # KREAM 확장앱 대기 타임아웃 (초)
 KREAM_TIMEOUT = 90
 # 소싱처별 적응형 인터벌 관리
@@ -65,6 +81,9 @@ def get_site_intervals_info() -> Dict[str, Any]:
         "intervals": dict(_site_intervals),
         "errors": dict(_site_consecutive_errors),
         "safe_intervals": dict(_site_safe_intervals),
+        "concurrency": dict(SITE_CONCURRENCY),
+        "base_intervals": dict(SITE_BASE_INTERVAL),
+        "min_intervals": dict(SITE_MIN_INTERVAL),
     }
 
 
@@ -81,6 +100,8 @@ class RefreshResult:
     new_detail_images: Optional[list] = None
     new_material: Optional[str] = None
     new_color: Optional[str] = None
+    new_free_shipping: Optional[bool] = None
+    new_same_day_delivery: Optional[bool] = None
     changed: bool = False
     needs_extension: bool = False
     error: Optional[str] = None
@@ -124,6 +145,22 @@ async def refresh_product(product: Any) -> RefreshResult:
 
 # ── 무신사 파서 ──
 
+async def _get_musinsa_cookie() -> str:
+    """DB에서 무신사 쿠키 조회."""
+    try:
+        from backend.db.orm import get_read_session
+        from backend.domain.samba.forbidden.model import SambaSettings
+        from sqlmodel import select
+        async with get_read_session() as session:
+            result = await session.execute(
+                select(SambaSettings).where(SambaSettings.key == "musinsa_cookie")
+            )
+            row = result.scalar_one_or_none()
+            return (row.value if row and row.value else "") or ""
+    except Exception:
+        return ""
+
+
 async def _parse_musinsa(product: Any) -> RefreshResult:
     """무신사 상품 가격/재고 재수집 (MusinsaClient 활용)."""
     from backend.domain.samba.proxy.musinsa import MusinsaClient, RateLimitError
@@ -132,14 +169,18 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
     if not site_product_id:
         return RefreshResult(product_id=product.id, error="site_product_id 없음")
 
-    client = MusinsaClient()
+    cookie = await _get_musinsa_cookie()
+    client = MusinsaClient(cookie)
     warnings: list[str] = []
 
     try:
         detail = await client.get_goods_detail(site_product_id)
         # 성공 → 인터벌 점진 복원
-        prev_interval = _site_intervals.get("MUSINSA", 1.0)
-        new_interval = max(1.0, prev_interval - 0.5)
+        base = SITE_BASE_INTERVAL.get("MUSINSA", 1.0)
+        min_iv = SITE_MIN_INTERVAL.get("MUSINSA", base)
+        step = SITE_INTERVAL_STEP.get("MUSINSA", 0.5)
+        prev_interval = _site_intervals.get("MUSINSA", base)
+        new_interval = max(min_iv, prev_interval - step)
         _site_intervals["MUSINSA"] = new_interval
         _site_consecutive_errors["MUSINSA"] = 0
         # 차단 안 당하는 최소 인터벌 기록
@@ -267,6 +308,8 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         new_detail_images=new_detail_images,
         new_material=new_material,
         new_color=new_color,
+        new_free_shipping=detail.get("freeShipping", False),
+        new_same_day_delivery=detail.get("sameDayDelivery", False),
         changed=changed,
         warnings=warnings,
     )
@@ -435,14 +478,16 @@ async def refresh_products_bulk(
     summary = BulkRefreshResult(total=len(products))
 
     async def _process_site(site: str, items: list) -> List[RefreshResult]:
-        sem = asyncio.Semaphore(CONCURRENCY_PER_SITE)
+        concurrency = SITE_CONCURRENCY.get(site, CONCURRENCY_PER_SITE)
+        base_interval = SITE_BASE_INTERVAL.get(site, 1.0)
+        sem = asyncio.Semaphore(concurrency)
         results = []
 
         async def _limited(p: Any) -> RefreshResult:
             async with sem:
                 r = await refresh_product(p)
-                # 소싱처별 적응형 인터벌
-                interval = _site_intervals.get(site, 1.0)
+                # 소싱처별 적응형 인터벌 (기본값은 소싱처별 base_interval)
+                interval = _site_intervals.get(site, base_interval)
                 await asyncio.sleep(interval)
                 return r
 
