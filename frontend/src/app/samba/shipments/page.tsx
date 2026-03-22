@@ -63,6 +63,7 @@ export default function ShipmentsPage() {
   [accounts])
   const [updateItems, setUpdateItems] = useState({ all: false, price: true, thumb: false, detail: false })
   const [skipEnabled, setSkipEnabled] = useState(false)
+  const [loopEnabled, setLoopEnabled] = useState(false)
   const [selectedSites, setSelectedSites] = useState<string[]>([])
 
   // 전송 로그
@@ -413,7 +414,15 @@ export default function ShipmentsPage() {
     addLog(`[${ts()}] 전송 완료 — ${summaryParts.length > 0 ? summaryParts.join(', ') : '처리 없음'}`)
 
     setProgress({ current: total, total })
-    setTimeout(() => { setTransmitting(false); load() }, 2000)
+
+    if (loopEnabled && !abortRef.current) {
+      addLog(`[${ts()}] 무한반복 모드 — 상품 새로고침 후 재시작...`)
+      await load()
+      // 새로고침 후 즉시 재시작
+      setTimeout(() => handleStart(), 1000)
+    } else {
+      setTimeout(() => { setTransmitting(false); load() }, 2000)
+    }
   }
 
   return (
@@ -575,11 +584,15 @@ export default function ShipmentsPage() {
               <button onClick={() => { abortRef.current = true }}
                 style={{ padding: '4px 16px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.2)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.5)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >강제 중단</button>
-            ) : (
+            ) : (<>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: loopEnabled ? '#FF8C00' : '#666', cursor: 'pointer' }}>
+                <input type="checkbox" checked={loopEnabled} onChange={() => setLoopEnabled(!loopEnabled)} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
+                무한반복
+              </label>
               <button onClick={handleStart}
                 style={{ padding: '4px 16px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >전송 시작</button>
-            )}
+            </>)}
           </div>
         </div>
         <div

@@ -625,6 +625,23 @@ class SambaShipmentService:
               product_id, market_product_nos=existing_nos
             )
             logger.info(f"[전송] {market_type} 상품번호 저장: {product_no}")
+          # last_sent_data 스냅샷 저장 (스킵 판단용)
+          try:
+            sent_snapshot = {
+              "sale_price": product_dict.get("sale_price"),
+              "cost": product_dict.get("cost"),
+              "options": [
+                {"name": o.get("name", ""), "price": o.get("price"), "stock": o.get("stock")}
+                for o in (product_dict.get("options") or [])
+              ],
+              "sent_at": datetime.now(UTC).isoformat(),
+            }
+            cur_sent = product_row.last_sent_data or {}
+            cur_sent[account_id] = sent_snapshot
+            await product_repo.update_async(product_id, last_sent_data=cur_sent)
+          except Exception as _snap_e:
+            logger.warning(f"[전송] last_sent_data 저장 실패: {_snap_e}")
+
           action = "수정" if existing_product_no else "등록"
           logger.info(
             f"[전송] {market_type} {action} 성공 - 상품: {product_id}, 계정: {account_id}"

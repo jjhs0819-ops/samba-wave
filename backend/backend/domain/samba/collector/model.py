@@ -217,6 +217,18 @@ class SambaCollectedProduct(SQLModel, table=True):
     care_instructions: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     quality_guarantee: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
+    # 배송 정보: 무료배송 / 당일발송
+    free_shipping: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default="false")
+    )
+    same_day_delivery: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default="false")
+    )
+
+    # 마켓별 마지막 전송 스냅샷 (스킵 판단용)
+    # { "계정ID": { "sale_price": 24469, "cost": 20000, "options": [...], "sent_at": "..." } }
+    last_sent_data: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+
     # 그룹상품 관련
     group_key: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True, index=True))
     similar_no: Optional[str] = Field(default=None, sa_column=Column(String(50), nullable=True))
