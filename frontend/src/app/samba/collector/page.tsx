@@ -119,10 +119,8 @@ export default function CollectorPage() {
 
   // 드릴다운 선택 상태
   const [drillSite, setDrillSite] = useState<string | null>(null)
-  const [drillFolder, setDrillFolder] = useState<string | null>(null)
+  const [drillBrand, setDrillBrand] = useState<string | null>(null)
   const [drillGroup, setDrillGroup] = useState<string | null>(null)
-  const [creatingFolder, setCreatingFolder] = useState<{ parentId: string; site: string } | null>(null)
-  const [newFolderName, setNewFolderName] = useState('')
 
   // Group table filters
   const [siteFilter, setSiteFilter] = useState("");
@@ -441,6 +439,66 @@ export default function CollectorPage() {
     const vb = sortField === "lastCollectedAt" ? (b.last_collected_at || "") : (b.created_at || "");
     return sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
   });
+
+  // 그룹명에서 브랜드/카테고리 파싱: "MUSINSA_나이키_운동화" → {brand:"나이키", category:"운동화"}
+  const parseGroupName = (name: string, site: string) => {
+    // 사이트 접두사 제거
+    let rest = name
+    const prefixes = [site + '_', site.toLowerCase() + '_', '무신사_']
+    for (const p of prefixes) {
+      if (rest.toLowerCase().startsWith(p.toLowerCase())) {
+        rest = rest.slice(p.length)
+        break
+      }
+    }
+    // _로 분리
+    const parts = rest.split('_')
+    if (parts.length >= 2) {
+      return { brand: parts[0], category: parts.slice(1).join('_') }
+    }
+    // 공백으로 분리 시도
+    const spaceParts = rest.split(' ')
+    if (spaceParts.length >= 2) {
+      return { brand: spaceParts[0], category: spaceParts.slice(1).join(' ') }
+    }
+    return { brand: rest, category: '' }
+  }
+
+  // 선택된 사이트의 브랜드 목록
+  const getBrands = () => {
+    if (!drillSite) return []
+    const siteNode = tree.find(n => n.id === drillSite)
+    const leafGroups = getAllLeafGroups(siteNode)
+    const brandSet = new Map<string, number>()
+    leafGroups.forEach(g => {
+      const { brand } = parseGroupName(g.name, siteNode?.source_site || '')
+      brandSet.set(brand, (brandSet.get(brand) || 0) + 1)
+    })
+    return Array.from(brandSet.entries()).map(([brand, count]) => ({ brand, count }))
+  }
+
+  // 선택된 브랜드의 카테고리 목록
+  const getCategories = () => {
+    if (!drillSite || !drillBrand) return []
+    const siteNode = tree.find(n => n.id === drillSite)
+    const leafGroups = getAllLeafGroups(siteNode)
+    return leafGroups.filter(g => {
+      const { brand } = parseGroupName(g.name, siteNode?.source_site || '')
+      return brand === drillBrand
+    })
+  }
+
+  // 사이트 노드 하위의 모든 리프 그룹 수집 (폴더 구조 무시)
+  const getAllLeafGroups = (node: SambaSearchFilter | undefined): SambaSearchFilter[] => {
+    if (!node) return []
+    const result: SambaSearchFilter[] = []
+    const walk = (n: SambaSearchFilter) => {
+      if (!n.is_folder) result.push(n)
+      ;(n.children || []).forEach(walk)
+    }
+    ;(node.children || []).forEach(walk)
+    return result
+  }
 
   // 드릴다운 스타일 헬퍼
   const colStyle = {
@@ -872,7 +930,7 @@ export default function CollectorPage() {
         }}>
           {/* 헤더 */}
           <div style={{ display: 'flex', borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
-            {['사이트', '폴더', '검색그룹'].map((h, i) => (
+            {['사이트', '브랜드', '카테고리'].map((h, i) => (
               <div key={h} style={{
                 flex: 1, minWidth: '180px', padding: '0.625rem 0.75rem',
                 fontSize: '0.75rem', fontWeight: 600, color: '#888',
@@ -885,119 +943,71 @@ export default function CollectorPage() {
           <div style={{ display: 'flex' }}>
             {/* 컬럼 1: 사이트 */}
             <div style={colStyle}>
-              {tree.filter(n => n.is_folder).length === 0 ? (
+              {tree.length === 0 ? (
                 <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>수집 그룹이 없습니다</div>
               ) : tree.map(siteNode => (
                 <div
                   key={siteNode.id}
                   style={itemStyle(drillSite === siteNode.id)}
-                  onClick={() => { setDrillSite(siteNode.id); setDrillFolder(null); setDrillGroup(null) }}
+                  onClick={() => { setDrillSite(siteNode.id); setDrillBrand(null); setDrillGroup(null) }}
+                  onMouseEnter={e => { if (drillSite !== siteNode.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                  onMouseLeave={e => { if (drillSite !== siteNode.id) e.currentTarget.style.background = 'transparent' }}
                 >
                   {siteNode.name}
                   <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#555' }}>
-                    {(siteNode.children || []).length}
+                    {getAllLeafGroups(siteNode).length}
                   </span>
                 </div>
               ))}
             </div>
 
-            {/* 컬럼 2: 폴더 (선택된 사이트의 하위) */}
+            {/* 컬럼 2: 브랜드 (그룹명에서 파싱) */}
             <div style={colStyle}>
-              {drillSite && (() => {
-                const siteNode = tree.find(n => n.id === drillSite)
-                const children = siteNode?.children || []
-                const folders = children.filter(c => c.is_folder)
-                const leafGroups = children.filter(c => !c.is_folder)
-                return (
-                  <>
-                    {folders.map(folder => (
-                      <div
-                        key={folder.id}
-                        style={itemStyle(drillFolder === folder.id)}
-                        onClick={() => { setDrillFolder(folder.id); setDrillGroup(null) }}
-                      >
-                        {folder.name}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#555' }}>
-                          {(folder.children || []).length}
-                        </span>
-                      </div>
-                    ))}
-                    {/* 사이트 바로 아래 리프 그룹 (폴더 없이) */}
-                    {leafGroups.map(g => (
-                      <div
-                        key={g.id}
-                        style={itemStyle(drillGroup === g.id)}
-                        onClick={() => { setDrillFolder(null); setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
-                      >
-                        {g.name}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#FF8C00' }}>
-                          {g.collected_count ?? 0}
-                        </span>
-                      </div>
-                    ))}
-                    {folders.length === 0 && leafGroups.length === 0 && (
-                      <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>하위 항목 없음</div>
-                    )}
-                    {/* 폴더 추가 버튼 */}
-                    <div
-                      onClick={() => {
-                        if (siteNode) {
-                          setCreatingFolder({ parentId: siteNode.id, site: siteNode.source_site })
-                          setNewFolderName('')
-                        }
-                      }}
-                      style={{ padding: '0.4rem 0.75rem', fontSize: '0.75rem', color: '#555', cursor: 'pointer' }}
-                    >
-                      + 폴더 추가
-                    </div>
-                    {creatingFolder?.parentId === drillSite && (
-                      <div style={{ padding: '0.25rem 0.75rem' }}>
-                        <input
-                          autoFocus
-                          value={newFolderName}
-                          onChange={e => setNewFolderName(e.target.value)}
-                          onKeyDown={async e => {
-                            if (e.key === 'Enter' && newFolderName.trim()) {
-                              await collectorApi.createFolder(creatingFolder.site, newFolderName.trim(), creatingFolder.parentId)
-                              setCreatingFolder(null)
-                              loadTree()
-                            }
-                            if (e.key === 'Escape') setCreatingFolder(null)
-                          }}
-                          placeholder="폴더명 입력"
-                          style={{
-                            background: '#222', border: '1px solid #444', color: '#ccc',
-                            padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', width: '100%',
-                          }}
-                        />
-                      </div>
-                    )}
-                  </>
-                )
-              })()}
+              {drillSite ? getBrands().map(({ brand, count }) => (
+                <div
+                  key={brand}
+                  style={itemStyle(drillBrand === brand)}
+                  onClick={() => { setDrillBrand(brand); setDrillGroup(null) }}
+                  onMouseEnter={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                  onMouseLeave={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'transparent' }}
+                >
+                  {brand}
+                  <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#555' }}>
+                    {count}
+                  </span>
+                </div>
+              )) : (
+                <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>사이트 선택</div>
+              )}
             </div>
 
-            {/* 컬럼 3: 폴더 내 그룹 */}
+            {/* 컬럼 3: 카테고리 (해당 브랜드의 그룹) */}
             <div style={{ ...colStyle, borderRight: 'none' }}>
-              {drillFolder && (() => {
+              {drillBrand ? (() => {
+                const cats = getCategories()
                 const siteNode = tree.find(n => n.id === drillSite)
-                const folderNode = (siteNode?.children || []).find(c => c.id === drillFolder)
-                const groups = (folderNode?.children || []).filter(c => !c.is_folder)
-                return groups.length > 0 ? groups.map(g => (
-                  <div
-                    key={g.id}
-                    style={itemStyle(drillGroup === g.id)}
-                    onClick={() => { setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
-                  >
-                    {g.name}
-                    <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#FF8C00' }}>
-                      {g.collected_count ?? 0}
-                    </span>
-                  </div>
-                )) : (
-                  <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>그룹 선택</div>
+                return cats.length > 0 ? cats.map(g => {
+                  const { category } = parseGroupName(g.name, siteNode?.source_site || '')
+                  return (
+                    <div
+                      key={g.id}
+                      style={itemStyle(drillGroup === g.id)}
+                      onClick={() => { setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
+                      onMouseEnter={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                      onMouseLeave={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'transparent' }}
+                    >
+                      {category || g.name}
+                      <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#FF8C00' }}>
+                        {g.collected_count ?? 0}
+                      </span>
+                    </div>
+                  )
+                }) : (
+                  <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>항목 없음</div>
                 )
-              })()}
+              })() : (
+                <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>브랜드 선택</div>
+              )}
             </div>
           </div>
         </div>
