@@ -837,6 +837,7 @@ class SambaShipmentService:
         "registered_accounts": new_accounts if new_accounts else None,
         "market_product_nos": new_nos if new_nos else None,
         "status": "registered" if new_accounts else "collected",
+        "updated_at": datetime.now(UTC),
       }
       await product_repo.update_async(product_id, **update_data)
 
