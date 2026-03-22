@@ -658,7 +658,7 @@ export default function ProductsPage() {
       {/* AI 이미지변환 / 이미지 필터링 / AI 비용 — 1행 3단 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '1rem' }}>
         {/* 1단: AI 이미지 변환 */}
-        <div style={{ padding: '10px 12px', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px' }}>
+        <div style={{ padding: '10px 12px', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', order: 2 }}>
           <div style={{ fontSize: '0.78rem', color: '#FF8C00', fontWeight: 600, marginBottom: '8px' }}>AI 이미지 변환</div>
           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
             <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.75rem', flex: 1, minWidth: 0 }}>
@@ -695,7 +695,7 @@ export default function ProductsPage() {
         </div>
 
         {/* 2단: 이미지 필터링 */}
-        <div style={{ padding: '10px 12px', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px' }}>
+        <div style={{ padding: '10px 12px', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px', order: 3 }}>
           <div style={{ fontSize: '0.78rem', color: '#818CF8', fontWeight: 600, marginBottom: '8px' }}>이미지 필터링</div>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
             {(['images', 'detail', 'all'] as const).map(s => (
@@ -736,7 +736,7 @@ export default function ProductsPage() {
         </div>
 
         {/* 3단: AI 비용 */}
-        <div style={{ padding: '10px 12px', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+        <div style={{ padding: '10px 12px', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'center', order: 1 }}>
           <div style={{ fontSize: '0.78rem', color: '#FF8C00', fontWeight: 600, marginBottom: '6px' }}>AI 비용</div>
           {lastAiUsage ? (<>
             <div style={{ fontSize: '1rem', fontWeight: 700, color: '#7BAF7E' }}>₩{lastAiUsage.cost.toLocaleString()}</div>
