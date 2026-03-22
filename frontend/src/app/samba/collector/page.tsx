@@ -116,8 +116,11 @@ export default function CollectorPage() {
 
   // 트리 사이드바
   const [tree, setTree] = useState<SambaSearchFilter[]>([])
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
-  const [selectedNode, setSelectedNode] = useState<string | null>(null)
+
+  // 드릴다운 선택 상태
+  const [drillSite, setDrillSite] = useState<string | null>(null)
+  const [drillFolder, setDrillFolder] = useState<string | null>(null)
+  const [drillGroup, setDrillGroup] = useState<string | null>(null)
   const [creatingFolder, setCreatingFolder] = useState<{ parentId: string; site: string } | null>(null)
   const [newFolderName, setNewFolderName] = useState('')
 
@@ -146,12 +149,6 @@ export default function CollectorPage() {
     try {
       const data = await collectorApi.getFilterTree()
       setTree(data)
-      // 모든 루트 노드 기본 펼침
-      setExpandedNodes(prev => {
-        const next = new Set(prev)
-        data.forEach(n => next.add(n.id))
-        return next
-      })
     } catch { /* 트리 로드 실패 무시 */ }
   }, [])
 
@@ -445,134 +442,29 @@ export default function CollectorPage() {
     return sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
   });
 
-  const allSites = [...new Set(filters.map((f) => f.source_site))].sort();
-
-  // 트리 노드 컴포넌트
-  const TreeNode = ({ node, depth = 0 }: { node: SambaSearchFilter; depth?: number }) => {
-    const isExpanded = expandedNodes.has(node.id)
-    const isSelected = selectedNode === node.id
-
-    return (
-      <div>
-        <div
-          onClick={() => {
-            if (node.is_folder) {
-              setExpandedNodes(prev => {
-                const next = new Set(prev)
-                if (next.has(node.id)) next.delete(node.id)
-                else next.add(node.id)
-                return next
-              })
-            } else {
-              setSelectedNode(node.id)
-              // 해당 그룹 클릭 시 선택 상태 설정
-              setSelectedIds(new Set([node.id]))
-            }
-          }}
-          style={{
-            paddingLeft: `${depth * 16 + 8}px`,
-            paddingRight: '8px',
-            paddingTop: '4px',
-            paddingBottom: '4px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            fontSize: '0.78rem',
-            color: isSelected ? '#FF8C00' : '#ccc',
-            background: isSelected ? 'rgba(255,140,0,0.1)' : 'transparent',
-            borderRadius: '4px',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <span style={{ fontSize: '0.7rem', width: '14px' }}>
-            {node.is_folder ? (isExpanded ? '\u{1F4C2}' : '\u{1F4C1}') : '\u{1F4CB}'}
-          </span>
-          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.name}</span>
-          {!node.is_folder && (node.collected_count ?? 0) > 0 && (
-            <span style={{
-              background: 'rgba(255,140,0,0.15)', color: '#FF8C00',
-              padding: '0 4px', borderRadius: '3px', fontSize: '0.65rem',
-            }}>
-              {node.collected_count}
-            </span>
-          )}
-          {node.is_folder && (
-            <span
-              onClick={(e) => {
-                e.stopPropagation()
-                setCreatingFolder({ parentId: node.id, site: node.source_site })
-                setNewFolderName('')
-              }}
-              style={{ fontSize: '0.7rem', color: '#666', padding: '0 2px' }}
-              title="하위 폴더 추가"
-            >
-              +
-            </span>
-          )}
-        </div>
-        {node.is_folder && isExpanded && node.children?.map(child => (
-          <TreeNode key={child.id} node={child} depth={depth + 1} />
-        ))}
-        {/* 새 폴더 입력 */}
-        {creatingFolder?.parentId === node.id && isExpanded && (
-          <div style={{ paddingLeft: `${(depth + 1) * 16 + 8}px`, display: 'flex', gap: '4px', padding: '2px 8px' }}>
-            <input
-              autoFocus
-              value={newFolderName}
-              onChange={e => setNewFolderName(e.target.value)}
-              onKeyDown={async e => {
-                if (e.key === 'Enter' && newFolderName.trim()) {
-                  await collectorApi.createFolder(creatingFolder.site, newFolderName.trim(), creatingFolder.parentId)
-                  setCreatingFolder(null)
-                  loadTree()
-                }
-                if (e.key === 'Escape') setCreatingFolder(null)
-              }}
-              placeholder="폴더명"
-              style={{
-                background: '#222', border: '1px solid #444', color: '#ccc',
-                padding: '2px 6px', borderRadius: '4px', fontSize: '0.75rem', width: '120px',
-              }}
-            />
-          </div>
-        )}
-      </div>
-    )
+  // 드릴다운 스타일 헬퍼
+  const colStyle = {
+    flex: 1,
+    minWidth: '180px',
+    borderRight: '1px solid #2D2D2D',
+    maxHeight: '320px',
+    overflowY: 'auto' as const,
   }
+  const itemStyle = (isSelected: boolean) => ({
+    padding: '0.5rem 0.75rem',
+    fontSize: '0.8125rem',
+    color: isSelected ? '#FF8C00' : '#C5C5C5',
+    cursor: 'pointer' as const,
+    background: isSelected ? 'rgba(255,140,0,0.08)' : 'transparent',
+    transition: 'background 0.15s',
+    display: 'flex' as const,
+    alignItems: 'center' as const,
+    gap: '4px',
+  })
 
   return (
-    <div style={{ display: 'flex', gap: '0', height: 'calc(100vh - 60px)' }}>
-      {/* 좌측 트리 사이드바 */}
-      <div style={{
-        width: '220px', minWidth: '220px',
-        background: 'rgba(20,20,20,0.8)',
-        borderRight: '1px solid #2D2D2D',
-        overflowY: 'auto',
-        padding: '8px 0',
-      }}>
-        <div style={{ padding: '4px 8px', fontSize: '0.7rem', color: '#666', fontWeight: 600, marginBottom: '4px' }}>
-          수집 그룹
-        </div>
-        {tree.map(node => (
-          <TreeNode key={node.id} node={node} />
-        ))}
-        {selectedNode && (
-          <div
-            onClick={() => { setSelectedNode(null); setSelectedIds(new Set()) }}
-            style={{
-              padding: '4px 8px', fontSize: '0.7rem', color: '#666',
-              cursor: 'pointer', marginTop: '8px', textAlign: 'center',
-            }}
-          >
-            전체 보기
-          </div>
-        )}
-      </div>
-
-      {/* 우측 메인 콘텐츠 */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem 1rem' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+    <div style={{ color: '#E5E5E5' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0', padding: '0.5rem 1rem' }}>
       {/* 프록시 상태 배너 */}
       <div style={{
         display: "flex", alignItems: "center", gap: "10px", padding: "10px 16px",
@@ -874,21 +766,19 @@ export default function CollectorPage() {
         )}
       </div>
 
-      {/* 검색그룹 목록 */}
-      <div style={{ marginTop: "1rem" }}>
+      {/* 검색그룹 드릴다운 */}
+      <div style={{ marginTop: '1rem' }}>
         <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          marginBottom: "0.75rem", flexWrap: "wrap", gap: "8px",
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          marginBottom: '0.75rem', flexWrap: 'wrap', gap: '8px',
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "#E5E5E5", margin: 0 }}>검색그룹 목록</h3>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+          <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', margin: 0 }}>검색그룹 목록</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
             <button
               onClick={handleDeleteSelectedGroups}
               style={{
-                background: "rgba(255,100,100,0.1)", border: "1px solid rgba(255,100,100,0.3)",
-                color: "#FF6B6B", padding: "0.3rem 0.75rem", borderRadius: "6px", fontSize: "0.8rem", cursor: "pointer",
+                background: 'rgba(255,100,100,0.1)', border: '1px solid rgba(255,100,100,0.3)',
+                color: '#FF6B6B', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
               }}
             >
               그룹 삭제
@@ -896,8 +786,8 @@ export default function CollectorPage() {
             <button
               onClick={handleCollectGroups}
               style={{
-                background: "rgba(255,140,0,0.1)", border: "1px solid rgba(255,140,0,0.35)",
-                color: "#FF8C00", padding: "0.3rem 0.75rem", borderRadius: "6px", fontSize: "0.8rem", cursor: "pointer",
+                background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.35)',
+                color: '#FF8C00', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
               }}
             >
               상품수집
@@ -906,10 +796,10 @@ export default function CollectorPage() {
               onClick={handleRefresh}
               disabled={refreshing}
               style={{
-                background: refreshing ? "rgba(76,154,255,0.05)" : "rgba(76,154,255,0.1)",
-                border: "1px solid rgba(76,154,255,0.35)",
-                color: "#4C9AFF", padding: "0.3rem 0.75rem", borderRadius: "6px",
-                fontSize: "0.8rem", cursor: refreshing ? "not-allowed" : "pointer",
+                background: refreshing ? 'rgba(76,154,255,0.05)' : 'rgba(76,154,255,0.1)',
+                border: '1px solid rgba(76,154,255,0.35)',
+                color: '#4C9AFF', padding: '0.3rem 0.75rem', borderRadius: '6px',
+                fontSize: '0.8rem', cursor: refreshing ? 'not-allowed' : 'pointer',
                 opacity: refreshing ? 0.6 : 1,
               }}
             >
@@ -942,7 +832,6 @@ export default function CollectorPage() {
             </button>
             <button
               onClick={async () => {
-                // 체크된 그룹이 없으면 전체 표시된 그룹 사용
                 const targetIds = selectedIds.size > 0 ? [...selectedIds] : displayedFilters.map(f => f.id)
                 if (targetIds.length === 0) { showAlert('검색그룹이 없습니다'); return }
                 const ok = await showConfirm(`${selectedIds.size > 0 ? '선택된' : '전체'} ${targetIds.length}개 그룹의 상품에 AI 태그를 생성하시겠습니까?`)
@@ -959,248 +848,267 @@ export default function CollectorPage() {
                 }
               }}
               style={{
-                background: "rgba(255,140,0,0.1)", border: "1px solid rgba(255,140,0,0.35)",
-                color: "#FF8C00", padding: "0.3rem 0.75rem", borderRadius: "6px", fontSize: "0.8rem", cursor: "pointer",
+                background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.35)',
+                color: '#FF8C00', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
               }}
             >
               AI태그
             </button>
-            <select style={{
-              padding: "0.3rem 0.5rem", fontSize: "0.8rem",
-              background: "rgba(22,22,22,0.95)", border: "1px solid #353535",
-              color: "#C5C5C5", borderRadius: "6px", width: "auto",
-            }}>
-              <option>100개씩</option>
-              <option>50개씩</option>
-            </select>
-            <select
-              value={siteFilter}
-              onChange={(e) => setSiteFilter(e.target.value)}
-              style={{
-                padding: "0.3rem 0.5rem", fontSize: "0.8rem",
-                background: "rgba(22,22,22,0.95)", border: "1px solid #353535",
-                color: "#C5C5C5", borderRadius: "6px", width: "auto",
-              }}
-            >
-              <option value="">전체 사이트</option>
-              {allSites.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <select
-              value={aiFilter}
-              onChange={(e) => setAiFilter(e.target.value)}
-              style={{
-                padding: "0.3rem 0.5rem", fontSize: "0.8rem",
-                background: "rgba(22,22,22,0.95)", border: "1px solid #353535",
-                color: "#C5C5C5", borderRadius: "6px", width: "auto",
-              }}
-            >
-              <option value="">AI 전체</option>
-              <option value="ai_tag_yes">AI태그 적용</option>
-              <option value="ai_tag_no">AI태그 미적용</option>
-              <option value="ai_img_yes">AI이미지 적용</option>
-              <option value="ai_img_no">AI이미지 미적용</option>
-            </select>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              style={{
-                padding: "0.3rem 0.5rem", fontSize: "0.8rem",
-                background: "rgba(22,22,22,0.95)", border: "1px solid #353535",
-                color: "#C5C5C5", borderRadius: "6px", width: "auto",
-              }}
-            >
-              <option value="lastCollectedAt_desc">수집일 ▼</option>
-              <option value="lastCollectedAt_asc">수집일 ▲</option>
-              <option value="createdAt_desc">그룹생성일 ▼</option>
-              <option value="createdAt_asc">그룹생성일 ▲</option>
-            </select>
           </div>
         </div>
 
         <div style={{
-          marginBottom: "0.75rem", padding: "0.5rem 0.875rem", borderRadius: "8px",
-          background: "rgba(255,140,0,0.05)", border: "1px solid rgba(255,140,0,0.2)",
-          fontSize: "0.8rem", color: "#888",
+          marginBottom: '0.75rem', padding: '0.5rem 0.875rem', borderRadius: '8px',
+          background: 'rgba(255,140,0,0.05)', border: '1px solid rgba(255,140,0,0.2)',
+          fontSize: '0.8rem', color: '#888',
         }}>
-          ※ 정책 우선순위: <span style={{ color: "#FF8C00" }}>[상품별 개별정책]</span> → <span style={{ color: "#FF8C00" }}>[카테고리 정책]</span> 순으로 적용됩니다
+          ※ 정책 우선순위: <span style={{ color: '#FF8C00' }}>[상품별 개별정책]</span> → <span style={{ color: '#FF8C00' }}>[카테고리 정책]</span> 순으로 적용됩니다
         </div>
 
+        {/* 3-column 드릴다운 */}
         <div style={{
-          background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "8px",
-          overflow: "hidden",
+          background: 'rgba(30,30,30,0.5)', border: '1px solid #2D2D2D',
+          borderRadius: '8px', overflow: 'hidden', marginBottom: '1rem',
         }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ borderBottom: "2px solid #2D2D2D" }}>
-                <th style={{ width: "36px", padding: "0.75rem", textAlign: "center" }}>
-                  <input
-                    type="checkbox"
-                    checked={selectAll}
-                    onChange={(e) => handleSelectAll(e.target.checked)}
-                    style={{ accentColor: "#FF8C00", cursor: "pointer" }}
-                  />
-                </th>
-                <th style={{ padding: "0.75rem 0.75rem", textAlign: "center", fontSize: "0.8rem", color: "#999", fontWeight: 500 }}>사이트</th>
-                <th style={{ padding: "0.75rem 0.75rem", textAlign: "center", fontSize: "0.8rem", color: "#999", fontWeight: 500 }}>그룹이름</th>
-                <th style={{ padding: "0.75rem 0.75rem", textAlign: "center", fontSize: "0.8rem", color: "#999", fontWeight: 500 }}>링크</th>
-                <th style={{ padding: "0.75rem 0.75rem", textAlign: "center", fontSize: "0.8rem", color: "#999", fontWeight: 500 }}>정책적용</th>
-                <th style={{ padding: "0.75rem 0.75rem", textAlign: "center", fontSize: "0.8rem", color: "#999", fontWeight: 500 }}>스스 브랜드/제조사</th>
-                <th style={{ padding: "0.75rem 0.75rem", textAlign: "center", fontSize: "0.8rem", color: "#999", fontWeight: 500 }}>수집상품수</th>
-                <th style={{ padding: "0.75rem 0.75rem", textAlign: "center", fontSize: "0.8rem", color: "#999", fontWeight: 500 }}>요청상품수</th>
-                <th style={{ padding: "0.75rem 0.75rem", textAlign: "center", fontSize: "0.8rem", color: "#999", fontWeight: 500 }}>그룹생성일</th>
-                <th style={{ padding: "0.75rem 0.75rem", textAlign: "center", fontSize: "0.8rem", color: "#999", fontWeight: 500 }}>최근수집일</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={9} style={{ padding: "2rem", textAlign: "center", color: "#666" }}>로딩 중...</td>
-                </tr>
-              ) : displayedFilters.length === 0 ? (
-                <tr>
-                  <td colSpan={9} style={{ padding: "2rem", textAlign: "center", color: "#666" }}>
-                    수집하기를 실행하면 검색그룹이 자동으로 생성됩니다
-                  </td>
-                </tr>
-              ) : (
-                displayedFilters.map((f) => {
-                  const collectedCount = (f as unknown as Record<string, number>).collected_count ?? 0;
-                  return (
-                    <tr key={f.id} style={{ borderBottom: "1px solid #2D2D2D" }}>
-                      <td style={{ padding: "0.5rem 0.75rem", textAlign: "center" }}>
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(f.id)}
-                          onChange={(e) => handleCheckboxToggle(f.id, e.target.checked)}
-                          style={{ accentColor: "#FF8C00", cursor: "pointer" }}
-                        />
-                      </td>
-                      <td style={{ padding: "0.5rem 0.75rem" }}>
-                        <span style={{
-                          fontSize: "0.75rem",
-                          background: `${SITE_COLORS[f.source_site] || '#FF8C00'}15`,
-                          border: `1px solid ${SITE_COLORS[f.source_site] || '#FF8C00'}50`,
-                          color: SITE_COLORS[f.source_site] || '#FF8C00',
-                          padding: "0.125rem 0.5rem", borderRadius: "4px", cursor: "pointer",
-                        }}>
-                          {f.source_site}
+          {/* 헤더 */}
+          <div style={{ display: 'flex', borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
+            {['사이트', '폴더', '검색그룹'].map((h, i) => (
+              <div key={h} style={{
+                flex: 1, minWidth: '180px', padding: '0.625rem 0.75rem',
+                fontSize: '0.75rem', fontWeight: 600, color: '#888',
+                borderRight: i < 2 ? '1px solid #2D2D2D' : 'none',
+              }}>{h}</div>
+            ))}
+          </div>
+
+          {/* 컬럼 */}
+          <div style={{ display: 'flex' }}>
+            {/* 컬럼 1: 사이트 */}
+            <div style={colStyle}>
+              {tree.filter(n => n.is_folder).length === 0 ? (
+                <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>수집 그룹이 없습니다</div>
+              ) : tree.map(siteNode => (
+                <div
+                  key={siteNode.id}
+                  style={itemStyle(drillSite === siteNode.id)}
+                  onClick={() => { setDrillSite(siteNode.id); setDrillFolder(null); setDrillGroup(null) }}
+                >
+                  {siteNode.name}
+                  <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#555' }}>
+                    {(siteNode.children || []).length}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* 컬럼 2: 폴더 (선택된 사이트의 하위) */}
+            <div style={colStyle}>
+              {drillSite && (() => {
+                const siteNode = tree.find(n => n.id === drillSite)
+                const children = siteNode?.children || []
+                const folders = children.filter(c => c.is_folder)
+                const leafGroups = children.filter(c => !c.is_folder)
+                return (
+                  <>
+                    {folders.map(folder => (
+                      <div
+                        key={folder.id}
+                        style={itemStyle(drillFolder === folder.id)}
+                        onClick={() => { setDrillFolder(folder.id); setDrillGroup(null) }}
+                      >
+                        {folder.name}
+                        <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#555' }}>
+                          {(folder.children || []).length}
                         </span>
-                      </td>
-                      {/* 그룹이름 - 수정 가능 인풋 */}
-                      <td style={{ padding: "0.5rem 0.75rem" }}>
+                      </div>
+                    ))}
+                    {/* 사이트 바로 아래 리프 그룹 (폴더 없이) */}
+                    {leafGroups.map(g => (
+                      <div
+                        key={g.id}
+                        style={itemStyle(drillGroup === g.id)}
+                        onClick={() => { setDrillFolder(null); setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
+                      >
+                        {g.name}
+                        <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#FF8C00' }}>
+                          {g.collected_count ?? 0}
+                        </span>
+                      </div>
+                    ))}
+                    {folders.length === 0 && leafGroups.length === 0 && (
+                      <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>하위 항목 없음</div>
+                    )}
+                    {/* 폴더 추가 버튼 */}
+                    <div
+                      onClick={() => {
+                        if (siteNode) {
+                          setCreatingFolder({ parentId: siteNode.id, site: siteNode.source_site })
+                          setNewFolderName('')
+                        }
+                      }}
+                      style={{ padding: '0.4rem 0.75rem', fontSize: '0.75rem', color: '#555', cursor: 'pointer' }}
+                    >
+                      + 폴더 추가
+                    </div>
+                    {creatingFolder?.parentId === drillSite && (
+                      <div style={{ padding: '0.25rem 0.75rem' }}>
                         <input
-                          key={f.id + f.name}
-                          defaultValue={f.name}
-                          onBlur={(e) => {
-                            if (e.target.value !== f.name) handleUpdateGroupName(f.id, e.target.value);
+                          autoFocus
+                          value={newFolderName}
+                          onChange={e => setNewFolderName(e.target.value)}
+                          onKeyDown={async e => {
+                            if (e.key === 'Enter' && newFolderName.trim()) {
+                              await collectorApi.createFolder(creatingFolder.site, newFolderName.trim(), creatingFolder.parentId)
+                              setCreatingFolder(null)
+                              loadTree()
+                            }
+                            if (e.key === 'Escape') setCreatingFolder(null)
                           }}
+                          placeholder="폴더명 입력"
                           style={{
-                            background: "transparent", border: "1px solid #3D3D3D",
-                            color: "#E5E5E5", fontSize: "0.8125rem", padding: "0.15rem 0.4rem",
-                            borderRadius: "4px", width: "100%", outline: "none",
-                            transition: "border-color 0.15s",
+                            background: '#222', border: '1px solid #444', color: '#ccc',
+                            padding: '3px 8px', borderRadius: '4px', fontSize: '0.75rem', width: '100%',
                           }}
-                          onFocus={(e) => { e.currentTarget.style.borderColor = "#FF8C00"; }}
-                          onBlurCapture={(e) => { e.currentTarget.style.borderColor = "#3D3D3D"; }}
                         />
-                      </td>
-                      <td style={{ padding: "0.5rem 0.75rem", maxWidth: "360px" }}>
-                        {f.keyword ? (
-                          <a
-                            href={f.keyword}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{
-                              color: "#7EB5D0", fontSize: "0.75rem", fontFamily: "monospace",
-                              display: "block", overflow: "hidden", textOverflow: "ellipsis",
-                              whiteSpace: "nowrap", maxWidth: "320px",
-                              textDecoration: "underline", textUnderlineOffset: "2px",
-                            }}
-                          >
-                            {f.keyword}
-                          </a>
-                        ) : (
-                          <span style={{ color: "#555", fontSize: "0.75rem" }}>-</span>
-                        )}
-                      </td>
-                      <td style={{ padding: "0.5rem 0.75rem" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                          <select
-                            defaultValue={(f as unknown as Record<string, string>).applied_policy_id || ""}
-                            onChange={(e) => handlePolicyApply(f.id, e.target.value)}
-                            style={{
-                              width: "150px", padding: "0.3rem 0.5rem", fontSize: "0.8125rem",
-                              background: "rgba(22,22,22,0.95)", border: "1px solid #353535",
-                              color: "#C5C5C5", borderRadius: "5px",
-                            }}
-                          >
-                            <option value="">정책 선택</option>
-                            {policies.map((p) => (
-                              <option key={p.id} value={p.id}>{p.name}</option>
-                            ))}
-                          </select>
-                          {((f as unknown as Record<string, number>).ai_tagged_count ?? 0) > 0 && (
-                            <span style={{ fontSize: '0.62rem', padding: '1px 6px', background: 'rgba(255,140,0,0.12)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '3px', color: '#FF8C00', fontWeight: 600, whiteSpace: 'nowrap' }}>AI</span>
-                          )}
-                        </div>
-                      </td>
-                      {/* 스스 브랜드/제조사 ID (자동 매핑) */}
-                      <td style={{ padding: "0.5rem 0.75rem", fontSize: "0.72rem", color: "#888" }}>
-                        {f.ss_brand_name ? (
-                          <span>{f.ss_brand_name}<span style={{ color: '#555' }}>({f.ss_brand_id})</span></span>
-                        ) : <span style={{ color: '#444' }}>전송 시 자동</span>}
-                      </td>
-                      {/* 수집상품수 - 클릭 시 상품관리 이동 */}
-                      <td style={{ padding: "0.5rem 0.75rem", textAlign: "center", fontSize: "0.8125rem", color: "#C5C5C5" }}>
-                        <span
-                          onClick={() => handleGoToProducts(f)}
-                          style={{
-                            color: collectedCount > 0 ? "#FF8C00" : "#555",
-                            fontWeight: 600,
-                            cursor: collectedCount > 0 ? "pointer" : "default",
-                            textDecoration: collectedCount > 0 ? "underline" : "none",
-                            textUnderlineOffset: "2px",
-                          }}
-                        >
-                          {collectedCount}
-                        </span>개
-                      </td>
-                      {/* 요청상품수 - 수정 가능 인풋 */}
-                      <td style={{ padding: "0.5rem 0.75rem", textAlign: "center" }}>
-                        <input
-                          key={f.id + (f.requested_count ?? 100)}
-                          type="text"
-                          inputMode="numeric"
-                          pattern="[0-9]*"
-                          defaultValue={f.requested_count ?? 100}
-                          onBlur={(e) => {
-                            const v = parseInt(e.target.value, 10);
-                            if (!isNaN(v) && v !== (f.requested_count ?? 100)) handleUpdateRequestedCount(f.id, v);
-                          }}
-                          style={{
-                            width: "60px", textAlign: "center",
-                            background: "transparent", border: "1px solid #3D3D3D",
-                            color: "#4C9AFF", fontSize: "0.8125rem", fontWeight: 600,
-                            padding: "0.15rem 0.25rem", borderRadius: "4px", outline: "none",
-                            transition: "border-color 0.15s",
-                          }}
-                          onFocus={(e) => { e.currentTarget.style.borderColor = "#4C9AFF"; }}
-                          onBlurCapture={(e) => { e.currentTarget.style.borderColor = "#3D3D3D"; }}
-                        />
-                      </td>
-                      <td style={{ padding: "0.5rem 0.75rem", textAlign: "center" }}>
-                        <span style={{ fontSize: "0.72rem", color: "#888" }}>{fmtDate(f.created_at)}</span>
-                      </td>
-                      <td style={{ padding: "0.5rem 0.75rem", textAlign: "center" }}>
-                        <span style={{ fontSize: "0.72rem", color: "#888" }}>{fmtDate(f.last_collected_at)}</span>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
+
+            {/* 컬럼 3: 폴더 내 그룹 */}
+            <div style={{ ...colStyle, borderRight: 'none' }}>
+              {drillFolder && (() => {
+                const siteNode = tree.find(n => n.id === drillSite)
+                const folderNode = (siteNode?.children || []).find(c => c.id === drillFolder)
+                const groups = (folderNode?.children || []).filter(c => !c.is_folder)
+                return groups.length > 0 ? groups.map(g => (
+                  <div
+                    key={g.id}
+                    style={itemStyle(drillGroup === g.id)}
+                    onClick={() => { setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
+                  >
+                    {g.name}
+                    <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#FF8C00' }}>
+                      {g.collected_count ?? 0}
+                    </span>
+                  </div>
+                )) : (
+                  <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>그룹 선택</div>
+                )
+              })()}
+            </div>
+          </div>
         </div>
+
+        {/* 선택된 그룹 상세 패널 */}
+        {drillGroup && (() => {
+          const f = filters.find(fl => fl.id === drillGroup)
+          if (!f) return null
+          const collectedCount = (f as unknown as Record<string, number>).collected_count ?? 0
+          return (
+            <div style={{
+              background: 'rgba(30,30,30,0.5)', border: '1px solid #2D2D2D',
+              borderRadius: '8px', padding: '1rem', marginBottom: '1rem',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem' }}>
+                <input
+                  key={f.id + f.name}
+                  defaultValue={f.name}
+                  onBlur={(e) => { if (e.target.value !== f.name) handleUpdateGroupName(f.id, e.target.value) }}
+                  style={{
+                    background: 'transparent', border: '1px solid #3D3D3D', color: '#E5E5E5',
+                    fontSize: '1rem', fontWeight: 600, padding: '0.3rem 0.5rem', borderRadius: '4px',
+                    flex: 1, outline: 'none',
+                  }}
+                  onFocus={e => { e.currentTarget.style.borderColor = '#FF8C00' }}
+                  onBlurCapture={e => { e.currentTarget.style.borderColor = '#3D3D3D' }}
+                />
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(f.id)}
+                  onChange={(e) => handleCheckboxToggle(f.id, e.target.checked)}
+                  style={{ accentColor: '#FF8C00', cursor: 'pointer', width: '16px', height: '16px' }}
+                />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', fontSize: '0.8125rem' }}>
+                <div>
+                  <span style={{ color: '#666', fontSize: '0.72rem' }}>링크</span>
+                  <div>{f.keyword ? (
+                    <a href={f.keyword} target="_blank" rel="noopener noreferrer" style={{
+                      color: '#7EB5D0', fontSize: '0.75rem', display: 'block', overflow: 'hidden',
+                      textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '300px',
+                    }}>{f.keyword}</a>
+                  ) : <span style={{ color: '#555' }}>-</span>}</div>
+                </div>
+                <div>
+                  <span style={{ color: '#666', fontSize: '0.72rem' }}>정책</span>
+                  <div>
+                    <select
+                      defaultValue={f.applied_policy_id || ''}
+                      onChange={(e) => handlePolicyApply(f.id, e.target.value)}
+                      style={{
+                        width: '150px', padding: '0.25rem 0.4rem', fontSize: '0.8125rem',
+                        background: 'rgba(22,22,22,0.95)', border: '1px solid #353535',
+                        color: '#C5C5C5', borderRadius: '5px',
+                      }}
+                    >
+                      <option value="">정책 선택</option>
+                      {policies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: '#666', fontSize: '0.72rem' }}>스스 브랜드</span>
+                  <div style={{ color: '#888' }}>
+                    {f.ss_brand_name ? `${f.ss_brand_name}(${f.ss_brand_id})` : '전송 시 자동'}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: '#666', fontSize: '0.72rem' }}>수집상품수</span>
+                  <div>
+                    <span
+                      onClick={() => handleGoToProducts(f)}
+                      style={{
+                        color: collectedCount > 0 ? '#FF8C00' : '#555', fontWeight: 600,
+                        cursor: collectedCount > 0 ? 'pointer' : 'default',
+                        textDecoration: collectedCount > 0 ? 'underline' : 'none',
+                      }}
+                    >{collectedCount}</span>개
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: '#666', fontSize: '0.72rem' }}>요청상품수</span>
+                  <div>
+                    <input
+                      key={f.id + (f.requested_count ?? 100)}
+                      type="text" inputMode="numeric" pattern="[0-9]*"
+                      defaultValue={f.requested_count ?? 100}
+                      onBlur={(e) => {
+                        const v = parseInt(e.target.value, 10)
+                        if (!isNaN(v) && v !== (f.requested_count ?? 100)) handleUpdateRequestedCount(f.id, v)
+                      }}
+                      style={{
+                        width: '60px', textAlign: 'center', background: 'transparent',
+                        border: '1px solid #3D3D3D', color: '#4C9AFF', fontSize: '0.8125rem',
+                        fontWeight: 600, padding: '0.15rem 0.25rem', borderRadius: '4px', outline: 'none',
+                      }}
+                      onFocus={e => { e.currentTarget.style.borderColor = '#4C9AFF' }}
+                      onBlurCapture={e => { e.currentTarget.style.borderColor = '#3D3D3D' }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <span style={{ color: '#666', fontSize: '0.72rem' }}>생성일 / 최근수집</span>
+                  <div style={{ color: '#888', fontSize: '0.72rem' }}>
+                    {fmtDate(f.created_at)} / {fmtDate(f.last_collected_at)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       {/* 갱신 결과 모달 */}
@@ -1372,7 +1280,6 @@ export default function CollectorPage() {
           </div>
         </div>
       )}
-    </div>
     </div>
     </div>
   );
