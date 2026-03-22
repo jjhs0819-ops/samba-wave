@@ -117,10 +117,6 @@ export default function CollectorPage() {
   // 트리 사이드바
   const [tree, setTree] = useState<SambaSearchFilter[]>([])
 
-  // 드릴다운 선택 상태
-  const [drillSite, setDrillSite] = useState<string | null>(null)
-  const [drillBrand, setDrillBrand] = useState<string | null>(null)
-  const [drillGroup, setDrillGroup] = useState<string | null>(null)
 
   // Group table filters
   const [siteFilter, setSiteFilter] = useState("");
@@ -464,61 +460,6 @@ export default function CollectorPage() {
     return { brand: rest, category: '' }
   }
 
-  // 선택된 사이트의 브랜드 목록
-  const getBrands = () => {
-    if (!drillSite) return []
-    const siteNode = tree.find(n => n.id === drillSite)
-    const leafGroups = getAllLeafGroups(siteNode)
-    const brandSet = new Map<string, number>()
-    leafGroups.forEach(g => {
-      const { brand } = parseGroupName(g.name, siteNode?.source_site || '')
-      brandSet.set(brand, (brandSet.get(brand) || 0) + 1)
-    })
-    return Array.from(brandSet.entries()).map(([brand, count]) => ({ brand, count }))
-  }
-
-  // 선택된 브랜드의 카테고리 목록
-  const getCategories = () => {
-    if (!drillSite || !drillBrand) return []
-    const siteNode = tree.find(n => n.id === drillSite)
-    const leafGroups = getAllLeafGroups(siteNode)
-    return leafGroups.filter(g => {
-      const { brand } = parseGroupName(g.name, siteNode?.source_site || '')
-      return brand === drillBrand
-    })
-  }
-
-  // 사이트 노드 하위의 모든 리프 그룹 수집 (폴더 구조 무시)
-  const getAllLeafGroups = (node: SambaSearchFilter | undefined): SambaSearchFilter[] => {
-    if (!node) return []
-    const result: SambaSearchFilter[] = []
-    const walk = (n: SambaSearchFilter) => {
-      if (!n.is_folder) result.push(n)
-      ;(n.children || []).forEach(walk)
-    }
-    ;(node.children || []).forEach(walk)
-    return result
-  }
-
-  // 드릴다운 스타일 헬퍼
-  const colStyle = {
-    flex: 1,
-    minWidth: '180px',
-    borderRight: '1px solid #2D2D2D',
-    maxHeight: '320px',
-    overflowY: 'auto' as const,
-  }
-  const itemStyle = (isSelected: boolean) => ({
-    padding: '0.5rem 0.75rem',
-    fontSize: '0.8125rem',
-    color: isSelected ? '#FF8C00' : '#C5C5C5',
-    cursor: 'pointer' as const,
-    background: isSelected ? 'rgba(255,140,0,0.08)' : 'transparent',
-    transition: 'background 0.15s',
-    display: 'flex' as const,
-    alignItems: 'center' as const,
-    gap: '4px',
-  })
 
   return (
     <div style={{ color: '#E5E5E5' }}>
@@ -923,202 +864,117 @@ export default function CollectorPage() {
           ※ 정책 우선순위: <span style={{ color: '#FF8C00' }}>[상품별 개별정책]</span> → <span style={{ color: '#FF8C00' }}>[카테고리 정책]</span> 순으로 적용됩니다
         </div>
 
-        {/* 3-column 드릴다운 */}
+        {/* 검색그룹 테이블 — 사이트/브랜드/카테고리/링크/정책/스스브랜드/수집상품수/요청상품수/생성일·최근수집 */}
         <div style={{
           background: 'rgba(30,30,30,0.5)', border: '1px solid #2D2D2D',
-          borderRadius: '8px', overflow: 'hidden', marginBottom: '1rem',
+          borderRadius: '8px', overflow: 'auto', marginBottom: '1rem',
         }}>
-          {/* 헤더 */}
-          <div style={{ display: 'flex', borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
-            {['사이트', '브랜드', '카테고리'].map((h, i) => (
-              <div key={h} style={{
-                flex: 1, minWidth: '180px', padding: '0.625rem 0.75rem',
-                fontSize: '0.75rem', fontWeight: 600, color: '#888',
-                borderRight: i < 2 ? '1px solid #2D2D2D' : 'none',
-              }}>{h}</div>
-            ))}
-          </div>
-
-          {/* 컬럼 */}
-          <div style={{ display: 'flex' }}>
-            {/* 컬럼 1: 사이트 */}
-            <div style={colStyle}>
-              {tree.length === 0 ? (
-                <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>수집 그룹이 없습니다</div>
-              ) : tree.map(siteNode => (
-                <div
-                  key={siteNode.id}
-                  style={itemStyle(drillSite === siteNode.id)}
-                  onClick={() => { setDrillSite(siteNode.id); setDrillBrand(null); setDrillGroup(null) }}
-                  onMouseEnter={e => { if (drillSite !== siteNode.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                  onMouseLeave={e => { if (drillSite !== siteNode.id) e.currentTarget.style.background = 'transparent' }}
-                >
-                  {siteNode.name}
-                  <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#555' }}>
-                    {getAllLeafGroups(siteNode).length}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            {/* 컬럼 2: 브랜드 (그룹명에서 파싱) */}
-            <div style={colStyle}>
-              {drillSite ? getBrands().map(({ brand, count }) => (
-                <div
-                  key={brand}
-                  style={itemStyle(drillBrand === brand)}
-                  onClick={() => { setDrillBrand(brand); setDrillGroup(null) }}
-                  onMouseEnter={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                  onMouseLeave={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'transparent' }}
-                >
-                  {brand}
-                  <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#555' }}>
-                    {count}
-                  </span>
-                </div>
-              )) : (
-                <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>사이트 선택</div>
-              )}
-            </div>
-
-            {/* 컬럼 3: 카테고리 (해당 브랜드의 그룹) */}
-            <div style={{ ...colStyle, borderRight: 'none' }}>
-              {drillBrand ? (() => {
-                const cats = getCategories()
-                const siteNode = tree.find(n => n.id === drillSite)
-                return cats.length > 0 ? cats.map(g => {
-                  const { category } = parseGroupName(g.name, siteNode?.source_site || '')
-                  return (
-                    <div
-                      key={g.id}
-                      style={itemStyle(drillGroup === g.id)}
-                      onClick={() => { setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
-                      onMouseEnter={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                      onMouseLeave={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'transparent' }}
-                    >
-                      {category || g.name}
-                      <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: '#FF8C00' }}>
-                        {g.collected_count ?? 0}
-                      </span>
-                    </div>
-                  )
-                }) : (
-                  <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>항목 없음</div>
-                )
-              })() : (
-                <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>브랜드 선택</div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* 선택된 그룹 상세 패널 */}
-        {drillGroup && (() => {
-          const f = filters.find(fl => fl.id === drillGroup)
-          if (!f) return null
-          const collectedCount = (f as unknown as Record<string, number>).collected_count ?? 0
-          return (
-            <div style={{
-              background: 'rgba(30,30,30,0.5)', border: '1px solid #2D2D2D',
-              borderRadius: '8px', padding: '1rem', marginBottom: '1rem',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem' }}>
-                <input
-                  key={f.id + f.name}
-                  defaultValue={f.name}
-                  onBlur={(e) => { if (e.target.value !== f.name) handleUpdateGroupName(f.id, e.target.value) }}
-                  style={{
-                    background: 'transparent', border: '1px solid #3D3D3D', color: '#E5E5E5',
-                    fontSize: '1rem', fontWeight: 600, padding: '0.3rem 0.5rem', borderRadius: '4px',
-                    flex: 1, outline: 'none',
-                  }}
-                  onFocus={e => { e.currentTarget.style.borderColor = '#FF8C00' }}
-                  onBlurCapture={e => { e.currentTarget.style.borderColor = '#3D3D3D' }}
-                />
-                <input
-                  type="checkbox"
-                  checked={selectedIds.has(f.id)}
-                  onChange={(e) => handleCheckboxToggle(f.id, e.target.checked)}
-                  style={{ accentColor: '#FF8C00', cursor: 'pointer', width: '16px', height: '16px' }}
-                />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', fontSize: '0.8125rem' }}>
-                <div>
-                  <span style={{ color: '#666', fontSize: '0.72rem' }}>링크</span>
-                  <div>{f.keyword ? (
-                    <a href={f.keyword} target="_blank" rel="noopener noreferrer" style={{
-                      color: '#7EB5D0', fontSize: '0.75rem', display: 'block', overflow: 'hidden',
-                      textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '300px',
-                    }}>{f.keyword}</a>
-                  ) : <span style={{ color: '#555' }}>-</span>}</div>
-                </div>
-                <div>
-                  <span style={{ color: '#666', fontSize: '0.72rem' }}>정책</span>
-                  <div>
-                    <select
-                      defaultValue={f.applied_policy_id || ''}
-                      onChange={(e) => handlePolicyApply(f.id, e.target.value)}
-                      style={{
-                        width: '150px', padding: '0.25rem 0.4rem', fontSize: '0.8125rem',
-                        background: 'rgba(22,22,22,0.95)', border: '1px solid #353535',
-                        color: '#C5C5C5', borderRadius: '5px',
-                      }}
-                    >
-                      <option value="">정책 선택</option>
-                      {policies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <span style={{ color: '#666', fontSize: '0.72rem' }}>스스 브랜드</span>
-                  <div style={{ color: '#888' }}>
-                    {f.ss_brand_name ? `${f.ss_brand_name}(${f.ss_brand_id})` : '전송 시 자동'}
-                  </div>
-                </div>
-                <div>
-                  <span style={{ color: '#666', fontSize: '0.72rem' }}>수집상품수</span>
-                  <div>
-                    <span
-                      onClick={() => handleGoToProducts(f)}
-                      style={{
-                        color: collectedCount > 0 ? '#FF8C00' : '#555', fontWeight: 600,
+          <table style={{ width: '100%', borderCollapse: 'collapse', whiteSpace: 'nowrap' }}>
+            <thead>
+              <tr style={{ borderBottom: '2px solid #2D2D2D' }}>
+                <th style={{ width: '36px', padding: '0.6rem 0.5rem', textAlign: 'center' }}>
+                  <input type="checkbox" checked={selectAll} onChange={e => handleSelectAll(e.target.checked)} style={{ accentColor: '#FF8C00', cursor: 'pointer' }} />
+                </th>
+                {['사이트', '브랜드', '카테고리', '링크', '정책', '스스브랜드', '수집', '요청', '생성일/최근수집'].map(h => (
+                  <th key={h} style={{ padding: '0.6rem 0.5rem', textAlign: 'center', fontSize: '0.75rem', color: '#888', fontWeight: 600 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={10} style={{ padding: '2rem', textAlign: 'center', color: '#666' }}>로딩 중...</td></tr>
+              ) : displayedFilters.length === 0 ? (
+                <tr><td colSpan={10} style={{ padding: '2rem', textAlign: 'center', color: '#666' }}>수집하기를 실행하면 검색그룹이 자동으로 생성됩니다</td></tr>
+              ) : displayedFilters.map(f => {
+                const collectedCount = (f as unknown as Record<string, number>).collected_count ?? 0
+                const siteNode = tree.find(n => n.source_site === f.source_site)
+                const { brand, category } = parseGroupName(f.name, f.source_site)
+                return (
+                  <tr key={f.id} style={{ borderBottom: '1px solid #2D2D2D' }}>
+                    {/* 체크박스 */}
+                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center' }}>
+                      <input type="checkbox" checked={selectedIds.has(f.id)} onChange={e => handleCheckboxToggle(f.id, e.target.checked)} style={{ accentColor: '#FF8C00', cursor: 'pointer' }} />
+                    </td>
+                    {/* 사이트 */}
+                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center' }}>
+                      <span style={{
+                        fontSize: '0.72rem',
+                        background: `${SITE_COLORS[f.source_site] || '#FF8C00'}15`,
+                        border: `1px solid ${SITE_COLORS[f.source_site] || '#FF8C00'}50`,
+                        color: SITE_COLORS[f.source_site] || '#FF8C00',
+                        padding: '0.1rem 0.4rem', borderRadius: '4px',
+                      }}>{f.source_site}</span>
+                    </td>
+                    {/* 브랜드 */}
+                    <td style={{ padding: '0.4rem 0.5rem', fontSize: '0.8rem', color: '#E5E5E5', fontWeight: 500 }}>{brand}</td>
+                    {/* 카테고리 */}
+                    <td style={{ padding: '0.4rem 0.5rem', fontSize: '0.8rem', color: '#C5C5C5' }}>{category || '-'}</td>
+                    {/* 링크 */}
+                    <td style={{ padding: '0.4rem 0.5rem', maxWidth: '200px' }}>
+                      {f.keyword ? (
+                        <a href={f.keyword} target="_blank" rel="noopener noreferrer" style={{
+                          color: '#7EB5D0', fontSize: '0.72rem', fontFamily: 'monospace',
+                          display: 'block', overflow: 'hidden', textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap', maxWidth: '180px', textDecoration: 'underline', textUnderlineOffset: '2px',
+                        }}>{f.keyword}</a>
+                      ) : <span style={{ color: '#555', fontSize: '0.72rem' }}>-</span>}
+                    </td>
+                    {/* 정책 */}
+                    <td style={{ padding: '0.4rem 0.5rem' }}>
+                      <select
+                        defaultValue={(f as unknown as Record<string, string>).applied_policy_id || ''}
+                        onChange={e => handlePolicyApply(f.id, e.target.value)}
+                        style={{
+                          width: '120px', padding: '0.2rem 0.3rem', fontSize: '0.75rem',
+                          background: 'rgba(22,22,22,0.95)', border: '1px solid #353535',
+                          color: '#C5C5C5', borderRadius: '4px',
+                        }}
+                      >
+                        <option value="">정책 선택</option>
+                        {policies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </td>
+                    {/* 스스브랜드 */}
+                    <td style={{ padding: '0.4rem 0.5rem', fontSize: '0.7rem', color: '#888' }}>
+                      {f.ss_brand_name ? <span>{f.ss_brand_name}<span style={{ color: '#555' }}>({f.ss_brand_id})</span></span> : <span style={{ color: '#444' }}>자동</span>}
+                    </td>
+                    {/* 수집상품수 */}
+                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center' }}>
+                      <span onClick={() => handleGoToProducts(f)} style={{
+                        color: collectedCount > 0 ? '#FF8C00' : '#555', fontWeight: 600, fontSize: '0.8rem',
                         cursor: collectedCount > 0 ? 'pointer' : 'default',
-                        textDecoration: collectedCount > 0 ? 'underline' : 'none',
-                      }}
-                    >{collectedCount}</span>개
-                  </div>
-                </div>
-                <div>
-                  <span style={{ color: '#666', fontSize: '0.72rem' }}>요청상품수</span>
-                  <div>
-                    <input
-                      key={f.id + (f.requested_count ?? 100)}
-                      type="text" inputMode="numeric" pattern="[0-9]*"
-                      defaultValue={f.requested_count ?? 100}
-                      onBlur={(e) => {
-                        const v = parseInt(e.target.value, 10)
-                        if (!isNaN(v) && v !== (f.requested_count ?? 100)) handleUpdateRequestedCount(f.id, v)
-                      }}
-                      style={{
-                        width: '60px', textAlign: 'center', background: 'transparent',
-                        border: '1px solid #3D3D3D', color: '#4C9AFF', fontSize: '0.8125rem',
-                        fontWeight: 600, padding: '0.15rem 0.25rem', borderRadius: '4px', outline: 'none',
-                      }}
-                      onFocus={e => { e.currentTarget.style.borderColor = '#4C9AFF' }}
-                      onBlurCapture={e => { e.currentTarget.style.borderColor = '#3D3D3D' }}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <span style={{ color: '#666', fontSize: '0.72rem' }}>생성일 / 최근수집</span>
-                  <div style={{ color: '#888', fontSize: '0.72rem' }}>
-                    {fmtDate(f.created_at)} / {fmtDate(f.last_collected_at)}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )
-        })()}
+                        textDecoration: collectedCount > 0 ? 'underline' : 'none', textUnderlineOffset: '2px',
+                      }}>{collectedCount}</span>
+                    </td>
+                    {/* 요청상품수 */}
+                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center' }}>
+                      <input
+                        key={f.id + (f.requested_count ?? 100)}
+                        type="text" inputMode="numeric" pattern="[0-9]*"
+                        defaultValue={f.requested_count ?? 100}
+                        onBlur={e => {
+                          const v = parseInt(e.target.value, 10)
+                          if (!isNaN(v) && v !== (f.requested_count ?? 100)) handleUpdateRequestedCount(f.id, v)
+                        }}
+                        style={{
+                          width: '50px', textAlign: 'center', background: 'transparent',
+                          border: '1px solid #3D3D3D', color: '#4C9AFF', fontSize: '0.78rem',
+                          fontWeight: 600, padding: '0.1rem 0.2rem', borderRadius: '4px', outline: 'none',
+                        }}
+                        onFocus={e => { e.currentTarget.style.borderColor = '#4C9AFF' }}
+                        onBlurCapture={e => { e.currentTarget.style.borderColor = '#3D3D3D' }}
+                      />
+                    </td>
+                    {/* 생성일/최근수집 */}
+                    <td style={{ padding: '0.4rem 0.5rem', textAlign: 'center', fontSize: '0.68rem', color: '#888' }}>
+                      {fmtDate(f.created_at)}<br />{fmtDate(f.last_collected_at)}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* 갱신 결과 모달 */}
