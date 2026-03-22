@@ -583,88 +583,55 @@ export default function ProductsPage() {
         background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "8px",
         padding: "1rem", marginBottom: "1rem", fontSize: "0.875rem",
       }}>
-        {/* Row 1: Date + site + status filters */}
-        <div style={{ display: "flex", gap: "0.75rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <span style={{ color: "#888", whiteSpace: "nowrap", fontSize: "0.8125rem" }}>등록일자</span>
-            <input type="date" style={{
-              width: "140px", padding: "0.375rem 0.5rem", fontSize: "0.8125rem",
-              background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "6px",
-              color: "#E5E5E5",
-            }} />
-            <span style={{ color: "#888" }}>~</span>
-            <input type="date" style={{
-              width: "140px", padding: "0.375rem 0.5rem", fontSize: "0.8125rem",
-              background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "6px",
-              color: "#E5E5E5",
-            }} />
-          </div>
-          <select
-            value={siteFilter}
-            onChange={(e) => setSiteFilter(e.target.value)}
-            style={{
-              padding: "0.375rem 0.625rem", fontSize: "0.8125rem",
-              background: "rgba(22,22,22,0.95)", border: "1px solid #353535",
-              color: "#C5C5C5", borderRadius: "6px", width: "auto",
-            }}
-          >
+        {/* 검색 조건 1줄 배치 */}
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+          <span style={{ color: "#888", whiteSpace: "nowrap", fontSize: "0.8125rem" }}>등록일자</span>
+          <input type="date" style={{
+            width: "130px", padding: "0.3rem 0.4rem", fontSize: "0.78rem",
+            background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "6px",
+            color: "#E5E5E5",
+          }} />
+          <span style={{ color: "#888" }}>~</span>
+          <input type="date" style={{
+            width: "130px", padding: "0.3rem 0.4rem", fontSize: "0.78rem",
+            background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "6px",
+            color: "#E5E5E5",
+          }} />
+          <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)}
+            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "rgba(22,22,22,0.95)", border: "1px solid #353535", color: "#C5C5C5", borderRadius: "6px" }}>
             <option value="">소싱사이트</option>
             {allSites.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            style={{
-              padding: "0.375rem 0.625rem", fontSize: "0.8125rem",
-              background: "rgba(22,22,22,0.95)", border: "1px solid #353535",
-              color: "#C5C5C5", borderRadius: "6px", width: "auto",
-            }}
-          >
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "rgba(22,22,22,0.95)", border: "1px solid #353535", color: "#C5C5C5", borderRadius: "6px" }}>
             <option value="">판매현황</option>
             <option value="registered">마켓등록</option>
             <option value="collected">미등록</option>
             <option value="has_orders">판매이력</option>
           </select>
-        </div>
-        {/* Row 2: Search type + input + search button */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "nowrap", marginTop: "0.5rem" }}>
-          <select
-            value={searchType}
-            onChange={(e) => setSearchType(e.target.value)}
-            style={{
-              padding: "0.375rem 0.5rem", fontSize: "0.8125rem",
-              background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px",
-              color: "#C5C5C5", width: "120px", flexShrink: 0,
-            }}
-          >
+          <select value={searchType} onChange={(e) => setSearchType(e.target.value)}
+            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px", color: "#C5C5C5", width: "90px" }}>
             <option value="name">상품명</option>
             <option value="filter">그룹</option>
             <option value="no">상품번호</option>
             <option value="policy">정책</option>
           </select>
-          <input
-            type="text"
-            placeholder="검색어를 입력하세요."
-            value={searchQ}
+          <input type="text" placeholder="검색어" value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
             style={{
-              flex: 1, minWidth: "160px", maxWidth: "260px",
-              padding: "0.375rem 0.625rem", fontSize: "0.8125rem",
+              flex: 1, minWidth: "120px", maxWidth: "200px",
+              padding: "0.3rem 0.5rem", fontSize: "0.78rem",
               background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px",
               color: "#C5C5C5", outline: "none",
             }}
           />
-          <button
-            onClick={handleSearch}
+          <button onClick={handleSearch}
             style={{
               background: "rgba(255,140,0,0.15)", border: "1px solid #FF8C00",
-              color: "#FF8C00", padding: "0.375rem 0.75rem", borderRadius: "6px",
-              fontSize: "0.8125rem", whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer",
-            }}
-          >
-            검색
-          </button>
+              color: "#FF8C00", padding: "0.3rem 0.625rem", borderRadius: "6px",
+              fontSize: "0.78rem", whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer",
+            }}>검색</button>
         </div>
       </div>
 
@@ -704,19 +671,6 @@ export default function ProductsPage() {
       {/* AI 이미지 변환 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-          <input type="checkbox" checked={aiImgScope.thumbnail} onChange={() => setAiImgScope(p => ({ ...p, thumbnail: !p.thumbnail }))} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
-          <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>대표이미지</span>
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-          <input type="checkbox" checked={aiImgScope.additional} onChange={() => setAiImgScope(p => ({ ...p, additional: !p.additional }))} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
-          <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>추가이미지</span>
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-          <input type="checkbox" checked={aiImgScope.detail} onChange={() => setAiImgScope(p => ({ ...p, detail: !p.detail }))} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
-          <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>상세이미지</span>
-        </label>
-        <span style={{ color: '#2D2D2D' }}>|</span>
         <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
           <option value="background">배경 제거</option>
           <option value="scene">연출컷</option>
@@ -746,20 +700,16 @@ export default function ProductsPage() {
             </optgroup>
           </select>
         )}
-        <span style={{ color: '#2D2D2D' }}>|</span>
-        <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>
-          예상 <span style={{ color: '#FFB84D', fontWeight: 700 }}>₩{((aiImgScope.thumbnail ? 1 : 0) + (aiImgScope.additional ? 4 : 0) + (aiImgScope.detail ? 10 : 0)) * selectedIds.size * 3}</span>
-          <span style={{ color: '#888' }}> ({selectedIds.size}개 상품)</span>
-        </span>
+        <span style={{ fontSize: '0.78rem', color: '#888' }}>({selectedIds.size}개 상품)</span>
         <button
           onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            if (!aiImgScope.thumbnail && !aiImgScope.additional && !aiImgScope.detail) { showAlert('변환할 이미지 범위를 선택해주세요'); return }
             const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 이미지를 변환하시겠습니까?`)
             if (!ok) return
             setAiImgTransforming(true)
             try {
-              const res = await proxyApi.transformImages([...selectedIds], aiImgScope, aiImgMode, aiModelPreset)
+              const autoScope = { thumbnail: true, additional: true, detail: true }
+              const res = await proxyApi.transformImages([...selectedIds], autoScope, aiImgMode, aiModelPreset)
               if (res.success) {
                 showAlert(res.message, 'success')
                 load()
@@ -1789,42 +1739,42 @@ function ProductCard({
 
               </div>
             </div>
+
+            {/* 이미지 확대 팝업 */}
+            {zoomImg && (
+              <div
+                onClick={() => setZoomImg(null)}
+                style={{
+                  position: 'fixed', inset: 0, zIndex: 10000,
+                  background: 'rgba(0,0,0,0.85)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer',
+                }}
+              >
+                <img
+                  src={zoomImg}
+                  alt=""
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    maxWidth: '90vw', maxHeight: '90vh',
+                    objectFit: 'contain', borderRadius: '8px',
+                    cursor: 'default',
+                  }}
+                />
+                <button
+                  onClick={() => setZoomImg(null)}
+                  style={{
+                    position: 'absolute', top: '20px', right: '20px',
+                    background: 'rgba(0,0,0,0.5)', border: '1px solid #555',
+                    color: '#ccc', fontSize: '1.2rem', padding: '4px 10px',
+                    borderRadius: '6px', cursor: 'pointer',
+                  }}
+                >✕</button>
+              </div>
+            )}
           </div>
         )
       })()}
-
-      {/* 이미지 확대 팝업 */}
-      {zoomImg && (
-        <div
-          onClick={() => setZoomImg(null)}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 10000,
-            background: 'rgba(0,0,0,0.85)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer',
-          }}
-        >
-          <img
-            src={zoomImg}
-            alt=""
-            onClick={e => e.stopPropagation()}
-            style={{
-              maxWidth: '90vw', maxHeight: '90vh',
-              objectFit: 'contain', borderRadius: '8px',
-              cursor: 'default',
-            }}
-          />
-          <button
-            onClick={() => setZoomImg(null)}
-            style={{
-              position: 'absolute', top: '20px', right: '20px',
-              background: 'rgba(0,0,0,0.5)', border: '1px solid #555',
-              color: '#ccc', fontSize: '1.2rem', padding: '4px 10px',
-              borderRadius: '6px', cursor: 'pointer',
-            }}
-          >✕</button>
-        </div>
-      )}
 
       {/* Card header */}
       <div style={{
