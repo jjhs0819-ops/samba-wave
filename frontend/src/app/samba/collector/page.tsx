@@ -134,13 +134,10 @@ export default function CollectorPage() {
   // AI 소싱기 상태
   const [showAiSourcingModal, setShowAiSourcingModal] = useState(false)
   const [aiSourcingStep, setAiSourcingStep] = useState<'config' | 'analyzing' | 'confirm'>('config')
-  const [aiUseMusinsa, setAiUseMusinsa] = useState(true)
-  const [aiUseNaver, setAiUseNaver] = useState(true)
-  const [aiUseExcel, setAiUseExcel] = useState(false)
+  const [aiMonth, setAiMonth] = useState(new Date().getMonth() + 1) // 현재월
+  const [aiMainCategory, setAiMainCategory] = useState('패션의류')
   const [aiExcelFile, setAiExcelFile] = useState<File | null>(null)
   const [aiTargetCount, setAiTargetCount] = useState(10000)
-  const [aiMusinsaCats, setAiMusinsaCats] = useState<string[]>([])
-  const [aiNaverCats, setAiNaverCats] = useState<string[]>([])
   const [aiAnalyzing, setAiAnalyzing] = useState(false)
   const [aiLogs, setAiLogs] = useState<string[]>([])
   const [aiResult, setAiResult] = useState<AISourcingResult | null>(null)
@@ -572,9 +569,9 @@ export default function CollectorPage() {
                 setAiSelectedCombos(new Set())
               }}
               style={{
-                marginLeft: 'auto', padding: '0.7rem 1.75rem', borderRadius: '24px',
+                marginLeft: 'auto', padding: '0.6rem 1.2rem', borderRadius: '6px',
                 background: 'linear-gradient(135deg, #6C5CE7, #A29BFE)',
-                color: '#fff', fontWeight: 700, fontSize: '1.1rem',
+                color: '#fff', fontWeight: 600, fontSize: '0.82rem',
                 border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
               }}
             >
