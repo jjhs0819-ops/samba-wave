@@ -78,7 +78,7 @@ export default function WarroomPage() {
 
   // 실시간 로그 상태
   const [refreshLogs, setRefreshLogs] = useState<RefreshLogEntry[]>([])
-  const [logSinceIdx, setLogSinceIdx] = useState(0)
+  const logSinceIdxRef = useRef(0)
   const [siteIntervals, setSiteIntervals] = useState<Record<string, number>>({})
   const logContainerRef = useRef<HTMLDivElement>(null)
   const logTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -116,6 +116,7 @@ export default function WarroomPage() {
       if (probeStatus && Object.keys(probeStatus).length > 0) setProbeData(probeStatus)
       setAutotuneRunning(atStatus.running)
       setAutotuneCycles(atStatus.cycle_count)
+      if (atStatus.target) setAutotuneTarget(atStatus.target)
       if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
       setAutotuneLastTick(atStatus.last_tick)
       setLastFetched(new Date())
@@ -127,18 +128,22 @@ export default function WarroomPage() {
     }
   }, [])
 
-  // 실시간 로그 폴링
+  // 실시간 로그 폴링 (ref로 안정화 — setInterval 리셋 방지)
   const loadLogs = useCallback(async () => {
     try {
-      const res = await monitorApi.refreshLogs(logSinceIdx)
+      const res = await monitorApi.refreshLogs(logSinceIdxRef.current)
+      // 서버 재시작 시 idx 리셋 감지
+      if (res.current_idx < logSinceIdxRef.current) {
+        logSinceIdxRef.current = 0
+        setRefreshLogs([])
+        return
+      }
       if (res.logs.length > 0) {
         setRefreshLogs(prev => {
           const next = [...prev, ...res.logs]
-          // 최대 300건 유지
           return next.length > 300 ? next.slice(next.length - 300) : next
         })
-        setLogSinceIdx(res.current_idx)
-        // 자동 스크롤
+        logSinceIdxRef.current = res.current_idx
         requestAnimationFrame(() => {
           if (logContainerRef.current) {
             logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight
@@ -151,7 +156,7 @@ export default function WarroomPage() {
     } catch {
       // 무시
     }
-  }, [logSinceIdx])
+  }, [])
 
   useEffect(() => {
     load()
@@ -227,8 +232,6 @@ export default function WarroomPage() {
           {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
         </div>
         <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
-          <span>마지막 갱신: {timeAgo(lastFetched)}</span>
-          <span>다음 폴링: {nextPoll}초 후</span>
           <select
             value={autotuneTarget}
             onChange={e => setAutotuneTarget(e.target.value)}
@@ -709,34 +712,27 @@ export default function WarroomPage() {
       </div>
 
       {/* F. 오토튠 실시간 로그 */}
-      <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+      <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00' }}>오토튠 실시간 로그</span>
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>오토튠 실시간 로그</span>
             <span style={{ fontSize: '0.65rem', color: '#666' }}>5초 폴링</span>
           </div>
-          {Object.keys(siteIntervals).length > 0 && (
-            <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.7rem' }}>
-              {Object.entries(siteIntervals).map(([site, interval]) => (
-                <span key={site} style={{ color: SITE_COLORS[site] || '#888' }}>
-                  {site} {interval.toFixed(1)}s
-                </span>
-              ))}
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            {Object.keys(siteIntervals).length > 0 && (
+              <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.7rem' }}>
+                {Object.entries(siteIntervals).map(([site, interval]) => (
+                  <span key={site} style={{ color: SITE_COLORS[site] || '#888' }}>
+                    {site} {interval.toFixed(1)}s
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <div
           ref={logContainerRef}
-          style={{
-            maxHeight: '240px',
-            overflow: 'auto',
-            background: '#0A0A0A',
-            borderRadius: '6px',
-            padding: '0.5rem',
-            fontFamily: 'monospace',
-            fontSize: '0.72rem',
-            lineHeight: '1.5',
-          }}
+          style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.73rem', lineHeight: 1.8, color: '#4A5568' }}
         >
           {refreshLogs.length === 0 ? (
             <div style={{ color: '#555', textAlign: 'center', padding: '1.5rem 0' }}>
@@ -745,40 +741,15 @@ export default function WarroomPage() {
           ) : (
             refreshLogs.map((log, i) => {
               const t = new Date(log.ts)
-              const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`
+              const timeStr = `[${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}]`
+              let color = '#DCE0E8'
+              if (log.level === 'error') color = '#C4736E'
+              else if (log.level === 'warning') color = '#B89A5A'
+              else if (log.msg.includes('완료') || log.msg.includes('성공')) color = '#7BAF7E'
+              else if (log.msg.includes('스킵')) color = '#888'
               return (
-                <div
-                  key={`${log.ts}-${i}`}
-                  style={{
-                    display: 'flex',
-                    gap: '0.5rem',
-                    padding: '0.15rem 0',
-                    borderBottom: '1px solid #1A1A1A',
-                    color: LOG_LEVEL_COLORS[log.level] || '#888',
-                  }}
-                >
-                  <span style={{ color: '#555', flexShrink: 0 }}>{timeStr}</span>
-                  <span style={{
-                    color: SITE_COLORS[log.site] || '#888',
-                    minWidth: '4.5rem',
-                    flexShrink: 0,
-                  }}>
-                    {log.site}
-                  </span>
-                  <span style={{
-                    color: log.level === 'error' ? '#FF6B6B' : log.level === 'warning' ? '#FFD93D' : '#E5E5E5',
-                    flex: 1,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}>
-                    {log.msg}
-                  </span>
-                  {log.name && (
-                    <span style={{ color: '#555', flexShrink: 0, maxWidth: '10rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {log.name}
-                    </span>
-                  )}
+                <div key={`${log.ts}-${i}`} style={{ color }}>
+                  {timeStr} <span style={{ color: SITE_COLORS[log.site] || '#8A95B0' }}>{log.site}</span> {log.msg}{log.name ? ` — ${log.name}` : ''}
                 </div>
               )
             })
