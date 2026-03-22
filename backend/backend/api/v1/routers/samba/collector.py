@@ -31,6 +31,8 @@ class SearchFilterCreate(BaseModel):
     max_price: Optional[float] = None
     exclude_sold_out: bool = True
     requested_count: int = 100
+    parent_id: Optional[str] = None
+    is_folder: bool = False
 
 
 class SearchFilterUpdate(BaseModel):
@@ -185,7 +187,9 @@ async def musinsa_auth_status(
 @router.get("/filters")
 async def list_filters(session: AsyncSession = Depends(get_read_session_dependency)):
     svc = _get_services(session)
-    filters = await svc.list_filters()
+    all_filters = await svc.list_filters()
+    # 폴더 제외, 리프 그룹만 반환 (기존 호환성)
+    filters = [f for f in all_filters if not f.is_folder]
 
     # 각 필터별 수집상품 카운트 추가
     result = []
@@ -258,6 +262,81 @@ async def delete_filter(
     if not await svc.delete_filter(filter_id):
         raise HTTPException(404, "필터를 찾을 수 없습니다")
     return {"ok": True}
+
+
+@router.get("/filters/tree")
+async def get_filter_tree(session: AsyncSession = Depends(get_read_session_dependency)):
+    """검색그룹 트리 구조 반환. 사이트 > 폴더 > 리프 그룹."""
+    svc = _get_services(session)
+    all_filters = await svc.list_filters()
+
+    # 각 필터별 수집상품 카운트
+    filter_data = []
+    for f in all_filters:
+        data = {c.key: getattr(f, c.key) for c in f.__table__.columns}
+        if not f.is_folder:
+            count = await svc.product_repo.count_async(
+                filters={"search_filter_id": f.id}
+            )
+            data["collected_count"] = count
+        else:
+            data["collected_count"] = 0
+        filter_data.append(data)
+
+    # 트리 빌드: parent_id 기반
+    by_id = {f["id"]: f for f in filter_data}
+    roots = []
+    for f in filter_data:
+        f["children"] = []
+    for f in filter_data:
+        pid = f.get("parent_id")
+        if pid and pid in by_id:
+            by_id[pid]["children"].append(f)
+        elif not pid:
+            roots.append(f)
+
+    return roots
+
+
+class FolderCreateRequest(BaseModel):
+    source_site: str
+    name: str
+    parent_id: Optional[str] = None
+
+
+@router.post("/filters/folder", status_code=201)
+async def create_folder(
+    body: FolderCreateRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """폴더(분류) 노드 생성."""
+    svc = _get_services(session)
+    data = {
+        "source_site": body.source_site,
+        "name": body.name,
+        "parent_id": body.parent_id,
+        "is_folder": True,
+        "requested_count": 0,
+    }
+    return await svc.create_filter(data)
+
+
+class MoveFilterRequest(BaseModel):
+    parent_id: Optional[str] = None
+
+
+@router.patch("/filters/{filter_id}/move")
+async def move_filter(
+    filter_id: str,
+    body: MoveFilterRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """필터/폴더를 다른 폴더로 이동."""
+    svc = _get_services(session)
+    result = await svc.update_filter(filter_id, {"parent_id": body.parent_id})
+    if not result:
+        raise HTTPException(404, "필터를 찾을 수 없습니다")
+    return result
 
 
 # ── Collected Products ──
