@@ -281,10 +281,10 @@ export default function ProductsPage() {
     }
 
     setProducts(filtered);
-  }, [allProducts, searchQ, searchType, siteFilter, statusFilter, sortBy, pageSize, currentPage, policies, filterNameMap, filterByGroupId, highlightProductId, orderProductIds]);
+  }, [allProducts, searchQ, searchType, siteFilter, statusFilter, aiFilter, sortBy, pageSize, currentPage, policies, filterNameMap, filterByGroupId, highlightProductId, orderProductIds]);
 
   // 필터/정렬/페이지크기 변경 시 1페이지로 리셋 + 선택 초기화
-  useEffect(() => { setCurrentPage(1); setSelectAll(false); setSelectedIds(new Set()) }, [searchQ, searchType, siteFilter, statusFilter, sortBy, pageSize, filterByGroupId]);
+  useEffect(() => { setCurrentPage(1); setSelectAll(false); setSelectedIds(new Set()) }, [searchQ, searchType, siteFilter, statusFilter, aiFilter, sortBy, pageSize, filterByGroupId]);
 
   const totalCount = useMemo(() => {
     let filtered = [...allProducts];
