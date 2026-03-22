@@ -104,6 +104,7 @@ export default function CollectorPage() {
 
   // 이미지 필터링 (모델컷/연출컷/배너 제거)
   const [imgFiltering, setImgFiltering] = useState(false)
+  const [imgFilterScope, setImgFilterScope] = useState<'images' | 'detail' | 'all'>('images')
 
   // 스스그룹 전송
   const [showGroupModal, setShowGroupModal] = useState(false)
@@ -615,9 +616,6 @@ export default function CollectorPage() {
             {collecting ? "생성중..." : "그룹 생성"}
           </button>
         </div>
-        <p style={{ fontSize: "0.8rem", color: "#888", margin: '4px 0 0' }}>
-          ** URL 입력 후 그룹 생성 → 하단 검색그룹에서 상품수집 실행
-        </p>
       </div>
 
       {/* 수집 로그 */}
