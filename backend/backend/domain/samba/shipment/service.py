@@ -413,6 +413,21 @@ class SambaShipmentService:
             refresh_updates["is_sold_out"] = refresh_result.new_sale_status == "sold_out"
           if refresh_result.new_images:
             refresh_updates["images"] = refresh_result.new_images
+          # 가격/재고 이력 스냅샷 기록
+          snapshot: dict[str, Any] = {
+            "date": datetime.now(UTC).isoformat(),
+            "source": "transmit_refresh",
+            "sale_price": refresh_result.new_sale_price if refresh_result.new_sale_price is not None else product_row.sale_price,
+            "original_price": refresh_result.new_original_price if refresh_result.new_original_price is not None else product_row.original_price,
+            "cost": refresh_result.new_cost if refresh_result.new_cost is not None else product_row.cost,
+            "sale_status": refresh_result.new_sale_status or "in_stock",
+            "changed": refresh_result.changed,
+          }
+          if refresh_result.new_options:
+            snapshot["options"] = refresh_result.new_options
+          history = list(product_row.price_history or [])
+          history.insert(0, snapshot)
+          refresh_updates["price_history"] = history[:200]
           await product_repo.update_async(product_id, **refresh_updates)
           for k, v in refresh_updates.items():
             product_dict[k] = v
