@@ -245,10 +245,10 @@ class MusinsaClient:
             )
 
             # 시즌 정보 — 코드 → 텍스트 변환
-            _SEASON_MAP = {"1": "SS", "2": "FW", "3": "ALL SS", "4": "ALL FW", "0": ""}
+            _SEASON_MAP = {"1": "SS", "2": "FW", "3": "ALL SS", "4": "ALL FW", "0": "ALL"}
             season_year = d.get("seasonYear", "")
             if season_year == "0000":
-                season_year = ""
+                season_year = "ALL"
             season_code = str(d.get("season", ""))
             season_text = _SEASON_MAP.get(season_code, season_code)
             if not season_text and season_code not in ("0", ""):
@@ -297,8 +297,7 @@ class MusinsaClient:
             benefit_base = s_price - benefit_coupon_discount
 
             # 2단계: 등급할인 (benefit_base 기준, 10원 절사)
-            # partnerDiscountOn=true일 때만 등급할인 적용
-            # 등급 할인율: goodsPrice에서 조회 (복수 키 탐색) → 없으면 회원등급 API 값 사용
+            # 등급 할인율이 있으면 적용 (partnerDiscountOn과 무관)
             grade_discount_rate = (
                 gp.get("memberDiscountRate")
                 or gp.get("gradeDiscountRate")
@@ -307,8 +306,7 @@ class MusinsaClient:
                 or member_grade_rate
                 or 0
             )
-            is_grade_applicable = gp.get("partnerDiscountOn") is True
-            grade_discount = int(benefit_base * grade_discount_rate / 100 / 10) * 10 if is_grade_applicable else 0
+            grade_discount = int(benefit_base * grade_discount_rate / 100 / 10) * 10 if grade_discount_rate > 0 else 0
 
             # 3단계: 적립금 사용 (benefit_base - 등급할인 기준, 10원 절사)
             is_point_restricted = d.get("isRestictedUsePoint") is True
@@ -331,10 +329,22 @@ class MusinsaClient:
                 f"[무신사 혜택가] {goods_no}: "
                 f"할인가={s_price}, 쿠폰=-{benefit_coupon_discount}, "
                 f"benefit_base={benefit_base}, member_grade_rate={member_grade_rate}%, "
-                f"등급({grade_discount_rate}%,partnerDiscountOn={is_grade_applicable})=-{grade_discount}, "
+                f"등급({grade_discount_rate}%)=-{grade_discount}, "
                 f"적립금({point_rate_pct}%)=-{point_usage}(base={point_base}), "
                 f"선할인({grade_discount_rate}%,base={remaining + pre_discount})=-{pre_discount}, "
                 f"혜택가={best_benefit_price}"
+            )
+
+            # 배송 정보: 무료배송(플러스배송) / 당일발송(플러스배송 OR isTodayReleaseGoods)
+            is_plus = d.get("isPlusDelivery", False) is True
+            lpi = d.get("logisticsPrioritizedInventory") or {}
+            is_free_shipping = is_plus
+            is_same_day = is_plus or lpi.get("isTodayReleaseGoods", False) is True
+            logger.info(
+                f"[무신사 배송] {goods_no}: "
+                f"isPlusDelivery={is_plus}, "
+                f"isTodayReleaseGoods={lpi.get('isTodayReleaseGoods')}, "
+                f"freeShipping={is_free_shipping}, sameDayDelivery={is_same_day}"
             )
 
             now_iso = datetime.now(tz=timezone.utc).isoformat()
@@ -410,7 +420,7 @@ class MusinsaClient:
                 "marketTransmitEnabled": True,
                 "registeredAccounts": [],
                 # 성별: 배열 → 문자열 (예: ["남성", "여성"] → "남녀공용", ["남성"] → "남성")
-                "sex": (lambda s: "남녀공용" if len(s) > 1 else (s[0] if s else ""))(d.get("sex") or []),
+                "sex": (lambda s: "남녀공용" if len(s) != 1 else s[0])(d.get("sex") or []),
                 "storeCodes": d.get("storeCodes", []),
                 "isOutlet": d.get("isOutlet", False),
                 # 부티끄 판별: goodsTypeCode 또는 saleType
@@ -457,6 +467,8 @@ class MusinsaClient:
                     )
                     else "in_stock"
                 ),
+                "freeShipping": is_free_shipping,
+                "sameDayDelivery": is_same_day,
                 "collectedAt": now_iso,
                 "updatedAt": now_iso,
             }
