@@ -691,7 +691,7 @@ export default function ShipmentsPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
           <thead>
             <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #2D2D2D' }}>
-              <th style={{ width: '36px', padding: '0.625rem' }}><input type="checkbox" checked={selectedProducts.length === filteredProducts.length && filteredProducts.length > 0} onChange={toggleAllProducts} style={{ accentColor: '#F59E0B' }} /></th>
+              <th style={{ width: '36px', padding: '0.625rem' }}><input type="checkbox" checked={filteredProducts.length > 0 && filteredProducts.every(p => selectedProducts.includes(p.id))} onChange={toggleAllProducts} style={{ accentColor: '#F59E0B' }} /></th>
               <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: '#888' }}>No</th>
               <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: '#888' }}>사이트</th>
               <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: '#888' }}>상품명</th>
