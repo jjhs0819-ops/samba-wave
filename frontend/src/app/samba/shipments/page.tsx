@@ -164,15 +164,16 @@ export default function ShipmentsPage() {
         const marketType = marketMatch[1]
         const mul = marketMatch[2] === 'desc' ? -1 : 1
         const getMarketTime = (p: typeof a) => {
+          // last_sent_data에서 해당 마켓 계정의 sent_at 조회
+          const sent = (p as Record<string, unknown>).last_sent_data as Record<string, { sent_at?: string }> | undefined
+          if (!sent) return ''
           const accIds = (p.registered_accounts || [])
           const accId = accIds.find(aid => {
             const acc = accounts.find(x => x.id === aid)
             return acc?.market_type === marketType
           })
-          if (!accId) return ''
-          const s = shipments.filter(x => x.product_id === p.id && x.account_id === accId && x.completed_at)
-            .sort((x, y) => new Date(y.completed_at!).getTime() - new Date(x.completed_at!).getTime())[0]
-          return s?.completed_at || ''
+          if (!accId || !sent[accId]) return ''
+          return sent[accId].sent_at || ''
         }
         const va = getMarketTime(a), vb = getMarketTime(b)
         return va > vb ? mul : va < vb ? -mul : 0
@@ -426,7 +427,9 @@ export default function ShipmentsPage() {
           for (const [accId, status] of Object.entries(txResult)) {
             const label = accountLabelMap[accId] || accId
             if (status === 'success') {
-              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 성공${rl}`)
+              const hasChange = rl && (rl.includes('>') || rl.includes('변동'))
+              const statusLabel = skipEnabled ? '전송' : '성공'
+              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: ${statusLabel}${rl}`)
               successCount++
             } else if (status === 'skipped') {
               addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 스킵 (변동 없음)`)
@@ -745,23 +748,22 @@ export default function ShipmentsPage() {
                     {(() => {
                       const regAccs = (p.registered_accounts || [])
                       if (regAccs.length === 0) return <span style={{ color: '#555', textAlign: 'center', display: 'block' }}>-</span>
-                      // 해당 상품의 최근 shipment에서 전송 시간 조회
-                      const productShipments = shipments.filter(s => s.product_id === p.id && s.completed_at)
-                      const lastShipment = productShipments.sort((a, b) => new Date(b.completed_at!).getTime() - new Date(a.completed_at!).getTime())[0]
-                      const lastTime = lastShipment?.completed_at ? (() => {
-                        const d = new Date(lastShipment.completed_at!)
-                        return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
-                      })() : ''
-                      const marketLabels = regAccs.map(aid => {
+                      const sent = p.last_sent_data || {}
+                      return regAccs.map(aid => {
                         const acc = accounts.find(a => a.id === aid)
-                        return acc ? `${acc.market_name}(${acc.seller_id || acc.account_label || '-'})` : null
-                      }).filter(Boolean).join(', ')
-                      return (
-                        <span style={{ fontSize: '0.68rem' }}>
-                          <span style={{ color: '#51CF66' }}>{marketLabels}</span>
-                          {lastTime && <span style={{ color: '#555' }}> {lastTime}</span>}
-                        </span>
-                      )
+                        if (!acc) return null
+                        const sentAt = sent[aid]?.sent_at
+                        const timeLabel = sentAt ? (() => {
+                          const d = new Date(sentAt)
+                          return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+                        })() : ''
+                        return (
+                          <div key={aid} style={{ fontSize: '0.68rem' }}>
+                            <span style={{ color: '#51CF66' }}>{acc.market_name}({acc.seller_id || acc.account_label || '-'})</span>
+                            {timeLabel && <span style={{ color: '#555' }}> {timeLabel}</span>}
+                          </div>
+                        )
+                      })
                     })()}
                   </td>
                 </tr>
