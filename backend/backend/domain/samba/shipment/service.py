@@ -81,24 +81,11 @@ class SambaShipmentService:
     processed = 0
     skipped = 0
     results: list[dict[str, Any]] = []
-    product_repo = SambaCollectedProductRepository(self.session) if skip_unchanged else None
     for product_id in product_ids:
       try:
-        if skip_unchanged and product_repo:
-          product = await product_repo.get_async(product_id)
-          if product and product.price_history:
-            history = product.price_history if isinstance(product.price_history, list) else []
-            if len(history) >= 2:
-              latest = history[0] if isinstance(history[0], dict) else {}
-              prev = history[1] if isinstance(history[1], dict) else {}
-              if (latest.get("sale_price") == prev.get("sale_price")
-                  and latest.get("cost") == prev.get("cost")):
-                skipped += 1
-                results.append({"product_id": product_id, "status": "skipped"})
-                continue
-
         shipment = await self._transmit_product(
-          product_id, target_account_ids, update_items
+          product_id, target_account_ids, update_items,
+          skip_unchanged=skip_unchanged,
         )
         results.append({
           "product_id": product_id,
@@ -322,6 +309,7 @@ class SambaShipmentService:
     product_id: str,
     target_account_ids: list[str],
     update_items: list[str],
+    skip_unchanged: bool = False,
   ) -> SambaShipment:
     """단일 상품에 대한 실제 마켓 전송."""
     from backend.domain.samba.account.model import SambaMarketAccount
@@ -351,6 +339,40 @@ class SambaShipmentService:
       return shipment
 
     product_dict = product_row.model_dump()
+
+    # 업데이트 항목이 체크되어 있으면 소싱처 최신화 먼저 실행
+    has_update = bool(update_items) and len(update_items) > 0
+    if has_update and product_row.source_site and product_row.site_product_id:
+      try:
+        from backend.domain.samba.collector.refresher import refresh_product
+        refresh_result = await refresh_product(product_row)
+        if refresh_result.error:
+          logger.warning(f"[전송] 소싱처 최신화 실패: {refresh_result.error}")
+        else:
+          # DB 반영
+          refresh_updates: dict[str, Any] = {
+            "last_refreshed_at": datetime.now(UTC),
+          }
+          if refresh_result.new_sale_price is not None:
+            refresh_updates["sale_price"] = refresh_result.new_sale_price
+          if refresh_result.new_original_price is not None:
+            refresh_updates["original_price"] = refresh_result.new_original_price
+          if refresh_result.new_cost is not None:
+            refresh_updates["cost"] = refresh_result.new_cost
+          if refresh_result.new_options is not None:
+            refresh_updates["options"] = refresh_result.new_options
+          if refresh_result.new_sale_status:
+            refresh_updates["sale_status"] = refresh_result.new_sale_status
+            refresh_updates["is_sold_out"] = refresh_result.new_sale_status == "sold_out"
+          if refresh_result.new_images:
+            refresh_updates["images"] = refresh_result.new_images
+          await product_repo.update_async(product_id, **refresh_updates)
+          # product_dict도 갱신
+          for k, v in refresh_updates.items():
+            product_dict[k] = v
+          logger.info(f"[전송] 소싱처 최신화 완료 — 변동: {refresh_result.changed}")
+      except Exception as ref_e:
+        logger.warning(f"[전송] 소싱처 최신화 예외: {ref_e}")
 
     # 이미지/상세페이지 업데이트 필요 여부 판단
     needs_image = not update_items or "image" in update_items or "description" in update_items
@@ -555,6 +577,24 @@ class SambaShipmentService:
           product_dict["sale_price"] = calc_price
           logger.info(f"[전송] 정책 가격 계산: 원가={cost}, 마진={margin_amt}({m_margin_rate}%), 배송={m_shipping}, 수수료={m_fee}% → 판매가={calc_price}")
 
+        # 스킵 판단: last_sent_data와 비교
+        if skip_unchanged and has_update:
+          last_sent = (product_row.last_sent_data or {}).get(account_id)
+          if last_sent:
+            # 전송가 비교
+            last_price = last_sent.get("sale_price")
+            cur_price = product_dict.get("sale_price")
+            # 옵션별 재고/가격 비교
+            last_opts = last_sent.get("options", [])
+            cur_opts = [
+              {"name": o.get("name", ""), "price": o.get("price"), "stock": o.get("stock")}
+              for o in (product_dict.get("options") or [])
+            ]
+            if last_price == cur_price and last_opts == cur_opts:
+              transmit_result[account_id] = "skipped"
+              logger.info(f"[전송] {market_type} 변동 없음 → 스킵 (계정: {account_id})")
+              continue
+
         # 기존 마켓 상품번호 확인 (있으면 수정, 없으면 신규등록)
         existing_nos = product_row.market_product_nos or {}
         if market_type == "smartstore":
@@ -660,10 +700,14 @@ class SambaShipmentService:
 
     # 6. 최종 상태 결정
     values = list(transmit_result.values())
-    all_success = len(values) > 0 and all(v == "success" for v in values)
-    all_failed = len(values) > 0 and all(v == "failed" for v in values)
+    non_skip = [v for v in values if v != "skipped"]
+    all_skipped = len(values) > 0 and len(non_skip) == 0
+    all_success = len(non_skip) > 0 and all(v == "success" for v in non_skip)
+    all_failed = len(non_skip) > 0 and all(v == "failed" for v in non_skip)
 
-    if all_success:
+    if all_skipped:
+      final_status = "skipped"
+    elif all_success:
       final_status = "completed"
     elif all_failed:
       final_status = "failed"

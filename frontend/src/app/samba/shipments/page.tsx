@@ -387,6 +387,8 @@ export default function ShipmentsPage() {
             if (status === 'success') {
               addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 성공`)
               successCount++
+            } else if (status === 'skipped') {
+              skipCount++
             } else {
               addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 실패 — ${shortenError(txError[accId] || '알 수 없는 오류')}`)
               failCount++
