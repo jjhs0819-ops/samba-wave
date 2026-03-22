@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -2441,28 +2442,28 @@ async def _autotune_loop():
         try:
             from backend.db.orm import get_write_session
             async with get_write_session() as session:
-                from backend.domain.samba.collector.scheduler import get_refresh_candidates
                 from backend.domain.samba.collector.refresher import refresh_products_bulk
                 from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+                from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
                 from backend.domain.samba.warroom.service import SambaMonitorService
 
                 now = datetime.now(timezone.utc)
-                candidates = await get_refresh_candidates(session, now)
+                repo = SambaCollectedProductRepository(session)
 
-                if candidates:
-                    repo = SambaCollectedProductRepository(session)
-                    products = []
-                    for pid in candidates:
-                        p = await repo.get_async(pid)
-                        if not p:
-                            continue
-                        # target 필터 적용
-                        if _autotune_target == "registered" and not p.registered_accounts:
-                            continue
-                        if _autotune_target == "unregistered" and p.registered_accounts:
-                            continue
-                        products.append(p)
+                # target 기반으로 직접 상품 조회 (스케줄러 우회)
+                stmt = select(_CP)
+                if _autotune_target == "registered":
+                    stmt = stmt.where(_CP.registered_accounts != None, _CP.status == "registered")
+                elif _autotune_target == "unregistered":
+                    stmt = stmt.where(or_(_CP.registered_accounts == None, _CP.status != "registered"))
+                # 정책 적용된 상품만
+                stmt = stmt.where(_CP.applied_policy_id != None)
+                result = await session.exec(stmt)
+                products = list(result.all())
+                candidates = products  # 로그용
 
+                if products:
+                    filtered_count = len(products)
                     results, summary = await refresh_products_bulk(products)
 
                     # DB 업데이트
@@ -2527,16 +2528,17 @@ async def _autotune_loop():
                     monitor = SambaMonitorService(session)
                     await monitor.emit(
                         "scheduler_tick", "info",
-                        summary=f"오토튠 — {len(candidates)}건 후보, {summary.refreshed}건 갱신, {summary.changed}건 변동",
+                        summary=f"오토튠({_autotune_target}) — 대상 {filtered_count}건, {summary.refreshed}건 갱신, {summary.changed}건 변동",
                         detail={
-                            "candidates": len(candidates),
+                            "target": _autotune_target,
+                            "total": filtered_count,
                             "refreshed": summary.refreshed,
                             "changed": summary.changed,
                             "sold_out": summary.sold_out,
                         },
                     )
                     await session.commit()
-                    log.info("[오토튠] tick 완료: %d건 후보, %d건 갱신", len(candidates), summary.refreshed)
+                    log.info("[오토튠] tick 완료: 대상 %d, 갱신 %d", filtered_count, summary.refreshed)
                 else:
                     # 갱신 대상 없으면 5초 대기 후 재확인
                     await _asyncio.sleep(5)
@@ -2592,6 +2594,7 @@ async def autotune_status():
         "running": _autotune_running,
         "last_tick": _autotune_last_tick,
         "cycle_count": _autotune_cycle_count,
+        "target": _autotune_target,
     }
 
 
