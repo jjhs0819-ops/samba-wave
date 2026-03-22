@@ -32,6 +32,15 @@ class SambaSearchFilter(SQLModel, table=True):
         sa_column=Column(Text, nullable=False, index=True),
     )
     name: str = Field(sa_column=Column(Text, nullable=False))
+
+    # 트리 구조
+    parent_id: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True, index=True)
+    )
+    is_folder: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default="false")
+    )
+
     keyword: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     category_filter: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
