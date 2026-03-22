@@ -436,9 +436,9 @@ class SambaShipmentService:
           for k, v in refresh_updates.items():
             product_dict[k] = v
           # 가격/재고 변동 각각 판단
-          old_price = getattr(product_row, "sale_price", None)
-          new_price = refresh_result.new_sale_price
-          price_changed = new_price is not None and new_price != old_price
+          old_cost = getattr(product_row, "cost", None)
+          new_cost = refresh_result.new_cost
+          cost_changed = new_cost is not None and new_cost != old_cost
           old_opts = getattr(product_row, "options", None) or []
           new_opts = refresh_result.new_options
           stock_changed = False
@@ -449,9 +449,10 @@ class SambaShipmentService:
             stock_changes = [k for k in set(list(old_stocks.keys()) + list(new_stocks.keys())) if old_stocks.get(k) != new_stocks.get(k)]
             stock_changed = len(stock_changes) > 0
             stock_change_count = len(stock_changes)
-          p_label = f"가격변동O({old_price}→{new_price})" if price_changed else "가격변동X"
+          cur_cost_val = new_cost if new_cost is not None else old_cost
+          c_label = f"원가{old_cost}→{new_cost}" if cost_changed else f"원가{cur_cost_val}"
           s_label = f"재고변동O({stock_change_count}건)" if stock_changed else "재고변동X"
-          refresh_status = f"{p_label} {s_label}"
+          refresh_status = f"{c_label} {s_label}"
           logger.info(f"[전송] 소싱처 최신화 완료 — {refresh_status}")
       except Exception as ref_e:
         refresh_status = f"최신화예외:{str(ref_e)[:30]}"
@@ -665,18 +666,18 @@ class SambaShipmentService:
         if skip_unchanged and has_update:
           last_sent = (product_row.last_sent_data or {}).get(account_id)
           if last_sent:
-            # 전송가 비교
             last_price = last_sent.get("sale_price")
             cur_price = product_dict.get("sale_price")
-            # 옵션별 재고/가격 비교
+            last_cost = last_sent.get("cost")
+            cur_cost = product_dict.get("cost")
             last_opts = last_sent.get("options", [])
             cur_opts = [
               {"name": o.get("name", ""), "price": o.get("price"), "stock": o.get("stock")}
               for o in (product_dict.get("options") or [])
             ]
-            if last_price == cur_price and last_opts == cur_opts:
+            if last_price == cur_price and last_cost == cur_cost and last_opts == cur_opts:
               transmit_result[account_id] = "skipped"
-              logger.info(f"[전송] {market_type} 변동 없음 → 스킵 (계정: {account_id})")
+              logger.info(f"[전송] {market_type} 변동 없음 → 스킵 (원가={cur_cost}, 전송가={cur_price})")
               continue
 
         # 기존 마켓 상품번호 확인 (있으면 수정, 없으면 신규등록)
