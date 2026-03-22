@@ -331,10 +331,10 @@ export const collectorApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}/reset-registration`, { method: "POST" }),
 
   // 재고/가격 갱신
-  refresh: (productIds?: string[], autoRetransmit = true) =>
+  refresh: (productIds?: string[], autoRetransmit = true, searchFilterIds?: string[]) =>
     request<RefreshResult>(`${SAMBA_PREFIX}/collector/products/refresh`, {
       method: 'POST',
-      body: JSON.stringify({ product_ids: productIds, auto_retransmit: autoRetransmit }),
+      body: JSON.stringify({ product_ids: productIds, search_filter_ids: searchFilterIds, auto_retransmit: autoRetransmit }),
     }),
 
   // Ken Burns 영상 생성 (R2/로컬 저장 후 URL 반환)
@@ -406,6 +406,36 @@ export interface SambaShipment {
   created_at: string;
 }
 
+// ── 그룹상품 타입 ──
+
+export interface GroupPreviewProduct {
+  id: string
+  name: string
+  color: string | null
+  sale_price: number | null
+  thumbnail: string | null
+  existing_product_no: string | null
+}
+
+export interface GroupPreviewGroup {
+  group_key: string
+  group_name: string
+  products: GroupPreviewProduct[]
+}
+
+export interface GroupPreviewResponse {
+  groups: GroupPreviewGroup[]
+  singles: GroupPreviewProduct[]
+  delete_count: number
+  group_count: number
+  single_count: number
+}
+
+export interface GroupSendResponse {
+  group_results: { group_key: string; status: string; error?: string; group_product_no?: number }[]
+  single_results: Record<string, unknown>
+}
+
 export const shipmentApi = {
   list: (skip = 0, limit = 50, status?: string) => {
     const p = new URLSearchParams({ skip: String(skip), limit: String(limit) });
@@ -439,6 +469,20 @@ export const shipmentApi = {
         body: JSON.stringify({ product_ids: productIds, target_account_ids: targetAccountIds }),
       }
     ),
+
+  // 그룹상품 미리보기
+  groupPreview: (searchFilterIds: string[], accountId: string) =>
+    request<GroupPreviewResponse>(`${SAMBA_PREFIX}/shipments/group-preview`, {
+      method: 'POST',
+      body: JSON.stringify({ search_filter_ids: searchFilterIds, account_id: accountId }),
+    }),
+
+  // 그룹상품 전송
+  groupSend: (groups: { group_key: string; product_ids: string[] }[], singles: string[], accountId: string) =>
+    request<GroupSendResponse>(`${SAMBA_PREFIX}/shipments/group-send`, {
+      method: 'POST',
+      body: JSON.stringify({ groups, singles, account_id: accountId }),
+    }),
 };
 
 // ── Forbidden Words ──
@@ -525,6 +569,22 @@ export const proxyApi = {
   r2Test: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/r2/test`, { method: 'POST' }),
+  listPresets: () =>
+    request<{ success: boolean; presets: { key: string; label: string; desc: string; image: string | null }[] }>(
+      `${SAMBA_PREFIX}/proxy/preset-images/list`),
+  regeneratePreset: (presetKey: string, desc?: string, label?: string, saveOnly?: boolean) =>
+    request<{ success: boolean; message: string; image?: string }>(
+      `${SAMBA_PREFIX}/proxy/preset-images/regenerate`, {
+        method: 'POST',
+        body: JSON.stringify({ preset_key: presetKey, desc, label, save_only: saveOnly }),
+      }),
+  uploadPresetImage: async (presetKey: string, file: File) => {
+    const formData = new FormData()
+    formData.append('preset_key', presetKey)
+    formData.append('file', file)
+    const res = await fetch(`${SAMBA_PREFIX}/proxy/preset-images/upload`, { method: 'POST', body: formData })
+    return res.json() as Promise<{ success: boolean; message: string; image?: string }>
+  },
   transformImages: (productIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
     request<{ success: boolean; message: string; total_transformed: number; total_failed: number }>(
       `${SAMBA_PREFIX}/proxy/fireworks/transform`, {
@@ -889,6 +949,10 @@ export const monitorApi = {
     ),
   refreshLogs: (sinceIdx = 0) =>
     request<RefreshLogsResponse>(`${SAMBA_PREFIX}/monitor/refresh-logs?since_idx=${sinceIdx}`),
+  storeScores: () =>
+    request<Record<string, { account_id: string; account_label: string; market_type: string; grade: string; grade_code: string; good_service: Record<string, number> | null; penalty: number | null; penalty_rate: number | null; updated_at: string }>>(`${SAMBA_PREFIX}/monitor/store-scores`),
+  refreshStoreScores: () =>
+    request<{ success: boolean; accounts: number }>(`${SAMBA_PREFIX}/monitor/store-scores/refresh`, { method: 'POST' }),
 }
 
 // ── S3 이미지 헬퍼 ──

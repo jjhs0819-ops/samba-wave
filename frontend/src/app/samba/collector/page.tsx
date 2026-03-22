@@ -6,10 +6,14 @@ import {
   collectorApi,
   policyApi,
   proxyApi,
+  shipmentApi,
+  accountApi,
   API_BASE,
   type SambaSearchFilter,
   type SambaPolicy,
   type RefreshResult,
+  type GroupPreviewResponse,
+  type SambaMarketAccount,
 } from "@/lib/samba/api";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 
@@ -97,6 +101,13 @@ export default function CollectorPage() {
   // 이미지 필터링 (모델컷/연출컷/배너 제거)
   const [imgFiltering, setImgFiltering] = useState(false)
 
+  // 그룹상품 전송
+  const [showGroupModal, setShowGroupModal] = useState(false)
+  const [groupPreview, setGroupPreview] = useState<GroupPreviewResponse | null>(null)
+  const [groupSending, setGroupSending] = useState(false)
+  const [groupTargetAccount, setGroupTargetAccount] = useState('')
+  const [smartstoreAccounts, setSmartstoreAccounts] = useState<SambaMarketAccount[]>([])
+
   // Proxy & auth status
   const [proxyStatus, setProxyStatus] = useState<"checking" | "ok" | "error">("checking");
   const [proxyText, setProxyText] = useState("프록시 서버 확인 중...");
@@ -125,6 +136,13 @@ export default function CollectorPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // 스마트스토어 계정 로드
+  useEffect(() => {
+    accountApi.listActive().then(accs => {
+      setSmartstoreAccounts(accs.filter(a => a.market_type === 'smartstore'))
+    }).catch(() => {})
+  }, [])
 
   // 프록시 & 무신사 인증 상태 확인
   useEffect(() => {
@@ -365,10 +383,10 @@ export default function CollectorPage() {
   // 일괄 갱신 핸들러
   const handleRefresh = async () => {
     setRefreshing(true)
-    addLog('일괄 갱신 시작...')
+    const filterIds = selectedIds.size > 0 ? [...selectedIds] : undefined
+    addLog(filterIds ? `선택된 ${filterIds.length}개 그룹 갱신 시작...` : '전체 일괄 갱신 시작...')
     try {
-      // 선택된 그룹이 있으면 해당 그룹의 상품만, 없으면 전체
-      const result = await collectorApi.refresh(undefined, true)
+      const result = await collectorApi.refresh(undefined, true, filterIds)
       setRefreshResult(result)
       setShowRefreshModal(true)
       addLog(
@@ -755,6 +773,31 @@ export default function CollectorPage() {
             </button>
             <button
               onClick={async () => {
+                if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
+                if (smartstoreAccounts.length === 0) { showAlert('스마트스토어 계정이 없습니다'); return }
+                const accountId = smartstoreAccounts[0].id
+                setGroupTargetAccount(accountId)
+                try {
+                  const preview = await shipmentApi.groupPreview([...selectedIds], accountId)
+                  setGroupPreview(preview)
+                  setShowGroupModal(true)
+                } catch {
+                  showAlert('그룹 미리보기 실패', 'error')
+                }
+              }}
+              disabled={groupSending || selectedIds.size === 0}
+              style={{
+                background: 'rgba(81,207,102,0.1)',
+                border: '1px solid rgba(81,207,102,0.35)',
+                color: '#51CF66', padding: '0.3rem 0.75rem', borderRadius: '6px',
+                fontSize: '0.8rem', cursor: selectedIds.size === 0 ? 'not-allowed' : 'pointer',
+                opacity: selectedIds.size === 0 ? 0.5 : 1,
+              }}
+            >
+              {groupSending ? '전송중...' : '그룹상품 전송'}
+            </button>
+            <button
+              onClick={async () => {
                 // 체크된 그룹이 없으면 전체 표시된 그룹 사용
                 const targetIds = selectedIds.size > 0 ? [...selectedIds] : displayedFilters.map(f => f.id)
                 if (targetIds.length === 0) { showAlert('검색그룹이 없습니다'); return }
@@ -1073,6 +1116,115 @@ export default function CollectorPage() {
             >
               확인
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 그룹상품 전송 미리보기 모달 */}
+      {showGroupModal && groupPreview && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.7)', zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: '#1a1a1a', borderRadius: '12px', padding: '1.5rem',
+            maxWidth: '700px', width: '90%', maxHeight: '80vh', overflow: 'auto',
+            border: '1px solid #333',
+          }}>
+            <h3 style={{ color: '#51CF66', marginBottom: '1rem', fontSize: '1.1rem' }}>
+              그룹상품 전송 미리보기
+            </h3>
+
+            {groupPreview.groups.map(g => (
+              <div key={g.group_key} style={{
+                background: 'rgba(81,207,102,0.05)', border: '1px solid rgba(81,207,102,0.2)',
+                borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem',
+              }}>
+                <div style={{ color: '#51CF66', fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                  [그룹] {g.group_name} ({g.products.length}건)
+                </div>
+                {g.products.map(p => (
+                  <div key={p.id} style={{
+                    display: 'flex', alignItems: 'center', gap: '0.5rem',
+                    padding: '0.25rem 0', fontSize: '0.8rem', color: '#ccc',
+                  }}>
+                    {p.thumbnail && (
+                      <img src={p.thumbnail} alt="" style={{ width: 32, height: 32, borderRadius: 4, objectFit: 'cover' }} />
+                    )}
+                    <span style={{ flex: 1 }}>{p.color || '기본'}</span>
+                    <span>{p.sale_price?.toLocaleString()}원</span>
+                    {p.existing_product_no && (
+                      <span style={{ color: '#FF6B6B', fontSize: '0.7rem' }}>기존삭제</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))}
+
+            {groupPreview.singles.length > 0 && (
+              <div style={{
+                background: 'rgba(255,140,0,0.05)', border: '1px solid rgba(255,140,0,0.2)',
+                borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem',
+              }}>
+                <div style={{ color: '#FF8C00', fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                  [단일] {groupPreview.singles.length}건
+                </div>
+                {groupPreview.singles.map(p => (
+                  <div key={p.id} style={{ fontSize: '0.8rem', color: '#ccc', padding: '0.15rem 0' }}>
+                    {p.name} - {p.sale_price?.toLocaleString()}원
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {groupPreview.delete_count > 0 && (
+              <div style={{ color: '#FF6B6B', fontSize: '0.8rem', marginBottom: '1rem' }}>
+                기존 단일등록 {groupPreview.delete_count}건 삭제 후 그룹상품으로 재등록됩니다
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button
+                onClick={() => setShowGroupModal(false)}
+                style={{
+                  background: 'rgba(255,255,255,0.05)', border: '1px solid #444',
+                  color: '#888', padding: '0.4rem 1rem', borderRadius: '6px', cursor: 'pointer',
+                }}
+              >
+                취소
+              </button>
+              <button
+                onClick={async () => {
+                  setGroupSending(true)
+                  try {
+                    const groups = groupPreview.groups.map(g => ({
+                      group_key: g.group_key,
+                      product_ids: g.products.map(p => p.id),
+                    }))
+                    const singles = groupPreview.singles.map(p => p.id)
+                    const res = await shipmentApi.groupSend(groups, singles, groupTargetAccount)
+                    const successCount = res.group_results.filter(r => r.status === 'success').length
+                    const failCount = res.group_results.filter(r => r.status === 'error').length
+                    showAlert(`그룹상품 ${successCount}건 성공, ${failCount}건 실패`, successCount > 0 ? 'success' : 'error')
+                    setShowGroupModal(false)
+                    load()
+                  } catch {
+                    showAlert('그룹 전송 실패', 'error')
+                  }
+                  setGroupSending(false)
+                }}
+                disabled={groupSending}
+                style={{
+                  background: groupSending ? 'rgba(81,207,102,0.1)' : 'rgba(81,207,102,0.2)',
+                  border: '1px solid rgba(81,207,102,0.5)',
+                  color: '#51CF66', padding: '0.4rem 1rem', borderRadius: '6px',
+                  cursor: groupSending ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {groupSending ? '전송중...' : `전송 (그룹 ${groupPreview.group_count}건 + 단일 ${groupPreview.single_count}건)`}
+              </button>
+            </div>
           </div>
         </div>
       )}

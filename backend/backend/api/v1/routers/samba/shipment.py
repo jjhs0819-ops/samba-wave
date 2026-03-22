@@ -102,7 +102,8 @@ async def retry_shipment(
 
 
 class GroupPreviewRequest(BaseModel):
-  product_ids: list[str]
+  product_ids: list[str] = []
+  search_filter_ids: list[str] = []
   account_id: str
 
 
@@ -142,7 +143,15 @@ async def group_preview(
 
   repo = SambaCollectedProductRepository(session)
   products = []
-  for pid in body.product_ids:
+
+  # search_filter_ids가 제공되면 해당 필터의 상품을 모두 조회
+  product_ids = list(body.product_ids)
+  if body.search_filter_ids:
+    for sf_id in body.search_filter_ids:
+      filter_products = await repo.filter_by_async(search_filter_id=sf_id, limit=10000)
+      product_ids.extend([p.id for p in filter_products])
+
+  for pid in product_ids:
     p = await repo.get_async(pid)
     if p:
       products.append(p.model_dump())
