@@ -697,7 +697,8 @@ async function runFocusPoll() {
     const hadCollect = await pollCollectOnce()
     const hadSearch = await pollSearchOnce()
     const hadSourcing = await pollSourcingOnce()
-    if (hadCollect || hadSearch || hadSourcing) {
+    const hadAi = await pollAiSourcingOnce()
+    if (hadCollect || hadSearch || hadSourcing || hadAi) {
       emptyCount = 0
     } else {
       emptyCount++
@@ -713,7 +714,8 @@ async function runPollCycle() {
   const hadCollect = await pollCollectOnce()
   const hadSearch = await pollSearchOnce()
   const hadSourcing = await pollSourcingOnce()
-  if (hadCollect || hadSearch || hadSourcing) {
+  const hadAi = await pollAiSourcingOnce()
+  if (hadCollect || hadSearch || hadSourcing || hadAi) {
     runFocusPoll()
   }
 }
@@ -749,6 +751,261 @@ chrome.runtime.onStartup.addListener(() => {
 
 // Service Worker 활성화 시 alarm만 설정 (중복 폴링 방지)
 setupAlarm()
+
+// ==================== AI소싱 큐 폴링 ====================
+
+// AI소싱 큐는 /api/v1/samba/ai-sourcing/ 경로 사용 (proxy 아님)
+async function pollAiSourcingOnce() {
+  try {
+    const res = await fetch(`${PROXY_URL}/api/v1/samba/ai-sourcing/collect-queue`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const job = await res.json()
+    if (job.hasJob) {
+      console.log(`[AI소싱] 작업 수신: ${job.type}`)
+      await handleAiSourcingJob(job)
+      return true
+    }
+    return false
+  } catch (e) {
+    console.log(`[AI소싱] 폴링 오류: ${e.message}`)
+    return false
+  }
+}
+
+// AI소싱 결과 전송도 별도 경로
+async function postAiSourcingResult(body) {
+  await fetch(`${PROXY_URL}/api/v1/samba/ai-sourcing/collect-result`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+async function handleAiSourcingJob(job) {
+  const jobType = job.type // 'ranking' 또는 'keywords'
+  let tabId = null
+
+  try {
+    if (jobType === 'ranking') {
+      // 랭킹 아카이브 수집 — API 가로채기 방식
+      const date = job.date || '202503'
+      const categoryCode = job.categoryCode || '000'
+      const url = `https://www.musinsa.com/ranking/archive?date=${date}&categoryCode=${categoryCode}&gf=A`
+      console.log(`[AI소싱] 랭킹 수집: ${url}`)
+
+      const [prevActive] = await chrome.tabs.query({ active: true, currentWindow: true })
+      const prevId = prevActive?.id
+
+      const tab = await chrome.tabs.create({ url, active: true })
+      tabId = tab.id
+      await waitForTabLoad(tabId, 30000)
+      await wait(3000)
+
+      // 페이지 내에서 fetch를 가로채서 API 응답 수집 + DOM 텍스트 파싱 병행
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: () => {
+          // DOM 텍스트 기반 파싱 — 렌더링된 상품 카드에서 추출
+          const items = []
+          const bodyText = document.body.innerText
+          const lines = bodyText.split('\n').map(l => l.trim()).filter(Boolean)
+
+          // 상품 링크
+          const goodsNos = []
+          document.querySelectorAll('a[href*="/products/"]').forEach(link => {
+            const m = link.href?.match(/\/products\/(\d+)/)
+            if (m && !goodsNos.includes(m[1])) goodsNos.push(m[1])
+          })
+
+          // 순위+브랜드+상품명+가격 텍스트 파싱
+          let rank = 0
+          let brand = ''
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i]
+            // 순위 (1~200)
+            if (/^\d{1,3}$/.test(line)) {
+              const n = parseInt(line)
+              if (n >= 1 && n <= 200) { rank = n; brand = ''; continue }
+            }
+            if (rank > 0 && !brand) {
+              // 가격/할인율이 아닌 짧은 텍스트 = 브랜드
+              if (line.length < 30 && !/[\d,]+원/.test(line) && !/^\d+%$/.test(line) && !/^[\d,]+$/.test(line)) {
+                brand = line; continue
+              }
+            }
+            if (rank > 0 && brand) {
+              // 브랜드 다음 긴 텍스트 = 상품명
+              if (line.length >= 3 && !/[\d,]+원/.test(line) && !/^\d+%$/.test(line)) {
+                let price = 0
+                for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+                  const pm = lines[j].replace(/\s/g, '').match(/([\d,]+)원/)
+                  if (pm) { price = parseInt(pm[1].replace(/,/g, '')); break }
+                }
+                items.push({ rank, brand, name: line, price, goodsNo: goodsNos[items.length] || '' })
+                rank = 0; brand = ''
+              }
+            }
+          }
+
+          return {
+            items,
+            debug: {
+              title: document.title,
+              productLinks: goodsNos.length,
+              totalItems: items.length,
+              bodyLen: bodyText.length,
+              bodyPreview: bodyText.substring(0, 1200),
+            },
+          }
+        },
+      })
+
+      try { await chrome.tabs.remove(tabId) } catch {}
+      tabId = null
+      // 이전 탭 복원
+      if (prevId) {
+        try { await chrome.tabs.update(prevId, { active: true }) } catch {}
+      }
+
+      const data = results?.[0]?.result || {}
+      console.log(`[AI소싱] 랭킹: ${data.items?.length || 0}개 상품`)
+
+      await postAiSourcingResult({
+        requestId: job.requestId,
+        type: 'ranking',
+        data,
+      })
+
+    } else if (jobType === 'keywords') {
+      // 인기/급상승 검색어 수집 — 검색 페이지를 active 탭으로 열어서 키워드 표시
+      console.log('[AI소싱] 검색 키워드 수집 시작')
+      // 현재 활성 탭 기억 (복원용)
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      const prevTabId = activeTab?.id
+
+      // 검색 페이지를 active 탭으로 열기 (포커스 필요)
+      const tab = await chrome.tabs.create({ url: 'https://www.musinsa.com/search', active: true })
+      tabId = tab.id
+      await waitForTabLoad(tabId, 30000)
+      await wait(2000)
+
+      // 검색 입력 클릭 (인기검색어 표시 트리거)
+      await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN',
+        func: () => {
+          // 다양한 셀렉터 시도 (무신사 UI 변경 대응)
+          const selectors = [
+            'input[type="search"]',
+            'input[placeholder*="검색"]',
+            'input[name*="search"]',
+            'input[aria-label*="검색"]',
+            '.search-bar input',
+            '#search-input',
+            'header input',
+          ]
+          for (const sel of selectors) {
+            const el = document.querySelector(sel)
+            if (el) { el.focus(); el.click(); break }
+          }
+          // 검색 버튼/아이콘 클릭도 시도
+          const searchBtn = document.querySelector('[class*="search"] button, button[aria-label*="검색"]')
+          if (searchBtn) searchBtn.click()
+        },
+      })
+      await wait(4000)
+
+      const results = await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN',
+        func: () => {
+          const popular = []
+          const trending = []
+          const bodyText = document.body.innerText
+
+          // 방법1: "인기 검색어" / "급상승 검색어" 섹션 텍스트 파싱
+          const popularMatch = bodyText.match(/인기\s*검색어([\s\S]*?)(?:급상승\s*검색어|$)/)
+          const trendingMatch = bodyText.match(/급상승\s*검색어([\s\S]*?)(?:어바웃|회사|무신사 스토어|$)/)
+
+          function extractKw(text) {
+            const kws = []
+            const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+            for (const line of lines) {
+              const m = line.match(/^(\d{1,2})\s+(.+)$/)
+              if (m && m[2].length < 30) {
+                kws.push({ rank: parseInt(m[1]), keyword: m[2].trim() })
+              }
+            }
+            return kws
+          }
+
+          if (popularMatch) popular.push(...extractKw(popularMatch[1]))
+          if (trendingMatch) trending.push(...extractKw(trendingMatch[1]))
+
+          // 방법2: DOM 기반 파싱 (텍스트 매칭 실패 시 fallback)
+          if (popular.length === 0 && trending.length === 0) {
+            // li 요소에서 순위+키워드 추출 시도
+            const listItems = document.querySelectorAll('li, [class*="keyword"], [class*="search-rank"], [class*="popular"]')
+            let rank = 1
+            listItems.forEach(li => {
+              const text = li.textContent?.trim() || ''
+              // "1나이키운동화" 또는 "1 나이키 운동화" 패턴
+              const m = text.match(/^(\d{1,2})\s*(.{2,25})$/)
+              if (m) {
+                popular.push({ rank: parseInt(m[1]), keyword: m[2].trim() })
+              } else if (text.length >= 2 && text.length <= 25 && !/^(MUSINSA|BEAUTY|SPORTS|OUTLET|BOUTIQUE|KICKS|KIDS|USED|SNAP)$/i.test(text)) {
+                // 순위 없이 키워드만 있는 경우
+                const exists = popular.some(p => p.keyword === text) || trending.some(t => t.keyword === text)
+                if (!exists && rank <= 20) {
+                  popular.push({ rank: rank++, keyword: text })
+                }
+              }
+            })
+          }
+
+          return {
+            keywordItems: [
+              ...popular.map(k => ({ ...k, type: 'popular' })),
+              ...trending.map(k => ({ ...k, type: 'trending' })),
+            ],
+            debug: {
+              bodyLen: bodyText.length,
+              bodyPreview: bodyText.substring(0, 1500),
+              hasPopular: !!popularMatch,
+              hasTrending: !!trendingMatch,
+              domFallback: popular.length > 0 && !popularMatch,
+            },
+          }
+        },
+      })
+
+      // 이전 탭으로 복원
+      if (prevTabId) {
+        try { await chrome.tabs.update(prevTabId, { active: true }) } catch {}
+      }
+
+      try { await chrome.tabs.remove(tabId) } catch {}
+      tabId = null
+      const data = results?.[0]?.result || {}
+      console.log(`[AI소싱] 키워드: ${data.keywordItems?.length || 0}개`)
+
+      await postAiSourcingResult({
+        requestId: job.requestId,
+        type: 'keywords',
+        data,
+      })
+    }
+  } catch (err) {
+    console.error(`[AI소싱] ${jobType} 오류:`, err)
+    if (tabId) try { await chrome.tabs.remove(tabId) } catch {}
+    try {
+      await postAiSourcingResult({
+        requestId: job.requestId,
+        type: jobType,
+        error: err.message,
+      })
+    } catch {}
+  }
+}
 
 // ==================== 통합 소싱 큐 폴링 (ABCmart, GrandStage, OKmall, 롯데ON, GSShop) ====================
 
@@ -1025,6 +1282,110 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.tabs.create({ url: 'https://kream.co.kr/login' })
     sendResponse({ success: true })
     return false
+  }
+
+  // 스마트스토어 셀러센터 굿서비스/패널티 점수 스크래핑
+  if (msg.type === 'SCRAPE_STORE_SCORES') {
+    ;(async () => {
+      try {
+        // 1. 셀러센터 탭 찾기
+        const tabs = await chrome.tabs.query({ url: 'https://sell.smartstore.naver.com/*' })
+        let tab = tabs[0]
+        if (!tab) {
+          // 셀러센터 탭이 없으면 새로 열기
+          tab = await chrome.tabs.create({ url: 'https://sell.smartstore.naver.com/#/seller/good-service-score', active: true })
+          // 페이지 로딩 대기
+          await new Promise(r => setTimeout(r, 3000))
+          sendResponse({ success: false, message: '셀러센터를 열었습니다. 로그인 후 다시 버튼을 눌러주세요.' })
+          return
+        }
+
+        // 2. 굿서비스 페이지로 이동
+        await chrome.tabs.update(tab.id, { url: 'https://sell.smartstore.naver.com/#/seller/good-service-score', active: true })
+        await new Promise(r => setTimeout(r, 2500))
+
+        // 3. 굿서비스 DOM 스크래핑
+        const gsResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            // 로그인 체크
+            if (document.querySelector('.login_area') || document.body.innerText.includes('로그인')) {
+              if (!document.querySelector('.snb_area') && !document.querySelector('.lnb_area')) {
+                return { error: 'login_required' }
+              }
+            }
+            // 점수 항목 추출 (텍스트 기반)
+            const scores = {}
+            const text = document.body.innerText
+            // 항목별 점수 추출 패턴
+            const items = document.querySelectorAll('[class*="score"], [class*="grade"], [class*="item"], [class*="metric"], tr, li')
+            items.forEach(el => {
+              const t = el.innerText.trim()
+              // "항목명 N점" 또는 "항목명 N" 패턴
+              const m = t.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*점?$/m)
+              if (m && m[1].length < 20) {
+                scores[m[1].trim()] = parseFloat(m[2])
+              }
+            })
+            // 전체 점수 텍스트도 포함
+            const totalMatch = text.match(/(\d+(?:\.\d+)?)\s*점/)
+            return { scores, rawText: text.substring(0, 2000), totalMatch: totalMatch ? totalMatch[1] : null }
+          }
+        })
+
+        const gsData = gsResult?.[0]?.result
+        if (gsData?.error === 'login_required') {
+          sendResponse({ success: false, message: '셀러센터에 로그인해주세요.' })
+          return
+        }
+
+        // 4. 패널티 페이지로 이동
+        await chrome.tabs.update(tab.id, { url: 'https://sell.smartstore.naver.com/#/seller/policy', active: true })
+        await new Promise(r => setTimeout(r, 2500))
+
+        // 5. 패널티 DOM 스크래핑
+        const penResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const text = document.body.innerText
+            // 패널티 점수/비율 추출
+            const penaltyMatch = text.match(/(\d+(?:\.\d+)?)\s*점/)
+            const rateMatch = text.match(/(\d+(?:\.\d+)?)\s*%/)
+            return { rawText: text.substring(0, 2000), penalty: penaltyMatch ? penaltyMatch[1] : null, penaltyRate: rateMatch ? rateMatch[1] : null }
+          }
+        })
+
+        const penData = penResult?.[0]?.result
+
+        // 6. 서버로 전송
+        const accountId = msg.account_id || ''
+        const payload = {
+          account_id: accountId,
+          good_service: gsData?.scores || null,
+          penalty: penData?.penalty ? parseFloat(penData.penalty) : null,
+          penalty_rate: penData?.penaltyRate ? parseFloat(penData.penaltyRate) : null,
+        }
+
+        const resp = await fetch(`${PROXY_URL}/api/v1/samba/monitor/store-scores/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const result = await resp.json()
+
+        sendResponse({
+          success: true,
+          message: '스토어 점수 수집 완료',
+          good_service: gsData?.scores,
+          penalty: penData?.penalty,
+          penalty_rate: penData?.penaltyRate,
+        })
+      } catch (e) {
+        console.error('[스토어점수] 스크래핑 실패:', e)
+        sendResponse({ success: false, message: `스크래핑 실패: ${e.message}` })
+      }
+    })()
+    return true
   }
 
   // 가격/재고 갱신 요청 (프론트에서 확장앱 경유 필요 상품 전달)

@@ -72,18 +72,25 @@ async def bulk_save_words(
     body: BulkWordsRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """기존 타입의 단어를 전부 삭제 후 새 단어 벌크 저장."""
-    svc = _get_service(session)
-    existing = await svc.list_by_type(body.type)
-    for w in existing:
-        await svc.delete_word(w.id)
+    """기존 타입의 단어를 전부 삭제 후 새 단어 벌크 저장 (단일 트랜잭션)."""
+    from sqlmodel import delete, select
+    from backend.domain.samba.forbidden.model import SambaForbiddenWord
+
+    # 해당 타입 전체 삭제 (단일 쿼리)
+    await session.exec(delete(SambaForbiddenWord).where(SambaForbiddenWord.type == body.type))
+
+    # 새 단어 일괄 추가 (중복 제거)
     created = 0
+    seen: set[str] = set()
     for word in body.words:
         w = word.strip()
-        if not w:
+        if not w or w.lower() in seen:
             continue
-        await svc.create_word({"word": w, "type": body.type, "scope": "all", "is_active": True})
+        seen.add(w.lower())
+        session.add(SambaForbiddenWord(word=w, type=body.type, scope="all", is_active=True))
         created += 1
+
+    await session.commit()
     return {"ok": True, "created": created}
 
 
@@ -159,3 +166,42 @@ async def save_setting(
 ):
     svc = _get_service(session)
     return await svc.save_setting(key, body.get("value"))
+
+
+@router.get("/tag-banned-words")
+async def get_tag_banned_words(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """태그 금지어 통합 조회: 소싱처 + 수집 브랜드 + API 거부 태그."""
+    from sqlmodel import select, func
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+
+    svc = _get_service(session)
+
+    # 1. API 거부 태그 (DB 누적)
+    rejected = await svc.get_setting("smartstore_banned_tags")
+    rejected_tags: list[str] = rejected if isinstance(rejected, list) else []
+
+    # 2. 수집된 브랜드 (distinct)
+    stmt = select(SambaCollectedProduct.brand).where(
+        SambaCollectedProduct.brand.isnot(None),
+        SambaCollectedProduct.brand != "",
+    ).distinct().limit(500)
+    result = await session.exec(stmt)
+    brands = sorted(set(b for b in result.all() if b and len(b.strip()) >= 2))
+
+    # 3. 소싱처 (고정)
+    source_sites = [
+        "MUSINSA", "무신사", "KREAM", "크림", "ABCmart", "ABC마트",
+        "Nike", "나이키", "Adidas", "아디다스", "올리브영", "OliveYoung",
+        "SSG", "신세계", "롯데온", "LOTTEON", "GSShop", "GS샵",
+        "eBay", "이베이", "Zara", "자라", "FashionPlus", "패션플러스",
+        "GrandStage", "그랜드스테이지", "OKmall", "ElandMall", "이랜드몰",
+        "SSF", "SSF샵",
+    ]
+
+    return {
+        "rejected": rejected_tags,
+        "brands": brands,
+        "source_sites": source_sites,
+    }

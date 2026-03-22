@@ -150,11 +150,21 @@ class ImageFilterService:
       content.append({"type": "text", "text": CLASSIFY_PROMPT})
 
       try:
-        response = await client.messages.create(
-          model="claude-sonnet-4-20250514",
-          max_tokens=1024,
-          messages=[{"role": "user", "content": content}],
-        )
+        # 429 rate limit 대비 재시도
+        for attempt in range(3):
+            try:
+                response = await client.messages.create(
+                  model="claude-sonnet-4-20250514",
+                  max_tokens=1024,
+                  messages=[{"role": "user", "content": content}],
+                )
+                break
+            except anthropic.RateLimitError:
+                if attempt < 2:
+                    import asyncio
+                    await asyncio.sleep(60 * (attempt + 1))
+                else:
+                    raise
         # 응답 파싱
         text = response.content[0].text.strip()
         # JSON 배열 추출 (앞뒤 마크다운 코드블록 제거)

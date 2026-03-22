@@ -146,3 +146,257 @@ async def cleanup_old_events(
   deleted = await repo.cleanup_old(before)
   await session.commit()
   return {"deleted": deleted}
+
+
+# ═══════════════════════════════════════════════
+# 스토어 현황 점수 모니터링
+# ═══════════════════════════════════════════════
+
+_GRADE_LABELS: dict[str, str] = {
+  "01": "프리미엄", "02": "빅파워", "03": "파워", "04": "새싹", "05": "씨앗",
+}
+
+# 스마트스토어 등급별 최대 등록 상품 수
+_SS_MAX_PRODUCTS: dict[str, int] = {
+  "01": 100000, "02": 50000, "03": 10000, "04": 5000, "05": 1000,
+}
+
+# 마켓별 기본 최대 등록 상품 수
+_MARKET_MAX_PRODUCTS: dict[str, int] = {
+  "coupang": 0,       # 무제한
+  "11st": 50000,
+  "lotteon": 50000,
+  "ssg": 10000,
+}
+
+
+@router.get("/store-scores")
+async def get_store_scores(
+  session: AsyncSession = Depends(get_write_session_dependency),
+):
+  """전체 계정의 스토어 점수 조회 (DB 캐시)."""
+  from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+  repo = SambaSettingsRepository(session)
+  row = await repo.find_by_async(key="store_scores_cache")
+  return row.value if row and row.value else {}
+
+
+@router.post("/store-scores/refresh")
+async def refresh_store_scores(
+  session: AsyncSession = Depends(get_write_session_dependency),
+):
+  """전체 마켓 계정의 판매자 등급/상태를 API로 조회 후 캐시 저장."""
+  from backend.domain.samba.account.repository import SambaMarketAccountRepository
+  from backend.domain.samba.proxy.smartstore import SmartStoreClient
+  from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+  from backend.domain.samba.forbidden.model import SambaSettings
+  from backend.utils.logger import logger
+
+  account_repo = SambaMarketAccountRepository(session)
+  accounts = await account_repo.list_async(limit=200)
+  active_accounts = [a for a in accounts if a.is_active]
+
+  results: dict[str, dict] = {}
+
+  # 기존 캐시 로드
+  settings_repo = SambaSettingsRepository(session)
+  cache_row = await settings_repo.find_by_async(key="store_scores_cache")
+  if cache_row and isinstance(cache_row.value, dict):
+    results = cache_row.value
+
+  now_iso = datetime.now(timezone.utc).isoformat()
+
+  for acc in active_accounts:
+    extras = acc.additional_fields or {}
+    market = acc.market_type or ""
+    old = results.get(acc.id, {})
+
+    try:
+      if market == "smartstore":
+        cid = extras.get("clientId", "")
+        cs = extras.get("clientSecret", "")
+        if not cid or not cs:
+          continue
+        client = SmartStoreClient(cid, cs)
+        data = await client._call_api("GET", "/v1/seller/account")
+        grade_code = data.get("grade", "")
+        grade_label = _GRADE_LABELS.get(grade_code, grade_code)
+        # 상품 수 조회
+        product_count = 0
+        try:
+          search = await client._call_api("POST", "/v1/products/search", body={"page": 1, "size": 1})
+          product_count = search.get("totalElements", search.get("total", 0))
+        except Exception:
+          pass
+        max_products = _SS_MAX_PRODUCTS.get(grade_code, 1000)
+        results[acc.id] = {
+          **old,
+          "account_id": acc.id,
+          "account_label": acc.account_label or acc.seller_id,
+          "market_type": market,
+          "grade": grade_label,
+          "grade_code": grade_code,
+          "product_count": product_count,
+          "max_products": max_products,
+          "good_service": old.get("good_service"),
+          "penalty": old.get("penalty"),
+          "penalty_rate": old.get("penalty_rate"),
+          "updated_at": now_iso,
+        }
+        logger.info(f"[워룸] {acc.account_label} 등급: {grade_label}, 상품: {product_count}/{max_products}개")
+
+      elif market == "11st":
+        api_key = extras.get("apiKey", "")
+        if not api_key:
+          continue
+        from backend.domain.samba.proxy.elevenst import ElevenstClient
+        client_11 = ElevenstClient(api_key)
+        # 상품 검색으로 등록 상품 수 확인
+        product_count = 0
+        try:
+          search = await client_11.get_product("0")  # 존재하지 않는 상품 조회 → 인증 확인
+        except Exception:
+          pass
+        results[acc.id] = {
+          **old,
+          "account_id": acc.id,
+          "account_label": acc.account_label or acc.seller_id,
+          "market_type": market,
+          "grade": "연결됨",
+          "grade_code": "connected",
+          "max_products": _MARKET_MAX_PRODUCTS.get(market, 0),
+          "updated_at": now_iso,
+        }
+        logger.info(f"[워룸] 11번가 {acc.account_label} 연결 확인")
+
+      elif market == "coupang":
+        access_key = extras.get("accessKey", "")
+        secret_key = extras.get("secretKey", "")
+        vendor_id = extras.get("vendorId", "")
+        if not access_key or not secret_key:
+          continue
+        from backend.domain.samba.proxy.coupang import CoupangClient
+        client_cp = CoupangClient(access_key, secret_key)
+        results[acc.id] = {
+          **old,
+          "account_id": acc.id,
+          "account_label": acc.account_label or acc.seller_id,
+          "market_type": market,
+          "grade": "연결됨" if vendor_id else "Vendor ID 없음",
+          "grade_code": "connected" if vendor_id else "no_vendor",
+          "max_products": _MARKET_MAX_PRODUCTS.get(market, 0),
+          "updated_at": now_iso,
+        }
+        logger.info(f"[워룸] 쿠팡 {acc.account_label} 연결 확인")
+
+      elif market == "lotteon":
+        api_key = extras.get("apiKey", "")
+        if not api_key:
+          continue
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+        client_lt = LotteonClient(api_key)
+        try:
+          auth = await client_lt.test_auth()
+          auth_data = auth.get("data", {})
+          tr_grp = auth_data.get("trGrpCd", "")
+          results[acc.id] = {
+            **old,
+            "account_id": acc.id,
+            "account_label": acc.account_label or acc.seller_id,
+            "market_type": market,
+            "grade": f"연결됨 ({tr_grp})" if tr_grp else "연결됨",
+            "grade_code": "connected",
+            "max_products": _MARKET_MAX_PRODUCTS.get(market, 0),
+            "updated_at": now_iso,
+          }
+        except Exception:
+          results[acc.id] = {
+            **old,
+            "account_id": acc.id,
+            "account_label": acc.account_label or acc.seller_id,
+            "market_type": market,
+            "grade": "인증 실패",
+            "grade_code": "auth_failed",
+            "max_products": _MARKET_MAX_PRODUCTS.get(market, 0),
+            "updated_at": now_iso,
+          }
+        logger.info(f"[워룸] 롯데ON {acc.account_label} 연결 확인")
+
+      elif market == "ssg":
+        api_key = extras.get("apiKey", "")
+        if not api_key:
+          continue
+        results[acc.id] = {
+          **old,
+          "account_id": acc.id,
+          "account_label": acc.account_label or acc.seller_id,
+          "market_type": market,
+          "grade": "연결됨",
+          "grade_code": "connected",
+          "max_products": _MARKET_MAX_PRODUCTS.get(market, 0),
+          "updated_at": now_iso,
+        }
+        logger.info(f"[워룸] SSG {acc.account_label} 연결 확인")
+
+      else:
+        # 기타 마켓 (기본 정보만)
+        results[acc.id] = {
+          **old,
+          "account_id": acc.id,
+          "account_label": acc.account_label or acc.seller_id,
+          "market_type": market,
+          "grade": "등록됨",
+          "grade_code": "registered",
+          "updated_at": now_iso,
+        }
+
+    except Exception as e:
+      logger.warning(f"[워룸] {acc.account_label} ({market}) 조회 실패: {e}")
+
+  # 캐시 저장 (JSON 변경 감지를 위해 flag_modified 사용)
+  from sqlalchemy.orm.attributes import flag_modified
+  if cache_row:
+    cache_row.value = results
+    flag_modified(cache_row, "value")
+    session.add(cache_row)
+  else:
+    session.add(SambaSettings(key="store_scores_cache", value=results))
+  await session.commit()
+
+  return {"success": True, "accounts": len(results), "data": results}
+
+
+@router.post("/store-scores/update")
+async def update_store_scores(
+  body: dict,
+  session: AsyncSession = Depends(get_write_session_dependency),
+):
+  """확장앱에서 스크래핑한 점수 데이터 수신 (굿서비스/패널티 등)."""
+  from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+  from backend.domain.samba.forbidden.model import SambaSettings
+
+  account_id = body.get("account_id", "")
+  if not account_id:
+    return {"success": False, "message": "account_id 필요"}
+
+  settings_repo = SambaSettingsRepository(session)
+  cache_row = await settings_repo.find_by_async(key="store_scores_cache")
+  results: dict = cache_row.value if cache_row and isinstance(cache_row.value, dict) else {}
+
+  existing = results.get(account_id, {})
+  existing.update({
+    "good_service": body.get("good_service"),
+    "penalty": body.get("penalty"),
+    "penalty_rate": body.get("penalty_rate"),
+    "updated_at": datetime.now(timezone.utc).isoformat(),
+  })
+  results[account_id] = existing
+
+  if cache_row:
+    cache_row.value = results
+    session.add(cache_row)
+  else:
+    session.add(SambaSettings(key="store_scores_cache", value=results))
+  await session.commit()
+
+  return {"success": True}

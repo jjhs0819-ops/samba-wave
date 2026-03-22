@@ -1,0 +1,33 @@
+{
+  "productOrder": {
+    "productOrderId": "2024032012345678",
+    "productOrderStatus": "PAYED",
+    "placeOrderStatus": "OK",
+    "productName": "나이키 에어포스 1 '07 - 블랙",
+    "productOption": "270",
+    "imageUrl": "https://shop-phinf.pstatic.net/20230101/product_image.jpg",
+    "quantity": 1,
+    "totalPaymentAmount": 119000,
+    "unitPrice": 119000,
+    "expectedSettlementAmount": 107100,
+    "shippingFeeAmount": 0,
+    "deliveryMethod": "DELIVERY",
+    "claimType": "",
+    "claimStatus": ""
+  },
+  "order": {
+    "orderId": "2024032000001",
+    "paymentDate": "2024-03-20T14:30:00+09:00"
+  },
+  "shippingAddress": {
+    "name": "홍길동",
+    "tel1": "010-1234-5678",
+    "baseAddress": "서울특별시 강남구 역삼동",
+    "detailAddress": "123-45 테스트아파트 101동 202호"
+  },
+  "_context": {
+    "account_id": "acc_smartstore_001",
+    "account_name": "내스토어",
+    "market_type": "smartstore"
+  }
+}

@@ -213,6 +213,14 @@ class CoupangClient:
     )
     return {"success": True, "data": result}
 
+  async def delete_product(self, seller_product_id: str) -> dict[str, Any]:
+    """상품 삭제 (리스트에서 완전 제거)."""
+    result = await self._call_api(
+      "DELETE",
+      f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/{seller_product_id}",
+    )
+    return {"success": True, "data": result}
+
   async def get_product(self, seller_product_id: str) -> dict[str, Any]:
     """상품 조회."""
     return await self._call_api(
@@ -247,18 +255,9 @@ class CoupangClient:
     # 판매기간
     now = dt.now(tz.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
-    # 고시정보 — 의류 기본값 (카테고리 메타정보 API 기준 상세명 정확히 일치해야 함)
-    notices = [
-      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "제품 소재", "content": product.get("material", "") or "상세페이지 참조"},
-      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "색상", "content": color},
-      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "치수", "content": "상세페이지 참조"},
-      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "제조자(수입자)", "content": product.get("manufacturer", "") or "상세페이지 참조"},
-      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "제조국", "content": product.get("origin", "") or "상세페이지 참조"},
-      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "세탁방법 및 취급시 주의사항", "content": "상세페이지 참조"},
-      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "제조연월", "content": "상세페이지 참조"},
-      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "품질보증기준", "content": "제품 이상 시 공정거래위원회 고시 소비자분쟁해결기준에 의거 보상합니다."},
-      {"noticeCategoryName": "의류", "noticeCategoryDetailName": "A/S 책임자와 전화번호", "content": "상세페이지 참조"},
-    ]
+    # 고시정보 — 카테고리별 동적 생성
+    from backend.domain.samba.proxy.notice_utils import build_coupang_notices
+    notices = build_coupang_notices(product)
 
     # 아이템별 공통 필드 생성 함수
     def _build_item(item_name: str, stock: int, size_val: str) -> dict[str, Any]:
@@ -346,7 +345,7 @@ class CoupangClient:
       "unionDeliveryType": "NOT_UNION_DELIVERY",
       "returnCenterCode": return_center_code or "NO_RETURN_CENTERCODE",
       "returnChargeName": "반품지",
-      "companyContactNumber": "02-0000-0000",
+      "companyContactNumber": product.get("_as_phone", "") or "상세페이지 참조",
       "returnZipCode": "00000",
       "returnAddress": "상세페이지 참조",
       "returnAddressDetail": "상세페이지 참조",

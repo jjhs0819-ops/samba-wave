@@ -141,19 +141,38 @@ async def ai_suggest_category(
         raise HTTPException(400, str(e)) from e
 
 
+class BulkAiMappingRequest(BaseModel):
+    """벌크 AI 매핑 요청 — 대상 마켓 선택."""
+    target_markets: Optional[List[str]] = None
+
+
 @router.post("/ai-suggest-bulk")
 async def ai_suggest_bulk(
+    body: Optional[BulkAiMappingRequest] = None,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """미매핑 카테고리 일괄 AI 매핑 + 기존 매핑 누락 마켓 보충."""
+    """미매핑 카테고리 일괄 AI 매핑 — 선택된 마켓만 대상."""
     api_key = await _get_claude_api_key(session)
     if not api_key:
         raise HTTPException(400, "Claude API Key가 설정되지 않았습니다")
     svc = _get_service(session)
+    target_markets = body.target_markets if body else None
     try:
-        return await svc.bulk_ai_mapping(api_key, session)
+        return await svc.bulk_ai_mapping(api_key, session, target_markets=target_markets)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+
+
+@router.post("/markets/sync-smartstore")
+async def sync_smartstore_categories(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """스마트스토어 API에서 실제 카테고리를 가져와 DB 동기화."""
+    svc = _get_service(session)
+    result = await svc.seed_smartstore_from_api(session)
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    return result
 
 
 class MarketCheckRequest(BaseModel):

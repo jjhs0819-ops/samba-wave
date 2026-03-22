@@ -779,11 +779,21 @@ class SambaCategoryService:
 
         try:
             client = anthropic.AsyncAnthropic(api_key=key)
-            response = await client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=512,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            # 429 rate limit 대비 재시도
+            for attempt in range(3):
+                try:
+                    response = await client.messages.create(
+                        model="claude-sonnet-4-20250514",
+                        max_tokens=512,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    break
+                except anthropic.RateLimitError:
+                    if attempt < 2:
+                        import asyncio
+                        await asyncio.sleep(60 * (attempt + 1))
+                    else:
+                        raise
             text = response.content[0].text.strip()
             if text.startswith("```"):
                 text = text.split("\n", 1)[1] if "\n" in text else text[3:]
@@ -899,6 +909,88 @@ class SambaCategoryService:
         await self.tree_repo.session.commit()
         return result
 
+    async def seed_smartstore_from_api(
+        self, session: "AsyncSession"
+    ) -> Dict[str, Any]:
+        """스마트스토어 실제 카테고리를 API에서 가져와 DB에 저장.
+
+        GET /v1/categories?last=false → wholeCategoryName으로 카테고리 경로 구성.
+        """
+        from backend.domain.samba.proxy.smartstore import SmartStoreClient
+        from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+        from backend.domain.samba.account.model import SambaMarketAccount
+        from sqlmodel import select
+
+        # 스마트스토어 계정 찾기
+        stmt = select(SambaMarketAccount).where(
+            SambaMarketAccount.market_type == "smartstore",
+            SambaMarketAccount.is_active == True,
+        )
+        result = await session.execute(stmt)
+        account = result.scalars().first()
+        if not account:
+            return {"error": "활성 스마트스토어 계정이 없습니다"}
+
+        extras = account.additional_fields or {}
+        client_id = extras.get("clientId", "") or account.api_key or ""
+        client_secret = extras.get("clientSecret", "") or account.api_secret or ""
+
+        if not client_id or not client_secret:
+            # Settings 테이블 폴백
+            settings_repo = SambaSettingsRepository(session)
+            row = await settings_repo.find_by_async(key="smartstore")
+            if row and isinstance(row.value, dict):
+                client_id = client_id or row.value.get("clientId", "")
+                client_secret = client_secret or row.value.get("clientSecret", "")
+
+        if not client_id or not client_secret:
+            return {"error": "스마트스토어 API 인증 정보가 없습니다"}
+
+        client = SmartStoreClient(client_id=client_id, client_secret=client_secret)
+
+        # API에서 전체 카테고리 조회
+        try:
+            api_cats = await client.get_categories(last_only=False)
+        except Exception as e:
+            return {"error": f"카테고리 API 호출 실패: {e}"}
+
+        if not isinstance(api_cats, list):
+            return {"error": "카테고리 API 응답 형식 오류"}
+
+        # wholeCategoryName → 카테고리 경로, id → 코드
+        categories: list[str] = []
+        code_map: Dict[str, str] = {}
+        for cat in api_cats:
+            whole_name = cat.get("wholeCategoryName", "")
+            cat_id = cat.get("id", "")
+            if whole_name:
+                # API 형식: "패션잡화>남성신발>스니커즈" → "패션잡화 > 남성신발 > 스니커즈"
+                path = " > ".join(p.strip() for p in whole_name.split(">"))
+                categories.append(path)
+                if cat_id:
+                    code_map[path] = str(cat_id)
+
+        if not categories:
+            return {"error": "가져온 카테고리가 없습니다"}
+
+        # DB 저장 (기존 데이터 교체)
+        existing = await self.tree_repo.get_by_site("smartstore")
+        if existing:
+            existing.cat1 = categories
+            existing.cat2 = code_map
+            existing.updated_at = datetime.now(UTC)
+            self.tree_repo.session.add(existing)
+        else:
+            await self.tree_repo.create_async(
+                site_name="smartstore",
+                cat1=categories,
+                cat2=code_map,
+            )
+        await session.commit()
+
+        logger.info(f"[카테고리] 스마트스토어 API에서 {len(categories)}개 카테고리 동기화 완료")
+        return {"ok": True, "count": len(categories), "has_codes": bool(code_map)}
+
     async def seed_market_via_ai(
         self, market_type: str, api_key: str
     ) -> Dict[str, Any]:
@@ -942,11 +1034,22 @@ class SambaCategoryService:
 예시: ["패션의류 > 여성의류 > 원피스", "뷰티 > 메이크업 > 블러셔", ...]"""
 
         client = anthropic.AsyncAnthropic(api_key=api_key)
-        response = await client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=8192,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        # 429 rate limit 대비 재시도
+        for attempt in range(3):
+            try:
+                response = await client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=8192,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                break
+            except anthropic.RateLimitError:
+                if attempt < 2:
+                    import asyncio
+                    logger.warning("Claude API 429 rate limit — %d초 후 재시도 (%d/3)", 60 * (attempt + 1), attempt + 1)
+                    await asyncio.sleep(60 * (attempt + 1))
+                else:
+                    raise
 
         text = response.content[0].text.strip()
         if text.startswith("```"):
@@ -1457,6 +1560,164 @@ class SambaCategoryService:
                     code_map[path] = str(cat_id)
         return categories, code_map if code_map else None
 
+    # ==================== Batch AI Category Suggestion ====================
+
+    async def _batch_ai_suggest(
+        self,
+        items: List[Dict[str, Any]],
+        target_markets: List[str],
+        api_key: str,
+    ) -> List[Any]:
+        """여러 카테고리를 배치로 묶어 1회 AI 호출로 처리.
+
+        카테고리 목록을 프롬프트에 넣지 않음 — Claude가 각 마켓의 카테고리 체계를 알고 있으므로
+        소싱 카테고리와 상품명만 전달하면 충분. 토큰 대폭 절감.
+        10개씩 배치, 배치 간 3초 딜레이.
+        """
+        import anthropic
+        import asyncio
+        from backend.core.config import settings
+
+        key = api_key or settings.anthropic_api_key
+        if not key:
+            return ["API 키 없음"] * len(items)
+
+        # 마켓 한글명 매핑 (프롬프트에서 마켓 식별용)
+        market_labels: Dict[str, str] = {
+            "smartstore": "네이버 스마트스토어",
+            "coupang": "쿠팡",
+            "gmarket": "G마켓",
+            "auction": "옥션",
+            "11st": "11번가",
+            "ssg": "SSG(신세계몰)",
+            "lotteon": "롯데ON",
+            "lottehome": "롯데홈쇼핑",
+            "gsshop": "GS샵",
+        }
+        market_names = ", ".join(
+            market_labels.get(m, m) for m in target_markets
+        )
+
+        # DB에서 마켓별 실제 카테고리 목록 조회 (AI가 이 중에서만 선택)
+        market_cat_lists: Dict[str, List[str]] = {}
+        for m in target_markets:
+            try:
+                cats = await self._get_market_categories(m)
+                if cats:
+                    market_cat_lists[m] = cats
+            except Exception:
+                pass
+
+        client = anthropic.AsyncAnthropic(api_key=key)
+        all_results: List[Any] = []
+        # 카테고리 목록 포함 시 배치 크기 축소
+        has_cat_list = bool(market_cat_lists)
+        batch_size = 5 if has_cat_list else 10
+
+        for batch_start in range(0, len(items), batch_size):
+            batch = items[batch_start:batch_start + batch_size]
+
+            cat_entries = []
+            for idx, item in enumerate(batch):
+                sample_str = ", ".join(item["samples"][:3]) if item["samples"] else ""
+                cat_entries.append(
+                    f'{idx + 1}. [{item["site"]}] {item["leaf_path"]}'
+                    + (f' (상품: {sample_str})' if sample_str else '')
+                )
+
+            # 마켓별 실제 카테고리 목록 (키워드 관련 카테고리만 필터링)
+            cat_list_section = ""
+            if has_cat_list:
+                # 배치 내 키워드 추출 (필터링용)
+                batch_keywords: set[str] = set()
+                for item in batch:
+                    for seg in item["leaf_path"].split(">"):
+                        seg = seg.strip()
+                        if len(seg) >= 2:
+                            batch_keywords.add(seg)
+                    for s in (item.get("samples") or [])[:2]:
+                        for word in s.split():
+                            if len(word) >= 2:
+                                batch_keywords.add(word)
+
+                lines = []
+                for m, cats in market_cat_lists.items():
+                    # 키워드 관련 카테고리만 필터 (최대 30개)
+                    relevant = [c for c in cats if any(kw in c for kw in batch_keywords)]
+                    if not relevant:
+                        relevant = cats[:20]
+                    else:
+                        relevant = relevant[:30]
+                    lines.append(f"- {market_labels.get(m, m)}:\n" + "\n".join(f"  {c}" for c in relevant))
+                cat_list_section = "\n[마켓 실제 카테고리 (이 중에서만 선택)]\n" + "\n".join(lines) + "\n"
+
+            prompt = f"""소싱 카테고리를 판매 마켓 카테고리에 매핑.
+
+{chr(10).join(cat_entries)}
+{cat_list_section}
+규칙: 반드시 위 목록에 있는 카테고리 경로를 그대로 사용. 임의 생성 금지. 빈값 금지.
+JSON만 응답:
+{json.dumps({str(i + 1): {m: "" for m in target_markets} for i in range(len(batch))}, ensure_ascii=False)}"""
+
+            # API 호출 (재시도 포함)
+            for attempt in range(3):
+                try:
+                    response = await client.messages.create(
+                        model="claude-sonnet-4-20250514",
+                        max_tokens=2048,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    break
+                except anthropic.RateLimitError:
+                    if attempt < 2:
+                        wait = 60 * (attempt + 1)
+                        logger.warning(
+                            "[벌크매핑] 429 rate limit — %d초 대기 (배치 %d/%d, 시도 %d/3)",
+                            wait, batch_start // batch_size + 1,
+                            (len(items) + batch_size - 1) // batch_size,
+                            attempt + 1,
+                        )
+                        await asyncio.sleep(wait)
+                    else:
+                        for _ in batch:
+                            all_results.append("rate limit 초과")
+                        continue
+
+            try:
+                text = response.content[0].text.strip()
+                if text.startswith("```"):
+                    text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+                    if text.endswith("```"):
+                        text = text[:-3].strip()
+                result = json.loads(text)
+
+                target_set = set(target_markets)
+                for idx in range(len(batch)):
+                    key_str = str(idx + 1)
+                    if key_str in result and isinstance(result[key_str], dict):
+                        validated: Dict[str, str] = {}
+                        for market, suggested in result[key_str].items():
+                            if market in target_set and suggested:
+                                validated[market] = suggested
+                        all_results.append(validated)
+                    else:
+                        all_results.append("AI 응답에서 누락")
+            except Exception as e:
+                logger.error("[벌크매핑] 배치 응답 파싱 실패: %s", e)
+                for _ in batch:
+                    all_results.append(f"파싱 실패: {e}")
+
+            # 배치 간 딜레이 (분당 토큰 제한 대응)
+            if batch_start + batch_size < len(items):
+                logger.info(
+                    "[벌크매핑] 배치 %d/%d 완료, 5초 대기",
+                    batch_start // batch_size + 1,
+                    (len(items) + batch_size - 1) // batch_size,
+                )
+                await asyncio.sleep(5)
+
+        return all_results
+
     # ==================== AI Category Suggestion ====================
 
     async def ai_suggest_category(
@@ -1519,13 +1780,27 @@ JSON만 응답하세요 (설명 불필요):
 
         client = anthropic.AsyncAnthropic(api_key=key)
 
-        try:
-            response = await client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=1024,
-                messages=[{"role": "user", "content": prompt}],
-            )
+        # 429 rate limit 대비 재시도 (최대 3회, 60초 대기)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = await client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=1024,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                break
+            except anthropic.RateLimitError as e:
+                if attempt < max_retries - 1:
+                    wait = 60 * (attempt + 1)  # 60초, 120초
+                    logger.warning("Claude API 429 rate limit — %d초 후 재시도 (%d/%d)", wait, attempt + 1, max_retries)
+                    import asyncio
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error("Claude API rate limit 초과 (재시도 소진): %s", e)
+                    raise ValueError(f"Claude API rate limit 초과: {e}") from e
 
+        try:
             # 응답에서 JSON 추출
             text = response.content[0].text.strip()
             # ```json ... ``` 블록 제거
@@ -1560,19 +1835,36 @@ JSON만 응답하세요 (설명 불필요):
     # ==================== Bulk AI Mapping ====================
 
     async def bulk_ai_mapping(
-        self, api_key: str, session: "AsyncSession"
+        self, api_key: str, session: "AsyncSession",
+        target_markets: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """미매핑 카테고리 자동 매핑 + 기존 매핑 누락 마켓 보충.
 
-        1) 수집 상품 전체에서 고유 (site, leaf_category) 추출
-        2) 기존 매핑 전체 조회
-        3-A) 미매핑 → AI → 새 매핑 생성
-        3-B) 기존 매핑 중 MARKET_CATEGORIES 키 빠진 것 → AI → 매핑 업데이트
+        target_markets가 지정되면 해당 마켓만, 없으면 활성 계정 마켓만 대상.
         """
         from sqlmodel import select
         from backend.domain.samba.collector.model import SambaCollectedProduct
 
-        all_market_keys = set(MARKET_CATEGORIES.keys())
+        if target_markets:
+            # 사용자가 직접 선택한 마켓
+            all_market_keys = set(target_markets) & set(MARKET_CATEGORIES.keys())
+            logger.info(f"[벌크매핑] 사용자 선택 마켓: {all_market_keys} ({len(all_market_keys)}개)")
+        else:
+            # 폴백: 활성 계정 마켓
+            from backend.domain.samba.account.model import SambaMarketAccount
+            acct_stmt = select(SambaMarketAccount.market_type).where(
+                SambaMarketAccount.is_active == True
+            ).distinct()
+            acct_result = await session.execute(acct_stmt)
+            active_markets = {row[0] for row in acct_result.all()}
+            if active_markets:
+                all_market_keys = active_markets & set(MARKET_CATEGORIES.keys())
+                logger.info(f"[벌크매핑] 활성 마켓 대상: {all_market_keys} ({len(all_market_keys)}개)")
+            else:
+                all_market_keys = set(MARKET_CATEGORIES.keys())
+
+        if not all_market_keys:
+            return {"mapped": 0, "updated": 0, "skipped": 0, "errors": ["대상 마켓이 없습니다"]}
 
         # 1) 수집 상품에서 고유 (site, leaf_category, 대표 상품명) 추출
         stmt = select(SambaCollectedProduct)
@@ -1612,55 +1904,103 @@ JSON만 응답하세요 (설명 불필요):
         skipped = 0
         errors: List[str] = []
 
+        # AI 호출 대상 수집 (배치 처리)
+        batch_items: List[Dict[str, Any]] = []
         for (site, leaf_path), samples in cat_samples.items():
             existing = existing_map.get((site, leaf_path))
 
             if existing:
-                # 3-B) 기존 매핑에서 누락 마켓 확인
                 current_targets = existing.target_mappings or {}
                 missing_markets = all_market_keys - set(current_targets.keys())
                 if not missing_markets:
                     skipped += 1
                     continue
+                batch_items.append({
+                    "site": site,
+                    "leaf_path": leaf_path,
+                    "samples": samples,
+                    "target_markets": list(missing_markets),
+                    "existing": existing,
+                    "mode": "update",
+                })
+            else:
+                batch_items.append({
+                    "site": site,
+                    "leaf_path": leaf_path,
+                    "samples": samples,
+                    "target_markets": list(all_market_keys),
+                    "existing": None,
+                    "mode": "create",
+                })
 
-                # 누락 마켓만 AI 추천
-                try:
-                    ai_result = await self.ai_suggest_category(
-                        source_site=site,
-                        source_category=leaf_path,
-                        sample_products=samples,
-                        target_markets=list(missing_markets),
-                        api_key=api_key,
-                    )
-                    # 기존 매핑에 추가
+        if not batch_items:
+            return {"mapped": mapped, "updated": updated, "skipped": skipped, "errors": errors}
+
+        # 배치 AI 호출 + 빈 결과 재시도 (최대 2회)
+        remaining_items = batch_items
+        for round_num in range(2):
+            if not remaining_items:
+                break
+
+            batch_results = await self._batch_ai_suggest(
+                remaining_items, list(all_market_keys), api_key,
+            )
+
+            retry_items: List[Dict[str, Any]] = []
+
+            for item, ai_result in zip(remaining_items, batch_results):
+                site = item["site"]
+                leaf_path = item["leaf_path"]
+
+                if isinstance(ai_result, str):
+                    if round_num == 0:
+                        retry_items.append(item)
+                        logger.warning(f"[벌크매핑] 에러 → 재시도 대기: {site} > {leaf_path}: {ai_result}")
+                    else:
+                        errors.append(f"[{item['mode']}] {site} > {leaf_path}: {ai_result}")
+                    continue
+
+                if item["mode"] == "update":
+                    existing = item["existing"]
+                    current_targets = existing.target_mappings or {}
                     new_targets = {**current_targets}
                     for market, cat in ai_result.items():
                         if cat:
                             new_targets[market] = cat
-                    await self.update_mapping(existing.id, {"target_mappings": new_targets})
-                    updated += 1
-                except Exception as e:
-                    errors.append(f"[보충] {site} > {leaf_path}: {e}")
-            else:
-                # 3-A) 미매핑 → AI → 새 매핑 생성
-                try:
-                    ai_result = await self.ai_suggest_category(
-                        source_site=site,
-                        source_category=leaf_path,
-                        sample_products=samples,
-                        api_key=api_key,
-                    )
+                    # 새로 추가된 마켓이 없으면 빈 결과
+                    if new_targets == current_targets:
+                        if round_num == 0:
+                            retry_items.append(item)
+                        else:
+                            errors.append(f"[보충] {site} > {leaf_path}: AI 빈 응답")
+                        continue
+                    try:
+                        await self.update_mapping(existing.id, {"target_mappings": new_targets})
+                        updated += 1
+                    except Exception as e:
+                        errors.append(f"[보충] {site} > {leaf_path}: {e}")
+                else:
                     target_mappings = {m: c for m, c in ai_result.items() if c}
                     if target_mappings:
-                        await self.create_mapping({
-                            "source_site": site,
-                            "source_category": leaf_path,
-                            "target_mappings": target_mappings,
-                        })
-                        mapped += 1
+                        try:
+                            await self.create_mapping({
+                                "source_site": site,
+                                "source_category": leaf_path,
+                                "target_mappings": target_mappings,
+                            })
+                            mapped += 1
+                        except Exception as e:
+                            errors.append(f"[신규] {site} > {leaf_path}: {e}")
                     else:
-                        skipped += 1
-                except Exception as e:
-                    errors.append(f"[신규] {site} > {leaf_path}: {e}")
+                        if round_num == 0:
+                            retry_items.append(item)
+                        else:
+                            errors.append(f"[신규] {site} > {leaf_path}: AI 빈 응답 (2회 실패)")
+
+            remaining_items = retry_items
+            if retry_items and round_num == 0:
+                logger.info(f"[벌크매핑] {len(retry_items)}개 빈 결과 재시도")
+                import asyncio
+                await asyncio.sleep(3)
 
         return {"mapped": mapped, "updated": updated, "skipped": skipped, "errors": errors}

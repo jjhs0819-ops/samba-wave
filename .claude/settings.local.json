@@ -1,4 +1,7 @@
 {
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
   "permissions": {
     "allow": [
       "mcp__sequential-thinking__sequentialthinking",
@@ -10,20 +13,19 @@
       "mcp__playwright__browser_wait_for",
       "mcp__playwright__browser_close",
       "mcp__playwright__browser_console_messages",
-      "Read(//opt/homebrew/Cellar/python@3.12/3.12.3/Frameworks/Python.framework/Versions/3.12/bin/**)",
+      "mcp__playwright__browser_network_requests",
+      "mcp__playwright__browser_tabs",
+      "mcp__claude_ai_Context7__query-docs",
+      "mcp__claude_ai_Context7__resolve-library-id",
       "Skill(pytest-backend-testing)",
       "Skill(fastapi-backend-guidelines)",
       "Skill(nextjs-frontend-guidelines)",
       "Skill(pptx)",
-      "mcp__context7__get-library-docs",
-      "mcp__playwright__browser_network_requests",
-      "Skill(cliwant-brand-guidelines)",
+      "Skill(brand-guidelines)",
       "Skill(ppt-brand-guidelines)",
-      "Skill(reel-creator)",
-      "mcp__playwright__browser_tabs",
       "Skill(generate-image)",
-      "Bash()",
-      "WebFetch()",
+      "Bash",
+      "WebFetch"
     ],
     "deny": [],
     "ask": []

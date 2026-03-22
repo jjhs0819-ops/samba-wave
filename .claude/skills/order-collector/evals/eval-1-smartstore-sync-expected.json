@@ -1,0 +1,25 @@
+{
+  "order_number": "2024032012345678",
+  "channel_id": "acc_smartstore_001",
+  "channel_name": "내스토어",
+  "product_name": "나이키 에어포스 1 '07 - 블랙 (270)",
+  "product_image": "https://shop-phinf.pstatic.net/20230101/product_image.jpg",
+  "quantity": 1,
+  "sale_price": 119000,
+  "shipping_fee": 0,
+  "revenue": 107100,
+  "fee_rate": 10.0,
+  "customer_name": "홍길동",
+  "customer_phone": "010-1234-5678",
+  "customer_address": "서울특별시 강남구 역삼동 123-45 테스트아파트 101동 202호",
+  "status": "pending",
+  "shipping_status": "발송대기",
+  "shipment_id": "2024032000001",
+  "source": "smartstore",
+  "_checklist_score": {
+    "total": 20,
+    "passed": 20,
+    "score_percent": 100,
+    "note": "정상 주문 — 모든 필수필드 매핑 완료, 발주확인 완료(OK), 정산금액 API 제공"
+  }
+}

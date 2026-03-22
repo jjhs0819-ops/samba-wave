@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 import time
 from typing import Any, Optional
 
 import bcrypt
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, Form
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -719,6 +720,123 @@ async def fireworks_transform_images(
         return {"success": False, "message": str(exc)[:300]}
 
 
+@router.get("/preset-images/list")
+async def list_preset_images() -> dict[str, Any]:
+    """프리셋 목록 + 이미지 URL 반환."""
+    from backend.domain.samba.image.service import MODEL_PRESETS, PRESET_IMAGE_DIR
+
+    presets = []
+    for key, p in MODEL_PRESETS.items():
+        filename = p.get("image", "")
+        local_path = PRESET_IMAGE_DIR / filename if filename else None
+        presets.append({
+            "key": key,
+            "label": p["label"],
+            "desc": p["desc"],
+            "image": f"/static/model_presets/{filename}" if local_path and local_path.exists() else None,
+        })
+    return {"success": True, "presets": presets}
+
+
+@router.post("/preset-images/upload")
+async def upload_preset_image(
+    preset_key: str = Form(...),
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """프리셋 이미지를 직접 업로드."""
+    from backend.domain.samba.image.service import MODEL_PRESETS, PRESET_IMAGE_DIR
+
+    preset = MODEL_PRESETS.get(preset_key)
+    if not preset:
+        return {"success": False, "message": f"프리셋 '{preset_key}' 없음"}
+
+    filename = preset.get("image", f"{preset_key}.png")
+    out_path = PRESET_IMAGE_DIR / filename
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    content = await file.read()
+    out_path.write_bytes(content)
+
+    return {
+        "success": True,
+        "message": f"{preset['label']} 이미지 업로드 완료 ({len(content)} bytes)",
+        "image": f"/static/model_presets/{filename}",
+    }
+
+
+@router.post("/preset-images/regenerate")
+async def regenerate_preset_image(
+    request: dict[str, Any],
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """프리셋 이미지를 Gemini로 재생성."""
+    from backend.domain.samba.image.service import ImageTransformService, MODEL_PRESETS, PRESET_IMAGE_DIR
+    import base64, httpx
+
+    preset_key = request.get("preset_key", "")
+    custom_desc = request.get("desc", "")
+    custom_label = request.get("label", "")
+    save_only = request.get("save_only", False)
+    preset = MODEL_PRESETS.get(preset_key)
+    if not preset:
+        return {"success": False, "message": f"프리셋 '{preset_key}' 없음"}
+
+    # label/desc 텍스트 업데이트
+    if custom_label:
+        preset["label"] = custom_label
+    if custom_desc:
+        preset["desc"] = custom_desc
+
+    # 텍스트만 저장 (이미지 재생성 없이)
+    if save_only:
+        return {"success": True, "message": f"{preset['label']} 설정 저장 완료"}
+
+    svc = ImageTransformService(session)
+    api_key, model = await svc._get_gemini_config()
+
+    desc = custom_desc or preset["desc"]
+    prompt = (
+        f"{desc}의 전신 사진을 생성해주세요. "
+        "흰색 기본 라운드넥 티셔츠와 연한 블루 데님 청바지를 입고 있는 전신 사진. "
+        "흰색 운동화. 자연스러운 포즈. "
+        "밝은 라이트그레이 스튜디오 배경. 전문 패션 화보 스타일."
+    )
+
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+    }
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(url, json=body, headers={"Content-Type": "application/json"})
+        resp.raise_for_status()
+        data = resp.json()
+
+    candidates = data.get("candidates", [])
+    if not candidates:
+        return {"success": False, "message": "Gemini 응답에 candidates 없음"}
+
+    for part in candidates[0].get("content", {}).get("parts", []):
+        if "inlineData" in part:
+            img_bytes = base64.b64decode(part["inlineData"]["data"])
+            filename = preset.get("image", f"{preset_key}.png")
+            out_path = PRESET_IMAGE_DIR / filename
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(img_bytes)
+
+            # desc가 커스텀이면 프리셋 desc도 업데이트
+            if custom_desc:
+                preset["desc"] = custom_desc
+
+            return {
+                "success": True,
+                "message": f"{preset['label']} 이미지 재생성 완료",
+                "image": f"/static/model_presets/{filename}",
+            }
+
+    return {"success": False, "message": "Gemini 응답에 이미지 없음"}
+
+
 @router.post("/preset-images/sync-to-r2")
 async def sync_preset_images_to_r2(
     session: AsyncSession = Depends(get_write_session_dependency),
@@ -728,6 +846,141 @@ async def sync_preset_images_to_r2(
 
     svc = ImageTransformService(session)
     return await svc.sync_presets_to_r2()
+
+
+# ═══════════════════════════════════════════════
+# AI 태그 공통 상수 및 헬퍼
+# ═══════════════════════════════════════════════
+
+_SOURCING_SITE_BANNED: frozenset[str] = frozenset({
+    "musinsa", "무신사", "kream", "크림", "abcmart", "abc마트",
+    "올리브영", "oliveyoung", "ssg", "신세계", "롯데온", "lotteon",
+    "gsshop", "gs샵", "ebay", "이베이", "zara", "자라",
+    "fashionplus", "패션플러스", "grandstage", "그랜드스테이지",
+    "okmall", "elandmall", "이랜드몰", "ssf", "ssf샵",
+})
+
+_BRAND_BANNED: frozenset[str] = frozenset({
+    "nike", "나이키", "adidas", "아디다스", "뉴발란스", "new balance",
+    "푸마", "puma", "리복", "reebok", "아식스", "asics",
+    "컨버스", "converse", "반스", "vans", "휠라", "fila",
+    "스케쳐스", "skechers", "노스페이스", "the north face",
+    "코오롱", "kolon", "아이더", "eider", "블랙야크", "blackyak",
+    "k2", "네파", "nepa", "밀레", "millet", "살로몬", "salomon",
+    "메렐", "merrell", "콜롬비아", "columbia", "호카", "hoka",
+    "온러닝", "on running", "라코스테", "lacoste", "폴로", "polo",
+    "구찌", "gucci", "프라다", "prada", "버버리", "burberry",
+    "발렌시아가", "balenciaga", "디올", "dior",
+})
+
+_BRAND_PARTIAL_MATCH: frozenset[str] = frozenset({
+    "나이키", "아디다스", "뉴발란스", "푸마", "리복", "아식스",
+    "컨버스", "반스", "휠라", "스케쳐스", "노스페이스",
+    "코오롱", "아이더", "블랙야크", "네파", "밀레", "살로몬",
+    "메렐", "콜롬비아", "호카", "라코스테", "폴로",
+    "구찌", "프라다", "버버리", "발렌시아가", "디올",
+    "nike", "adidas", "puma", "reebok", "asics", "converse",
+    "vans", "fila", "skechers", "salomon", "merrell",
+    "columbia", "hoka", "lacoste", "gucci", "prada", "burberry",
+})
+
+
+async def _load_tag_filter_data(session) -> tuple[set[str], set[str]]:
+    """DB에서 금지태그/미등록태그 + 전체 브랜드 목록을 1회 로드."""
+    ss_banned: set[str] = set()
+    db_brands: set[str] = set()
+    try:
+        from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+        repo = SambaSettingsRepository(session)
+        for key in ("smartstore_banned_tags", "smartstore_unregistered_tags"):
+            row = await repo.find_by_async(key=key)
+            if row and isinstance(row.value, list):
+                ss_banned.update(w.lower().replace(" ", "") for w in row.value)
+    except Exception:
+        pass
+    try:
+        from sqlmodel import select as _sel
+        from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+        result = await session.exec(_sel(_CP.brand).distinct())
+        for b in result.all():
+            if b and len(b) >= 2:
+                db_brands.add(b.lower())
+    except Exception:
+        pass
+    return ss_banned, db_brands
+
+
+def _build_banned_set(
+    source_site: str,
+    brand: str,
+    cats: list,
+    rep_name: str,
+    ss_banned: set[str],
+    db_brands: set[str],
+) -> tuple[set[str], set[str], set[str], set[str]]:
+    """상품 정보 기반 금지어 집합 (_banned, _name_words, _brand_words, _ss_banned) 생성."""
+    _banned = set(_SOURCING_SITE_BANNED | _BRAND_BANNED | ss_banned)
+    if source_site:
+        _banned.add(source_site.lower())
+    for cat_part in cats:
+        if cat_part:
+            for w in re.split(r'[\s>/\-]+', cat_part):
+                clean = w.strip().lower()
+                if len(clean) >= 2:
+                    _banned.add(clean)
+    if brand:
+        _banned.add(brand.lower())
+        for w in brand.split():
+            if len(w) >= 2:
+                _banned.add(w.lower())
+
+    _name_words: set[str] = set()
+    for w in re.split(r'[\s/\-_()]+', rep_name):
+        clean = re.sub(r'[^가-힣a-zA-Z0-9]', '', w).lower()
+        if len(clean) >= 2:
+            _name_words.add(clean)
+
+    _brand_words = set(_BRAND_PARTIAL_MATCH | db_brands)
+    if brand and len(brand) >= 2:
+        _brand_words.add(brand.lower())
+
+    return _banned, _name_words, _brand_words, ss_banned
+
+
+def _is_valid_tag(tag: str, banned: set[str], name_words: set[str], ss_banned: set[str], brand_words: set[str]) -> bool:
+    """태그 유효성 검사."""
+    t = tag.strip().lower()
+    if not t:
+        return False
+    if t in banned or t in name_words:
+        return False
+    if t.replace(" ", "") in ss_banned:
+        return False
+    for bw in brand_words:
+        if bw in t:
+            return False
+    return True
+
+
+def _extract_seo_keywords(
+    tags: list[str], cats: list, banned: set[str], name_words: set[str], max_count: int = 3
+) -> list[str]:
+    """태그 목록에서 SEO 키워드 추출."""
+    seo: list[str] = []
+    for kw in tags[:5]:
+        cleaned = kw
+        for cat_part in cats:
+            if cat_part:
+                cleaned = cleaned.replace(cat_part, "").strip()
+        for word in cleaned.split():
+            w = word.strip()
+            if len(w) >= 2 and w.lower() not in banned and w.lower() not in name_words and w not in seo:
+                seo.append(w)
+                if len(seo) >= max_count:
+                    break
+        if len(seo) >= max_count:
+            break
+    return seo
 
 
 @router.post("/ai-tags/generate")
@@ -768,53 +1021,77 @@ async def generate_ai_tags(
         else:
             ungrouped.append(product)
 
-    # 그룹별 전체 상품 조회
-    groups: dict[str, list] = {}
+    # 그룹별 전체 상품 조회 (샘플링용)
+    group_products: dict[str, list] = {}
     for gid in group_ids:
         all_in_group = await repo.filter_by_async(search_filter_id=gid, limit=10000)
         if all_in_group:
-            groups[gid] = list(all_in_group)
-    # 그룹 없는 상품은 개별 처리
+            group_products[gid] = list(all_in_group)
     for p in ungrouped:
-        groups[p.id] = [p]
+        group_products[p.id] = [p]
 
-    if not groups:
+    if not group_products:
         return {"success": False, "message": "상품을 찾을 수 없습니다"}
 
     total_tagged = 0
-    total_groups = len(groups)
+    total_groups = len(group_products)
     api_calls = 0
     total_input_tokens = 0
     total_output_tokens = 0
 
-    for gid, products in groups.items():
-        # 대표 상품 선택 (첫 번째)
-        rep = products[0]
-        rep_name = rep.name or ""
-        cats = [rep.category1, rep.category2, rep.category3, rep.category4]
-        category = " > ".join(c for c in cats if c) or rep.category or ""
-        brand = rep.brand or ""
-        source_site = rep.source_site or ""
+    # 금지태그/브랜드 목록 1회 로드
+    ss_banned_cache, db_brands_cache = await _load_tag_filter_data(session)
 
-        # Claude API 호출
-        prompt = (
-            f"상품 정보:\n"
-            f"- 상품명: {rep_name}\n"
-            f"- 브랜드: {brand}\n"
-            f"- 카테고리: {category}\n\n"
-            f"이 상품과 관련된 검색용 태그를 10개 생성해주세요.\n"
-            f"규칙:\n"
-            f"1. 상품명에 이미 포함된 단어는 절대 제외\n"
-            f"2. 브랜드명('{brand}')과 브랜드명이 포함된 단어는 절대 제외\n"
-            f"3. 소비자가 검색할 만한 키워드\n"
-            f"4. 한글로 작성\n"
-            f"5. 쉼표로 구분하여 태그만 출력 (번호/설명 없이)\n"
-            f"6. 수집사이트/소싱처 이름(MUSINSA, 무신사, KREAM, 크림, ABCmart 등)은 절대 포함하지 마세요\n"
-        )
+    async with httpx.AsyncClient(timeout=30) as http_client:
+        for gid, products in group_products.items():
+            rep = products[0]
+            rep_name = rep.name or ""
+            cats = [rep.category1, rep.category2, rep.category3, rep.category4]
+            category = " > ".join(c for c in cats if c) or rep.category or ""
+            brand = rep.brand or ""
+            source_site = rep.source_site or ""
 
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
+            # 그룹 내 다양한 상품명 샘플링 (최대 10개, 컬러 제거)
+            seen_names: set[str] = set()
+            sample_names: list[str] = []
+            for p in products:
+                n = p.name or ""
+                if " - " in n:
+                    n = n.split(" - ")[0].strip()
+                if n and n not in seen_names:
+                    seen_names.add(n)
+                    sample_names.append(n)
+                    if len(sample_names) >= 10:
+                        break
+            sample_str = "\n".join(f"  · {n}" for n in sample_names)
+
+            # Claude API 호출
+            prompt = (
+                f"그룹 상품 정보 ({len(products)}개 상품):\n"
+                f"- 브랜드: {brand}\n"
+                f"- 카테고리: {category}\n"
+                f"- 대표 상품명 (샘플 {len(sample_names)}개):\n{sample_str}\n\n"
+                f"이 그룹의 모든 상품에 공통 적용할 검색용 태그를 25개 생성해주세요.\n"
+                f"규칙:\n"
+                f"1. 소비자가 네이버에서 실제로 검색할 만한 인기 키워드\n"
+                f"2. 브랜드명('{brand}')은 제외\n"
+                f"3. 한글로 작성\n"
+                f"4. 쉼표로 구분하여 태그만 출력 (번호/설명 없이)\n"
+                f"5. 수집사이트 이름(MUSINSA, 무신사, KREAM 등)은 제외\n"
+                f"6. 브랜드명(나이키, 아디다스, 뉴발란스 등 모든 브랜드)은 절대 포함하지 마세요\n"
+                f"7. 복합어보다 실제 검색에 사용되는 단순 키워드 위주 (예: 등산스니커즈(X) → 경량등산화(O))\n"
+                f"8. 다양한 관점의 태그 필수 — 다음 카테고리별로 골고루 생성:\n"
+                f"   - 용도/상황 (출근용, 데일리, 등산용, 캠핑, 여행)\n"
+                f"   - 소재/기능 (고어텍스, 방수, 경량, 쿠션, 통기성)\n"
+                f"   - 스타일/느낌 (캐주얼, 클래식, 빈티지, 트렌디)\n"
+                f"   - 대상/성별 (남성, 여성, 남녀공용, 커플)\n"
+                f"   - 시즌 (봄신발, 겨울신발, 사계절)\n"
+                f"9. 같은 의미 단어 조합을 반복하지 마세요 (남성/남자, 여성/여자, 경량/가벼운 등 동의어는 하나만 사용)\n"
+                f"10. 색상명(블랙, 화이트, 네이비, 그레이, 베이지, 카키, 레드, 블루 등)은 절대 포함하지 마세요 — 그룹 전체에 공통 적용됩니다\n"
+            )
+
+            try:
+                resp = await http_client.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
                         "x-api-key": api_key,
@@ -823,7 +1100,7 @@ async def generate_ai_tags(
                     },
                     json={
                         "model": model,
-                        "max_tokens": 200,
+                        "max_tokens": 400,
                         "messages": [{"role": "user", "content": prompt}],
                     },
                 )
@@ -837,71 +1114,47 @@ async def generate_ai_tags(
                 total_input_tokens += usage.get("input_tokens", 0)
                 total_output_tokens += usage.get("output_tokens", 0)
                 text = data.get("content", [{}])[0].get("text", "")
+
+                # 금지어 집합 생성
+                banned, name_words, brand_words, ss_banned = _build_banned_set(
+                    source_site, brand, cats, rep_name, ss_banned_cache, db_brands_cache,
+                )
+
                 # 쉼표 구분 태그 파싱 + 금지어 필터링
-                _banned = {
-                    "musinsa", "무신사", "kream", "크림", "abcmart", "abc마트",
-                    "nike", "나이키", "adidas", "아디다스", "올리브영", "oliveyoung",
-                    "ssg", "신세계", "롯데온", "lotteon", "gsshop", "gs샵",
-                    "ebay", "이베이", "zara", "자라", "fashionplus", "패션플러스",
-                    "grandstage", "그랜드스테이지", "okmall", "elandmall", "이랜드몰",
-                    "ssf", "ssf샵",
-                }
-                # DB에서 스마트스토어 금지 태그 불러오기
-                try:
-                    from backend.domain.samba.forbidden.repository import SambaSettingsRepository
-                    _settings_repo = SambaSettingsRepository(session)
-                    _banned_row = await _settings_repo.find_by_async(key="smartstore_banned_tags")
-                    if _banned_row and isinstance(_banned_row.value, list):
-                        _banned.update(w.lower() for w in _banned_row.value)
-                except Exception:
-                    pass
-                if source_site:
-                    _banned.add(source_site.lower())
-                # 브랜드명 + 상품명 단어도 금지 목록에 추가
-                if brand:
-                    _banned.add(brand.lower())
-                    # 브랜드 한/영 모두 추가
-                    for w in brand.split():
-                        if len(w) >= 2:
-                            _banned.add(w.lower())
-                # 상품명에서 2글자 이상 단어 추출 → 금지
-                import re
-                _name_words = set()
-                for w in re.split(r'[\s/\-_()]+', rep_name):
-                    clean = re.sub(r'[^가-힣a-zA-Z0-9]', '', w).lower()
-                    if len(clean) >= 2:
-                        _name_words.add(clean)
-
-                def _is_valid_tag(tag: str) -> bool:
-                    t = tag.strip().lower()
-                    if not t:
-                        return False
-                    # 정확 매칭 금지
-                    if t in _banned or t in _name_words:
-                        return False
-                    # 브랜드명이 태그에 포함되는 경우 금지
-                    if brand and brand.lower() in t:
-                        return False
-                    return True
-
-                tags = [
+                ai_tags = [
                     t.strip() for t in text.split(",")
-                    if _is_valid_tag(t)
-                ][:10]
+                    if _is_valid_tag(t, banned, name_words, ss_banned, brand_words)
+                ]
+
+                # AI 태그 중복 제거 (최대 10개)
+                seen: set[str] = set()
+                tags: list[str] = []
+                for t in ai_tags:
+                    tl = t.lower().replace(" ", "")
+                    if tl not in seen and len(tags) < 10:
+                        seen.add(tl)
+                        tags.append(t)
 
                 if not tags:
                     continue
 
-                # 그룹 내 모든 상품에 태그 적용 (AI 마커 포함)
-                for p in products:
+                # SEO 키워드 추출
+                seo_kws = _extract_seo_keywords(tags, cats, banned, name_words)
+
+                # 태그 생성 후 그룹 전체 상품 조회 → 벌크 적용
+                all_in_group = await repo.filter_by_async(search_filter_id=gid, limit=10000)
+                for p in all_in_group:
                     existing = p.tags or []
                     merged = list(set(existing + tags + ["__ai_tagged__"]))
-                    await repo.update_async(p.id, tags=merged)
+                    update_data: dict = {"tags": merged}
+                    if seo_kws:
+                        update_data["seo_keywords"] = seo_kws
+                    await repo.update_async(p.id, **update_data)
                     total_tagged += 1
 
-        except Exception as e:
-            logger.error(f"[AI태그] 그룹 {gid} 실패: {e}")
-            continue
+            except Exception as e:
+                logger.error(f"[AI태그] 그룹 {gid} 실패: {e}")
+                continue
 
     await session.commit()
     # 실비 계산 (Claude Sonnet 4.6: 입력 $3/1M, 출력 $15/1M, 환율 1400원)
@@ -916,6 +1169,270 @@ async def generate_ai_tags(
         "input_tokens": total_input_tokens,
         "output_tokens": total_output_tokens,
         "cost_krw": total_cost,
+    }
+
+
+@router.post("/ai-tags/preview")
+async def preview_ai_tags(
+    request: dict[str, Any],
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """선택 상품의 그룹별 대표 1개로 Claude 태그 20개 생성 → 적용하지 않고 미리보기 반환."""
+    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+
+    product_ids = request.get("product_ids", [])
+    req_group_ids = request.get("group_ids", [])
+    logger.info(f"[AI태그 미리보기] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}")
+
+    if not product_ids and not req_group_ids:
+        return {"success": False, "message": "상품 또는 그룹을 선택해주세요"}
+
+    # Claude API 키 조회
+    creds = await _get_setting(session, "claude")
+    if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
+        return {"success": False, "message": "Claude API 설정이 없습니다"}
+    api_key = str(creds["apiKey"]).strip()
+    model = str(creds.get("model", "claude-sonnet-4-6"))
+
+    repo = SambaCollectedProductRepository(session)
+
+    # 그룹 ID 수집
+    group_ids: set[str] = set(req_group_ids)
+    ungrouped: list = []
+    for pid in product_ids:
+        product = await repo.get_async(pid)
+        if not product:
+            continue
+        if product.search_filter_id:
+            group_ids.add(product.search_filter_id)
+        else:
+            ungrouped.append(product)
+
+    # 그룹별 상품 조회
+    groups: dict[str, list] = {}
+    for gid in group_ids:
+        all_in_group = await repo.filter_by_async(search_filter_id=gid, limit=10000)
+        if all_in_group:
+            groups[gid] = list(all_in_group)
+    for p in ungrouped:
+        groups[p.id] = [p]
+
+    if not groups:
+        return {"success": False, "message": "상품을 찾을 수 없습니다"}
+
+    # 그룹별 태그 미리보기 결과
+    preview_results: list[dict[str, Any]] = []
+    api_calls = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+
+    # 금지태그/브랜드 목록 1회 로드
+    ss_banned_cache, db_brands_cache = await _load_tag_filter_data(session)
+
+    async with httpx.AsyncClient(timeout=30) as http_client:
+        for gid, products in groups.items():
+            rep = products[0]
+            rep_name = rep.name or ""
+            cats = [rep.category1, rep.category2, rep.category3, rep.category4]
+            category = " > ".join(c for c in cats if c) or rep.category or ""
+            brand = rep.brand or ""
+            source_site = rep.source_site or ""
+
+            # 그룹 내 다양한 상품명 샘플링 (최대 10개, 컬러 제거)
+            seen_names: set[str] = set()
+            sample_names: list[str] = []
+            for p in products:
+                n = p.name or ""
+                if " - " in n:
+                    n = n.split(" - ")[0].strip()
+                if n and n not in seen_names:
+                    seen_names.add(n)
+                    sample_names.append(n)
+                    if len(sample_names) >= 10:
+                        break
+            sample_str = "\n".join(f"  · {n}" for n in sample_names)
+
+            # Claude API 호출 (20개 요청)
+            prompt = (
+                f"그룹 상품 정보 ({len(products)}개 상품):\n"
+                f"- 브랜드: {brand}\n"
+                f"- 카테고리: {category}\n"
+                f"- 대표 상품명 (샘플 {len(sample_names)}개):\n{sample_str}\n\n"
+                f"이 그룹의 모든 상품에 공통 적용할 검색용 태그를 20개 생성해주세요.\n"
+                f"규칙:\n"
+                f"1. 소비자가 네이버에서 실제로 검색할 만한 인기 키워드\n"
+                f"2. 브랜드명('{brand}')은 제외\n"
+                f"3. 한글로 작성\n"
+                f"4. 쉼표로 구분하여 태그만 출력 (번호/설명 없이)\n"
+                f"5. 수집사이트 이름(MUSINSA, 무신사, KREAM 등)은 제외\n"
+                f"6. 브랜드명(나이키, 아디다스, 뉴발란스 등 모든 브랜드)은 절대 포함하지 마세요\n"
+                f"7. 복합어보다 실제 검색에 사용되는 단순 키워드 위주 (예: 등산스니커즈(X) → 경량등산화(O))\n"
+                f"8. 다양한 관점의 태그 필수 — 다음 카테고리별로 골고루 생성:\n"
+                f"   - 용도/상황 (출근용, 데일리, 등산용, 캠핑, 여행)\n"
+                f"   - 소재/기능 (고어텍스, 방수, 경량, 쿠션, 통기성)\n"
+                f"   - 스타일/느낌 (캐주얼, 클래식, 빈티지, 트렌디)\n"
+                f"   - 대상/성별 (남성, 여성, 남녀공용, 커플)\n"
+                f"   - 시즌 (봄신발, 겨울신발, 사계절)\n"
+                f"9. 같은 의미 단어 조합을 반복하지 마세요 (남성/남자, 여성/여자, 경량/가벼운 등 동의어는 하나만 사용)\n"
+                f"10. 색상명(블랙, 화이트, 네이비, 그레이, 베이지, 카키, 레드, 블루 등)은 절대 포함하지 마세요 — 그룹 전체에 공통 적용됩니다\n"
+            )
+
+            try:
+                resp = await http_client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": 400,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                )
+                api_calls += 1
+                if resp.status_code != 200:
+                    logger.warning(f"[AI태그 미리보기] Claude 호출 실패: {resp.status_code}")
+                    continue
+
+                data = resp.json()
+                usage = data.get("usage", {})
+                total_input_tokens += usage.get("input_tokens", 0)
+                total_output_tokens += usage.get("output_tokens", 0)
+                text = data.get("content", [{}])[0].get("text", "")
+
+                # 금지어 집합 생성
+                banned, name_words, brand_words, ss_banned = _build_banned_set(
+                    source_site, brand, cats, rep_name, ss_banned_cache, db_brands_cache,
+                )
+
+                # 중복 제거 후 최대 20개
+                seen: set[str] = set()
+                tags: list[str] = []
+                for t in text.split(","):
+                    t = t.strip()
+                    if not _is_valid_tag(t, banned, name_words, ss_banned, brand_words):
+                        continue
+                    tl = t.lower().replace(" ", "")
+                    if tl not in seen and len(tags) < 20:
+                        seen.add(tl)
+                        tags.append(t)
+
+                # SEO 키워드 미리보기
+                seo_preview = _extract_seo_keywords(tags, cats, banned, name_words)
+
+                preview_results.append({
+                    "group_id": gid,
+                    "group_name": products[0].search_filter_id or rep_name,
+                    "product_count": len(products),
+                    "rep_name": rep_name,
+                    "tags": tags,
+                    "seo_keywords": seo_preview,
+                })
+
+            except Exception as e:
+                logger.error(f"[AI태그 미리보기] 그룹 {gid} 실패: {e}")
+                continue
+
+    # 비용 계산
+    input_cost = total_input_tokens * 3 / 1_000_000 * 1400
+    output_cost = total_output_tokens * 15 / 1_000_000 * 1400
+    total_cost = round(input_cost + output_cost, 1)
+
+    return {
+        "success": True,
+        "message": f"{len(preview_results)}개 그룹 태그 미리보기 생성 완료 (₩{total_cost})",
+        "previews": preview_results,
+        "api_calls": api_calls,
+        "input_tokens": total_input_tokens,
+        "output_tokens": total_output_tokens,
+        "cost_krw": total_cost,
+    }
+
+
+@router.post("/ai-tags/apply")
+async def apply_ai_tags(
+    request: dict[str, Any],
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """사용자가 확정한 태그를 그룹 전체 상품에 적용."""
+    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+
+    # groups: [{ group_id, tags: [...] }]
+    groups_data = request.get("groups", [])
+    removed_tags = request.get("removed_tags", [])
+    if not groups_data:
+        return {"success": False, "message": "적용할 태그 데이터가 없습니다"}
+
+    # 삭제된 태그를 금지태그(smartstore_banned_tags)에 추가
+    banned_added = 0
+    if removed_tags:
+        try:
+            from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+            settings_repo = SambaSettingsRepository(session)
+            row = await settings_repo.find_by_async(key="smartstore_banned_tags")
+            existing_banned: list[str] = row.value if row and isinstance(row.value, list) else []
+            existing_lower = {w.lower() for w in existing_banned}
+            for tag in removed_tags:
+                if tag.lower() not in existing_lower:
+                    existing_banned.append(tag)
+                    existing_lower.add(tag.lower())
+                    banned_added += 1
+            if banned_added > 0:
+                await settings_repo.upsert_async(key="smartstore_banned_tags", value=existing_banned)
+                logger.info(f"[AI태그] 금지태그 {banned_added}개 추가: {removed_tags[:5]}")
+        except Exception as e:
+            logger.warning(f"[AI태그] 금지태그 저장 실패: {e}")
+
+    repo = SambaCollectedProductRepository(session)
+    total_tagged = 0
+
+    for group in groups_data:
+        gid = group.get("group_id", "")
+        tags = group.get("tags", [])
+        if not gid or not tags:
+            continue
+
+        # 그룹 상품 조회
+        products = await repo.filter_by_async(search_filter_id=gid, limit=10000)
+        if not products:
+            # 개별 상품 (그룹 없는 경우)
+            product = await repo.get_async(gid)
+            if product:
+                products = [product]
+            else:
+                continue
+
+        # SEO 키워드: 프론트에서 수정한 값 우선, 없으면 자동 추출
+        seo_kws: list[str] = group.get("seo_keywords", [])
+        if not seo_kws:
+            for kw in tags[:5]:
+                for word in kw.split():
+                    w = word.strip()
+                    if len(w) >= 2 and w not in seo_kws:
+                        seo_kws.append(w)
+                        if len(seo_kws) >= 3:
+                            break
+                if len(seo_kws) >= 3:
+                    break
+
+        # 그룹 내 모든 상품에 적용
+        for p in products:
+            existing = p.tags or []
+            merged = list(set(existing + tags + ["__ai_tagged__"]))
+            update_data: dict = {"tags": merged}
+            if seo_kws:
+                update_data["seo_keywords"] = seo_kws
+            await repo.update_async(p.id, **update_data)
+            total_tagged += 1
+
+    await session.commit()
+    return {
+        "success": True,
+        "message": f"{len(groups_data)}개 그룹, {total_tagged}개 상품에 태그 적용 완료" + (f" (금지태그 {banned_added}개 추가)" if banned_added else ""),
+        "total_tagged": total_tagged,
+        "banned_added": banned_added,
     }
 
 

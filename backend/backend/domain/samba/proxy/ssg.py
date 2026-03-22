@@ -74,6 +74,8 @@ class SSGClient:
         resp = await client.post(url, headers=headers, json=body or {})
       elif method == "PUT":
         resp = await client.put(url, headers=headers, json=body or {})
+      elif method == "DELETE":
+        resp = await client.delete(url, headers=headers, params=params)
       else:
         raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
 
@@ -130,6 +132,16 @@ class SSGClient:
     result = await self._call_api(
       "POST",
       "/item/0.5/updateItem.ssg",
+      body=body,
+    )
+    return {"success": True, "data": result}
+
+  async def delete_product(self, item_id: str) -> dict[str, Any]:
+    """상품 삭제 (리스트에서 완전 제거)."""
+    body = {"deleteItem": {"itemId": item_id}}
+    result = await self._call_api(
+      "POST",
+      "/item/0.5/deleteItem.ssg",
       body=body,
     )
     return {"success": True, "data": result}
@@ -371,16 +383,9 @@ class SSGClient:
         "rplcTextNm": name[:50] if idx == 0 else f"{name[:40]}_{idx + 1}",
       })
 
-    # ── 상품관리속성 (의류 기본 — propClsId: 0000000001) ──
-    item_mng_attrs_list = [
-      {"itemMngPropId": "0000000001", "itemMngCntt": material},  # 소재
-      {"itemMngPropId": "0000000003", "itemMngCntt": color},  # 색상
-      {"itemMngPropId": "0000000006", "itemMngCntt": "상세설명참조"},  # 품질보증
-      {"itemMngPropId": "0000000007", "itemMngCntt": manufacturer},  # 제조자
-      {"itemMngPropId": "0000000008", "itemMngCntt": "N"},  # 사이즈표기안내
-      {"itemMngPropId": "0000000011", "itemMngCntt": "1000000001"},  # 제조국
-      {"itemMngPropId": "0000000012", "itemMngCntt": "상세설명참조"},  # A/S
-    ]
+    # ── 상품관리속성 (카테고리별 동적 생성) ──
+    from backend.domain.samba.proxy.notice_utils import build_ssg_notice
+    item_mng_attrs_list = build_ssg_notice(product)
 
     data: dict[str, Any] = {
       # 기본 정보

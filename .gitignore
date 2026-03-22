@@ -201,6 +201,12 @@ ENV/
 env.bak/
 venv.bak/
 
+# Backend 임시 개발 파일
+backend/coupang_cats.txt
+backend/coupang_raw.json
+backend/gsshop_resp.txt
+backend/msg.txt
+
 # Backend specific
 backend/.env
 backend/.venv/

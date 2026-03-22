@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any, Optional
+from urllib.parse import urlparse
+
+from backend.domain.samba.proxy.notice_utils import build_lotteon_notice as _build_lot_notice
 
 import httpx
 
@@ -57,6 +60,8 @@ class LotteonClient:
         resp = await client.post(url, headers=headers, json=body or {})
       elif method == "PUT":
         resp = await client.put(url, headers=headers, json=body or {})
+      elif method == "DELETE":
+        resp = await client.delete(url, headers=headers, params=params)
       else:
         raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
 
@@ -70,6 +75,17 @@ class LotteonClient:
       if not resp.is_success:
         msg = data.get("message", "") or data.get("msg", "") or resp.text[:200]
         raise LotteonApiError(f"HTTP {resp.status_code}: {msg}")
+
+      # HTTP 200이어도 응답 body에 에러 코드가 있을 수 있음
+      # returnCode: 요청 레벨 에러 (카테고리 누락 등)
+      res_code = (
+        data.get("returnCode") or data.get("code")
+        or data.get("resultCode") or data.get("rspnCd") or ""
+      )
+      if res_code and res_code not in ("0000", "00", "SUCCESS"):
+        msg = data.get("message", "") or data.get("msg", "") or data.get("rspnMsgCntn", "") or str(data)
+        logger.warning(f"[롯데ON] 응답 에러 코드: {res_code} — {msg}")
+        raise LotteonApiError(f"응답 에러 ({res_code}): {msg}")
 
       return data
 
@@ -91,21 +107,53 @@ class LotteonClient:
   # ------------------------------------------------------------------
 
   async def register_product(self, product_data: dict[str, Any]) -> dict[str, Any]:
-    """상품 등록."""
+    """상품 등록.
+
+    롯데ON은 returnCode=0000(요청 접수)이어도
+    data[].resultCode=9999이면 개별 상품 등록 실패.
+    """
     result = await self._call_api(
       "POST",
       "/v1/openapi/product/v1/product/registration/request",
       body=product_data,
     )
+    # 개별 상품 결과 검증 (data는 리스트)
+    data_list = result.get("data", [])
+    if isinstance(data_list, list) and data_list:
+      item = data_list[0]
+      if isinstance(item, dict):
+        item_code = item.get("resultCode", "")
+        if item_code and item_code not in ("0000", "00", "SUCCESS"):
+          msg = item.get("resultMessage", "") or str(item)
+          logger.warning(f"[롯데ON] 상품 등록 실패: {item_code} — {msg}")
+          raise LotteonApiError(f"상품 등록 실패 ({item_code}): {msg}")
+        # 성공 시 spdNo 추출
+        spd_no = item.get("spdNo") or item.get("epdNo") or ""
+        return {"success": True, "data": result, "spdNo": spd_no}
     return {"success": True, "data": result}
 
   async def update_product(self, product_data: dict[str, Any]) -> dict[str, Any]:
-    """승인 상품 수정."""
+    """승인 상품 수정.
+
+    등록과 동일하게 data[].resultCode 검증 필요.
+    """
     result = await self._call_api(
       "POST",
       "/v1/openapi/product/v1/product/modification/request",
       body=product_data,
     )
+    # 개별 상품 결과 검증
+    data_list = result.get("data", [])
+    if isinstance(data_list, list) and data_list:
+      item = data_list[0]
+      if isinstance(item, dict):
+        item_code = item.get("resultCode", "")
+        if item_code and item_code not in ("0000", "00", "SUCCESS"):
+          msg = item.get("resultMessage", "") or str(item)
+          logger.warning(f"[롯데ON] 상품 수정 실패: {item_code} — {msg}")
+          raise LotteonApiError(f"상품 수정 실패 ({item_code}): {msg}")
+        spd_no = item.get("spdNo") or item.get("epdNo") or ""
+        return {"success": True, "data": result, "spdNo": spd_no}
     return {"success": True, "data": result}
 
   async def get_product(self, spd_no: str) -> dict[str, Any]:
@@ -144,6 +192,15 @@ class LotteonClient:
       "/v1/openapi/product/v1/product/status/change",
       body={"spdLst": spd_lst},
     )
+
+  async def delete_product(self, spd_no: str) -> dict[str, Any]:
+    """상품 삭제 (리스트에서 완전 제거)."""
+    result = await self._call_api(
+      "POST",
+      "/v1/openapi/product/v1/product/delete",
+      body={"spdLst": [{"selPrdNo": spd_no}]},
+    )
+    return {"success": True, "data": result}
 
   # ------------------------------------------------------------------
   # 카테고리 / 브랜드 (onpick-api 도메인)
@@ -212,7 +269,6 @@ class LotteonClient:
     # URL에서 파일명 추출 헬퍼
     def _extract_filename(url: str) -> str:
       """URL에서 파일명 추출. 없으면 image.jpg 반환."""
-      from urllib.parse import urlparse
       path = urlparse(url).path
       fname = path.rsplit("/", 1)[-1] if "/" in path else ""
       return fname if fname else "image.jpg"
@@ -295,16 +351,7 @@ class LotteonClient:
         # 선물포장/메시지 여부
         "prstPckPsbYn": "N",
         "prstMsgPsbYn": "N",
-        "pdItmsInfo": {
-          "pdItmsCd": "38",
-          "pdItmsArtlLst": [
-            {"pdArtlCd": "0160", "pdArtlCnts": name},
-            {"pdArtlCd": "0060", "pdArtlCnts": "대한민국"},
-            {"pdArtlCd": "0070", "pdArtlCnts": brand or "제조자 정보 없음"},
-            {"pdArtlCd": "0080", "pdArtlCnts": "소비자 기본법에 따름"},
-            {"pdArtlCd": "0090", "pdArtlCnts": brand or "판매자 문의"},
-          ],
-        },
+        "pdItmsInfo": _build_lot_notice(product),
         "purPsbQtyInfo": {
           "itmByMinPurYn": "N",
           "itmByMaxPurPsbQtyYn": "N",

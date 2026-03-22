@@ -22,10 +22,10 @@ class SambaForbiddenService:
     # ==================== Forbidden Word CRUD ====================
 
     async def list_words(
-        self, skip: int = 0, limit: int = 50
+        self, skip: int = 0, limit: int = 0
     ) -> List[SambaForbiddenWord]:
         return await self.word_repo.list_async(
-            skip=skip, limit=limit, order_by="-created_at"
+            skip=skip, limit=limit if limit > 0 else None, order_by="-created_at"
         )
 
     async def get_word(self, word_id: str) -> Optional[SambaForbiddenWord]:

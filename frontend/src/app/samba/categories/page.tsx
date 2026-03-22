@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { collectorApi, categoryApi, type SambaCollectedProduct } from '@/lib/samba/api'
+import { collectorApi, categoryApi, accountApi, type SambaCollectedProduct } from '@/lib/samba/api'
 import { showAlert } from '@/components/samba/Modal'
 
 const card = {
@@ -102,6 +102,10 @@ export default function CategoriesPage() {
   const [seedLoading, setSeedLoading] = useState(false)
   // 최근 AI 사용량 기록
   const [lastAiUsage, setLastAiUsage] = useState<{ calls: number; tokens: number; cost: number; date: string } | null>(null)
+  // 활성 계정 마켓 목록 (벌크 매핑 마켓 선택용)
+  const [activeMarketTypes, setActiveMarketTypes] = useState<string[]>([])
+  // 벌크 매핑 마켓 선택
+  const [bulkSelectedMarkets, setBulkSelectedMarkets] = useState<Record<string, boolean>>({})
   // 수동 매핑 자동저장 디바운스
   const autoSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -127,6 +131,19 @@ export default function CategoriesPage() {
       setMappings(Array.isArray(list) ? (list as MappingRow[]) : [])
     } catch (e) {
       console.error('[카테고리] 매핑 로드 실패:', e)
+    }
+    // 활성 계정 마켓 로드
+    try {
+      const accounts = await accountApi.listActive()
+      if (Array.isArray(accounts)) {
+        const types = [...new Set(accounts.map(a => a.market_type))]
+        setActiveMarketTypes(types)
+        const initial: Record<string, boolean> = {}
+        types.forEach(t => { initial[t] = true })
+        setBulkSelectedMarkets(initial)
+      }
+    } catch (e) {
+      console.error('[카테고리] 활성 계정 로드 실패:', e)
     }
     setLoading(false)
   }, [])
@@ -239,8 +256,15 @@ export default function CategoriesPage() {
 
   const handleOpenAiMarketSelect = () => {
     if (!selectedSite || !selectedCat1) {
-      // 벌크 모드 — 마켓 선택 없이 바로 실행
-      handleAiMapping()
+      // 벌크 모드 — 계정 연결된 마켓 선택 단계
+      if (activeMarketTypes.length === 0) {
+        showAlert('활성 마켓 계정이 없습니다. 마켓계정 페이지에서 계정을 등록해주세요.', 'info')
+        return
+      }
+      const initial: Record<string, boolean> = {}
+      activeMarketTypes.forEach(t => { initial[t] = true })
+      setBulkSelectedMarkets(initial)
+      setAiMarketSelectOpen(true)
       return
     }
     // 단건 모드 — 마켓 선택 단계
@@ -257,13 +281,25 @@ export default function CategoriesPage() {
   }
 
   const handleAiMarketConfirm = () => {
-    const selected = marketKeys.filter(mk => aiSelectedMarkets[mk])
-    if (selected.length === 0) {
-      showAlert('최소 1개 마켓을 선택해주세요', 'info')
-      return
+    if (!selectedSite || !selectedCat1) {
+      // 벌크 모드
+      const selected = activeMarketTypes.filter(t => bulkSelectedMarkets[t])
+      if (selected.length === 0) {
+        showAlert('최소 1개 마켓을 선택해주세요', 'info')
+        return
+      }
+      setAiMarketSelectOpen(false)
+      handleAiMapping(selected)
+    } else {
+      // 단건 모드
+      const selected = marketKeys.filter(mk => aiSelectedMarkets[mk])
+      if (selected.length === 0) {
+        showAlert('최소 1개 마켓을 선택해주세요', 'info')
+        return
+      }
+      setAiMarketSelectOpen(false)
+      handleAiMapping(selected)
     }
-    setAiMarketSelectOpen(false)
-    handleAiMapping(selected)
   }
 
   const handleAiMapping = async (targetMarkets?: string[]) => {
@@ -297,9 +333,9 @@ export default function CategoriesPage() {
         setAiLoading(false)
       }
     } else {
-      // 벌크 모드: 미매핑 전체 자동 매핑
+      // 벌크 모드: 선택된 마켓만 미매핑 자동 매핑
       try {
-        const result = await categoryApi.aiSuggestBulk()
+        const result = await categoryApi.aiSuggestBulk(targetMarkets)
         setBulkResult(result)
         const totalCalls = result.mapped + result.updated
         setLastAiUsage({ calls: totalCalls, tokens: totalCalls * 1800, cost: totalCalls * COST_PER_CALL_KRW, date: new Date().toLocaleTimeString() })
@@ -479,7 +515,61 @@ export default function CategoriesPage() {
   // ── 매핑 현황 필터링 (드릴다운 선택에 연동) ──
 
   const filteredMappings = useMemo(() => {
-    let result = mappings
+    // 수집 상품에서 고유 (site, leaf_category) 추출
+    const productCats = new Map<string, { site: string; category: string }>()
+    products.forEach(p => {
+      const site = p.source_site || ''
+      if (!site) return
+      const cats = [p.category1, p.category2, p.category3, p.category4].filter(Boolean) as string[]
+      if (cats.length === 0 && p.category) {
+        cats.push(...p.category.split('>').map(c => c.trim()).filter(Boolean))
+      }
+      if (cats.length === 0) return
+      const leafPath = cats.join(' > ')
+      const key = `${site}::${leafPath}`
+      if (!productCats.has(key)) {
+        productCats.set(key, { site, category: leafPath })
+      }
+    })
+
+    // DB 매핑을 키 맵으로 변환
+    const mappingMap = new Map<string, MappingRow>()
+    mappings.forEach(m => {
+      mappingMap.set(`${m.source_site}::${m.source_category}`, m)
+    })
+
+    // 수집 상품 카테고리 + DB 매핑 병합
+    const merged: MappingRow[] = []
+    const seen = new Set<string>()
+
+    // 수집 상품 카테고리 기준으로 먼저 추가 (매핑 유무 관계없이)
+    productCats.forEach(({ site, category }, key) => {
+      seen.add(key)
+      const existing = mappingMap.get(key)
+      if (existing) {
+        merged.push(existing)
+      } else {
+        // 미매핑 카테고리 — 빈 행으로 추가
+        merged.push({
+          id: `unmapped_${key}`,
+          source_site: site,
+          source_category: category,
+          target_mappings: {},
+        })
+      }
+    })
+
+    // DB에만 있고 상품이 없는 매핑도 추가 (과거 상품 삭제된 경우)
+    mappings.forEach(m => {
+      const key = `${m.source_site}::${m.source_category}`
+      if (!seen.has(key)) {
+        seen.add(key)
+        merged.push(m)
+      }
+    })
+
+    // 필터 적용
+    let result = merged
     if (selectedSite) {
       result = result.filter(m => m.source_site === selectedSite)
     }
@@ -490,7 +580,7 @@ export default function CategoriesPage() {
     return result.slice().sort((a, b) =>
       a.source_site.localeCompare(b.source_site) || a.source_category.localeCompare(b.source_category)
     )
-  }, [mappings, selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4])
+  }, [mappings, products, selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4])
 
   // ── 매핑 현황 핸들러 ──
 
@@ -534,19 +624,51 @@ export default function CategoriesPage() {
     }, 300)
   }
 
+  // 미매핑 행에서 편집된 매핑 찾기 (unmapped_ ID → filteredMappings에서 조회)
+  const findMappingRow = (id: string): MappingRow | undefined => {
+    if (id.startsWith('unmapped_')) {
+      return filteredMappings.find(m => m.id === id)
+    }
+    return mappings.find(m => m.id === id)
+  }
+
+  // 미매핑 행 → 새 매핑 생성
+  const createMappingForUnmapped = async (row: MappingRow, market: string, value: string) => {
+    const targets = { [market]: value }
+    try {
+      const created = await categoryApi.createMapping({
+        source_site: row.source_site,
+        source_category: row.source_category,
+        target_mappings: targets,
+      })
+      if (created && typeof created === 'object' && 'id' in created) {
+        setMappings(prev => [...prev, created as MappingRow])
+      } else {
+        await load()
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '생성 실패'
+      showAlert(`매핑 생성 실패: ${msg}`, 'error')
+    }
+  }
+
   const handleSelectSuggestion = async (cat: string) => {
     if (!editingCell) return
     const { id, market } = editingCell
-    const mapping = mappings.find(m => m.id === id)
-    if (!mapping) return
+    const row = findMappingRow(id)
+    if (!row) return
 
-    const updatedTargets = { ...mapping.target_mappings, [market]: cat }
-    try {
-      await categoryApi.updateMapping(id, { target_mappings: updatedTargets })
-      setMappings(prev => prev.map(m => m.id === id ? { ...m, target_mappings: updatedTargets } : m))
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : '수정 실패'
-      showAlert(`매핑 수정 실패: ${msg}`, 'error')
+    if (id.startsWith('unmapped_')) {
+      await createMappingForUnmapped(row, market, cat)
+    } else {
+      const updatedTargets = { ...row.target_mappings, [market]: cat }
+      try {
+        await categoryApi.updateMapping(id, { target_mappings: updatedTargets })
+        setMappings(prev => prev.map(m => m.id === id ? { ...m, target_mappings: updatedTargets } : m))
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : '수정 실패'
+        showAlert(`매핑 수정 실패: ${msg}`, 'error')
+      }
     }
     setEditingCell(null)
     setEditingValue('')
@@ -556,22 +678,27 @@ export default function CategoriesPage() {
   const handleSaveEdit = async () => {
     if (!editingCell) return
     const { id, market } = editingCell
-    const mapping = mappings.find(m => m.id === id)
-    if (!mapping) return
+    const row = findMappingRow(id)
+    if (!row) return
 
-    const updatedTargets = { ...mapping.target_mappings }
-    if (editingValue.trim()) {
-      updatedTargets[market] = editingValue.trim()
+    if (id.startsWith('unmapped_')) {
+      if (editingValue.trim()) {
+        await createMappingForUnmapped(row, market, editingValue.trim())
+      }
     } else {
-      delete updatedTargets[market]
-    }
-
-    try {
-      await categoryApi.updateMapping(id, { target_mappings: updatedTargets })
-      setMappings(prev => prev.map(m => m.id === id ? { ...m, target_mappings: updatedTargets } : m))
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : '수정 실패'
-      showAlert(`매핑 수정 실패: ${msg}`, 'error')
+      const updatedTargets = { ...row.target_mappings }
+      if (editingValue.trim()) {
+        updatedTargets[market] = editingValue.trim()
+      } else {
+        delete updatedTargets[market]
+      }
+      try {
+        await categoryApi.updateMapping(id, { target_mappings: updatedTargets })
+        setMappings(prev => prev.map(m => m.id === id ? { ...m, target_mappings: updatedTargets } : m))
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : '수정 실패'
+        showAlert(`매핑 수정 실패: ${msg}`, 'error')
+      }
     }
     setEditingCell(null)
     setEditingValue('')
@@ -728,9 +855,10 @@ export default function CategoriesPage() {
               // 마켓 API에서 실제 카테고리 동기화 (코드맵 포함)
               const syncResult = await categoryApi.syncAll()
               const syncResults = syncResult.results || {}
-              const apiOk = Object.values(syncResults).filter((r: Record<string, unknown>) => r.ok).length
-              const apiFail = Object.values(syncResults).filter((r: Record<string, unknown>) => !r.ok).length
-              const total = Object.values(syncResults).reduce((sum: number, r: Record<string, unknown>) => sum + ((r.ok ? (r as Record<string, number>).count : 0) || 0), 0)
+              const entries = Object.values(syncResults) as Record<string, unknown>[]
+              const apiOk = entries.filter((r) => r.ok).length
+              const apiFail = entries.filter((r) => !r.ok).length
+              const total = entries.reduce((sum, r) => sum + ((r.ok ? (r as Record<string, number>).count : 0) || 0), 0)
 
               showAlert(
                 `카테고리 동기화 완료\n성공: ${apiOk}개 마켓 / 실패: ${apiFail}개 / 총 ${total}개 카테고리`,
@@ -1071,21 +1199,25 @@ export default function CategoriesPage() {
                         )
                       })}
                       <td style={{ padding: '0.5rem 0.5rem', textAlign: 'center' }}>
-                        <button
-                          onClick={() => handleDeleteMapping(row.id)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#666',
-                            fontSize: '0.875rem',
-                            cursor: 'pointer',
-                            padding: '0.25rem',
-                            lineHeight: 1,
-                          }}
-                          onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
-                          onMouseLeave={e => { e.currentTarget.style.color = '#666' }}
-                          title="매핑 삭제"
-                        >✕</button>
+                        {row.id.startsWith('unmapped_') ? (
+                          <span style={{ color: '#555', fontSize: '0.7rem' }}>미매핑</span>
+                        ) : (
+                          <button
+                            onClick={() => handleDeleteMapping(row.id)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#666',
+                              fontSize: '0.875rem',
+                              cursor: 'pointer',
+                              padding: '0.25rem',
+                              lineHeight: 1,
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
+                            onMouseLeave={e => { e.currentTarget.style.color = '#666' }}
+                            title="매핑 삭제"
+                          >✕</button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1440,40 +1572,85 @@ export default function CategoriesPage() {
             }}
             onClick={e => e.stopPropagation()}
           >
-            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #2D2D2D' }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>AI 매핑 — 마켓 선택</h3>
-              <p style={{ fontSize: '0.75rem', color: '#888' }}>
-                {selectedPath} — AI가 선택된 마켓의 카테고리를 추천합니다
-              </p>
-            </div>
-            <div style={{ padding: '1.25rem 1.5rem' }}>
-              {/* 전체 선택/해제 */}
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={marketKeys.every(mk => aiSelectedMarkets[mk])}
-                  onChange={e => handleAiMarketSelectAll(e.target.checked)}
-                  style={{ accentColor: '#FF8C00' }}
-                />
-                <span style={{ fontSize: '0.8125rem', color: '#E5E5E5', fontWeight: 600 }}>전체 선택</span>
-              </label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
-                {marketKeys.map(mk => (
-                  <label key={mk} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.625rem', background: aiSelectedMarkets[mk] ? 'rgba(255,140,0,0.08)' : 'transparent', border: `1px solid ${aiSelectedMarkets[mk] ? 'rgba(255,140,0,0.3)' : '#2D2D2D'}`, borderRadius: '6px', cursor: 'pointer', transition: 'all 0.15s' }}>
+            {(!selectedSite || !selectedCat1) ? (
+              /* 벌크 모드: 계정 연결된 마켓만 표시 */
+              <>
+                <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #2D2D2D' }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>AI 전체 자동 매핑 — 마켓 선택</h3>
+                  <p style={{ fontSize: '0.75rem', color: '#888' }}>
+                    계정 연결된 마켓만 표시됩니다 · 미매핑 카테고리를 선택된 마켓으로 일괄 매핑
+                  </p>
+                </div>
+                <div style={{ padding: '1.25rem 1.5rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
-                      checked={!!aiSelectedMarkets[mk]}
-                      onChange={e => setAiSelectedMarkets(prev => ({ ...prev, [mk]: e.target.checked }))}
+                      checked={activeMarketTypes.every(t => bulkSelectedMarkets[t])}
+                      onChange={e => {
+                        const updated: Record<string, boolean> = {}
+                        activeMarketTypes.forEach(t => { updated[t] = e.target.checked })
+                        setBulkSelectedMarkets(updated)
+                      }}
                       style={{ accentColor: '#FF8C00' }}
                     />
-                    <span style={{ fontSize: '0.8125rem', color: aiSelectedMarkets[mk] ? '#FF8C00' : '#999' }}>{MARKET_LABELS[mk]}</span>
+                    <span style={{ fontSize: '0.8125rem', color: '#E5E5E5', fontWeight: 600 }}>전체 선택</span>
                   </label>
-                ))}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.75rem' }}>
-                선택: {marketKeys.filter(mk => aiSelectedMarkets[mk]).length}개 마켓 · 예상 비용 ₩{COST_PER_CALL_KRW}
-              </div>
-            </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
+                    {activeMarketTypes.map(t => (
+                      <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.625rem', background: bulkSelectedMarkets[t] ? 'rgba(255,140,0,0.08)' : 'transparent', border: `1px solid ${bulkSelectedMarkets[t] ? 'rgba(255,140,0,0.3)' : '#2D2D2D'}`, borderRadius: '6px', cursor: 'pointer', transition: 'all 0.15s' }}>
+                        <input
+                          type="checkbox"
+                          checked={!!bulkSelectedMarkets[t]}
+                          onChange={e => setBulkSelectedMarkets(prev => ({ ...prev, [t]: e.target.checked }))}
+                          style={{ accentColor: '#FF8C00' }}
+                        />
+                        <span style={{ fontSize: '0.8125rem', color: bulkSelectedMarkets[t] ? '#FF8C00' : '#999' }}>{MARKET_LABELS[t] || t}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.75rem' }}>
+                    선택: {activeMarketTypes.filter(t => bulkSelectedMarkets[t]).length}개 마켓
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* 단건 모드: 전체 마켓 표시 */
+              <>
+                <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #2D2D2D' }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>AI 매핑 — 마켓 선택</h3>
+                  <p style={{ fontSize: '0.75rem', color: '#888' }}>
+                    {selectedPath} — AI가 선택된 마켓의 카테고리를 추천합니다
+                  </p>
+                </div>
+                <div style={{ padding: '1.25rem 1.5rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={marketKeys.every(mk => aiSelectedMarkets[mk])}
+                      onChange={e => handleAiMarketSelectAll(e.target.checked)}
+                      style={{ accentColor: '#FF8C00' }}
+                    />
+                    <span style={{ fontSize: '0.8125rem', color: '#E5E5E5', fontWeight: 600 }}>전체 선택</span>
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
+                    {marketKeys.map(mk => (
+                      <label key={mk} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.625rem', background: aiSelectedMarkets[mk] ? 'rgba(255,140,0,0.08)' : 'transparent', border: `1px solid ${aiSelectedMarkets[mk] ? 'rgba(255,140,0,0.3)' : '#2D2D2D'}`, borderRadius: '6px', cursor: 'pointer', transition: 'all 0.15s' }}>
+                        <input
+                          type="checkbox"
+                          checked={!!aiSelectedMarkets[mk]}
+                          onChange={e => setAiSelectedMarkets(prev => ({ ...prev, [mk]: e.target.checked }))}
+                          style={{ accentColor: '#FF8C00' }}
+                        />
+                        <span style={{ fontSize: '0.8125rem', color: aiSelectedMarkets[mk] ? '#FF8C00' : '#999' }}>{MARKET_LABELS[mk]}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.75rem' }}>
+                    선택: {marketKeys.filter(mk => aiSelectedMarkets[mk]).length}개 마켓 · 예상 비용 ₩{COST_PER_CALL_KRW}
+                  </div>
+                </div>
+              </>
+            )}
             <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #2D2D2D', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
               <button
                 onClick={() => setAiMarketSelectOpen(false)}

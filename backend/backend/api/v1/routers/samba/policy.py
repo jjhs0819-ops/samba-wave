@@ -338,11 +338,21 @@ JSON만 응답:
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
     try:
-        response = await client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2048,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        # 429 rate limit 대비 재시도
+        for attempt in range(3):
+            try:
+                response = await client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=2048,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                break
+            except anthropic.RateLimitError:
+                if attempt < 2:
+                    import asyncio
+                    await asyncio.sleep(60 * (attempt + 1))
+                else:
+                    raise
         text = response.content[0].text.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[1] if "\n" in text else text[3:]

@@ -71,6 +71,8 @@ class ElevenstClient:
         resp = await client.post(url, headers=headers, content=body)
       elif method == "PUT":
         resp = await client.put(url, headers=headers, content=body)
+      elif method == "DELETE":
+        resp = await client.delete(url, headers=headers)
       else:
         raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
 
@@ -139,6 +141,11 @@ class ElevenstClient:
   async def update_product(self, prd_no: str, xml_data: str) -> dict[str, Any]:
     """상품 수정."""
     result = await self._call_api("PUT", f"/product/{prd_no}", body=xml_data)
+    return {"success": True, "data": result}
+
+  async def delete_product(self, prd_no: str) -> dict[str, Any]:
+    """상품 삭제 (리스트에서 완전 제거)."""
+    result = await self._call_api("DELETE", f"/product/{prd_no}")
     return {"success": True, "data": result}
 
   async def get_product(self, prd_no: str) -> dict[str, Any]:

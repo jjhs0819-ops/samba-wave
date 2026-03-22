@@ -1455,6 +1455,9 @@ function ProductCard({
   const [showPriceHistoryModal, setShowPriceHistoryModal] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)
   const [zoomImg, setZoomImg] = useState<string | null>(null)
+  // 알림/확인 모달 (alert/confirm 대체)
+  const [cardAlert, setCardAlert] = useState<{ msg: string; type?: 'success' | 'error' } | null>(null)
+  const [cardConfirm, setCardConfirm] = useState<{ msg: string; onOk: () => void } | null>(null)
   const [imageTab, setImageTab] = useState<'main' | 'extra' | 'detail' | 'video'>('main')
   const [productImages, setProductImages] = useState<string[]>(p.images || [])
   const [detailImgList, setDetailImgList] = useState<string[]>(
@@ -1826,15 +1829,19 @@ function ProductCard({
                 style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888' }}>▲</button>}
               {i < list.length - 1 && <button onClick={() => { const a = [...list]; [a[i+1], a[i]] = [a[i], a[i+1]]; setList(a) }}
                 style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888' }}>▼</button>}
-              <button onClick={async () => {
-                if (!confirm(`이 이미지를 모든 상품에서 삭제하시겠습니까?`)) return
-                try {
-                  const field = list === detailImgList ? 'detail_images' : 'images'
-                  const res = await collectorApi.bulkRemoveImage(img, field)
-                  setList(list.filter((_, j) => j !== i))
-                  alert(`${res.removed}개 상품에서 삭제 완료`)
-                  load()
-                } catch (e) { alert('추적삭제 실패: ' + (e instanceof Error ? e.message : String(e))) }
+              <button onClick={() => {
+                setCardConfirm({
+                  msg: '이 이미지를 모든 상품에서 삭제하시겠습니까?',
+                  onOk: async () => {
+                    setCardConfirm(null)
+                    try {
+                      const field = list === detailImgList ? 'detail_images' : 'images'
+                      const res = await collectorApi.bulkRemoveImage(img, field)
+                      setList(list.filter((_, j) => j !== i))
+                      setCardAlert({ msg: `${res.removed}개 상품에서 삭제 완료`, type: 'success' })
+                    } catch (e) { setCardAlert({ msg: '추적삭제 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' }) }
+                  },
+                })
               }}
                 style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid rgba(168,85,247,0.3)', background: 'rgba(168,85,247,0.08)', color: '#A855F7' }}>추적삭제</button>
               <button onClick={() => setList(list.filter((_, j) => j !== i))}
@@ -1928,7 +1935,7 @@ function ProductCard({
                             onProductUpdate(p.id, updateData)
                           } catch (e) {
                             console.error('[이미지삭제] 저장 실패:', e)
-                            alert('이미지 변경 저장 실패: ' + (e instanceof Error ? e.message : String(e)))
+                            setCardAlert({ msg: '이미지 변경 저장 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' })
                           }
                         }, i === 0 ? `추가 1` : undefined))}
                       </div>
@@ -1972,7 +1979,7 @@ function ProductCard({
                             onProductUpdate(p.id, updateData)
                           } catch (e) {
                             console.error('[상세이미지삭제] 저장 실패:', e)
-                            alert('상세이미지 변경 저장 실패: ' + (e instanceof Error ? e.message : String(e)))
+                            setCardAlert({ msg: '상세이미지 변경 저장 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' })
                           }
                         }))}
                       </div>
@@ -2593,6 +2600,34 @@ function ProductCard({
           </table>
         </div>
       </div>
+      )}
+      {/* 카드 알림 모달 */}
+      {cardAlert && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 999999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setCardAlert(null)}>
+          <div style={{ background: '#1A1A1A', border: `1px solid ${cardAlert.type === 'error' ? 'rgba(255,107,107,0.4)' : 'rgba(34,197,94,0.4)'}`, borderRadius: '12px', padding: '24px 32px', minWidth: '320px', textAlign: 'center' }}
+            onClick={e => e.stopPropagation()}>
+            <p style={{ margin: '0 0 16px', color: '#E5E5E5', fontSize: '0.9rem' }}>{cardAlert.msg}</p>
+            <button onClick={() => setCardAlert(null)}
+              style={{ padding: '6px 24px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid #3D3D3D', background: 'rgba(50,50,50,0.6)', color: '#E5E5E5' }}>확인</button>
+          </div>
+        </div>
+      )}
+      {/* 카드 확인 모달 */}
+      {cardConfirm && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 999999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setCardConfirm(null)}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', padding: '24px 32px', minWidth: '320px', textAlign: 'center' }}
+            onClick={e => e.stopPropagation()}>
+            <p style={{ margin: '0 0 20px', color: '#E5E5E5', fontSize: '0.9rem' }}>{cardConfirm.msg}</p>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
+              <button onClick={() => setCardConfirm(null)}
+                style={{ padding: '6px 24px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid #3D3D3D', background: 'transparent', color: '#888' }}>취소</button>
+              <button onClick={cardConfirm.onOk}
+                style={{ padding: '6px 24px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(168,85,247,0.5)', background: 'rgba(168,85,247,0.15)', color: '#A855F7', fontWeight: 600 }}>확인</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

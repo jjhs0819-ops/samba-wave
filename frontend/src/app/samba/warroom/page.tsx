@@ -53,11 +53,24 @@ const card: React.CSSProperties = {
 type EventFilter = 'all' | 'critical' | 'price_changed' | 'sold_out' | 'system'
 const SYSTEM_TYPES = ['refresh_batch', 'scheduler_tick', 'rate_limited', 'api_structure_changed', 'probe_failed']
 
+type StoreScore = {
+  account_id: string; account_label: string; market_type: string
+  grade: string; grade_code: string
+  good_service: Record<string, number> | null
+  penalty: number | null; penalty_rate: number | null
+  product_count?: number; max_products?: number
+  updated_at: string
+}
+
 export default function WarroomPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [events, setEvents] = useState<MonitorEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [lastFetched, setLastFetched] = useState<Date | null>(null)
+  const [storeScores, setStoreScores] = useState<Record<string, StoreScore>>({})
+  const [scoreTab, setScoreTab] = useState('smartstore')
+  const [showPenaltyGuide, setShowPenaltyGuide] = useState(false)
+  const [scoreRefreshing, setScoreRefreshing] = useState(false)
   const [nextPoll, setNextPoll] = useState(POLL_INTERVAL / 1000)
   const [eventFilter, setEventFilter] = useState<EventFilter>('all')
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -90,17 +103,19 @@ export default function WarroomPage() {
 
   const load = useCallback(async () => {
     try {
-      const [dashboard, recentEvents, probeStatus, atStatus] = await Promise.all([
+      const [dashboard, recentEvents, probeStatus, atStatus, scores] = await Promise.all([
         monitorApi.dashboard().catch(() => null),
         monitorApi.recentEvents(20).catch(() => []),
         collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>,
         collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0 })),
+        monitorApi.storeScores().catch(() => ({})),
       ])
       if (dashboard) setStats(dashboard)
       setEvents(recentEvents)
       if (probeStatus && Object.keys(probeStatus).length > 0) setProbeData(probeStatus)
       setAutotuneRunning(atStatus.running)
       setAutotuneCycles(atStatus.cycle_count)
+      if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
       setAutotuneLastTick(atStatus.last_tick)
       setLastFetched(new Date())
       setNextPoll(POLL_INTERVAL / 1000)
@@ -239,6 +254,136 @@ export default function WarroomPage() {
           >{autotuneRunning ? '정지' : '시작'}</button>
         </div>
       </div>
+
+      {/* A-2. 마켓별 스토어 현황 분석 */}
+      {(() => {
+        const MARKET_TABS = [
+          { key: 'smartstore', label: '스마트스토어', color: '#51CF66' },
+          { key: 'coupang', label: '쿠팡', color: '#FF6B6B' },
+          { key: '11st', label: '11번가', color: '#FFD93D' },
+          { key: 'lotteon', label: '롯데ON', color: '#FB923C' },
+          { key: 'ssg', label: 'SSG', color: '#A78BFA' },
+        ]
+        const GRADE_COLORS: Record<string, string> = {
+          '빅파워': '#FF8C00', '파워': '#4C9AFF', '프리미엄': '#51CF66', '새싹': '#34D399', '씨앗': '#888',
+          '연결됨': '#51CF66', '등록됨': '#4C9AFF', '인증 실패': '#FF6B6B', 'Vendor ID 없음': '#FFD93D',
+        }
+        const tabAccounts = Object.values(storeScores).filter(s => s.market_type === scoreTab)
+
+        return (
+          <div style={{ ...card, padding: '1rem 1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#E5E5E5' }}>스토어 현황 분석</span>
+                <span style={{ fontSize: '0.7rem', color: '#666' }}>{tabAccounts.length}개 계정</span>
+              </div>
+              <button
+                onClick={async () => {
+                  setScoreRefreshing(true)
+                  try {
+                    await monitorApi.refreshStoreScores()
+                    const scores = await monitorApi.storeScores()
+                    if (scores) setStoreScores(scores)
+                  } catch { /* ignore */ }
+                  setScoreRefreshing(false)
+                }}
+                style={{
+                  padding: '0.2rem 0.6rem', fontSize: '0.72rem', borderRadius: '5px', cursor: 'pointer',
+                  background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', color: '#FF8C00',
+                }}
+              >{scoreRefreshing ? '조회 중...' : '등급 새로고침'}</button>
+              {scoreTab === 'smartstore' && (
+                <button
+                  onClick={() => setShowPenaltyGuide(true)}
+                  style={{
+                    padding: '0.2rem 0.6rem', fontSize: '0.72rem', borderRadius: '5px', cursor: 'pointer',
+                    background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.3)', color: '#4285F4',
+                  }}
+                >판매관리 기준</button>
+              )}
+            </div>
+            {/* 마켓 탭 */}
+            <div style={{ display: 'flex', gap: '0', marginBottom: '0.75rem', borderBottom: '1px solid #2D2D2D' }}>
+              {MARKET_TABS.map(tab => (
+                <button key={tab.key} onClick={() => setScoreTab(tab.key)} style={{
+                  padding: '0.4rem 1rem', fontSize: '0.78rem', fontWeight: scoreTab === tab.key ? 600 : 400, cursor: 'pointer',
+                  background: 'transparent', border: 'none', color: scoreTab === tab.key ? tab.color : '#666',
+                  borderBottom: scoreTab === tab.key ? `2px solid ${tab.color}` : '2px solid transparent',
+                }}>{tab.label}</button>
+              ))}
+            </div>
+            {/* 계정 카드 */}
+            {tabAccounts.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.8rem' }}>
+                등급 새로고침 버튼을 눌러 계정 정보를 조회하세요
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.75rem' }}>
+                {tabAccounts.map(acc => (
+                  <div key={acc.account_id} style={{
+                    background: 'rgba(20,20,20,0.6)', border: '1px solid #2D2D2D', borderRadius: '10px', padding: '0.875rem',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem' }}>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#E5E5E5' }}>{acc.account_label}</span>
+                      {acc.grade && (
+                        <span style={{
+                          fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '4px',
+                          background: `${GRADE_COLORS[acc.grade] || '#888'}20`,
+                          color: GRADE_COLORS[acc.grade] || '#888',
+                          border: `1px solid ${GRADE_COLORS[acc.grade] || '#888'}50`,
+                        }}>{acc.grade}</span>
+                      )}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                      <div>
+                        <div style={{ fontSize: '0.65rem', color: '#666', marginBottom: '0.3rem' }}>굿서비스 점수</div>
+                        {acc.good_service ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                            {Object.entries(acc.good_service).map(([k, v]) => (
+                              <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem' }}>
+                                <span style={{ color: '#999' }}>{k}</span>
+                                <span style={{ color: v >= 80 ? '#51CF66' : v >= 50 ? '#FFD93D' : '#FF6B6B', fontWeight: 600 }}>{v}점</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '0.7rem', color: '#555' }}>—</span>
+                        )}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.65rem', color: '#666', marginBottom: '0.3rem' }}>판매 패널티</div>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem' }}>
+                          <span style={{
+                            fontSize: '0.85rem', fontWeight: 700,
+                            color: (acc.penalty ?? 0) > 0 ? '#FF6B6B' : '#51CF66',
+                          }}>{acc.penalty ?? 0}점</span>
+                          <span style={{ fontSize: '0.68rem', color: '#888' }}>{acc.penalty_rate ?? 0}%</span>
+                        </div>
+                      </div>
+                      {(acc.max_products !== undefined && acc.max_products > 0) && (
+                      <div>
+                        <div style={{ fontSize: '0.65rem', color: '#666', marginBottom: '0.3rem' }}>등록 상품</div>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem' }}>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#4C9AFF' }}>
+                            {(acc.product_count ?? 0).toLocaleString()}
+                          </span>
+                          <span style={{ fontSize: '0.68rem', color: '#888' }}>/ {acc.max_products.toLocaleString()}</span>
+                        </div>
+                      </div>
+                      )}
+                    </div>
+                    {acc.updated_at && (
+                      <div style={{ fontSize: '0.58rem', color: '#444', marginTop: '0.4rem', textAlign: 'right' }}>
+                        {new Date(acc.updated_at).toLocaleString('ko')}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* B. KPI 카드 행 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
@@ -784,6 +929,85 @@ export default function WarroomPage() {
           </div>
         </div>
       </div>
+      {/* 스마트스토어 판매관리 기준 모달 */}
+      {showPenaltyGuide && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center' }} onClick={() => setShowPenaltyGuide(false)}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #333', borderRadius: '12px', width: '90%', maxWidth: '900px', maxHeight: '85vh', overflow: 'auto', padding: '2rem' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#4285F4' }}>스마트스토어 판매관리 프로그램</h2>
+              <button onClick={() => setShowPenaltyGuide(false)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.5rem', cursor: 'pointer' }}>x</button>
+            </div>
+            <p style={{ fontSize: '0.8125rem', color: '#AAA', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+              소비자 권익을 해칠 수 있는 판매활동이 확인되면 페널티가 부여되며, 점수가 누적되면 단계적 제재를 받습니다.
+            </p>
+            <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#FF8C00', marginBottom: '0.75rem' }}>페널티 부과 기준</h3>
+            <div style={{ overflowX: 'auto', marginBottom: '1.5rem' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem', minWidth: '700px' }}>
+                <thead>
+                  <tr style={{ background: 'rgba(255,140,0,0.1)' }}>
+                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#FFB84D', borderBottom: '1px solid #333' }}>항목</th>
+                    <th style={{ padding: '0.5rem', textAlign: 'left', color: '#FFB84D', borderBottom: '1px solid #333' }}>상세 기준</th>
+                    <th style={{ padding: '0.5rem', textAlign: 'center', color: '#FFB84D', borderBottom: '1px solid #333' }}>일반</th>
+                    <th style={{ padding: '0.5rem', textAlign: 'center', color: '#FFB84D', borderBottom: '1px solid #333' }}>오늘출발</th>
+                    <th style={{ padding: '0.5rem', textAlign: 'center', color: '#FFB84D', borderBottom: '1px solid #333' }}>정기구독</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ['발송처리 지연', '발송처리기한까지 미발송', '1점', '1점', '1점'],
+                    ['발송처리 지연 (4영업일)', '발송처리기한 +4영업일 경과 후 미발송', '3점', '3점', '3점'],
+                    ['발송지연 후 미발송', '발송지연 처리 후 발송예정일까지 미발송', '2점', '3점', '3점'],
+                    ['허위 송장 (국내)', '송장 입력 +2영업일까지 배송상태 없음', '3점', '3점', '3점'],
+                    ['허위 송장 (해외)', '송장 입력 +15영업일까지 배송상태 없음', '3점', '3점', '3점'],
+                    ['품절취소', '취소 사유가 품절', '2점', '2점', '3점'],
+                    ['품절취소 (선물하기)', '선물하기 주문 품절 취소', '3점', '3점', '-'],
+                    ['반품 처리지연', '수거 완료일 +3영업일 이상 경과', '1점', '1점', '1점'],
+                    ['교환 처리지연', '수거 완료일 +3영업일 이상 경과', '1점', '1점', '1점'],
+                  ].map(([item, desc, normal, today, sub], i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
+                      <td style={{ padding: '0.5rem', color: '#E5E5E5', fontWeight: 600 }}>{item}</td>
+                      <td style={{ padding: '0.5rem', color: '#AAA' }}>{desc}</td>
+                      <td style={{ padding: '0.5rem', textAlign: 'center', color: '#FF6B6B', fontWeight: 600 }}>{normal}</td>
+                      <td style={{ padding: '0.5rem', textAlign: 'center', color: '#FF6B6B', fontWeight: 600 }}>{today}</td>
+                      <td style={{ padding: '0.5rem', textAlign: 'center', color: '#FF6B6B', fontWeight: 600 }}>{sub}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#FF8C00', marginBottom: '0.75rem' }}>발송처리기한</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.5rem' }}>
+              {[
+                ['일반 발송', '결제완료일 + 3영업일'],
+                ['오늘 출발', '설정시간 내 결제 → 당일 / 이후 → +1영업일'],
+                ['정기 구독', '결제완료일 + 1영업일'],
+                ['희망배송일', '희망배송일 당일'],
+              ].map(([type, limit], i) => (
+                <div key={i} style={{ background: 'rgba(30,30,30,0.8)', padding: '0.625rem 0.75rem', borderRadius: '6px', border: '1px solid #2D2D2D' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#FFB84D' }}>{type}</span>
+                  <span style={{ fontSize: '0.75rem', color: '#AAA', marginLeft: '0.5rem' }}>{limit}</span>
+                </div>
+              ))}
+            </div>
+            <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#FF8C00', marginBottom: '0.75rem' }}>단계별 제재</h3>
+            <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.75rem' }}>최근 30일 페널티 10점 이상 + 페널티 비율 40% 이상 시 적용 (마지막 제재일로부터 1년간 누적)</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
+              <div style={{ background: 'rgba(255,200,50,0.08)', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(255,200,50,0.2)' }}>
+                <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FFD93D', marginBottom: '0.5rem' }}>1단계 — 주의</div>
+                <p style={{ fontSize: '0.7rem', color: '#AAA', lineHeight: 1.5 }}>최초 발생 시 주의 통보. 제재 없음.</p>
+              </div>
+              <div style={{ background: 'rgba(255,140,0,0.08)', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(255,140,0,0.2)' }}>
+                <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FF8C00', marginBottom: '0.5rem' }}>2단계 — 경고</div>
+                <p style={{ fontSize: '0.7rem', color: '#AAA', lineHeight: 1.5 }}>7일간 신규 상품 등록 금지 (센터 + API)</p>
+              </div>
+              <div style={{ background: 'rgba(255,80,80,0.08)', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(255,80,80,0.2)' }}>
+                <div style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FF6B6B', marginBottom: '0.5rem' }}>3단계 — 이용제한</div>
+                <p style={{ fontSize: '0.7rem', color: '#AAA', lineHeight: 1.5 }}>판매 활동 전면 제한, 정산 비즈월렛 전환</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

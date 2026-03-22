@@ -1,0 +1,92 @@
+{
+  "_comment": "무신사 상품 3138771 (비플레인 녹두 클렌징 폼) - 단일옵션 (옵션 없는 단품)",
+  "_source_url": "https://www.musinsa.com/products/3138771",
+  "detail_api": {
+    "meta": { "result": "SUCCESS" },
+    "data": {
+      "goodsNo": 3138771,
+      "goodsNm": "녹두 약산성 클렌징 폼 160ml X 2개 (증정: 폼 20ml)",
+      "goodsNmEng": "",
+      "brand": "beplain",
+      "brandInfo": {
+        "brandName": "비플레인",
+        "brandNameEng": "BEPLAIN",
+        "brandNationName": "한국"
+      },
+      "goodsPrice": {
+        "normalPrice": 52000,
+        "immediateDiscountedPrice": 39000,
+        "salePrice": 39000,
+        "discountRate": 25,
+        "couponPrice": 39000,
+        "maxBenefitPrice": null,
+        "memberDiscountRate": 0,
+        "gradeRate": 0,
+        "isSoldOut": false,
+        "isSale": true,
+        "saleReserveYmdt": null
+      },
+      "thumbnailImageUrl": "/images/goods_img/20230310/3138771/3138771_17719804242655_500.jpg",
+      "goodsImages": [
+        { "imageUrl": "/images/prd_img/20230310/3138771/detail_3138771_16795414381688_500.jpg" },
+        { "imageUrl": "/images/prd_img/20230310/3138771/detail_3138771_17333585820840_500.jpg" },
+        { "imageUrl": "/images/prd_img/20230310/3138771/detail_3138771_17569672633713_500.jpg" }
+      ],
+      "goodsContents": "<div class='product-detail'><img src='//image.msscdn.net/images/prd_img/20230310/3138771/desc_detail_01.jpg'/><p>녹두 약산성 클렌징 폼은 민감한 피부를 위한 저자극 클렌저입니다.</p><img src='//image.msscdn.net/images/prd_img/20230310/3138771/desc_detail_02.jpg'/><img src='//image.msscdn.net/images/prd_img/20230310/3138771/desc_detail_03.jpg'/><img src='//image.msscdn.net/images/prd_img/20230310/3138771/desc_detail_04.jpg'/></div>",
+      "goodsMaterial": {
+        "materials": []
+      },
+      "category": {
+        "categoryDepth1Name": "뷰티",
+        "categoryDepth1Code": "016",
+        "categoryDepth2Name": "클렌징/필링",
+        "categoryDepth2Code": "016001",
+        "categoryDepth3Name": "클렌징폼/젤/비누",
+        "categoryDepth3Code": "016001001",
+        "categoryDepth4Name": "클렌징폼",
+        "categoryDepth4Code": "016001001001"
+      },
+      "styleNo": "beplain0185",
+      "seasonYear": "0000",
+      "season": "0",
+      "isSoldOut": false,
+      "isOutOfStock": false,
+      "maxUsePointRate": 0.04,
+      "isPrePoint": false,
+      "isRestictedUsePoint": false,
+      "sex": ["male", "female"],
+      "storeCodes": ["beauty"],
+      "isOutlet": false,
+      "goodsTypeCode": "GENERAL",
+      "goodsTypeName": "일반배송"
+    }
+  },
+  "options_api": {
+    "meta": { "result": "SUCCESS" },
+    "data": {
+      "optionItems": []
+    }
+  },
+  "inventory_api": {
+    "meta": { "result": "SUCCESS" },
+    "data": []
+  },
+  "essential_api": {
+    "meta": { "result": "SUCCESS" },
+    "data": {
+      "essentials": [
+        { "name": "화장품 제조업자 및 책임판매업자", "value": "비플레인 / ㈜비플레인" },
+        { "name": "제조국(원산지)", "value": "대한민국" },
+        { "name": "내용물의 용량 또는 중량", "value": "160ml X 2개" },
+        { "name": "사용기한 또는 개봉 후 사용기간", "value": "제조일로부터 36개월 / 개봉 후 12개월" },
+        { "name": "모든 성분", "value": "정제수, 미리스틱애씨드, 글리세린, 스테아릭애씨드, 팔미틱애씨드 외" },
+        { "name": "품질보증기준", "value": "관련 법 및 소비자분쟁해결기준에 따름" }
+      ]
+    }
+  },
+  "coupon_api": {
+    "data": {
+      "list": []
+    }
+  }
+}

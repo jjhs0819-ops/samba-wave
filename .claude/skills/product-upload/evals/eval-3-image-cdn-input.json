@@ -1,0 +1,51 @@
+{
+  "id": "cp_01JTEST003",
+  "source_site": "MUSINSA",
+  "site_product_id": "4293381",
+  "name": "더엣지 [3PACK] 링클프리 와이드 팬츠",
+  "brand": "더엣지",
+  "original_price": 89000,
+  "sale_price": 49900,
+  "cost": null,
+  "images": [
+    "https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_1_500.jpg",
+    "https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_2_500.jpg",
+    "https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_3_500.jpg",
+    "https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_4_500.jpg",
+    "https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_5_500.jpg",
+    "https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_6_500.jpg",
+    "https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_7_500.jpg"
+  ],
+  "detail_images": [
+    "https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_d1.jpg",
+    "https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_d2.jpg",
+    "https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_d3.jpg",
+    "https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_d4.jpg",
+    "https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_d5.jpg"
+  ],
+  "detail_html": "<div style=\"text-align:center;\"><img src=\"https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_d1.jpg\" style=\"max-width:860px;width:100%;\" /><img src=\"https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_d2.jpg\" style=\"max-width:860px;width:100%;\" /><img src=\"https://image.msscdn.net/images/goods_img/20240101/4293381/4293381_d3.jpg\" style=\"max-width:860px;width:100%;\" /></div>",
+  "options": [
+    { "no": 1, "name": "S", "size": "S", "price": 49900, "stock": 0, "isSoldOut": true },
+    { "no": 2, "name": "M", "size": "M", "price": 49900, "stock": 3, "isSoldOut": false },
+    { "no": 3, "name": "L", "size": "L", "price": 49900, "stock": 0, "isSoldOut": true },
+    { "no": 4, "name": "XL", "size": "XL", "price": 49900, "stock": 0, "isSoldOut": true },
+    { "no": 5, "name": "XXL", "size": "XXL", "price": 49900, "stock": null, "isSoldOut": false, "isBrandDelivery": true }
+  ],
+  "category": "하의 > 슬랙스",
+  "category1": "하의",
+  "category2": "슬랙스",
+  "category3": "",
+  "category4": "",
+  "status": "collected",
+  "applied_policy_id": null,
+  "registered_accounts": null,
+  "market_product_nos": null,
+  "is_sold_out": false,
+  "sale_status": "in_stock",
+  "manufacturer": "더엣지",
+  "origin": "중국",
+  "material": "폴리에스터 95%, 스판덱스 5%",
+  "color": "",
+  "kream_data": null,
+  "tags": ["와이드팬츠", "링클프리"]
+}

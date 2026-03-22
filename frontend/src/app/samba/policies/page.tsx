@@ -49,13 +49,6 @@ interface MarketPolicyForm {
   maxStock: number      // 최대 재고수량 (0=무제한)
 }
 
-// 금지어/삭제어 템플릿
-interface ForbiddenTemplate {
-  id: string
-  name: string
-  type: 'forbidden' | 'deletion'
-  words: string[]
-}
 
 // 마켓 key → label 맵핑
 const MARKET_KEY_MAP: Record<string, string> = {
@@ -202,12 +195,6 @@ export default function PoliciesPage() {
   // 실제 마켓 계정 목록 (DB에서 로드 — 다중 계정 지원)
   const [marketAccounts, setMarketAccounts] = useState<SambaMarketAccount[]>([])
 
-  // 금지어·삭제어 템플릿
-  const [forbiddenTemplates, setForbiddenTemplates] = useState<ForbiddenTemplate[]>([])
-  const [activeTemplateId, setActiveTemplateId] = useState<Record<string, string>>({ forbidden: '', deletion: '' })
-  const [forbiddenText, setForbiddenText] = useState('')
-  const [deletionText, setDeletionText] = useState('')
-  const [newTemplateName, setNewTemplateName] = useState<Record<string, string>>({ forbidden: '', deletion: '' })
 
   // 현재 마켓 정책 가져오기
   const getCurrentMarketPolicy = useCallback((): MarketPolicyForm => {
@@ -233,63 +220,6 @@ export default function PoliciesPage() {
     setStoreAccounts(loaded)
   }, [])
 
-  // 금지어/삭제어 템플릿 로드 (템플릿 목록만, 텍스트 영역은 채우지 않음)
-  const loadForbiddenTemplates = useCallback(async () => {
-    try {
-      const data = await forbiddenApi.getSetting('forbidden_templates').catch(() => null) as ForbiddenTemplate[] | null
-      if (data && Array.isArray(data)) {
-        setForbiddenTemplates(data)
-      }
-    } catch { /* ignore */ }
-  }, [])
-
-
-  // 템플릿 저장
-  const saveTemplate = async (type: 'forbidden' | 'deletion') => {
-    const tplName = newTemplateName[type]?.trim()
-    if (!tplName) {
-      showAlert('템플릿 이름을 입력해주세요', 'error')
-      return
-    }
-    const text = type === 'forbidden' ? forbiddenText : deletionText
-    const words = text.split(';').map(w => w.trim()).filter(Boolean)
-    if (words.length === 0) {
-      showAlert('단어를 입력해주세요', 'error')
-      return
-    }
-    const newTpl: ForbiddenTemplate = {
-      id: `tpl_${Date.now()}`,
-      name: tplName,
-      type,
-      words,
-    }
-    const updated = [...forbiddenTemplates.filter(t => !(t.type === type && t.name === tplName)), newTpl]
-    await forbiddenApi.saveSetting('forbidden_templates', updated)
-    setForbiddenTemplates(updated)
-    setNewTemplateName(prev => ({ ...prev, [type]: '' }))
-    // DB에도 단어 벌크 저장
-    const result = await forbiddenApi.bulkSaveWords(type, words)
-    showAlert(`"${tplName}" ${result.created}개 단어 저장 완료`, 'success')
-  }
-
-  // 템플릿 불러오기
-  const loadTemplate = (tpl: ForbiddenTemplate) => {
-    const text = tpl.words.join(';')
-    if (tpl.type === 'forbidden') setForbiddenText(text)
-    else setDeletionText(text)
-    setActiveTemplateId(prev => ({ ...prev, [tpl.type]: tpl.id }))
-    setNewTemplateName(prev => ({ ...prev, [tpl.type]: tpl.name }))
-  }
-
-  // 템플릿 삭제
-  const deleteTemplate = async (tplId: string) => {
-    if (!await showConfirm('템플릿을 삭제하시겠습니까?')) return
-    const updated = forbiddenTemplates.filter(t => t.id !== tplId)
-    await forbiddenApi.saveSetting('forbidden_templates', updated)
-    setForbiddenTemplates(updated)
-    showAlert('템플릿이 삭제되었습니다', 'success')
-  }
-
   const loadPolicies = useCallback(async () => {
     setLoading(true)
     try {
@@ -299,7 +229,7 @@ export default function PoliciesPage() {
   }, [])
 
   useEffect(() => {
-    loadPolicies(); loadForbiddenTemplates(); loadStoreAccounts()
+    loadPolicies(); loadStoreAccounts()
     accountApi.listActive().then(setMarketAccounts).catch(() => {})
     detailTemplateApi.list().then(setDetailTemplates).catch(() => {})
     nameRuleApi.list().then(setNameRules).catch(() => {})
@@ -307,7 +237,7 @@ export default function PoliciesPage() {
     collectorApi.listProducts(0, 1).then(list => {
       if (list.length > 0) setPreviewProduct(list[0])
     }).catch(() => {})
-  }, [loadPolicies, loadForbiddenTemplates, loadStoreAccounts])
+  }, [loadPolicies, loadStoreAccounts])
 
 
   // URL highlight 파라미터로 정책 자동 선택
@@ -359,22 +289,9 @@ export default function PoliciesPage() {
     // 마켓 정책 로드
     const mp = (p.market_policies || {}) as Record<string, MarketPolicyForm>
     setMarketPolicies(mp)
-    // extras에서 템플릿/금지어 설정 복원
+    // extras 복원
     setSelectedDetailTemplateId(p.extras?.detail_template_id || '')
     setSelectedNameRuleId(p.extras?.name_rule_id || '')
-    setForbiddenText(p.extras?.forbidden_text || '')
-    setDeletionText(p.extras?.deletion_text || '')
-    // 금지어/삭제어 템플릿 그룹 ID 복원
-    setActiveTemplateId({
-      forbidden: p.extras?.forbidden_template_id || '',
-      deletion: p.extras?.deletion_template_id || '',
-    })
-    const fTpl = forbiddenTemplates.find(t => t.id === p.extras?.forbidden_template_id)
-    const dTpl = forbiddenTemplates.find(t => t.id === p.extras?.deletion_template_id)
-    setNewTemplateName({
-      forbidden: fTpl?.name || '',
-      deletion: dTpl?.name || '',
-    })
     setShowForm(true)
   }
 
@@ -400,47 +317,37 @@ export default function PoliciesPage() {
         extras: {
           detail_template_id: selectedDetailTemplateId || undefined,
           name_rule_id: selectedNameRuleId || undefined,
-          forbidden_text: forbiddenText || undefined,
-          deletion_text: deletionText || undefined,
-          forbidden_template_id: activeTemplateId.forbidden || undefined,
-          deletion_template_id: activeTemplateId.deletion || undefined,
         },
       }
+      // 정책 저장 (필수 — 먼저 실행)
       if (editingId) {
         await policyApi.update(editingId, payload)
-        setPolicies(await policyApi.list().catch(() => []))
       } else {
         const created = await policyApi.create(payload)
         setEditingId(created.id)
         setSelectedPolicyId(created.id)
-        setPolicies(await policyApi.list().catch(() => []))
       }
 
-      // 상품명 규칙 동시 저장
+      // 나머지 병렬 실행 (상품명규칙 + 삭제어 + 금지어 + 목록갱신)
+      const parallel: Promise<unknown>[] = [policyApi.list().then(list => setPolicies(list)).catch(() => {})]
+
       if (selectedNameRuleId) {
         const rule = nameRulesRef.current.find(x => x.id === selectedNameRuleId)
         if (rule) {
-          const saved = await nameRuleApi.update(rule.id, {
-            name: rule.name, prefix: rule.prefix, suffix: rule.suffix,
-            replacements: rule.replacements, replace_mode: rule.replace_mode,
-            option_rules: rule.option_rules, name_composition: rule.name_composition,
-            brand_display: rule.brand_display, dedup_enabled: rule.dedup_enabled,
-          }).catch(() => null)
-          if (saved) setNameRules(prev => prev.map(x => x.id === saved.id ? saved : x))
+          parallel.push(
+            nameRuleApi.update(rule.id, {
+              name: rule.name, prefix: rule.prefix, suffix: rule.suffix,
+              replacements: rule.replacements, replace_mode: rule.replace_mode,
+              option_rules: rule.option_rules, name_composition: rule.name_composition,
+              brand_display: rule.brand_display, dedup_enabled: rule.dedup_enabled,
+            }).then(saved => { if (saved) setNameRules(prev => prev.map(x => x.id === saved.id ? saved : x)) }).catch(() => {})
+          )
         }
       }
 
-      // 삭제어 동시 저장
-      const delWords = deletionText.split(';').map(w => w.trim()).filter(Boolean)
-      if (delWords.length > 0) {
-        await forbiddenApi.bulkSaveWords('deletion', delWords).catch(() => {})
-      }
-      // 금지어 동시 저장
-      const forbWords = forbiddenText.split(';').map(w => w.trim()).filter(Boolean)
-      if (forbWords.length > 0) {
-        await forbiddenApi.bulkSaveWords('forbidden', forbWords).catch(() => {})
-      }
+      // 금지어/삭제어는 설정 페이지에서 전역 관리
 
+      await Promise.all(parallel)
       showAlert('정책이 저장되었습니다', 'success')
     } catch (e) {
       showAlert(e instanceof Error ? e.message : '저장 실패', 'error')
@@ -460,10 +367,10 @@ export default function PoliciesPage() {
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latestPricingRef = useRef(pricing)
   const latestMarketPoliciesRef = useRef(marketPolicies)
-  const latestExtrasRef = useRef({ detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId, forbidden_text: forbiddenText, deletion_text: deletionText, forbidden_template_id: activeTemplateId.forbidden, deletion_template_id: activeTemplateId.deletion })
+  const latestExtrasRef = useRef({ detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId })
   latestPricingRef.current = pricing
   latestMarketPoliciesRef.current = marketPolicies
-  latestExtrasRef.current = { detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId, forbidden_text: forbiddenText, deletion_text: deletionText, forbidden_template_id: activeTemplateId.forbidden, deletion_template_id: activeTemplateId.deletion }
+  latestExtrasRef.current = { detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId }
 
   const triggerAutoSave = useCallback(() => {
     if (!editingId) return
@@ -479,10 +386,6 @@ export default function PoliciesPage() {
           extras: {
             detail_template_id: ex.detail_template_id || undefined,
             name_rule_id: ex.name_rule_id || undefined,
-            forbidden_text: ex.forbidden_text || undefined,
-            deletion_text: ex.deletion_text || undefined,
-            forbidden_template_id: ex.forbidden_template_id || undefined,
-            deletion_template_id: ex.deletion_template_id || undefined,
           },
         })
         // 리스트만 갱신 (현재 편집 폼은 유지)
@@ -561,8 +464,6 @@ export default function PoliciesPage() {
                 setMarketPolicies({})
                 setSelectedDetailTemplateId('')
                 setSelectedNameRuleId('')
-                setForbiddenText('')
-                setDeletionText('')
                 setShowForm(true)
                 return
               }
@@ -1167,7 +1068,7 @@ export default function PoliciesPage() {
             reps.splice(to, 0, moved)
             updateRule({ replacements: reps })
           }
-          const COMP_TAGS = ['{상품명}', '{브랜드명}', '{모델명}', '{사이트명}', '{상품번호}']
+          const COMP_TAGS = ['{상품명}', '{브랜드명}', '{모델명}', '{사이트명}', '{상품번호}', '{검색키워드}']
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {/* 규칙명 */}
@@ -1311,73 +1212,7 @@ export default function PoliciesPage() {
 
       </div>{/* 2컬럼 grid 닫기 */}
 
-      {/* 금지어 · 삭제어 설정 */}
-      <div style={{ ...card, padding: '1.5rem', marginTop: '1.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-          <span style={{ fontSize: '1rem', fontWeight: 700, color: '#FF6B6B' }}>금지어 · 삭제어 설정</span>
-          <span style={{ fontSize: '0.75rem', color: '#666' }}>수집 시 금지어 포함 상품 자동 제외, 삭제어는 상품명에서 자동 제거 (단어는 ;로 구분)</span>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-          {/* 금지어 */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FF6B6B' }}>금지어 템플릿 관리</span>
-              <select style={{ ...inputStyle, flex: 1 }}
-                value={activeTemplateId.forbidden || ''}
-                onChange={(e) => {
-                  const tpl = forbiddenTemplates.find(t => t.id === e.target.value)
-                  if (tpl) loadTemplate(tpl)
-                }}>
-                <option value="">그룹 선택</option>
-                {forbiddenTemplates.filter(t => t.type === 'forbidden').map(tpl => (
-                  <option key={tpl.id} value={tpl.id}>{tpl.name} ({tpl.words.length})</option>
-                ))}
-              </select>
-            </div>
-            <div style={{ border: '1px solid #2D2D2D', borderRadius: '8px', overflow: 'hidden' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '6px 12px', background: '#0D1117', borderBottom: '1px solid #2D2D2D' }}>
-                <input value={newTemplateName.forbidden} onChange={(e) => setNewTemplateName(prev => ({ ...prev, forbidden: e.target.value }))} placeholder="그룹 이름 입력" style={{ flex: 1, padding: '0.25rem 0.5rem', fontSize: '0.8rem', background: 'transparent', border: 'none', color: '#C5C5C5', outline: 'none' }} />
-                <button onClick={() => saveTemplate('forbidden')} style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>그룹저장</button>
-                <button onClick={() => { if (activeTemplateId.forbidden) deleteTemplate(activeTemplateId.forbidden) }} style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer' }}>그룹삭제</button>
-              </div>
-              <textarea value={forbiddenText} onChange={(e) => setForbiddenText(e.target.value)} placeholder={'단어를 ;로 구분해서 입력\n예) 나이키;아디다스;퓨마;리복;'} style={{ width: '100%', height: '160px', padding: '10px 12px', fontSize: '0.8125rem', background: '#080A10', border: 'none', color: '#D8DEE9', resize: 'vertical', outline: 'none', fontFamily: 'monospace', lineHeight: 1.6, boxSizing: 'border-box' }} />
-              <div style={{ background: '#0D1117', padding: '6px 12px', borderTop: '1px solid #2D2D2D' }}>
-                <span style={{ fontSize: '0.75rem', color: '#666' }}>( 금지어 {forbiddenText.split(';').filter(w => w.trim()).length}개 )</span>
-              </div>
-            </div>
-          </div>
-
-          {/* 삭제어 */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FFB84D' }}>삭제어 템플릿 관리</span>
-              <select style={{ ...inputStyle, flex: 1 }}
-                value={activeTemplateId.deletion || ''}
-                onChange={(e) => {
-                  const tpl = forbiddenTemplates.find(t => t.id === e.target.value)
-                  if (tpl) loadTemplate(tpl)
-                }}>
-                <option value="">그룹 선택</option>
-                {forbiddenTemplates.filter(t => t.type === 'deletion').map(tpl => (
-                  <option key={tpl.id} value={tpl.id}>{tpl.name} ({tpl.words.length})</option>
-                ))}
-              </select>
-            </div>
-            <div style={{ border: '1px solid #2D2D2D', borderRadius: '8px', overflow: 'hidden' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '6px 12px', background: '#0D1117', borderBottom: '1px solid #2D2D2D' }}>
-                <input value={newTemplateName.deletion} onChange={(e) => setNewTemplateName(prev => ({ ...prev, deletion: e.target.value }))} placeholder="그룹 이름 입력" style={{ flex: 1, padding: '0.25rem 0.5rem', fontSize: '0.8rem', background: 'transparent', border: 'none', color: '#C5C5C5', outline: 'none' }} />
-                <button onClick={() => saveTemplate('deletion')} style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>그룹저장</button>
-                <button onClick={() => { if (activeTemplateId.deletion) deleteTemplate(activeTemplateId.deletion) }} style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', background: 'rgba(255,184,77,0.1)', border: '1px solid rgba(255,184,77,0.3)', borderRadius: '4px', color: '#FFB84D', cursor: 'pointer' }}>그룹삭제</button>
-              </div>
-              <textarea value={deletionText} onChange={(e) => setDeletionText(e.target.value)} placeholder={'단어를 ;로 구분해서 입력\n예) [해외직구];정품보장;무료배송;'} style={{ width: '100%', height: '160px', padding: '10px 12px', fontSize: '0.8125rem', background: '#080A10', border: 'none', color: '#D8DEE9', resize: 'vertical', outline: 'none', fontFamily: 'monospace', lineHeight: 1.6, boxSizing: 'border-box' }} />
-              <div style={{ background: '#0D1117', padding: '6px 12px', borderTop: '1px solid #2D2D2D' }}>
-                <span style={{ fontSize: '0.75rem', color: '#666' }}>( 삭제어 {deletionText.split(';').filter(w => w.trim()).length}개 )</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* 금지어/삭제어는 설정 페이지로 이동 */}
 
       {/* 설정 저장/삭제 버튼 */}
       {showForm && (
