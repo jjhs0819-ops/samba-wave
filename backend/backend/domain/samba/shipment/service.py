@@ -423,32 +423,33 @@ class SambaShipmentService:
             "sale_status": refresh_result.new_sale_status or "in_stock",
             "changed": refresh_result.changed,
           }
-          if refresh_result.new_options:
-            snapshot["options"] = refresh_result.new_options
+          # 옵션이 없어도 현재 옵션 스냅샷 기록
+          snap_opts = refresh_result.new_options or (product_row.options if product_row.options else None)
+          if snap_opts:
+            snapshot["options"] = snap_opts
           history = list(product_row.price_history or [])
           history.insert(0, snapshot)
           refresh_updates["price_history"] = history[:200]
           await product_repo.update_async(product_id, **refresh_updates)
           for k, v in refresh_updates.items():
             product_dict[k] = v
-          if refresh_result.changed:
-            # 변동 상세 표시
-            changes = []
-            old_price = getattr(product_row, "sale_price", None)
-            new_price = refresh_result.new_sale_price
-            if new_price is not None and new_price != old_price:
-              changes.append(f"가격{old_price}→{new_price}")
-            old_opts = getattr(product_row, "options", None) or []
-            new_opts = refresh_result.new_options
-            if new_opts is not None:
-              old_stocks = {o.get("name", ""): o.get("stock", 0) for o in old_opts}
-              new_stocks = {o.get("name", ""): o.get("stock", 0) for o in new_opts}
-              stock_changes = [k for k in set(list(old_stocks.keys()) + list(new_stocks.keys())) if old_stocks.get(k) != new_stocks.get(k)]
-              if stock_changes:
-                changes.append(f"재고{len(stock_changes)}건")
-            refresh_status = f"변동O({','.join(changes)})" if changes else "변동O"
-          else:
-            refresh_status = "변동X"
+          # 가격/재고 변동 각각 판단
+          old_price = getattr(product_row, "sale_price", None)
+          new_price = refresh_result.new_sale_price
+          price_changed = new_price is not None and new_price != old_price
+          old_opts = getattr(product_row, "options", None) or []
+          new_opts = refresh_result.new_options
+          stock_changed = False
+          stock_change_count = 0
+          if new_opts is not None:
+            old_stocks = {o.get("name", ""): o.get("stock", 0) for o in old_opts}
+            new_stocks = {o.get("name", ""): o.get("stock", 0) for o in new_opts}
+            stock_changes = [k for k in set(list(old_stocks.keys()) + list(new_stocks.keys())) if old_stocks.get(k) != new_stocks.get(k)]
+            stock_changed = len(stock_changes) > 0
+            stock_change_count = len(stock_changes)
+          p_label = f"가격변동O({old_price}→{new_price})" if price_changed else "가격변동X"
+          s_label = f"재고변동O({stock_change_count}건)" if stock_changed else "재고변동X"
+          refresh_status = f"{p_label} {s_label}"
           logger.info(f"[전송] 소싱처 최신화 완료 — {refresh_status}")
       except Exception as ref_e:
         refresh_status = f"최신화예외:{str(ref_e)[:30]}"
