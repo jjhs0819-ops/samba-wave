@@ -259,6 +259,14 @@ export default function ProductsPage() {
     if (aiFilter === 'ai_img_no') filtered = filtered.filter(p => !(p.images || []).some(u => u.includes('/transformed/') || u.includes('/static/images/ai_')))
     if (aiFilter === 'filter_yes') filtered = filtered.filter(p => (p.tags || []).includes('__img_filtered__'))
     if (aiFilter === 'filter_no') filtered = filtered.filter(p => !(p.tags || []).includes('__img_filtered__'))
+    if (aiFilter === 'img_edit_yes') filtered = filtered.filter(p => {
+      const t = p.tags || []
+      return t.includes('__ai_image__') || t.includes('__img_filtered__') || t.includes('__img_edited__')
+    })
+    if (aiFilter === 'img_edit_no') filtered = filtered.filter(p => {
+      const t = p.tags || []
+      return !t.includes('__ai_image__') && !t.includes('__img_filtered__') && !t.includes('__img_edited__')
+    })
     if (aiFilter === 'video_yes') filtered = filtered.filter(p => !!p.video_url)
     if (aiFilter === 'video_no') filtered = filtered.filter(p => !p.video_url)
     if (aiFilter === 'has_orders') filtered = filtered.filter(p => orderProductIds.has(p.id))
@@ -1129,6 +1137,8 @@ export default function ProductsPage() {
             <option value="ai_img_no">AI이미지 미적용</option>
             <option value="filter_yes">필터링완료</option>
             <option value="filter_no">필터링미완료</option>
+            <option value="img_edit_yes">이미지수정완료</option>
+            <option value="img_edit_no">이미지수정미완료</option>
             <option value="video_yes">영상있음</option>
             <option value="video_no">영상없음</option>
             <option value="has_orders">판매이력상품</option>
@@ -1221,12 +1231,19 @@ export default function ProductsPage() {
         </div>
       ) : (
         /* Card view - matching original product-card style */
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: viewMode === "compact" ? "4px" : "8px" }}>
           {products.map((p, idx) => (
             <ProductCard
               key={p.id}
               product={p}
               idx={idx}
+              compact={viewMode === "compact"}
+              expanded={expandedIds.has(p.id)}
+              onToggleExpand={() => setExpandedIds(prev => {
+                const next = new Set(prev)
+                next.has(p.id) ? next.delete(p.id) : next.add(p.id)
+                return next
+              })}
               policies={policies}
               accounts={accounts}
               nameRules={nameRules}
@@ -1353,6 +1370,9 @@ interface ProductCardProps {
   onProductUpdate: (productId: string, data: Partial<SambaCollectedProduct>) => void;
   logMessage?: string;
   catMappingMap: Map<string, Record<string, string>>;
+  compact?: boolean;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }
 
 function getSourceUrl(sourceSite: string, siteProductId: string | undefined): string {
@@ -1430,7 +1450,7 @@ function renderRegisteredName(name: string, deletionWords: string[]): React.Reac
 function ProductCard({
   product: p, idx, policies, accounts, nameRules, selectedIds, filterNameMap, deletionWords,
   onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onTagUpdate, onMarketDelete, onAddTaskLog, onProductUpdate, logMessage,
-  catMappingMap,
+  catMappingMap, compact, expanded, onToggleExpand,
 }: ProductCardProps) {
   const [showPriceHistoryModal, setShowPriceHistoryModal] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)
@@ -1888,9 +1908,13 @@ function ProductCard({
                         {extraImgs.map((img, i) => renderImageRow(img, i, extraImgs, async (newList) => {
                           const newImgs = [mainImg, ...newList]
                           try {
-                            await collectorApi.updateProduct(p.id, { images: newImgs } as Partial<SambaCollectedProduct>)
+                            const updateData: Partial<SambaCollectedProduct> = { images: newImgs }
+                            if (!(p.tags || []).includes('__img_edited__')) {
+                              updateData.tags = [...(p.tags || []), '__img_edited__']
+                            }
+                            await collectorApi.updateProduct(p.id, updateData)
                             setProductImages(newImgs)
-                            onProductUpdate(p.id, { images: newImgs })
+                            onProductUpdate(p.id, updateData)
                           } catch (e) {
                             console.error('[이미지삭제] 저장 실패:', e)
                             alert('이미지 변경 저장 실패: ' + (e instanceof Error ? e.message : String(e)))
@@ -1928,9 +1952,13 @@ function ProductCard({
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {detailImgs.map((img, i) => renderImageRow(img, i, detailImgs, async (newList) => {
                           try {
-                            await collectorApi.updateProduct(p.id, { detail_images: newList } as Partial<SambaCollectedProduct>)
+                            const updateData: Partial<SambaCollectedProduct> = { detail_images: newList }
+                            if (!(p.tags || []).includes('__img_edited__')) {
+                              updateData.tags = [...(p.tags || []), '__img_edited__']
+                            }
+                            await collectorApi.updateProduct(p.id, updateData)
                             setDetailImgList(newList)
-                            onProductUpdate(p.id, { detail_images: newList })
+                            onProductUpdate(p.id, updateData)
                           } catch (e) {
                             console.error('[상세이미지삭제] 저장 실패:', e)
                             alert('상세이미지 변경 저장 실패: ' + (e instanceof Error ? e.message : String(e)))
@@ -2012,6 +2040,15 @@ function ProductCard({
         padding: "7px 14px", background: "rgba(15,15,15,0.8)", borderBottom: "1px solid #222",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px", fontSize: "0.75rem", color: "#666" }}>
+          {compact && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleExpand?.() }}
+              style={{
+                background: "none", border: "none", color: expanded ? "#FF8C00" : "#666",
+                fontSize: "0.85rem", cursor: "pointer", padding: "0 2px", lineHeight: 1,
+              }}
+            >{expanded ? "−" : "+"}</button>
+          )}
           <input
             type="checkbox"
             checked={selectedIds.has(p.id)}
@@ -2108,6 +2145,23 @@ function ProductCard({
       </div>
 
       {/* Card body */}
+      {(compact && !expanded) ? (
+        /* 간단보기: 원 상품명 + 등록 상품명 + 브랜드 + 원가 한 줄 */
+        <div style={{ padding: "8px 14px", display: "flex", gap: "14px", alignItems: "center", fontSize: "0.78rem" }}>
+          <ProductImage src={p.images?.[0]} name={p.name} size={50} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: "#FFFFFF", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+            <div style={{ color: "#888", fontSize: "0.72rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))}
+            </div>
+          </div>
+          <div style={{ textAlign: "right", flexShrink: 0 }}>
+            <div style={{ color: "#888", fontSize: "0.68rem" }}>{p.brand || "-"}</div>
+            <div style={{ color: "#FFB84D", fontWeight: 600 }}>₩{fmt(cost)}</div>
+            {marketPrice > 0 && <div style={{ color: "#FF8C00", fontSize: "0.72rem" }}>→ ₩{fmt(marketPrice)}</div>}
+          </div>
+        </div>
+      ) : (
       <div style={{ display: "flex", gap: "0", padding: "14px" }}>
         {/* Left: Image section */}
         <div style={{
@@ -2526,6 +2580,7 @@ function ProductCard({
           </table>
         </div>
       </div>
+      )}
     </div>
   );
 }
