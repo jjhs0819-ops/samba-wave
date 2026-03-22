@@ -1267,6 +1267,7 @@ function ProductCard({
 }: ProductCardProps) {
   const [showPriceHistoryModal, setShowPriceHistoryModal] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)
+  const [zoomImg, setZoomImg] = useState<string | null>(null)
   const [imageTab, setImageTab] = useState<'main' | 'extra' | 'detail' | 'video'>('main')
   const [productImages, setProductImages] = useState<string[]>(p.images || [])
   const [detailImgList, setDetailImgList] = useState<string[]>(
@@ -1614,7 +1615,8 @@ function ProductCard({
             border: label ? '1px solid rgba(255,140,0,0.2)' : '1px solid #2D2D2D',
           }}>
             <img src={img} alt="" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-              style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0 }} />
+              onClick={() => setZoomImg(img)}
+              style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer' }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               {label && <span style={{ fontSize: '0.7rem', color: '#FF8C00', fontWeight: 600 }}>{label}</span>}
               <p style={{ margin: 0, fontSize: '0.68rem', color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img}</p>
@@ -1664,7 +1666,8 @@ function ProductCard({
                         <div>
                           <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 대표이미지]</p>
                           <img src={mainImg} alt="대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                            style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #2D2D2D' }} />
+                            onClick={() => setZoomImg(mainImg)}
+                            style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #2D2D2D', cursor: 'pointer' }} />
                           <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{mainImg}</p>
                         </div>
                         <div style={{ flex: 1 }}>
@@ -1789,6 +1792,39 @@ function ProductCard({
           </div>
         )
       })()}
+
+      {/* 이미지 확대 팝업 */}
+      {zoomImg && (
+        <div
+          onClick={() => setZoomImg(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 10000,
+            background: 'rgba(0,0,0,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer',
+          }}
+        >
+          <img
+            src={zoomImg}
+            alt=""
+            onClick={e => e.stopPropagation()}
+            style={{
+              maxWidth: '90vw', maxHeight: '90vh',
+              objectFit: 'contain', borderRadius: '8px',
+              cursor: 'default',
+            }}
+          />
+          <button
+            onClick={() => setZoomImg(null)}
+            style={{
+              position: 'absolute', top: '20px', right: '20px',
+              background: 'rgba(0,0,0,0.5)', border: '1px solid #555',
+              color: '#ccc', fontSize: '1.2rem', padding: '4px 10px',
+              borderRadius: '6px', cursor: 'pointer',
+            }}
+          >✕</button>
+        </div>
+      )}
 
       {/* Card header */}
       <div style={{
