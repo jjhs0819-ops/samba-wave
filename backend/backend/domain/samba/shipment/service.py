@@ -681,7 +681,7 @@ class SambaShipmentService:
           new_stocks = {o.get("name", ""): o.get("stock", 0) for o in cur_opts}
           opt_diff_count = len([k for k in set(list(old_stocks.keys()) + list(new_stocks.keys())) if old_stocks.get(k) != new_stocks.get(k)])
         # refresh_status에 전송가 정보 추가
-        refresh_status = f"원가 {last_cost_sent}>{cur_cost_int}, 전송가 {last_price}>{cur_price}, 재고변동 {opt_diff_count}건"
+        refresh_status = f"원가 {last_cost_sent:,}>{cur_cost_int:,}, 전송가 {last_price:,}>{cur_price:,}, 재고변동 {opt_diff_count}건"
 
         # 스킵 판단: last_sent_data와 비교
         if skip_unchanged and has_update and last_sent:
