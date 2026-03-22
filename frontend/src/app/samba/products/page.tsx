@@ -259,6 +259,8 @@ export default function ProductsPage() {
     if (aiFilter === 'ai_tag_no') filtered = filtered.filter(p => !(p.tags || []).includes('__ai_tagged__'))
     if (aiFilter === 'ai_img_yes') filtered = filtered.filter(p => (p.images || []).some(u => u.includes('/transformed/') || u.includes('/static/images/ai_')))
     if (aiFilter === 'ai_img_no') filtered = filtered.filter(p => !(p.images || []).some(u => u.includes('/transformed/') || u.includes('/static/images/ai_')))
+    if (aiFilter === 'filter_yes') filtered = filtered.filter(p => (p.tags || []).includes('__img_filtered__'))
+    if (aiFilter === 'filter_no') filtered = filtered.filter(p => !(p.tags || []).includes('__img_filtered__'))
     if (aiFilter === 'video_yes') filtered = filtered.filter(p => !!p.video_url)
     if (aiFilter === 'video_no') filtered = filtered.filter(p => !p.video_url)
     if (aiFilter === 'has_orders') filtered = filtered.filter(p => orderProductIds.has(p.id))
@@ -1122,6 +1124,8 @@ export default function ProductsPage() {
             <option value="ai_tag_no">AI태그 미적용</option>
             <option value="ai_img_yes">AI이미지 적용</option>
             <option value="ai_img_no">AI이미지 미적용</option>
+            <option value="filter_yes">필터링완료</option>
+            <option value="filter_no">필터링미완료</option>
             <option value="video_yes">영상있음</option>
             <option value="video_no">영상없음</option>
             <option value="has_orders">판매이력상품</option>
@@ -1535,7 +1539,8 @@ function ProductCard({
       .filter((a): a is SambaMarketAccount => !!a)
       .map(acc => {
         const market = MARKETS.find(m => m.id === acc.market_type)
-        const productNo = marketProductNos[acc.id] || ''
+        // channelProductNo(구매페이지용) 우선, 없으면 originProductNo 사용
+        const productNo = marketProductNos[acc.id] || marketProductNos[`${acc.id}_origin`] || ''
         // 마켓 상품번호가 있으면 구매페이지 직접 링크, 없으면 검색 URL
         const extras = (acc.additional_fields || {}) as Record<string, string>
         const url = buildMarketProductUrl(acc.market_type, acc.seller_id || '', productNo, extras.storeSlug)
