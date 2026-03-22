@@ -12,6 +12,16 @@ from backend.domain.samba.shipment.model import SambaShipment
 from backend.domain.samba.shipment.repository import SambaShipmentRepository
 from backend.utils.logger import logger
 
+# 그룹상품 동시성 제어 락 (account_id별)
+_group_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_group_lock(account_id: str) -> asyncio.Lock:
+  if account_id not in _group_locks:
+    _group_locks[account_id] = asyncio.Lock()
+  return _group_locks[account_id]
+
+
 STATUS_LABELS: dict[str, str] = {
   "pending": "대기중",
   "updating": "업데이트중",
@@ -107,6 +117,206 @@ class SambaShipmentService:
 
     return {"processed": processed, "skipped": skipped, "results": results}
 
+  # ==================== 그룹상품 전송 ====================
+
+  async def transmit_group(self, product_ids: list[str], account_id: str) -> dict:
+    """그룹상품을 스마트스토어에 등록."""
+    import math
+
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+    from backend.domain.samba.policy.repository import SambaPolicyRepository
+    from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
+    product_repo = SambaCollectedProductRepository(self.session)
+    account_repo = SambaMarketAccountRepository(self.session)
+
+    # 상품 조회
+    products = []
+    for pid in product_ids:
+      p = await product_repo.get_async(pid)
+      if p:
+        products.append(p)
+    if len(products) < 2:
+      raise ValueError("그룹상품은 2개 이상의 상품이 필요합니다")
+
+    # 계정 조회
+    account = await account_repo.get_async(account_id)
+    if not account:
+      raise ValueError(f"계정을 찾을 수 없습니다: {account_id}")
+
+    additional = account.additional_fields or {}
+    client_id = additional.get("clientId") or account.api_key
+    client_secret = additional.get("clientSecret") or account.api_secret
+    client = SmartStoreClient(client_id, client_secret)
+
+    # 카테고리 매핑 조회 (기존 _transmit_product 패턴과 동일)
+    first = products[0]
+    cat_parts = [first.category1, first.category2, first.category3, first.category4]
+    raw_category = " > ".join(c for c in cat_parts if c) or first.category or ""
+
+    mapped = await self._resolve_category_mappings(
+      first.source_site or "", raw_category, [account_id]
+    )
+    category_id = mapped.get("smartstore", "")
+    if not category_id:
+      raise ValueError("카테고리 매핑을 찾을 수 없습니다")
+
+    # 정책 조회 (가격 계산용)
+    MARKET_TYPE_TO_POLICY_KEY = {
+      'coupang': '쿠팡', 'ssg': '신세계몰', 'smartstore': '스마트스토어',
+      '11st': '11번가', 'gmarket': '지마켓', 'auction': '옥션',
+      'gsshop': 'GS샵', 'lotteon': '롯데ON', 'lottehome': '롯데홈쇼핑',
+      'homeand': '홈앤쇼핑', 'hmall': 'HMALL', 'kream': 'KREAM',
+    }
+    policy = None
+    policy_market_data: dict[str, Any] = {}
+    if first.applied_policy_id:
+      pol_repo = SambaPolicyRepository(self.session)
+      policy = await pol_repo.get_async(first.applied_policy_id)
+      if policy and policy.market_policies:
+        policy_market_data = policy.market_policies
+
+    # account_id별 동시성 락
+    lock = _get_group_lock(account_id)
+    async with lock:
+      # guideId 조회
+      guides = await client.get_purchase_option_guides(category_id)
+      if not guides:
+        # 카테고리 미지원 → 단일상품 폴백
+        logger.info(f"카테고리 {category_id} 그룹상품 미지원, 단일상품으로 전송")
+        for p in products:
+          await self._transmit_product(
+            p.id, [account_id], ["price", "stock", "image", "description"]
+          )
+        return {
+          "group_product_no": None,
+          "product_count": len(products),
+          "deleted_count": 0,
+          "fallback": True,
+        }
+      guide_id = guides[0].get("guideId")
+
+      # 기존 단일상품 삭제
+      deleted_nos = []
+      for p in products:
+        market_nos = p.market_product_nos or {}
+        existing_no = market_nos.get(account_id)
+        origin_no = market_nos.get(f"{account_id}_origin")
+        delete_no = origin_no or existing_no
+        if delete_no:
+          try:
+            if isinstance(delete_no, dict):
+              delete_no = delete_no.get("originProductNo", delete_no)
+            await client.delete_product(str(delete_no))
+            deleted_nos.append(delete_no)
+          except Exception:
+            pass
+
+      # 상품 데이터 준비 (가격 계산, 이미지 업로드)
+      product_dicts = []
+      for p in products:
+        pd = p.model_dump()
+
+        # 상세 HTML 재생성
+        pd["detail_html"] = await self._build_detail_html(pd)
+
+        # 정책 기반 판매가 계산 (기존 _transmit_product 라인 313-341 동일 패턴)
+        if policy and policy.pricing:
+          cost = pd.get("cost") or pd.get("sale_price") or pd.get("original_price") or 0
+          pr = policy.pricing
+          common_margin_rate = pr.get("marginRate", 15)
+          common_shipping = pr.get("shippingCost", 0)
+          common_extra = pr.get("extraCharge", 0)
+          common_fee = pr.get("feeRate", 0)
+          min_margin = pr.get("minMarginAmount", 0)
+
+          policy_key = MARKET_TYPE_TO_POLICY_KEY.get("smartstore")
+          mp = policy_market_data.get(policy_key, {}) if policy_key else {}
+          m_margin_rate = mp.get("marginRate") or common_margin_rate
+          m_shipping = mp.get("shippingCost") or common_shipping
+          m_fee = mp.get("feeRate") or common_fee
+
+          margin_amt = round(cost * m_margin_rate / 100)
+          if min_margin > 0 and margin_amt < min_margin:
+            margin_amt = min_margin
+          calc_price = cost + margin_amt + m_shipping
+          if m_fee > 0 and calc_price > 0:
+            calc_price = math.ceil(calc_price / (1 - m_fee / 100))
+          if common_extra > 0:
+            calc_price += common_extra
+
+          pd["_final_sale_price"] = calc_price
+          logger.info(
+            f"[그룹전송] 가격 계산: 원가={cost}, 마진={margin_amt}({m_margin_rate}%), "
+            f"배송={m_shipping}, 수수료={m_fee}% → 판매가={calc_price}"
+          )
+
+        # 이미지 업로드
+        uploaded_images = []
+        for img_url in (pd.get("images") or [])[:5]:
+          try:
+            naver_url = await client.upload_image_from_url(img_url)
+            uploaded_images.append(naver_url)
+          except Exception:
+            uploaded_images.append(img_url)
+        pd["images"] = uploaded_images
+        product_dicts.append(pd)
+
+      # 페이로드 변환
+      payload = SmartStoreClient.transform_group_product(
+        products=product_dicts,
+        category_id=category_id,
+        guide_id=guide_id,
+        account_settings=additional,
+      )
+
+      # 그룹상품 등록
+      await client.register_group_product(payload)
+
+      # 폴링
+      try:
+        poll_result = await client.poll_group_status(max_wait=300)
+      except Exception as e:
+        # 그룹 등록 실패 → 삭제된 상품 롤백 (단일상품 재등록)
+        logger.error(f"그룹등록 실패, 단일상품으로 롤백: {e}")
+        for p in products:
+          try:
+            await self._transmit_product(
+              p.id, [account_id], ["price", "stock", "image", "description"]
+            )
+          except Exception:
+            pass
+        raise e
+
+      # 결과 저장
+      group_product_no = poll_result.get("groupProductNo")
+      product_nos = poll_result.get("productNos", [])
+
+      for i, p in enumerate(products):
+        updates: dict[str, Any] = {"group_product_no": group_product_no}
+        if i < len(product_nos):
+          pno = product_nos[i]
+          market_nos = dict(p.market_product_nos or {})
+          market_nos[account_id] = {
+            "originProductNo": pno.get("originProductNo"),
+            "smartstoreChannelProductNo": pno.get("smartstoreChannelProductNo"),
+            "groupProductNo": group_product_no,
+          }
+          updates["market_product_nos"] = market_nos
+          registered = list(p.registered_accounts or [])
+          if account_id not in registered:
+            registered.append(account_id)
+          updates["registered_accounts"] = registered
+          updates["status"] = "registered"
+        await product_repo.update_async(p.id, **updates)
+
+      return {
+        "group_product_no": group_product_no,
+        "product_count": len(products),
+        "deleted_count": len(deleted_nos),
+      }
+
   async def _transmit_product(
     self,
     product_id: str,
@@ -142,9 +352,14 @@ class SambaShipmentService:
 
     product_dict = product_row.model_dump()
 
-    # 2-1. 정책의 상세 템플릿으로 detail_html 항상 재생성
-    # (수집된 detail_html은 소싱처 CDN URL이 포함되어 있어 마켓에서 핫링크 차단됨)
-    product_dict["detail_html"] = await self._build_detail_html(product_dict)
+    # 이미지/상세페이지 업데이트 필요 여부 판단
+    needs_image = not update_items or "image" in update_items or "description" in update_items
+    if not needs_image:
+      product_dict["_skip_image_upload"] = True
+
+    # 2-1. 정책의 상세 템플릿으로 detail_html 재생성 (이미지/상세 업데이트 시에만)
+    if needs_image:
+      product_dict["detail_html"] = await self._build_detail_html(product_dict)
 
     # 3. 카테고리 매핑 자동 조회 (성별 + category1~4 조합)
     cat_parts = [
@@ -476,16 +691,21 @@ class SambaShipmentService:
     if not composition:
       return product.get("name", "")
 
+    # SEO 검색키워드: seo_keywords 배열을 공백 연결
+    seo_kws = product.get("seo_keywords") or []
+    seo_text = " ".join(seo_kws[:3]) if seo_kws else ""
+
     tag_map = {
       "{상품명}": product.get("name", ""),
       "{브랜드명}": product.get("brand", ""),
       "{모델명}": product.get("model_no", ""),
       "{사이트명}": product.get("source_site", ""),
       "{상품번호}": product.get("site_product_id", ""),
+      "{검색키워드}": seo_text,
     }
 
-    # 조합 태그 순서대로 값 치환
-    parts = [tag_map.get(tag, tag) for tag in composition]
+    # 조합 태그 순서대로 값 치환 (빈 값이면 태그 자체 제거)
+    parts = [tag_map.get(tag, "") if tag in tag_map else tag for tag in composition]
     composed = " ".join(p for p in parts if p and p.strip())
 
     # 치환어 적용
