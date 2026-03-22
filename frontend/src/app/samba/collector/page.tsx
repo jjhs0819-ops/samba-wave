@@ -114,6 +114,13 @@ export default function CollectorPage() {
   const [musinsaAuth, setMusinsaAuth] = useState<"checking" | "ok" | "error">("checking");
   const [musinsaAuthText, setMusinsaAuthText] = useState("인증 상태 확인 중...");
 
+  // 트리 사이드바
+  const [tree, setTree] = useState<SambaSearchFilter[]>([])
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
+  const [selectedNode, setSelectedNode] = useState<string | null>(null)
+  const [creatingFolder, setCreatingFolder] = useState<{ parentId: string; site: string } | null>(null)
+  const [newFolderName, setNewFolderName] = useState('')
+
   // Group table filters
   const [siteFilter, setSiteFilter] = useState("");
   const [aiFilter, setAiFilter] = useState("");
@@ -135,7 +142,20 @@ export default function CollectorPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const loadTree = useCallback(async () => {
+    try {
+      const data = await collectorApi.getFilterTree()
+      setTree(data)
+      // 모든 루트 노드 기본 펼침
+      setExpandedNodes(prev => {
+        const next = new Set(prev)
+        data.forEach(n => next.add(n.id))
+        return next
+      })
+    } catch { /* 트리 로드 실패 무시 */ }
+  }, [])
+
+  useEffect(() => { load(); loadTree(); }, [load, loadTree]);
 
   // 스마트스토어 계정 로드
   useEffect(() => {
@@ -220,7 +240,7 @@ export default function CollectorPage() {
 
       addLog(`그룹 생성 완료: "${created.name}" (${site})`);
       setCollectUrl("");
-      load();
+      load(); loadTree();
     } catch (e) {
       addLog(`그룹 생성 실패: ${e instanceof Error ? e.message : "오류"}`);
     }
@@ -235,7 +255,7 @@ export default function CollectorPage() {
     }
     setSelectedIds(new Set());
     setSelectAll(false);
-    load();
+    load(); loadTree();
   };
 
   const handleCollectGroups = async () => {
@@ -311,7 +331,7 @@ export default function CollectorPage() {
     }
     setCollecting(false);
     collectAbortRef.current = null;
-    load();
+    load(); loadTree();
   };
 
   const handleStopCollect = () => {
@@ -344,7 +364,7 @@ export default function CollectorPage() {
       showAlert('정책 적용에 실패했습니다.', 'error')
       return
     }
-    load();
+    load(); loadTree();
   };
 
   // 그룹이름 수정
@@ -357,7 +377,7 @@ export default function CollectorPage() {
       showAlert('그룹이름 수정에 실패했습니다.', 'error')
       return
     }
-    load();
+    load(); loadTree();
   };
 
   // 요청상품수 수정
@@ -370,7 +390,7 @@ export default function CollectorPage() {
       showAlert('요청수 변경에 실패했습니다.', 'error')
       return
     }
-    load();
+    load(); loadTree();
   };
 
   // 수집상품수 클릭 → 상품관리 이동
@@ -393,7 +413,7 @@ export default function CollectorPage() {
         `갱신 완료: ${result.refreshed}건 갱신, ${result.changed}건 변동, ` +
         `${result.sold_out}건 품절, ${result.retransmitted}건 재전송`
       )
-      load()
+      load(); loadTree()
     } catch (e) {
       addLog(`갱신 실패: ${e instanceof Error ? e.message : '오류'}`)
       showAlert('일괄 갱신에 실패했습니다.', 'error')
@@ -427,8 +447,132 @@ export default function CollectorPage() {
 
   const allSites = [...new Set(filters.map((f) => f.source_site))].sort();
 
+  // 트리 노드 컴포넌트
+  const TreeNode = ({ node, depth = 0 }: { node: SambaSearchFilter; depth?: number }) => {
+    const isExpanded = expandedNodes.has(node.id)
+    const isSelected = selectedNode === node.id
+
+    return (
+      <div>
+        <div
+          onClick={() => {
+            if (node.is_folder) {
+              setExpandedNodes(prev => {
+                const next = new Set(prev)
+                if (next.has(node.id)) next.delete(node.id)
+                else next.add(node.id)
+                return next
+              })
+            } else {
+              setSelectedNode(node.id)
+              // 해당 그룹 클릭 시 선택 상태 설정
+              setSelectedIds(new Set([node.id]))
+            }
+          }}
+          style={{
+            paddingLeft: `${depth * 16 + 8}px`,
+            paddingRight: '8px',
+            paddingTop: '4px',
+            paddingBottom: '4px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            fontSize: '0.78rem',
+            color: isSelected ? '#FF8C00' : '#ccc',
+            background: isSelected ? 'rgba(255,140,0,0.1)' : 'transparent',
+            borderRadius: '4px',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <span style={{ fontSize: '0.7rem', width: '14px' }}>
+            {node.is_folder ? (isExpanded ? '\u{1F4C2}' : '\u{1F4C1}') : '\u{1F4CB}'}
+          </span>
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.name}</span>
+          {!node.is_folder && (node.collected_count ?? 0) > 0 && (
+            <span style={{
+              background: 'rgba(255,140,0,0.15)', color: '#FF8C00',
+              padding: '0 4px', borderRadius: '3px', fontSize: '0.65rem',
+            }}>
+              {node.collected_count}
+            </span>
+          )}
+          {node.is_folder && (
+            <span
+              onClick={(e) => {
+                e.stopPropagation()
+                setCreatingFolder({ parentId: node.id, site: node.source_site })
+                setNewFolderName('')
+              }}
+              style={{ fontSize: '0.7rem', color: '#666', padding: '0 2px' }}
+              title="하위 폴더 추가"
+            >
+              +
+            </span>
+          )}
+        </div>
+        {node.is_folder && isExpanded && node.children?.map(child => (
+          <TreeNode key={child.id} node={child} depth={depth + 1} />
+        ))}
+        {/* 새 폴더 입력 */}
+        {creatingFolder?.parentId === node.id && isExpanded && (
+          <div style={{ paddingLeft: `${(depth + 1) * 16 + 8}px`, display: 'flex', gap: '4px', padding: '2px 8px' }}>
+            <input
+              autoFocus
+              value={newFolderName}
+              onChange={e => setNewFolderName(e.target.value)}
+              onKeyDown={async e => {
+                if (e.key === 'Enter' && newFolderName.trim()) {
+                  await collectorApi.createFolder(creatingFolder.site, newFolderName.trim(), creatingFolder.parentId)
+                  setCreatingFolder(null)
+                  loadTree()
+                }
+                if (e.key === 'Escape') setCreatingFolder(null)
+              }}
+              placeholder="폴더명"
+              style={{
+                background: '#222', border: '1px solid #444', color: '#ccc',
+                padding: '2px 6px', borderRadius: '4px', fontSize: '0.75rem', width: '120px',
+              }}
+            />
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+    <div style={{ display: 'flex', gap: '0', height: 'calc(100vh - 60px)' }}>
+      {/* 좌측 트리 사이드바 */}
+      <div style={{
+        width: '220px', minWidth: '220px',
+        background: 'rgba(20,20,20,0.8)',
+        borderRight: '1px solid #2D2D2D',
+        overflowY: 'auto',
+        padding: '8px 0',
+      }}>
+        <div style={{ padding: '4px 8px', fontSize: '0.7rem', color: '#666', fontWeight: 600, marginBottom: '4px' }}>
+          수집 그룹
+        </div>
+        {tree.map(node => (
+          <TreeNode key={node.id} node={node} />
+        ))}
+        {selectedNode && (
+          <div
+            onClick={() => { setSelectedNode(null); setSelectedIds(new Set()) }}
+            style={{
+              padding: '4px 8px', fontSize: '0.7rem', color: '#666',
+              cursor: 'pointer', marginTop: '8px', textAlign: 'center',
+            }}
+          >
+            전체 보기
+          </div>
+        )}
+      </div>
+
+      {/* 우측 메인 콘텐츠 */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem 1rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
       {/* 프록시 상태 배너 */}
       <div style={{
         display: "flex", alignItems: "center", gap: "10px", padding: "10px 16px",
@@ -808,7 +952,7 @@ export default function CollectorPage() {
                   if (res.success) {
                     showAlert(res.message, 'success')
                     setLastAiUsage({ calls: res.api_calls || 0, tokens: (res.input_tokens || 0) + (res.output_tokens || 0), cost: res.cost_krw || 0, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
-                    load()
+                    load(); loadTree()
                   } else showAlert(res.message, 'error')
                 } catch (e) {
                   showAlert(`태그 생성 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
@@ -1208,7 +1352,7 @@ export default function CollectorPage() {
                     const failCount = res.group_results.filter(r => r.status === 'error').length
                     showAlert(`스스그룹 ${successCount}건 성공, ${failCount}건 실패`, successCount > 0 ? 'success' : 'error')
                     setShowGroupModal(false)
-                    load()
+                    load(); loadTree()
                   } catch {
                     showAlert('스스그룹 전송 실패', 'error')
                   }
@@ -1228,6 +1372,8 @@ export default function CollectorPage() {
           </div>
         </div>
       )}
+    </div>
+    </div>
     </div>
   );
 }
