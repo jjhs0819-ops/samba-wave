@@ -273,12 +273,17 @@ export default function ShipmentsPage() {
       const prod = products.find(p => p.id === pid)
       return !!prod?.applied_policy_id
     })
+    const noPolicyCount = selectedProducts.length - policyProducts.length
     const total = policyProducts.length
 
     if (total === 0) {
-      addLog(`[${ts()}] 전송 대상 없음 — 선택된 상품에 적용된 정책이 없습니다`)
+      addLog(`[${ts()}] 전송 대상 없음 — 선택된 ${selectedProducts.length}개 상품 중 정책 적용된 상품이 없습니다`)
       setTransmitting(false)
       return
+    }
+
+    if (noPolicyCount > 0) {
+      addLog(`[${ts()}] 정책 미적용 ${noPolicyCount}개 제외 (선택 ${selectedProducts.length}개 → 전송 대상 ${total}개)`)
     }
 
     setProgress({ current: 0, total })
