@@ -483,51 +483,39 @@ export default function CollectorPage() {
   return (
     <div style={{ color: '#E5E5E5' }}>
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0', padding: '0.5rem 1rem' }}>
-      {/* 프록시 상태 배너 */}
+      {/* 프록시 + 무신사 인증 상태 (1줄) */}
       <div style={{
-        display: "flex", alignItems: "center", gap: "10px", padding: "10px 16px",
-        borderRadius: "8px", marginBottom: "12px",
-        background: "rgba(255,140,0,0.07)", border: "1px solid rgba(255,140,0,0.2)",
-        fontSize: "0.82rem",
+        display: 'flex', alignItems: 'center', gap: '16px', padding: '6px 14px',
+        borderRadius: '8px', marginBottom: '12px',
+        background: 'rgba(255,140,0,0.07)', border: '1px solid rgba(255,140,0,0.2)',
+        fontSize: '0.78rem',
       }}>
-        <span style={{
-          width: "8px", height: "8px", borderRadius: "50%", flexShrink: 0,
-          background: proxyStatus === "ok" ? "#51CF66" : proxyStatus === "error" ? "#FF6B6B" : "#555",
+        <span style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
+          background: proxyStatus === 'ok' ? '#51CF66' : proxyStatus === 'error' ? '#FF6B6B' : '#555',
         }} />
-        <span style={{ color: proxyStatus === "ok" ? "#51CF66" : "#888" }}>{proxyText}</span>
+        <span style={{ color: proxyStatus === 'ok' ? '#51CF66' : '#888' }}>{proxyText}</span>
+        <span style={{ color: '#2D2D2D' }}>|</span>
+        <span style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
+          background: musinsaAuth === 'ok' ? '#51CF66' : musinsaAuth === 'error' ? '#FF6B6B' : '#555',
+        }} />
+        <span style={{ color: musinsaAuth === 'ok' ? '#51CF66' : '#888' }}>{musinsaAuthText}</span>
         <button
           onClick={() => {
-            setProxyStatus("checking");
-            setProxyText("프록시 서버 확인 중...");
+            setProxyStatus('checking')
+            setProxyText('프록시 서버 확인 중...')
             fetch(`${API_BASE}/api/v1/samba/collector/proxy-status`)
-              .then((r) => r.json())
-              .then((data) => {
-                if (data.status === "ok") { setProxyStatus("ok"); setProxyText(data.message || "프록시 서버 정상 작동 중"); }
-                else { setProxyStatus("error"); setProxyText(data.message || "프록시 서버 연결 실패"); }
+              .then(r => r.json())
+              .then(data => {
+                if (data.status === 'ok') { setProxyStatus('ok'); setProxyText(data.message || '프록시 서버 정상 작동 중') }
+                else { setProxyStatus('error'); setProxyText(data.message || '프록시 서버 연결 실패') }
               })
-              .catch(() => { setProxyStatus("error"); setProxyText("백엔드 서버 연결 실패"); });
+              .catch(() => { setProxyStatus('error'); setProxyText('백엔드 서버 연결 실패') })
           }}
           style={{
-            marginLeft: "auto", background: "transparent", border: "1px solid #3D3D3D",
-            color: "#888", padding: "2px 10px", borderRadius: "4px", fontSize: "0.75rem", cursor: "pointer",
+            marginLeft: 'auto', background: 'transparent', border: '1px solid #3D3D3D',
+            color: '#888', padding: '2px 10px', borderRadius: '4px', fontSize: '0.72rem', cursor: 'pointer',
           }}
-        >
-          재확인
-        </button>
-      </div>
-
-      {/* 무신사 인증 배너 */}
-      <div style={{
-        background: "rgba(20,20,20,0.6)", border: "1px solid #2D2D2D", borderRadius: "8px",
-        fontSize: "0.78rem", marginBottom: "12px", overflow: "hidden",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "6px 14px" }}>
-          <span style={{
-            width: "8px", height: "8px", borderRadius: "50%", flexShrink: 0,
-            background: musinsaAuth === "ok" ? "#51CF66" : musinsaAuth === "error" ? "#FF6B6B" : "#555",
-          }} />
-          <span style={{ color: musinsaAuth === "ok" ? "#51CF66" : "#888" }}>{musinsaAuthText}</span>
-        </div>
+        >재확인</button>
       </div>
 
       {/* 소싱처 선택 + URL 입력 영역 */}
@@ -1318,119 +1306,86 @@ export default function CollectorPage() {
               )}
             </div>
 
-            {/* STEP 1: 데이터소스 설정 */}
+            {/* STEP 1: 월 + 대카테고리 설정 */}
             {aiSourcingStep === 'config' && (
               <div style={{ padding: '20px' }}>
+                {/* 월 + 대카테고리 (핵심 2개 입력) */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                  <div>
+                    <label style={{ fontSize: '0.82rem', color: '#C5C5C5', fontWeight: 600, display: 'block', marginBottom: '6px' }}>분석 월 (작년)</label>
+                    <select value={aiMonth} onChange={e => setAiMonth(Number(e.target.value))} style={{
+                      width: '100%', padding: '10px 12px', background: '#111', border: '1px solid #2D2D2D',
+                      borderRadius: '6px', color: '#E5E5E5', fontSize: '0.9rem', cursor: 'pointer',
+                    }}>
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                        <option key={m} value={m}>{m}월</option>
+                      ))}
+                    </select>
+                    <span style={{ fontSize: '0.7rem', color: '#555', marginTop: '4px', display: 'block' }}>
+                      {new Date().getFullYear() - 1}년 {aiMonth}월 데이터
+                    </span>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.82rem', color: '#C5C5C5', fontWeight: 600, display: 'block', marginBottom: '6px' }}>대 카테고리</label>
+                    <select value={aiMainCategory} onChange={e => setAiMainCategory(e.target.value)} style={{
+                      width: '100%', padding: '10px 12px', background: '#111', border: '1px solid #2D2D2D',
+                      borderRadius: '6px', color: '#E5E5E5', fontSize: '0.9rem', cursor: 'pointer',
+                    }}>
+                      <option value="패션의류">패션의류</option>
+                      <option value="패션잡화">패션잡화</option>
+                      <option value="스포츠/레저">스포츠/레저</option>
+                      <option value="패션전체">패션전체 (의류+잡화)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* 자동 조회 범위 */}
+                <div style={{
+                  background: 'rgba(108,92,231,0.08)', border: '1px solid rgba(108,92,231,0.25)',
+                  borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', fontSize: '0.78rem',
+                }}>
+                  <div style={{ color: '#A29BFE', fontWeight: 600, marginBottom: '6px' }}>자동 조회 범위</div>
+                  <div style={{ color: '#999', lineHeight: 1.6 }}>
+                    <span style={{ color: '#4C9AFF' }}>무신사</span>:{' '}
+                    {aiMainCategory === '패션의류' ? '상의, 아우터, 바지, 원피스/스커트, 속옷/슬립웨어' :
+                     aiMainCategory === '패션잡화' ? '가방, 신발, 시계/주얼리, 패션소품' :
+                     aiMainCategory === '스포츠/레저' ? '스포츠/레저' : '전체 10개 카테고리'}
+                    <br />
+                    <span style={{ color: '#51CF66' }}>네이버 데이터랩</span>:{' '}
+                    {aiMainCategory === '패션전체' ? '패션의류 + 패션잡화' : aiMainCategory} 인기검색어 TOP 500
+                  </div>
+                </div>
+
                 {/* 목표 상품수 */}
                 <div style={{ marginBottom: '16px' }}>
                   <label style={{ fontSize: '0.82rem', color: '#C5C5C5', fontWeight: 600 }}>목표 상품수</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={aiTargetCount.toLocaleString()}
-                    onChange={e => {
-                      const raw = e.target.value.replace(/[^0-9]/g, '')
-                      setAiTargetCount(Number(raw) || 0)
-                    }}
+                  <input type="text" inputMode="numeric" value={aiTargetCount.toLocaleString()}
+                    onChange={e => setAiTargetCount(Number(e.target.value.replace(/[^0-9]/g, '')) || 0)}
                     style={{
-                      display: 'block', width: '100%', marginTop: '6px',
-                      padding: '8px 12px', background: '#111', border: '1px solid #2D2D2D',
-                      borderRadius: '6px', color: '#E5E5E5', fontSize: '0.85rem',
+                      display: 'block', width: '100%', marginTop: '6px', padding: '8px 12px',
+                      background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px',
+                      color: '#E5E5E5', fontSize: '0.85rem',
                     }}
                   />
                 </div>
 
-                {/* 데이터소스 선택 */}
-                <div style={{ fontSize: '0.82rem', color: '#C5C5C5', fontWeight: 600, marginBottom: '10px' }}>근거 데이터 소스</div>
-
-                {/* 무신사 */}
-                <div style={{
-                  background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px',
-                  padding: '14px', marginBottom: '10px',
-                }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={aiUseMusinsa} onChange={e => setAiUseMusinsa(e.target.checked)}
-                      style={{ accentColor: '#4C9AFF' }} />
-                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>무신사 인기상품 랭킹</span>
-                    <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: 'auto' }}>자동 수집</span>
-                  </label>
-                  {aiUseMusinsa && (
-                    <div style={{ marginTop: '10px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                      {['상의','아우터','바지','신발','가방','원피스/스커트','패션소품','스포츠/레저'].map(cat => (
-                        <button key={cat}
-                          onClick={() => setAiMusinsaCats(prev =>
-                            prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
-                          )}
-                          style={{
-                            padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem',
-                            border: aiMusinsaCats.includes(cat) ? '1px solid #4C9AFF' : '1px solid #3D3D3D',
-                            background: aiMusinsaCats.includes(cat) ? 'rgba(76,154,255,0.15)' : 'transparent',
-                            color: aiMusinsaCats.includes(cat) ? '#4C9AFF' : '#888',
-                            cursor: 'pointer',
-                          }}
-                        >{cat}</button>
-                      ))}
-                      <span style={{ fontSize: '0.7rem', color: '#555', alignSelf: 'center' }}>
-                        {aiMusinsaCats.length === 0 ? '전체 카테고리' : `${aiMusinsaCats.length}개 선택`}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* 네이버 데이터랩 */}
-                <div style={{
-                  background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px',
-                  padding: '14px', marginBottom: '10px',
-                }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={aiUseNaver} onChange={e => setAiUseNaver(e.target.checked)}
-                      style={{ accentColor: '#51CF66' }} />
-                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>네이버 데이터랩 쇼핑인사이트</span>
-                    <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: 'auto' }}>자동 수집</span>
-                  </label>
-                  {aiUseNaver && (
-                    <div style={{ marginTop: '10px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                      {['패션의류','패션잡화','스포츠/레저'].map(cat => (
-                        <button key={cat}
-                          onClick={() => setAiNaverCats(prev =>
-                            prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
-                          )}
-                          style={{
-                            padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem',
-                            border: aiNaverCats.includes(cat) ? '1px solid #51CF66' : '1px solid #3D3D3D',
-                            background: aiNaverCats.includes(cat) ? 'rgba(81,207,102,0.15)' : 'transparent',
-                            color: aiNaverCats.includes(cat) ? '#51CF66' : '#888',
-                            cursor: 'pointer',
-                          }}
-                        >{cat}</button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* 엑셀 */}
+                {/* 엑셀 업로드 (선택) */}
                 <div style={{
                   background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px',
                   padding: '14px', marginBottom: '16px',
                 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={aiUseExcel} onChange={e => setAiUseExcel(e.target.checked)}
-                      style={{ accentColor: '#FFB84D' }} />
-                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>판매 엑셀 데이터</span>
-                    <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: 'auto' }}>파일 업로드</span>
-                  </label>
-                  {aiUseExcel && (
-                    <div style={{ marginTop: '10px' }}>
-                      <input type="file" accept=".xlsx,.xlsm,.xls,.csv"
-                        onChange={e => setAiExcelFile(e.target.files?.[0] || null)}
-                        style={{ fontSize: '0.8rem', color: '#888' }}
-                      />
-                      {aiExcelFile && (
-                        <span style={{ fontSize: '0.75rem', color: '#FFB84D', display: 'block', marginTop: '4px' }}>
-                          {aiExcelFile.name}
-                        </span>
-                      )}
-                    </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>판매 엑셀 (선택)</span>
+                    <span style={{ fontSize: '0.72rem', color: '#888' }}>작년 판매이력으로 정확도 향상</span>
+                  </div>
+                  <input type="file" accept=".xlsx,.xlsm,.xls,.csv"
+                    onChange={e => setAiExcelFile(e.target.files?.[0] || null)}
+                    style={{ fontSize: '0.8rem', color: '#888' }}
+                  />
+                  {aiExcelFile && (
+                    <span style={{ fontSize: '0.75rem', color: '#FFB84D', display: 'block', marginTop: '4px' }}>
+                      {aiExcelFile.name}
+                    </span>
                   )}
                 </div>
 
@@ -1439,14 +1394,11 @@ export default function CollectorPage() {
                   onClick={async () => {
                     setAiSourcingStep('analyzing')
                     setAiAnalyzing(true)
-                    setAiLogs(['[시작] AI 소싱 분석을 시작합니다...'])
+                    setAiLogs([`[시작] ${new Date().getFullYear() - 1}년 ${aiMonth}월 / ${aiMainCategory} 분석 시작...`])
                     try {
                       const resp = await aiSourcingApi.analyzeFull({
-                        use_musinsa: aiUseMusinsa,
-                        use_naver: aiUseNaver,
-                        use_excel: aiUseExcel,
-                        musinsa_categories: aiMusinsaCats.join(','),
-                        naver_categories: aiNaverCats.join(','),
+                        month: aiMonth,
+                        main_category: aiMainCategory,
                         target_count: aiTargetCount,
                         file: aiExcelFile || undefined,
                       })
@@ -1491,13 +1443,11 @@ export default function CollectorPage() {
                     }
                     setAiAnalyzing(false)
                   }}
-                  disabled={!aiUseMusinsa && !aiUseNaver && !aiUseExcel}
                   style={{
                     width: '100%', padding: '10px', borderRadius: '8px',
                     background: 'linear-gradient(135deg, #6C5CE7, #A29BFE)',
                     color: '#fff', fontWeight: 700, fontSize: '0.9rem',
                     border: 'none', cursor: 'pointer',
-                    opacity: (!aiUseMusinsa && !aiUseNaver && !aiUseExcel) ? 0.5 : 1,
                   }}
                 >
                   AI 분석 시작
