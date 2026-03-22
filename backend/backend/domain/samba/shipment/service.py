@@ -416,7 +416,24 @@ class SambaShipmentService:
           await product_repo.update_async(product_id, **refresh_updates)
           for k, v in refresh_updates.items():
             product_dict[k] = v
-          refresh_status = "변동있음" if refresh_result.changed else "변동없음"
+          if refresh_result.changed:
+            # 변동 상세 표시
+            changes = []
+            old_price = getattr(product_row, "sale_price", None)
+            new_price = refresh_result.new_sale_price
+            if new_price is not None and new_price != old_price:
+              changes.append(f"가격{old_price}→{new_price}")
+            old_opts = getattr(product_row, "options", None) or []
+            new_opts = refresh_result.new_options
+            if new_opts is not None:
+              old_stocks = {o.get("name", ""): o.get("stock", 0) for o in old_opts}
+              new_stocks = {o.get("name", ""): o.get("stock", 0) for o in new_opts}
+              stock_changes = [k for k in set(list(old_stocks.keys()) + list(new_stocks.keys())) if old_stocks.get(k) != new_stocks.get(k)]
+              if stock_changes:
+                changes.append(f"재고{len(stock_changes)}건")
+            refresh_status = f"변동O({','.join(changes)})" if changes else "변동O"
+          else:
+            refresh_status = "변동X"
           logger.info(f"[전송] 소싱처 최신화 완료 — {refresh_status}")
       except Exception as ref_e:
         refresh_status = f"최신화예외:{str(ref_e)[:30]}"
