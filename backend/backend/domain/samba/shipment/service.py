@@ -781,10 +781,10 @@ class SambaShipmentService:
     success_accounts = [
       aid for aid, status in transmit_result.items() if status == "success"
     ]
-    # 신규등록(POST) 실패만 제거 대상 — 수정(PATCH) 실패는 기존 등록정보 유지
+    # 신규등록(POST) 실패만 제거 대상 — 수정(PATCH) 실패/스킵은 기존 등록정보 유지
     removable_failed = [
       aid for aid, status in transmit_result.items()
-      if status != "success" and aid not in update_mode_accounts
+      if status not in ("success", "skipped") and aid not in update_mode_accounts
     ]
     # DB에서 최신 상태 다시 읽기 (전송 중 market_product_nos가 업데이트되었을 수 있음)
     refreshed = await product_repo.get_async(product_id)
