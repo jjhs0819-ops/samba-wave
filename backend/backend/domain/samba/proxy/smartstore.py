@@ -123,6 +123,7 @@ def _build_combination_options(options: list[dict], sale_price: int) -> dict:
   """수집 옵션 → 스마트스토어 combinationOption 변환.
 
   옵션명에서 사이즈/색상을 분리하고, 재고·품절 상태를 반영한다.
+  옵션가는 sale_price 기준 0원이 최소 1개 보장되도록 처리.
   """
   # 옵션명 패턴 분석: "02(235)" → 사이즈, "Black / 270" → 색상+사이즈
   has_slash = any("/" in (o.get("name") or "") for o in options)
@@ -143,9 +144,9 @@ def _build_combination_options(options: list[dict], sale_price: int) -> dict:
     if sold_out:
       stock = 0
 
-    # 옵션 가격 차이 (기본가 대비)
+    # 옵션 가격 차이 (기본가 대비, 음수면 0으로 클램핑)
     opt_price = int(opt.get("price", 0) or 0)
-    price_diff = opt_price - sale_price if opt_price > 0 else 0
+    price_diff = max(opt_price - sale_price, 0) if opt_price > 0 else 0
 
     if has_slash and "/" in name:
       parts = [p.strip() for p in name.split("/", 1)]
@@ -154,13 +155,21 @@ def _build_combination_options(options: list[dict], sale_price: int) -> dict:
       option_values = [name]
 
     combinations.append({
-      "id": idx + 1,
       "optionName1": option_values[0],
       **({"optionName2": option_values[1]} if len(option_values) > 1 else {}),
       "stockQuantity": max(stock, 0),
       "price": price_diff,
       "usable": not sold_out,
     })
+
+  # 스마트스토어 필수조건: 옵션가 0원 + 재고 1개 이상 + 사용여부 Y 가 최소 1개
+  has_base = any(c["price"] == 0 and c["stockQuantity"] > 0 and c["usable"] for c in combinations)
+  if not has_base and combinations:
+    # 가격 0원인 옵션이 없으면, 최저가 옵션을 기준(0원)으로 재조정
+    min_price = min(c["price"] for c in combinations)
+    if min_price > 0:
+      for c in combinations:
+        c["price"] = c["price"] - min_price
 
   return {
     "optionCombinationSortType": "CREATE",
@@ -378,6 +387,28 @@ class SmartStoreClient:
   # 브랜드 검색
   # ------------------------------------------------------------------
 
+  async def search_catalog(self, style_code: str) -> Optional[dict[str, Any]]:
+    """품번(스타일코드)으로 네이버 카탈로그 검색. 매칭되면 modelId/brandId/manufacturerId 반환."""
+    if not style_code:
+      return None
+    try:
+      result = await self._call_api("GET", "/v1/product-models", params={"name": style_code})
+      contents = result.get("contents", []) if isinstance(result, dict) else result if isinstance(result, list) else []
+      if contents:
+        c = contents[0]
+        logger.info(f"[스마트스토어] 카탈로그 매칭: {style_code} → {c.get('name', '')[:40]}")
+        return {
+          "modelId": c.get("id"),
+          "brandId": c.get("brandCode"),
+          "brandName": c.get("brandName", ""),
+          "manufacturerId": c.get("manufacturerCode"),
+          "manufacturerName": c.get("manufacturerName", ""),
+          "categoryId": c.get("categoryId", ""),
+        }
+    except Exception as e:
+      logger.warning(f"[스마트스토어] 카탈로그 검색 실패 ({style_code}): {e}")
+    return None
+
   async def search_brand(self, brand_name: str) -> Optional[int]:
     """브랜드명으로 네이버 브랜드 ID 검색. 없으면 None."""
     if not brand_name or brand_name in ("상세설명 참조", "상세 이미지 참조"):
@@ -405,16 +436,21 @@ class SmartStoreClient:
     """제조사명으로 네이버 제조사 ID 검색. 없으면 None."""
     if not mfr_name:
       return None
-    try:
-      result = await self._call_api("GET", "/v1/product-manufacturers", params={"name": mfr_name})
-      if isinstance(result, list):
-        for m in result:
-          if m.get("name") == mfr_name:
-            return m.get("id")
-        if result:
+    import re
+    # 법인 접두사/접미사 제거: (주), 주식회사, (유), (합) 등
+    clean = re.sub(r'\(주\)|\(유\)|\(합\)|주식회사|㈜', '', mfr_name).strip()
+    names_to_try = [clean, mfr_name] if clean != mfr_name else [mfr_name]
+    for name in names_to_try:
+      try:
+        result = await self._call_api("GET", "/v1/product-manufacturers", params={"name": name})
+        if isinstance(result, list) and result:
+          for m in result:
+            if m.get("name") == name:
+              return m.get("id")
           return result[0].get("id")
-    except Exception as e:
-      logger.warning(f"[스마트스토어] 제조사 검색 실패 ({mfr_name}): {e}")
+      except Exception:
+        continue
+    logger.warning(f"[스마트스토어] 제조사 검색 실패: {mfr_name}")
     return None
 
   async def get_category_attributes(self, category_id: str) -> list[dict[str, Any]]:
@@ -435,6 +471,54 @@ class SmartStoreClient:
     except Exception as e:
       logger.warning(f"[스마트스토어] 카테고리 속성 조회 실패 ({category_id}): {e}")
       return []
+
+  # ------------------------------------------------------------------
+  # 태그 사전 검색
+  # ------------------------------------------------------------------
+
+  async def search_tags(self, keyword: str) -> list[dict[str, Any]]:
+    """추천 태그 검색 목록 조회. 태그사전에 등록된 태그만 반환."""
+    if not keyword:
+      return []
+    try:
+      result = await self._call_api(
+        "GET", "/v1/tags/recommend",
+        params={"keyword": keyword},
+      )
+      if isinstance(result, list):
+        return result
+      if isinstance(result, dict):
+        return result.get("tags") or result.get("contents") or result.get("data") or []
+      return []
+    except Exception as e:
+      logger.warning(f"[스마트스토어] 태그 검색 실패 ({keyword}): {e}")
+      return []
+
+  async def validate_tags(self, tags: list[str]) -> list[dict[str, str]]:
+    """태그 목록을 태그사전에서 검증. 사전에 있는 태그만 code+text로 반환."""
+    valid_tags: list[dict[str, str]] = []
+    for tag in tags:
+      results = await self.search_tags(tag)
+      # 정확 매치 우선, 없으면 첫 번째 결과
+      matched = None
+      for r in results:
+        if r.get("text") == tag or r.get("tag") == tag:
+          matched = r
+          break
+      if not matched and results:
+        # 첫 번째 결과가 입력 태그를 포함하는지 확인
+        first = results[0]
+        first_text = first.get("text") or first.get("tag") or ""
+        if tag in first_text or first_text in tag:
+          matched = first
+      if matched:
+        valid_tags.append({
+          "code": str(matched.get("code", 0)),
+          "text": matched.get("text") or matched.get("tag") or tag,
+        })
+      else:
+        logger.info(f"[스마트스토어] 태그사전 미등록: {tag}")
+    return valid_tags
 
   # ------------------------------------------------------------------
   # 상품 등록
@@ -470,18 +554,26 @@ class SmartStoreClient:
     from backend.domain.samba.image.exif import strip_exif
     img_bytes = strip_exif(img_bytes)
 
-    # 네이버 이미지 업로드 API
+    # webp → PNG 변환 (네이버는 JPEG/PNG/GIF/BMP만 허용)
     ext = "jpg"
+    upload_type = content_type
     if "png" in content_type:
       ext = "png"
-    elif "webp" in content_type:
-      ext = "webp"
+    elif "webp" in content_type or image_url.endswith(".webp"):
+      from PIL import Image as _PILImage
+      import io as _io
+      pil_img = _PILImage.open(_io.BytesIO(img_bytes)).convert("RGB")
+      buf = _io.BytesIO()
+      pil_img.save(buf, format="PNG")
+      img_bytes = buf.getvalue()
+      ext = "png"
+      upload_type = "image/png"
 
     async with httpx.AsyncClient(timeout=30) as client:
       resp = await client.post(
         f"{self.BASE_URL}/v1/product-images/upload",
         headers={"Authorization": f"Bearer {token}"},
-        files={"imageFiles": (f"image.{ext}", img_bytes, content_type)},
+        files={"imageFiles": (f"image.{ext}", img_bytes, upload_type)},
       )
       if not resp.is_success:
         raise SmartStoreApiError(f"이미지 업로드 실패: {resp.status_code} {resp.text[:200]}")
@@ -664,7 +756,6 @@ class SmartStoreClient:
   def transform_product(
     product: dict[str, Any],
     category_id: str = "",
-    delivery_fee_type: str = "FREE",
   ) -> dict[str, Any]:
     """SambaCollectedProduct → 스마트스토어 상품 등록 데이터 변환."""
     images_raw = product.get("images") or []
@@ -689,12 +780,19 @@ class SmartStoreClient:
     else:
       sale_price = ((desired_price + 9) // 10) * 10
 
+    import re
+    # (주) 제거 함수
+    def _clean_company(name: str) -> str:
+      if not name:
+        return name
+      return re.sub(r'\(주\)|㈜|\(株\)', '', name).strip()
+
     brand = product.get("brand", "") or "상세설명 참조"
     # 제조사: manufacturer → brand → "상세설명 참조" 순으로 폴백
-    raw_mfr = product.get("manufacturer", "")
+    raw_mfr = _clean_company(product.get("manufacturer", ""))
     mfr = raw_mfr if (raw_mfr and raw_mfr != "상세설명 참조" and raw_mfr != "상세 이미지 참조") else ""
     if not mfr:
-      raw_brand = product.get("brand", "")
+      raw_brand = _clean_company(product.get("brand", ""))
       mfr = raw_brand if (raw_brand and raw_brand != "상세설명 참조" and raw_brand != "상세 이미지 참조") else "상세설명 참조"
 
     # 옵션에서 사이즈 정보 추출
@@ -841,8 +939,8 @@ class SmartStoreClient:
           "deliveryAttributeType": "NORMAL",
           "deliveryCompany": "CJGLS",
           "deliveryFee": {
-            "deliveryFeeType": delivery_fee_type,
-            "baseFee": 0,
+            "deliveryFeeType": product.get("_delivery_fee_type", "FREE"),
+            "baseFee": product.get("_delivery_base_fee", 0),
             "deliveryFeeByArea": {
               "deliveryAreaType": "AREA_2",
               "area2extraFee": product.get("_jeju_fee", 3000),
@@ -866,8 +964,8 @@ class SmartStoreClient:
             size_text=f"발길이(mm): {size_text}" if sizes else "FREE (상세 이미지 참조)",
             mfr=mfr, brand=brand,
           ),
+          **({"optionInfo": _build_combination_options(options, sale_price)} if options else {}),
         },
-        **({"optionInfo": _build_combination_options(options, sale_price)} if options else {}),
       },
       "smartstoreChannelProduct": {
         "channelProductName": product.get("name", ""),
@@ -896,8 +994,8 @@ class SmartStoreClient:
       if code_match:
         style_code = code_match.group()
     if style_code:
-      data["originProduct"]["detailAttribute"]["modelName"] = style_code
-      data["originProduct"]["detailAttribute"]["productNumber"] = style_code
+      # 품번 = manufactureDefineNo (셀러센터 "품번" 필드)
+      data["originProduct"]["detailAttribute"]["manufactureDefineNo"] = style_code
 
     # 브랜드/제조사 — naverShoppingSearchInfo에 설정 (스마트스토어 상품주요정보)
     naver_search_info: dict[str, Any] = {}
@@ -913,9 +1011,13 @@ class SmartStoreClient:
       naver_search_info["manufacturerName"] = mfr
     elif mfr:
       naver_search_info["manufacturerName"] = mfr
-    # 모델명도 naverShoppingSearchInfo에 추가 (상품 주요정보에 표시)
-    if style_code:
+    # 카탈로그 모델 ID — 설정하면 모델명/브랜드/제조사/상품속성 자동 매칭
+    catalog_model_id = product.get("_catalog_model_id")
+    if catalog_model_id:
+      naver_search_info["modelId"] = catalog_model_id
+    elif style_code:
       naver_search_info["modelName"] = style_code
+      naver_search_info["manufacturerModelName"] = style_code
     if naver_search_info:
       data["originProduct"]["detailAttribute"]["naverShoppingSearchInfo"] = naver_search_info
 
@@ -971,19 +1073,36 @@ class SmartStoreClient:
 
     # 태그 → originProduct.detailAttribute.seoInfo.sellerTags (네이버 커머스 API v2.67)
     tags = product.get("tags") or []
-    # 시스템 내부 마커(__ai_tagged__ 등) 제외 + 브랜드/상품명 포함 태그 제외
+    # 시스템 마커 + 브랜드 + 상품명 + 카테고리 포함 태그 제외
     brand_lower = brand.lower() if brand else ""
     name_lower = (product.get("name", "") or "").lower()
+    # 카테고리 단어 추출 (스마트스토어는 카테고리명을 태그 금지어 처리)
+    import re as _re
+    _cat_words: set[str] = set()
+    for ck in ("category1", "category2", "category3", "category4", "category"):
+      cv = product.get(ck, "")
+      if cv:
+        for w in _re.split(r'[\s>/\-]+', cv):
+          cw = w.strip().lower()
+          if len(cw) >= 2:
+            _cat_words.add(cw)
     seller_tags = []
+    seen: set[str] = set()
     for t in tags:
       if t.startswith("__"):
         continue
       tl = t.lower()
-      # 브랜드명이 태그에 포함되면 제외 (네이버 금지)
+      tl_nospace = tl.replace(" ", "")
+      # 중복 제거 (공백 무시)
+      if tl_nospace in seen:
+        continue
+      seen.add(tl_nospace)
       if brand_lower and brand_lower in tl:
         continue
-      # 상품명에 이미 포함된 단어면 제외
       if tl in name_lower:
+        continue
+      # 카테고리 단어와 정확 일치하면 제외 (부분 포함은 네이버 API가 판단)
+      if tl in _cat_words:
         continue
       seller_tags.append(t)
       if len(seller_tags) >= 10:
@@ -1003,6 +1122,202 @@ class SmartStoreClient:
       data["originProduct"]["customerBenefit"] = benefit
 
     return data
+
+  # ------------------------------------------------------------------
+  # 그룹상품 API
+  # ------------------------------------------------------------------
+
+  async def get_purchase_option_guides(self, category_id: str) -> list:
+    """카테고리별 표준 판매옵션 가이드 조회.
+    빈 리스트 반환 시 해당 카테고리는 그룹상품 미지원.
+    """
+    try:
+      data = await self._call_api(
+        "GET", "/v2/standard-purchase-option-guides",
+        params={"categoryId": category_id},
+      )
+      return data.get("contents", [])
+    except SmartStoreApiError:
+      return []  # API 에러 시 그룹상품 미지원으로 간주
+
+  async def register_group_product(self, payload: dict) -> dict:
+    """그룹상품 등록 (비동기). 결과는 poll_group_status로 확인."""
+    return await self._call_api("POST", "/v2/standard-group-products", body=payload)
+
+  async def poll_group_status(self, max_wait: int = 300) -> dict:
+    """그룹상품 등록/수정 결과 폴링. 최대 max_wait초 대기."""
+    import asyncio as _asyncio
+    start = time.time()
+    while time.time() - start < max_wait:
+      result = await self._call_api("GET", "/v2/standard-group-products/status")
+      state = result.get("progress", {}).get("state", "")
+      if state == "COMPLETED":
+        return result
+      elif state in ("ERROR", "FAILED"):
+        error_msg = result.get("errorMessage", "알 수 없는 오류")
+        raise SmartStoreApiError(f"그룹상품 등록 실패: {state} - {error_msg}")
+      await _asyncio.sleep(3)
+    raise TimeoutError("그룹상품 등록 타임아웃 (5분 초과)")
+
+  async def update_group_product(self, group_no: int, payload: dict) -> dict:
+    """그룹상품 수정."""
+    return await self._call_api("PUT", f"/v2/standard-group-products/{group_no}", body=payload)
+
+  async def delete_group_product(self, group_no: int) -> dict:
+    """그룹상품 삭제."""
+    return await self._call_api("DELETE", f"/v2/standard-group-products/{group_no}")
+
+  @staticmethod
+  def transform_group_product(
+    products: list[dict],
+    category_id: str,
+    guide_id: int,
+    account_settings: dict,
+  ) -> dict:
+    """수집 상품 리스트 → 그룹상품 API 페이로드 변환.
+
+    Args:
+        products: 같은 group_key를 가진 상품 리스트 (이미지 업로드 완료 상태)
+        category_id: 스마트스토어 리프 카테고리 ID
+        guide_id: 판매옵션 가이드 ID
+        account_settings: 계정 설정 (A/S, 배송, 할인 등)
+    """
+    first = products[0]
+    brand = first.get("brand", "")
+
+    # 그룹 상품명: 모델명 (색상 제거)
+    name = first.get("name", "")
+    group_name = name.split(" - ", 1)[0].strip() if " - " in name else name
+
+    # A/S 정보
+    as_phone = account_settings.get("asPhone", "") or "상세페이지 참조"
+    as_message = account_settings.get("asMessage", "") or "상세페이지 참조"
+
+    # 고시정보 (첫 상품 기준) - 기존 _build_ss_notice 사용
+    mfr = first.get("manufacturer", "") or brand or "상세 이미지 참조"
+    notice = _build_ss_notice(first, color_text="상세 이미지 참조", size_text="상세 이미지 참조", mfr=mfr, brand=brand)
+
+    # 공통 상세 HTML
+    common_detail = first.get("detail_html", "")
+
+    # 원산지 정보
+    origin_area = _build_origin_area(first.get("origin", ""))
+
+    # 개별 상품(specificProducts) 구성
+    specific_products = []
+    for p in products:
+      color = p.get("color", "") or "기본"
+      sale_price = p.get("_final_sale_price") or p.get("sale_price") or p.get("original_price", 0)
+      stock = int(account_settings.get("stockQuantity", 0)) or 999
+
+      # 옵션에서 재고 계산
+      options = p.get("options") or []
+      if options:
+        total_stock = sum(
+          o.get("stock", 0)
+          for o in options
+          if not o.get("isSoldOut", False)
+        )
+        if total_stock > 0:
+          stock = min(stock, total_stock)
+
+      # 이미지
+      images_list = p.get("images") or []
+      representative = {"url": images_list[0]} if images_list else {"url": ""}
+      optional_imgs = [{"url": url} for url in images_list[1:5]]
+
+      # 배송정보
+      delivery_info = {
+        "deliveryType": "DELIVERY",
+        "deliveryAttributeType": "NORMAL",
+        "deliveryCompany": "CJGLS",
+        "deliveryFee": {
+          "deliveryFeeType": p.get("_delivery_fee_type", "FREE"),
+          "baseFee": p.get("_delivery_base_fee", 0),
+          "deliveryFeeByArea": {
+            "deliveryAreaType": "AREA_2",
+            "area2extraFee": int(account_settings.get("jejuFee", 3000)),
+          },
+        },
+        "claimDeliveryInfo": {
+          "returnDeliveryFee": int(account_settings.get("returnFee", 3000)),
+          "exchangeDeliveryFee": int(account_settings.get("exchangeFee", 6000)),
+        },
+      }
+      if account_settings.get("returnSafeguard"):
+        delivery_info["claimDeliveryInfo"]["freeReturnInsuranceYn"] = True
+
+      sp = {
+        "standardPurchaseOptions": [
+          {"valueName": color}
+        ],
+        "salePrice": int(sale_price),
+        "stockQuantity": stock,
+        "images": {
+          "representativeImage": representative,
+          "optionalImages": optional_imgs,
+        },
+        "deliveryInfo": delivery_info,
+        "originAreaInfo": origin_area,
+        "smartstoreChannelProduct": {
+          "naverShoppingRegistration": account_settings.get("naverShopping", True),
+          "channelProductDisplayStatusType": "ON",
+        },
+      }
+
+      # 셀러 관리 코드
+      style_code = p.get("style_code", "")
+      if style_code:
+        sp["sellerCodeInfo"] = {"sellerManagementCode": style_code}
+
+      # 기존 상품번호 (수정용)
+      existing_no = p.get("_origin_product_no")
+      if existing_no:
+        sp["originProductNo"] = int(existing_no)
+
+      # 즉시할인
+      discount_rate = account_settings.get("discountRate")
+      if discount_rate and float(discount_rate) > 0:
+        sp["immediateDiscountPolicy"] = {
+          "discountMethod": {
+            "value": int(float(discount_rate)),
+            "unitType": "PERCENT",
+          }
+        }
+
+      specific_products.append(sp)
+
+    payload = {
+      "groupProduct": {
+        "leafCategoryId": category_id,
+        "name": group_name,
+        "guideId": guide_id,
+        "brandName": brand,
+        "minorPurchasable": True,
+        "saleType": "NEW",
+        "productInfoProvidedNotice": notice,
+        "afterServiceInfo": {
+          "afterServiceTelephoneNumber": _format_phone(as_phone),
+          "afterServiceGuideContent": as_message,
+        },
+        "commonDetailContent": common_detail,
+        "specificProducts": specific_products,
+        "smartstoreGroupChannel": {},
+      }
+    }
+
+    # 브랜드 ID
+    brand_id = first.get("_brand_id")
+    if brand_id:
+      payload["groupProduct"]["brandId"] = int(brand_id)
+
+    # SEO 태그
+    tags = first.get("tags") or []
+    seller_tags = [{"text": t} for t in tags[:10] if t and not t.startswith("__")]
+    if seller_tags:
+      payload["groupProduct"]["seoInfo"] = {"sellerTags": seller_tags}
+
+    return payload
 
 
 class SmartStoreApiError(Exception):
