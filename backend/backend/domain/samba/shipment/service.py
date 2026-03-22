@@ -796,8 +796,10 @@ class SambaShipmentService:
     ))
     # 신규등록 실패한 계정의 상품번호만 제거
     new_nos = {k: v for k, v in existing_nos.items() if k not in removable_failed}
-    # 전부 스킵이면 상품 데이터 변경하지 않음 (updated_at 유지)
-    if not all_skipped:
+    # 최신화 실패 시에는 상품 데이터 변경하지 않음 (updated_at 유지)
+    if refresh_status and (refresh_status.startswith("최신화실패") or refresh_status.startswith("최신화예외")):
+      logger.info(f"[전송] 최신화 실패 → 상품 데이터 변경 안 함")
+    else:
       update_data: dict[str, Any] = {
         "registered_accounts": new_accounts if new_accounts else None,
         "market_product_nos": new_nos if new_nos else None,
