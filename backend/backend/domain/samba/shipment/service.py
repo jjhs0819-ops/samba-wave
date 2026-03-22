@@ -774,8 +774,8 @@ class SambaShipmentService:
           # last_sent_data 스냅샷 저장 (스킵 판단용)
           try:
             sent_snapshot = {
-              "sale_price": product_dict.get("sale_price"),
-              "cost": product_dict.get("cost"),
+              "sale_price": int(product_dict.get("sale_price") or 0),
+              "cost": int(product_dict.get("cost") or 0),
               "options": [
                 {"name": o.get("name", ""), "price": o.get("price"), "stock": o.get("stock")}
                 for o in (product_dict.get("options") or [])
