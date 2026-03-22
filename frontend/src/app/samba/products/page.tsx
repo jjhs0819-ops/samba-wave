@@ -242,14 +242,11 @@ export default function ProductsPage() {
     if (statusFilter === 'has_orders') {
       filtered = filtered.filter((p) => orderProductIds.has(p.id))
     } else if (statusFilter === 'free_ship') {
-      filtered = filtered.filter((p) => (p as Record<string, unknown>).free_shipping === true)
+      filtered = filtered.filter((p) => p.free_shipping === true)
     } else if (statusFilter === 'same_day') {
-      filtered = filtered.filter((p) => (p as Record<string, unknown>).same_day_delivery === true)
+      filtered = filtered.filter((p) => p.same_day_delivery === true)
     } else if (statusFilter === 'free_same') {
-      filtered = filtered.filter((p) => {
-        const r = p as Record<string, unknown>
-        return r.free_shipping === true && r.same_day_delivery === true
-      })
+      filtered = filtered.filter((p) => p.free_shipping === true && p.same_day_delivery === true)
     } else if (statusFilter) {
       filtered = filtered.filter((p) => p.status === statusFilter)
     }
@@ -441,7 +438,7 @@ export default function ProductsPage() {
   const handleToggleMarket = async (productId: string, marketId: string) => {
     const product = allProducts.find((p) => p.id === productId);
     if (!product) return;
-    const currentEnabled = ((product as unknown as Record<string, unknown>).market_enabled as Record<string, boolean>) || {};
+    const currentEnabled = (product.market_enabled || {}) as Record<string, boolean>;
     const isOn = currentEnabled[marketId] !== false;
     const newEnabled = { ...currentEnabled, [marketId]: !isOn };
     await collectorApi.updateProduct(productId, { market_enabled: newEnabled } as unknown as Partial<SambaCollectedProduct>).catch(() => {});
@@ -1365,11 +1362,11 @@ function composeProductName(
   nameRule: SambaNameRule | undefined,
 ): string {
   if (!nameRule?.name_composition?.length) return product.name
-  const seoKws = (product as unknown as Record<string, string[]>).seo_keywords || []
+  const seoKws = product.seo_keywords || []
   const tagMap: Record<string, string> = {
     '{상품명}': product.name || '',
     '{브랜드명}': product.brand || '',
-    '{모델명}': (product as unknown as Record<string, string>).model_no || '',
+    '{모델명}': product.model_no || '',
     '{사이트명}': product.source_site || '',
     '{상품번호}': product.site_product_id || '',
     '{검색키워드}': seoKws.slice(0, 3).join(' '),
@@ -1516,7 +1513,7 @@ function ProductCard({
       return { marketName, price: mPrice, calcStr: `₩${fmt(mPrice)} = ${parts.join(' + ')}` }
     })
 
-  const marketEnabled = ((p as unknown as Record<string, unknown>).market_enabled as Record<string, boolean>) || {};
+  const marketEnabled = (p.market_enabled || {}) as Record<string, boolean>;
 
   // 상품의 카테고리 매핑 조회
   const productCatMapping = useMemo(() => {
@@ -2033,21 +2030,21 @@ function ProductCard({
               {statusText}
             </span>
           )}
-          {(p as unknown as Record<string, string>).sale_status === 'preorder' && (
+          {p.sale_status === 'preorder' && (
             <span style={{
               padding: "2px 8px", borderRadius: "4px", fontSize: "0.72rem", fontWeight: 500,
               background: "rgba(100,130,255,0.12)", color: "#6B8AFF",
               border: "1px solid rgba(100,130,255,0.25)",
             }}>판매예정</span>
           )}
-          {(p as unknown as Record<string, string>).sale_status === 'sold_out' && (
+          {p.sale_status === 'sold_out' && (
             <span style={{
               padding: "2px 8px", borderRadius: "4px", fontSize: "0.72rem", fontWeight: 500,
               background: "rgba(255,107,107,0.12)", color: "#FF6B6B",
               border: "1px solid rgba(255,107,107,0.25)",
             }}>품절</span>
           )}
-          {!((p as unknown as Record<string, string>).sale_status) && p.is_sold_out && (
+          {!(p.sale_status) && p.is_sold_out && (
             <span style={{
               padding: "2px 8px", borderRadius: "4px", fontSize: "0.72rem", fontWeight: 500,
               background: "rgba(255,107,107,0.12)", color: "#FF6B6B",
@@ -2220,23 +2217,16 @@ function ProductCard({
               <tr style={{ borderBottom: "1px solid #1E1E1E" }}>
                 <td style={tdLabel}>SEO</td>
                 <td style={tdVal}>
-                  <span style={{ color: ((p as unknown as Record<string, string[]>).seo_keywords || []).length > 0 ? "#4C9AFF" : "#444", fontSize: "0.78rem" }}>
-                    {((p as unknown as Record<string, string[]>).seo_keywords || []).join(', ') || '미설정 (AI태그 생성 필요)'}
+                  <span style={{ color: (p.seo_keywords || []).length > 0 ? "#4C9AFF" : "#444", fontSize: "0.78rem" }}>
+                    {(p.seo_keywords || []).join(', ') || '미설정 (AI태그 생성 필요)'}
                   </span>
-                </td>
-              </tr>
-              {/* 원상품명 */}
-              <tr style={{ borderBottom: "1px solid #1E1E1E" }}>
-                <td style={tdLabel}>원상품명</td>
-                <td style={tdVal}>
-                  <span style={{ color: "#666", fontSize: "0.75rem" }}>{p.name}</span>
                 </td>
               </tr>
               {/* 영문 상품명 */}
               <tr style={{ borderBottom: "1px solid #1E1E1E" }}>
                 <td style={tdLabel}>영문 상품명</td>
                 <td style={tdVal}>
-                  <input type="text" placeholder="영문 상품명 (English)" defaultValue={(p as unknown as Record<string, string>).name_en || ""}
+                  <input type="text" placeholder="영문 상품명 (English)" defaultValue={p.name_en || ""}
                     style={{ width: "100%", padding: "3px 7px", fontSize: "0.8rem", background: "#1A1A1A", border: "1px solid #2D2D2D", color: "#C5C5C5", borderRadius: "4px", outline: "none" }} />
                 </td>
               </tr>
@@ -2244,7 +2234,7 @@ function ProductCard({
               <tr style={{ borderBottom: "1px solid #1E1E1E" }}>
                 <td style={tdLabel}>일문 상품명</td>
                 <td style={tdVal}>
-                  <input type="text" placeholder="일문 상품명 (日本語)" defaultValue={(p as unknown as Record<string, string>).name_ja || ""}
+                  <input type="text" placeholder="일문 상품명 (日本語)" defaultValue={p.name_ja || ""}
                     style={{ width: "100%", padding: "3px 7px", fontSize: "0.8rem", background: "#1A1A1A", border: "1px solid #2D2D2D", color: "#C5C5C5", borderRadius: "4px", outline: "none" }} />
                 </td>
               </tr>
