@@ -669,118 +669,85 @@ export default function CollectorPage() {
         </div>
       </div>
 
-      {/* AI 이미지 변환 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', marginTop: '1.25rem', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
-        <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
-          <option value="background">배경 제거</option>
-          <option value="scene">연출컷</option>
-          <option value="model">모델 착용</option>
-        </select>
-        {aiImgMode === 'model' && (<>
-          <select value={aiModelPreset} onChange={e => setAiModelPreset(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
-            <optgroup label="성인 여성">
-              <option value="female_v1">청순 아이돌</option>
-              <option value="female_v2">시크 단발</option>
-              <option value="female_v3">건강 웨이브</option>
-            </optgroup>
-            <optgroup label="성인 남성">
-              <option value="male_v1">깔끔 아이돌</option>
-              <option value="male_v2">스포티 근육</option>
-              <option value="male_v3">부드러운 중머리</option>
-            </optgroup>
-            <optgroup label="키즈 여아">
-              <option value="kids_girl_v1">긴머리 활발</option>
-              <option value="kids_girl_v2">단발 쾌활</option>
-              <option value="kids_girl_v3">양갈래 귀여움</option>
-            </optgroup>
-            <optgroup label="키즈 남아">
-              <option value="kids_boy_v1">활발 밝은</option>
-              <option value="kids_boy_v2">장난꾸러기</option>
-              <option value="kids_boy_v3">차분한</option>
-            </optgroup>
-          </select>
-          <span
-            onClick={() => setPresetZoomImg(`/static/model_presets/${aiModelPreset}.png`)}
-            style={{
-              fontSize: '0.72rem', color: '#4C9AFF', cursor: 'pointer',
-              textDecoration: 'underline', textUnderlineOffset: '2px',
+      {/* AI 이미지변환 / 이미지 필터링 / AI 비용 — 1행 3단 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginTop: '1.25rem' }}>
+        {/* 1단: AI 이미지 변환 */}
+        <div style={{ padding: '10px 12px', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px' }}>
+          <div style={{ fontSize: '0.78rem', color: '#FF8C00', fontWeight: 600, marginBottom: '8px' }}>AI 이미지 변환</div>
+          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
+            <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.75rem', flex: 1, minWidth: 0 }}>
+              <option value="background">배경 제거</option>
+              <option value="scene">연출컷</option>
+              <option value="model">모델 착용</option>
+            </select>
+            {aiImgMode === 'model' && (
+              <select value={aiModelPreset} onChange={e => setAiModelPreset(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.75rem', flex: 1, minWidth: 0 }}>
+                <optgroup label="여성"><option value="female_v1">청순 아이돌</option><option value="female_v2">시크 단발</option><option value="female_v3">건강 웨이브</option></optgroup>
+                <optgroup label="남성"><option value="male_v1">깔끔 아이돌</option><option value="male_v2">스포티 근육</option><option value="male_v3">부드러운 중머리</option></optgroup>
+                <optgroup label="키즈 여아"><option value="kids_girl_v1">긴머리 활발</option><option value="kids_girl_v2">단발 쾌활</option><option value="kids_girl_v3">양갈래 귀여움</option></optgroup>
+                <optgroup label="키즈 남아"><option value="kids_boy_v1">활발 밝은</option><option value="kids_boy_v2">장난꾸러기</option><option value="kids_boy_v3">차분한</option></optgroup>
+              </select>
+            )}
+          </div>
+          <button
+            onClick={async () => {
+              if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
+              const ok = await showConfirm(`선택된 ${selectedIds.size}개 그룹의 상품 이미지를 변환하시겠습니까?`)
+              if (!ok) return
+              setAiImgTransforming(true)
+              try {
+                const res = await proxyApi.transformByGroups([...selectedIds], { thumbnail: true, additional: true, detail: true }, aiImgMode, aiModelPreset)
+                if (res.success) {
+                  showAlert(res.message, 'success')
+                  const cnt = res.total_transformed || 0
+                  setLastAiUsage({ calls: cnt, tokens: cnt * 2000, cost: cnt * 3, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
+                } else showAlert(res.message, 'error')
+              } catch (e) { showAlert(`변환 실패: ${e instanceof Error ? e.message : '오류'}`, 'error') }
+              finally { setAiImgTransforming(false); setSelectedIds(new Set()); setSelectAll(false) }
             }}
-          >미리보기</span>
-        </>)}
-        <span style={{ color: '#2D2D2D' }}>|</span>
-        <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>
-          <span style={{ color: '#888' }}>선택된 그룹: {selectedIds.size}개</span>
-        </span>
-        <button
-          onClick={async () => {
-            if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
-            const ok = await showConfirm(`선택된 ${selectedIds.size}개 그룹의 상품 이미지를 변환하시겠습니까?`)
-            if (!ok) return
-            setAiImgTransforming(true)
-            try {
-              const autoScope = { thumbnail: true, additional: true, detail: true }
-              const res = await proxyApi.transformByGroups([...selectedIds], autoScope, aiImgMode, aiModelPreset)
-              if (res.success) {
-                showAlert(res.message, 'success')
-                const cnt = res.total_transformed || 0
-                setLastAiUsage({ calls: cnt, tokens: cnt * 2000, cost: cnt * 3, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
-              } else showAlert(res.message, 'error')
-            } catch (e) {
-              showAlert(`변환 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
-            } finally { setAiImgTransforming(false); setSelectedIds(new Set()); setSelectAll(false) }
-          }}
-          disabled={aiImgTransforming || selectedIds.size === 0}
-          style={{ marginLeft: 'auto', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
-        >{aiImgTransforming ? '변환중...' : '변환 실행'}</button>
-      </div>
+            disabled={aiImgTransforming || selectedIds.size === 0}
+            style={{ width: '100%', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '4px 0', borderRadius: '6px', fontSize: '0.75rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+          >{aiImgTransforming ? '변환중...' : `변환 실행 (${selectedIds.size}개)`}</button>
+        </div>
 
-      {/* 이미지 필터링 (모델컷/연출컷/배너 제거) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.8125rem', color: '#818CF8', fontWeight: 600 }}>이미지 필터링</span>
-        <span style={{ fontSize: '0.75rem', color: '#999' }}>모델컷/연출컷/배너 자동 제거</span>
-        <button
-          onClick={async () => {
-            if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
-            const ok = await showConfirm(`선택된 ${selectedIds.size}개 그룹의 상품 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
-            if (!ok) return
-            setImgFiltering(true)
-            try {
-              const ids = [...selectedIds]
-              // 그룹별 순차 처리
-              let totalProcessed = 0
-              let totalErrors = 0
-              for (const gid of ids) {
-                try {
-                  const r = await proxyApi.filterProductImages([], gid)
-                  if (r.success) {
-                    totalProcessed += r.total || 0
-                    totalErrors += Object.keys(r.errors || {}).length
-                  }
-                } catch { totalErrors++ }
-              }
-              if (totalErrors > 0) showAlert(`이미지 필터링: ${totalProcessed}개 완료, ${totalErrors}개 실패`, 'info')
-              else showAlert(`이미지 필터링 완료 — ${totalProcessed}개 상품 처리`, 'success')
-            } catch (e) {
-              showAlert(`이미지 필터링 오류: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
-            } finally { setImgFiltering(false); setSelectedIds(new Set()); setSelectAll(false) }
-          }}
-          disabled={imgFiltering || selectedIds.size === 0}
-          style={{ marginLeft: 'auto', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
-        >{imgFiltering ? '필터링중...' : '필터링 실행'}</button>
-      </div>
+        {/* 2단: 이미지 필터링 */}
+        <div style={{ padding: '10px 12px', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px' }}>
+          <div style={{ fontSize: '0.78rem', color: '#818CF8', fontWeight: 600, marginBottom: '8px' }}>이미지 필터링</div>
+          <div style={{ fontSize: '0.72rem', color: '#999', marginBottom: '8px' }}>모델컷/연출컷/배너 자동 제거</div>
+          <button
+            onClick={async () => {
+              if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
+              const ok = await showConfirm(`선택된 ${selectedIds.size}개 그룹의 이미지를 필터링하시겠습니까?`)
+              if (!ok) return
+              setImgFiltering(true)
+              try {
+                let totalProcessed = 0, totalErrors = 0
+                for (const gid of [...selectedIds]) {
+                  try {
+                    const r = await proxyApi.filterProductImages([], gid)
+                    if (r.success) { totalProcessed += r.total || 0; totalErrors += Object.keys(r.errors || {}).length }
+                  } catch { totalErrors++ }
+                }
+                if (totalErrors > 0) showAlert(`필터링: ${totalProcessed}개 완료, ${totalErrors}개 실패`, 'info')
+                else showAlert(`필터링 완료 — ${totalProcessed}개 처리`, 'success')
+              } catch (e) { showAlert(`필터링 오류: ${e instanceof Error ? e.message : '오류'}`, 'error') }
+              finally { setImgFiltering(false); setSelectedIds(new Set()); setSelectAll(false) }
+            }}
+            disabled={imgFiltering || selectedIds.size === 0}
+            style={{ width: '100%', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '4px 0', borderRadius: '6px', fontSize: '0.75rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+          >{imgFiltering ? '필터링중...' : `필터링 실행 (${selectedIds.size}개)`}</button>
+        </div>
 
-      {/* AI 비용 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', marginTop: '0.5rem' }}>
-        <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 비용</span>
-        {lastAiUsage ? (
-          <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
-            최근 <span style={{ color: '#7BAF7E', fontWeight: 700 }}>₩{lastAiUsage.cost.toLocaleString()}</span>
-            <span style={{ color: '#888' }}> ({lastAiUsage.calls}회, {lastAiUsage.date})</span>
-          </span>
-        ) : (
-          <span style={{ fontSize: '0.8125rem', color: '#888' }}>호출 내역 없음</span>
-        )}
+        {/* 3단: AI 비용 */}
+        <div style={{ padding: '10px 12px', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <div style={{ fontSize: '0.78rem', color: '#FF8C00', fontWeight: 600, marginBottom: '6px' }}>AI 비용</div>
+          {lastAiUsage ? (<>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#7BAF7E' }}>₩{lastAiUsage.cost.toLocaleString()}</div>
+            <div style={{ fontSize: '0.7rem', color: '#888' }}>{lastAiUsage.calls}회 / {lastAiUsage.date}</div>
+          </>) : (
+            <div style={{ fontSize: '0.78rem', color: '#888' }}>호출 내역 없음</div>
+          )}
+        </div>
       </div>
 
       {/* 검색그룹 드릴다운 */}
