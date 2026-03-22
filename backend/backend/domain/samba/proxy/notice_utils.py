@@ -193,7 +193,11 @@ def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str,
   notice_type = _SMARTSTORE_NOTICE_TYPE.get(group, "ETC")
 
   fallback = "상세 이미지 참조"
-  material = product.get("material", "") or fallback
+  # 스마트스토어 금지 특수문자 제거: \ * ? " < >
+  import re as _re_special
+  def _clean_special(text: str) -> str:
+    return _re_special.sub(r'[\\*?"<>]', '', text).strip() if text else text
+  material = _clean_special(product.get("material", "") or fallback)
   color_text = kwargs.get("color_text", fallback)
   size_text = kwargs.get("size_text", fallback)
   mfr = kwargs.get("mfr", product.get("manufacturer", "") or product.get("brand", "") or fallback)
@@ -222,17 +226,22 @@ def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str,
     "troubleShootingContents": "0",
   }
 
-  # 공통 필드 (의류/신발/가방은 필드가 거의 동일)
+  # 제조사에서 (주) 제거
+  import re as _re
+  mfr = _re.sub(r'\(주\)|㈜|\(株\)', '', mfr).strip() if mfr else mfr
+
+  # 공통 필드 (의류/신발/가방은 필드가 거의 동일) — 수집 데이터 우선 사용
+  caution = _clean_special(product.get("care_instructions", "") or product.get("careInstructions", "") or _DEFAULT_CAUTION.get(group, _DEFAULT_CAUTION["etc"]))
   common_fields = {
     **_GUIDE_FIELDS,
     "material": material,
-    "color": color_text,
-    "size": size_text,
-    "manufacturer": mfr,
+    "color": _clean_special(color_text),
+    "size": _clean_special(size_text),
+    "manufacturer": _clean_special(mfr or fallback),
     "caution": caution,
     "packDateText": "주문 후 개별포장 발송",
-    "warrantyPolicy": product.get("quality_guarantee", "") or product.get("qualityGuarantee", "") or "제품 하자 시 소비자분쟁해결기준(공정거래위원회 고시)에 따라 보상",
-    "afterServiceDirector": f"{brand} 고객센터",
+    "warrantyPolicy": _clean_special(product.get("quality_guarantee", "") or product.get("qualityGuarantee", "") or "제품 하자 시 소비자분쟁해결기준(공정거래위원회 고시)에 따라 보상"),
+    "afterServiceDirector": _clean_special(f"{brand} 고객센터"),
   }
 
   # 타입별 필드 키 이름
