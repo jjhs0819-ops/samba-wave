@@ -91,6 +91,7 @@ export default function WarroomPage() {
   const [autotuneRunning, setAutotuneRunning] = useState(false)
   const [autotuneCycles, setAutotuneCycles] = useState(0)
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
+  const [autotuneTarget, setAutotuneTarget] = useState('all')
 
   const runProbe = async () => {
     setProbeLoading(true)
@@ -228,6 +229,20 @@ export default function WarroomPage() {
         <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
           <span>마지막 갱신: {timeAgo(lastFetched)}</span>
           <span>다음 폴링: {nextPoll}초 후</span>
+          <select
+            value={autotuneTarget}
+            onChange={e => setAutotuneTarget(e.target.value)}
+            disabled={autotuneRunning}
+            style={{
+              padding: '0.25rem 0.5rem', fontSize: '0.78rem', borderRadius: '6px',
+              background: '#1A1A1A', border: '1px solid #3D3D3D', color: '#C5C5C5',
+              opacity: autotuneRunning ? 0.5 : 1,
+            }}
+          >
+            <option value="all">전체</option>
+            <option value="registered">마켓등록</option>
+            <option value="unregistered">마켓미등록</option>
+          </select>
           <button
             onClick={async () => {
               try {
@@ -235,7 +250,7 @@ export default function WarroomPage() {
                   await collectorApi.autotuneStop()
                   setAutotuneRunning(false)
                 } else {
-                  await collectorApi.autotuneStart()
+                  await collectorApi.autotuneStart(autotuneTarget)
                   setAutotuneRunning(true)
                   setAutotuneCycles(0)
                 }

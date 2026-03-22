@@ -207,6 +207,10 @@ async def list_filters(session: AsyncSession = Depends(get_read_session_dependen
             "/transformed/" in u or "/static/images/ai_" in u for u in (p.images or [])
         ))
         data["ai_image_count"] = ai_img_count
+        # 마켓등록/태그등록/정책등록 카운트
+        data["market_registered_count"] = sum(1 for p in products_in_group if p.registered_accounts)
+        data["tag_applied_count"] = sum(1 for p in products_in_group if p.tags and any(t for t in p.tags if not t.startswith("__")))
+        data["policy_applied_count"] = sum(1 for p in products_in_group if p.applied_policy_id)
         result.append(data)
     return result
 
@@ -2423,6 +2427,7 @@ _autotune_task: Optional[_asyncio.Task] = None
 _autotune_running = False
 _autotune_last_tick: Optional[str] = None
 _autotune_cycle_count = 0
+_autotune_target = "all"  # all / registered / unregistered
 
 
 async def _autotune_loop():
@@ -2449,8 +2454,14 @@ async def _autotune_loop():
                     products = []
                     for pid in candidates:
                         p = await repo.get_async(pid)
-                        if p:
-                            products.append(p)
+                        if not p:
+                            continue
+                        # target 필터 적용
+                        if _autotune_target == "registered" and not p.registered_accounts:
+                            continue
+                        if _autotune_target == "unregistered" and p.registered_accounts:
+                            continue
+                        products.append(p)
 
                     results, summary = await refresh_products_bulk(products)
 
@@ -2544,16 +2555,21 @@ async def _autotune_loop():
     log.info("[오토튠] 루프 종료")
 
 
+class AutotuneStartRequest(BaseModel):
+    target: str = "all"  # all / registered / unregistered
+
+
 @router.post("/autotune/start")
-async def autotune_start():
+async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     """오토튠 무한 루프 시작."""
-    global _autotune_task, _autotune_running, _autotune_cycle_count
+    global _autotune_task, _autotune_running, _autotune_cycle_count, _autotune_target
     if _autotune_running:
         return {"ok": True, "status": "already_running"}
     _autotune_running = True
     _autotune_cycle_count = 0
+    _autotune_target = body.target
     _autotune_task = _asyncio.create_task(_autotune_loop())
-    return {"ok": True, "status": "started"}
+    return {"ok": True, "status": "started", "target": body.target}
 
 
 @router.post("/autotune/stop")

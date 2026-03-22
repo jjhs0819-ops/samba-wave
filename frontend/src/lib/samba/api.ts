@@ -383,8 +383,8 @@ export const collectorApi = {
     request<Record<string, unknown>>(`${SAMBA_PREFIX}/collector/probe/status`),
   probeRun: () =>
     request<Record<string, unknown>>(`${SAMBA_PREFIX}/collector/probe/run`, { method: 'POST' }),
-  autotuneStart: () =>
-    request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/start`, { method: 'POST' }),
+  autotuneStart: (target: string = 'all') =>
+    request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/start`, { method: 'POST', body: JSON.stringify({ target }) }),
   autotuneStop: () =>
     request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/stop`, { method: 'POST' }),
   autotuneStatus: () =>
