@@ -50,6 +50,8 @@ export interface SambaProduct {
   applied_policy_id?: string;
   market_prices?: Record<string, number>;
   registered_accounts?: string[];
+  group_key?: string | null;
+  group_product_no?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -283,6 +285,8 @@ export interface SambaCollectedProduct {
   monitor_priority?: string;
   last_refreshed_at?: string;
   refresh_error_count?: number;
+  group_key?: string | null;
+  group_product_no?: number | null;
   created_at: string;
   updated_at?: string;
 }
