@@ -257,6 +257,11 @@ export default function ShipmentsPage() {
     if (selectedProducts.length === 0) { showAlert('상품을 선택해주세요'); return }
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
 
+    // 현재 필터에 표시된 상품만 전송 (필터 외 잔존 선택 제거)
+    const filteredSet = new Set(filteredProducts.map(p => p.id))
+    const visibleSelected = selectedProducts.filter(id => filteredSet.has(id))
+    if (visibleSelected.length === 0) { showAlert('현재 화면에 표시된 선택 상품이 없습니다'); return }
+
     setTransmitting(true)
 
     const ts = () => new Date().toLocaleTimeString()
@@ -269,21 +274,21 @@ export default function ShipmentsPage() {
     }
 
     // 정책 적용된 상품만 전송 대상 (미적용 상품은 사전 제외)
-    const policyProducts = selectedProducts.filter(pid => {
+    const policyProducts = visibleSelected.filter(pid => {
       const prod = products.find(p => p.id === pid)
       return !!prod?.applied_policy_id
     })
-    const noPolicyCount = selectedProducts.length - policyProducts.length
+    const noPolicyCount = visibleSelected.length - policyProducts.length
     const total = policyProducts.length
 
     if (total === 0) {
-      addLog(`[${ts()}] 전송 대상 없음 — 선택된 ${selectedProducts.length}개 상품 중 정책 적용된 상품이 없습니다`)
+      addLog(`[${ts()}] 전송 대상 없음 — 선택된 ${visibleSelected.length}개 상품 중 정책 적용된 상품이 없습니다`)
       setTransmitting(false)
       return
     }
 
     if (noPolicyCount > 0) {
-      addLog(`[${ts()}] 정책 미적용 ${noPolicyCount}개 제외 (선택 ${selectedProducts.length}개 → 전송 대상 ${total}개)`)
+      addLog(`[${ts()}] 정책 미적용 ${noPolicyCount}개 제외 (선택 ${visibleSelected.length}개 → 전송 대상 ${total}개)`)
     }
 
     setProgress({ current: 0, total })
@@ -408,7 +413,7 @@ export default function ShipmentsPage() {
           }
           if (r.status === 'skipped') {
             const refreshInfo = (r as Record<string, unknown>).update_result as Record<string, string> | undefined
-            const refreshLabel = refreshInfo?.refresh ? ` [최신화:${refreshInfo.refresh}]` : ''
+            const refreshLabel = refreshInfo?.refresh ? ` [${refreshInfo.refresh}]` : ''
             addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel}: 스킵${refreshLabel}`)
             skipCount++
             return
@@ -417,6 +422,7 @@ export default function ShipmentsPage() {
           const txError = r.transmit_error || {}
           const ur = (r as Record<string, unknown>).update_result as Record<string, string> | undefined
           const rl = ur?.refresh ? ` [${ur.refresh}]` : ''
+
           for (const [accId, status] of Object.entries(txResult)) {
             const label = accountLabelMap[accId] || accId
             if (status === 'success') {
