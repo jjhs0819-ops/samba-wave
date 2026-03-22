@@ -712,7 +712,7 @@ export default function CollectorPage() {
               } else showAlert(res.message, 'error')
             } catch (e) {
               showAlert(`변환 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
-            } finally { setAiImgTransforming(false) }
+            } finally { setAiImgTransforming(false); setSelectedIds(new Set()); setSelectAll(false) }
           }}
           disabled={aiImgTransforming || selectedIds.size === 0}
           style={{ marginLeft: 'auto', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
@@ -747,7 +747,7 @@ export default function CollectorPage() {
               else showAlert(`이미지 필터링 완료 — ${totalProcessed}개 상품 처리`, 'success')
             } catch (e) {
               showAlert(`이미지 필터링 오류: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
-            } finally { setImgFiltering(false) }
+            } finally { setImgFiltering(false); setSelectedIds(new Set()); setSelectAll(false) }
           }}
           disabled={imgFiltering || selectedIds.size === 0}
           style={{ marginLeft: 'auto', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
@@ -843,6 +843,7 @@ export default function CollectorPage() {
                     showAlert(res.message, 'success')
                     setLastAiUsage({ calls: res.api_calls || 0, tokens: (res.input_tokens || 0) + (res.output_tokens || 0), cost: res.cost_krw || 0, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
                     load(); loadTree()
+                    setSelectedIds(new Set()); setSelectAll(false)
                   } else showAlert(res.message, 'error')
                 } catch (e) {
                   showAlert(`태그 생성 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
