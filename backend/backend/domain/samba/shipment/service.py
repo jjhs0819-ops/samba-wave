@@ -421,9 +421,7 @@ class SambaShipmentService:
       except Exception as ref_e:
         refresh_status = f"최신화예외:{str(ref_e)[:30]}"
         logger.warning(f"[전송] 소싱처 최신화 예외: {ref_e}")
-    # shipment에 최신화 상태 기록
-    if refresh_status:
-      await self.repo.update_async(shipment.id, update_result={"refresh": refresh_status})
+    # refresh_status는 최종 shipment 업데이트에서 기록
 
     # 이미지/상세페이지 업데이트 필요 여부 판단
     needs_image = not update_items or "image" in update_items or "description" in update_items
@@ -767,13 +765,15 @@ class SambaShipmentService:
     else:
       final_status = "partial"
 
-    updated = await self.repo.update_async(
-      shipment.id,
-      status=final_status,
-      transmit_result=transmit_result,
-      transmit_error=transmit_error if transmit_error else None,
-      completed_at=datetime.now(UTC),
-    )
+    final_update: dict[str, Any] = {
+      "status": final_status,
+      "transmit_result": transmit_result,
+      "transmit_error": transmit_error if transmit_error else None,
+      "completed_at": datetime.now(UTC),
+    }
+    if refresh_status:
+      final_update["update_result"] = {"refresh": refresh_status}
+    updated = await self.repo.update_async(shipment.id, **final_update)
 
     # 6. 상품 상태 업데이트 (등록된 계정 목록)
     # 성공한 계정은 추가, 실패한 계정은 제거
