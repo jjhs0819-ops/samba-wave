@@ -227,6 +227,11 @@ export interface SambaSearchFilter {
   ss_manufacturer_id?: number;
   ss_manufacturer_name?: string;
   created_at: string;
+  // 트리 구조
+  parent_id?: string | null;
+  is_folder?: boolean;
+  collected_count?: number;
+  children?: SambaSearchFilter[];
 }
 
 export interface SambaCollectedProduct {
@@ -287,6 +292,12 @@ export interface SambaCollectedProduct {
   refresh_error_count?: number;
   group_key?: string | null;
   group_product_no?: number | null;
+  video_url?: string;
+  seo_keywords?: string[];
+  free_shipping?: boolean;
+  same_day_delivery?: boolean;
+  model_no?: string;
+  collected_at?: string;
   created_at: string;
   updated_at?: string;
 }
@@ -305,8 +316,17 @@ export interface RefreshResult {
 export const collectorApi = {
   // Filters
   listFilters: () => request<SambaSearchFilter[]>(`${SAMBA_PREFIX}/collector/filters`),
+  getFilterTree: () => request<SambaSearchFilter[]>(`${SAMBA_PREFIX}/collector/filters/tree`),
   createFilter: (data: Partial<SambaSearchFilter>) =>
     request<SambaSearchFilter>(`${SAMBA_PREFIX}/collector/filters`, { method: "POST", body: JSON.stringify(data) }),
+  createFolder: (sourceSite: string, name: string, parentId?: string) =>
+    request<SambaSearchFilter>(`${SAMBA_PREFIX}/collector/filters/folder`, {
+      method: 'POST', body: JSON.stringify({ source_site: sourceSite, name, parent_id: parentId }),
+    }),
+  moveFilter: (id: string, parentId: string | null) =>
+    request<SambaSearchFilter>(`${SAMBA_PREFIX}/collector/filters/${id}/move`, {
+      method: 'PATCH', body: JSON.stringify({ parent_id: parentId }),
+    }),
   updateFilter: (id: string, data: Partial<SambaSearchFilter>) =>
     request<SambaSearchFilter>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteFilter: (id: string) =>
@@ -333,6 +353,8 @@ export const collectorApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: "DELETE" }),
   resetRegistration: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}/reset-registration`, { method: "POST" }),
+  bulkRemoveImage: (imageUrl: string, field: string = "images") =>
+    request<{ removed: number }>(`${SAMBA_PREFIX}/collector/products/images/bulk-remove`, { method: "POST", body: JSON.stringify({ image_url: imageUrl, field }) }),
 
   // 재고/가격 갱신
   refresh: (productIds?: string[], autoRetransmit = true, searchFilterIds?: string[]) =>
@@ -402,6 +424,7 @@ export const accountApi = {
 export interface SambaShipment {
   id: string;
   product_id: string;
+  account_id?: string;
   target_account_ids?: string[];
   update_items?: string[];
   status: string;
@@ -419,6 +442,8 @@ export interface GroupPreviewProduct {
   sale_price: number | null
   thumbnail: string | null
   existing_product_no: string | null
+  free_shipping?: boolean
+  same_day_delivery?: boolean
 }
 
 export interface GroupPreviewGroup {
@@ -601,17 +626,28 @@ export const proxyApi = {
         method: 'POST',
         body: JSON.stringify({ group_ids: groupIds, scope, mode, model_preset: modelPreset }),
       }),
-  generateAiTags: (productIds: string[]) =>
-    request<{ success: boolean; message: string; total_tagged: number; api_calls: number; input_tokens: number; output_tokens: number; cost_krw: number }>(
-      `${SAMBA_PREFIX}/proxy/ai-tags/generate`, {
-        method: 'POST',
-        body: JSON.stringify({ product_ids: productIds }),
-      }),
   generateAiTagsByGroups: (groupIds: string[]) =>
     request<{ success: boolean; message: string; total_tagged: number; api_calls: number; input_tokens: number; output_tokens: number; cost_krw: number }>(
       `${SAMBA_PREFIX}/proxy/ai-tags/generate`, {
         method: 'POST',
         body: JSON.stringify({ group_ids: groupIds }),
+      }),
+  // AI 태그 미리보기 (20개 생성 → 적용 안 함)
+  previewAiTags: (productIds: string[]) =>
+    request<{
+      success: boolean; message: string;
+      previews: { group_id: string; group_name: string; product_count: number; rep_name: string; tags: string[]; seo_keywords: string[] }[];
+      api_calls: number; input_tokens: number; output_tokens: number; cost_krw: number;
+    }>(`${SAMBA_PREFIX}/proxy/ai-tags/preview`, {
+      method: 'POST',
+      body: JSON.stringify({ product_ids: productIds }),
+    }),
+  // AI 태그 확정 적용 (삭제된 태그는 금지태그에 추가)
+  applyAiTags: (groups: { group_id: string; tags: string[]; seo_keywords?: string[] }[], removedTags?: string[]) =>
+    request<{ success: boolean; message: string; total_tagged: number }>(
+      `${SAMBA_PREFIX}/proxy/ai-tags/apply`, {
+        method: 'POST',
+        body: JSON.stringify({ groups, removed_tags: removedTags || [] }),
       }),
   // 이미지 필터링 (모델컷/연출컷/배너 자동 제거)
   filterProductImages: (productIds: string[], filterId?: string, scope?: string) =>
@@ -650,12 +686,18 @@ export const categoryApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/categories/tree/${siteName}`, { method: "DELETE" }),
   aiSuggest: (data: { source_site: string; source_category: string; sample_products: string[]; target_markets?: string[] }) =>
     request<Record<string, string>>(`${SAMBA_PREFIX}/categories/ai-suggest`, { method: "POST", body: JSON.stringify(data) }),
-  aiSuggestBulk: () =>
+  aiSuggestBulk: (targetMarkets?: string[]) =>
     request<{ mapped: number; updated: number; skipped: number; errors: string[] }>(
-      `${SAMBA_PREFIX}/categories/ai-suggest-bulk`, { method: 'POST' }),
+      `${SAMBA_PREFIX}/categories/ai-suggest-bulk`, {
+        method: 'POST',
+        body: JSON.stringify(targetMarkets ? { target_markets: targetMarkets } : {}),
+      }),
   seedMarketCategories: () =>
     request<{ ok: boolean; markets: Record<string, number> }>(
       `${SAMBA_PREFIX}/categories/markets/seed`, { method: 'POST' }),
+  syncSmartstoreCategories: () =>
+    request<{ ok: boolean; count: number; has_codes: boolean }>(
+      `${SAMBA_PREFIX}/categories/markets/sync-smartstore`, { method: 'POST' }),
   checkMarketRegistered: (market: string, mappingIds: string[]) =>
     request<{ registered_count: number }>(
       `${SAMBA_PREFIX}/categories/mappings/check-registered`,
@@ -1003,5 +1045,107 @@ export const userApi = {
   login: (email: string, password: string) =>
     request<SambaUser>(
       `${SAMBA_PREFIX}/users/login`, { method: 'POST', body: JSON.stringify({ email, password }) }
+    ),
+}
+
+// ── AI Sourcing (AI 소싱기) ──
+
+export interface AISourcingBrand {
+  brand: string
+  count: number
+  score: number
+  total_sales: number
+  avg_profit_rate: number
+  categories: string[]
+  keywords: string[]
+  source: string
+  is_safe: boolean
+  safety_reason: string
+}
+
+export interface AISourcingCombination {
+  source_site: string
+  brand: string
+  keyword: string
+  category: string
+  category_code: string
+  estimated_count: number
+  search_url: string
+  is_safe: boolean
+  safety_reason: string
+}
+
+export interface AISourcingSummary {
+  total_brands_found: number
+  safe_brands: number
+  unsafe_brands: number
+  total_combinations: number
+  total_estimated_products: number
+  target_count: number
+  total_pairs: number
+}
+
+export interface AISourcingResult {
+  brands: AISourcingBrand[]
+  combinations: AISourcingCombination[]
+  summary: AISourcingSummary
+}
+
+export const aiSourcingApi = {
+  // 카테고리 목록
+  getCategories: () =>
+    request<{
+      musinsa: { id: string; name: string }[]
+      naver: { id: string; name: string }[]
+    }>(`${SAMBA_PREFIX}/ai-sourcing/categories`),
+
+  // AI 분석 (SSE 스트리밍) - JSON body
+  analyze: (data: {
+    use_musinsa: boolean
+    use_naver: boolean
+    musinsa_categories?: string[]
+    naver_categories?: string[]
+    target_count: number
+  }) =>
+    fetch(`${SAMBA_PREFIX}/ai-sourcing/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+
+  // 월+대카테고리 기반 통합 분석 (SSE 스트리밍)
+  analyzeFull: (data: {
+    month: number
+    main_category: string
+    target_count: number
+    file?: File
+  }) => {
+    const formData = new FormData()
+    formData.append('month', String(data.month))
+    formData.append('main_category', data.main_category)
+    formData.append('target_count', String(data.target_count))
+    if (data.file) formData.append('file', data.file)
+    return fetch(`${SAMBA_PREFIX}/ai-sourcing/analyze-full`, {
+      method: 'POST',
+      body: formData,
+    })
+  },
+
+  // 엑셀만 분석
+  analyzeExcel: async (file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await fetch(`${SAMBA_PREFIX}/ai-sourcing/analyze-excel`, {
+      method: 'POST',
+      body: formData,
+    })
+    return res.json() as Promise<{ brands: AISourcingBrand[]; total: number }>
+  },
+
+  // 검색그룹 일괄 생성
+  createGroups: (combinations: AISourcingCombination[]) =>
+    request<{ created: number; ids: string[] }>(
+      `${SAMBA_PREFIX}/ai-sourcing/create-groups`,
+      { method: 'POST', body: JSON.stringify({ combinations }) }
     ),
 }

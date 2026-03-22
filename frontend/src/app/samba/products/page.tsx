@@ -1230,8 +1230,8 @@ export default function ProductsPage() {
           ))}
         </div>
       ) : (
-        /* Card view - matching original product-card style */
-        <div style={{ display: "flex", flexDirection: "column", gap: viewMode === "compact" ? "4px" : "8px" }}>
+        /* Card / Compact view — 2열 그리드 */
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: viewMode === "compact" ? "4px" : "8px" }}>
           {products.map((p, idx) => (
             <ProductCard
               key={p.id}
@@ -1826,6 +1826,17 @@ function ProductCard({
                 style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888' }}>▲</button>}
               {i < list.length - 1 && <button onClick={() => { const a = [...list]; [a[i+1], a[i]] = [a[i], a[i+1]]; setList(a) }}
                 style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888' }}>▼</button>}
+              <button onClick={async () => {
+                if (!confirm(`이 이미지를 모든 상품에서 삭제하시겠습니까?`)) return
+                try {
+                  const field = list === detailImgList ? 'detail_images' : 'images'
+                  const res = await collectorApi.bulkRemoveImage(img, field)
+                  setList(list.filter((_, j) => j !== i))
+                  alert(`${res.removed}개 상품에서 삭제 완료`)
+                  load()
+                } catch (e) { alert('추적삭제 실패: ' + (e instanceof Error ? e.message : String(e))) }
+              }}
+                style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid rgba(168,85,247,0.3)', background: 'rgba(168,85,247,0.08)', color: '#A855F7' }}>추적삭제</button>
               <button onClick={() => setList(list.filter((_, j) => j !== i))}
                 style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid rgba(255,107,107,0.3)', background: 'rgba(255,107,107,0.08)', color: '#FF6B6B' }}>삭제</button>
             </div>
@@ -2147,18 +2158,18 @@ function ProductCard({
       {/* Card body */}
       {(compact && !expanded) ? (
         /* 간단보기: 원 상품명 + 등록 상품명 + 브랜드 + 원가 한 줄 */
-        <div style={{ padding: "8px 14px", display: "flex", gap: "14px", alignItems: "center", fontSize: "0.78rem" }}>
-          <ProductImage src={p.images?.[0]} name={p.name} size={50} />
+        <div style={{ padding: "8px 14px", display: "flex", gap: "10px", alignItems: "center", fontSize: "0.78rem" }}>
+          <div onClick={() => { setProductImages(p.images || []); setShowImageModal(true) }} style={{ cursor: "pointer", flexShrink: 0 }}>
+            <ProductImage src={p.images?.[0]} name={p.name} size={50} />
+          </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ color: "#FFFFFF", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ color: "#FFFFFF", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{p.name}</span>
+              <span style={{ color: "#FFB84D", fontWeight: 600, flexShrink: 0 }}>₩{fmt(cost)}</span>
+            </div>
             <div style={{ color: "#888", fontSize: "0.72rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))}
             </div>
-          </div>
-          <div style={{ textAlign: "right", flexShrink: 0 }}>
-            <div style={{ color: "#888", fontSize: "0.68rem" }}>{p.brand || "-"}</div>
-            <div style={{ color: "#FFB84D", fontWeight: 600 }}>₩{fmt(cost)}</div>
-            {marketPrice > 0 && <div style={{ color: "#FF8C00", fontSize: "0.72rem" }}>→ ₩{fmt(marketPrice)}</div>}
           </div>
         </div>
       ) : (
@@ -2168,7 +2179,9 @@ function ProductCard({
           width: "130px", flexShrink: 0, display: "flex", flexDirection: "column",
           alignItems: "center", gap: "8px", paddingRight: "14px", borderRight: "1px solid #222",
         }}>
-          <ProductImage src={p.images?.[0]} name={p.name} size={110} />
+          <div onClick={() => { setProductImages(p.images || []); setShowImageModal(true) }} style={{ cursor: "pointer" }}>
+            <ProductImage src={p.images?.[0]} name={p.name} size={110} />
+          </div>
           <button
             onClick={() => { setProductImages(p.images || []); setShowImageModal(true); }}
             style={{

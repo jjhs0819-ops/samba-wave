@@ -407,6 +407,43 @@ async def bulk_create_collected_products(
     return {"created": len(created)}
 
 
+class BulkImageRemoveRequest(BaseModel):
+    image_url: str
+    field: str = "images"  # images 또는 detail_images
+
+
+@router.post("/products/images/bulk-remove")
+async def bulk_remove_image(
+    body: BulkImageRemoveRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """특정 이미지 URL을 모든 상품에서 일괄 삭제 (추적삭제)."""
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+    from sqlmodel import select
+
+    stmt = select(SambaCollectedProduct)
+    result = await session.exec(stmt)
+    removed_count = 0
+    for p in result.all():
+        target = p.images if body.field == "images" else p.detail_images
+        if not target or body.image_url not in target:
+            continue
+        new_list = [u for u in target if u != body.image_url]
+        if body.field == "images":
+            p.images = new_list
+        else:
+            p.detail_images = new_list
+        # __img_edited__ 태그 추가
+        tags = list(p.tags or [])
+        if "__img_edited__" not in tags:
+            tags.append("__img_edited__")
+            p.tags = tags
+        session.add(p)
+        removed_count += 1
+    await session.commit()
+    return {"removed": removed_count}
+
+
 @router.put("/products/{product_id}")
 async def update_collected_product(
     product_id: str,
@@ -667,6 +704,8 @@ async def collect_by_url(
                         "status": "collected",
                         "is_sold_out": detail.get("saleStatus") == "sold_out",
                         "sale_status": detail.get("saleStatus", "in_stock"),
+                        "free_shipping": detail.get("freeShipping", False),
+                        "same_day_delivery": detail.get("sameDayDelivery", False),
                         "price_history": [initial_snapshot],
                     })
                     saved += 1
@@ -772,6 +811,8 @@ async def collect_by_url(
                 "status": "collected",
                 "is_sold_out": sale_status == "sold_out",
                 "sale_status": sale_status,
+                "free_shipping": data.get("freeShipping", False),
+                "same_day_delivery": data.get("sameDayDelivery", False),
                 "price_history": [initial_snapshot],
             }
 
@@ -1215,6 +1256,8 @@ async def collect_by_filter(
                         "status": "collected",
                         "is_sold_out": detail.get("saleStatus") == "sold_out",
                         "sale_status": detail.get("saleStatus", "in_stock"),
+                        "free_shipping": detail.get("freeShipping", False),
+                        "same_day_delivery": detail.get("sameDayDelivery", False),
                         "price_history": [initial_snapshot],
                     })
                     total_saved += 1
@@ -2054,6 +2097,11 @@ async def refresh_products(
             updates["material"] = r.new_material
         if r.new_color and not getattr(product, "color", None):
             updates["color"] = r.new_color
+        # 배송 정보 항상 갱신
+        if r.new_free_shipping is not None:
+            updates["free_shipping"] = r.new_free_shipping
+        if r.new_same_day_delivery is not None:
+            updates["same_day_delivery"] = r.new_same_day_delivery
 
         if r.changed:
             if r.new_sale_price is not None:
