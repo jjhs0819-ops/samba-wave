@@ -410,7 +410,7 @@ export interface SambaShipment {
   created_at: string;
 }
 
-// ── 그룹상품 타입 ──
+// ── 스스그룹 타입 ──
 
 export interface GroupPreviewProduct {
   id: string
@@ -474,14 +474,14 @@ export const shipmentApi = {
       }
     ),
 
-  // 그룹상품 미리보기
+  // 스스그룹 미리보기
   groupPreview: (searchFilterIds: string[], accountId: string) =>
     request<GroupPreviewResponse>(`${SAMBA_PREFIX}/shipments/group-preview`, {
       method: 'POST',
       body: JSON.stringify({ search_filter_ids: searchFilterIds, account_id: accountId }),
     }),
 
-  // 그룹상품 전송
+  // 스스그룹 전송
   groupSend: (groups: { group_key: string; product_ids: string[] }[], singles: string[], accountId: string) =>
     request<GroupSendResponse>(`${SAMBA_PREFIX}/shipments/group-send`, {
       method: 'POST',

@@ -101,7 +101,7 @@ export default function CollectorPage() {
   // 이미지 필터링 (모델컷/연출컷/배너 제거)
   const [imgFiltering, setImgFiltering] = useState(false)
 
-  // 그룹상품 전송
+  // 스스그룹 전송
   const [showGroupModal, setShowGroupModal] = useState(false)
   const [groupPreview, setGroupPreview] = useState<GroupPreviewResponse | null>(null)
   const [groupSending, setGroupSending] = useState(false)
@@ -782,7 +782,7 @@ export default function CollectorPage() {
                   setGroupPreview(preview)
                   setShowGroupModal(true)
                 } catch {
-                  showAlert('그룹 미리보기 실패', 'error')
+                  showAlert('스스그룹 미리보기 실패', 'error')
                 }
               }}
               disabled={groupSending || selectedIds.size === 0}
@@ -794,7 +794,7 @@ export default function CollectorPage() {
                 opacity: selectedIds.size === 0 ? 0.5 : 1,
               }}
             >
-              {groupSending ? '전송중...' : '그룹상품 전송'}
+              {groupSending ? '전송중...' : '스스그룹 전송'}
             </button>
             <button
               onClick={async () => {
@@ -1120,7 +1120,7 @@ export default function CollectorPage() {
         </div>
       )}
 
-      {/* 그룹상품 전송 미리보기 모달 */}
+      {/* 스스그룹 전송 미리보기 모달 */}
       {showGroupModal && groupPreview && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
@@ -1133,7 +1133,7 @@ export default function CollectorPage() {
             border: '1px solid #333',
           }}>
             <h3 style={{ color: '#51CF66', marginBottom: '1rem', fontSize: '1.1rem' }}>
-              그룹상품 전송 미리보기
+              스스그룹 전송 미리보기
             </h3>
 
             {groupPreview.groups.map(g => (
@@ -1142,7 +1142,7 @@ export default function CollectorPage() {
                 borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem',
               }}>
                 <div style={{ color: '#51CF66', fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.9rem' }}>
-                  [그룹] {g.group_name} ({g.products.length}건)
+                  [스스그룹] {g.group_name} ({g.products.length}건)
                 </div>
                 {g.products.map(p => (
                   <div key={p.id} style={{
@@ -1180,7 +1180,7 @@ export default function CollectorPage() {
 
             {groupPreview.delete_count > 0 && (
               <div style={{ color: '#FF6B6B', fontSize: '0.8rem', marginBottom: '1rem' }}>
-                기존 단일등록 {groupPreview.delete_count}건 삭제 후 그룹상품으로 재등록됩니다
+                기존 단일등록 {groupPreview.delete_count}건 삭제 후 스스그룹으로 재등록됩니다
               </div>
             )}
 
@@ -1206,11 +1206,11 @@ export default function CollectorPage() {
                     const res = await shipmentApi.groupSend(groups, singles, groupTargetAccount)
                     const successCount = res.group_results.filter(r => r.status === 'success').length
                     const failCount = res.group_results.filter(r => r.status === 'error').length
-                    showAlert(`그룹상품 ${successCount}건 성공, ${failCount}건 실패`, successCount > 0 ? 'success' : 'error')
+                    showAlert(`스스그룹 ${successCount}건 성공, ${failCount}건 실패`, successCount > 0 ? 'success' : 'error')
                     setShowGroupModal(false)
                     load()
                   } catch {
-                    showAlert('그룹 전송 실패', 'error')
+                    showAlert('스스그룹 전송 실패', 'error')
                   }
                   setGroupSending(false)
                 }}

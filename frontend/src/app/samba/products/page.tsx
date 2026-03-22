@@ -1040,14 +1040,14 @@ export default function ProductsPage() {
                       background: 'rgba(81,207,102,0.15)', color: '#51CF66',
                       padding: '0.1rem 0.3rem', borderRadius: '4px',
                       fontSize: '0.6rem', marginLeft: '0.25rem', whiteSpace: 'nowrap',
-                    }}>그룹</span>
+                    }}>스스그룹</span>
                   )}
                   {p.group_product_no && (
                     <span style={{
                       background: 'rgba(76,154,255,0.15)', color: '#4C9AFF',
                       padding: '0.1rem 0.3rem', borderRadius: '4px',
                       fontSize: '0.6rem', marginLeft: '0.25rem', whiteSpace: 'nowrap',
-                    }}>그룹등록</span>
+                    }}>스스그룹등록</span>
                   )}
                 </p>
                 <p style={{ fontSize: "0.75rem", color: "#FF8C00", fontWeight: 600, margin: 0 }}>₩{fmt(p.sale_price)}</p>
@@ -1846,14 +1846,14 @@ function ProductCard({
               padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 500,
               background: 'rgba(81,207,102,0.15)', color: '#51CF66',
               border: '1px solid rgba(81,207,102,0.25)',
-            }}>그룹</span>
+            }}>스스그룹</span>
           )}
           {p.group_product_no && (
             <span style={{
               padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 500,
               background: 'rgba(76,154,255,0.15)', color: '#4C9AFF',
               border: '1px solid rgba(76,154,255,0.25)',
-            }}>그룹등록</span>
+            }}>스스그룹등록</span>
           )}
         </div>
         <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
