@@ -415,10 +415,12 @@ export default function ShipmentsPage() {
           }
           const txResult = r.transmit_result || {}
           const txError = r.transmit_error || {}
+          const ur = (r as Record<string, unknown>).update_result as Record<string, string> | undefined
+          const rl = ur?.refresh ? ` [${ur.refresh}]` : ''
           for (const [accId, status] of Object.entries(txResult)) {
             const label = accountLabelMap[accId] || accId
             if (status === 'success') {
-              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 성공`)
+              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 성공${rl}`)
               successCount++
             } else if (status === 'skipped') {
               addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 스킵 (변동 없음)`)
