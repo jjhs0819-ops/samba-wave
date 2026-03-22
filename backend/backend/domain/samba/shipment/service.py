@@ -388,6 +388,7 @@ class SambaShipmentService:
     # 업데이트 항목이 체크되어 있으면 소싱처 최신화 먼저 실행
     has_update = bool(update_items) and len(update_items) > 0
     refresh_status = ""  # 프론트 로그용
+    pending_refresh_updates: dict[str, Any] = {}  # 최종 업데이트에 통합
     if has_update and product_row.source_site and product_row.site_product_id:
       try:
         from backend.domain.samba.collector.refresher import refresh_product
@@ -430,7 +431,8 @@ class SambaShipmentService:
           history = list(product_row.price_history or [])
           history.insert(0, snapshot)
           refresh_updates["price_history"] = history[:200]
-          await product_repo.update_async(product_id, **refresh_updates)
+          # 최종 업데이트에서 통합 저장
+          pending_refresh_updates = refresh_updates
           for k, v in refresh_updates.items():
             product_dict[k] = v
           # 가격/재고 변동 각각 판단
@@ -839,6 +841,9 @@ class SambaShipmentService:
         "status": "registered" if new_accounts else "collected",
         "updated_at": datetime.now(UTC),
       }
+      # 소싱처 최신화 결과도 통합 저장
+      if pending_refresh_updates:
+        update_data.update(pending_refresh_updates)
       await product_repo.update_async(product_id, **update_data)
 
     logger.info(
