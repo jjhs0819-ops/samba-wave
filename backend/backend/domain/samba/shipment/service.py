@@ -449,10 +449,10 @@ class SambaShipmentService:
             stock_changes = [k for k in set(list(old_stocks.keys()) + list(new_stocks.keys())) if old_stocks.get(k) != new_stocks.get(k)]
             stock_changed = len(stock_changes) > 0
             stock_change_count = len(stock_changes)
-          cur_cost_val = new_cost if new_cost is not None else old_cost
-          c_label = f"원가{old_cost}→{new_cost}" if cost_changed else f"원가{cur_cost_val}"
-          s_label = f"재고변동O({stock_change_count}건)" if stock_changed else "재고변동X"
-          refresh_status = f"{c_label} {s_label}"
+          cur_cost_val = int(new_cost) if new_cost is not None else (int(old_cost) if old_cost else 0)
+          old_cost_int = int(old_cost) if old_cost else 0
+          new_cost_int = int(new_cost) if new_cost is not None else old_cost_int
+          refresh_status = f"원가 {old_cost_int}>{new_cost_int}, 재고변동 {stock_change_count}건"
           logger.info(f"[전송] 소싱처 최신화 완료 — {refresh_status}")
       except Exception as ref_e:
         refresh_status = f"최신화예외:{str(ref_e)[:30]}"
@@ -662,23 +662,33 @@ class SambaShipmentService:
           product_dict["sale_price"] = calc_price
           logger.info(f"[전송] 정책 가격 계산: 원가={cost}, 마진={margin_amt}({m_margin_rate}%), 배송={m_shipping}, 수수료={m_fee}% → 판매가={calc_price}")
 
+        # 전송가 계산 완료 — refresh_status에 전송가 추가
+        cur_price = int(product_dict.get("sale_price") or 0)
+        cur_cost_int = int(product_dict.get("cost") or 0)
+        last_sent = (product_row.last_sent_data or {}).get(account_id)
+        last_price = int(last_sent.get("sale_price") or 0) if last_sent else 0
+        last_cost_sent = int(last_sent.get("cost") or 0) if last_sent else 0
+        # 옵션 재고 비교
+        last_opts = last_sent.get("options", []) if last_sent else []
+        cur_opts = [
+          {"name": o.get("name", ""), "price": o.get("price"), "stock": o.get("stock")}
+          for o in (product_dict.get("options") or [])
+        ]
+        opts_changed = last_opts != cur_opts
+        opt_diff_count = 0
+        if opts_changed and last_opts:
+          old_stocks = {o.get("name", ""): o.get("stock", 0) for o in last_opts}
+          new_stocks = {o.get("name", ""): o.get("stock", 0) for o in cur_opts}
+          opt_diff_count = len([k for k in set(list(old_stocks.keys()) + list(new_stocks.keys())) if old_stocks.get(k) != new_stocks.get(k)])
+        # refresh_status에 전송가 정보 추가
+        refresh_status = f"원가 {last_cost_sent}>{cur_cost_int}, 전송가 {last_price}>{cur_price}, 재고변동 {opt_diff_count}건"
+
         # 스킵 판단: last_sent_data와 비교
-        if skip_unchanged and has_update:
-          last_sent = (product_row.last_sent_data or {}).get(account_id)
-          if last_sent:
-            last_price = last_sent.get("sale_price")
-            cur_price = product_dict.get("sale_price")
-            last_cost = last_sent.get("cost")
-            cur_cost = product_dict.get("cost")
-            last_opts = last_sent.get("options", [])
-            cur_opts = [
-              {"name": o.get("name", ""), "price": o.get("price"), "stock": o.get("stock")}
-              for o in (product_dict.get("options") or [])
-            ]
-            if last_price == cur_price and last_cost == cur_cost and last_opts == cur_opts:
-              transmit_result[account_id] = "skipped"
-              logger.info(f"[전송] {market_type} 변동 없음 → 스킵 (원가={cur_cost}, 전송가={cur_price})")
-              continue
+        if skip_unchanged and has_update and last_sent:
+          if last_price == cur_price and last_cost_sent == cur_cost_int and not opts_changed:
+            transmit_result[account_id] = "skipped"
+            logger.info(f"[전송] {market_type} 스킵 — {refresh_status}")
+            continue
 
         # 기존 마켓 상품번호 확인 (있으면 수정, 없으면 신규등록)
         existing_nos = product_row.market_product_nos or {}
