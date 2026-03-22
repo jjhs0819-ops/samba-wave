@@ -540,8 +540,8 @@ export default function CollectorPage() {
       }}>
         {/* 소싱처 선택 버튼 */}
         <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "0.875rem" }}>
-          {/* 1행: 소싱처 버튼 전체 */}
-          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+          {/* 1행: 소싱처 버튼 + AI소싱기 */}
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
             {SITES.map((site) => (
               <button
                 key={site.id}
@@ -563,6 +563,23 @@ export default function CollectorPage() {
                 }}
               >{site.label}</button>
             ))}
+            <button
+              onClick={() => {
+                setShowAiSourcingModal(true)
+                setAiSourcingStep('config')
+                setAiResult(null)
+                setAiLogs([])
+                setAiSelectedCombos(new Set())
+              }}
+              style={{
+                marginLeft: 'auto', padding: '0.35rem 0.875rem', borderRadius: '20px',
+                background: 'linear-gradient(135deg, #6C5CE7, #A29BFE)',
+                color: '#fff', fontWeight: 600, fontSize: '0.8rem',
+                border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              AI 소싱기
+            </button>
           </div>
           {/* 2행: 선택된 소싱처 검색 조건 체크박스 (동적) */}
           {(SITE_OPTIONS[selectedSite] || []).length > 0 && (
@@ -613,28 +630,9 @@ export default function CollectorPage() {
             {collecting ? "생성중..." : "그룹 생성"}
           </button>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '4px' }}>
-          <p style={{ fontSize: "0.8rem", color: "#888", margin: 0 }}>
-            ** URL 입력 후 그룹 생성 → 하단 검색그룹에서 상품수집 실행
-          </p>
-          <button
-            onClick={() => {
-              setShowAiSourcingModal(true)
-              setAiSourcingStep('config')
-              setAiResult(null)
-              setAiLogs([])
-              setAiSelectedCombos(new Set())
-            }}
-            style={{
-              marginLeft: 'auto', padding: '6px 16px', borderRadius: '8px',
-              background: 'linear-gradient(135deg, #6C5CE7, #A29BFE)',
-              color: '#fff', fontWeight: 600, fontSize: '0.82rem',
-              border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
-            }}
-          >
-            AI 소싱기
-          </button>
-        </div>
+        <p style={{ fontSize: "0.8rem", color: "#888", margin: '4px 0 0' }}>
+          ** URL 입력 후 그룹 생성 → 하단 검색그룹에서 상품수집 실행
+        </p>
       </div>
 
       {/* 수집 로그 */}
@@ -732,12 +730,12 @@ export default function CollectorPage() {
         <button
           onClick={async () => {
             if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
-            if (!aiImgScope.thumbnail && !aiImgScope.additional && !aiImgScope.detail) { showAlert('변환할 이미지 범위를 선택해주세요'); return }
             const ok = await showConfirm(`선택된 ${selectedIds.size}개 그룹의 상품 이미지를 변환하시겠습니까?`)
             if (!ok) return
             setAiImgTransforming(true)
             try {
-              const res = await proxyApi.transformByGroups([...selectedIds], aiImgScope, aiImgMode, aiModelPreset)
+              const autoScope = { thumbnail: true, additional: true, detail: true }
+              const res = await proxyApi.transformByGroups([...selectedIds], autoScope, aiImgMode, aiModelPreset)
               if (res.success) {
                 showAlert(res.message, 'success')
                 const cnt = res.total_transformed || 0
