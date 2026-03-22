@@ -68,6 +68,7 @@ class SambaCollectorService:
         self, data: Dict[str, Any]
     ) -> SambaCollectedProduct:
         self._sanitize_kream_data(data)
+        self._clean_company_names(data)
         self._fill_optional_images(data)
         return await self.product_repo.create_async(**data)
 
@@ -75,6 +76,7 @@ class SambaCollectorService:
         self, product_id: str, data: Dict[str, Any]
     ) -> Optional[SambaCollectedProduct]:
         self._sanitize_kream_data(data)
+        self._clean_company_names(data)
         self._fill_optional_images(data)
         # tags가 None으로 전달되면 기존 태그를 덮어쓰지 않도록 제거
         # (명시적으로 빈 리스트 []를 보내면 태그 초기화 허용)
@@ -105,6 +107,18 @@ class SambaCollectorService:
         data.pop("kream_data", None)
 
     @staticmethod
+    def _clean_company_names(data: Dict[str, Any]) -> None:
+        """브랜드/제조사에서 (주), ㈜, (株) 제거."""
+        import re
+        _pattern = re.compile(r'\(주\)|㈜|\(株\)')
+        for field in ("brand", "manufacturer"):
+            val = data.get(field)
+            if val and isinstance(val, str):
+                cleaned = _pattern.sub("", val).strip()
+                if cleaned:
+                    data[field] = cleaned
+
+    @staticmethod
     def _fill_optional_images(data: Dict[str, Any]) -> None:
         """추가이미지가 부족하면 상세이미지로 보충 (최대 9장)."""
         images = data.get("images")
@@ -131,6 +145,18 @@ class SambaCollectorService:
     async def bulk_create_collected_products(
         self, items: List[Dict[str, Any]]
     ) -> List[SambaCollectedProduct]:
+        # 검색필터의 정책을 신규 상품에 자동 적용
+        filter_ids = {item.get("search_filter_id") for item in items if item.get("search_filter_id")}
+        filter_policy_map: Dict[str, str] = {}
+        for fid in filter_ids:
+            f = await self.filter_repo.get_async(fid)
+            if f and f.applied_policy_id:
+                filter_policy_map[fid] = f.applied_policy_id
+        for item in items:
+            if not item.get("applied_policy_id"):
+                fid = item.get("search_filter_id", "")
+                if fid in filter_policy_map:
+                    item["applied_policy_id"] = filter_policy_map[fid]
         return await self.product_repo.bulk_create_async(items)
 
     async def apply_policy_to_filter_products(
