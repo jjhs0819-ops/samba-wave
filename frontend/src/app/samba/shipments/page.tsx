@@ -51,6 +51,7 @@ export default function ShipmentsPage() {
   const [pageSize, setPageSize] = useState(50)
   const [siteFilter, setSiteFilter] = useState('전체')
   const [registrationFilter, setRegistrationFilter] = useState('전체')
+  const [sortBy, setSortBy] = useState('updated_at_desc')
 
   // 선택
   const [selectedProducts, setSelectedProducts] = useState<string[]>([])
@@ -69,6 +70,15 @@ export default function ShipmentsPage() {
   const [transmitting, setTransmitting] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const progressRef = useRef<NodeJS.Timeout | null>(null)
+  const abortRef = useRef(false)
+
+  // 전송 중 새로고침/탭닫기 방지
+  useEffect(() => {
+    if (!transmitting) return
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault() }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [transmitting])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -94,16 +104,19 @@ export default function ShipmentsPage() {
   const preSelectedIds = searchParams.get('selected')?.split(',') || []
   const preSelectedSites = searchParams.get('sites')?.split(',') || []
   const autoAll = searchParams.get('autoAll') === '1'
+  const initializedRef = useRef(false)
   useEffect(() => {
-    if (preSelectedIds.length > 0 && products.length > 0) {
+    if (initializedRef.current) return
+    if (products.length === 0) return
+    initializedRef.current = true
+
+    if (preSelectedIds.length > 0) {
       const ids = preSelectedIds.filter(id => products.some(p => p.id === id))
       if (ids.length > 0) setSelectedProducts(ids)
     }
-    // 상품관리에서 넘어온 경우: 소싱사이트 자동 체크
     if (preSelectedSites.length > 0) {
       setSelectedSites(preSelectedSites.filter(s => s))
     }
-    // autoAll: 업데이트 전체 + 마켓 전체 자동 체크
     if (autoAll && accounts.length > 0) {
       setUpdateItems({ all: true, price: true, thumb: true, detail: true })
       const allTypes = [...new Set(accounts.map(a => a.market_type))]
@@ -146,8 +159,55 @@ export default function ShipmentsPage() {
         default:
           return true
       }
+    }).sort((a, b) => {
+      // market_xxx_desc / market_xxx_asc 패턴 감지
+      const marketMatch = sortBy.match(/^market_(.+?)_(asc|desc)$/)
+      if (marketMatch) {
+        const marketType = marketMatch[1]
+        const mul = marketMatch[2] === 'desc' ? -1 : 1
+        const getMarketTime = (p: typeof a) => {
+          const accIds = (p.registered_accounts || [])
+          const accId = accIds.find(aid => {
+            const acc = accounts.find(x => x.id === aid)
+            return acc?.market_type === marketType
+          })
+          if (!accId) return ''
+          const s = shipments.filter(x => x.product_id === p.id && x.account_id === accId && x.completed_at)
+            .sort((x, y) => new Date(y.completed_at!).getTime() - new Date(x.completed_at!).getTime())[0]
+          return s?.completed_at || ''
+        }
+        const va = getMarketTime(a), vb = getMarketTime(b)
+        return va > vb ? mul : va < vb ? -mul : 0
+      }
+      const isDesc = sortBy.endsWith('_desc')
+      const field = sortBy.replace(/_desc$|_asc$/, '')
+      const mul = isDesc ? -1 : 1
+      const getVal = (p: typeof a) => {
+        switch (field) {
+          case 'updated_at': return p.updated_at || ''
+          case 'collected_at': return p.collected_at || p.created_at || ''
+          default: return p.updated_at || ''
+        }
+      }
+      return getVal(a) > getVal(b) ? mul : getVal(a) < getVal(b) ? -mul : 0
     })
-  }, [products, siteFilter, registrationFilter, searchText, searchField, filterNameMap, preSelectedIds])
+  }, [products, siteFilter, registrationFilter, searchText, searchField, filterNameMap, preSelectedIds, sortBy, accounts, shipments])
+
+  // 등록된 마켓 목록 (동적)
+  const registeredMarkets = useMemo(() => {
+    const marketSet = new Set<string>()
+    for (const p of products) {
+      for (const aid of (p.registered_accounts || [])) {
+        const acc = accounts.find(a => a.id === aid)
+        if (acc) marketSet.add(acc.market_type)
+      }
+    }
+    const marketNameMap: Record<string, string> = {}
+    for (const acc of accounts) {
+      if (!marketNameMap[acc.market_type]) marketNameMap[acc.market_type] = acc.market_name
+    }
+    return [...marketSet].map(type => ({ type, name: marketNameMap[type] || type }))
+  }, [products, accounts])
 
   const handleMarketDelete = async () => {
     // 등록된 마켓이 있는 상품만 필터
@@ -162,7 +222,7 @@ export default function ShipmentsPage() {
       const acc = accounts.find(a => a.id === aid)
       return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
     }).join(', ')
-    if (!await showConfirm(`${targetProducts.length}개 상품을 ${targetLabels}에서 판매중지하시겠습니까?`)) return
+    if (!await showConfirm(`${targetProducts.length}개 상품을 ${targetLabels}에서 마켓삭제하시겠습니까?`)) return
 
     setTransmitting(true)
     const ts = () => new Date().toLocaleTimeString()
@@ -200,28 +260,9 @@ export default function ShipmentsPage() {
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
 
     setTransmitting(true)
-    const total = selectedProducts.length
-    // 선택된 계정 정보 (마켓명 + 계정 라벨)
-    const selectedAccountInfos = selectedAccounts.map(aid => {
-      const acc = accounts.find(a => a.id === aid)
-      return acc ? `${acc.market_name}(${acc.seller_id || acc.account_label || acc.business_name || '-'})` : aid
-    })
-    setProgress({ current: 0, total })
 
     const ts = () => new Date().toLocaleTimeString()
     const addLog = (msg: string) => setLogMessages(prev => [...prev, msg])
-
-    addLog(`[${ts()}] 전송 시작 — 상품 ${total}개, ${selectedAccountInfos.join(', ')}`)
-
-    const items: string[] = []
-    if (updateItems.price) items.push('price', 'stock')
-    if (updateItems.thumb) items.push('image')
-    if (updateItems.detail) items.push('description')
-    addLog(`[${ts()}] 업데이트 항목: ${items.length > 0 ? items.join(', ') : '없음'}`)
-
-    const successAccLabels: string[] = []
-    const failAccLabels: string[] = []
-    let skipCount = 0
 
     // 계정 ID → 표시명 매핑
     const accountLabelMap: Record<string, string> = {}
@@ -229,99 +270,146 @@ export default function ShipmentsPage() {
       accountLabelMap[acc.id] = `${acc.market_name}(${acc.seller_id || acc.account_label || acc.business_name || '-'})`
     }
 
-    for (let i = 0; i < selectedProducts.length; i++) {
-      const pid = selectedProducts[i]
+    // 정책 적용된 상품만 전송 대상 (미적용 상품은 사전 제외)
+    const policyProducts = selectedProducts.filter(pid => {
       const prod = products.find(p => p.id === pid)
-      const prodName = prod?.name || pid
-      setProgress({ current: i + 1, total })
+      return !!prod?.applied_policy_id
+    })
+    const total = policyProducts.length
 
-      // 정책에 연결된 계정만 필터링 (마켓별 개별 필터링)
-      let targetAccIds = [...selectedAccounts]
-      if (prod?.applied_policy_id) {
-        const policy = policies.find(p => p.id === prod.applied_policy_id)
-        if (policy?.market_policies && typeof policy.market_policies === 'object') {
-          const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
-          const beforeCount = targetAccIds.length
-          targetAccIds = selectedAccounts.filter(aid => {
-            const acc = accounts.find(a => a.id === aid)
-            if (!acc) return false
-            const policyKey = MARKET_TYPE_TO_POLICY_KEY[acc.market_type]
-            if (!policyKey) return true
-            const marketPolicy = mp[policyKey]
-            if (!marketPolicy) return false
-            const policyAccIds = marketPolicy.accountIds?.length
-              ? marketPolicy.accountIds
-              : (marketPolicy.accountId ? [marketPolicy.accountId] : [])
-            return policyAccIds.length > 0 && policyAccIds.includes(aid)
-          })
-          if (beforeCount !== targetAccIds.length) {
-            addLog(`[${ts()}]   정책 필터: ${beforeCount}개 → ${targetAccIds.length}개`)
-          }
-        }
-      }
-
-      if (targetAccIds.length === 0) {
-        addLog(`[${ts()}] [${i + 1}/${total}] ${prodName}`)
-        addLog(`[${ts()}]   → 정책에 연결된 계정 없음 (스킵)`)
-        skipCount++
-        continue
-      }
-
-      const targetLabels = targetAccIds.map(aid => accountLabelMap[aid] || aid).join(', ')
-      addLog(`[${ts()}] [${i + 1}/${total}] ${prodName} → ${targetLabels}`)
-
-      try {
-        const res = await shipmentApi.start([pid], items, targetAccIds, skipEnabled)
-        const r = res.results?.[0]
-        if (!r) {
-          addLog(`[${ts()}]   → 응답 없음`)
-          for (const aid of targetAccIds) failAccLabels.push(accountLabelMap[aid] || aid)
-          continue
-        }
-
-        if (r.status === 'skipped') {
-          addLog(`[${ts()}]   → 스킵 (가격 변동 없음)`)
-          skipCount++
-          continue
-        }
-
-        // 마켓별 실제 결과 표시 + 계정 기준 집계
-        const txResult = r.transmit_result || {}
-        const txError = r.transmit_error || {}
-
-        for (const [accId, status] of Object.entries(txResult)) {
-          const label = accountLabelMap[accId] || accId
-          if (status === 'success') {
-            addLog(`[${ts()}]   → ${label}: 성공`)
-            successAccLabels.push(label)
-          } else {
-            const errMsg = txError[accId] || '알 수 없는 오류'
-            addLog(`[${ts()}]   → ${label}: 실패 — ${errMsg}`)
-            failAccLabels.push(label)
-          }
-        }
-
-        if (r.error) {
-          addLog(`[${ts()}]   → 오류: ${r.error}`)
-        }
-
-        if (r.status === 'partial') addLog(`[${ts()}]   ⚠ 일부 마켓만 성공`)
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : '전송 실패'
-        addLog(`[${ts()}]   → 오류: ${msg}`)
-        for (const aid of targetAccIds) failAccLabels.push(accountLabelMap[aid] || aid)
-      }
+    if (total === 0) {
+      addLog(`[${ts()}] 전송 대상 없음 — 선택된 상품에 적용된 정책이 없습니다`)
+      setTransmitting(false)
+      return
     }
 
-    // 최종 요약 (계정 기준)
-    addLog(`[${ts()}] ──────────────────────────`)
+    setProgress({ current: 0, total })
+
+    // 정책 연결 계정 ∩ UI 선택 마켓 = 실제 전송 대상
+    const selectedSet = new Set(selectedAccounts)
+    const effectiveAccountSet = new Set<string>()
+    for (const pid of policyProducts) {
+      const prod = products.find(p => p.id === pid)
+      const policy = policies.find(p => p.id === prod?.applied_policy_id)
+      if (!policy?.market_policies || typeof policy.market_policies !== 'object') continue
+      const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
+      for (const marketPolicy of Object.values(mp)) {
+        const ids = marketPolicy.accountIds?.length
+          ? marketPolicy.accountIds
+          : (marketPolicy.accountId ? [marketPolicy.accountId] : [])
+        ids.forEach((id: string) => { if (selectedSet.has(id)) effectiveAccountSet.add(id) })
+      }
+    }
+    const effectiveLabels = [...effectiveAccountSet].map(aid => accountLabelMap[aid] || aid)
+    abortRef.current = false
+    addLog(`[${ts()}] 전송 시작 — 상품 ${total}개, ${effectiveLabels.length > 0 ? effectiveLabels.join(', ') : '연결 계정 없음'}`)
+
+    const items: string[] = []
+    if (updateItems.price) items.push('price', 'stock')
+    if (updateItems.thumb) items.push('image')
+    if (updateItems.detail) items.push('description')
+
+    let successCount = 0
+    let failCount = 0
+    let skipCount = 0
+
+    // 에러 메시지 요약 (너무 긴 메시지 truncate)
+    const shortenError = (msg: string): string => {
+      if (msg.length <= 80) return msg
+      const apiMatch = msg.match(/API (?:에러|ERROR)[^:]*:\s*(.+)/)
+      if (apiMatch) {
+        const inner = apiMatch[1]
+        const first = inner.split(',')[0].trim().replace(/^\[/, '')
+        const count = (inner.match(/,/g) || []).length
+        return count > 0 ? `${first} 외 ${count}건` : first
+      }
+      return msg.slice(0, 77) + '...'
+    }
+
+    // 마켓별 결과 수집
+    type MarketLogEntry = { idx: number, prodLabel: string, status: string, error?: string }
+    const marketGrouped: Record<string, MarketLogEntry[]> = {}
+    const marketOrder: string[] = []
+
+    // 전송 태스크 사전 준비
+    type TransmitTask = { idx: number, pid: string, prodLabel: string, targetAccIds: string[] }
+    const tasks: TransmitTask[] = []
+    for (let i = 0; i < policyProducts.length; i++) {
+      const pid = policyProducts[i]
+      const prod = products.find(p => p.id === pid)
+      const prodName = prod?.name || pid
+      const policy = policies.find(p => p.id === prod?.applied_policy_id)
+      const targetAccIds: string[] = []
+      if (policy?.market_policies && typeof policy.market_policies === 'object') {
+        const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
+        for (const marketPolicy of Object.values(mp)) {
+          const ids = marketPolicy.accountIds?.length
+            ? marketPolicy.accountIds
+            : (marketPolicy.accountId ? [marketPolicy.accountId] : [])
+          ids.forEach((id: string) => { if (selectedSet.has(id) && !targetAccIds.includes(id)) targetAccIds.push(id) })
+        }
+      }
+      if (targetAccIds.length === 0) { skipCount++; continue }
+      const siteProductId = prod?.site_product_id || ''
+      const prodLabel = siteProductId ? `${prodName} (${siteProductId})` : prodName
+      tasks.push({ idx: i + 1, pid, prodLabel, targetAccIds })
+    }
+
+    // 순차 전송 (상품당 이미지 동시 4장)
+    const BATCH_SIZE = 1
+    let doneCount = 0
+    for (let b = 0; b < tasks.length; b += BATCH_SIZE) {
+      if (abortRef.current) {
+        addLog(`[${ts()}] ⛔ 전송 강제 중단 — ${doneCount}/${total} 완료 시점에서 중단됨`)
+        break
+      }
+      const batch = tasks.slice(b, b + BATCH_SIZE)
+      const promises = batch.map(async (task) => {
+        if (abortRef.current) return
+        try {
+          const res = await shipmentApi.start([task.pid], items, task.targetAccIds, skipEnabled)
+          const r = res.results?.[0]
+          if (!r) {
+            for (const aid of task.targetAccIds) {
+              const label = accountLabelMap[aid] || aid
+              if (!marketGrouped[label]) { marketGrouped[label] = []; marketOrder.push(label) }
+              marketGrouped[label].push({ idx: task.idx, prodLabel: task.prodLabel, status: 'failed', error: '응답 없음' })
+              failCount++
+            }
+            return
+          }
+          if (r.status === 'skipped') { skipCount++; return }
+          const txResult = r.transmit_result || {}
+          const txError = r.transmit_error || {}
+          for (const [accId, status] of Object.entries(txResult)) {
+            const label = accountLabelMap[accId] || accId
+            if (status === 'success') {
+              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 성공`)
+              successCount++
+            } else {
+              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 실패 — ${shortenError(txError[accId] || '알 수 없는 오류')}`)
+              failCount++
+            }
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : '전송 실패'
+          for (const aid of task.targetAccIds) {
+            const label = accountLabelMap[aid] || aid
+            addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 실패 — ${shortenError(msg)}`)
+            failCount++
+          }
+        }
+      })
+      await Promise.all(promises)
+      doneCount += batch.length
+      setProgress({ current: doneCount, total })
+    }
+
+    // 최종 요약
     const summaryParts: string[] = []
-    if (successAccLabels.length > 0)
-      summaryParts.push(`성공 ${successAccLabels.length}건(${successAccLabels.join(', ')})`)
-    if (failAccLabels.length > 0)
-      summaryParts.push(`실패 ${failAccLabels.length}건(${failAccLabels.join(', ')})`)
-    if (skipCount > 0)
-      summaryParts.push(`스킵 ${skipCount}건`)
+    if (successCount > 0) summaryParts.push(`성공 ${successCount}건`)
+    if (failCount > 0) summaryParts.push(`실패 ${failCount}건`)
+    if (skipCount > 0) summaryParts.push(`스킵 ${skipCount}건`)
     addLog(`[${ts()}] 전송 완료 — ${summaryParts.length > 0 ? summaryParts.join(', ') : '처리 없음'}`)
 
     setProgress({ current: total, total })
@@ -400,8 +488,16 @@ export default function ShipmentsPage() {
               <label key={item.key} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#8A95B0', cursor: 'pointer' }}>
                 <input type="checkbox" checked={updateItems[item.key as keyof typeof updateItems]}
                   onChange={() => {
-                    if (item.key === 'all') setUpdateItems({ all: !updateItems.all, price: !updateItems.all, thumb: !updateItems.all, detail: !updateItems.all })
-                    else setUpdateItems(prev => ({ ...prev, [item.key]: !prev[item.key as keyof typeof prev] }))
+                    if (item.key === 'all') {
+                      setUpdateItems({ all: !updateItems.all, price: !updateItems.all, thumb: !updateItems.all, detail: !updateItems.all })
+                    } else {
+                      setUpdateItems(prev => {
+                        const next = { ...prev, [item.key]: !prev[item.key as keyof typeof prev] }
+                        // 개별 항목 변경 시 전체 체크 자동 동기화
+                        next.all = next.price && next.thumb && next.detail
+                        return next
+                      })
+                    }
                   }}
                   style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }} />
                 {item.label}
@@ -475,9 +571,15 @@ export default function ShipmentsPage() {
             <button onClick={() => setLogMessages(['로그가 초기화되었습니다.'])} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
             <button onClick={handleMarketDelete} disabled={transmitting}
               style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: transmitting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
-            <button onClick={handleStart} disabled={transmitting}
-              style={{ padding: '4px 16px', fontSize: '0.78rem', background: transmitting ? '#333' : 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: transmitting ? 'not-allowed' : 'pointer', fontWeight: 600 }}
-            >{transmitting ? '전송 중...' : '전송 시작'}</button>
+            {transmitting ? (
+              <button onClick={() => { abortRef.current = true }}
+                style={{ padding: '4px 16px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.2)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.5)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
+              >강제 중단</button>
+            ) : (
+              <button onClick={handleStart}
+                style={{ padding: '4px 16px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
+              >전송 시작</button>
+            )}
           </div>
         </div>
         <div
@@ -485,14 +587,10 @@ export default function ShipmentsPage() {
           style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.73rem', lineHeight: 1.8, color: '#4A5568' }}
         >
           {logMessages.map((msg, i) => {
-            let color = '#555'
-            if (msg.includes('실패') || msg.includes('오류')) color = '#FF6B6B'
-            else if (msg.includes('성공')) color = '#51CF66'
-            else if (msg.includes('전송 완료')) color = '#51CF66'
-            else if (msg.includes('전송 시작')) color = '#4C9AFF'
-            else if (msg.includes('→')) color = msg.includes('성공') ? '#51CF66' : msg.includes('실패') ? '#FF6B6B' : '#888'
-            else if (msg.match(/\[\d+\/\d+\]/)) color = '#FFB84D'
-            else if (msg.includes('────')) color = '#333'
+            let color = '#DCE0E8'
+            if (msg.includes('전송 완료') || msg.includes('전송 시작') || msg.includes('마켓삭제')) color = '#8A95B0'
+            else if (msg.includes('실패') || msg.includes('오류')) color = '#C4736E'
+            else if (msg.includes('성공')) color = '#7BAF7E'
             return <div key={i} style={{ color }}>{msg}</div>
           })}
         </div>
@@ -514,7 +612,17 @@ export default function ShipmentsPage() {
         {/* 상단 탭 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid #2D2D2D', gap: '8px' }}>
           <span style={{ fontSize: '0.8rem', color: '#888' }}>총 <span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredProducts.length.toLocaleString()}</span> 개의 상품이 검색되었습니다.</span>
-          <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} style={{ ...inputStyle, width: '80px', marginLeft: 'auto' }}>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '250px', marginLeft: 'auto' }}>
+            <option value="updated_at_desc">상품업데이트 날짜순 ▼</option>
+            <option value="updated_at_asc">상품업데이트 날짜순 ▲</option>
+            <option value="collected_at_desc">상품수집 날짜순 ▼</option>
+            <option value="collected_at_asc">상품수집 날짜순 ▲</option>
+            {registeredMarkets.flatMap(m => [
+              <option key={`${m.type}_asc`} value={`market_${m.type}_asc`}>{m.name} 업데이트 날짜순 ▲</option>,
+              <option key={`${m.type}_desc`} value={`market_${m.type}_desc`}>{m.name} 업데이트 날짜순 ▼</option>,
+            ])}
+          </select>
+          <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} style={{ ...inputStyle, width: '80px' }}>
             <option value={50}>50개</option>
             <option value={100}>100개</option>
             <option value={200}>200개</option>
@@ -554,11 +662,11 @@ export default function ShipmentsPage() {
                   <td style={{ padding: '0.625rem 0.5rem', fontSize: '0.75rem', color: '#888' }}>{p.source_site}</td>
                   <td style={{ padding: '0.625rem 0.5rem' }}>
                     <div>
-                      <a href={`/samba/products?highlight=${p.id}`} style={{ color: '#4C9AFF', textDecoration: 'none', fontSize: '0.8rem', cursor: 'pointer' }}
+                      <a href={`/samba/products?highlight=${p.id}`} style={{ color: '#DCE0E8', textDecoration: 'none', fontSize: '0.8rem', cursor: 'pointer' }}
                         onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
                         onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
                       >
-                        [{p.site_product_id || ''}] {p.name} {optCount > 0 ? <span style={{ color: '#4C9AFF' }}>[옵션수:{optCount}]</span> : ''}
+                        [{p.site_product_id || ''}] {p.name} {optCount > 0 ? <span style={{ color: '#DCE0E8' }}>[옵션수:{optCount}]</span> : ''}
                       </a>
                     </div>
                     {regMarkets.length > 0 && (
@@ -586,18 +694,15 @@ export default function ShipmentsPage() {
                         const d = new Date(lastShipment.completed_at!)
                         return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
                       })() : ''
+                      const marketLabels = regAccs.map(aid => {
+                        const acc = accounts.find(a => a.id === aid)
+                        return acc ? `${acc.market_name}(${acc.seller_id || acc.account_label || '-'})` : null
+                      }).filter(Boolean).join(', ')
                       return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                          {regAccs.map(aid => {
-                            const acc = accounts.find(a => a.id === aid)
-                            return acc ? (
-                              <span key={aid} style={{ color: '#51CF66', fontSize: '0.68rem' }}>
-                                {acc.market_name}({acc.seller_id || acc.account_label || '-'})
-                              </span>
-                            ) : null
-                          })}
-                          {lastTime && <span style={{ color: '#555', fontSize: '0.65rem' }}>{lastTime}</span>}
-                        </div>
+                        <span style={{ fontSize: '0.68rem' }}>
+                          <span style={{ color: '#51CF66' }}>{marketLabels}</span>
+                          {lastTime && <span style={{ color: '#555' }}> {lastTime}</span>}
+                        </span>
                       )
                     })()}
                   </td>

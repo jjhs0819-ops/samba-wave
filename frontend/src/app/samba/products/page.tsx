@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   collectorApi,
@@ -10,6 +10,7 @@ import {
   shipmentApi,
   proxyApi,
   nameRuleApi,
+  categoryApi,
   type SambaCollectedProduct,
   type SambaPolicy,
   type SambaSearchFilter,
@@ -120,12 +121,21 @@ export default function ProductsPage() {
   const [lastAiUsage, setLastAiUsage] = useState<{ calls: number; tokens: number; cost: number; date: string } | null>(null);
 
   // AI 이미지 변환
-  const [aiImgScope, setAiImgScope] = useState({ thumbnail: true, additional: false, detail: false })
   const [aiImgMode, setAiImgMode] = useState('background')
   const [aiModelPreset, setAiModelPreset] = useState('female_v1')
   const [aiImgTransforming, setAiImgTransforming] = useState(false)
   const [imgFiltering, setImgFiltering] = useState(false)
   const [imgFilterScope, setImgFilterScope] = useState<'images' | 'detail' | 'all'>('images')
+
+  // AI 작업 진행 모달
+  const [aiJobModal, setAiJobModal] = useState(false)
+  const [aiJobTitle, setAiJobTitle] = useState('')
+  const [aiJobLogs, setAiJobLogs] = useState<string[]>([])
+  const [aiJobDone, setAiJobDone] = useState(false)
+  const aiJobLogRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
+  }, [aiJobLogs])
 
   // 삭제 확인 모달
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: string[]; label: string } | null>(null);
@@ -133,6 +143,16 @@ export default function ProductsPage() {
   // 태그 일괄 입력
   const [showBulkTag, setShowBulkTag] = useState(false)
   const [bulkTagInput, setBulkTagInput] = useState('')
+
+  // 카테고리 매핑 (source_site::source_category → { market: category })
+  const [catMappingMap, setCatMappingMap] = useState<Map<string, Record<string, string>>>(new Map())
+
+  // AI 태그 미리보기 모달
+  const [showTagPreview, setShowTagPreview] = useState(false)
+  const [tagPreviews, setTagPreviews] = useState<{ group_id: string; group_name: string; product_count: number; rep_name: string; tags: string[]; seo_keywords: string[] }[]>([])
+  const [tagPreviewCost, setTagPreviewCost] = useState<{ api_calls: number; input_tokens: number; output_tokens: number; cost_krw: number } | null>(null)
+  const [tagPreviewLoading, setTagPreviewLoading] = useState(false)
+  const [removedTags, setRemovedTags] = useState<string[]>([])
 
   // 삭제어 목록 (등록 상품명 취소선 표시용)
   const [deletionWords, setDeletionWords] = useState<string[]>([]);
@@ -161,6 +181,17 @@ export default function ProductsPage() {
       const nameMap: Record<string, string> = {};
       filters.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name; });
       setFilterNameMap(nameMap);
+      // 카테고리 매핑 로드
+      try {
+        const mappings = await categoryApi.listMappings() as { source_site: string; source_category: string; target_mappings: Record<string, string> }[]
+        if (Array.isArray(mappings)) {
+          const map = new Map<string, Record<string, string>>()
+          mappings.forEach(m => {
+            map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {})
+          })
+          setCatMappingMap(map)
+        }
+      } catch { /* 매핑 로드 실패해도 무시 */ }
     } catch (e) {
       console.error("load error:", e);
     }
@@ -210,6 +241,15 @@ export default function ProductsPage() {
     // Status filter
     if (statusFilter === 'has_orders') {
       filtered = filtered.filter((p) => orderProductIds.has(p.id))
+    } else if (statusFilter === 'free_ship') {
+      filtered = filtered.filter((p) => (p as Record<string, unknown>).free_shipping === true)
+    } else if (statusFilter === 'same_day') {
+      filtered = filtered.filter((p) => (p as Record<string, unknown>).same_day_delivery === true)
+    } else if (statusFilter === 'free_same') {
+      filtered = filtered.filter((p) => {
+        const r = p as Record<string, unknown>
+        return r.free_shipping === true && r.same_day_delivery === true
+      })
     } else if (statusFilter) {
       filtered = filtered.filter((p) => p.status === statusFilter)
     }
@@ -282,7 +322,7 @@ export default function ProductsPage() {
     return filtered.length;
   }, [allProducts, searchQ, searchType, siteFilter, statusFilter, filterByGroupId, filterNameMap, policies]);
 
-  const allSites = [...new Set(allProducts.map((p) => p.source_site))].sort();
+  const allSites = useMemo(() => [...new Set(allProducts.map(p => p.source_site))].sort(), [allProducts])
 
   const handleSearch = () => {
     // highlight 필터가 있으면 해제하고 전체 검색
@@ -300,21 +340,6 @@ export default function ProductsPage() {
     }
     setDeleteConfirm({ ids: [id], label: p ? `"${p.name.slice(0, 30)}"` : "이 상품" });
   };
-
-  const handleBulkTagApply = async () => {
-    if (!bulkTagInput.trim()) return
-    const newTags = bulkTagInput.split(',').map(t => t.trim()).filter(Boolean)
-    if (newTags.length === 0) return
-    for (const id of selectedIds) {
-      const p = allProducts.find(x => x.id === id)
-      const merged = [...new Set([...(p?.tags || []), ...newTags])]
-      setAllProducts(prev => prev.map(x => x.id === id ? { ...x, tags: merged } : x))
-      await collectorApi.updateProduct(id, { tags: merged } as Partial<SambaCollectedProduct>).catch(() => {})
-    }
-    showAlert(`${selectedIds.size}개 상품에 태그 ${newTags.length}개 적용 완료`, 'success')
-    setShowBulkTag(false)
-    setBulkTagInput('')
-  }
 
   const handleBulkDelete = () => {
     if (selectedIds.size === 0) return;
@@ -350,9 +375,7 @@ export default function ProductsPage() {
 
   const confirmDelete = async () => {
     if (!deleteConfirm) return;
-    for (const id of deleteConfirm.ids) {
-      await collectorApi.deleteProduct(id).catch(() => {});
-    }
+    await Promise.all(deleteConfirm.ids.map(id => collectorApi.deleteProduct(id).catch(() => {})))
     setSelectedIds(new Set());
     setSelectAll(false);
     setDeleteConfirm(null);
@@ -448,6 +471,60 @@ export default function ProductsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+      {/* AI 작업 진행 모달 */}
+      {aiJobModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 99998,
+          background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px',
+            width: '520px', maxHeight: '70vh', display: 'flex', flexDirection: 'column',
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{
+              padding: '14px 20px', borderBottom: '1px solid #2D2D2D',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#E5E5E5' }}>{aiJobTitle}</span>
+              {aiJobDone && (
+                <button onClick={() => setAiJobModal(false)} style={{
+                  background: 'none', border: 'none', color: '#888', fontSize: '1.1rem', cursor: 'pointer',
+                }}>✕</button>
+              )}
+            </div>
+            <div
+              ref={aiJobLogRef}
+              style={{
+                flex: 1, overflow: 'auto', padding: '14px', fontFamily: 'monospace',
+                fontSize: '0.68rem', lineHeight: 1.6, color: '#8A95B0',
+                maxHeight: '50vh',
+              }}
+            >
+              {aiJobLogs.map((line, i) => (
+                <p key={i} style={{
+                  margin: 0,
+                  color: line.includes('완료') && !line.includes('실패') ? '#51CF66'
+                    : line.includes('실패') || line.includes('오류') ? '#FF6B6B'
+                    : '#8A95B0',
+                }}>{line}</p>
+              ))}
+              {!aiJobDone && (
+                <p style={{ margin: 0, color: '#FFB84D' }}>처리 중...</p>
+              )}
+            </div>
+            {aiJobDone && (
+              <div style={{ padding: '12px 20px', borderTop: '1px solid #2D2D2D', textAlign: 'right' }}>
+                <button onClick={() => setAiJobModal(false)} style={{
+                  padding: '6px 20px', borderRadius: '6px', fontSize: '0.8rem',
+                  background: 'rgba(81,207,102,0.15)', border: '1px solid rgba(81,207,102,0.4)',
+                  color: '#51CF66', cursor: 'pointer', fontWeight: 600,
+                }}>확인</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 삭제 확인 모달 */}
       {deleteConfirm && (
         <div
@@ -476,28 +553,126 @@ export default function ProductsPage() {
           </div>
         </div>
       )}
-      {/* 태그 일괄입력 모달 */}
-      {showBulkTag && (
+      {/* AI 태그 미리보기 모달 */}
+      {showTagPreview && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          onClick={() => setShowBulkTag(false)}>
-          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', padding: '28px 32px', minWidth: '400px', maxWidth: '500px' }}
+          onClick={() => { setShowTagPreview(false); setRemovedTags([]) }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', padding: '28px 32px', minWidth: '500px', maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto' }}
             onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 8px', fontSize: '1rem', fontWeight: 600, color: '#E5E5E5' }}>태그 일괄 입력</h3>
-            <p style={{ margin: '0 0 16px', fontSize: '0.8rem', color: '#888' }}>
-              선택된 {selectedIds.size}개 상품에 태그를 추가합니다. 콤마(,)로 여러 태그를 구분하세요.
+            <h3 style={{ margin: '0 0 4px', fontSize: '1rem', fontWeight: 600, color: '#E5E5E5' }}>AI 태그 미리보기</h3>
+            <p style={{ margin: '0 0 20px', fontSize: '0.75rem', color: '#888' }}>
+              태그사전에 미등록된 태그를 X로 제거한 후 적용하세요
             </p>
-            <input
-              value={bulkTagInput}
-              onChange={(e) => setBulkTagInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { handleBulkTagApply(); } }}
-              placeholder="예: 나이키, 스니커즈, 한정판"
-              style={{ width: '100%', padding: '10px 14px', fontSize: '0.875rem', background: '#0A0A0A', border: '1px solid #3D3D3D', borderRadius: '6px', color: '#E5E5E5', outline: 'none', boxSizing: 'border-box', marginBottom: '16px' }}
-            />
+            {tagPreviews.map((preview) => (
+              <div key={preview.group_id} style={{ marginBottom: '20px', padding: '16px', background: '#0F0F0F', borderRadius: '8px', border: '1px solid #2D2D2D' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '0.82rem', color: '#FFB84D', fontWeight: 600 }}>{preview.rep_name}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#666' }}>{preview.product_count}개 상품 | {preview.tags.length}개 태그</span>
+                </div>
+                <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#4C9AFF', fontWeight: 600, whiteSpace: 'nowrap' }}>SEO:</span>
+                  <input
+                    type="text"
+                    defaultValue={preview.seo_keywords.join(', ')}
+                    placeholder="SEO 키워드 (콤마 구분)"
+                    onBlur={(e) => {
+                      const newKws = e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                      setTagPreviews(prev => prev.map(p =>
+                        p.group_id === preview.group_id ? { ...p, seo_keywords: newKws } : p
+                      ))
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                    style={{ flex: 1, fontSize: '0.72rem', padding: '3px 8px', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#4C9AFF', outline: 'none' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>
+                  {preview.tags.map((tag, ti) => (
+                    <span key={ti} style={{
+                      fontSize: '0.78rem', padding: '4px 10px', borderRadius: '14px',
+                      background: 'rgba(100,100,255,0.1)', border: '1px solid rgba(100,100,255,0.25)', color: '#8B8FD4',
+                      display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    }}>
+                      {tag}
+                      <span
+                        style={{ cursor: 'pointer', color: '#666', fontSize: '0.85rem', lineHeight: 1 }}
+                        onClick={async () => {
+                          setTagPreviews(prev => prev.map(p => ({
+                            ...p, tags: p.tags.filter(t => t !== tag)
+                          })))
+                          const ban = await showConfirm(`"${tag}"을(를) 금지태그에 등록할까요?\n(등록하면 다음 AI태그 생성 시 자동 제외됩니다)`)
+                          if (ban) {
+                            setRemovedTags(prev => prev.includes(tag) ? prev : [...prev, tag])
+                          }
+                        }}
+                      >&times;</span>
+                    </span>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  placeholder="추가 태그 입력 후 Enter (콤마 구분 가능)"
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      const input = (e.target as HTMLInputElement)
+                      const newTags = input.value.split(',').map(t => t.trim()).filter(Boolean)
+                      if (newTags.length === 0) return
+                      setTagPreviews(prev => prev.map(p =>
+                        p.group_id === preview.group_id
+                          ? { ...p, tags: [...p.tags, ...newTags.filter(t => !p.tags.includes(t))] }
+                          : p
+                      ))
+                      input.value = ''
+                    }
+                  }}
+                  style={{
+                    width: '100%', padding: '5px 10px', fontSize: '0.75rem',
+                    background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px',
+                    color: '#E5E5E5', outline: 'none',
+                  }}
+                />
+              </div>
+            ))}
+            {removedTags.length > 0 && (
+              <div style={{ marginBottom: '12px', padding: '10px 14px', background: 'rgba(255,107,107,0.06)', borderRadius: '6px', border: '1px solid rgba(255,107,107,0.15)' }}>
+                <span style={{ fontSize: '0.72rem', color: '#FF6B6B', fontWeight: 600 }}>금지태그 등록 예정 ({removedTags.length}개): </span>
+                <span style={{ fontSize: '0.72rem', color: '#888' }}>{removedTags.join(', ')}</span>
+              </div>
+            )}
+            {tagPreviewCost && (
+              <p style={{ margin: '0 0 16px', fontSize: '0.72rem', color: '#666', textAlign: 'right' }}>
+                API {tagPreviewCost.api_calls}회 | {tagPreviewCost.input_tokens + tagPreviewCost.output_tokens} 토큰 | ~{tagPreviewCost.cost_krw}원
+              </p>
+            )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-              <button onClick={() => setShowBulkTag(false)}
+              <button onClick={() => { setShowTagPreview(false); setRemovedTags([]) }}
                 style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid #3D3D3D', background: 'transparent', color: '#888' }}>취소</button>
-              <button onClick={handleBulkTagApply}
-                style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(255,211,61,0.5)', background: 'rgba(255,211,61,0.15)', color: '#FFD93D', fontWeight: 600 }}>적용</button>
+              <button onClick={async () => {
+                const groups = tagPreviews.filter(p => p.tags.length > 0).map(p => ({ group_id: p.group_id, tags: p.tags, seo_keywords: p.seo_keywords }))
+                if (groups.length === 0) { showAlert('적용할 태그가 없습니다'); return }
+                try {
+                  const res = await proxyApi.applyAiTags(groups, removedTags)
+                  if (res.success) {
+                    showAlert(res.message, 'success')
+                    if (tagPreviewCost) {
+                      const now = new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' })
+                      setLastAiUsage({
+                        calls: tagPreviewCost.api_calls,
+                        tokens: tagPreviewCost.input_tokens + tagPreviewCost.output_tokens,
+                        cost: tagPreviewCost.cost_krw,
+                        date: now,
+                      })
+                    }
+                    setShowTagPreview(false)
+                    setSelectedIds(new Set()); setSelectAll(false)
+                    load()
+                  } else showAlert(res.message, 'error')
+                } catch (e) {
+                  showAlert(`태그 적용 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+                }
+              }}
+                style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(255,140,0,0.5)', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600 }}>
+                전체 그룹에 적용 ({tagPreviews.reduce((s, p) => s + p.tags.length, 0)}개 태그)
+              </button>
             </div>
           </div>
         </div>
@@ -608,6 +783,9 @@ export default function ProductsPage() {
             <option value="registered">마켓등록</option>
             <option value="collected">미등록</option>
             <option value="has_orders">판매이력</option>
+            <option value="free_ship">무료배송</option>
+            <option value="same_day">당일발송</option>
+            <option value="free_same">무배당발</option>
           </select>
           <select value={searchType} onChange={(e) => setSearchType(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px", color: "#C5C5C5", width: "90px" }}>
@@ -655,96 +833,121 @@ export default function ProductsPage() {
         </div>
       </div>)}
 
-      {/* AI 이미지변환 / 이미지 필터링 / AI 비용 — 1행 3단 */}
+      {/* AI비용 + AI 이미지 변환 + 이미지 필터링 — 3단 나란히 배치 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '1rem' }}>
-        {/* 1단: AI 이미지 변환 */}
-        <div style={{ padding: '10px 12px', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', order: 2 }}>
-          <div style={{ fontSize: '0.78rem', color: '#FF8C00', fontWeight: 600, marginBottom: '8px' }}>AI 이미지 변환</div>
-          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
-            <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.75rem', flex: 1, minWidth: 0 }}>
-              <option value="background">배경 제거</option>
-              <option value="scene">연출컷</option>
-              <option value="model">모델 착용</option>
-            </select>
-            {aiImgMode === 'model' && (
-              <select value={aiModelPreset} onChange={e => setAiModelPreset(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.75rem', flex: 1, minWidth: 0 }}>
-                <optgroup label="여성"><option value="female_v1">청순 생머리</option><option value="female_v2">시크 단발</option><option value="female_v3">건강 웨이브</option></optgroup>
-                <optgroup label="남성"><option value="male_v1">깔끔 슬림</option><option value="male_v2">남성미 근육</option><option value="male_v3">훈남 스타일</option></optgroup>
-                <optgroup label="키즈 여아"><option value="kids_girl_v1">긴머리 차분</option><option value="kids_girl_v2">단발 활발</option><option value="kids_girl_v3">양갈래 귀여움</option></optgroup>
-                <optgroup label="키즈 남아"><option value="kids_boy_v1">밝은 정면</option><option value="kids_boy_v2">장난꾸러기</option><option value="kids_boy_v3">차분한</option></optgroup>
-              </select>
-            )}
-          </div>
-          <button
-            onClick={async () => {
-              if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-              const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 이미지를 변환하시겠습니까?`)
-              if (!ok) return
-              setAiImgTransforming(true)
+      {/* AI 비용 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(81,207,102,0.08)', border: '1px solid rgba(81,207,102,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.8125rem', color: '#51CF66', fontWeight: 600 }}>AI 비용</span>
+        {lastAiUsage ? (
+          <>
+            <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{lastAiUsage.calls}건</span>
+            <span style={{ fontSize: '0.78rem', color: '#888' }}>·</span>
+            <span style={{ fontSize: '0.78rem', color: '#FFB84D' }}>₩{lastAiUsage.cost.toLocaleString()}</span>
+            <span style={{ fontSize: '0.7rem', color: '#555' }}>{lastAiUsage.date}</span>
+          </>
+        ) : (
+          <span style={{ fontSize: '0.78rem', color: '#555' }}>사용 내역 없음</span>
+        )}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
+        <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
+          <option value="background">배경 제거</option>
+          <option value="scene">연출컷</option>
+          <option value="model">모델 착용</option>
+        </select>
+        {aiImgMode === 'model' && (
+          <select value={aiModelPreset} onChange={e => setAiModelPreset(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
+            <optgroup label="여성"><option value="female_v1">청순 생머리</option><option value="female_v2">시크 단발</option><option value="female_v3">건강 웨이브</option></optgroup>
+            <optgroup label="남성"><option value="male_v1">깔끔 슬림</option><option value="male_v2">남성미 근육</option><option value="male_v3">훈남 스타일</option></optgroup>
+            <optgroup label="키즈 여아"><option value="kids_girl_v1">긴머리 차분</option><option value="kids_girl_v2">단발 활발</option><option value="kids_girl_v3">양갈래 귀여움</option></optgroup>
+            <optgroup label="키즈 남아"><option value="kids_boy_v1">밝은 정면</option><option value="kids_boy_v2">장난꾸러기</option><option value="kids_boy_v3">차분한</option></optgroup>
+          </select>
+        )}
+        <span style={{ fontSize: '0.78rem', color: '#888' }}>({selectedIds.size}개 상품)</span>
+        <button
+          onClick={async () => {
+            if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
+            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 이미지를 변환하시겠습니까?`)
+            if (!ok) return
+            const ids = [...selectedIds]
+            setAiImgTransforming(true)
+            setAiJobTitle(`AI 이미지변환 (${ids.length}개)`)
+            setAiJobLogs([])
+            setAiJobDone(false)
+            setAiJobModal(true)
+            const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
+            let success = 0
+            let fail = 0
+            for (let i = 0; i < ids.length; i++) {
+              const prod = allProducts.find(p => p.id === ids[i])
+              const label = prod?.name?.slice(0, 30) || ids[i].slice(-8)
               try {
                 const autoScope = { thumbnail: true, additional: true, detail: true }
-                const res = await proxyApi.transformImages([...selectedIds], autoScope, aiImgMode, aiModelPreset)
-                if (res.success) { showAlert(res.message, 'success'); load() }
-                else showAlert(res.message, 'error')
-              } catch (e) { showAlert(`변환 실패: ${e instanceof Error ? e.message : '오류'}`, 'error') }
-              finally { setAiImgTransforming(false) }
-            }}
-            disabled={aiImgTransforming || selectedIds.size === 0}
-            style={{ width: '100%', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '4px 0', borderRadius: '6px', fontSize: '0.75rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600 }}
-          >{aiImgTransforming ? '변환중...' : `변환 실행 (${selectedIds.size}개)`}</button>
-        </div>
+                const res = await proxyApi.transformImages([ids[i]], autoScope, aiImgMode, aiModelPreset)
+                if (res.success) { success++; addLog(`[${i + 1}/${ids.length}] ${label} — 완료`) }
+                else { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 실패: ${res.message}`) }
+              } catch (e) { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+            }
+            addLog(`\n완료: 성공 ${success}개 / 실패 ${fail}개`)
+            setAiJobDone(true)
+            setAiImgTransforming(false)
+            setSelectedIds(new Set()); setSelectAll(false)
+            load()
+          }}
+          disabled={aiImgTransforming || selectedIds.size === 0}
+          style={{ marginLeft: 'auto', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+        >{aiImgTransforming ? '변환중...' : '변환 실행'}</button>
+      </div>
 
-        {/* 2단: 이미지 필터링 */}
-        <div style={{ padding: '10px 12px', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px', order: 3 }}>
-          <div style={{ fontSize: '0.78rem', color: '#818CF8', fontWeight: 600, marginBottom: '8px' }}>이미지 필터링</div>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-            {(['images', 'detail', 'all'] as const).map(s => (
-              <label key={s} style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer' }}>
-                <input type="radio" name="imgFilterScope" checked={imgFilterScope === s}
-                  onChange={() => setImgFilterScope(s)}
-                  style={{ accentColor: '#818CF8', width: '12px', height: '12px' }} />
-                <span style={{ fontSize: '0.72rem', color: '#E5E5E5' }}>
-                  {s === 'images' ? '대표+추가' : s === 'detail' ? '상세' : '전체'}
-                </span>
-              </label>
-            ))}
-          </div>
-          <button
-            onClick={async () => {
-              if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-              const scopeLabel = imgFilterScope === 'images' ? '대표+추가이미지' : imgFilterScope === 'detail' ? '상세이미지' : '전체 이미지'
-              const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 ${scopeLabel}를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
-              if (!ok) return
-              setImgFiltering(true)
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.8125rem', color: '#818CF8', fontWeight: 600 }}>이미지 필터링</span>
+        {(['images', 'detail', 'all'] as const).map(s => (
+          <label key={s} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+            <input type="radio" name="imgFilterScope" checked={imgFilterScope === s}
+              onChange={() => setImgFilterScope(s)}
+              style={{ accentColor: '#818CF8', width: '13px', height: '13px' }} />
+            <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>
+              {s === 'images' ? '대표+추가' : s === 'detail' ? '상세이미지' : '전체'}
+            </span>
+          </label>
+        ))}
+        <button
+          onClick={async () => {
+            if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
+            const scopeLabel = imgFilterScope === 'images' ? '대표+추가이미지' : imgFilterScope === 'detail' ? '상세이미지' : '전체 이미지'
+            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 ${scopeLabel}를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
+            if (!ok) return
+            const ids = [...selectedIds]
+            setImgFiltering(true)
+            setAiJobTitle(`이미지 필터링 (${ids.length}개)`)
+            setAiJobLogs([])
+            setAiJobDone(false)
+            setAiJobModal(true)
+            const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
+            let success = 0
+            let fail = 0
+            for (let i = 0; i < ids.length; i++) {
+              const prod = allProducts.find(p => p.id === ids[i])
+              const label = prod?.name?.slice(0, 30) || ids[i].slice(-8)
               try {
-                const ids = [...selectedIds]
-                const r = await proxyApi.filterProductImages(ids, '', imgFilterScope)
-                if (r.success) {
-                  const errCount = Object.keys(r.errors || {}).length
-                  if (errCount > 0) showAlert(`필터링: ${r.total}개 완료, ${errCount}개 실패`, 'info')
-                  else showAlert(`필터링 완료 — ${r.total}개 처리`, 'success')
-                  const apiCalls = r.total || ids.length
-                  setLastAiUsage({ calls: apiCalls, tokens: apiCalls * 1000, cost: apiCalls * 15, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
-                  setSelectedIds(new Set()); setSelectAll(false); load()
-                }
-              } catch (e) { showAlert(`필터링 오류: ${e instanceof Error ? e.message : '오류'}`, 'error') }
-              finally { setImgFiltering(false) }
-            }}
-            disabled={imgFiltering || selectedIds.size === 0}
-            style={{ width: '100%', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '4px 0', borderRadius: '6px', fontSize: '0.75rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600 }}
-          >{imgFiltering ? '필터링중...' : `필터링 실행 (${selectedIds.size}개)`}</button>
-        </div>
-
-        {/* 3단: AI 비용 */}
-        <div style={{ padding: '10px 12px', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'center', order: 1 }}>
-          <div style={{ fontSize: '0.78rem', color: '#FF8C00', fontWeight: 600, marginBottom: '6px' }}>AI 비용</div>
-          {lastAiUsage ? (<>
-            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#7BAF7E' }}>₩{lastAiUsage.cost.toLocaleString()}</div>
-            <div style={{ fontSize: '0.7rem', color: '#888' }}>{lastAiUsage.calls}회 / {lastAiUsage.date}</div>
-          </>) : (
-            <div style={{ fontSize: '0.78rem', color: '#888' }}>호출 내역 없음</div>
-          )}
-        </div>
+                const r = await proxyApi.filterProductImages([ids[i]], '', imgFilterScope)
+                if (r.success) { success++; addLog(`[${i + 1}/${ids.length}] ${label} — 완료`) }
+                else { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 실패: ${r.message}`) }
+              } catch (e) { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+            }
+            addLog(`\n완료: 성공 ${success}개 / 실패 ${fail}개`)
+            setAiJobDone(true)
+            setImgFiltering(false)
+            const apiCalls = success + fail
+            setLastAiUsage({ calls: apiCalls, tokens: apiCalls * 1000, cost: apiCalls * 15, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
+            setSelectedIds(new Set()); setSelectAll(false)
+            load()
+          }}
+          disabled={imgFiltering || selectedIds.size === 0}
+          style={{ marginLeft: 'auto', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+        >{imgFiltering ? '필터링중...' : '필터링 실행'}</button>
+      </div>
       </div>
 
       {/* Result header + action bar */}
@@ -793,38 +996,42 @@ export default function ProductsPage() {
           }}>AI상품명변경</button>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출)`)
+            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
             if (!ok) return
+            setTagPreviewLoading(true)
             try {
-              const res = await proxyApi.generateAiTags([...selectedIds])
+              const res = await proxyApi.previewAiTags([...selectedIds])
               if (res.success) {
-                showAlert(res.message, 'success')
-                const now = new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' })
-                setLastAiUsage({
-                  calls: res.api_calls || 0,
-                  tokens: (res.input_tokens || 0) + (res.output_tokens || 0),
-                  cost: res.cost_krw || 0,
-                  date: now,
-                })
-                setSelectedIds(new Set()); setSelectAll(false)
-                load()
+                setTagPreviews(res.previews)
+                setTagPreviewCost({ api_calls: res.api_calls, input_tokens: res.input_tokens, output_tokens: res.output_tokens, cost_krw: res.cost_krw })
+                setRemovedTags([])
+                setShowTagPreview(true)
               } else showAlert(res.message, 'error')
             } catch (e) {
               showAlert(`태그 생성 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+            } finally {
+              setTagPreviewLoading(false)
             }
-          }} style={{
+          }} disabled={tagPreviewLoading} style={{
             fontSize: "0.78rem", padding: "4px 12px",
             border: "1px solid #3D3D3D", borderRadius: "5px",
-            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
-          }}>AI태그</button>
-          <button onClick={() => {
+            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: tagPreviewLoading ? "wait" : "pointer", whiteSpace: "nowrap", opacity: tagPreviewLoading ? 0.5 : 1,
+          }}>{tagPreviewLoading ? 'AI태그 생성중...' : 'AI태그'}</button>
+          <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            setShowBulkTag(true)
+            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 태그를 모두 삭제하시겠습니까?`)
+            if (!ok) return
+            await Promise.all([...selectedIds].map(id =>
+              collectorApi.updateProduct(id, { tags: [], seo_keywords: [] } as Partial<SambaCollectedProduct>).catch(() => {})
+            ))
+            setAllProducts(prev => prev.map(p => selectedIds.has(p.id) ? { ...p, tags: [], seo_keywords: [] as string[] } : p))
+            showAlert(`${selectedIds.size}개 상품 태그 삭제 완료`, 'success')
+            setSelectedIds(new Set()); setSelectAll(false)
           }} style={{
             fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid #3D3D3D", borderRadius: "5px",
-            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
-          }}>태그 일괄입력</button>
+            border: "1px solid rgba(255,107,107,0.3)", borderRadius: "5px",
+            color: "#FF6B6B", background: "rgba(255,107,107,0.08)", cursor: "pointer", whiteSpace: "nowrap",
+          }}>태그 삭제</button>
           <button
             onClick={() => {
               if (selectedIds.size === 0) { showAlert('전송할 상품을 선택해주세요'); return }
@@ -960,10 +1167,28 @@ export default function ProductsPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "8px" }}>
           {products.map((p) => (
             <div key={p.id} style={{
-              background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "8px",
-              overflow: "hidden", cursor: "pointer",
-            }}>
+              background: "rgba(30,30,30,0.5)",
+              border: selectedIds.has(p.id) ? "1px solid #FF8C00" : "1px solid #2D2D2D",
+              borderRadius: "8px",
+              overflow: "hidden", cursor: "pointer", position: "relative",
+            }} onClick={() => handleCheckboxToggle(p.id, !selectedIds.has(p.id))}>
+              <input
+                type="checkbox"
+                checked={selectedIds.has(p.id)}
+                onChange={e => handleCheckboxToggle(p.id, e.target.checked)}
+                onClick={e => e.stopPropagation()}
+                style={{
+                  position: "absolute", top: "6px", left: "6px", zIndex: 1,
+                  accentColor: "#FF8C00", width: "14px", height: "14px", cursor: "pointer",
+                }}
+              />
               <ProductImage src={p.images?.[0]} name={p.name} size={140} />
+              {((p as Record<string, unknown>).free_shipping || (p as Record<string, unknown>).same_day_delivery) && (
+                <div style={{ display: 'flex', gap: '3px', padding: '3px 8px 0' }}>
+                  {(p as Record<string, unknown>).free_shipping && <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', background: 'rgba(76,154,255,0.15)', color: '#4C9AFF', fontWeight: 600 }}>무배</span>}
+                  {(p as Record<string, unknown>).same_day_delivery && <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600 }}>당발</span>}
+                </div>
+              )}
               <div style={{ padding: "6px 8px" }}>
                 <p style={{ fontSize: '0.7rem', color: '#C5C5C5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0, display: 'flex', alignItems: 'center' }}>
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
@@ -1020,6 +1245,7 @@ export default function ProductsPage() {
                 await collectorApi.updateProduct(productId, { tags } as Partial<SambaCollectedProduct>).catch(() => {})
               }}
               logMessage={activeLog?.productId === p.id ? activeLog.message : undefined}
+              catMappingMap={catMappingMap}
             />
           ))}
         </div>
@@ -1119,6 +1345,7 @@ interface ProductCardProps {
   onAddTaskLog: (msg: string) => void;
   onProductUpdate: (productId: string, data: Partial<SambaCollectedProduct>) => void;
   logMessage?: string;
+  catMappingMap: Map<string, Record<string, string>>;
 }
 
 function getSourceUrl(sourceSite: string, siteProductId: string | undefined): string {
@@ -1196,6 +1423,7 @@ function renderRegisteredName(name: string, deletionWords: string[]): React.Reac
 function ProductCard({
   product: p, idx, policies, accounts, nameRules, selectedIds, filterNameMap, deletionWords,
   onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onTagUpdate, onMarketDelete, onAddTaskLog, onProductUpdate, logMessage,
+  catMappingMap,
 }: ProductCardProps) {
   const [showPriceHistoryModal, setShowPriceHistoryModal] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)
@@ -1285,6 +1513,18 @@ function ProductCard({
     })
 
   const marketEnabled = ((p as unknown as Record<string, unknown>).market_enabled as Record<string, boolean>) || {};
+
+  // 상품의 카테고리 매핑 조회
+  const productCatMapping = useMemo(() => {
+    const site = p.source_site || ''
+    const cats = [p.category1, p.category2, p.category3, p.category4].filter(Boolean) as string[]
+    if (cats.length === 0 && p.category) {
+      cats.push(...p.category.split('>').map(c => c.trim()).filter(Boolean))
+    }
+    if (!site || cats.length === 0) return {}
+    const leafPath = cats.join(' > ')
+    return catMappingMap.get(`${site}::${leafPath}`) || {}
+  }, [p.source_site, p.category, p.category1, p.category2, p.category3, p.category4, catMappingMap])
 
   // 등록된 계정 기반 마켓 정보 (등록한 마켓만 표시용)
   const regAccIds = p.registered_accounts ?? []
@@ -1885,6 +2125,17 @@ function ProductCard({
               )}
             </div>
           )}
+          {/* 무배당발 배지 */}
+          {((p as Record<string, unknown>).free_shipping || (p as Record<string, unknown>).same_day_delivery) && (
+            <div style={{ display: 'flex', gap: '3px', width: '100%' }}>
+              {(p as Record<string, unknown>).free_shipping && (
+                <span style={{ fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', background: 'transparent', color: '#4C9AFF', border: '1px solid rgba(76,154,255,0.3)', flex: 1, textAlign: 'center' }}>무배</span>
+              )}
+              {(p as Record<string, unknown>).same_day_delivery && (
+                <span style={{ fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', background: 'transparent', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.3)', flex: 1, textAlign: 'center' }}>당발</span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Right: Detail info */}
@@ -2033,7 +2284,19 @@ function ProductCard({
                   <td style={tdLabel}>{m.marketName}</td>
                   <td style={tdVal}>
                     <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                      <span style={{ color: "#FFB84D", fontWeight: 600 }}>₩{fmt(m.price)}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span style={{ color: "#FFB84D", fontWeight: 600 }}>₩{fmt(m.price)}</span>
+                        {(() => {
+                          const marketKey = MARKETS.find(mk => m.marketName.includes(mk.name))?.id
+                            || m.marketName.toLowerCase().replace(/\s/g, '')
+                          const mappedCat = productCatMapping[marketKey] || ''
+                          return mappedCat ? (
+                            <span style={{ fontSize: "0.68rem", color: "#888", background: "rgba(255,255,255,0.04)", padding: "1px 6px", borderRadius: "3px", border: "1px solid #2D2D2D" }}>{mappedCat}</span>
+                          ) : (
+                            <span style={{ fontSize: "0.68rem", color: "#555" }}>미매핑</span>
+                          )
+                        })()}
+                      </div>
                       <span style={{ fontSize: "0.72rem", color: "#666" }}>{m.calcStr}</span>
                     </div>
                   </td>
@@ -2125,7 +2388,7 @@ function ProductCard({
                 <td style={tdLabel}>태그</td>
                 <td style={tdVal}>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "center" }}>
-                    {(p.tags || []).filter(t => t !== '__ai_tagged__').map((tag, ti) => (
+                    {(p.tags || []).filter(t => !t.startsWith('__')).map((tag, ti) => (
                       <span key={ti} style={{
                         fontSize: "0.7rem", padding: "1px 8px", borderRadius: "10px",
                         background: "rgba(100,100,255,0.1)", border: "1px solid rgba(100,100,255,0.25)", color: "#8B8FD4",
@@ -2135,7 +2398,7 @@ function ProductCard({
                         <span
                           style={{ cursor: "pointer", color: "#666", fontSize: "0.8rem", lineHeight: 1 }}
                           onClick={() => {
-                            const newTags = (p.tags || []).filter((_, i) => i !== ti)
+                            const newTags = (p.tags || []).filter(t => t !== tag)
                             onTagUpdate(p.id, newTags)
                           }}
                         >×</span>

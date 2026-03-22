@@ -119,12 +119,60 @@ def _build_origin_area(origin: str) -> dict:
   return {"originAreaCode": "03", "content": origin or "상세설명에 표기", "plural": False}
 
 
-def _build_combination_options(options: list[dict], sale_price: int) -> dict:
+def _build_certification_infos(cert_infos: list[dict] | None) -> dict:
+  """카테고리 인증정보 → productCertificationInfos 변환.
+
+  카테고리 API 조회 결과 중 필수(nonEssential=false)만 선택.
+  네이버 API 제한: 최대 5개.
+  kindType별 기본값:
+    GREEN_PRODUCTS → 인증번호 숫자+하이픈만 허용
+    companyName=true → 인증상호 필수
+  """
+  if not cert_infos:
+    return {}
+  # 필수 인증만 필터 (nonEssential이 false이거나 없는 것)
+  required = [c for c in cert_infos if not c.get("nonEssential", False)]
+  if not required:
+    return {}
+  items = []
+  for info in required[:5]:  # 최대 5개
+    cert_id = info.get("id")
+    if cert_id is None:
+      continue
+    kind_types = info.get("kindTypes") or []
+    kind_type = kind_types[0] if kind_types else "ETC"
+    # 친환경인증: 인증번호 숫자+하이픈만 허용
+    if info.get("green") or kind_type == "GREEN_PRODUCTS":
+      cert_number = "0000-0000"
+    else:
+      cert_number = "해당사항없음"
+    # companyName=true면 인증상호 필수
+    name = "자가인증" if info.get("companyName") else "해당사항없음"
+    items.append({
+      "certificationInfoId": cert_id,
+      "certificationKindType": kind_type,
+      "name": name,
+      "certificationNumber": cert_number,
+    })
+  if not items:
+    return {}
+  return {"productCertificationInfos": items}
+
+
+def _build_combination_options(
+  options: list[dict], sale_price: int,
+  max_stock_per_option: int = 0,
+  option_deletion_words: list[str] | None = None,
+) -> dict:
   """수집 옵션 → 스마트스토어 combinationOption 변환.
 
   옵션명에서 사이즈/색상을 분리하고, 재고·품절 상태를 반영한다.
   옵션가는 sale_price 기준 0원이 최소 1개 보장되도록 처리.
+  max_stock_per_option: 계정 재고수량 설정 (옵션별 재고 상한)
+  option_deletion_words: 옵션명에서 제거할 단어 목록
   """
+  import re as _re
+  _opt_del = option_deletion_words or []
   # 옵션명 패턴 분석: "02(235)" → 사이즈, "Black / 270" → 색상+사이즈
   has_slash = any("/" in (o.get("name") or "") for o in options)
 
@@ -135,9 +183,17 @@ def _build_combination_options(options: list[dict], sale_price: int) -> dict:
     # 1단 옵션: 사이즈만
     option_groups = ["사이즈"]
 
+  def _clean_option_name(n: str) -> str:
+    """옵션명에서 삭제어 제거."""
+    for w in _opt_del:
+      n = n.replace(w, "")
+    return _re.sub(r"\s{2,}", " ", n).strip() or n
+
   combinations = []
   for idx, opt in enumerate(options):
     name = opt.get("name") or opt.get("size") or f"옵션{idx+1}"
+    if _opt_del:
+      name = _clean_option_name(name)
     stock = opt.get("stock", 0) or 0
     sold_out = opt.get("isSoldOut", False)
 
@@ -157,7 +213,7 @@ def _build_combination_options(options: list[dict], sale_price: int) -> dict:
     combinations.append({
       "optionName1": option_values[0],
       **({"optionName2": option_values[1]} if len(option_values) > 1 else {}),
-      "stockQuantity": max(stock, 0),
+      "stockQuantity": min(max(stock, 0), max_stock_per_option) if max_stock_per_option > 0 else max(stock, 0),
       "price": price_diff,
       "usable": not sold_out,
     })
@@ -278,7 +334,11 @@ class SmartStoreClient:
           details = "; ".join(
             f"{iv.get('name', iv.get('field', '?'))}: {iv.get('message', '')}" for iv in invalid_inputs if isinstance(iv, dict)
           )
-          msg = f"{msg} [{details}]"
+          # 어린이제품 인증 에러 시 명확한 가이드
+          if any("인증" in str(iv.get("message", "")) for iv in invalid_inputs if isinstance(iv, dict)):
+            msg = f"이 카테고리는 어린이제품 인증정보(KC인증 등)가 필요합니다. 카테고리를 변경하거나 인증정보를 등록해주세요. [{details}]"
+          else:
+            msg = f"{msg} [{details}]"
         raise SmartStoreApiError(f"HTTP {resp.status_code}: {msg}")
 
       return data
@@ -387,7 +447,7 @@ class SmartStoreClient:
   # 브랜드 검색
   # ------------------------------------------------------------------
 
-  async def search_catalog(self, style_code: str) -> Optional[dict[str, Any]]:
+  async def search_catalog(self, style_code: str, category_id: str = "") -> Optional[dict[str, Any]]:
     """품번(스타일코드)으로 네이버 카탈로그 검색. 매칭되면 modelId/brandId/manufacturerId 반환."""
     if not style_code:
       return None
@@ -395,8 +455,14 @@ class SmartStoreClient:
       result = await self._call_api("GET", "/v1/product-models", params={"name": style_code})
       contents = result.get("contents", []) if isinstance(result, dict) else result if isinstance(result, list) else []
       if contents:
+        # 같은 카테고리 카탈로그 우선 선택
         c = contents[0]
-        logger.info(f"[스마트스토어] 카탈로그 매칭: {style_code} → {c.get('name', '')[:40]}")
+        if category_id:
+          for item in contents:
+            if str(item.get("categoryId", "")) == str(category_id):
+              c = item
+              break
+        logger.info(f"[스마트스토어] 카탈로그 매칭: {style_code} → {c.get('name', '')[:40]} (catId={c.get('categoryId')}, 상품catId={category_id})")
         return {
           "modelId": c.get("id"),
           "brandId": c.get("brandCode"),
@@ -452,6 +518,23 @@ class SmartStoreClient:
         continue
     logger.warning(f"[스마트스토어] 제조사 검색 실패: {mfr_name}")
     return None
+
+  async def get_category_certification_infos(self, category_id: str) -> list[dict[str, Any]]:
+    """카테고리별 필수 인증정보 조회. certificationInfos[].id/name/kindTypes 반환."""
+    if not category_id:
+      return []
+    try:
+      result = await self._call_api(
+        "GET", f"/v1/categories/{category_id}",
+      )
+      cert_infos = []
+      if isinstance(result, dict):
+        cert_infos = result.get("certificationInfos") or []
+      logger.info(f"[스마트스토어] 카테고리 {category_id} 인증정보: {len(cert_infos)}개")
+      return cert_infos
+    except Exception as e:
+      logger.warning(f"[스마트스토어] 카테고리 인증정보 조회 실패 ({category_id}): {e}")
+      return []
 
   async def get_category_attributes(self, category_id: str) -> list[dict[str, Any]]:
     """카테고리별 상품속성 값 목록 조회."""
@@ -524,20 +607,19 @@ class SmartStoreClient:
   # 상품 등록
   # ------------------------------------------------------------------
 
-  async def upload_image_from_url(self, image_url: str) -> str:
+  async def upload_image_from_url(self, image_url: str, _dl_client: httpx.AsyncClient | None = None, _ul_client: httpx.AsyncClient | None = None) -> str:
     """외부 이미지 URL을 네이버 커머스에 업로드하고 네이버 URL을 반환."""
     token = await self._ensure_token()
-    # 이미지 다운로드
-    # 이미지 원본 도메인을 Referer로 사용 (CDN 핫링크 방지 우회)
     from urllib.parse import urlparse
     parsed = urlparse(image_url)
     referer = f"{parsed.scheme}://{parsed.netloc}/"
-    # 무신사 CDN은 musinsa.com Referer가 필요
     if "msscdn.net" in (parsed.netloc or ""):
       referer = "https://www.musinsa.com/"
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-      img_resp = await client.get(image_url, headers={
+    # 이미지 다운로드 (클라이언트 재사용)
+    dl = _dl_client or httpx.AsyncClient(timeout=30, follow_redirects=True)
+    try:
+      img_resp = await dl.get(image_url, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Referer": referer,
         "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
@@ -546,15 +628,17 @@ class SmartStoreClient:
         raise SmartStoreApiError(f"이미지 다운로드 실패: {img_resp.status_code}")
       img_bytes = img_resp.content
       content_type = img_resp.headers.get("content-type", "image/jpeg")
-      # CDN 경고 이미지 감지 (너무 작으면 핫링크 차단 이미지일 가능성)
       if len(img_bytes) < 1000:
         raise SmartStoreApiError(f"이미지가 비정상적으로 작음({len(img_bytes)}B) — CDN 차단 가능성")
+    finally:
+      if not _dl_client:
+        await dl.aclose()
 
     # EXIF 메타데이터 제거
     from backend.domain.samba.image.exif import strip_exif
     img_bytes = strip_exif(img_bytes)
 
-    # webp → PNG 변환 (네이버는 JPEG/PNG/GIF/BMP만 허용)
+    # webp → PNG 변환
     ext = "jpg"
     upload_type = content_type
     if "png" in content_type:
@@ -569,19 +653,32 @@ class SmartStoreClient:
       ext = "png"
       upload_type = "image/png"
 
-    async with httpx.AsyncClient(timeout=30) as client:
-      resp = await client.post(
-        f"{self.BASE_URL}/v1/product-images/upload",
-        headers={"Authorization": f"Bearer {token}"},
-        files={"imageFiles": (f"image.{ext}", img_bytes, upload_type)},
-      )
-      if not resp.is_success:
-        raise SmartStoreApiError(f"이미지 업로드 실패: {resp.status_code} {resp.text[:200]}")
-      data = resp.json()
-      images = data.get("images", [])
-      if not images:
-        raise SmartStoreApiError("이미지 업로드 응답에 URL 없음")
-      return images[0].get("url", "")
+    # 네이버 업로드 (클라이언트 재사용 + 429 재시도)
+    import asyncio as _aio_retry
+    ul = _ul_client or httpx.AsyncClient(timeout=30)
+    try:
+      for attempt in range(4):
+        resp = await ul.post(
+          f"{self.BASE_URL}/v1/product-images/upload",
+          headers={"Authorization": f"Bearer {token}"},
+          files={"imageFiles": (f"image.{ext}", img_bytes, upload_type)},
+        )
+        if resp.status_code == 429:
+          wait = 2 ** attempt
+          logger.warning(f"[스마트스토어] 이미지 업로드 429 → {wait}초 후 재시도 ({attempt + 1}/3)")
+          await _aio_retry.sleep(wait)
+          continue
+        if not resp.is_success:
+          raise SmartStoreApiError(f"이미지 업로드 실패: {resp.status_code} {resp.text[:200]}")
+        data = resp.json()
+        images = data.get("images", [])
+        if not images:
+          raise SmartStoreApiError("이미지 업로드 응답에 URL 없음")
+        return images[0].get("url", "")
+    finally:
+      if not _ul_client:
+        await ul.aclose()
+    raise SmartStoreApiError("이미지 업로드 실패: 429 Rate Limit 초과 (재시도 3회 실패)")
 
   async def register_product(self, product_data: dict[str, Any]) -> dict[str, Any]:
     """상품 등록.
@@ -622,8 +719,8 @@ class SmartStoreClient:
   async def update_product(
     self, product_no: str, product_data: dict[str, Any]
   ) -> dict[str, Any]:
-    """상품 수정."""
-    result = await self._call_api("PATCH", f"/v2/products/origin-products/{product_no}", body=product_data)
+    """상품 수정. origin-products로 PUT."""
+    result = await self._call_api("PUT", f"/v2/products/origin-products/{product_no}", body=product_data)
     return {"success": True, "data": result}
 
   async def delete_product(self, product_no: str) -> dict[str, Any]:
@@ -964,7 +1061,12 @@ class SmartStoreClient:
             size_text=f"발길이(mm): {size_text}" if sizes else "FREE (상세 이미지 참조)",
             mfr=mfr, brand=brand,
           ),
-          **({"optionInfo": _build_combination_options(options, sale_price)} if options else {}),
+          **({"optionInfo": _build_combination_options(
+            options, sale_price,
+            max_stock_per_option=stock_qty,
+            option_deletion_words=product.get("_option_deletion_words"),
+          )} if options else {}),
+          **_build_certification_infos(product.get("_certification_infos")),
         },
       },
       "smartstoreChannelProduct": {
@@ -1145,9 +1247,10 @@ class SmartStoreClient:
     return await self._call_api("POST", "/v2/standard-group-products", body=payload)
 
   async def poll_group_status(self, max_wait: int = 300) -> dict:
-    """그룹상품 등록/수정 결과 폴링. 최대 max_wait초 대기."""
+    """그룹상품 등록/수정 결과 폴링. 최대 max_wait초 대기. 지수백오프."""
     import asyncio as _asyncio
     start = time.time()
+    attempt = 0
     while time.time() - start < max_wait:
       result = await self._call_api("GET", "/v2/standard-group-products/status")
       state = result.get("progress", {}).get("state", "")
@@ -1156,7 +1259,10 @@ class SmartStoreClient:
       elif state in ("ERROR", "FAILED"):
         error_msg = result.get("errorMessage", "알 수 없는 오류")
         raise SmartStoreApiError(f"그룹상품 등록 실패: {state} - {error_msg}")
-      await _asyncio.sleep(3)
+      # 지수백오프: 0.5s → 1s → 2s → 3s (최대)
+      wait = min(0.5 * (2 ** attempt), 3)
+      await _asyncio.sleep(wait)
+      attempt += 1
     raise TimeoutError("그룹상품 등록 타임아웃 (5분 초과)")
 
   async def update_group_product(self, group_no: int, payload: dict) -> dict:

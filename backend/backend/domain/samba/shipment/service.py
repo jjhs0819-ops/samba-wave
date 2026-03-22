@@ -356,6 +356,10 @@ class SambaShipmentService:
     needs_image = not update_items or "image" in update_items or "description" in update_items
     if not needs_image:
       product_dict["_skip_image_upload"] = True
+    # 가격/재고만 수정 시 404 → POST 신규등록 차단 (중복 등록 방지)
+    is_price_only = update_items and set(update_items) <= {"price", "stock"}
+    if is_price_only:
+      product_dict["_price_stock_only"] = True
 
     # 2-1. 정책의 상세 템플릿으로 detail_html 재생성 (이미지/상세 업데이트 시에만)
     if needs_image:
@@ -491,6 +495,7 @@ class SambaShipmentService:
 
     transmit_result: dict[str, str] = {}
     transmit_error: dict[str, str] = {}
+    update_mode_accounts: set[str] = set()  # PATCH 모드였던 계정 (실패해도 등록정보 보존)
 
     for account_id in target_account_ids:
       try:
@@ -553,10 +558,12 @@ class SambaShipmentService:
         # 기존 마켓 상품번호 확인 (있으면 수정, 없으면 신규등록)
         existing_nos = product_row.market_product_nos or {}
         if market_type == "smartstore":
+          # origin 번호 우선 (PATCH API용)
           existing_product_no = existing_nos.get(f"{account_id}_origin", "") or existing_nos.get(account_id, "")
         else:
           existing_product_no = existing_nos.get(account_id, "")
         if existing_product_no:
+          update_mode_accounts.add(account_id)
           logger.info(f"[전송] 기존 상품번호 발견 → 수정 모드: {market_type} #{existing_product_no}")
 
         # 실제 마켓 API 호출 (계정 정보 직접 전달)
@@ -566,15 +573,17 @@ class SambaShipmentService:
           existing_product_no=existing_product_no,
         )
 
+        # 404 → 상품번호 초기화 처리
+        if result.get("_clear_product_no"):
+          old_nos = product_row.market_product_nos or {}
+          removed_no = old_nos.get(f"{account_id}_origin") or old_nos.get(account_id, "")
+          for key in [account_id, f"{account_id}_origin"]:
+            old_nos.pop(key, None)
+          await product_repo.update_async(product_id, market_product_nos=old_nos or None)
+          logger.info(f"[전송] 404 상품번호 초기화: {market_type} #{removed_no} (계정: {account_id})")
+
         if result.get("success"):
           transmit_result[account_id] = "success"
-          # 404 신규 전환 시 이전 상품번호 DB에서 제거
-          if "신규 전환" in (result.get("message") or ""):
-            old_nos = product_row.market_product_nos or {}
-            for key in [account_id, f"{account_id}_origin"]:
-              old_nos.pop(key, None)
-            await product_repo.update_async(product_id, market_product_nos=old_nos or None)
-            logger.info(f"[전송] 404 전환 — 이전 상품번호 제거: {account_id}")
           # 마켓 상품번호 추출 (API 응답에서)
           # 롯데ON은 핸들러가 result에 spdNo를 직접 포함
           product_no = result.get("spdNo") or ""
@@ -608,8 +617,10 @@ class SambaShipmentService:
             # 스마트스토어: originProductNo도 별도 저장 (수정/삭제 API용)
             if market_type == "smartstore" and isinstance(api_data, dict):
               origin_no = api_data.get("originProductNo") or ""
+              channel_no = str(product_no)
               if origin_no:
                 existing_nos[f"{account_id}_origin"] = str(origin_no)
+              logger.info(f"[전송] 스마트스토어 상품번호 — channel={channel_no}, origin={origin_no}")
             await product_repo.update_async(
               product_id, market_product_nos=existing_nos
             )
@@ -652,21 +663,25 @@ class SambaShipmentService:
 
     # 6. 상품 상태 업데이트 (등록된 계정 목록)
     # 성공한 계정은 추가, 실패한 계정은 제거
+    # 단, PATCH(수정) 모드에서 실패한 계정은 등록정보 보존 (404 케이스는 이미 위에서 처리됨)
     success_accounts = [
       aid for aid, status in transmit_result.items() if status == "success"
     ]
-    failed_accounts = [
-      aid for aid, status in transmit_result.items() if status != "success"
+    # 신규등록(POST) 실패만 제거 대상 — 수정(PATCH) 실패는 기존 등록정보 유지
+    removable_failed = [
+      aid for aid, status in transmit_result.items()
+      if status != "success" and aid not in update_mode_accounts
     ]
-    existing = product_row.registered_accounts or []
-    existing_nos = product_row.market_product_nos or {}
-    # 성공 추가 + 실패 제거
+    # DB에서 최신 상태 다시 읽기 (전송 중 market_product_nos가 업데이트되었을 수 있음)
+    refreshed = await product_repo.get_async(product_id)
+    existing = (refreshed.registered_accounts if refreshed else product_row.registered_accounts) or []
+    existing_nos = dict((refreshed.market_product_nos if refreshed else product_row.market_product_nos) or {})
+    # 성공 추가 + 신규등록 실패만 제거
     new_accounts = list(set(
-      [a for a in existing if a not in failed_accounts] + success_accounts
+      [a for a in existing if a not in removable_failed] + success_accounts
     ))
-    # 실패한 계정의 상품번호도 제거
-    new_nos = {k: v for k, v in existing_nos.items() if k not in failed_accounts}
-    # 성공한 계정의 상품번호 유지 (transmit_result에서 product_no 추출 안 하므로 기존 값 보존)
+    # 신규등록 실패한 계정의 상품번호만 제거
+    new_nos = {k: v for k, v in existing_nos.items() if k not in removable_failed}
     update_data: dict[str, Any] = {
       "registered_accounts": new_accounts if new_accounts else None,
       "market_product_nos": new_nos if new_nos else None,
@@ -914,13 +929,27 @@ class SambaShipmentService:
     new_result = dict(old_result)
     new_errors = dict(old_errors)
 
+    # 카테고리 매핑 재조회
+    raw_category = product_row.category or ""
+    mapped_categories = await self._resolve_category_mappings(
+      product_row.source_site or "",
+      raw_category,
+      failed_accounts,
+    )
+
     for account_id in failed_accounts:
       try:
         account = await account_repo.get_async(account_id)
         if not account:
           continue
+        category_id = mapped_categories.get(account.market_type, "")
+        if not category_id:
+          new_result[account_id] = "failed"
+          new_errors[account_id] = "카테고리 매핑 없음"
+          continue
         result = await dispatch_to_market(
-          self.session, account.market_type, product_dict, ""
+          self.session, account.market_type, product_dict, category_id,
+          account=account,
         )
         if result.get("success"):
           new_result[account_id] = "success"
