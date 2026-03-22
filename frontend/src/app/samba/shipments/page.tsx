@@ -49,6 +49,7 @@ export default function ShipmentsPage() {
   const [searchField, setSearchField] = useState('name')
   const [searchText, setSearchText] = useState('')
   const [pageSize, setPageSize] = useState(50)
+  const [currentPage, setCurrentPage] = useState(1)
   const [siteFilter, setSiteFilter] = useState('전체')
   const [registrationFilter, setRegistrationFilter] = useState('전체')
   const [sortBy, setSortBy] = useState('updated_at_desc')
@@ -139,10 +140,6 @@ export default function ShipmentsPage() {
   }, [filters])
 
   const filteredProducts = useMemo(() => {
-    // URL에서 전달된 상품이 있으면 해당 상품만 표시
-    if (preSelectedIds.length > 0) {
-      return products.filter(p => preSelectedIds.includes(p.id))
-    }
     const q = searchText.trim().toLowerCase()
     return products.filter(p => {
       if (siteFilter !== '전체' && p.source_site !== siteFilter) return false
@@ -192,7 +189,7 @@ export default function ShipmentsPage() {
       }
       return getVal(a) > getVal(b) ? mul : getVal(a) < getVal(b) ? -mul : 0
     })
-  }, [products, siteFilter, registrationFilter, searchText, searchField, filterNameMap, preSelectedIds, sortBy, accounts, shipments])
+  }, [products, siteFilter, registrationFilter, searchText, searchField, filterNameMap, sortBy, accounts, shipments])
 
   // 등록된 마켓 목록 (동적)
   const registeredMarkets = useMemo(() => {
@@ -637,11 +634,11 @@ export default function ShipmentsPage() {
               <option key={`${m.type}_desc`} value={`market_${m.type}_desc`}>{m.name} 업데이트 날짜순 ▼</option>,
             ])}
           </select>
-          <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} style={{ ...inputStyle, width: '80px' }}>
+          <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }} style={{ ...inputStyle, width: '80px' }}>
+            <option value={20}>20개</option>
             <option value={50}>50개</option>
             <option value={100}>100개</option>
             <option value={200}>200개</option>
-            <option value={500}>500개</option>
             <option value={99999}>전체</option>
           </select>
         </div>
@@ -661,7 +658,7 @@ export default function ShipmentsPage() {
               <tr><td colSpan={6} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
             ) : filteredProducts.length === 0 ? (
               <tr><td colSpan={6} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>상품이 없습니다</td></tr>
-            ) : filteredProducts.slice(0, pageSize).map((p, idx) => {
+            ) : filteredProducts.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((p, idx) => {
               const regAccounts = p.registered_accounts || []
               const regMarkets = regAccounts.map(aid => accounts.find(a => a.id === aid)?.market_name).filter(Boolean)
               const optCount = (p.options || []).length
@@ -726,6 +723,42 @@ export default function ShipmentsPage() {
             })}
           </tbody>
         </table>
+
+        {/* 페이지네이션 */}
+        {filteredProducts.length > pageSize && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', padding: '12px 0' }}>
+            <button
+              disabled={currentPage <= 1}
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage <= 1 ? '#444' : '#C5C5C5', cursor: currentPage <= 1 ? 'default' : 'pointer' }}
+            >◀</button>
+            {Array.from({ length: Math.ceil(filteredProducts.length / pageSize) }, (_, i) => i + 1)
+              .filter(page => Math.abs(page - currentPage) <= 2 || page === 1 || page === Math.ceil(filteredProducts.length / pageSize))
+              .map((page, i, arr) => (
+                <span key={page}>
+                  {i > 0 && arr[i - 1] !== page - 1 && <span style={{ color: '#555' }}>…</span>}
+                  <button
+                    onClick={() => setCurrentPage(page)}
+                    style={{
+                      padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer',
+                      background: page === currentPage ? 'rgba(255,140,0,0.2)' : 'transparent',
+                      border: page === currentPage ? '1px solid #FF8C00' : '1px solid #2D2D2D',
+                      color: page === currentPage ? '#FF8C00' : '#C5C5C5',
+                      fontWeight: page === currentPage ? 600 : 400,
+                    }}
+                  >{page}</button>
+                </span>
+              ))}
+            <button
+              disabled={currentPage >= Math.ceil(filteredProducts.length / pageSize)}
+              onClick={() => setCurrentPage(p => p + 1)}
+              style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage >= Math.ceil(filteredProducts.length / pageSize) ? '#444' : '#C5C5C5', cursor: currentPage >= Math.ceil(filteredProducts.length / pageSize) ? 'default' : 'pointer' }}
+            >▶</button>
+            <span style={{ fontSize: '0.72rem', color: '#666', marginLeft: '8px' }}>
+              {filteredProducts.length}개 중 {(currentPage - 1) * pageSize + 1}~{Math.min(currentPage * pageSize, filteredProducts.length)}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )
