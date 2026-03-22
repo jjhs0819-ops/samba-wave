@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-from sqlalchemy import Boolean, Integer
+from sqlalchemy import BigInteger, Boolean, Integer, String
 from sqlmodel import Column, DateTime, Field, JSON, SQLModel, Text
 
 from ulid import ULID
@@ -175,6 +175,8 @@ class SambaCollectedProduct(SQLModel, table=True):
 
     # 태그
     tags: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # SEO 검색키워드 (상품명 조합용, 2-3개)
+    seo_keywords: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # 모니터링 우선순위: hot / warm / cold
     monitor_priority: str = Field(
@@ -205,6 +207,11 @@ class SambaCollectedProduct(SQLModel, table=True):
     # 취급주의사항/품질보증기준
     care_instructions: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     quality_guarantee: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+
+    # 그룹상품 관련
+    group_key: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True, index=True))
+    similar_no: Optional[str] = Field(default=None, sa_column=Column(String(50), nullable=True))
+    group_product_no: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
 
     # Timestamps
     created_at: datetime = Field(
