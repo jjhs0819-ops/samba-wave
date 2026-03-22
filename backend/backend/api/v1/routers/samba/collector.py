@@ -425,21 +425,21 @@ async def bulk_remove_image(
     result = await session.exec(stmt)
     removed_count = 0
     for p in result.all():
-        target = p.images if body.field == "images" else p.detail_images
-        if not target or body.image_url not in target:
-            continue
-        new_list = [u for u in target if u != body.image_url]
-        if body.field == "images":
-            p.images = new_list
-        else:
-            p.detail_images = new_list
-        # __img_edited__ 태그 추가
-        tags = list(p.tags or [])
-        if "__img_edited__" not in tags:
-            tags.append("__img_edited__")
-            p.tags = tags
-        session.add(p)
-        removed_count += 1
+        found = False
+        # images와 detail_images 둘 다 검색
+        if p.images and body.image_url in p.images:
+            p.images = [u for u in p.images if u != body.image_url]
+            found = True
+        if p.detail_images and body.image_url in p.detail_images:
+            p.detail_images = [u for u in p.detail_images if u != body.image_url]
+            found = True
+        if found:
+            tags = list(p.tags or [])
+            if "__img_edited__" not in tags:
+                tags.append("__img_edited__")
+                p.tags = tags
+            session.add(p)
+            removed_count += 1
     await session.commit()
     return {"removed": removed_count}
 
