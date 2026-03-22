@@ -353,6 +353,31 @@ export default function ShipmentsPage() {
       tasks.push({ idx: i + 1, pid, prodLabel, targetAccIds })
     }
 
+    if (skipCount > 0) {
+      addLog(`[${ts()}] 선택 마켓 미연결 ${skipCount}개 스킵 → 실제 전송 ${tasks.length}개`)
+      // 디버그: 스킵된 첫 3개 상품의 정책 연결 상태 출력
+      let debugCount = 0
+      for (let i = 0; i < policyProducts.length && debugCount < 3; i++) {
+        const pid = policyProducts[i]
+        const prod = products.find(p => p.id === pid)
+        const policy = policies.find(p => p.id === prod?.applied_policy_id)
+        const mp = policy?.market_policies as Record<string, { accountId?: string; accountIds?: string[] }> | undefined
+        const policyAccIds: string[] = []
+        if (mp) {
+          for (const v of Object.values(mp)) {
+            const ids = v.accountIds?.length ? v.accountIds : (v.accountId ? [v.accountId] : [])
+            policyAccIds.push(...ids)
+          }
+        }
+        const matched = policyAccIds.filter(id => selectedSet.has(id))
+        if (matched.length === 0) {
+          addLog(`  [디버그] ${prod?.name?.slice(0, 25)} — 정책: ${policy?.name || '없음'}, 정책계정: ${policyAccIds.length}개 [${policyAccIds.slice(0, 2).join(',')}], 선택계정: ${selectedAccounts.length}개 [${selectedAccounts.slice(0, 2).join(',')}]`)
+          debugCount++
+        }
+      }
+    }
+    setProgress({ current: 0, total: tasks.length })
+
     // 순차 전송 (상품당 이미지 동시 4장)
     const BATCH_SIZE = 1
     let doneCount = 0
@@ -376,7 +401,11 @@ export default function ShipmentsPage() {
             }
             return
           }
-          if (r.status === 'skipped') { skipCount++; return }
+          if (r.status === 'skipped') {
+            addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel}: 스킵 (변동 없음)`)
+            skipCount++
+            return
+          }
           const txResult = r.transmit_result || {}
           const txError = r.transmit_error || {}
           for (const [accId, status] of Object.entries(txResult)) {
@@ -385,6 +414,7 @@ export default function ShipmentsPage() {
               addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 성공`)
               successCount++
             } else if (status === 'skipped') {
+              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 스킵 (변동 없음)`)
               skipCount++
             } else {
               addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 실패 — ${shortenError(txError[accId] || '알 수 없는 오류')}`)
@@ -602,6 +632,7 @@ export default function ShipmentsPage() {
             let color = '#DCE0E8'
             if (msg.includes('전송 완료') || msg.includes('전송 시작') || msg.includes('마켓삭제')) color = '#8A95B0'
             else if (msg.includes('실패') || msg.includes('오류')) color = '#C4736E'
+            else if (msg.includes('스킵')) color = '#888'
             else if (msg.includes('성공')) color = '#7BAF7E'
             return <div key={i} style={{ color }}>{msg}</div>
           })}
