@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { accountApi, collectorApi, forbiddenApi, proxyApi, type SambaMarketAccount } from '@/lib/samba/api'
+import { accountApi, collectorApi, forbiddenApi, proxyApi, API_BASE, type SambaMarketAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum, parseNum } from '@/lib/samba/styles'
 
@@ -331,6 +331,13 @@ export default function SettingsPage() {
   const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash-image')
   const [geminiStatus, setGeminiStatus] = useState('')
 
+  // 모델 프리셋
+  const [presets, setPresets] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
+  const [editingPreset, setEditingPreset] = useState<string | null>(null)
+  const [editingDesc, setEditingDesc] = useState('')
+  const [editingLabel, setEditingLabel] = useState('')
+  const [regenerating, setRegenerating] = useState<string | null>(null)
+
   // 태그 금지어
   const [tagBanned, setTagBanned] = useState<{ rejected: string[]; brands: string[]; source_sites: string[] }>({ rejected: [], brands: [], source_sites: [] })
 
@@ -566,7 +573,7 @@ export default function SettingsPage() {
     setProbeLoading(false)
   }
 
-  useEffect(() => { loadExternalSettings(); loadStoreSettings(); loadProbeStatus() }, [loadExternalSettings, loadStoreSettings, loadProbeStatus])
+  useEffect(() => { loadExternalSettings(); loadStoreSettings(); loadProbeStatus(); loadPresets() }, [loadExternalSettings, loadStoreSettings, loadProbeStatus, loadPresets])
 
   // 태그 금지어 로드
   useEffect(() => {
@@ -713,6 +720,43 @@ export default function SettingsPage() {
     }
   }
 
+  // 프리셋 로드
+  const loadPresets = useCallback(async () => {
+    try {
+      const res = await proxyApi.listPresets()
+      if (res.success) setPresets(res.presets)
+    } catch { /* ignore */ }
+  }, [])
+
+  // 프리셋 텍스트만 저장 (이미지 재생성 없이)
+  const handleSavePreset = async (key: string, label: string, desc: string) => {
+    try {
+      const res = await proxyApi.regeneratePreset(key, desc, label, true)
+      if (res.success) {
+        showAlert('프리셋 저장 완료', 'success')
+        setEditingPreset(null)
+        await loadPresets()
+      } else showAlert(res.message, 'error')
+    } catch (e) {
+      showAlert(`저장 실패: ${e instanceof Error ? e.message : ''}`, 'error')
+    }
+  }
+
+  // 프리셋 재생성
+  const handleRegeneratePreset = async (key: string, desc?: string, label?: string) => {
+    setRegenerating(key)
+    try {
+      const res = await proxyApi.regeneratePreset(key, desc, label)
+      if (res.success) {
+        showAlert(res.message, 'success')
+        setEditingPreset(null)
+        await loadPresets()
+      } else showAlert(res.message, 'error')
+    } catch (e) {
+      showAlert(`재생성 실패: ${e instanceof Error ? e.message : ''}`, 'error')
+    } finally { setRegenerating(null) }
+  }
+
   // Fireworks AI 저장
   const saveFireworksSettings = async () => {
     if (!fireworksApiKey) {
@@ -814,9 +858,10 @@ export default function SettingsPage() {
               ))}
             </div>
 
-            {/* 마켓별 설정 폼 */}
+            {/* 마켓별 설정 폼 + 연결계정 */}
             {STORE_MARKETS.filter(m => m.key === storeTab).map(market => (
-              <div key={market.key} style={{ maxWidth: '560px' }}>
+              <div key={market.key} style={{ display: 'flex', gap: '2rem', alignItems: 'flex-start' }}>
+              <div style={{ flex: 1, maxWidth: '560px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
                   <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#E5E5E5' }}>{market.label} 설정</span>
                   {editingAccountId && (
@@ -939,103 +984,62 @@ export default function SettingsPage() {
                   >설정 저장</button>
                 </div>
               </div>
-            ))}
-          </div>
 
-          {/* 마켓별 계정 현황 */}
-          <div style={{ marginBottom: '1rem' }}>
-            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5' }}>마켓별 계정 현황</div>
-          </div>
-
-          {accountLoading ? (
-            <div style={{ ...card, padding: '2rem', textAlign: 'center', color: '#555' }}>로딩 중...</div>
-          ) : accounts.length === 0 ? (
-            <div style={{ ...card, padding: '2rem', textAlign: 'center', color: '#555' }}>마켓 계정이 없습니다</div>
-          ) : (() => {
-            // 마켓별 그룹핑
-            const grouped: Record<string, SambaMarketAccount[]> = {}
-            accounts.forEach(a => {
-              if (!grouped[a.market_type]) grouped[a.market_type] = []
-              grouped[a.market_type].push(a)
-            })
-            const marketColors: Record<string, string> = {
-              smartstore: '#03C75A', coupang: '#E4422B', gmarket: '#6DB33F', auction: '#E74C3C',
-              '11st': '#FF0000', lotteon: '#E10044', ssg: '#FF5A00', gsshop: '#6B5CE7',
-              lottehome: '#E10044', homeand: '#FF6600', hmall: '#2D2D8A', kream: '#222', musinsa: '#1A1A1A',
-            }
-            return (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', maxWidth: '480px' }}>
-                {Object.entries(grouped).map(([marketType, accs]) => {
-                  const marketLabel = STORE_MARKETS.find(m => m.key === marketType)?.label
-                    || MARKET_TYPES.find(m => m.value === marketType)?.label || marketType
-                  const color = marketColors[marketType] || '#FF8C00'
+              {/* 우측: 해당 마켓 연결계정 */}
+              <div style={{ width: '260px', flexShrink: 0 }}>
+                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#888', marginBottom: '0.5rem' }}>연결 계정</div>
+                {(() => {
+                  const marketAccounts = accounts.filter(a => a.market_type === market.key)
+                  if (marketAccounts.length === 0) return (
+                    <div style={{ fontSize: '0.78rem', color: '#555', padding: '0.5rem 0' }}>등록된 계정 없음</div>
+                  )
                   return (
-                    <div key={marketType} style={{ ...card, padding: '0.75rem 1rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                        <span style={{
-                          width: '24px', height: '24px', borderRadius: '5px', display: 'flex',
-                          alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem',
-                          fontWeight: 700, color: '#fff', background: color,
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                      {marketAccounts.map(a => (
+                        <div key={a.id} style={{
+                          display: 'flex', alignItems: 'center', gap: '0.5rem',
+                          padding: '0.4rem 0.625rem', background: 'rgba(255,255,255,0.02)',
+                          borderRadius: '6px', border: '1px solid rgba(45,45,45,0.5)',
                         }}>
-                          {marketLabel.charAt(0)}
-                        </span>
-                        <span style={{ fontWeight: 700, color: '#E5E5E5', fontSize: '0.85rem' }}>
-                          {marketLabel}
-                        </span>
-                        <span style={{ fontSize: '0.7rem', color: '#888' }}>({accs.length}개)</span>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                        {accs.map(a => (
-                          <div key={a.id} style={{
-                            display: 'flex', alignItems: 'center', gap: '0.5rem',
-                            padding: '0.3rem 0.5rem', background: 'rgba(255,255,255,0.02)',
-                            borderRadius: '5px', border: '1px solid rgba(45,45,45,0.5)',
-                          }}>
-                            <div style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {a.account_label}
-                            </div>
-                            <button
-                              onClick={() => {
-                                setStoreTab(marketType)
-                                setEditingAccountId(a.id)
-                                // 해당 계정의 데이터를 폼에 채우기
-                                const accFields = (a.additional_fields || {}) as Record<string, string>
-                                const formData: Record<string, string> = {
-                                  businessName: a.business_name || '',
-                                  storeId: a.seller_id || '',
-                                  ...accFields,
-                                }
-                                setStoreData(prev => ({ ...prev, [marketType]: formData }))
-                              }}
-                              style={{
-                                padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem',
-                                background: editingAccountId === a.id ? 'rgba(255,140,0,0.15)' : 'rgba(60,60,60,0.8)',
-                                color: editingAccountId === a.id ? '#FF8C00' : '#C5C5C5',
-                                border: editingAccountId === a.id ? '1px solid #FF8C00' : '1px solid #3D3D3D',
-                                cursor: 'pointer', whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {editingAccountId === a.id ? '수정중' : '수정'}
-                            </button>
-                            <button
-                              onClick={() => handleAccountDelete(a.id)}
-                              style={{
-                                padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem',
-                                background: 'rgba(255,80,80,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.3)',
-                                cursor: 'pointer', whiteSpace: 'nowrap',
-                              }}
-                            >
-                              삭제
-                            </button>
+                          <div style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {a.account_label}
                           </div>
-                        ))}
-                      </div>
+                          <button
+                            onClick={() => {
+                              setEditingAccountId(a.id)
+                              const accFields = (a.additional_fields || {}) as Record<string, string>
+                              const formData: Record<string, string> = {
+                                businessName: a.business_name || '',
+                                storeId: a.seller_id || '',
+                                ...accFields,
+                              }
+                              setStoreData(prev => ({ ...prev, [market.key]: formData }))
+                            }}
+                            style={{
+                              padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem',
+                              background: editingAccountId === a.id ? 'rgba(255,140,0,0.15)' : 'rgba(60,60,60,0.8)',
+                              color: editingAccountId === a.id ? '#FF8C00' : '#C5C5C5',
+                              border: editingAccountId === a.id ? '1px solid #FF8C00' : '1px solid #3D3D3D',
+                              cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}
+                          >{editingAccountId === a.id ? '수정중' : '수정'}</button>
+                          <button
+                            onClick={() => handleAccountDelete(a.id)}
+                            style={{
+                              padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem',
+                              background: 'rgba(255,80,80,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.3)',
+                              cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}
+                          >삭제</button>
+                        </div>
+                      ))}
                     </div>
                   )
-                })}
+                })()}
               </div>
-            )
-          })()}
+              </div>
+            ))}
+          </div>
       {/* SMS / 카카오 알림톡 설정 */}
       <div style={{ ...card, padding: '1.5rem', marginTop: '1.5rem' }}>
 
@@ -1121,54 +1125,6 @@ export default function SettingsPage() {
               {geminiStatus}
             </div>
           )}
-        </div>
-      </div>
-
-      {/* 태그 금지어 (스마트스토어 등록불가 단어) */}
-      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#C4736E' }}>태그 금지어</span>
-          <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 스마트스토어 등록 시 자동 제외되는 단어 (API 거부 + 소싱처 + 브랜드)</span>
-          <button onClick={() => forbiddenApi.getTagBannedWords().then(setTagBanned).catch(() => {})}
-            style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>새로고침</button>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          {/* API 거부 태그 */}
-          <div>
-            <div style={{ fontSize: '0.8125rem', color: '#C4736E', fontWeight: 600, marginBottom: '0.4rem' }}>
-              API 거부 태그 ({tagBanned.rejected.length}개)
-              <span style={{ fontWeight: 400, color: '#666', marginLeft: '0.5rem' }}>전송 실패 시 자동 누적</span>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-              {tagBanned.rejected.length === 0 && <span style={{ fontSize: '0.75rem', color: '#555' }}>아직 없음</span>}
-              {tagBanned.rejected.map((w, i) => (
-                <span key={i} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(196,115,110,0.12)', border: '1px solid rgba(196,115,110,0.3)', color: '#C4736E' }}>{w}</span>
-              ))}
-            </div>
-          </div>
-          {/* 수집 브랜드 */}
-          <div>
-            <div style={{ fontSize: '0.8125rem', color: '#FFB84D', fontWeight: 600, marginBottom: '0.4rem' }}>
-              수집 브랜드 ({tagBanned.brands.length}개)
-              <span style={{ fontWeight: 400, color: '#666', marginLeft: '0.5rem' }}>브랜드명 포함 태그 자동 제외</span>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', maxHeight: '80px', overflow: 'auto' }}>
-              {tagBanned.brands.map((w, i) => (
-                <span key={i} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(255,184,77,0.08)', border: '1px solid rgba(255,184,77,0.25)', color: '#FFB84D' }}>{w}</span>
-              ))}
-            </div>
-          </div>
-          {/* 소싱처 */}
-          <div>
-            <div style={{ fontSize: '0.8125rem', color: '#4C9AFF', fontWeight: 600, marginBottom: '0.4rem' }}>
-              소싱처 ({tagBanned.source_sites.length}개)
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-              {tagBanned.source_sites.map((w, i) => (
-                <span key={i} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(76,154,255,0.08)', border: '1px solid rgba(76,154,255,0.25)', color: '#4C9AFF' }}>{w}</span>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
 
@@ -1277,6 +1233,176 @@ export default function SettingsPage() {
               {claudeStatus.includes('저장') ? '✓ ' : claudeStatus.includes('유효') ? '⚠ ' : '✗ '}{claudeStatus}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* AI 모델 프리셋 관리 */}
+      {presets.length > 0 && (
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#FF8C00' }}>AI 모델 프리셋</span>
+          <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 모델 착용 이미지 생성 시 참조하는 기준 모델</span>
+          <button onClick={loadPresets} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>새로고침</button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '1rem' }}>
+          {presets.map(p => (
+            <div key={p.key} style={{ background: 'rgba(30,30,30,0.6)', borderRadius: '8px', border: '1px solid #2D2D2D', overflow: 'hidden' }}>
+              <div
+                style={{ position: 'relative', paddingTop: '120%', background: '#1A1A1A', cursor: 'pointer' }}
+                onClick={() => {
+                  const input = document.createElement('input')
+                  input.type = 'file'
+                  input.accept = 'image/*'
+                  input.onchange = async (e) => {
+                    const file = (e.target as HTMLInputElement).files?.[0]
+                    if (!file) return
+                    setRegenerating(p.key)
+                    try {
+                      const res = await proxyApi.uploadPresetImage(p.key, file)
+                      if (res.success) { showAlert(res.message, 'success'); await loadPresets() }
+                      else showAlert(res.message, 'error')
+                    } catch { showAlert('업로드 실패', 'error') }
+                    finally { setRegenerating(null) }
+                  }
+                  input.click()
+                }}
+              >
+                {p.image ? (
+                  <img
+                    src={`${API_BASE}${p.image}?t=${Date.now()}`}
+                    alt={p.label}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: '#555', fontSize: '0.7rem', textAlign: 'center' }}>클릭하여<br/>이미지 등록</div>
+                )}
+                {regenerating === p.key && (
+                  <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FF8C00', fontSize: '0.75rem' }}>
+                    처리중...
+                  </div>
+                )}
+              </div>
+              <div style={{ padding: '0.5rem' }}>
+                {editingPreset === p.key ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                    <input
+                      value={editingLabel}
+                      onChange={e => setEditingLabel(e.target.value)}
+                      style={{ ...inputStyle, fontSize: '0.7rem', fontWeight: 600 }}
+                      placeholder="프리셋 이름"
+                    />
+                    <textarea
+                      value={editingDesc}
+                      onChange={e => setEditingDesc(e.target.value)}
+                      rows={3}
+                      style={{ ...inputStyle, fontSize: '0.7rem', resize: 'vertical' }}
+                      placeholder="모델 설명 프롬프트"
+                    />
+                    <div style={{ display: 'flex', gap: '0.25rem' }}>
+                      <button
+                        onClick={() => handleRegeneratePreset(p.key, editingDesc, editingLabel)}
+                        disabled={regenerating !== null}
+                        style={{ flex: 1, padding: '0.2rem', fontSize: '0.65rem', background: 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '4px', color: '#FF8C00', cursor: 'pointer' }}
+                      >저장 & 재생성</button>
+                      <button
+                        onClick={() => handleSavePreset(p.key, editingLabel, editingDesc)}
+                        style={{ flex: 1, padding: '0.2rem', fontSize: '0.65rem', background: 'rgba(255,255,255,0.08)', border: '1px solid #444', borderRadius: '4px', color: '#CCC', cursor: 'pointer' }}
+                      >저장만</button>
+                      <button
+                        onClick={() => setEditingPreset(null)}
+                        style={{ padding: '0.2rem 0.4rem', fontSize: '0.65rem', background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer' }}
+                      >취소</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#E5E5E5', marginBottom: '0.2rem' }}>{p.label}</div>
+                    <div style={{ fontSize: '0.65rem', color: '#888', marginBottom: '0.35rem', lineHeight: 1.3 }}>{p.desc.length > 40 ? p.desc.slice(0, 40) + '...' : p.desc}</div>
+                    <button
+                      onClick={() => { setEditingPreset(p.key); setEditingLabel(p.label); setEditingDesc(p.desc) }}
+                      style={{ width: '100%', padding: '0.2rem', fontSize: '0.65rem', background: 'rgba(255,255,255,0.05)', border: '1px solid #333', borderRadius: '4px', color: '#AAA', cursor: 'pointer' }}
+                    >수정</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      )}
+
+      {/* 태그 금지어 (스마트스토어 등록불가 단어) */}
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#C4736E' }}>태그 금지어</span>
+          <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 스마트스토어 등록 시 자동 제외되는 단어 (API 거부 + 소싱처 + 브랜드)</span>
+          <button onClick={() => forbiddenApi.getTagBannedWords().then(setTagBanned).catch(() => {})}
+            style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>새로고침</button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {/* API 거부 태그 */}
+          <div>
+            <div style={{ fontSize: '0.8125rem', color: '#C4736E', fontWeight: 600, marginBottom: '0.4rem' }}>
+              API 거부 태그 ({tagBanned.rejected.length}개)
+              <span style={{ fontWeight: 400, color: '#666', marginLeft: '0.5rem' }}>전송 실패 시 자동 누적 + 직접 추가 가능</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+              {tagBanned.rejected.length === 0 && <span style={{ fontSize: '0.75rem', color: '#555' }}>아직 없음</span>}
+              {tagBanned.rejected.map((w, i) => (
+                <span key={i} style={{
+                  fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px',
+                  background: 'rgba(196,115,110,0.12)', border: '1px solid rgba(196,115,110,0.3)', color: '#C4736E',
+                  display: 'inline-flex', alignItems: 'center', gap: '4px',
+                }}>
+                  {w}
+                  <span style={{ cursor: 'pointer', color: '#888', fontSize: '0.8rem', lineHeight: 1 }}
+                    onClick={async () => {
+                      const updated = tagBanned.rejected.filter((_, idx) => idx !== i)
+                      await forbiddenApi.saveSetting('smartstore_banned_tags', updated)
+                      setTagBanned(prev => ({ ...prev, rejected: updated }))
+                    }}>×</span>
+                </span>
+              ))}
+              <input
+                type="text"
+                placeholder="금지어 입력 후 Enter"
+                style={{ fontSize: '0.7rem', padding: '2px 7px', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#C5C5C5', background: '#1A1A1A', outline: 'none', width: '140px' }}
+                onKeyDown={async (e) => {
+                  if (e.key === 'Enter') {
+                    const val = e.currentTarget.value.trim().toLowerCase()
+                    if (!val || tagBanned.rejected.includes(val)) return
+                    const updated = [...tagBanned.rejected, val]
+                    await forbiddenApi.saveSetting('smartstore_banned_tags', updated)
+                    setTagBanned(prev => ({ ...prev, rejected: updated }))
+                    e.currentTarget.value = ''
+                  }
+                }}
+              />
+            </div>
+          </div>
+          {/* 수집 브랜드 */}
+          <div>
+            <div style={{ fontSize: '0.8125rem', color: '#FFB84D', fontWeight: 600, marginBottom: '0.4rem' }}>
+              수집 브랜드 ({tagBanned.brands.length}개)
+              <span style={{ fontWeight: 400, color: '#666', marginLeft: '0.5rem' }}>브랜드명 포함 태그 자동 제외</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', maxHeight: '80px', overflow: 'auto' }}>
+              {tagBanned.brands.map((w, i) => (
+                <span key={i} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(255,184,77,0.08)', border: '1px solid rgba(255,184,77,0.25)', color: '#FFB84D' }}>{w}</span>
+              ))}
+            </div>
+          </div>
+          {/* 소싱처 */}
+          <div>
+            <div style={{ fontSize: '0.8125rem', color: '#4C9AFF', fontWeight: 600, marginBottom: '0.4rem' }}>
+              소싱처 ({tagBanned.source_sites.length}개)
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+              {tagBanned.source_sites.map((w, i) => (
+                <span key={i} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: 'rgba(76,154,255,0.08)', border: '1px solid rgba(76,154,255,0.25)', color: '#4C9AFF' }}>{w}</span>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
