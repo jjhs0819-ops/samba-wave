@@ -572,9 +572,9 @@ export default function CollectorPage() {
                 setAiSelectedCombos(new Set())
               }}
               style={{
-                marginLeft: 'auto', padding: '0.35rem 0.875rem', borderRadius: '20px',
+                marginLeft: 'auto', padding: '0.7rem 1.75rem', borderRadius: '24px',
                 background: 'linear-gradient(135deg, #6C5CE7, #A29BFE)',
-                color: '#fff', fontWeight: 600, fontSize: '0.8rem',
+                color: '#fff', fontWeight: 700, fontSize: '1.1rem',
                 border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
               }}
             >
@@ -612,8 +612,8 @@ export default function CollectorPage() {
               "URL을 입력하세요"
             }
             style={{
-              flex: 1, padding: "0.75rem 1rem", fontSize: "0.875rem",
-              background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "8px",
+              flex: 1, padding: "0.6rem 0.8rem", fontSize: "0.82rem",
+              background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "6px",
               color: "#E5E5E5", outline: "none",
             }}
           />
@@ -622,7 +622,7 @@ export default function CollectorPage() {
             disabled={collecting}
             style={{
               background: "linear-gradient(135deg, #FF8C00, #FFB84D)", color: "#fff",
-              padding: "0.75rem 1.5rem", borderRadius: "8px", fontWeight: 600,
+              padding: "0.6rem 1.2rem", borderRadius: "6px", fontWeight: 600, fontSize: "0.82rem",
               whiteSpace: "nowrap", cursor: collecting ? "not-allowed" : "pointer",
               border: "none", opacity: collecting ? 0.6 : 1,
             }}
@@ -1328,9 +1328,13 @@ export default function CollectorPage() {
                 <div style={{ marginBottom: '16px' }}>
                   <label style={{ fontSize: '0.82rem', color: '#C5C5C5', fontWeight: 600 }}>목표 상품수</label>
                   <input
-                    type="number"
-                    value={aiTargetCount}
-                    onChange={e => setAiTargetCount(Number(e.target.value))}
+                    type="text"
+                    inputMode="numeric"
+                    value={aiTargetCount.toLocaleString()}
+                    onChange={e => {
+                      const raw = e.target.value.replace(/[^0-9]/g, '')
+                      setAiTargetCount(Number(raw) || 0)
+                    }}
                     style={{
                       display: 'block', width: '100%', marginTop: '6px',
                       padding: '8px 12px', background: '#111', border: '1px solid #2D2D2D',
