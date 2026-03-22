@@ -679,8 +679,8 @@ export default function ShipmentsPage() {
             <option value="collected_at_desc">상품수집 날짜순 ▼</option>
             <option value="collected_at_asc">상품수집 날짜순 ▲</option>
             {registeredMarkets.flatMap(m => [
-              <option key={`${m.type}_asc`} value={`market_${m.type}_asc`}>{m.name} 업데이트 날짜순 ▲</option>,
-              <option key={`${m.type}_desc`} value={`market_${m.type}_desc`}>{m.name} 업데이트 날짜순 ▼</option>,
+              <option key={`${m.type}_asc`} value={`market_${m.type}_asc`}>{m.name} ▲</option>,
+              <option key={`${m.type}_desc`} value={`market_${m.type}_desc`}>{m.name} ▼</option>,
             ])}
           </select>
           <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }} style={{ ...inputStyle, width: '80px' }}>
