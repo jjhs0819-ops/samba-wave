@@ -173,15 +173,15 @@ export default function WarroomPage() {
   const [probeLoading, setProbeLoading] = useState(false)
 
   // 오토튠 상태
+  const [autotuneRunning, setAutotuneRunning] = useState(false)
+  const [autotuneCycles, setAutotuneCycles] = useState(0)
+  const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
+  const [autotuneTarget, setAutotuneTarget] = useState('all')
   const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null) => {
     setAutotuneRunning(running)
     setAutotuneCycles(cycles)
     setAutotuneLastTick(lastTick)
   }, [])
-  const [autotuneRunning, setAutotuneRunning] = useState(false)
-  const [autotuneCycles, setAutotuneCycles] = useState(0)
-  const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
-  const [autotuneTarget, setAutotuneTarget] = useState('all')
 
   const runProbe = async () => {
     setProbeLoading(true)
