@@ -71,7 +71,7 @@ export default function WarroomPage() {
   const [scoreTab, setScoreTab] = useState('smartstore')
   const [showPenaltyGuide, setShowPenaltyGuide] = useState(false)
   const [scoreRefreshing, setScoreRefreshing] = useState(false)
-  const [nextPoll, setNextPoll] = useState(POLL_INTERVAL / 1000)
+  const nextPollRef = useRef(POLL_INTERVAL / 1000)
   const [eventFilter, setEventFilter] = useState<EventFilter>('all')
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -120,7 +120,7 @@ export default function WarroomPage() {
       if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
       setAutotuneLastTick(atStatus.last_tick)
       setLastFetched(new Date())
-      setNextPoll(POLL_INTERVAL / 1000)
+      nextPollRef.current = POLL_INTERVAL / 1000
     } catch {
       // 무시
     } finally {
@@ -132,10 +132,9 @@ export default function WarroomPage() {
   const loadLogs = useCallback(async () => {
     try {
       const res = await monitorApi.refreshLogs(logSinceIdxRef.current)
-      // 서버 재시작 시 idx 리셋 감지
+      // 서버 재시작 시 idx 리셋 감지 — 기존 로그 유지하고 인덱스만 리셋
       if (res.current_idx < logSinceIdxRef.current) {
         logSinceIdxRef.current = 0
-        setRefreshLogs([])
         return
       }
       if (res.logs.length > 0) {
@@ -164,7 +163,7 @@ export default function WarroomPage() {
     timerRef.current = setInterval(load, POLL_INTERVAL)
     logTimerRef.current = setInterval(loadLogs, LOG_POLL_INTERVAL)
     countdownRef.current = setInterval(() => {
-      setNextPoll(prev => Math.max(0, prev - 1))
+      nextPollRef.current = Math.max(0, nextPollRef.current - 1)
     }, 1000)
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)

@@ -60,6 +60,7 @@ async def _prepare_musinsa_cache() -> None:
 
 # ── 실시간 로그 링 버퍼 (최대 300건) ──
 _refresh_log_buffer: deque[Dict[str, Any]] = deque(maxlen=300)
+_refresh_log_total: int = 0  # 누적 카운터 (밀려나도 증가만)
 
 
 def _log_refresh(
@@ -71,11 +72,8 @@ def _log_refresh(
     idx: int = 0,
     total: int = 0,
 ) -> None:
-    """갱신 로그를 링 버퍼에 추가.
-
-    상품전송삭제 로그와 동일 형태:
-    [HH:MM:SS] [순번/총] 상품명: 성공/실패 [원가 > 판매가]
-    """
+    """갱신 로그를 링 버퍼에 추가."""
+    global _refresh_log_total
     now = datetime.now(timezone.utc)
     kst = now + timedelta(hours=9)
     ts_str = kst.strftime("%H:%M:%S")
@@ -90,17 +88,26 @@ def _log_refresh(
         "msg": full_msg,
         "level": level,
     })
+    _refresh_log_total += 1
 
 
 def get_refresh_logs(since_idx: int = 0) -> tuple[List[Dict[str, Any]], int]:
-    """로그 조회. since_idx 이후 로그만 반환 + 현재 인덱스."""
-    logs = list(_refresh_log_buffer)
-    current_idx = len(logs)
-    if since_idx > 0 and since_idx < current_idx:
-        return logs[since_idx:], current_idx
-    if since_idx >= current_idx:
-        return [], current_idx
-    return logs, current_idx
+    """로그 조회. since_idx 이후 로그만 반환 + 누적 인덱스."""
+    global _refresh_log_total
+    buf_len = len(_refresh_log_buffer)
+    # 버퍼 시작 인덱스 = 누적 총 - 현재 버퍼 크기
+    buf_start = _refresh_log_total - buf_len
+
+    if since_idx >= _refresh_log_total:
+        # 새 로그 없음
+        return [], _refresh_log_total
+    if since_idx <= buf_start:
+        # 요청 인덱스가 밀려나간 범위 → 버퍼 전체 반환
+        return list(_refresh_log_buffer), _refresh_log_total
+
+    # 버퍼 내 오프셋 계산
+    offset = since_idx - buf_start
+    return list(_refresh_log_buffer)[offset:], _refresh_log_total
 
 
 def get_site_intervals_info() -> Dict[str, Any]:
