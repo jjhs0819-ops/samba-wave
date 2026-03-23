@@ -188,7 +188,13 @@ export default function WarroomPage() {
   }
 
   // 이벤트 필터링
-  const filteredEvents = events.filter(e => {
+  const filteredEvents = events.map(e => ({
+    ...e,
+    summary: e.summary?.replace(/오토튠\(registered\)\s*—\s*/, '') ?? e.summary,
+  })).filter(e => {
+    // 재전송 0건인 오토튠 이벤트 숨기기
+    const d = e.detail as Record<string, unknown> | undefined
+    if (e.event_type === 'scheduler_tick' && d && (d.retransmitted === 0 || d.retransmitted === undefined)) return false
     if (eventFilter === 'all') return true
     if (eventFilter === 'critical') return e.severity === 'critical' || e.severity === 'warning'
     if (eventFilter === 'price_changed') return e.event_type === 'price_changed'
@@ -775,45 +781,66 @@ export default function WarroomPage() {
             {filteredEvents.map(e => {
               const t = new Date(e.created_at)
               const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+              const d = e.detail as Record<string, unknown> | undefined
+              // detail에서 표시할 태그 목록 생성
+              const detailTags: { label: string; value: string; color: string }[] = []
+              if (d) {
+                if (d.old_price != null && d.new_price != null) {
+                  const diff = d.diff_pct as number | undefined
+                  const sign = diff && diff > 0 ? '+' : ''
+                  detailTags.push({
+                    label: '가격',
+                    value: `₩${Number(d.old_price).toLocaleString()} → ₩${Number(d.new_price).toLocaleString()}${diff != null ? ` (${sign}${diff}%)` : ''}`,
+                    color: (diff ?? 0) > 0 ? '#FF6B6B' : '#51CF66',
+                  })
+                }
+                if (typeof d.refreshed === 'number' && d.refreshed > 0)
+                  detailTags.push({ label: '갱신', value: `${d.refreshed}건`, color: '#4C9AFF' })
+                if (typeof d.changed === 'number' && d.changed > 0)
+                  detailTags.push({ label: '변동', value: `${d.changed}건`, color: '#FFD93D' })
+                if (typeof d.sold_out === 'number' && d.sold_out > 0)
+                  detailTags.push({ label: '품절', value: `${d.sold_out}건`, color: '#FF6B6B' })
+                if (typeof d.retransmitted === 'number' && d.retransmitted > 0)
+                  detailTags.push({ label: '재전송', value: `${d.retransmitted}건`, color: '#A78BFA' })
+                if (typeof d.deleted === 'number' && d.deleted > 0)
+                  detailTags.push({ label: '삭제', value: `${d.deleted}건`, color: '#FF6B6B' })
+                if (typeof d.count === 'number' && d.count > 0 && detailTags.length === 0)
+                  detailTags.push({ label: '건수', value: `${d.count}건`, color: '#4C9AFF' })
+                if (d.error && typeof d.error === 'string')
+                  detailTags.push({ label: '에러', value: String(d.error).slice(0, 60), color: '#FF6B6B' })
+                if (Array.isArray(d.missing_fields) && d.missing_fields.length > 0)
+                  detailTags.push({ label: '누락필드', value: (d.missing_fields as string[]).join(', '), color: '#FFD93D' })
+              }
               return (
                 <div
                   key={e.id}
                   style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: '0.75rem',
                     padding: '0.4rem 0.5rem',
                     borderRadius: '6px',
                     background: e.severity === 'critical' ? 'rgba(255,107,107,0.08)' : 'transparent',
                     borderBottom: '1px solid #1A1A1A',
                   }}
                 >
-                  <span style={{
-                    width: 8, height: 8, borderRadius: '50%',
-                    background: SEV_COLORS[e.severity] || '#666',
-                    marginTop: '4px', flexShrink: 0,
-                  }} />
-                  <span style={{ fontSize: '0.75rem', color: '#666', minWidth: '3rem', flexShrink: 0 }}>{timeStr}</span>
-                  <span style={{
-                    fontSize: '0.7rem',
-                    padding: '0.1rem 0.4rem',
-                    borderRadius: '3px',
-                    background: `${SEV_COLORS[e.severity] || '#666'}22`,
-                    color: SEV_COLORS[e.severity] || '#666',
-                    flexShrink: 0,
-                  }}>
-                    {e.severity}
-                  </span>
-                  <span style={{ fontSize: '0.8rem', color: '#E5E5E5', flex: 1 }}>{e.summary}</span>
-                  {e.source_site && (
+                  {/* 메인 로그 */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
                     <span style={{
-                      fontSize: '0.65rem', color: SITE_COLORS[e.source_site] || '#888',
-                      padding: '0.1rem 0.3rem', borderRadius: '3px',
-                      background: 'rgba(255,255,255,0.05)', flexShrink: 0,
-                    }}>
-                      {e.source_site}
-                    </span>
-                  )}
+                      width: 8, height: 8, borderRadius: '50%',
+                      background: SEV_COLORS[e.severity] || '#666',
+                      marginTop: '4px', flexShrink: 0,
+                    }} />
+                    <span style={{ fontSize: '0.75rem', color: '#666', minWidth: '3rem', flexShrink: 0 }}>{timeStr}</span>
+                    <span style={{ fontSize: '0.8rem', color: '#E5E5E5', flex: 1 }}>{e.summary}</span>
+                    {e.source_site && (
+                      <span style={{
+                        fontSize: '0.65rem', color: SITE_COLORS[e.source_site] || '#888',
+                        padding: '0.1rem 0.3rem', borderRadius: '3px',
+                        background: 'rgba(255,255,255,0.05)', flexShrink: 0,
+                      }}>
+                        {e.source_site}
+                      </span>
+                    )}
+                  </div>
+                  {/* 변동 정보 — 배지 제거, summary에 포함 */}
                 </div>
               )
             })}

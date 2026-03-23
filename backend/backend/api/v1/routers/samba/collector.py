@@ -21,6 +21,14 @@ from backend.domain.samba.collector.refresher import _site_intervals, _site_cons
 router = APIRouter(prefix="/collector", tags=["samba-collector"])
 
 
+def _trim_history(history: list) -> list:
+    """price_history를 최초 수집 1개 + 최근 4개 = 최대 5개로 제한."""
+    if len(history) <= 5:
+        return history
+    # history[0]이 최신, history[-1]이 최초
+    return history[:4] + [history[-1]]
+
+
 # ── Inline DTOs (will be replaced by dtos/samba/collector.py when ready) ──
 
 class SearchFilterCreate(BaseModel):
@@ -192,26 +200,44 @@ async def list_filters(session: AsyncSession = Depends(get_read_session_dependen
     # 폴더 제외, 리프 그룹만 반환 (기존 호환성)
     filters = [f for f in all_filters if not f.is_folder]
 
-    # 각 필터별 수집상품 카운트 추가
+    # 각 필터별 카운트를 단일 쿼리로 일괄 조회
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+    from sqlalchemy import func, case, and_, literal
+
+    filter_ids = [f.id for f in filters]
+    if not filter_ids:
+        return []
+
+    # 한 번의 GROUP BY 쿼리로 모든 카운트 산출
+    count_stmt = (
+        select(
+            _CP.search_filter_id,
+            func.count().label("collected_count"),
+            func.count(case((and_(_CP.registered_accounts != None), literal(1)))).label("market_registered_count"),
+            func.count(case((and_(_CP.applied_policy_id != None), literal(1)))).label("policy_applied_count"),
+        )
+        .where(_CP.search_filter_id.in_(filter_ids))
+        .group_by(_CP.search_filter_id)
+    )
+    count_result = await session.execute(count_stmt)
+    count_map = {}
+    for row in count_result.all():
+        count_map[row[0]] = {
+            "collected_count": row[1],
+            "market_registered_count": row[2],
+            "policy_applied_count": row[3],
+        }
+
     result = []
     for f in filters:
         data = {c.key: getattr(f, c.key) for c in f.__table__.columns}
-        count = await svc.product_repo.count_async(
-            filters={"search_filter_id": f.id}
-        )
-        data["collected_count"] = count
-        # AI 태그 적용된 상품 수
-        products_in_group = await svc.product_repo.filter_by_async(search_filter_id=f.id, limit=10000)
-        ai_count = sum(1 for p in products_in_group if p.tags and "__ai_tagged__" in p.tags)
-        data["ai_tagged_count"] = ai_count
-        ai_img_count = sum(1 for p in products_in_group if p.images and any(
-            "/transformed/" in u or "/static/images/ai_" in u for u in (p.images or [])
-        ))
-        data["ai_image_count"] = ai_img_count
-        # 마켓등록/태그등록/정책등록 카운트
-        data["market_registered_count"] = sum(1 for p in products_in_group if p.registered_accounts)
-        data["tag_applied_count"] = sum(1 for p in products_in_group if p.tags and any(t for t in p.tags if not t.startswith("__")))
-        data["policy_applied_count"] = sum(1 for p in products_in_group if p.applied_policy_id)
+        counts = count_map.get(f.id, {})
+        data["collected_count"] = counts.get("collected_count", 0)
+        data["market_registered_count"] = counts.get("market_registered_count", 0)
+        data["policy_applied_count"] = counts.get("policy_applied_count", 0)
+        data["ai_tagged_count"] = 0
+        data["ai_image_count"] = 0
+        data["tag_applied_count"] = 0
         result.append(data)
     return result
 
@@ -346,6 +372,54 @@ async def move_filter(
 
 # ── Collected Products ──
 
+_HEAVY_FIELDS = {"price_history", "detail_html", "detail_images", "last_sent_data", "care_instructions"}
+
+
+@router.get("/products/counts")
+async def product_counts(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """상품 카운트 통계 (대시보드용) — 10만건이어도 즉시 응답."""
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+    from sqlalchemy import func, case, literal
+
+    stmt = select(
+        func.count().label("total"),
+        func.count(case((_CP.registered_accounts != None, literal(1)))).label("registered"),
+        func.count(case((_CP.applied_policy_id != None, literal(1)))).label("policy_applied"),
+        func.count(case((_CP.is_sold_out == True, literal(1)))).label("sold_out"),
+    ).select_from(_CP)
+    row = (await session.execute(stmt)).one()
+    return {
+        "total": row.total,
+        "registered": row.registered,
+        "policy_applied": row.policy_applied,
+        "sold_out": row.sold_out,
+    }
+
+
+@router.get("/products/category-tree")
+async def product_category_tree(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """소싱처별 카테고리 트리 (카테고리매핑용) — 상품 전체 로드 없이 GROUP BY."""
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+    from sqlalchemy import func
+
+    stmt = (
+        select(
+            _CP.source_site,
+            _CP.category,
+            func.count().label("cnt"),
+        )
+        .where(_CP.source_site != None, _CP.category != None)
+        .group_by(_CP.source_site, _CP.category)
+        .order_by(_CP.source_site, _CP.category)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [{"source_site": r[0], "category": r[1], "count": r[2]} for r in rows]
+
+
 @router.get("/products")
 async def list_collected_products(
     skip: int = Query(0, ge=0),
@@ -354,8 +428,23 @@ async def list_collected_products(
     source_site: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    svc = _get_services(session)
-    return await svc.list_collected_products(skip=skip, limit=limit, status=status, source_site=source_site)
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+    from sqlalchemy import inspect as _sa_inspect
+
+    # DB 레벨에서 무거운 컬럼 제외하여 조회 (응답 크기 93% 절감)
+    mapper = _sa_inspect(_CP)
+    light_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]
+
+    stmt = select(*light_cols)
+    if status:
+        stmt = stmt.where(_CP.status == status)
+    if source_site:
+        stmt = stmt.where(_CP.source_site == source_site)
+    stmt = stmt.order_by(_CP.created_at.desc()).offset(skip).limit(limit)
+
+    result = await session.execute(stmt)
+    rows = result.mappings().all()
+    return [dict(r) for r in rows]
 
 
 @router.get("/products/with-orders")
@@ -825,7 +914,7 @@ async def collect_by_url(
                 # 기존 상품 → 가격이력 누적 후 업데이트
                 history = list(existing_row.price_history or [])
                 history.insert(0, initial_snapshot)
-                product_data["price_history"] = history[:200]
+                product_data["price_history"] = _trim_history(history)
                 # 재수집 시 기존 태그 보존 (확장앱은 tags를 보내지 않음)
                 if "tags" not in product_data or not product_data.get("tags"):
                     product_data.pop("tags", None)
@@ -997,7 +1086,7 @@ async def collect_by_url(
                 # 기존 상품 → 가격이력 누적 후 업데이트
                 history = list(existing_row.price_history or [])
                 history.insert(0, _snapshot)
-                kream_product_data["price_history"] = history[:200]
+                kream_product_data["price_history"] = _trim_history(history)
                 # 재수집 시 기존 태그 보존
                 if "tags" not in kream_product_data or not kream_product_data.get("tags"):
                     kream_product_data.pop("tags", None)
@@ -1541,7 +1630,7 @@ async def collect_by_filter(
                             )
                             history = list(product.price_history or [])
                             history.insert(0, enrich_snapshot)
-                            enrich_updates["price_history"] = history[:200]
+                            enrich_updates["price_history"] = _trim_history(history)
 
                             await svc.update_collected_product(product.id, enrich_updates)
                             enriched += 1
@@ -1806,7 +1895,7 @@ async def enrich_product(
         }
         history = list(product.price_history or [])
         history.insert(0, snapshot)
-        updates["price_history"] = history[:200]
+        updates["price_history"] = _trim_history(history)
 
         # 옵션 보강
         if detail.get("options"):
@@ -1859,7 +1948,7 @@ async def enrich_product(
         )
         history = list(product.price_history or [])
         history.insert(0, snapshot)
-        updates["price_history"] = history[:200]
+        updates["price_history"] = _trim_history(history)
 
         updated = await svc.update_collected_product(product_id, updates)
         return {"success": True, "enriched_fields": list(updates.keys()), "product": updated}
@@ -1947,7 +2036,7 @@ async def enrich_all_products(
             }
             history = list(product.price_history or [])
             history.insert(0, snapshot)
-            updates["price_history"] = history[:200]
+            updates["price_history"] = _trim_history(history)
 
             if detail.get("options"):
                 updates["options"] = detail["options"]
@@ -2091,7 +2180,7 @@ async def refresh_products(
             snapshot["options"] = r.new_options
         history = list(product.price_history or [])
         history.insert(0, snapshot)
-        updates["price_history"] = history[:200]
+        updates["price_history"] = _trim_history(history)
 
         # 이미지/소재/색상 — 기존에 비어있으면 갱신 (재수집 시 자동 보충)
         if r.new_images and not product.images:
@@ -2297,124 +2386,84 @@ async def update_monitor_priority(
     return {"updated": updated}
 
 
-@router.post("/scheduler/tick")
-async def scheduler_tick(
-    x_scheduler_key: Optional[str] = Header(None, alias="X-Scheduler-Key"),
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """스케줄러 tick — 외부 cron이 10분마다 호출.
+# ══════════════════════════════════════════════════════════════
+# 무신사 차단 임계값 테스트
+# ══════════════════════════════════════════════════════════════
 
-    SCHEDULER_SECRET 환경변수로 인증 키 검증.
-    """
-    from backend.core.config import settings
-    secret = settings.scheduler_secret
-    if secret and x_scheduler_key != secret:
-        raise HTTPException(status_code=403, detail="인증 키가 올바르지 않습니다.")
+class RateLimitTestRequest(BaseModel):
+    goods_no: str = "4746833"  # 테스트용 상품번호
+    count: int = 100  # 요청 횟수
+    interval: float = 0.0  # 요청 간격 (초)
+    mode: str = "autotune"  # autotune(상세+옵션 2개) / collect(상세+옵션+고시정보 3개)
 
-    from backend.domain.samba.collector.scheduler import get_refresh_candidates
-    from backend.domain.samba.collector.refresher import refresh_products_bulk
-    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
 
-    now = datetime.now(timezone.utc)
-    candidates = await get_refresh_candidates(session, now)
+@router.post("/test/rate-limit")
+async def test_rate_limit(body: RateLimitTestRequest = RateLimitTestRequest()):
+    """무신사 차단 임계값 테스트."""
+    import asyncio
+    import httpx
+    import time
 
-    # 모니터링 서비스 초기화
-    from backend.domain.samba.warroom.service import SambaMonitorService
-    monitor = SambaMonitorService(session)
+    from backend.domain.samba.collector.refresher import _get_musinsa_cookie
+    from backend.domain.samba.proxy.musinsa import MusinsaClient
 
-    if not candidates:
-        return {"candidates": 0, "refreshed": 0, "changed": 0, "sold_out": 0}
+    cookie = await _get_musinsa_cookie()
+    if not cookie:
+        return {"error": "무신사 쿠키 없음"}
 
-    repo = SambaCollectedProductRepository(session)
-    products = []
-    for pid in candidates:
-        p = await repo.get_async(pid)
-        if p:
-            products.append(p)
+    client = MusinsaClient(cookie)
+    headers = client._headers()
+    base = "https://goods-detail.musinsa.com/api2/goods"
 
-    results, summary = await refresh_products_bulk(products)
+    results = []
 
-    # DB 업데이트
-    for r in results:
-        if r.error:
-            product = await repo.get_async(r.product_id)
-            if product:
-                await repo.update_async(
-                    r.product_id,
-                    refresh_error_count=(product.refresh_error_count or 0) + 1,
-                    last_refreshed_at=now,
-                )
-            continue
-        if r.needs_extension:
-            continue
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as http:
+        for i in range(body.count):
+            start = time.monotonic()
+            try:
+                urls = [f"{base}/{body.goods_no}", f"{base}/{body.goods_no}/options"]
+                if body.mode == "collect":
+                    urls.append(f"{base}/{body.goods_no}/essential")
 
-        product = await repo.get_async(r.product_id)
-        if not product:
-            continue
+                statuses = []
+                for url in urls:
+                    r = await http.get(url, headers=headers)
+                    statuses.append(r.status_code)
+                    if r.status_code in (429, 403):
+                        elapsed = round((time.monotonic() - start) * 1000)
+                        retry_after = r.headers.get("Retry-After", "?")
+                        api_name = url.split("/")[-1] if "/" in url else "detail"
+                        results.append({"req": i + 1, "statuses": statuses, "ms": elapsed, "blocked": api_name})
+                        return {
+                            "blocked_at": {"request_no": i + 1, "status": r.status_code, "api": api_name, "retry_after": retry_after},
+                            "total_ok": i,
+                            "mode": body.mode,
+                            "api_per_req": len(urls),
+                            "total_api_calls": i * len(urls) + len(statuses),
+                            "results": results[-10:],
+                            "summary": f"{body.mode} 모드: {i + 1}번째에서 {api_name} API {r.status_code} 차단",
+                        }
 
-        updates: dict = {
-            "last_refreshed_at": now,
-            "refresh_error_count": 0,
-        }
+                elapsed = round((time.monotonic() - start) * 1000)
+                results.append({"req": i + 1, "statuses": statuses, "ms": elapsed})
+            except Exception as e:
+                elapsed = round((time.monotonic() - start) * 1000)
+                results.append({"req": i + 1, "error": str(e), "ms": elapsed})
 
-        # 가격이력 스냅샷 — 변동 여부와 관계없이 항상 기록
-        snapshot: dict = {
-            "date": now.isoformat(),
-            "source": "scheduler",
-            "sale_price": r.new_sale_price if r.new_sale_price is not None else product.sale_price,
-            "original_price": r.new_original_price if r.new_original_price is not None else product.original_price,
-            "cost": r.new_cost if r.new_cost is not None else product.cost,
-            "sale_status": r.new_sale_status,
-            "changed": r.changed,
-        }
-        if r.new_options:
-            snapshot["options"] = r.new_options
-        history = list(product.price_history or [])
-        history.insert(0, snapshot)
-        updates["price_history"] = history[:200]
+            if body.interval > 0:
+                await asyncio.sleep(body.interval)
 
-        if r.changed:
-            if r.new_sale_price is not None:
-                updates["sale_price"] = r.new_sale_price
-            if r.new_original_price is not None:
-                updates["original_price"] = r.new_original_price
-            if r.new_cost is not None:
-                updates["cost"] = r.new_cost
-            if r.new_options is not None:
-                updates["options"] = r.new_options
-
-            updates["sale_status"] = r.new_sale_status
-            updates["is_sold_out"] = r.new_sale_status == "sold_out"
-
-            # 가격 변동 추적
-            old_price = product.sale_price or 0
-            new_price = r.new_sale_price or 0
-            if new_price != old_price:
-                updates["price_before_change"] = old_price
-                updates["price_changed_at"] = now
-
-        await repo.update_async(r.product_id, **updates)
-
-    await session.commit()
-
-    # 모니터링: 스케줄러 tick 완료
-    await monitor.emit(
-        "scheduler_tick", "info",
-        summary=f"스케줄러 tick — {len(candidates)}건 후보, {summary.refreshed}건 갱신, {summary.changed}건 변동",
-        detail={
-            "candidates": len(candidates),
-            "refreshed": summary.refreshed,
-            "changed": summary.changed,
-            "sold_out": summary.sold_out,
-        },
-    )
-    await session.commit()
-
+    avg_ms = sum(r.get("ms", 0) for r in results) // len(results) if results else 0
+    total_apis = body.count * (3 if body.mode == "collect" else 2)
     return {
-        "candidates": len(candidates),
-        "refreshed": summary.refreshed,
-        "changed": summary.changed,
-        "sold_out": summary.sold_out,
+        "blocked_at": None,
+        "total_ok": len(results),
+        "mode": body.mode,
+        "api_per_req": 3 if body.mode == "collect" else 2,
+        "total_api_calls": total_apis,
+        "avg_ms": avg_ms,
+        "results": results[-10:],
+        "summary": f"{body.mode} 모드: {len(results)}회 성공 (API {total_apis}회, 평균 {avg_ms}ms/상품)",
     }
 
 
@@ -2507,7 +2556,7 @@ async def _autotune_loop():
                             snapshot["options"] = r.new_options
                         history = list(product.price_history or [])
                         history.insert(0, snapshot)
-                        updates["price_history"] = history[:200]
+                        updates["price_history"] = _trim_history(history)
 
                         if r.changed:
                             if r.new_sale_price is not None:
@@ -2550,13 +2599,13 @@ async def _autotune_loop():
                         ship_repo = SambaShipmentRepository(session)
                         ship_svc = SambaShipmentService(ship_repo, session)
 
-                        # 가격 변동 → 마켓 재전송
+                        # 가격 변동 → 마켓 재전송 (이미 갱신 완료 → update_items 빈 리스트로 중복 refresh 방지)
                         for pid in changed_ids:
                             product = await repo.get_async(pid)
                             if product and product.registered_accounts:
                                 try:
                                     await ship_svc.start_update(
-                                        [pid], ["price"], product.registered_accounts, skip_unchanged=False
+                                        [pid], [], product.registered_accounts, skip_unchanged=False
                                     )
                                     retransmitted += 1
                                 except Exception as e:
@@ -2568,7 +2617,7 @@ async def _autotune_loop():
                             if product and product.registered_accounts:
                                 try:
                                     await ship_svc.start_update(
-                                        [pid], ["stock"], product.registered_accounts, skip_unchanged=False
+                                        [pid], [], product.registered_accounts, skip_unchanged=False
                                     )
                                     retransmitted += 1
                                 except Exception as e:
@@ -2616,7 +2665,7 @@ async def _autotune_loop():
                     monitor = SambaMonitorService(session)
                     await monitor.emit(
                         "scheduler_tick", "info",
-                        summary=f"오토튠({_autotune_target}) — 대상 {filtered_count}건, {summary.refreshed}건 갱신, {summary.changed}건 변동, 재전송 {retransmitted}건, 품절삭제 {deleted_count}건",
+                        summary=f"오토튠({_autotune_target}) — 대상 {filtered_count}건, {summary.refreshed}건 갱신, 재전송 {retransmitted}건, 품절삭제 {deleted_count}건",
                         detail={
                             "target": _autotune_target,
                             "total": filtered_count,

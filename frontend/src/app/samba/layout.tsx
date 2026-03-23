@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import SambaModal from "@/components/samba/Modal";
+import SambaBlockAlert from "@/components/samba/BlockAlert";
 import type { SambaUser } from "@/lib/samba/api";
 
 interface NavItem {
@@ -86,7 +87,7 @@ export default function SambaLayout({
         style={{
           background: "rgba(15,15,15,0.9)",
           borderBottom: "1px solid #2D2D2D",
-          backdropFilter: "blur(10px)",
+          backdropFilter: "blur(4px)",
         }}
       >
         <div className="flex items-center justify-between px-8 py-3">
@@ -131,7 +132,7 @@ export default function SambaLayout({
                         borderBottomStyle: "solid",
                         borderBottomColor: isGroupActive ? "#FF8C00" : "transparent",
                         cursor: "pointer",
-                        transition: "all 0.3s",
+                        transition: "color 0.15s, border-color 0.15s",
                       }}
                       onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.borderBottomColor = "#FF8C00"; }}
                       onMouseLeave={(e) => {
@@ -167,7 +168,7 @@ export default function SambaLayout({
                                 color: isChildActive ? "#FF8C00" : "#C5C5C5",
                                 fontSize: "0.8125rem",
                                 background: isChildActive ? "rgba(255,140,0,0.12)" : "transparent",
-                                transition: "all 0.2s",
+                                transition: "color 0.15s, border-color 0.15s, background 0.15s",
                               }}
                               onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.background = "rgba(255,140,0,0.08)"; }}
                               onMouseLeave={(e) => {
@@ -200,7 +201,7 @@ export default function SambaLayout({
                       fontWeight: 500,
                       color: isActive ? "#FF8C00" : "#E5E5E5",
                       borderBottom: `2px solid ${isActive ? "#FF8C00" : "transparent"}`,
-                      transition: "all 0.3s",
+                      transition: "color 0.15s, border-color 0.15s",
                     }}
                     onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.borderBottomColor = "#FF8C00"; }}
                     onMouseLeave={(e) => {
@@ -231,7 +232,7 @@ export default function SambaLayout({
                 cursor: "pointer",
                 color: "#888",
                 fontSize: "1.125rem",
-                transition: "all 0.2s",
+                transition: "color 0.15s, border-color 0.15s, background 0.15s",
                 position: "relative",
               }}
               onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.background = "rgba(255,140,0,0.08)"; }}
@@ -258,7 +259,7 @@ export default function SambaLayout({
                 cursor: "pointer",
                 color: pathname.startsWith("/samba/users") ? "#FF8C00" : "#888",
                 fontSize: "1.125rem",
-                transition: "all 0.2s",
+                transition: "color 0.15s, border-color 0.15s, background 0.15s",
               }}
               onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.background = "rgba(255,140,0,0.08)"; }}
               onMouseLeave={(e) => {
@@ -285,7 +286,7 @@ export default function SambaLayout({
                 border: "1px solid #333",
                 borderRadius: "6px",
                 cursor: "pointer",
-                transition: "all 0.2s",
+                transition: "color 0.15s, border-color 0.15s, background 0.15s",
               }}
               onMouseEnter={(e) => { e.currentTarget.style.color = "#FF6B6B"; e.currentTarget.style.borderColor = "#FF6B6B"; }}
               onMouseLeave={(e) => { e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "#333"; }}
@@ -295,6 +296,9 @@ export default function SambaLayout({
           </div>
         </div>
       </header>
+
+      {/* 소싱처 접속 차단 알림 배너 */}
+      <SambaBlockAlert />
 
       {/* Main content - full width, gradient background */}
       <main

@@ -160,6 +160,9 @@ async def _handle_smartstore(
 
   naver_images = []
   detail_html = product.get("detail_html", "")
+  # 프로토콜 없는 이미지 URL 보정 (src="//... → src="https://...)
+  if detail_html:
+    detail_html = re.sub(r'(src=["\'])\/\/', r'\1https://', detail_html)
 
   import asyncio as _aio
   import httpx as _httpx
@@ -170,6 +173,9 @@ async def _handle_smartstore(
   _ul_client = _httpx.AsyncClient(timeout=30)
 
   async def _upload_safe(url: str) -> str | None:
+    # 프로토콜 없는 URL 보정 (//image.msscdn.net/... → https://image.msscdn.net/...)
+    if url.startswith("//"):
+      url = "https:" + url
     async with _upload_sem:
       try:
         return await client.upload_image_from_url(url, _dl_client=_dl_client, _ul_client=_ul_client)

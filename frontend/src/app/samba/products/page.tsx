@@ -163,17 +163,21 @@ export default function ProductsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [p, pol, filters, words, accs, orderPids, rules] = await Promise.all([
-        collectorApi.listProducts(0, 500).catch((e) => { console.error("listProducts error:", e); return []; }),
-        policyApi.list().catch((e) => { console.error("listPolicies error:", e); return []; }),
+      // 1단계: 상품만 먼저 로드하여 즉시 표시
+      const p = await collectorApi.listProducts(0, 500).catch((e) => { console.error("listProducts error:", e); return []; });
+      setAllProducts(p);
+      setLoading(false);
+
+      // 2단계: 나머지 데이터 백그라운드 로드
+      const [pol, filters, words, accs, orderPids, rules, mappings] = await Promise.all([
+        policyApi.list().catch(() => []),
         collectorApi.listFilters().catch(() => [] as SambaSearchFilter[]),
         forbiddenApi.listWords('deletion').catch(() => []),
         accountApi.listActive().catch(() => [] as SambaMarketAccount[]),
         collectorApi.getProductIdsWithOrders().catch(() => [] as string[]),
         nameRuleApi.list().catch(() => [] as SambaNameRule[]),
+        categoryApi.listMappings().catch(() => []) as Promise<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>,
       ]);
-      console.log("loaded products:", p.length, "policies:", pol.length);
-      setAllProducts(p);
       setPolicies(pol);
       setAccounts(accs);
       setDeletionWords(words.filter(w => w.is_active).map(w => w.word));
@@ -182,28 +186,24 @@ export default function ProductsPage() {
       const nameMap: Record<string, string> = {};
       filters.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name; });
       setFilterNameMap(nameMap);
-      // 카테고리 매핑 로드
-      try {
-        const mappings = await categoryApi.listMappings() as { source_site: string; source_category: string; target_mappings: Record<string, string> }[]
-        if (Array.isArray(mappings)) {
-          const map = new Map<string, Record<string, string>>()
-          mappings.forEach(m => {
-            map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {})
-          })
-          setCatMappingMap(map)
-        }
-      } catch { /* 매핑 로드 실패해도 무시 */ }
+      if (Array.isArray(mappings)) {
+        const map = new Map<string, Record<string, string>>();
+        mappings.forEach(m => {
+          map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {});
+        });
+        setCatMappingMap(map);
+      }
     } catch (e) {
       console.error("load error:", e);
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  // Apply filters / sort / pagination whenever dependencies change
-  useEffect(() => {
-    let filtered = [...allProducts];
+  // 필터링 1회 실행 (useMemo) — totalCount + 페이지네이션 결과 동시 산출
+  const { filteredTotal, pagedProducts } = useMemo(() => {
+    let filtered = allProducts;
 
     // URL에서 넘어온 상품 하이라이트 (카테고리 매핑에서 클릭)
     if (highlightProductId) {
@@ -275,61 +275,31 @@ export default function ProductsPage() {
     // Sort
     const isCollect = sortBy.startsWith("collect");
     const isDesc = sortBy.endsWith("desc");
-    filtered.sort((a, b) => {
+    const sorted = filtered.slice().sort((a, b) => {
       const aD = isCollect ? (a.created_at || "") : (a.updated_at || a.created_at || "");
       const bD = isCollect ? (b.created_at || "") : (b.updated_at || b.created_at || "");
       return isDesc ? bD.localeCompare(aD) : aD.localeCompare(bD);
     });
 
+    const total = sorted.length;
+
     // Pagination
+    let paged = sorted;
     if (pageSize > 0) {
       const start = (currentPage - 1) * pageSize
-      filtered = filtered.slice(start, start + pageSize)
+      paged = sorted.slice(start, start + pageSize)
     }
 
-    setProducts(filtered);
+    return { filteredTotal: total, pagedProducts: paged };
   }, [allProducts, searchQ, searchType, siteFilter, statusFilter, aiFilter, sortBy, pageSize, currentPage, policies, filterNameMap, filterByGroupId, highlightProductId, orderProductIds]);
+
+  // useMemo 결과를 products state에 동기화
+  useEffect(() => { setProducts(pagedProducts) }, [pagedProducts]);
 
   // 필터/정렬/페이지크기 변경 시 1페이지로 리셋 + 선택 초기화
   useEffect(() => { setCurrentPage(1); setSelectAll(false); setSelectedIds(new Set()) }, [searchQ, searchType, siteFilter, statusFilter, aiFilter, sortBy, pageSize, filterByGroupId]);
 
-  const totalCount = useMemo(() => {
-    let filtered = [...allProducts];
-    if (filterByGroupId) filtered = filtered.filter((p) => p.search_filter_id === filterByGroupId);
-    if (searchQ.trim()) {
-      const q = searchQ.toLowerCase();
-      switch (searchType) {
-        case "name":
-          filtered = filtered.filter((p) => p.name.toLowerCase().includes(q));
-          break;
-        case "filter": {
-          const matchIds = new Set(
-            Object.entries(filterNameMap)
-              .filter(([, name]) => name.toLowerCase().includes(q))
-              .map(([id]) => id)
-          );
-          filtered = filtered.filter((p) => p.search_filter_id && matchIds.has(p.search_filter_id));
-          break;
-        }
-        case "no":
-          filtered = filtered.filter((p) => (p.site_product_id || "").toLowerCase().includes(q));
-          break;
-        case "policy": {
-          const matchPols = policies.filter((pol) => pol.name.toLowerCase().includes(q));
-          const polIds = new Set(matchPols.map((pol) => pol.id));
-          filtered = filtered.filter((p) => p.applied_policy_id && polIds.has(p.applied_policy_id));
-          break;
-        }
-      }
-    }
-    if (siteFilter) filtered = filtered.filter((p) => p.source_site === siteFilter);
-    if (statusFilter === 'has_orders') {
-      filtered = filtered.filter((p) => orderProductIds.has(p.id))
-    } else if (statusFilter) {
-      filtered = filtered.filter((p) => p.status === statusFilter)
-    }
-    return filtered.length;
-  }, [allProducts, searchQ, searchType, siteFilter, statusFilter, filterByGroupId, filterNameMap, policies]);
+  const totalCount = filteredTotal;
 
   const allSites = useMemo(() => [...new Set(allProducts.map(p => p.source_site))].sort(), [allProducts])
 
@@ -1455,6 +1425,14 @@ function ProductCard({
   catMappingMap, compact, expanded, onToggleExpand,
 }: ProductCardProps) {
   const [showPriceHistoryModal, setShowPriceHistoryModal] = useState(false)
+  const [priceHistoryData, setPriceHistoryData] = useState<Record<string, unknown>[] | null>(null)
+  const openPriceHistory = useCallback(() => {
+    setShowPriceHistoryModal(true)
+    setPriceHistoryData(null)
+    collectorApi.getProduct(p.id).then(detail => {
+      setPriceHistoryData(((detail as unknown as Record<string, unknown>).price_history as Record<string, unknown>[]) || [])
+    }).catch(() => setPriceHistoryData([]))
+  }, [p.id])
   const [showImageModal, setShowImageModal] = useState(false)
   const [zoomImg, setZoomImg] = useState<string | null>(null)
   // 알림/확인 모달 (alert/confirm 대체)
@@ -1603,15 +1581,23 @@ function ProductCard({
       )}
       {/* 가격/재고 이력 모달 */}
       {showPriceHistoryModal && (() => {
-        const history = p.price_history || []
+        if (priceHistoryData === null) {
+          return (
+            <div style={{ position: "fixed", inset: 0, zIndex: 99998, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.6)" }}
+              onClick={() => setShowPriceHistoryModal(false)}>
+              <div style={{ background: "#1A1A1A", borderRadius: "10px", padding: "2rem", color: "#888", fontSize: "0.85rem" }}>이력 로딩 중...</div>
+            </div>
+          )
+        }
+        const history = priceHistoryData
         const isKream = p.source_site === 'KREAM'
         // 원가(cost) 기준으로 최저/최고가 계산
-        const costPrices = history.map(h => h.cost || h.sale_price).filter(Boolean)
+        const costPrices = history.map(h => Number(h.cost || h.sale_price || 0)).filter(Boolean)
         const currentPrice = costPrices[0] || cost || p.sale_price || 0
         const minPrice = costPrices.length ? Math.min(...costPrices) : 0
         const maxPrice = costPrices.length ? Math.max(...costPrices) : 0
-        const minEntry = history.find(h => (h.cost || h.sale_price) === minPrice)
-        const maxEntry = history.find(h => (h.cost || h.sale_price) === maxPrice)
+        const minEntry = history.find(h => Number(h.cost || h.sale_price || 0) === minPrice)
+        const maxEntry = history.find(h => Number(h.cost || h.sale_price || 0) === maxPrice)
         // KREAM 빠른배송/일반배송 현재가
         const kreamFastMin = isKream && history[0] ? (history[0] as Record<string, unknown>).kream_fast_min as number || 0 : 0
         const kreamGeneralMin = isKream && history[0] ? (history[0] as Record<string, unknown>).kream_general_min as number || 0 : 0
@@ -1684,12 +1670,12 @@ function ProductCard({
                     <div>
                       <span style={{ color: "#666" }}>최저가 </span>
                       <span style={{ color: "#51CF66", fontWeight: 600 }}>₩ {minPrice.toLocaleString()}</span>
-                      {minEntry && <span style={{ color: "#555", fontSize: "0.68rem" }}> ({fmtShortDate(minEntry.date)})</span>}
+                      {minEntry && <span style={{ color: "#555", fontSize: "0.68rem" }}> ({fmtShortDate(String(minEntry.date))})</span>}
                     </div>
                     <div>
                       <span style={{ color: "#666" }}>최고가 </span>
                       <span style={{ color: "#FF6B6B", fontWeight: 600 }}>₩ {maxPrice.toLocaleString()}</span>
-                      {maxEntry && <span style={{ color: "#555", fontSize: "0.68rem" }}> ({fmtShortDate(maxEntry.date)})</span>}
+                      {maxEntry && <span style={{ color: "#555", fontSize: "0.68rem" }}> ({fmtShortDate(String(maxEntry.date))})</span>}
                     </div>
                   </div>
                 )}
@@ -1727,7 +1713,7 @@ function ProductCard({
                             {/* 메인 행: 날짜 + 가격 + 옵션 요약 */}
                             <tr style={{ borderTop: i > 0 ? "1px solid #2D2D2D" : "none", background: "rgba(255,255,255,0.02)" }}>
                               <td style={{ padding: "8px 16px", color: "#C5C5C5", fontWeight: 600, fontSize: "0.78rem" }}>
-                                {fmtDate(h.date)}
+                                {fmtDate(String(h.date))}
                               </td>
                               {isKream ? (
                                 <>
@@ -2187,7 +2173,7 @@ function ProductCard({
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <span style={{ color: "#FFFFFF", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{p.name}</span>
-              <button onClick={(e) => { e.stopPropagation(); setShowPriceHistoryModal(true) }}
+              <button onClick={(e) => { e.stopPropagation(); openPriceHistory() }}
                 style={{ fontSize: "0.6rem", padding: "2px 5px", borderRadius: "3px", cursor: "pointer", border: "1px solid #2D2D2D", background: "transparent", color: "#888", whiteSpace: "nowrap" }}>이력</button>
               <button onClick={(e) => { e.stopPropagation(); const url = getSourceUrl(p.source_site, p.site_product_id); if (url) window.open(url, '_blank') }}
                 style={{ fontSize: "0.6rem", padding: "2px 5px", borderRadius: "3px", cursor: "pointer", border: "1px solid #2D2D2D", background: "transparent", color: "#888", whiteSpace: "nowrap" }}>원문</button>
@@ -2246,7 +2232,7 @@ function ProductCard({
           {/* Action button bar */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: "3px", marginBottom: "8px" }}>
             <button
-              onClick={() => setShowPriceHistoryModal(true)}
+              onClick={() => openPriceHistory()}
               style={{
                 fontSize: "0.72rem", padding: "3px 9px", background: "#1E1E1E",
                 color: "#999",

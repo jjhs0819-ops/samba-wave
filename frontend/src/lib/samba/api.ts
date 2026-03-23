@@ -341,6 +341,10 @@ export const collectorApi = {
   },
   getProductIdsWithOrders: () =>
     request<string[]>(`${SAMBA_PREFIX}/collector/products/with-orders`),
+  productCounts: () =>
+    request<{ total: number; registered: number; policy_applied: number; sold_out: number }>(`${SAMBA_PREFIX}/collector/products/counts`),
+  categoryTree: () =>
+    request<{ source_site: string; category: string; count: number }[]>(`${SAMBA_PREFIX}/collector/products/category-tree`),
   searchProducts: (q: string) =>
     request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products/search?q=${encodeURIComponent(q)}`),
   getProduct: (id: string) => request<SambaCollectedProduct>(`${SAMBA_PREFIX}/collector/products/${id}`),

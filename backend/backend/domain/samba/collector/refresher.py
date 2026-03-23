@@ -24,11 +24,11 @@ SITE_CONCURRENCY: dict[str, int] = {
 }
 # 소싱처별 기본 인터벌 (초)
 SITE_BASE_INTERVAL: dict[str, float] = {
-    "MUSINSA": 1.0,
+    "MUSINSA": 0.0,
 }
 # 소싱처별 최소 인터벌 (초)
 SITE_MIN_INTERVAL: dict[str, float] = {
-    "MUSINSA": 0.8,
+    "MUSINSA": 0.0,
 }
 # 소싱처별 인터벌 복원 스텝 (성공 시 감소량)
 SITE_INTERVAL_STEP: dict[str, float] = {
@@ -211,10 +211,13 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
     warnings: list[str] = []
 
     try:
-        detail = await client.get_goods_detail(
-            site_product_id,
-            member_grade_rate=cached_grade_rate,
-            refresh_only=True,
+        detail = await asyncio.wait_for(
+            client.get_goods_detail(
+                site_product_id,
+                member_grade_rate=cached_grade_rate,
+                refresh_only=True,
+            ),
+            timeout=45,
         )
         # 성공 → 인터벌 점진 복원
         base = SITE_BASE_INTERVAL.get("MUSINSA", 1.0)
@@ -281,6 +284,15 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
                 return RefreshResult(product_id=product.id, error=f"차단 후 재시도 실패: HTTP {e.status}")
         else:
             return RefreshResult(product_id=product.id, error=f"차단: HTTP {e.status}")
+    except asyncio.TimeoutError:
+        # 45초 안에 응답 없음 → 건너뛰기
+        _log_refresh(
+            "MUSINSA", product.id,
+            getattr(product, "name", ""),
+            "응답 없음 (45초 타임아웃) — 건너뜀",
+            level="warning", idx=_idx, total=_total,
+        )
+        return RefreshResult(product_id=product.id, error="응답 없음: 45초 타임아웃")
     except Exception as e:
         _log_refresh(
             "MUSINSA", product.id,
@@ -321,8 +333,6 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
 
     changed = (
         new_sale_price != old_sale
-        or new_original_price != old_original
-        or new_cost != old_cost
         or new_sale_status != old_status
     )
 
@@ -339,7 +349,7 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
     # 상품명 (품번) 형태
     _name = getattr(product, "name", "") or ""
     _prod_label = f"{_name} ({site_product_id})" if site_product_id else _name
-    _status = "변동" if changed else "성공"
+    _status = "전송" if (changed or _stock_changes > 0) else "스킵"
     _log_refresh(
         "MUSINSA", product.id, _prod_label,
         f"{_status} [원가 {int(old_sale):,}>{int(new_sale_price):,}, 판매가 {int(old_cost or old_sale):,}>{int(new_cost or new_sale_price):,}, 재고변동 {_stock_changes}건]",
@@ -549,7 +559,19 @@ async def refresh_products_bulk(
         async def _limited(p: Any) -> RefreshResult:
             async with sem:
                 _counter["i"] += 1
-                r = await refresh_product(p, idx=_counter["i"], total=_total)
+                try:
+                    r = await asyncio.wait_for(
+                        refresh_product(p, idx=_counter["i"], total=_total),
+                        timeout=60,
+                    )
+                except asyncio.TimeoutError:
+                    _log_refresh(
+                        site, getattr(p, "id", "unknown"),
+                        getattr(p, "name", ""),
+                        "전체 처리 타임아웃 (60초) — 건너뜀",
+                        level="warning",
+                    )
+                    r = RefreshResult(product_id=getattr(p, "id", "unknown"), error="전체 처리 타임아웃: 60초")
                 # 소싱처별 적응형 인터벌 (기본값은 소싱처별 base_interval)
                 interval = _site_intervals.get(site, base_interval)
                 await asyncio.sleep(interval)

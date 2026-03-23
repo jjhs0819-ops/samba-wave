@@ -100,7 +100,7 @@ export default function ShipmentsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     const [p, a, s, f, pol] = await Promise.all([
-      collectorApi.listProducts(0, 10000).catch(() => []),
+      collectorApi.listProducts(0, 500).catch(() => []),
       accountApi.listActive().catch(() => []),
       shipmentApi.list(0, 100).catch(() => []),
       collectorApi.listFilters().catch(() => []),
@@ -156,7 +156,10 @@ export default function ShipmentsPage() {
 
   const filteredProducts = useMemo(() => {
     const q = searchText.trim().toLowerCase()
+    // URL에서 넘어온 선택 상품이 있으면 해당 상품만 표시
+    const preIds = preSelectedIds.filter(id => id)
     return products.filter(p => {
+      if (preIds.length > 0 && !preIds.includes(p.id)) return false
       if (siteFilter !== '전체' && p.source_site !== siteFilter) return false
       // 마켓등록 필터
       if (registrationFilter === '등록' && !(p.registered_accounts?.length)) return false
@@ -205,7 +208,7 @@ export default function ShipmentsPage() {
       }
       return getVal(a) > getVal(b) ? mul : getVal(a) < getVal(b) ? -mul : 0
     })
-  }, [products, siteFilter, registrationFilter, searchText, searchField, filterNameMap, sortBy, accounts, shipments])
+  }, [products, siteFilter, registrationFilter, searchText, searchField, filterNameMap, sortBy, accounts, shipments, preSelectedIds])
 
   // 등록된 마켓 목록 (동적)
   const registeredMarkets = useMemo(() => {

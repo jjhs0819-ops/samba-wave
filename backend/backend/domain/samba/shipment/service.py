@@ -430,7 +430,11 @@ class SambaShipmentService:
             snapshot["options"] = snap_opts
           history = list(product_row.price_history or [])
           history.insert(0, snapshot)
-          refresh_updates["price_history"] = history[:200]
+          # 최초 수집 1개 + 최근 4개 = 최대 5개
+          if len(history) <= 5:
+            refresh_updates["price_history"] = history
+          else:
+            refresh_updates["price_history"] = history[:4] + [history[-1]]
           # 최종 업데이트에서 통합 저장
           pending_refresh_updates = refresh_updates
           for k, v in refresh_updates.items():

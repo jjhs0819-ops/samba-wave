@@ -121,6 +121,7 @@ class MusinsaClient:
         "골드": 4, "GOLD": 4,
         "플래티넘": 5, "PLATINUM": 5,
         "다이아몬드": 5, "DIAMOND": 5,
+        "블랙다이아몬드": 4, "BLACK_DIAMOND": 4,
         "러버": 5, "LOVER": 5,
         "무신사": 5, "MUSINSA": 5,
     }
@@ -303,8 +304,8 @@ class MusinsaClient:
             benefit_base = s_price - benefit_coupon_discount
 
             # 2단계: 등급할인 (benefit_base 기준, 10원 절사)
-            # partnerDiscountOn=false/None이면 등급할인 불가 상품
-            partner_discount_on = d.get("partnerDiscountOn") is True
+            # partnerDiscountOn 필드는 신뢰 불가 — False여도 사이트는 등급할인 적용
+            # goodsPrice.memberDiscountRate가 로그인 시 정확한 값을 반환하므로 이를 기준으로 판단
             grade_discount_rate = (
                 gp.get("memberDiscountRate")
                 or gp.get("gradeDiscountRate")
@@ -313,7 +314,7 @@ class MusinsaClient:
                 or member_grade_rate
                 or 0
             )
-            grade_discount = int(benefit_base * grade_discount_rate / 100 / 10) * 10 if (partner_discount_on and grade_discount_rate > 0) else 0
+            grade_discount = int(benefit_base * grade_discount_rate / 100 / 10) * 10 if grade_discount_rate > 0 else 0
 
             # 3단계: 적립금 사용 (benefit_base - 등급할인 기준, 10원 절사)
             is_point_restricted = d.get("isRestictedUsePoint") is True
