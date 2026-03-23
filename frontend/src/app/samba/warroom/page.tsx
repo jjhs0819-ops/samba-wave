@@ -1,10 +1,91 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState, memo } from 'react'
 import { monitorApi, collectorApi, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api'
 
 const POLL_INTERVAL = 30_000
 const LOG_POLL_INTERVAL = 5_000
+
+// 오토튠 실시간 로그 (독립 컴포넌트 — 대시보드 리렌더링 영향 없음)
+const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors }: { siteColors: Record<string, string> }) {
+  const [logs, setLogs] = useState<RefreshLogEntry[]>([])
+  const [intervals, setIntervals] = useState<Record<string, number>>({})
+  const sinceIdxRef = useRef(0)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const res = await monitorApi.refreshLogs(sinceIdxRef.current)
+        if (res.current_idx < sinceIdxRef.current) {
+          sinceIdxRef.current = 0
+          return
+        }
+        if (res.logs.length > 0) {
+          setLogs(prev => {
+            const next = [...prev, ...res.logs]
+            return next.length > 300 ? next.slice(next.length - 300) : next
+          })
+          sinceIdxRef.current = res.current_idx
+          requestAnimationFrame(() => {
+            if (containerRef.current) {
+              containerRef.current.scrollTop = containerRef.current.scrollHeight
+            }
+          })
+        }
+        if (res.intervals?.intervals) {
+          setIntervals(res.intervals.intervals)
+        }
+      } catch { /* 무시 */ }
+    }
+    poll()
+    timerRef.current = setInterval(poll, LOG_POLL_INTERVAL)
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+  }, [])
+
+  return (
+    <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>오토튠 실시간 로그</span>
+          <span style={{ fontSize: '0.65rem', color: '#666' }}>5초 폴링</span>
+        </div>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          {Object.keys(intervals).length > 0 && (
+            <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.7rem' }}>
+              {Object.entries(intervals).map(([site, interval]) => (
+                <span key={site} style={{ color: siteColors[site] || '#888' }}>
+                  {site} {(interval as number).toFixed(1)}s
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div
+        ref={containerRef}
+        style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.73rem', lineHeight: 1.8, color: '#4A5568' }}
+      >
+        {logs.length === 0 ? (
+          <div style={{ color: '#555', textAlign: 'center', padding: '1.5rem 0' }}>
+            갱신 로그 대기 중...
+          </div>
+        ) : (
+          logs.map((log, i) => {
+            let color = '#DCE0E8'
+            if (log.msg.includes('실패') || log.msg.includes('오류') || log.msg.includes('차단')) color = '#C4736E'
+            else if (log.msg.includes('전송')) color = '#FFFFFF'
+            else if (log.msg.includes('스킵')) color = '#888'
+            else if (log.msg.includes('변동')) color = '#FFD93D'
+            else if (log.msg.includes('성공')) color = '#7BAF7E'
+            return <div key={`${log.ts}-${i}`} style={{ color }}>{log.msg}</div>
+          })
+        )}
+      </div>
+    </div>
+  )
+})
 
 // 색상 상수
 const SEV_COLORS: Record<string, string> = {
@@ -74,14 +155,8 @@ export default function WarroomPage() {
   const nextPollRef = useRef(POLL_INTERVAL / 1000)
   const [eventFilter, setEventFilter] = useState<EventFilter>('all')
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // 실시간 로그 상태
-  const [refreshLogs, setRefreshLogs] = useState<RefreshLogEntry[]>([])
-  const logSinceIdxRef = useRef(0)
-  const [siteIntervals, setSiteIntervals] = useState<Record<string, number>>({})
-  const logContainerRef = useRef<HTMLDivElement>(null)
-  const logTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // 소싱처/마켓 상태
   const [probeData, setProbeData] = useState<Record<string, Record<string, Record<string, unknown>>>>({})
@@ -128,49 +203,15 @@ export default function WarroomPage() {
     }
   }, [])
 
-  // 실시간 로그 폴링 (ref로 안정화 — setInterval 리셋 방지)
-  const loadLogs = useCallback(async () => {
-    try {
-      const res = await monitorApi.refreshLogs(logSinceIdxRef.current)
-      // 서버 재시작 시 idx 리셋 감지 — 기존 로그 유지하고 인덱스만 리셋
-      if (res.current_idx < logSinceIdxRef.current) {
-        logSinceIdxRef.current = 0
-        return
-      }
-      if (res.logs.length > 0) {
-        setRefreshLogs(prev => {
-          const next = [...prev, ...res.logs]
-          return next.length > 300 ? next.slice(next.length - 300) : next
-        })
-        logSinceIdxRef.current = res.current_idx
-        requestAnimationFrame(() => {
-          if (logContainerRef.current) {
-            logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight
-          }
-        })
-      }
-      if (res.intervals?.intervals) {
-        setSiteIntervals(res.intervals.intervals)
-      }
-    } catch {
-      // 무시
-    }
-  }, [])
+  // 로그 폴링은 AutotuneLogPanel 내부에서 독립적으로 처리
 
   useEffect(() => {
     load()
-    loadLogs()
     timerRef.current = setInterval(load, POLL_INTERVAL)
-    logTimerRef.current = setInterval(loadLogs, LOG_POLL_INTERVAL)
-    countdownRef.current = setInterval(() => {
-      nextPollRef.current = Math.max(0, nextPollRef.current - 1)
-    }, 1000)
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
-      if (countdownRef.current) clearInterval(countdownRef.current)
-      if (logTimerRef.current) clearInterval(logTimerRef.current)
     }
-  }, [load, loadLogs])
+  }, [load])
 
   // 시간 차이 표시
   const timeAgo = (date: Date | null) => {
@@ -699,46 +740,8 @@ export default function WarroomPage() {
         </div>
       </div>
 
-      {/* F. 오토튠 실시간 로그 */}
-      <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>오토튠 실시간 로그</span>
-            <span style={{ fontSize: '0.65rem', color: '#666' }}>5초 폴링</span>
-          </div>
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-            {Object.keys(siteIntervals).length > 0 && (
-              <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.7rem' }}>
-                {Object.entries(siteIntervals).map(([site, interval]) => (
-                  <span key={site} style={{ color: SITE_COLORS[site] || '#888' }}>
-                    {site} {interval.toFixed(1)}s
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-        <div
-          ref={logContainerRef}
-          style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.73rem', lineHeight: 1.8, color: '#4A5568' }}
-        >
-          {refreshLogs.length === 0 ? (
-            <div style={{ color: '#555', textAlign: 'center', padding: '1.5rem 0' }}>
-              갱신 로그 대기 중...
-            </div>
-          ) : (
-            refreshLogs.map((log, i) => {
-              let color = '#DCE0E8'
-              if (log.msg.includes('실패') || log.msg.includes('오류') || log.msg.includes('차단')) color = '#C4736E'
-              else if (log.msg.includes('전송')) color = '#FFFFFF'
-              else if (log.msg.includes('스킵')) color = '#888'
-              else if (log.msg.includes('변동')) color = '#FFD93D'
-              else if (log.msg.includes('성공')) color = '#7BAF7E'
-              return <div key={`${log.ts}-${i}`} style={{ color }}>{log.msg}</div>
-            })
-          )}
-        </div>
-      </div>
+      {/* F. 오토튠 실시간 로그 (독립 컴포넌트) */}
+      <AutotuneLogPanel siteColors={SITE_COLORS} />
 
       {/* G. 이벤트 타임라인 */}
       <div style={card}>
