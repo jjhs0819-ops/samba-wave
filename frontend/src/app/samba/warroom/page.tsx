@@ -238,17 +238,11 @@ export default function WarroomPage() {
     return timeAgo(new Date(iso))
   }
 
-  // 이벤트 필터링
+  // 이벤트 필터링 (모든 이벤트 표시, 오토튠 텍스트만 정리)
   const filteredEvents = events.map(e => ({
     ...e,
     summary: e.summary?.replace(/오토튠\(registered\)\s*—\s*/, '') ?? e.summary,
   })).filter(e => {
-    // info severity 이벤트 중 재전송/변동 없는 건 숨기기
-    const d = e.detail as Record<string, unknown> | undefined
-    if (e.event_type === 'scheduler_tick' && d) {
-      const hasChange = (d.retransmitted as number || 0) > 0 || (d.changed as number || 0) > 0 || (d.sold_out as number || 0) > 0 || (d.deleted as number || 0) > 0
-      if (!hasChange) return false
-    }
     if (eventFilter === 'all') return true
     if (eventFilter === 'critical') return e.severity === 'critical' || e.severity === 'warning'
     if (eventFilter === 'price_changed') return e.event_type === 'price_changed'
@@ -859,7 +853,23 @@ export default function WarroomPage() {
                       </span>
                     )}
                   </div>
-                  {/* 변동 정보 — 배지 제거, summary에 포함 */}
+                  {/* 변동 정보 태그 (변동 있는 건만 표시) */}
+                  {detailTags.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', marginTop: '0.25rem', paddingLeft: '2.5rem' }}>
+                      {detailTags.map((tag, i) => (
+                        <span key={i} style={{
+                          fontSize: '0.65rem',
+                          padding: '0.1rem 0.4rem',
+                          borderRadius: '3px',
+                          background: `${tag.color}15`,
+                          color: tag.color,
+                          border: `1px solid ${tag.color}30`,
+                        }}>
+                          {tag.label}: {tag.value}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )
             })}
