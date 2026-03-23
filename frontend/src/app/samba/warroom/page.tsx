@@ -7,7 +7,10 @@ const POLL_INTERVAL = 30_000
 const LOG_POLL_INTERVAL = 5_000
 
 // 오토튠 실시간 로그 (독립 컴포넌트 — 대시보드 리렌더링 영향 없음)
-const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors }: { siteColors: Record<string, string> }) {
+const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusChange }: {
+  siteColors: Record<string, string>
+  onStatusChange?: (running: boolean, cycles: number, lastTick: string | null) => void
+}) {
   const [logs, setLogs] = useState<RefreshLogEntry[]>([])
   const [intervals, setIntervals] = useState<Record<string, number>>({})
   const sinceIdxRef = useRef(0)
@@ -17,7 +20,10 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors }: { siteCo
   useEffect(() => {
     const poll = async () => {
       try {
-        const res = await monitorApi.refreshLogs(sinceIdxRef.current)
+        const [res, atStatus] = await Promise.all([
+          monitorApi.refreshLogs(sinceIdxRef.current),
+          collectorApi.autotuneStatus().catch(() => null),
+        ])
         if (res.current_idx < sinceIdxRef.current) {
           sinceIdxRef.current = 0
           return
@@ -37,12 +43,16 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors }: { siteCo
         if (res.intervals?.intervals) {
           setIntervals(res.intervals.intervals)
         }
+        // 오토튠 상태 부모에 전달
+        if (atStatus && onStatusChange) {
+          onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick)
+        }
       } catch { /* 무시 */ }
     }
     poll()
     timerRef.current = setInterval(poll, LOG_POLL_INTERVAL)
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
-  }, [])
+  }, [onStatusChange])
 
   return (
     <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
@@ -740,7 +750,14 @@ export default function WarroomPage() {
       </div>
 
       {/* F. 오토튠 실시간 로그 (독립 컴포넌트) */}
-      <AutotuneLogPanel siteColors={SITE_COLORS} />
+      <AutotuneLogPanel
+        siteColors={SITE_COLORS}
+        onStatusChange={useCallback((running: boolean, cycles: number, lastTick: string | null) => {
+          setAutotuneRunning(running)
+          setAutotuneCycles(cycles)
+          setAutotuneLastTick(lastTick)
+        }, [])}
+      />
 
       {/* G. 이벤트 타임라인 */}
       <div style={card}>
