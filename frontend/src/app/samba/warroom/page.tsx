@@ -228,9 +228,12 @@ export default function WarroomPage() {
     ...e,
     summary: e.summary?.replace(/오토튠\(registered\)\s*—\s*/, '') ?? e.summary,
   })).filter(e => {
-    // 재전송 0건인 오토튠 이벤트 숨기기
+    // info severity 이벤트 중 재전송/변동 없는 건 숨기기
     const d = e.detail as Record<string, unknown> | undefined
-    if (e.event_type === 'scheduler_tick' && d && (d.retransmitted === 0 || d.retransmitted === undefined)) return false
+    if (e.event_type === 'scheduler_tick' && d) {
+      const hasChange = (d.retransmitted as number || 0) > 0 || (d.changed as number || 0) > 0 || (d.sold_out as number || 0) > 0 || (d.deleted as number || 0) > 0
+      if (!hasChange) return false
+    }
     if (eventFilter === 'all') return true
     if (eventFilter === 'critical') return e.severity === 'critical' || e.severity === 'warning'
     if (eventFilter === 'price_changed') return e.event_type === 'price_changed'
