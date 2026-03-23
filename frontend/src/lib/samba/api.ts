@@ -4,7 +4,7 @@
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL ||
   (process.env.NODE_ENV === 'production'
-    ? 'https://samba-wave-production.up.railway.app'
+    ? 'https://samba-wave-production-b105.up.railway.app'
     : 'http://localhost:28080')
 
 const SAMBA_PREFIX = `${API_BASE}/api/v1/samba`;
