@@ -348,12 +348,28 @@ async def analyze_full(
       # ── 4단계: 조합 생성 — 브랜드×키워드 쌍 기반 ──
       yield _sse("log", "")
       yield _sse("log", f"━━ 4/4 조합 생성 ({len(sorted_brands)}개 브랜드, IP위험 포함) ━━")
-      yield _sse("log", "브랜드×키워드 쌍으로 무신사 상품수 조회 중...")
+
+      # 기존 검색그룹 조회 → 이미 존재하는 조합 제외
+      existing_combos: set[str] = set()
+      async with get_write_session() as filter_session:
+        filter_repo = SambaSearchFilterRepository(filter_session)
+        existing_filters = await filter_repo.filter_by_async(limit=10000)
+        for f in existing_filters:
+          # 그룹명 패턴: "{소싱처}_{브랜드}_{키워드}" 또는 keyword 필드에서 추출
+          fname = (f.name or "").upper()
+          fkw = (f.keyword or "").lower()
+          existing_combos.add(fname)
+          # keyword 필드: "브랜드 키워드" 형태
+          if fkw:
+            existing_combos.add(fkw)
+      if existing_combos:
+        yield _sse("log", f"기존 검색그룹 {len(existing_filters)}개 로드 → 중복 조합 제외")
 
       pair_list = sorted(all_pairs.values(), key=lambda x: x.score, reverse=True)
       combinations = await svc.generate_combinations(
         sorted_brands,
         pair_list,
+        existing_combos=existing_combos,
       )
       for combo in combinations:
         b_safety = safety.get(combo.brand, {})

@@ -149,7 +149,11 @@ class MusinsaClient:
     # Public API
     # ------------------------------------------------------------------
 
-    async def get_goods_detail(self, goods_no: str) -> dict[str, Any]:
+    async def get_goods_detail(
+        self, goods_no: str, *,
+        member_grade_rate: Optional[float] = None,
+        refresh_only: bool = False,
+    ) -> dict[str, Any]:
         """상품 상세 조회 - 상세 + 옵션 + 재고 + 고시정보 + 쿠폰 + 혜택가.
 
         proxy-server.mjs ``fetchMusinsaProduct()`` 전체 로직 포팅.
@@ -160,8 +164,9 @@ class MusinsaClient:
                 "무신사 수집은 로그인(쿠키)이 필요합니다. "
                 "확장앱에서 무신사 로그인 후 다시 시도하세요."
             )
-        # 회원 등급 할인율 조회 (등급별 최대혜택가 계산에 필요)
-        member_grade_rate = await self._get_member_grade_rate()
+        # 회원 등급 할인율 조회 (등급별 최대혜택가 계산에 필요, 외부 캐시값 있으면 스킵)
+        if member_grade_rate is None:
+            member_grade_rate = await self._get_member_grade_rate()
         timeout = httpx.Timeout(30.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             # 1) 상품 상세 API
@@ -188,8 +193,8 @@ class MusinsaClient:
                 client, goods_no, gp
             )
 
-            # 3) 상품고시정보 API
-            essential = await self._fetch_essential(client, goods_no)
+            # 3) 상품고시정보 API (갱신 모드에서는 스킵)
+            essential = {} if refresh_only else await self._fetch_essential(client, goods_no)
 
             # 카테고리
             category_levels = [
@@ -287,10 +292,11 @@ class MusinsaClient:
             if 0 < coupon_price_raw < s_price:
                 benefit_coupon_discount = s_price - coupon_price_raw
 
-            # 쿠폰 API로 추가 쿠폰 탐색 (로그인 시 실제 적용 가능한 쿠폰)
-            benefit_coupon_discount = await self._fetch_coupons(
-                client, goods_no, d, s_price, benefit_coupon_discount
-            )
+            # 쿠폰 API로 추가 쿠폰 탐색 (갱신 모드에서는 스킵)
+            if not refresh_only:
+                benefit_coupon_discount = await self._fetch_coupons(
+                    client, goods_no, d, s_price, benefit_coupon_discount
+                )
             coupon_applied_price = s_price - benefit_coupon_discount if benefit_coupon_discount > 0 else s_price
 
             # bestBenefitPrice 계산도 쿠폰 API 결과 포함

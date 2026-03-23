@@ -232,20 +232,6 @@ export default function WarroomPage() {
           {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
         </div>
         <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
-          <select
-            value={autotuneTarget}
-            onChange={e => setAutotuneTarget(e.target.value)}
-            disabled={autotuneRunning}
-            style={{
-              padding: '0.25rem 0.5rem', fontSize: '0.78rem', borderRadius: '6px',
-              background: '#1A1A1A', border: '1px solid #3D3D3D', color: '#C5C5C5',
-              opacity: autotuneRunning ? 0.5 : 1,
-            }}
-          >
-            <option value="all">전체</option>
-            <option value="registered">마켓등록</option>
-            <option value="unregistered">마켓미등록</option>
-          </select>
           <button
             onClick={async () => {
               try {
@@ -253,7 +239,7 @@ export default function WarroomPage() {
                   await collectorApi.autotuneStop()
                   setAutotuneRunning(false)
                 } else {
-                  await collectorApi.autotuneStart(autotuneTarget)
+                  await collectorApi.autotuneStart('registered')
                   setAutotuneRunning(true)
                   setAutotuneCycles(0)
                 }
@@ -425,9 +411,6 @@ export default function WarroomPage() {
           <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>24시간 오토튠</div>
           <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#4C9AFF' }}>
             {refresh_stats.refreshed_24h.toLocaleString()}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: '#888', marginTop: '0.25rem' }}>
-            마지막 {isoTimeAgo(refresh_stats.last_refreshed_at)}
           </div>
         </div>
 
@@ -740,18 +723,12 @@ export default function WarroomPage() {
             </div>
           ) : (
             refreshLogs.map((log, i) => {
-              const t = new Date(log.ts)
-              const timeStr = `[${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}]`
               let color = '#DCE0E8'
-              if (log.level === 'error') color = '#C4736E'
-              else if (log.level === 'warning') color = '#B89A5A'
-              else if (log.msg.includes('완료') || log.msg.includes('성공')) color = '#7BAF7E'
+              if (log.msg.includes('실패') || log.msg.includes('오류') || log.msg.includes('차단')) color = '#C4736E'
               else if (log.msg.includes('스킵')) color = '#888'
-              return (
-                <div key={`${log.ts}-${i}`} style={{ color }}>
-                  {timeStr} <span style={{ color: SITE_COLORS[log.site] || '#8A95B0' }}>{log.site}</span> {log.msg}{log.name ? ` — ${log.name}` : ''}
-                </div>
-              )
+              else if (log.msg.includes('변동')) color = '#FFD93D'
+              else if (log.msg.includes('성공')) color = '#7BAF7E'
+              return <div key={`${log.ts}-${i}`} style={{ color }}>{log.msg}</div>
             })
           )}
         </div>

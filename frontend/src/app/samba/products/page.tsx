@@ -253,6 +253,7 @@ export default function ProductsPage() {
     }
 
     // AI filter
+    if (aiFilter === 'sold_out') filtered = filtered.filter(p => p.is_sold_out || p.sale_status === 'sold_out')
     if (aiFilter === 'ai_tag_yes') filtered = filtered.filter(p => (p.tags || []).includes('__ai_tagged__'))
     if (aiFilter === 'ai_tag_no') filtered = filtered.filter(p => !(p.tags || []).includes('__ai_tagged__'))
     if (aiFilter === 'ai_img_yes') filtered = filtered.filter(p => (p.images || []).some(u => u.includes('/transformed/') || u.includes('/static/images/ai_')))
@@ -1130,7 +1131,8 @@ export default function ProductsPage() {
             onChange={(e) => setAiFilter(e.target.value)}
             style={{ background: '#1A1A1A', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '6px', padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
           >
-            <option value="">AI 전체</option>
+            <option value="">전체</option>
+            <option value="sold_out">품절상품</option>
             <option value="ai_tag_yes">AI태그 적용</option>
             <option value="ai_tag_no">AI태그 미적용</option>
             <option value="ai_img_yes">AI이미지 적용</option>
@@ -1906,6 +1908,19 @@ function ProductCard({
                               }
                             }} style={{ padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid #FF8C00', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>변경완료</button>
                           </div>
+                          <button onClick={() => {
+                            // 대표이미지 삭제 → 추가이미지[0]이 대표로 승격
+                            const remaining = productImages.slice(1)
+                            const newImgs = remaining.length > 0 ? remaining : []
+                            setProductImages(newImgs)
+                            collectorApi.updateProduct(p.id, { images: newImgs } as Partial<SambaCollectedProduct>).then(() => {
+                              onProductUpdate(p.id, { images: newImgs })
+                            }).catch(() => {})
+                          }} style={{
+                            marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
+                            border: '1px solid rgba(255,107,107,0.4)', background: 'rgba(255,107,107,0.08)',
+                            color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap',
+                          }}>대표이미지 삭제</button>
                         </div>
                       </div>
                     ) : (
@@ -2170,8 +2185,14 @@ function ProductCard({
             <ProductImage src={p.images?.[0]} name={p.name} size={50} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <span style={{ color: "#FFFFFF", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{p.name}</span>
+              <button onClick={(e) => { e.stopPropagation(); setShowPriceHistoryModal(true) }}
+                style={{ fontSize: "0.6rem", padding: "2px 5px", borderRadius: "3px", cursor: "pointer", border: "1px solid #2D2D2D", background: "transparent", color: "#888", whiteSpace: "nowrap" }}>이력</button>
+              <button onClick={(e) => { e.stopPropagation(); const url = getSourceUrl(p.source_site, p.site_product_id); if (url) window.open(url, '_blank') }}
+                style={{ fontSize: "0.6rem", padding: "2px 5px", borderRadius: "3px", cursor: "pointer", border: "1px solid #2D2D2D", background: "transparent", color: "#888", whiteSpace: "nowrap" }}>원문</button>
+              <button onClick={(e) => { e.stopPropagation(); onEnrich(p.id) }}
+                style={{ fontSize: "0.6rem", padding: "2px 5px", borderRadius: "3px", cursor: "pointer", border: "1px solid #2D2D2D", background: "transparent", color: "#888", whiteSpace: "nowrap" }}>업데이트</button>
               <span style={{ color: "#FFB84D", fontWeight: 600, flexShrink: 0 }}>₩{fmt(cost)}</span>
             </div>
             <div style={{ color: "#888", fontSize: "0.72rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -2602,6 +2623,7 @@ function ProductCard({
       </div>
       )}
       {/* 카드 알림 모달 */}
+
       {cardAlert && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 999999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => setCardAlert(null)}>

@@ -73,6 +73,21 @@ export default function ShipmentsPage() {
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const progressRef = useRef<NodeJS.Timeout | null>(null)
   const abortRef = useRef(false)
+  const [loopRestart, setLoopRestart] = useState(false)
+
+  // 무한반복: 3분 대기 후 미등록 필터 + 전체 선택 + 재시작
+  useEffect(() => {
+    if (!loopRestart) return
+    setLoopRestart(false)
+    // 미등록 상품 전체 선택
+    const unregistered = products.filter(p => !(p.registered_accounts?.length)).map(p => p.id)
+    if (unregistered.length > 0) {
+      setSelectedProducts(unregistered)
+      setTimeout(() => handleStart(unregistered), 300)
+    } else {
+      setTransmitting(false)
+    }
+  }, [loopRestart, products]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 전송 중 새로고침/탭닫기 방지
   useEffect(() => {
@@ -85,7 +100,7 @@ export default function ShipmentsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     const [p, a, s, f, pol] = await Promise.all([
-      collectorApi.listProducts(0, 500).catch(() => []),
+      collectorApi.listProducts(0, 10000).catch(() => []),
       accountApi.listActive().catch(() => []),
       shipmentApi.list(0, 100).catch(() => []),
       collectorApi.listFilters().catch(() => []),
@@ -254,13 +269,14 @@ export default function ShipmentsPage() {
     setTransmitting(false)
   }
 
-  const handleStart = async () => {
-    if (selectedProducts.length === 0) { showAlert('상품을 선택해주세요'); return }
+  const handleStart = async (targetIds?: string[]) => {
+    const inputIds = targetIds || selectedProducts
+    if (inputIds.length === 0) { showAlert('상품을 선택해주세요'); return }
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
 
     // 현재 필터에 표시된 상품만 전송 (필터 외 잔존 선택 제거)
     const filteredSet = new Set(filteredProducts.map(p => p.id))
-    const visibleSelected = selectedProducts.filter(id => filteredSet.has(id))
+    const visibleSelected = targetIds ? inputIds : inputIds.filter(id => filteredSet.has(id))
     if (visibleSelected.length === 0) { showAlert('현재 화면에 표시된 선택 상품이 없습니다'); return }
 
     setTransmitting(true)
@@ -428,7 +444,7 @@ export default function ShipmentsPage() {
             const label = accountLabelMap[accId] || accId
             if (status === 'success') {
               const hasChange = rl && (rl.includes('>') || rl.includes('변동'))
-              const statusLabel = skipEnabled ? '전송' : '성공'
+              const statusLabel = '전송'
               addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: ${statusLabel}${rl}`)
               successCount++
             } else if (status === 'skipped') {
@@ -463,10 +479,21 @@ export default function ShipmentsPage() {
     setProgress({ current: total, total })
 
     if (loopEnabled && !abortRef.current) {
-      addLog(`[${ts()}] 무한반복 모드 — 상품 새로고침 후 재시작...`)
-      await load()
-      // 새로고침 후 즉시 재시작
-      setTimeout(() => handleStart(), 1000)
+      addLog(`[${ts()}] 무한반복 모드 — 3분 대기 후 새로고침 & 미등록 상품부터 재시작...`)
+      // 3분 카운트다운 (10초 단위 로그)
+      for (let remain = 180; remain > 0; remain -= 10) {
+        if (abortRef.current) break
+        await new Promise(r => setTimeout(r, Math.min(10000, remain * 1000)))
+        if (abortRef.current) break
+        const left = Math.max(0, remain - 10)
+        if (left > 0 && left % 60 === 0) addLog(`[${ts()}] 대기 중... ${Math.floor(left / 60)}분 남음`)
+      }
+      if (!abortRef.current) {
+        setRegistrationFilter('미등록')
+        await load()
+        addLog(`[${ts()}] 새로고침 완료 — 미등록 상품 전체 선택 후 재시작`)
+        setLoopRestart(true)
+      }
     } else {
       setTimeout(() => { setTransmitting(false); load() }, 2000)
     }
@@ -636,9 +663,12 @@ export default function ShipmentsPage() {
                 <input type="checkbox" checked={loopEnabled} onChange={() => setLoopEnabled(!loopEnabled)} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
                 무한반복
               </label>
-              <button onClick={handleStart}
-                style={{ padding: '4px 16px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
-              >전송 시작</button>
+              <button onClick={() => handleStart()}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.4)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
+              >선택전송</button>
+              <button onClick={() => handleStart(filteredProducts.map(p => p.id))}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
+              >검색결과전송 ({filteredProducts.length})</button>
             </>)}
           </div>
         </div>
@@ -695,7 +725,8 @@ export default function ShipmentsPage() {
           <thead>
             <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #2D2D2D' }}>
               <th style={{ width: '36px', padding: '0.625rem' }}><input type="checkbox" checked={filteredProducts.length > 0 && filteredProducts.every(p => selectedProducts.includes(p.id))} onChange={toggleAllProducts} style={{ accentColor: '#F59E0B' }} /></th>
-              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: '#888' }}>No</th>
+              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem', color: '#888', width: '40px' }}>No</th>
+              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: '#888' }}>상품번호</th>
               <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: '#888' }}>사이트</th>
               <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: '#888' }}>상품명</th>
               <th style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem', color: '#888' }}>상품업데이트</th>
@@ -704,9 +735,9 @@ export default function ShipmentsPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
+              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
             ) : filteredProducts.length === 0 ? (
-              <tr><td colSpan={6} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>상품이 없습니다</td></tr>
+              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>상품이 없습니다</td></tr>
             ) : filteredProducts.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((p, idx) => {
               const regAccounts = p.registered_accounts || []
               const regMarkets = regAccounts.map(aid => accounts.find(a => a.id === aid)?.market_name).filter(Boolean)
@@ -719,7 +750,8 @@ export default function ShipmentsPage() {
                   <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center' }}>
                     <input type="checkbox" checked={selectedProducts.includes(p.id)} onChange={() => toggleProduct(p.id)} style={{ accentColor: '#F59E0B' }} />
                   </td>
-                  <td style={{ padding: '0.625rem 0.5rem', color: '#666', fontSize: '0.72rem' }}>{p.site_product_id || idx + 1}</td>
+                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: '#666', fontSize: '0.72rem' }}>{(currentPage - 1) * pageSize + idx + 1}</td>
+                  <td style={{ padding: '0.625rem 0.5rem', color: '#666', fontSize: '0.72rem' }}>{p.site_product_id || '-'}</td>
                   <td style={{ padding: '0.625rem 0.5rem', fontSize: '0.75rem', color: '#888' }}>{p.source_site}</td>
                   <td style={{ padding: '0.625rem 0.5rem' }}>
                     <div>

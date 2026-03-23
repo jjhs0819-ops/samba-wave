@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -20,15 +20,15 @@ from backend.utils.logger import logger
 CONCURRENCY_PER_SITE = 5
 # 소싱처별 동시 요청 수 (개별 설정)
 SITE_CONCURRENCY: dict[str, int] = {
-    "MUSINSA": 8,
+    "MUSINSA": 1,
 }
 # 소싱처별 기본 인터벌 (초)
 SITE_BASE_INTERVAL: dict[str, float] = {
-    "MUSINSA": 0.5,
+    "MUSINSA": 1.0,
 }
 # 소싱처별 최소 인터벌 (초)
 SITE_MIN_INTERVAL: dict[str, float] = {
-    "MUSINSA": 0.3,
+    "MUSINSA": 0.8,
 }
 # 소싱처별 인터벌 복원 스텝 (성공 시 감소량)
 SITE_INTERVAL_STEP: dict[str, float] = {
@@ -41,6 +41,22 @@ _site_intervals: dict[str, float] = {}
 _site_consecutive_errors: dict[str, int] = {}
 # 소싱처별 안전 인터벌 기록 (차단 안 당하는 최소값)
 _site_safe_intervals: dict[str, float] = {}
+# 벌크 갱신용 캐시 (배치 시작 시 1회 조회)
+_bulk_musinsa_cache: dict[str, Any] = {}
+
+
+async def _prepare_musinsa_cache() -> None:
+    """MUSINSA 벌크 갱신 전 쿠키/회원등급 1회 캐싱."""
+    cookie = await _get_musinsa_cookie()
+    _bulk_musinsa_cache["cookie"] = cookie
+    if cookie:
+        from backend.domain.samba.proxy.musinsa import MusinsaClient
+        client = MusinsaClient(cookie)
+        grade_rate = await client._get_member_grade_rate()
+        _bulk_musinsa_cache["grade_rate"] = grade_rate
+    else:
+        _bulk_musinsa_cache["grade_rate"] = 0
+
 
 # ── 실시간 로그 링 버퍼 (최대 300건) ──
 _refresh_log_buffer: deque[Dict[str, Any]] = deque(maxlen=300)
@@ -52,14 +68,26 @@ def _log_refresh(
     product_name: str = "",
     message: str = "",
     level: str = "info",
+    idx: int = 0,
+    total: int = 0,
 ) -> None:
-    """갱신 로그를 링 버퍼에 추가."""
+    """갱신 로그를 링 버퍼에 추가.
+
+    상품전송삭제 로그와 동일 형태:
+    [HH:MM:SS] [순번/총] 상품명: 성공/실패 [원가 > 판매가]
+    """
+    now = datetime.now(timezone.utc)
+    kst = now + timedelta(hours=9)
+    ts_str = kst.strftime("%H:%M:%S")
+    prefix = f"[{idx}/{total}] " if idx and total else ""
+    name_label = f"{product_name[:40]}: " if product_name else ""
+    full_msg = f"[{ts_str}] {prefix}{name_label}{message}"
     _refresh_log_buffer.append({
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now.isoformat(),
         "site": site,
         "product_id": product_id,
-        "name": product_name[:40] if product_name else "",
-        "msg": message,
+        "name": "",
+        "msg": full_msg,
         "level": level,
     })
 
@@ -103,6 +131,7 @@ class RefreshResult:
     new_free_shipping: Optional[bool] = None
     new_same_day_delivery: Optional[bool] = None
     changed: bool = False
+    stock_changed: bool = False
     needs_extension: bool = False
     error: Optional[str] = None
     warnings: list = field(default_factory=list)
@@ -120,7 +149,7 @@ class BulkRefreshResult:
     errors: int = 0
 
 
-async def refresh_product(product: Any) -> RefreshResult:
+async def refresh_product(product: Any, idx: int = 0, total: int = 0) -> RefreshResult:
     """소싱처에서 최신 가격/재고 재수집."""
     source_site = getattr(product, "source_site", "")
 
@@ -131,6 +160,10 @@ async def refresh_product(product: Any) -> RefreshResult:
             product_id=product.id,
             error=f"지원하지 않는 소싱처: {source_site}",
         )
+
+    # idx/total을 thread-local에 임시 저장 (파서에서 접근)
+    product._refresh_idx = idx
+    product._refresh_total = total
 
     try:
         result = await parser(product)
@@ -165,16 +198,24 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
     """무신사 상품 가격/재고 재수집 (MusinsaClient 활용)."""
     from backend.domain.samba.proxy.musinsa import MusinsaClient, RateLimitError
 
+    _idx = getattr(product, "_refresh_idx", 0)
+    _total = getattr(product, "_refresh_total", 0)
+
     site_product_id = getattr(product, "site_product_id", None)
     if not site_product_id:
         return RefreshResult(product_id=product.id, error="site_product_id 없음")
 
-    cookie = await _get_musinsa_cookie()
+    cookie = _bulk_musinsa_cache.get("cookie") or await _get_musinsa_cookie()
     client = MusinsaClient(cookie)
+    cached_grade_rate = _bulk_musinsa_cache.get("grade_rate")
     warnings: list[str] = []
 
     try:
-        detail = await client.get_goods_detail(site_product_id)
+        detail = await client.get_goods_detail(
+            site_product_id,
+            member_grade_rate=cached_grade_rate,
+            refresh_only=True,
+        )
         # 성공 → 인터벌 점진 복원
         base = SITE_BASE_INTERVAL.get("MUSINSA", 1.0)
         min_iv = SITE_MIN_INTERVAL.get("MUSINSA", base)
@@ -186,11 +227,7 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         # 차단 안 당하는 최소 인터벌 기록
         if new_interval <= _site_safe_intervals.get("MUSINSA", 999):
             _site_safe_intervals["MUSINSA"] = new_interval
-        _log_refresh(
-            "MUSINSA", product.id,
-            getattr(product, "name", ""),
-            f"조회 성공 (인터벌 {new_interval:.1f}s)",
-        )
+        pass  # 로그는 변동 판정 후 출력
     except RateLimitError as e:
         # 차단 → 인터벌 2배 증가 (최대 30초)
         current = _site_intervals.get("MUSINSA", 1.0)
@@ -200,7 +237,7 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
             "MUSINSA", product.id,
             getattr(product, "name", ""),
             f"차단 HTTP {e.status} (연속 {_site_consecutive_errors['MUSINSA']}회, 인터벌→{_site_intervals['MUSINSA']:.1f}s)",
-            level="warning",
+            level="warning", idx=_idx, total=_total,
         )
 
         # 연속 5회 이상이면 해당 소싱처 전체 일시 중단
@@ -209,7 +246,7 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
                 "MUSINSA", product.id,
                 getattr(product, "name", ""),
                 f"연속 {_site_consecutive_errors['MUSINSA']}회 차단 — 일시 중단",
-                level="error",
+                level="error", idx=_idx, total=_total,
             )
             return RefreshResult(
                 product_id=product.id,
@@ -222,19 +259,24 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
             logger.warning(f"[refresher] {site_product_id} 차단({e.status}), {e.retry_after}초 후 재시도")
             await asyncio.sleep(e.retry_after)
             try:
-                detail = await client.get_goods_detail(site_product_id)
+                detail = await client.get_goods_detail(
+                    site_product_id,
+                    member_grade_rate=cached_grade_rate,
+                    refresh_only=True,
+                )
                 _site_consecutive_errors["MUSINSA"] = 0
                 _log_refresh(
                     "MUSINSA", product.id,
                     getattr(product, "name", ""),
                     f"재시도 성공 (대기 {e.retry_after}s 후)",
+                    idx=_idx, total=_total,
                 )
             except Exception:
                 _log_refresh(
                     "MUSINSA", product.id,
                     getattr(product, "name", ""),
                     f"재시도 실패: HTTP {e.status}",
-                    level="error",
+                    level="error", idx=_idx, total=_total,
                 )
                 return RefreshResult(product_id=product.id, error=f"차단 후 재시도 실패: HTTP {e.status}")
         else:
@@ -243,8 +285,8 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         _log_refresh(
             "MUSINSA", product.id,
             getattr(product, "name", ""),
-            f"API 오류: {e}",
-            level="error",
+            f"실패 — {e}",
+            level="error", idx=_idx, total=_total,
         )
         return RefreshResult(product_id=product.id, error=f"무신사 API 오류: {e}")
 
@@ -284,12 +326,25 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         or new_sale_status != old_status
     )
 
-    if changed:
-        _log_refresh(
-            "MUSINSA", product.id,
-            getattr(product, "name", ""),
-            f"변동 감지: 가격 {old_sale}→{new_sale_price}, 상태 {old_status}→{new_sale_status}",
-        )
+    # 옵션 재고 변동 건수
+    old_options = getattr(product, "options", None) or []
+    _stock_changes = 0
+    if new_options and old_options:
+        old_stock_map = {(o.get("name", "") or o.get("size", "")): o.get("stock", 0) for o in old_options}
+        for o in new_options:
+            key = o.get("name", "") or o.get("size", "")
+            if o.get("stock", 0) != old_stock_map.get(key, 0):
+                _stock_changes += 1
+
+    # 상품명 (품번) 형태
+    _name = getattr(product, "name", "") or ""
+    _prod_label = f"{_name} ({site_product_id})" if site_product_id else _name
+    _status = "변동" if changed else "성공"
+    _log_refresh(
+        "MUSINSA", product.id, _prod_label,
+        f"{_status} [원가 {int(old_sale):,}>{int(new_sale_price):,}, 판매가 {int(old_cost or old_sale):,}>{int(new_cost or new_sale_price):,}, 재고변동 {_stock_changes}건]",
+        idx=_idx, total=_total,
+    )
 
     # 이미지/소재/색상 (빈 값이 아닌 경우만 업데이트)
     new_images = detail.get("images") or None
@@ -311,6 +366,7 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         new_free_shipping=detail.get("freeShipping", False),
         new_same_day_delivery=detail.get("sameDayDelivery", False),
         changed=changed,
+        stock_changed=_stock_changes > 0,
         warnings=warnings,
     )
 
@@ -477,7 +533,14 @@ async def refresh_products_bulk(
     all_results: List[RefreshResult] = []
     summary = BulkRefreshResult(total=len(products))
 
+    # 전체 순번 카운터 (소싱처 무관)
+    _counter = {"i": 0}
+    _total = len(products)
+
     async def _process_site(site: str, items: list) -> List[RefreshResult]:
+        # 소싱처별 사전 캐싱 (배치 시작 시 1회)
+        if site == "MUSINSA":
+            await _prepare_musinsa_cache()
         concurrency = SITE_CONCURRENCY.get(site, CONCURRENCY_PER_SITE)
         base_interval = SITE_BASE_INTERVAL.get(site, 1.0)
         sem = asyncio.Semaphore(concurrency)
@@ -485,7 +548,8 @@ async def refresh_products_bulk(
 
         async def _limited(p: Any) -> RefreshResult:
             async with sem:
-                r = await refresh_product(p)
+                _counter["i"] += 1
+                r = await refresh_product(p, idx=_counter["i"], total=_total)
                 # 소싱처별 적응형 인터벌 (기본값은 소싱처별 base_interval)
                 interval = _site_intervals.get(site, base_interval)
                 await asyncio.sleep(interval)

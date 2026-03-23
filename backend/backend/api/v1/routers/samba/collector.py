@@ -2456,8 +2456,9 @@ async def _autotune_loop():
                     stmt = stmt.where(_CP.registered_accounts != None, _CP.status == "registered")
                 elif _autotune_target == "unregistered":
                     stmt = stmt.where(or_(_CP.registered_accounts == None, _CP.status != "registered"))
-                # 정책 적용된 상품만
+                # 정책 적용된 상품만 + 품절 제외
                 stmt = stmt.where(_CP.applied_policy_id != None)
+                stmt = stmt.where(or_(_CP.is_sold_out == None, _CP.is_sold_out == False))
                 result = await session.exec(stmt)
                 products = list(result.all())
                 candidates = products  # 로그용
@@ -2466,7 +2467,11 @@ async def _autotune_loop():
                     filtered_count = len(products)
                     results, summary = await refresh_products_bulk(products)
 
-                    # DB 업데이트
+                    # DB 업데이트 + 변동/품절 추적
+                    changed_ids: list[str] = []
+                    stock_changed_ids: list[str] = []
+                    soldout_ids: list[str] = []
+
                     for r in results:
                         if r.error:
                             product = await repo.get_async(r.product_id)
@@ -2520,25 +2525,110 @@ async def _autotune_loop():
                             if new_price != old_price:
                                 updates["price_before_change"] = old_price
                                 updates["price_changed_at"] = now
+                            # 품절이면 soldout, 아니면 가격변동으로 추적
+                            if r.new_sale_status == "sold_out":
+                                soldout_ids.append(r.product_id)
+                            else:
+                                changed_ids.append(r.product_id)
+                        # 재고만 변동 (가격은 동일)
+                        elif r.stock_changed:
+                            if r.new_options is not None:
+                                updates["options"] = r.new_options
+                            stock_changed_ids.append(r.product_id)
 
                         await repo.update_async(r.product_id, **updates)
 
                     await session.commit()
 
+                    # 마켓 반영: 가격변동 → 재전송, 재고변동 → 재전송, 품절 → 마켓삭제+DB삭제
+                    retransmitted = 0
+                    deleted_count = 0
+                    if changed_ids or stock_changed_ids or soldout_ids:
+                        from backend.domain.samba.shipment.repository import SambaShipmentRepository
+                        from backend.domain.samba.shipment.service import SambaShipmentService
+
+                        ship_repo = SambaShipmentRepository(session)
+                        ship_svc = SambaShipmentService(ship_repo, session)
+
+                        # 가격 변동 → 마켓 재전송
+                        for pid in changed_ids:
+                            product = await repo.get_async(pid)
+                            if product and product.registered_accounts:
+                                try:
+                                    await ship_svc.start_update(
+                                        [pid], ["price"], product.registered_accounts, skip_unchanged=False
+                                    )
+                                    retransmitted += 1
+                                except Exception as e:
+                                    log.error("[오토튠] 가격변동 재전송 실패 %s: %s", pid, e)
+
+                        # 재고 변동 → 마켓 재전송
+                        for pid in stock_changed_ids:
+                            product = await repo.get_async(pid)
+                            if product and product.registered_accounts:
+                                try:
+                                    await ship_svc.start_update(
+                                        [pid], ["stock"], product.registered_accounts, skip_unchanged=False
+                                    )
+                                    retransmitted += 1
+                                except Exception as e:
+                                    log.error("[오토튠] 재고변동 재전송 실패 %s: %s", pid, e)
+
+                        # 품절 → 마켓 판매중지 + DB 삭제
+                        from backend.domain.samba.shipment.dispatcher import delete_from_market
+                        from backend.domain.samba.account.repository import SambaMarketAccountRepository
+                        account_repo = SambaMarketAccountRepository(session)
+
+                        for pid in soldout_ids:
+                            product = await repo.get_async(pid)
+                            if not product:
+                                continue
+                            if getattr(product, "lock_delete", False):
+                                log.info("[오토튠] %s 품절이지만 lock_delete=True, 삭제 건너뜀", pid)
+                                continue
+                            product_dict = product.model_dump()
+                            if product.registered_accounts:
+                                for account_id in product.registered_accounts:
+                                    try:
+                                        account = await account_repo.get_async(account_id)
+                                        if not account:
+                                            continue
+                                        m_nos = product.market_product_nos or {}
+                                        product_dict["market_product_no"] = {account.market_type: m_nos.get(account_id, "")}
+                                        result_del = await delete_from_market(
+                                            session, account.market_type, product_dict, account=account
+                                        )
+                                        if result_del.get("success"):
+                                            log.info("[오토튠] %s → %s 판매중지 완료", pid, account.market_type)
+                                        else:
+                                            log.warning("[오토튠] %s → %s 판매중지 실패: %s", pid, account.market_type, result_del.get("message"))
+                                    except Exception as e:
+                                        log.error("[오토튠] %s → 마켓 삭제 오류: %s", pid, e)
+                            try:
+                                await repo.delete_async(pid)
+                                deleted_count += 1
+                                log.info("[오토튠] 품절 상품 삭제 완료: %s", pid)
+                            except Exception as e:
+                                log.error("[오토튠] 품절 상품 DB 삭제 실패 %s: %s", pid, e)
+
+                        await session.commit()
+
                     monitor = SambaMonitorService(session)
                     await monitor.emit(
                         "scheduler_tick", "info",
-                        summary=f"오토튠({_autotune_target}) — 대상 {filtered_count}건, {summary.refreshed}건 갱신, {summary.changed}건 변동",
+                        summary=f"오토튠({_autotune_target}) — 대상 {filtered_count}건, {summary.refreshed}건 갱신, {summary.changed}건 변동, 재전송 {retransmitted}건, 품절삭제 {deleted_count}건",
                         detail={
                             "target": _autotune_target,
                             "total": filtered_count,
                             "refreshed": summary.refreshed,
                             "changed": summary.changed,
                             "sold_out": summary.sold_out,
+                            "retransmitted": retransmitted,
+                            "deleted": deleted_count,
                         },
                     )
                     await session.commit()
-                    log.info("[오토튠] tick 완료: 대상 %d, 갱신 %d", filtered_count, summary.refreshed)
+                    log.info("[오토튠] tick 완료: 대상 %d, 갱신 %d, 재전송 %d, 품절삭제 %d", filtered_count, summary.refreshed, retransmitted, deleted_count)
                 else:
                     # 갱신 대상 없으면 5초 대기 후 재확인
                     await _asyncio.sleep(5)

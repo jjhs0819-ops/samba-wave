@@ -73,6 +73,7 @@ export default function CategoriesPage() {
   const [selectedCat2, setSelectedCat2] = useState<string | null>(null)
   const [selectedCat3, setSelectedCat3] = useState<string | null>(null)
   const [selectedCat4, setSelectedCat4] = useState<string | null>(null)
+  const [catEntry, setCatEntry] = useState<number>(0) // 진입점 레벨 (0=사이트, 1=대분류, ...)
 
   // 선택된 카테고리의 상품들
   const [selectedProducts, setSelectedProducts] = useState<SambaCollectedProduct[]>([])
@@ -187,52 +188,52 @@ export default function CategoriesPage() {
   }
 
   const handleSiteClick = (site: string) => {
-    setSelectedSite(site)
-    setSelectedCat1(null); setSelectedCat2(null); setSelectedCat3(null); setSelectedCat4(null)
+    setSelectedSite(selectedSite === site ? null : site)
     setSelectedProducts([]); setSelectedPath('')
   }
 
   const handleCat1Click = (cat: string) => {
-    setSelectedCat1(cat); setSelectedCat2(null); setSelectedCat3(null); setSelectedCat4(null)
-    updateSelectedProducts(cat, null, null, null)
+    setSelectedCat1(selectedCat1 === cat ? null : cat)
+    setSelectedProducts([]); setSelectedPath('')
   }
 
   const handleCat2Click = (cat: string) => {
-    setSelectedCat2(cat); setSelectedCat3(null); setSelectedCat4(null)
-    updateSelectedProducts(selectedCat1!, cat, null, null)
+    setSelectedCat2(selectedCat2 === cat ? null : cat)
+    setSelectedProducts([]); setSelectedPath('')
   }
 
   const handleCat3Click = (cat: string) => {
-    setSelectedCat3(cat); setSelectedCat4(null)
-    updateSelectedProducts(selectedCat1!, selectedCat2!, cat, null)
+    setSelectedCat3(selectedCat3 === cat ? null : cat)
+    setSelectedProducts([]); setSelectedPath('')
   }
 
   const handleCat4Click = (cat: string) => {
-    setSelectedCat4(cat)
-    updateSelectedProducts(selectedCat1!, selectedCat2!, selectedCat3!, cat)
+    setSelectedCat4(selectedCat4 === cat ? null : cat)
+    setSelectedProducts([]); setSelectedPath('')
   }
 
-  const updateSelectedProducts = (c1: string, c2: string | null, c3: string | null, c4: string | null) => {
-    if (!selectedSite) return
-    let node = catTree[selectedSite]
-    const path = [selectedSite]
+  // 크로스 필터: 지정 레벨 제외한 나머지 필터 적용
+  const getCrossFiltered = useCallback((excludeLevel: string) => {
+    let filtered = products
+    if (excludeLevel !== 'site' && selectedSite) filtered = filtered.filter(p => (p.source_site || '기타') === selectedSite)
+    if (excludeLevel !== 'cat1' && selectedCat1) filtered = filtered.filter(p => p.category1 === selectedCat1)
+    if (excludeLevel !== 'cat2' && selectedCat2) filtered = filtered.filter(p => p.category2 === selectedCat2)
+    if (excludeLevel !== 'cat3' && selectedCat3) filtered = filtered.filter(p => p.category3 === selectedCat3)
+    if (excludeLevel !== 'cat4' && selectedCat4) filtered = filtered.filter(p => p.category4 === selectedCat4)
+    return filtered
+  }, [products, selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4])
 
-    if (c1 && node.children[c1]) { node = node.children[c1]; path.push(c1) }
-    if (c2 && node.children[c2]) { node = node.children[c2]; path.push(c2) }
-    if (c3 && node.children[c3]) { node = node.children[c3]; path.push(c3) }
-    if (c4 && node.children[c4]) { node = node.children[c4]; path.push(c4) }
-
-    // 해당 노드 + 하위의 모든 상품 수집
-    const collectProducts = (n: CatLevel): SambaCollectedProduct[] => {
-      let result = [...n.products]
-      Object.values(n.children).forEach(child => { result = result.concat(collectProducts(child)) })
-      return result
+  // 선택 변경 시 상품 목록 자동 업데이트
+  useEffect(() => {
+    if (!selectedSite && !selectedCat1 && !selectedCat2 && !selectedCat3 && !selectedCat4) {
+      setSelectedProducts([]); setSelectedPath('')
+      return
     }
-
-    const prods = collectProducts(node)
-    setSelectedProducts(prods)
+    const filtered = getCrossFiltered('none')
+    const path = [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4].filter(Boolean)
+    setSelectedProducts(filtered)
     setSelectedPath(path.join(' > '))
-  }
+  }, [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4, getCrossFiltered])
 
   // ── AI 카테고리 매핑 ──
 
@@ -415,23 +416,24 @@ export default function CategoriesPage() {
     }
   }
 
-  // 5단 드릴다운 데이터
-  const getCat1List = () => selectedSite && catTree[selectedSite] ? Object.keys(catTree[selectedSite].children) : []
-  const getCat2List = () => selectedSite && selectedCat1 && catTree[selectedSite]?.children[selectedCat1] ? Object.keys(catTree[selectedSite].children[selectedCat1].children) : []
-  const getCat3List = () => selectedSite && selectedCat1 && selectedCat2 && catTree[selectedSite]?.children[selectedCat1]?.children[selectedCat2] ? Object.keys(catTree[selectedSite].children[selectedCat1].children[selectedCat2].children) : []
-  const getCat4List = () => selectedSite && selectedCat1 && selectedCat2 && selectedCat3 && catTree[selectedSite]?.children[selectedCat1]?.children[selectedCat2]?.children[selectedCat3] ? Object.keys(catTree[selectedSite].children[selectedCat1].children[selectedCat2].children[selectedCat3].children) : []
+  // 5단 드릴다운 데이터 (크로스 필터: 각 레벨은 자신을 제외한 필터 적용)
+  const getCrossSites = () => [...new Set(getCrossFiltered('site').map(p => p.source_site || '기타'))].sort()
+  const getCat1List = () => [...new Set(getCrossFiltered('cat1').map(p => p.category1).filter(Boolean) as string[])].sort()
+  const getCat2List = () => [...new Set(getCrossFiltered('cat2').map(p => p.category2).filter(Boolean) as string[])].sort()
+  const getCat3List = () => [...new Set(getCrossFiltered('cat3').map(p => p.category3).filter(Boolean) as string[])].sort()
+  const getCat4List = () => [...new Set(getCrossFiltered('cat4').map(p => p.category4).filter(Boolean) as string[])].sort()
 
   // ── 최하단 카테고리 감지 (하위 자식이 없는 노드) ──
 
   const isLeafCategory = useMemo(() => {
-    if (!selectedSite || !selectedCat1) return false
+    if (!selectedCat1) return false
     if (selectedCat4) return true
     if (selectedCat3 && getCat4List().length === 0) return true
     if (selectedCat2 && getCat3List().length === 0) return true
     if (selectedCat1 && getCat2List().length === 0) return true
     return false
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4, catTree])
+  }, [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4, catTree, products])
 
   // 최하단 선택 시 기존 매핑값으로 manualEdits 초기화
   useEffect(() => {
@@ -949,61 +951,88 @@ export default function CategoriesPage() {
       <div style={{ ...card, overflow: 'hidden', marginBottom: '1.25rem' }}>
         {/* 헤더 */}
         <div style={{ display: 'flex', borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
-          {['사이트', '대분류', '중분류', '소분류', '세분류'].map((h, i) => (
-            <div key={h} style={{ flex: 1, minWidth: '140px', padding: '0.625rem 0.75rem', fontSize: '0.75rem', fontWeight: 600, color: '#888', borderRight: i < 4 ? '1px solid #2D2D2D' : 'none' }}>{h}</div>
-          ))}
+          {['사이트', '대분류', '중분류', '소분류', '세분류'].map((h, i) => {
+            const selections = [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4]
+            return (
+              <div key={h} style={{
+                flex: 1, minWidth: '140px', padding: '0.625rem 0.75rem',
+                fontSize: '0.75rem', fontWeight: 600,
+                color: catEntry === i || selections[i] ? '#FF8C00' : '#888',
+                borderRight: i < 4 ? '1px solid #2D2D2D' : 'none',
+                cursor: 'pointer',
+              }}
+              onClick={() => {
+                // 진입점 전환: 모든 선택 초기화, 해당 레벨을 진입점으로
+                setCatEntry(i)
+                setSelectedSite(null); setSelectedCat1(null); setSelectedCat2(null)
+                setSelectedCat3(null); setSelectedCat4(null)
+                setSelectedProducts([]); setSelectedPath('')
+              }}
+              >{h}</div>
+            )
+          })}
         </div>
 
         {loading ? (
           <div style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>카테고리 트리를 로딩 중...</div>
         ) : (
           <div style={{ display: 'flex' }}>
-            {/* 사이트 */}
+            {/* 사이트: 진입점이거나 다른 레벨 선택 시 연관 표시 */}
             <div style={colStyle}>
-              {sites.length === 0 ? (
-                <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>수집 상품이 없습니다</div>
-              ) : sites.map(site => (
-                <div key={site} style={itemStyle(selectedSite === site)} onClick={() => handleSiteClick(site)}
-                  onMouseEnter={e => { if (selectedSite !== site) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                  onMouseLeave={e => { if (selectedSite !== site) e.currentTarget.style.background = 'transparent' }}
-                >{site}</div>
-              ))}
+              {(catEntry === 0 || selectedCat1 || selectedCat2 || selectedCat3 || selectedCat4) ? (
+                getCrossSites().length === 0 ? (
+                  <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>수집 상품이 없습니다</div>
+                ) : getCrossSites().map(site => (
+                  <div key={site} style={itemStyle(selectedSite === site)} onClick={() => handleSiteClick(site)}
+                    onMouseEnter={e => { if (selectedSite !== site) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                    onMouseLeave={e => { if (selectedSite !== site) e.currentTarget.style.background = 'transparent' }}
+                  >{site}</div>
+                ))
+              ) : null}
             </div>
-            {/* 대분류 */}
+            {/* 대분류: 진입점이거나 다른 레벨 선택 시 연관 표시 */}
             <div style={colStyle}>
-              {getCat1List().map(cat => (
-                <div key={cat} style={itemStyle(selectedCat1 === cat)} onClick={() => handleCat1Click(cat)}
-                  onMouseEnter={e => { if (selectedCat1 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                  onMouseLeave={e => { if (selectedCat1 !== cat) e.currentTarget.style.background = 'transparent' }}
-                >{cat}</div>
-              ))}
+              {(catEntry === 1 || selectedSite || selectedCat2 || selectedCat3 || selectedCat4) ? (
+                getCat1List().map(cat => (
+                  <div key={cat} style={itemStyle(selectedCat1 === cat)} onClick={() => handleCat1Click(cat)}
+                    onMouseEnter={e => { if (selectedCat1 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                    onMouseLeave={e => { if (selectedCat1 !== cat) e.currentTarget.style.background = 'transparent' }}
+                  >{cat}</div>
+                ))
+              ) : null}
             </div>
             {/* 중분류 */}
             <div style={colStyle}>
-              {getCat2List().map(cat => (
-                <div key={cat} style={itemStyle(selectedCat2 === cat)} onClick={() => handleCat2Click(cat)}
-                  onMouseEnter={e => { if (selectedCat2 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                  onMouseLeave={e => { if (selectedCat2 !== cat) e.currentTarget.style.background = 'transparent' }}
-                >{cat}</div>
-              ))}
+              {(catEntry === 2 || selectedSite || selectedCat1 || selectedCat3 || selectedCat4) ? (
+                getCat2List().map(cat => (
+                  <div key={cat} style={itemStyle(selectedCat2 === cat)} onClick={() => handleCat2Click(cat)}
+                    onMouseEnter={e => { if (selectedCat2 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                    onMouseLeave={e => { if (selectedCat2 !== cat) e.currentTarget.style.background = 'transparent' }}
+                  >{cat}</div>
+                ))
+              ) : null}
             </div>
             {/* 소분류 */}
             <div style={colStyle}>
-              {getCat3List().length > 0 ? getCat3List().map(cat => (
-                <div key={cat} style={itemStyle(selectedCat3 === cat)} onClick={() => handleCat3Click(cat)}
-                  onMouseEnter={e => { if (selectedCat3 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                  onMouseLeave={e => { if (selectedCat3 !== cat) e.currentTarget.style.background = 'transparent' }}
-                >{cat}</div>
-              )) : selectedCat2 && <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8125rem' }}>항목 없음</div>}
+              {(catEntry === 3 || selectedSite || selectedCat1 || selectedCat2 || selectedCat4) ? (
+                getCat3List().map(cat => (
+                  <div key={cat} style={itemStyle(selectedCat3 === cat)} onClick={() => handleCat3Click(cat)}
+                    onMouseEnter={e => { if (selectedCat3 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                    onMouseLeave={e => { if (selectedCat3 !== cat) e.currentTarget.style.background = 'transparent' }}
+                  >{cat}</div>
+                ))
+              ) : null}
             </div>
             {/* 세분류 */}
             <div style={{ ...colStyle, borderRight: 'none' }}>
-              {getCat4List().length > 0 ? getCat4List().map(cat => (
-                <div key={cat} style={itemStyle(selectedCat4 === cat)} onClick={() => handleCat4Click(cat)}
-                  onMouseEnter={e => { if (selectedCat4 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                  onMouseLeave={e => { if (selectedCat4 !== cat) e.currentTarget.style.background = 'transparent' }}
-                >{cat}</div>
-              )) : selectedCat3 && <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8125rem' }}>소분류 선택</div>}
+              {(catEntry === 4 || selectedSite || selectedCat1 || selectedCat2 || selectedCat3) ? (
+                getCat4List().map(cat => (
+                  <div key={cat} style={itemStyle(selectedCat4 === cat)} onClick={() => handleCat4Click(cat)}
+                    onMouseEnter={e => { if (selectedCat4 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                    onMouseLeave={e => { if (selectedCat4 !== cat) e.currentTarget.style.background = 'transparent' }}
+                  >{cat}</div>
+                ))
+              ) : null}
             </div>
           </div>
         )}

@@ -878,13 +878,15 @@ class AISourcingService:
     safe_brands: list[BrandScore],
     brand_keyword_pairs: list[BrandKeywordPair],
     target_count: int = 0,
+    existing_combos: set[str] | None = None,
   ) -> list[Combination]:
     """실제 발견된 브랜드×키워드 쌍으로 조합 생성 + 무신사 상품수 조회.
 
     모든 브랜드(IP위험 포함)의 조합을 생성한다.
-    프론트에서 IP위험 브랜드 표시 및 사용자 선택을 처리.
+    existing_combos: 이미 존재하는 검색그룹 이름/키워드 set → 중복 제외.
     """
     all_brand_names = {bs.brand for bs in safe_brands}
+    _existing = {s.lower() for s in (existing_combos or set())}
 
     # 모든 브랜드 쌍 + 점수순 정렬 (IP위험 포함)
     valid_pairs = [
@@ -945,9 +947,18 @@ class AISourcingService:
 
     results = await asyncio.gather(*[_fetch_count(p) for p in unique_pairs])
 
+    skipped_existing = 0
     for pair, total, search_keyword in results:
       if total == 0:
         continue
+
+      # 기존 검색그룹 중복 체크
+      if _existing:
+        group_name = f"musinsa_{pair.brand}_{pair.keyword}".lower()
+        kw_combo = f"{pair.brand} {pair.keyword}".lower()
+        if group_name in _existing or kw_combo in _existing:
+          skipped_existing += 1
+          continue
 
       # 키워드가 속한 카테고리 찾기
       cat_name = ""
@@ -977,6 +988,8 @@ class AISourcingService:
     combinations.sort(key=lambda c: c.estimated_count, reverse=True)
 
     total_est = sum(c.estimated_count for c in combinations)
+    if skipped_existing > 0:
+      logger.info(f"[AI소싱] 기존 검색그룹 중복 {skipped_existing}개 제외")
     logger.info(
       f"[AI소싱] 조합 생성 완료: {len(combinations)}개 그룹, "
       f"예상 {total_est:,}개 상품"

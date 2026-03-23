@@ -124,10 +124,14 @@ export default function CollectorPage() {
   const [drillSite, setDrillSite] = useState<string | null>(null)
   const [drillBrand, setDrillBrand] = useState<string | null>(null)
   const [drillGroup, setDrillGroup] = useState<string | null>(null)
+  const [drillEntry, setDrillEntry] = useState<'site' | 'brand' | null>('site')
 
   // Group table filters
   const [siteFilter, setSiteFilter] = useState("");
   const [aiFilter, setAiFilter] = useState("");
+  const [marketRegFilter, setMarketRegFilter] = useState("")
+  const [tagRegFilter, setTagRegFilter] = useState("")
+  const [policyRegFilter, setPolicyRegFilter] = useState("")
   const [sortBy, setSortBy] = useState("lastCollectedAt_desc");
   const [selectAll, setSelectAll] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -452,6 +456,39 @@ export default function CollectorPage() {
       }
     })
   }
+  if (marketRegFilter) {
+    displayedFilters = displayedFilters.filter((f) => {
+      const r = f as unknown as Record<string, number>
+      const cnt = r.market_registered_count ?? 0
+      const total = r.collected_count ?? 0
+      if (marketRegFilter === 'registered') return cnt > 0 && cnt >= total
+      if (marketRegFilter === 'partial') return cnt > 0 && cnt < total
+      if (marketRegFilter === 'unregistered') return cnt === 0
+      return true
+    })
+  }
+  if (tagRegFilter) {
+    displayedFilters = displayedFilters.filter((f) => {
+      const r = f as unknown as Record<string, number>
+      const cnt = r.tag_applied_count ?? 0
+      const total = r.collected_count ?? 0
+      if (tagRegFilter === 'registered') return cnt > 0 && cnt >= total
+      if (tagRegFilter === 'partial') return cnt > 0 && cnt < total
+      if (tagRegFilter === 'unregistered') return cnt === 0
+      return true
+    })
+  }
+  if (policyRegFilter) {
+    displayedFilters = displayedFilters.filter((f) => {
+      const r = f as unknown as Record<string, number>
+      const cnt = r.policy_applied_count ?? 0
+      const total = r.collected_count ?? 0
+      if (policyRegFilter === 'registered') return cnt > 0 && cnt >= total
+      if (policyRegFilter === 'partial') return cnt > 0 && cnt < total
+      if (policyRegFilter === 'unregistered') return cnt === 0
+      return true
+    })
+  }
   const [sortField, sortDir] = sortBy.split("_");
   displayedFilters.sort((a, b) => {
     const va = sortField === "lastCollectedAt" ? (a.last_collected_at || "") : (a.created_at || "");
@@ -773,6 +810,27 @@ export default function CollectorPage() {
         }}>
           <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', margin: 0 }}>검색그룹 목록</h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            <select value={marketRegFilter} onChange={e => setMarketRegFilter(e.target.value)}
+              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: marketRegFilter ? '#4C9AFF' : '#888', cursor: 'pointer' }}>
+              <option value="">마켓등록</option>
+              <option value="registered">등록</option>
+              <option value="partial">부분등록</option>
+              <option value="unregistered">미등록</option>
+            </select>
+            <select value={tagRegFilter} onChange={e => setTagRegFilter(e.target.value)}
+              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: tagRegFilter ? '#51CF66' : '#888', cursor: 'pointer' }}>
+              <option value="">태그등록</option>
+              <option value="registered">등록</option>
+              <option value="partial">부분등록</option>
+              <option value="unregistered">미등록</option>
+            </select>
+            <select value={policyRegFilter} onChange={e => setPolicyRegFilter(e.target.value)}
+              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: policyRegFilter ? '#FF8C00' : '#888', cursor: 'pointer' }}>
+              <option value="">정책등록</option>
+              <option value="registered">등록</option>
+              <option value="partial">부분등록</option>
+              <option value="unregistered">미등록</option>
+            </select>
             <button
               onClick={handleDeleteSelectedGroups}
               style={{
@@ -878,20 +936,29 @@ export default function CollectorPage() {
             ;(node.children || []).forEach(walk)
             return result
           }
-          const siteNode = tree.find(n => n.id === drillSite)
-          const allLeaves = getAllLeaves(siteNode)
-          // 브랜드 목록
+          // 전체 사이트별 리프 + 브랜드/카테고리 파싱 (크로스 필터용)
+          const allLeafInfos = tree.flatMap(s =>
+            getAllLeaves(s).map(l => {
+              const parsed = parseGroupName(l.name, s.source_site || '')
+              return { ...l, _siteId: s.id, _siteSite: s.source_site || '', _brand: parsed.brand, _category: parsed.category }
+            })
+          )
+          // 크로스 필터: 사이트 목록 (선택된 브랜드 기준 필터)
+          const filteredSites = drillBrand
+            ? tree.filter(s => allLeafInfos.some(l => l._siteId === s.id && l._brand === drillBrand))
+            : tree
+          // 크로스 필터: 브랜드 목록 (선택된 사이트 기준 필터)
+          const brandLeaves = drillSite
+            ? allLeafInfos.filter(l => l._siteId === drillSite)
+            : allLeafInfos
           const brandMap = new Map<string, number>()
-          allLeaves.forEach(g => {
-            const { brand } = parseGroupName(g.name, siteNode?.source_site || '')
-            brandMap.set(brand, (brandMap.get(brand) || 0) + 1)
-          })
+          brandLeaves.forEach(l => brandMap.set(l._brand, (brandMap.get(l._brand) || 0) + 1))
           const brands = Array.from(brandMap.entries())
-          // 선택된 브랜드의 카테고리 그룹
-          const catGroups = drillBrand ? allLeaves.filter(g => {
-            const { brand } = parseGroupName(g.name, siteNode?.source_site || '')
-            return brand === drillBrand
-          }) : []
+          // 카테고리 그룹 (사이트+브랜드 교차 필터)
+          let catLeaves = allLeafInfos
+          if (drillSite) catLeaves = catLeaves.filter(l => l._siteId === drillSite)
+          if (drillBrand) catLeaves = catLeaves.filter(l => l._brand === drillBrand)
+          const catGroups = (drillSite || drillBrand) ? catLeaves : []
           // 선택된 그룹 상세
           const selectedFilter = drillGroup ? filters.find(fl => fl.id === drillGroup) : null
           const selectedCount = selectedFilter ? ((selectedFilter as unknown as Record<string, number>).collected_count ?? 0) : 0
@@ -916,59 +983,71 @@ export default function CollectorPage() {
                 {['사이트', '브랜드', '카테고리', '링크', '정책', '스스브랜드', '수집', '요청', '생성일/최근수집'].map((h, i) => (
                   <div key={h} style={{
                     flex: 1, minWidth: i < 3 ? '120px' : '80px', padding: '0.5rem 0.5rem',
-                    fontSize: '0.72rem', fontWeight: 600, color: '#888',
+                    fontSize: '0.72rem', fontWeight: 600,
+                    color: (i === 0 && (drillEntry === 'site' || drillSite)) || (i === 1 && (drillEntry === 'brand' || drillBrand)) || (i === 2 && drillGroup) ? '#FF8C00' : '#888',
                     borderRight: i < 8 ? '1px solid #2D2D2D' : 'none',
-                  }}>{h}</div>
+                    cursor: i < 3 ? 'pointer' : 'default',
+                  }}
+                  onClick={() => {
+                    if (i === 0) { setDrillEntry('site'); setDrillSite(null); setDrillBrand(null); setDrillGroup(null) }
+                    else if (i === 1) { setDrillEntry('brand'); setDrillSite(null); setDrillBrand(null); setDrillGroup(null) }
+                    else if (i === 2) { setDrillGroup(null) }
+                  }}
+                  >{h}</div>
                 ))}
               </div>
 
               {/* 컬럼 */}
               <div style={{ display: 'flex' }}>
-                {/* 1. 사이트 */}
+                {/* 1. 사이트: 사이트 헤더 클릭 시 전체 표시 / 브랜드 선택 시 연관만 표시 */}
                 <div style={colStyle}>
-                  {tree.length === 0 ? (
-                    <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>그룹 없음</div>
-                  ) : tree.map(s => (
-                    <div key={s.id} style={itemSt(drillSite === s.id)}
-                      onClick={() => { setDrillSite(s.id); setDrillBrand(null); setDrillGroup(null) }}
-                      onMouseEnter={e => { if (drillSite !== s.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                      onMouseLeave={e => { if (drillSite !== s.id) e.currentTarget.style.background = 'transparent' }}
-                    >
-                      {s.name}
-                      <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#555' }}>{getAllLeaves(s).length}</span>
-                    </div>
-                  ))}
-                </div>
-                {/* 2. 브랜드 */}
-                <div style={colStyle}>
-                  {drillSite ? (brands.length > 0 ? brands.map(([brand, count]) => (
-                    <div key={brand} style={itemSt(drillBrand === brand)}
-                      onClick={() => { setDrillBrand(brand); setDrillGroup(null) }}
-                      onMouseEnter={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                      onMouseLeave={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'transparent' }}
-                    >
-                      {brand}
-                      <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#555' }}>{count}</span>
-                    </div>
-                  )) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>브랜드 없음</div>
-                  ) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>사이트 선택</div>}
-                </div>
-                {/* 3. 카테고리 */}
-                <div style={colStyle}>
-                  {drillBrand ? (catGroups.length > 0 ? catGroups.map(g => {
-                    const { category } = parseGroupName(g.name, siteNode?.source_site || '')
-                    return (
-                      <div key={g.id} style={itemSt(drillGroup === g.id)}
-                        onClick={() => { setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
-                        onMouseEnter={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                        onMouseLeave={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'transparent' }}
+                  {(drillEntry === 'site' || drillBrand) ? (
+                    filteredSites.length === 0 ? (
+                      <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>그룹 없음</div>
+                    ) : filteredSites.map(s => (
+                      <div key={s.id} style={itemSt(drillSite === s.id)}
+                        onClick={() => { setDrillSite(drillSite === s.id ? null : s.id); setDrillGroup(null) }}
+                        onMouseEnter={e => { if (drillSite !== s.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                        onMouseLeave={e => { if (drillSite !== s.id) e.currentTarget.style.background = 'transparent' }}
                       >
-                        {category || g.name}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#FF8C00' }}>{g.collected_count ?? 0}</span>
+                        {s.name}
+                        <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#555' }}>
+                          {drillBrand
+                            ? allLeafInfos.filter(l => l._siteId === s.id && l._brand === drillBrand).length
+                            : getAllLeaves(s).length}
+                        </span>
                       </div>
-                    )
-                  }) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>항목 없음</div>
-                  ) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>브랜드 선택</div>}
+                    ))
+                  ) : null}
+                </div>
+                {/* 2. 브랜드: 브랜드 헤더 클릭 시 전체 표시 / 사이트 선택 시 연관만 표시 */}
+                <div style={colStyle}>
+                  {(drillEntry === 'brand' || drillSite) ? (
+                    brands.length > 0 ? brands.map(([brand, count]) => (
+                      <div key={brand} style={itemSt(drillBrand === brand)}
+                        onClick={() => { setDrillBrand(drillBrand === brand ? null : brand); setDrillGroup(null) }}
+                        onMouseEnter={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                        onMouseLeave={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'transparent' }}
+                      >
+                        {brand}
+                        <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#555' }}>{count}</span>
+                      </div>
+                    )) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>브랜드 없음</div>
+                  ) : null}
+                </div>
+                {/* 3. 카테고리: 사이트 또는 브랜드 선택 후 연관 표시 */}
+                <div style={colStyle}>
+                  {(drillSite || drillBrand) ? (catGroups.length > 0 ? catGroups.map(g => (
+                    <div key={g.id} style={itemSt(drillGroup === g.id)}
+                      onClick={() => { setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
+                      onMouseEnter={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                      onMouseLeave={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'transparent' }}
+                    >
+                      {g._category || g.name}
+                      <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#FF8C00' }}>{g.collected_count ?? 0}</span>
+                    </div>
+                  )) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>항목 없음</div>
+                  ) : null}
                 </div>
                 {/* 4. 링크 */}
                 <div style={detColStyle}>
