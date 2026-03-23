@@ -207,10 +207,6 @@ export default function WarroomPage() {
 
   useEffect(() => {
     load()
-    timerRef.current = setInterval(load, POLL_INTERVAL)
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
-    }
   }, [load])
 
   // 시간 차이 표시
