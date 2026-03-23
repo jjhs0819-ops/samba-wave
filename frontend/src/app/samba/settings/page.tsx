@@ -582,7 +582,7 @@ export default function SettingsPage() {
     setProbeLoading(false)
   }
 
-  useEffect(() => { loadExternalSettings(); loadStoreSettings(); loadProbeStatus(); loadPresets() }, [loadExternalSettings, loadStoreSettings, loadProbeStatus, loadPresets])
+  useEffect(() => { loadExternalSettings(); loadStoreSettings(); loadProbeStatus() }, [loadExternalSettings, loadStoreSettings, loadProbeStatus])
 
   // 금지어/삭제어 + 태그 금지어 로드
   useEffect(() => {
@@ -748,6 +748,8 @@ export default function SettingsPage() {
       if (res.success) setPresets(res.presets)
     } catch { /* ignore */ }
   }, [])
+
+  useEffect(() => { loadPresets() }, [loadPresets])
 
   // 프리셋 텍스트만 저장 (이미지 재생성 없이)
   const handleSavePreset = async (key: string, label: string, desc: string) => {
