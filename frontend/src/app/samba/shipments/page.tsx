@@ -180,7 +180,7 @@ export default function ShipmentsPage() {
         const mul = marketMatch[2] === 'desc' ? -1 : 1
         const getMarketTime = (p: typeof a) => {
           // last_sent_data에서 해당 마켓 계정의 sent_at 조회
-          const sent = (p as Record<string, unknown>).last_sent_data as Record<string, { sent_at?: string }> | undefined
+          const sent = (p as unknown as Record<string, unknown>).last_sent_data as Record<string, { sent_at?: string }> | undefined
           if (!sent) return ''
           const accIds = (p.registered_accounts || [])
           const accId = accIds.find(aid => {
