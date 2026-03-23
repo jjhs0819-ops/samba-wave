@@ -173,6 +173,11 @@ export default function WarroomPage() {
   const [probeLoading, setProbeLoading] = useState(false)
 
   // 오토튠 상태
+  const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null) => {
+    setAutotuneRunning(running)
+    setAutotuneCycles(cycles)
+    setAutotuneLastTick(lastTick)
+  }, [])
   const [autotuneRunning, setAutotuneRunning] = useState(false)
   const [autotuneCycles, setAutotuneCycles] = useState(0)
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
@@ -752,11 +757,7 @@ export default function WarroomPage() {
       {/* F. 오토튠 실시간 로그 (독립 컴포넌트) */}
       <AutotuneLogPanel
         siteColors={SITE_COLORS}
-        onStatusChange={useCallback((running: boolean, cycles: number, lastTick: string | null) => {
-          setAutotuneRunning(running)
-          setAutotuneCycles(cycles)
-          setAutotuneLastTick(lastTick)
-        }, [])}
+        onStatusChange={handleAutotuneStatus}
       />
 
       {/* G. 이벤트 타임라인 */}
