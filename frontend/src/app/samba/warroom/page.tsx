@@ -108,7 +108,7 @@ export default function WarroomPage() {
         monitorApi.dashboard().catch(() => null),
         monitorApi.recentEvents(20).catch(() => []),
         collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>,
-        collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0 })),
+        collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, target: 'registered' })),
         monitorApi.storeScores().catch(() => ({})),
       ])
       if (dashboard) setStats(dashboard)
@@ -725,6 +725,7 @@ export default function WarroomPage() {
             refreshLogs.map((log, i) => {
               let color = '#DCE0E8'
               if (log.msg.includes('실패') || log.msg.includes('오류') || log.msg.includes('차단')) color = '#C4736E'
+              else if (log.msg.includes('전송')) color = '#FFFFFF'
               else if (log.msg.includes('스킵')) color = '#888'
               else if (log.msg.includes('변동')) color = '#FFD93D'
               else if (log.msg.includes('성공')) color = '#7BAF7E'
