@@ -356,10 +356,19 @@ export const collectorApi = {
     request<SambaCollectedProduct>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteProduct: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: "DELETE" }),
+  bulkDeleteProducts: (ids: string[]) =>
+    request<{ deleted: number }>(`${SAMBA_PREFIX}/collector/products/bulk-delete`, { method: "POST", body: JSON.stringify({ ids }) }),
   resetRegistration: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}/reset-registration`, { method: "POST" }),
+  bulkResetRegistration: (ids: string[]) =>
+    request<{ reset: number }>(`${SAMBA_PREFIX}/collector/products/bulk-reset-registration`, { method: "POST", body: JSON.stringify({ ids }) }),
   bulkRemoveImage: (imageUrl: string, field: string = "images") =>
     request<{ removed: number }>(`${SAMBA_PREFIX}/collector/products/images/bulk-remove`, { method: "POST", body: JSON.stringify({ image_url: imageUrl, field }) }),
+  bulkUpdateTags: (ids: string[], tags: string[] | null, seoKeywords: string[] | null) =>
+    request<{ updated: number }>(`${SAMBA_PREFIX}/collector/products/bulk-update-tags`, {
+      method: "POST",
+      body: JSON.stringify({ ids, tags, seo_keywords: seoKeywords }),
+    }),
 
   // 재고/가격 갱신
   refresh: (productIds?: string[], autoRetransmit = true, searchFilterIds?: string[]) =>
@@ -689,13 +698,17 @@ export const categoryApi = {
     request<unknown>(`${SAMBA_PREFIX}/categories/tree/${siteName}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteTree: (siteName: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/categories/tree/${siteName}`, { method: "DELETE" }),
-  aiSuggest: (data: { source_site: string; source_category: string; sample_products: string[]; target_markets?: string[] }) =>
+  aiSuggest: (data: { source_site: string; source_category: string; sample_products: string[]; sample_tags?: string[]; target_markets?: string[] }) =>
     request<Record<string, string>>(`${SAMBA_PREFIX}/categories/ai-suggest`, { method: "POST", body: JSON.stringify(data) }),
-  aiSuggestBulk: (targetMarkets?: string[]) =>
+  aiSuggestBulk: (targetMarkets?: string[], sourceSite?: string, categoryPrefix?: string) =>
     request<{ mapped: number; updated: number; skipped: number; errors: string[] }>(
       `${SAMBA_PREFIX}/categories/ai-suggest-bulk`, {
         method: 'POST',
-        body: JSON.stringify(targetMarkets ? { target_markets: targetMarkets } : {}),
+        body: JSON.stringify({
+          ...(targetMarkets ? { target_markets: targetMarkets } : {}),
+          ...(sourceSite ? { source_site: sourceSite } : {}),
+          ...(categoryPrefix ? { category_prefix: categoryPrefix } : {}),
+        }),
       }),
   seedMarketCategories: () =>
     request<{ ok: boolean; markets: Record<string, number> }>(

@@ -276,6 +276,7 @@ TRANSFORM_ONLY_EXEMPTIONS = ["B1", "B3", "B4", "B5"]
 | `manufacturer` | `wear.manufacturer` | `brand` |
 | `brand` | `afterServiceDirector` 텍스트 | `"상세설명 참조"` |
 | `options[].name/size` | `wear.size` (쉼표 연결) | `"FREE (상세 이미지 참조)"` |
+| `tags` | `detailAttribute.seoInfo.sellerTags` | **최대 10개**, 시스템마커·브랜드·상품명·카테고리 포함 태그 자동 제외 |
 
 ---
 

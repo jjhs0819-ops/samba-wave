@@ -797,21 +797,45 @@ async def _handle_lottehome(
   """롯데홈쇼핑 상품 등록."""
   from backend.domain.samba.proxy.lottehome import LotteHomeClient
 
-  creds = await _get_setting(session, "lottehome_credentials")
+  # account.additional_fields 우선, settings fallback
+  creds: dict[str, Any] = {}
+  if account:
+    extra = getattr(account, "additional_fields", None) or {}
+    if extra.get("userId") or extra.get("password") or extra.get("agncNo"):
+      creds = extra
+    elif getattr(account, "seller_id", None):
+      creds = {
+        "userId": account.seller_id,
+        "password": extra.get("password", ""),
+        "agncNo": extra.get("agncNo", account.seller_id),
+        "env": extra.get("env", "test"),
+      }
+  if not creds:
+    creds = await _get_setting(session, "lottehome_credentials") or {}
   if not creds or not isinstance(creds, dict):
-    creds = await _get_setting(session, "store_lottehome")
+    creds = await _get_setting(session, "store_lottehome") or {}
   if not creds or not isinstance(creds, dict):
     return {"success": False, "message": "롯데홈쇼핑 설정이 없습니다."}
 
-  user_id = creds.get("userId", "")
+  user_id = creds.get("userId", "") or (account.seller_id if account else "")
   password = creds.get("password", "")
   agnc_no = creds.get("agncNo", "")
   env = creds.get("env", "test")
 
+  if not user_id or not password:
+    return {"success": False, "message": "롯데홈쇼핑 userId/password가 없습니다."}
+
   client = LotteHomeClient(user_id, password, agnc_no, env)
-  goods_data = _transform_for_lottehome(product, category_id)
+  goods_data = _transform_for_lottehome(product, category_id, creds)
   result = await client.register_goods(goods_data)
-  return {"success": True, "message": "롯데홈쇼핑 등록 성공", "data": result}
+
+  # 상품번호 추출
+  g_data = result.get("data", {})
+  g_result = g_data.get("GoodsResults", g_data.get("Result", g_data))
+  goods_no = ""
+  if isinstance(g_result, dict):
+    goods_no = g_result.get("goods_no", "") or g_result.get("Result", "")
+  return {"success": True, "message": "롯데홈쇼핑 등록 성공", "data": result, "goodsNo": goods_no}
 
 
 async def _handle_gsshop(
@@ -961,18 +985,88 @@ async def _handle_kream(
 # ═══════════════════════════════════════════════
 
 
-def _transform_for_lottehome(product: dict[str, Any], category_id: str) -> dict[str, Any]:
-  """수집 상품 → 롯데홈쇼핑 형식 변환."""
-  return {
+def _transform_for_lottehome(product: dict[str, Any], category_id: str, creds: dict[str, Any] | None = None) -> dict[str, Any]:
+  """수집 상품 → 롯데홈쇼핑 API 형식 변환.
+
+  API 문서: registApiGoodsInfo.lotte 파라미터 기준.
+  """
+  creds = creds or {}
+  images = product.get("images") or []
+  sale_price = int(product.get("sale_price", 0) or 0)
+  # 판매가 끝자리 0 필수 (API 에러 1062)
+  if sale_price % 10 != 0:
+    sale_price = (sale_price // 10 + 1) * 10
+
+  # 마진율 (정수, 1~99)
+  margin_rate = int(product.get("margin_rate", 0) or 0)
+  if margin_rate <= 0:
+    margin_rate = 20
+
+  # MD상품군번호 — 테스트: 24973(구두/신발), 카테고리코드가 없으면 creds에서 기본값
+  md_gsgr_no = creds.get("md_gsgr_no", "") or category_id or ""
+
+  # 품목코드 — 기본 102(구두/신발)
+  ec_goods_artc_cd = creds.get("ec_goods_artc_cd", "102")
+
+  data: dict[str, Any] = {
+    # 필수
+    "brnd_no": product.get("brand_code", "") or creds.get("brnd_no", "010565"),
     "goods_nm": product.get("name", ""),
-    "sel_price": str(int(product.get("sale_price", 0))),
-    "disp_ctgr_no": category_id,
-    "brand_nm": product.get("brand", ""),
-    "goods_img_url": (product.get("images") or [""])[0],
-    "goods_detail": product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>",
-    "as_info": "상세페이지 참조",
-    "rtn_exch_info": "상세페이지 참조",
+    "md_gsgr_no": md_gsgr_no,
+    "pur_shp_cd": "3",  # 위탁판매
+    "sale_shp_cd": "10",  # 정상
+    "sale_prc": str(sale_price),
+    "mrgn_rt": str(margin_rate),
+    "tdf_sct_cd": "1",  # 과세
+    "disp_no": category_id or creds.get("disp_no", ""),
+    "inv_mgmt_yn": "Y",
+    "item_mgmt_yn": "N",
+    "inv_qty": "999",
+    "dlv_proc_tp_cd": "1",  # 업체배송
+    "gift_pkg_yn": "N",
+    "exch_rtgs_sct_cd": "20",  # 교환/반품 가능
+    "dlv_mean_cd": "10",  # 택배
+    "dlv_goods_sct_cd": "01",  # 일반상품
+    "dlv_dday": "2",  # 배송기일 2일
+    "byr_age_lmt_cd": "0",  # 나이제한 없음
+    "dlv_polc_no": creds.get("dlv_polc_no", ""),
+    "corp_dlvp_sn": creds.get("corp_dlvp_sn", ""),  # 반품지
+    "corp_rls_pl_sn": creds.get("corp_rls_pl_sn", ""),  # 출고지
+    "orpl_nm": product.get("origin", "") or "해외",
+    "mfcp_nm": product.get("manufacturer", "") or product.get("brand", "") or "상세페이지 참조",
+    "img_url": images[0] if images else "",
+    "dtl_info_fcont": product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>",
+    "sum_pkg_psb_yn": "N",
+    "ec_goods_artc_cd": ec_goods_artc_cd,
+    "cdl_yn": "Y",  # 업체직송
+    "cdl_goods_std": "30",  # 중형
+    "prl_imp_yn": "N",
+    "price_site_yn": "Y",
   }
+
+  # 부가이미지 (최대 5장)
+  for i, img in enumerate(images[1:6], start=1):
+    data[f"img_url{i}"] = img
+
+  # 품목별 항목정보 (구두/신발 102 기본값)
+  if ec_goods_artc_cd == "102":
+    data["10030"] = product.get("color", "") or "상세 이미지 참조"  # 색상
+    data["10084"] = product.get("material", "") or "상세 이미지 참조"  # 주요소재
+    data["10107"] = product.get("size_info", "") or "상세 이미지 참조"  # 크기
+    data["10041_RD"] = "Y"  # 수입여부
+    data["10041"] = "Y"
+    data["10116"] = "품질보증기준에 따름"  # 품질보증기준
+    data["10001"] = "상세페이지 참조"  # A/S 책임자/전화번호
+  elif ec_goods_artc_cd == "101":
+    data["10030"] = product.get("color", "") or "상세 이미지 참조"
+    data["10035"] = "상세 이미지 참조"  # 세탁방법
+    data["10041_RD"] = "Y"
+    data["10041"] = "Y"
+    data["10073"] = "상세 이미지 참조"  # 제조연월
+    data["10116"] = "품질보증기준에 따름"
+    data["10001"] = "상세페이지 참조"
+
+  return data
 
 
 def _transform_for_gsshop(product: dict[str, Any], category_id: str, gs_margin_rate: int = 0) -> dict[str, Any]:

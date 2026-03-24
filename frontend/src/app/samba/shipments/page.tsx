@@ -408,8 +408,8 @@ export default function ShipmentsPage() {
     }
     setProgress({ current: 0, total: tasks.length })
 
-    // 순차 전송 (상품당 이미지 동시 4장)
-    const BATCH_SIZE = 1
+    // 병렬 전송 (상품 3건 동시, 마켓별 병렬은 백엔드에서 처리)
+    const BATCH_SIZE = 3
     let doneCount = 0
     for (let b = 0; b < tasks.length; b += BATCH_SIZE) {
       if (abortRef.current) {

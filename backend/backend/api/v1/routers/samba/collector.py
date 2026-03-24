@@ -579,6 +579,77 @@ async def delete_collected_product(
     return {"ok": True}
 
 
+class BulkProductIdsRequest(BaseModel):
+    ids: list[str]
+
+
+@router.post("/products/bulk-delete")
+async def bulk_delete_products(
+    body: BulkProductIdsRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """상품 일괄 삭제."""
+    from sqlmodel import col
+    stmt = select(SambaCollectedProduct).where(
+        col(SambaCollectedProduct.id).in_(body.ids)
+    )
+    results = await session.exec(stmt)
+    products = results.all()
+    for p in products:
+        await session.delete(p)
+    await session.commit()
+    return {"deleted": len(products)}
+
+
+@router.post("/products/bulk-reset-registration")
+async def bulk_reset_registration(
+    body: BulkProductIdsRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """상품 마켓 등록 정보 일괄 초기화."""
+    from sqlmodel import col
+    stmt = select(SambaCollectedProduct).where(
+        col(SambaCollectedProduct.id).in_(body.ids)
+    )
+    results = await session.exec(stmt)
+    products = results.all()
+    for p in products:
+        p.registered_accounts = None
+        p.market_product_nos = None
+        p.status = "collected"
+        session.add(p)
+    await session.commit()
+    return {"reset": len(products)}
+
+
+class BulkTagUpdateRequest(BaseModel):
+    ids: list[str]
+    tags: list[str] | None = None
+    seo_keywords: list[str] | None = None
+
+
+@router.post("/products/bulk-update-tags")
+async def bulk_update_tags(
+    body: BulkTagUpdateRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """상품 태그/SEO키워드 일괄 업데이트."""
+    from sqlmodel import col
+    stmt = select(SambaCollectedProduct).where(
+        col(SambaCollectedProduct.id).in_(body.ids)
+    )
+    results = await session.exec(stmt)
+    products = results.all()
+    for p in products:
+        if body.tags is not None:
+            p.tags = body.tags
+        if body.seo_keywords is not None:
+            p.seo_keywords = body.seo_keywords
+        session.add(p)
+    await session.commit()
+    return {"updated": len(products)}
+
+
 # ── 실제 수집 (프록시 통합) ──
 
 @router.post("/collect-by-url", status_code=201)

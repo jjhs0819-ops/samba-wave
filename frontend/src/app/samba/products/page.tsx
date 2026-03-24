@@ -84,10 +84,22 @@ export default function ProductsPage() {
   // URL searchParams에서 필터 읽기
   const filterByGroupId = searchParams.get("search_filter_id") || "";
   const filterGroupName = searchParams.get("group_name") || "";
-  const highlightProductId = searchParams.get("highlight") || "";
+
+  // highlight는 로컬 state로 관리 → 새로고침 시 자동 해제
+  const [highlightProductId, setHighlightProductId] = useState(searchParams.get("highlight") || "");
+  useEffect(() => {
+    const h = searchParams.get("highlight")
+    if (h) {
+      setHighlightProductId(h)
+      // URL에서 highlight 파라미터 제거 (뒤로가기 히스토리 안 남김)
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete("highlight")
+      const qs = params.toString()
+      router.replace(`/samba/products${qs ? `?${qs}` : ""}`)
+    }
+  }, [searchParams, router]);
 
   const [allProducts, setAllProducts] = useState<SambaCollectedProduct[]>([]);
-  const [products, setProducts] = useState<SambaCollectedProduct[]>([]);
   const [policies, setPolicies] = useState<SambaPolicy[]>([]);
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([]);
   const [filterNameMap, setFilterNameMap] = useState<Record<string, string>>({});
@@ -160,16 +172,19 @@ export default function ProductsPage() {
   // 상품명 규칙 목록 (상품명 조합 적용용)
   const [nameRules, setNameRules] = useState<SambaNameRule[]>([]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      // 1단계: 상품만 먼저 로드하여 즉시 표시
-      const p = await collectorApi.listProducts(0, 500).catch((e) => { console.error("listProducts error:", e); return []; });
-      setAllProducts(p);
-      setLoading(false);
+  // 상품만 리로드 (삭제/수정 등 상품 변경 후 사용)
+  const reloadProducts = useCallback(async () => {
+    const p = await collectorApi.listProducts(0, 500).catch((e) => { console.error("listProducts error:", e); return []; })
+    setAllProducts(p)
+  }, [])
 
-      // 2단계: 나머지 데이터 백그라운드 로드
-      const [pol, filters, words, accs, orderPids, rules, mappings] = await Promise.all([
+  // 전체 로드 (초기 진입 시 1회)
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      // 상품 + 메타데이터 병렬 로드
+      const [p, pol, filters, words, accs, orderPids, rules, mappings] = await Promise.all([
+        collectorApi.listProducts(0, 500).catch((e) => { console.error("listProducts error:", e); return [] as SambaCollectedProduct[] }),
         policyApi.list().catch(() => []),
         collectorApi.listFilters().catch(() => [] as SambaSearchFilter[]),
         forbiddenApi.listWords('deletion').catch(() => []),
@@ -177,29 +192,31 @@ export default function ProductsPage() {
         collectorApi.getProductIdsWithOrders().catch(() => [] as string[]),
         nameRuleApi.list().catch(() => [] as SambaNameRule[]),
         categoryApi.listMappings().catch(() => []) as Promise<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>,
-      ]);
-      setPolicies(pol);
-      setAccounts(accs);
-      setDeletionWords(words.filter(w => w.is_active).map(w => w.word));
-      setNameRules(rules);
-      setOrderProductIds(new Set(orderPids));
-      const nameMap: Record<string, string> = {};
-      filters.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name; });
-      setFilterNameMap(nameMap);
+      ])
+      setAllProducts(p)
+      setPolicies(pol)
+      setAccounts(accs)
+      setDeletionWords(words.filter(w => w.is_active).map(w => w.word))
+      setNameRules(rules)
+      setOrderProductIds(new Set(orderPids))
+      const nameMap: Record<string, string> = {}
+      filters.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
+      setFilterNameMap(nameMap)
       if (Array.isArray(mappings)) {
-        const map = new Map<string, Record<string, string>>();
+        const map = new Map<string, Record<string, string>>()
         mappings.forEach(m => {
-          map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {});
-        });
-        setCatMappingMap(map);
+          map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {})
+        })
+        setCatMappingMap(map)
       }
     } catch (e) {
-      console.error("load error:", e);
-      setLoading(false);
+      console.error("load error:", e)
+    } finally {
+      setLoading(false)
     }
-  }, []);
+  }, [])
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load() }, [load])
 
   // 필터링 1회 실행 (useMemo) — totalCount + 페이지네이션 결과 동시 산출
   const { filteredTotal, pagedProducts } = useMemo(() => {
@@ -293,8 +310,7 @@ export default function ProductsPage() {
     return { filteredTotal: total, pagedProducts: paged };
   }, [allProducts, searchQ, searchType, siteFilter, statusFilter, aiFilter, sortBy, pageSize, currentPage, policies, filterNameMap, filterByGroupId, highlightProductId, orderProductIds]);
 
-  // useMemo 결과를 products state에 동기화
-  useEffect(() => { setProducts(pagedProducts) }, [pagedProducts]);
+  const products = pagedProducts
 
   // 필터/정렬/페이지크기 변경 시 1페이지로 리셋 + 선택 초기화
   useEffect(() => { setCurrentPage(1); setSelectAll(false); setSelectedIds(new Set()) }, [searchQ, searchType, siteFilter, statusFilter, aiFilter, sortBy, pageSize, filterByGroupId]);
@@ -304,10 +320,8 @@ export default function ProductsPage() {
   const allSites = useMemo(() => [...new Set(allProducts.map(p => p.source_site))].sort(), [allProducts])
 
   const handleSearch = () => {
-    // highlight 필터가 있으면 해제하고 전체 검색
-    if (highlightProductId) {
-      router.push(`/samba/products${searchQ.trim() ? `?q=${encodeURIComponent(searchQ)}` : ''}`)
-    }
+    // highlight 필터 무조건 해제
+    if (highlightProductId) setHighlightProductId("")
     setCurrentPage(1)
   };
 
@@ -317,22 +331,35 @@ export default function ProductsPage() {
       showAlert('삭제잠금이 설정된 상품입니다. 잠금을 해제한 후 삭제하세요.')
       return;
     }
+    if ((p?.registered_accounts?.length ?? 0) > 0) {
+      showAlert('마켓에 등록된 상품입니다. 마켓삭제 후 진행하세요.')
+      return;
+    }
     setDeleteConfirm({ ids: [id], label: p ? `"${p.name.slice(0, 30)}"` : "이 상품" });
   };
 
   const handleBulkDelete = () => {
     if (selectedIds.size === 0) return;
-    const locked = allProducts.filter((p) => selectedIds.has(p.id) && p.lock_delete);
-    // 잠금 상품 제외하고 나머지만 삭제
-    const deletableIds = [...selectedIds].filter(
-      (id) => !allProducts.find((p) => p.id === id)?.lock_delete
-    );
+    const selected = allProducts.filter(p => selectedIds.has(p.id))
+    const locked = selected.filter(p => p.lock_delete)
+    const registered = selected.filter(p => !p.lock_delete && (p.registered_accounts?.length ?? 0) > 0)
+    const deletableIds = selected
+      .filter(p => !p.lock_delete && !(p.registered_accounts?.length))
+      .map(p => p.id)
     if (deletableIds.length === 0) {
-      showAlert('선택된 상품이 모두 삭제잠금 상태입니다.')
+      const reasons = [
+        locked.length > 0 ? `삭제잠금 ${locked.length}개` : '',
+        registered.length > 0 ? `마켓등록 ${registered.length}개` : '',
+      ].filter(Boolean).join(', ')
+      showAlert(`삭제 가능한 상품이 없습니다 (${reasons})`)
       return;
     }
-    const lockMsg = locked.length > 0 ? ` (삭제잠금 ${locked.length}개 제외)` : '';
-    setDeleteConfirm({ ids: deletableIds, label: `${deletableIds.length}개 상품${lockMsg}` });
+    const excludes = [
+      locked.length > 0 ? `잠금 ${locked.length}개` : '',
+      registered.length > 0 ? `마켓등록 ${registered.length}개` : '',
+    ].filter(Boolean)
+    const excludeMsg = excludes.length > 0 ? ` (${excludes.join(', ')} 제외)` : ''
+    setDeleteConfirm({ ids: deletableIds, label: `${deletableIds.length}개 상품${excludeMsg}` });
   };
 
   const handleLockToggle = async (productId: string, field: 'lock_delete' | 'lock_stock', value: boolean) => {
@@ -353,17 +380,32 @@ export default function ProductsPage() {
   };
 
   const confirmDelete = async () => {
-    if (!deleteConfirm) return;
-    await Promise.all(deleteConfirm.ids.map(id => collectorApi.deleteProduct(id).catch(() => {})))
-    setSelectedIds(new Set());
-    setSelectAll(false);
-    setDeleteConfirm(null);
-    load();
-  };
+    if (!deleteConfirm) return
+    const ids = deleteConfirm.ids
+    setDeleteConfirm(null)
+    setAiJobTitle(`삭제 (${ids.length}건)`)
+    setAiJobLogs([`${ids.length}건 일괄 삭제 중...`])
+    setAiJobDone(false)
+    setAiJobModal(true)
+    const idSet = new Set(ids)
+    try {
+      const res = await collectorApi.bulkDeleteProducts(ids)
+      setAiJobLogs(prev => [...prev, `${res.deleted}건 삭제 완료 ✓`])
+      setAllProducts(prev => prev.filter(p => !idSet.has(p.id)))
+    } catch {
+      setAiJobLogs(prev => [...prev, `삭제 실패 ✗`])
+    }
+    setAiJobDone(true)
+    setSelectedIds(new Set())
+    setSelectAll(false)
+  }
 
   const handlePolicyChange = async (productId: string, policyId: string) => {
-    await collectorApi.updateProduct(productId, { applied_policy_id: policyId || undefined } as Partial<SambaCollectedProduct>).catch(() => {});
-    load();
+    // 낙관적 업데이트
+    setAllProducts(prev => prev.map(p =>
+      p.id === productId ? { ...p, applied_policy_id: policyId || undefined } as SambaCollectedProduct : p
+    ))
+    await collectorApi.updateProduct(productId, { applied_policy_id: policyId || undefined } as Partial<SambaCollectedProduct>).catch(() => {})
   };
 
   const handleEnrich = async (productId: string) => {
@@ -401,18 +443,37 @@ export default function ProductsPage() {
       return
     }
     if (!await showConfirm('마켓에서 상품을 삭제(판매중지)하시겠습니까?')) return
+    const productName = (p?.name || productId).slice(0, 20)
+    setAiJobTitle(`마켓삭제 - ${productName}`)
+    setAiJobLogs([`${productName} 처리 중...`])
+    setAiJobDone(false)
+    setAiJobModal(true)
     try {
       const res = await shipmentApi.marketDelete([productId], regAccIds)
       const result = res?.results?.[0]
-      if (result && result.success_count > 0) {
-        showAlert(`마켓삭제 완료 (${result.success_count}개 마켓)`, 'success')
+      if (result?.delete_results) {
+        const entries = Object.entries(result.delete_results as Record<string, string>)
+        for (const [accId, status] of entries) {
+          const acc = accounts.find(a => a.id === accId)
+          const label = acc ? `${acc.market_type} (${acc.account_label || acc.seller_id})` : accId.slice(0, 12)
+          const isOk = status === 'success' || status.includes('성공')
+          setAiJobLogs(prev => [...prev, `${isOk ? '✓' : '✗'} ${label}`])
+        }
+        setAiJobLogs(prev => [...prev, ``, `성공 ${result.success_count} / 전체 ${entries.length}`])
+        // 성공한 계정 제거
+        const successAccIds = entries.filter(([, s]) => s === 'success' || (s as string).includes('성공')).map(([id]) => id)
+        setAllProducts(prev => prev.map(pp => {
+          if (pp.id !== productId) return pp
+          const remaining = (pp.registered_accounts ?? []).filter(id => !successAccIds.includes(id))
+          return { ...pp, registered_accounts: remaining, status: remaining.length === 0 ? 'collected' : pp.status } as SambaCollectedProduct
+        }))
       } else {
-        showAlert('마켓삭제 처리 완료 (일부 실패할 수 있음)')
+        setAiJobLogs(prev => [...prev, '처리 완료'])
       }
-      load()
     } catch {
-      showAlert('마켓삭제 중 오류가 발생했습니다.', 'error')
+      setAiJobLogs(prev => [...prev, '오류 발생'])
     }
+    setAiJobDone(true)
   }
 
   const handleToggleMarket = async (productId: string, marketId: string) => {
@@ -643,7 +704,14 @@ export default function ProductsPage() {
                     }
                     setShowTagPreview(false)
                     setSelectedIds(new Set()); setSelectAll(false)
-                    load()
+                    // 태그 로컬 반영
+                    const tagMap = new Map(tagPreviews.map(tp => [tp.group_id, { tags: tp.tags, seo: tp.seo_keywords }]))
+                    setAllProducts(prev => prev.map(pp => {
+                      const entry = pp.search_filter_id ? tagMap.get(pp.search_filter_id) : undefined
+                      if (!entry) return pp
+                      const existing = (pp.tags || []).filter(t => t.startsWith('__'))
+                      return { ...pp, tags: [...existing, '__ai_tagged__', ...entry.tags], seo_keywords: entry.seo } as SambaCollectedProduct
+                    }))
                   } else showAlert(res.message, 'error')
                 } catch (e) {
                   showAlert(`태그 적용 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
@@ -697,7 +765,7 @@ export default function ProductsPage() {
             {allProducts.find(p => p.id === highlightProductId)?.name?.slice(0, 40) || highlightProductId}
           </span>
           <button
-            onClick={() => router.push("/samba/products")}
+            onClick={() => setHighlightProductId("")}
             style={{
               marginLeft: "auto", background: "transparent", border: "1px solid #3D3D3D",
               color: "#888", padding: "2px 10px", borderRadius: "4px",
@@ -868,7 +936,7 @@ export default function ProductsPage() {
             setAiJobDone(true)
             setAiImgTransforming(false)
             setSelectedIds(new Set()); setSelectAll(false)
-            load()
+            reloadProducts()
           }}
           disabled={aiImgTransforming || selectedIds.size === 0}
           style={{ marginLeft: 'auto', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
@@ -917,7 +985,7 @@ export default function ProductsPage() {
             const apiCalls = success + fail
             setLastAiUsage({ calls: apiCalls, tokens: apiCalls * 1000, cost: apiCalls * 15, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
             setSelectedIds(new Set()); setSelectAll(false)
-            load()
+            reloadProducts()
           }}
           disabled={imgFiltering || selectedIds.size === 0}
           style={{ marginLeft: 'auto', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
@@ -958,7 +1026,7 @@ export default function ProductsPage() {
                 addTaskLog(`[영상생성] ${prod?.name?.slice(0, 25) || pid} — 실패: ${e instanceof Error ? e.message : e}`)
               }
             }
-            load()
+            reloadProducts()
           }} style={{
             fontSize: "0.78rem", padding: "4px 12px",
             border: "1px solid rgba(76,154,255,0.3)", borderRadius: "5px",
@@ -996,9 +1064,7 @@ export default function ProductsPage() {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
             const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 태그를 모두 삭제하시겠습니까?`)
             if (!ok) return
-            await Promise.all([...selectedIds].map(id =>
-              collectorApi.updateProduct(id, { tags: [], seo_keywords: [] } as Partial<SambaCollectedProduct>).catch(() => {})
-            ))
+            await collectorApi.bulkUpdateTags([...selectedIds], [], [])
             setAllProducts(prev => prev.map(p => selectedIds.has(p.id) ? { ...p, tags: [], seo_keywords: [] as string[] } : p))
             showAlert(`${selectedIds.size}개 상품 태그 삭제 완료`, 'success')
             setSelectedIds(new Set()); setSelectAll(false)
@@ -1032,19 +1098,49 @@ export default function ProductsPage() {
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-              // 선택된 상품 중 등록된 계정이 있는 것만 대상
               const targets = allProducts.filter(p => selectedIds.has(p.id) && (p.registered_accounts?.length ?? 0) > 0)
               if (!targets.length) { showAlert('마켓에 등록된 상품이 없습니다.'); return }
               if (!await showConfirm(`${targets.length}개 상품을 마켓에서 삭제(판매중지)하시겠습니까?`)) return
-              try {
-                const productIds = targets.map(p => p.id)
-                const allAccIds = [...new Set(targets.flatMap(p => p.registered_accounts ?? []))]
-                await shipmentApi.marketDelete(productIds, allAccIds)
-                showAlert(`${targets.length}개 상품 마켓삭제 완료`, 'success')
-                load()
-              } catch {
-                showAlert('마켓삭제 중 오류가 발생했습니다.', 'error')
+              setAiJobTitle(`마켓삭제 (${targets.length}건)`)
+              setAiJobLogs([])
+              setAiJobDone(false)
+              setAiJobModal(true)
+              let totalOk = 0, totalFail = 0
+              for (let i = 0; i < targets.length; i++) {
+                const t = targets[i]
+                const name = t.name.slice(0, 20)
+                setAiJobLogs(prev => [...prev, `[${i + 1}/${targets.length}] ${name}`])
+                try {
+                  const accIds = t.registered_accounts ?? []
+                  const res = await shipmentApi.marketDelete([t.id], accIds)
+                  const result = res?.results?.[0]
+                  if (result?.delete_results) {
+                    const entries = Object.entries(result.delete_results as Record<string, string>)
+                    const successAccIds: string[] = []
+                    for (const [accId, status] of entries) {
+                      const acc = accounts.find(a => a.id === accId)
+                      const label = acc ? acc.market_type : accId.slice(0, 8)
+                      const isOk = status === 'success' || status.includes('성공')
+                      if (isOk) { totalOk++; successAccIds.push(accId) } else totalFail++
+                      setAiJobLogs(prev => [...prev, `  ${isOk ? '✓' : '✗'} ${label}`])
+                    }
+                    // 성공 계정 로컬 제거
+                    setAllProducts(prev => prev.map(pp => {
+                      if (pp.id !== t.id) return pp
+                      const remaining = (pp.registered_accounts ?? []).filter(id => !successAccIds.includes(id))
+                      return { ...pp, registered_accounts: remaining, status: remaining.length === 0 ? 'collected' : pp.status } as SambaCollectedProduct
+                    }))
+                  } else {
+                    totalOk++
+                    setAiJobLogs(prev => [...prev, `  ✓`])
+                  }
+                } catch {
+                  totalFail++
+                  setAiJobLogs(prev => [...prev, `  ✗`])
+                }
               }
+              setAiJobLogs(prev => [...prev, ``, `성공 ${totalOk} / 실패 ${totalFail}`])
+              setAiJobDone(true)
             }}
             style={{
             fontSize: "0.78rem", padding: "4px 12px",
@@ -1055,11 +1151,22 @@ export default function ProductsPage() {
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
               if (!await showConfirm(`${selectedIds.size}개 상품의 마켓 등록 정보를 초기화하시겠습니까?\n(마켓에서 이미 삭제된 상품의 등록 상태만 정리합니다)`)) return
-              for (const id of selectedIds) {
-                await collectorApi.resetRegistration(id).catch(() => {})
+              const ids = Array.from(selectedIds)
+              setAiJobTitle(`강제삭제 (${ids.length}건)`)
+              setAiJobLogs([`${ids.length}건 초기화 중...`])
+              setAiJobDone(false)
+              setAiJobModal(true)
+              const idSet = new Set(ids)
+              try {
+                const res = await collectorApi.bulkResetRegistration(ids)
+                setAiJobLogs(prev => [...prev, `${res.reset}건 초기화 완료 ✓`])
+                setAllProducts(prev => prev.map(p =>
+                  idSet.has(p.id) ? { ...p, registered_accounts: null, market_product_nos: null, status: 'collected' } as unknown as SambaCollectedProduct : p
+                ))
+              } catch {
+                setAiJobLogs(prev => [...prev, `초기화 실패 ✗`])
               }
-              showAlert(`${selectedIds.size}개 상품 마켓 등록 정보 초기화 완료`, 'success')
-              load()
+              setAiJobDone(true)
             }}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
@@ -1231,14 +1338,19 @@ export default function ProductsPage() {
               onMarketDelete={handleMarketDelete}
               onAddTaskLog={addTaskLog}
               onProductUpdate={(productId, data) => {
-                setProducts(prev => prev.map(pp => pp.id === productId ? { ...pp, ...data } : pp))
+                setAllProducts(prev => prev.map(pp => pp.id === productId ? { ...pp, ...data } : pp))
               }}
               onTagUpdate={async (productId, tags) => {
+                // 일반 태그(__로 시작하지 않는)가 없으면 SEO 키워드도 함께 삭제
+                const userTags = tags.filter(t => !t.startsWith('__'))
+                const clearSeo = userTags.length === 0
                 // 낙관적 업데이트 (새로고침 없이 즉시 반영)
                 setAllProducts(prev => prev.map(p =>
-                  p.id === productId ? { ...p, tags } : p
+                  p.id === productId ? { ...p, tags, ...(clearSeo ? { seo_keywords: [] } : {}) } : p
                 ))
-                await collectorApi.updateProduct(productId, { tags } as Partial<SambaCollectedProduct>).catch(() => {})
+                const updateData: Partial<SambaCollectedProduct> = { tags }
+                if (clearSeo) updateData.seo_keywords = []
+                await collectorApi.updateProduct(productId, updateData).catch(() => {})
               }}
               logMessage={activeLog?.productId === p.id ? activeLog.message : undefined}
               catMappingMap={catMappingMap}

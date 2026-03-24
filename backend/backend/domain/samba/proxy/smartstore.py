@@ -560,12 +560,12 @@ class SmartStoreClient:
   # ------------------------------------------------------------------
 
   async def search_tags(self, keyword: str) -> list[dict[str, Any]]:
-    """추천 태그 검색 목록 조회. 태그사전에 등록된 태그만 반환."""
+    """(v2) 추천 태그 검색 목록 조회. 태그사전에 등록된 태그만 반환."""
     if not keyword:
       return []
     try:
       result = await self._call_api(
-        "GET", "/v1/tags/recommend",
+        "GET", "/v2/tags/recommend-tags",
         params={"keyword": keyword},
       )
       if isinstance(result, list):
@@ -577,30 +577,64 @@ class SmartStoreClient:
       logger.warning(f"[스마트스토어] 태그 검색 실패 ({keyword}): {e}")
       return []
 
-  async def validate_tags(self, tags: list[str]) -> list[dict[str, str]]:
-    """태그 목록을 태그사전에서 검증. 사전에 있는 태그만 code+text로 반환."""
-    valid_tags: list[dict[str, str]] = []
+  async def check_restricted_tags(self, tags: list[str]) -> dict[str, bool]:
+    """(v2) 제한 태그 여부 조회. {태그: 제한여부} 딕셔너리 반환."""
+    if not tags:
+      return {}
+    try:
+      result = await self._call_api(
+        "GET", "/v2/tags/restricted-tags",
+        params={"tags": tags},
+      )
+      if isinstance(result, list):
+        return {r.get("tag", ""): r.get("restricted", False) for r in result}
+      return {}
+    except Exception as e:
+      logger.warning(f"[스마트스토어] 제한 태그 조회 실패: {e}")
+      return {}
+
+  async def validate_tags(self, tags: list[str], max_count: int = 10) -> list[dict[str, str]]:
+    """태그를 태그사전 검색 + 제한태그 필터링하여 사용 가능한 태그만 반환.
+
+    1) 각 태그를 recommend-tags API로 정확 매치 확인
+    2) 매치된 태그를 restricted-tags API로 제한 여부 확인
+    3) 둘 다 통과한 태그만 max_count개까지 반환
+    """
+    # 1단계: 태그사전 매치
+    matched_tags: list[dict[str, str]] = []
     for tag in tags:
+      if len(matched_tags) >= max_count * 2:
+        break
       results = await self.search_tags(tag)
-      # 정확 매치 우선, 없으면 첫 번째 결과
       matched = None
       for r in results:
         if r.get("text") == tag or r.get("tag") == tag:
           matched = r
           break
-      if not matched and results:
-        # 첫 번째 결과가 입력 태그를 포함하는지 확인
-        first = results[0]
-        first_text = first.get("text") or first.get("tag") or ""
-        if tag in first_text or first_text in tag:
-          matched = first
       if matched:
-        valid_tags.append({
+        matched_tags.append({
           "code": str(matched.get("code", 0)),
           "text": matched.get("text") or matched.get("tag") or tag,
         })
       else:
         logger.info(f"[스마트스토어] 태그사전 미등록: {tag}")
+
+    if not matched_tags:
+      return []
+
+    # 2단계: 제한 태그 필터링
+    tag_texts = [t["text"] for t in matched_tags]
+    restricted = await self.check_restricted_tags(tag_texts)
+    valid_tags: list[dict[str, str]] = []
+    for t in matched_tags:
+      if restricted.get(t["text"], False):
+        logger.info(f"[스마트스토어] 제한 태그 제외: {t['text']}")
+        continue
+      valid_tags.append(t)
+      if len(valid_tags) >= max_count:
+        break
+
+    logger.info(f"[스마트스토어] 태그 검증 완료: {len(tags)}개 후보 → {len(matched_tags)}개 사전등록 → {len(valid_tags)}개 사용가능")
     return valid_tags
 
   # ------------------------------------------------------------------

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>SAMBA-WAVE</title>
+  <link rel="icon" href="icon16.png" type="image/png">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 240px;
+      font-family: 'Segoe UI', sans-serif;
+      background: #0F0F0F;
+      color: #E5E5E5;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px 20px 16px;
+      gap: 10px;
+    }
+
+    .icon { width: 40px; height: 40px; border-radius: 8px; }
+    .app-name { font-size: 15px; font-weight: 700; color: #FFB84D; }
+    .version { font-size: 11px; color: #666; }
+    .divider { width: 100%; height: 1px; background: #2D2D2D; }
+
+    .sync-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #22c55e;
+    }
+
+    .sync-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #22c55e;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .btn {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #2D2D2D;
+      border-radius: 6px;
+      background: rgba(30,30,30,0.8);
+      color: #E5E5E5;
+      font-size: 12px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .btn:hover { background: rgba(50,50,50,0.9); }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+    .btn-score { border-color: rgba(255,140,0,0.3); color: #FFB84D; }
+    .score-result { font-size: 11px; color: #888; text-align: center; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <img src="icon48.png" class="icon">
+    <div class="app-name">SAMBA-WAVE</div>
+    <div class="version" id="version"></div>
+    <div class="divider"></div>
+    <div class="sync-badge">
+      <span class="sync-dot"></span>
+      자동 동기화 활성
+    </div>
+    <div class="divider"></div>
+    <button class="btn btn-score" id="btnStoreScore">스토어 점수 가져오기</button>
+    <div class="score-result" id="scoreResult"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

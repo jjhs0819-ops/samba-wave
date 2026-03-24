@@ -608,37 +608,34 @@ class SambaShipmentService:
     transmit_error: dict[str, str] = {}
     update_mode_accounts: set[str] = set()  # PATCH 모드였던 계정 (실패해도 등록정보 보존)
 
-    for account_id in target_account_ids:
+    # 계정별 전송을 병렬 코루틴으로 실행
+    import math
+
+    async def _dispatch_one(account_id: str) -> dict[str, Any]:
+      """단일 계정 전송 — 결과 dict 반환."""
+      res: dict[str, Any] = {"account_id": account_id, "status": "failed", "error": "", "product_nos": {}, "sent_snapshot": None, "is_update": False, "clear_nos": []}
       try:
         account = await account_repo.get_async(account_id)
         if not account:
-          transmit_result[account_id] = "failed"
-          transmit_error[account_id] = "계정을 찾을 수 없습니다."
-          continue
+          res["error"] = "계정을 찾을 수 없습니다."
+          return res
 
         market_type = account.market_type
         category_id = mapped_categories.get(market_type, "")
 
-        # 카테고리 매핑 없으면 해당 마켓 전송 차단
         if not category_id:
-          transmit_result[account_id] = "failed"
-          transmit_error[account_id] = "카테고리 매핑 없음"
+          res["error"] = "카테고리 매핑 없음"
           logger.warning(f"[전송] 상품 {product_id} → {market_type} 카테고리 매핑 없음 (스킵)")
-          continue
+          return res
 
-        # 최하단 카테고리(leaf) 코드 검증 — 숫자 코드가 아니면 leaf 미매핑
-        # 쿠팡은 디스패처에서 경로→코드 동적 변환하므로 제외
         if market_type != "coupang" and not str(category_id).isdigit():
-          transmit_result[account_id] = "failed"
-          transmit_error[account_id] = f"최하단 카테고리 매핑 필요 (현재: {category_id})"
-          logger.warning(
-            f"[전송] 상품 {product_id} → {market_type} 최하단 카테고리 미매핑: '{category_id}' (스킵)"
-          )
-          continue
+          res["error"] = f"최하단 카테고리 매핑 필요 (현재: {category_id})"
+          logger.warning(f"[전송] 상품 {product_id} → {market_type} 최하단 카테고리 미매핑: '{category_id}' (스킵)")
+          return res
 
-        # 정책 기반 판매가 계산 (프론트 products/page.tsx 계산 로직 동일)
-        import math
-        cost = product_dict.get("cost") or product_dict.get("sale_price") or product_dict.get("original_price") or 0
+        # 마켓별 판매가 계산 (product_dict 원본 보호를 위해 복사본 사용)
+        acct_product = dict(product_dict)
+        cost = acct_product.get("cost") or acct_product.get("sale_price") or acct_product.get("original_price") or 0
         if policy and policy.pricing:
           pr = policy.pricing
           common_margin_rate = pr.get("marginRate", 15)
@@ -647,7 +644,6 @@ class SambaShipmentService:
           common_fee = pr.get("feeRate", 0)
           min_margin = pr.get("minMarginAmount", 0)
 
-          # 마켓별 개별 설정 (0이면 공통값 사용 — 프론트 로직 동일)
           policy_key = MARKET_TYPE_TO_POLICY_KEY.get(market_type)
           mp = policy_market_data.get(policy_key, {}) if policy_key else {}
           m_margin_rate = mp.get("marginRate") or common_margin_rate
@@ -663,150 +659,151 @@ class SambaShipmentService:
           if common_extra > 0:
             calc_price += common_extra
 
-          product_dict["sale_price"] = calc_price
+          acct_product["sale_price"] = calc_price
           logger.info(f"[전송] 정책 가격 계산: 원가={cost}, 마진={margin_amt}({m_margin_rate}%), 배송={m_shipping}, 수수료={m_fee}% → 판매가={calc_price}")
 
-        # 전송가 계산 완료 — refresh_status에 전송가 추가
-        cur_price = int(product_dict.get("sale_price") or 0)
-        cur_cost_int = int(product_dict.get("cost") or 0)
+        # 스킵 판단
+        cur_price = int(acct_product.get("sale_price") or 0)
+        cur_cost_int = int(acct_product.get("cost") or 0)
         last_sent = (product_row.last_sent_data or {}).get(account_id)
         if last_sent:
           last_price = int(last_sent.get("sale_price") or 0)
           last_cost_sent = int(last_sent.get("cost") or 0)
-          # 옵션 재고 비교
           last_opts = last_sent.get("options", [])
           cur_opts = [
             {"name": o.get("name", ""), "price": o.get("price"), "stock": o.get("stock")}
-            for o in (product_dict.get("options") or [])
+            for o in (acct_product.get("options") or [])
           ]
           opts_changed = last_opts != cur_opts
-          opt_diff_count = 0
-          if opts_changed:
-            old_stocks = {o.get("name", ""): o.get("stock", 0) for o in last_opts}
-            new_stocks = {o.get("name", ""): o.get("stock", 0) for o in cur_opts}
-            opt_diff_count = len([k for k in set(list(old_stocks.keys()) + list(new_stocks.keys())) if old_stocks.get(k) != new_stocks.get(k)])
-          refresh_status = f"원가 {last_cost_sent:,}>{cur_cost_int:,}, 전송가 {last_price:,}>{cur_price:,}, 재고변동 {opt_diff_count}건"
         else:
-          # 미등록 상품 — 이전 전송 기록 없음
           last_price = 0
           last_cost_sent = 0
-          last_opts = []
-          cur_opts = []
           opts_changed = False
-          opt_diff_count = 0
-          refresh_status = f"신규등록 원가 {cur_cost_int:,}, 전송가 {cur_price:,}"
 
-        # 스킵 판단: last_sent_data와 비교
         if skip_unchanged and has_update and last_sent:
           if last_price == cur_price and last_cost_sent == cur_cost_int and not opts_changed:
-            transmit_result[account_id] = "skipped"
-            logger.info(f"[전송] {market_type} 스킵 — {refresh_status}")
-            continue
+            res["status"] = "skipped"
+            logger.info(f"[전송] {market_type} 스킵")
+            return res
 
-        # 기존 마켓 상품번호 확인 (있으면 수정, 없으면 신규등록)
+        # 기존 상품번호 확인
         existing_nos = product_row.market_product_nos or {}
         if market_type == "smartstore":
-          # origin 번호 우선 (PATCH API용)
           existing_product_no = existing_nos.get(f"{account_id}_origin", "") or existing_nos.get(account_id, "")
         else:
           existing_product_no = existing_nos.get(account_id, "")
         if existing_product_no:
-          update_mode_accounts.add(account_id)
+          res["is_update"] = True
           logger.info(f"[전송] 기존 상품번호 발견 → 수정 모드: {market_type} #{existing_product_no}")
 
-        # 실제 마켓 API 호출 (계정별 세마포어로 Rate Limit 방지)
+        # 마켓 API 호출 (계정별 세마포어)
         account_sem = _get_account_semaphore(account_id)
         async with account_sem:
           result = await dispatch_to_market(
-            self.session, market_type, product_dict, category_id,
+            self.session, market_type, acct_product, category_id,
             account=account,
             existing_product_no=existing_product_no,
           )
 
-        # 404 → 상품번호 초기화 처리
+        # 404 → 상품번호 초기화
         if result.get("_clear_product_no"):
-          old_nos = product_row.market_product_nos or {}
-          removed_no = old_nos.get(f"{account_id}_origin") or old_nos.get(account_id, "")
-          for key in [account_id, f"{account_id}_origin"]:
-            old_nos.pop(key, None)
-          await product_repo.update_async(product_id, market_product_nos=old_nos or None)
-          logger.info(f"[전송] 404 상품번호 초기화: {market_type} #{removed_no} (계정: {account_id})")
+          res["clear_nos"] = [account_id, f"{account_id}_origin"]
+          logger.info(f"[전송] 404 상품번호 초기화: {market_type} (계정: {account_id})")
 
         if result.get("success"):
-          transmit_result[account_id] = "success"
-          # 마켓 상품번호 추출 (API 응답에서)
-          # 롯데ON은 핸들러가 result에 spdNo를 직접 포함
+          res["status"] = "success"
+          # 상품번호 추출
           product_no = result.get("spdNo") or ""
+          api_data: dict[str, Any] = {}
           if not product_no:
             result_data = result.get("data", {})
             if isinstance(result_data, dict):
               api_data = result_data.get("data", result_data)
-              # api_data가 리스트인 경우 (롯데ON 등) 첫번째 항목에서 추출
               if isinstance(api_data, list) and api_data:
                 api_data = api_data[0] if isinstance(api_data[0], dict) else {}
               if isinstance(api_data, dict):
-                # 마켓별 상품번호 키 추출
-                # 스마트스토어: 구매페이지 URL용 channelProductNo 우선 저장
                 product_no = (
-                  api_data.get("smartstoreChannelProductNo")  # 스마트스토어 (구매페이지 URL용)
-                  or api_data.get("originProductNo")       # 스마트스토어 (API용)
-                  or api_data.get("productNo")             # 11번가
-                  or api_data.get("sellerProductId")     # 쿠팡
-                  or api_data.get("spdNo")               # 롯데ON
-                  or api_data.get("itemId")              # SSG(신세계몰)
-                  or api_data.get("supPrdCd")            # GS샵
-                  or api_data.get("prdNo")               # GS샵 대체
-                  or api_data.get("goodsNo")             # 롯데홈쇼핑
+                  api_data.get("smartstoreChannelProductNo")
+                  or api_data.get("originProductNo")
+                  or api_data.get("productNo")
+                  or api_data.get("sellerProductId")
+                  or api_data.get("spdNo")
+                  or api_data.get("itemId")
+                  or api_data.get("supPrdCd")
+                  or api_data.get("prdNo")
+                  or api_data.get("goodsNo")
                   or api_data.get("product_id")
                   or api_data.get("productId")
                   or ""
                 )
           if product_no:
-            existing_nos = product_row.market_product_nos or {}
-            existing_nos[account_id] = str(product_no)
-            # 스마트스토어: originProductNo도 별도 저장 (수정/삭제 API용)
+            nos: dict[str, str] = {account_id: str(product_no)}
             if market_type == "smartstore" and isinstance(api_data, dict):
               origin_no = api_data.get("originProductNo") or ""
-              channel_no = str(product_no)
               if origin_no:
-                existing_nos[f"{account_id}_origin"] = str(origin_no)
-              logger.info(f"[전송] 스마트스토어 상품번호 — channel={channel_no}, origin={origin_no}")
-            await product_repo.update_async(
-              product_id, market_product_nos=existing_nos
-            )
-            logger.info(f"[전송] {market_type} 상품번호 저장: {product_no}")
-          # last_sent_data 스냅샷 저장 (스킵 판단용)
-          try:
-            sent_snapshot = {
-              "sale_price": int(product_dict.get("sale_price") or 0),
-              "cost": int(product_dict.get("cost") or 0),
-              "options": [
-                {"name": o.get("name", ""), "price": o.get("price"), "stock": o.get("stock")}
-                for o in (product_dict.get("options") or [])
-              ],
-              "sent_at": datetime.now(UTC).isoformat(),
-            }
-            cur_sent = product_row.last_sent_data or {}
-            cur_sent[account_id] = sent_snapshot
-            await product_repo.update_async(product_id, last_sent_data=cur_sent)
-          except Exception as _snap_e:
-            logger.warning(f"[전송] last_sent_data 저장 실패: {_snap_e}")
+                nos[f"{account_id}_origin"] = str(origin_no)
+              logger.info(f"[전송] 스마트스토어 상품번호 — channel={product_no}, origin={origin_no}")
+            res["product_nos"] = nos
+            logger.info(f"[전송] {market_type} 상품번호: {product_no}")
+
+          # 스냅샷 준비
+          res["sent_snapshot"] = {
+            "sale_price": int(acct_product.get("sale_price") or 0),
+            "cost": int(acct_product.get("cost") or 0),
+            "options": [
+              {"name": o.get("name", ""), "price": o.get("price"), "stock": o.get("stock")}
+              for o in (acct_product.get("options") or [])
+            ],
+            "sent_at": datetime.now(UTC).isoformat(),
+          }
 
           action = "수정" if existing_product_no else "등록"
-          logger.info(
-            f"[전송] {market_type} {action} 성공 - 상품: {product_id}, 계정: {account_id}"
-          )
+          logger.info(f"[전송] {market_type} {action} 성공 - 상품: {product_id}, 계정: {account_id}")
         else:
-          transmit_result[account_id] = "failed"
-          transmit_error[account_id] = result.get("message", "알 수 없는 오류")
-          logger.warning(
-            f"[전송] {market_type} 실패 - {result.get('message')}"
-          )
+          res["error"] = result.get("message", "알 수 없는 오류")
+          logger.warning(f"[전송] {market_type} 실패 - {result.get('message')}")
 
       except Exception as exc:
-        transmit_result[account_id] = "failed"
-        transmit_error[account_id] = str(exc)
+        res["error"] = str(exc)
         logger.error(f"[전송] 계정 {account_id} 예외: {exc}")
+      return res
+
+    # 모든 계정 병렬 전송
+    account_results = await asyncio.gather(
+      *[_dispatch_one(aid) for aid in target_account_ids],
+      return_exceptions=True,
+    )
+
+    # 결과 병합 + DB 일괄 업데이트
+    merged_nos = dict(product_row.market_product_nos or {})
+    merged_sent = dict(product_row.last_sent_data or {})
+    for ar in account_results:
+      if isinstance(ar, Exception):
+        continue
+      aid = ar["account_id"]
+      transmit_result[aid] = ar["status"]
+      if ar["error"]:
+        transmit_error[aid] = ar["error"]
+      if ar["is_update"]:
+        update_mode_accounts.add(aid)
+      # 404 초기화
+      for key in ar.get("clear_nos", []):
+        merged_nos.pop(key, None)
+      # 상품번호 병합
+      merged_nos.update(ar.get("product_nos", {}))
+      # 스냅샷 병합
+      if ar.get("sent_snapshot"):
+        merged_sent[aid] = ar["sent_snapshot"]
+
+    # DB 1회 업데이트
+    try:
+      await product_repo.update_async(
+        product_id,
+        market_product_nos=merged_nos or None,
+        last_sent_data=merged_sent or None,
+      )
+    except Exception as _db_e:
+      logger.warning(f"[전송] DB 업데이트 실패: {_db_e}")
 
     # 6. 최종 상태 결정
     values = list(transmit_result.values())

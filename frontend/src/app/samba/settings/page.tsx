@@ -395,10 +395,21 @@ export default function SettingsPage() {
 
   const saveStoreSettings = async (marketKey: string) => {
     try {
-      // 기존 저장 데이터와 현재 입력 데이터 병합 (빈 문자열은 기존값 유지)
+      // 기존 저장 데이터와 현재 입력 데이터 병합
+      // select 필드에서 ''(설정안함)을 선택한 경우 해당 키 삭제
       const current = storeData[marketKey] || {}
+      const marketCfgForMerge = STORE_MARKETS.find(m => m.key === marketKey)
+      const selectFields = new Set(
+        (marketCfgForMerge?.fields ?? []).filter(f => f.type === 'select').map(f => f.name)
+      )
+      const clearKeys = Object.entries(current)
+        .filter(([k, v]) => v === '' && selectFields.has(k))
+        .map(([k]) => k)
       const filtered = Object.fromEntries(Object.entries(current).filter(([, v]) => v !== ''))
-      const data = { ...(savedStoreData[marketKey] || {}), ...filtered }
+      const merged = { ...(savedStoreData[marketKey] || {}), ...filtered }
+      // select "설정안함" 선택 시 해당 키 삭제
+      for (const k of clearKeys) delete merged[k]
+      const data = merged
       await forbiddenApi.saveSetting(`store_${marketKey}`, data)
       const marketCfg = STORE_MARKETS.find(m => m.key === marketKey)
       const label = marketCfg?.label || marketKey

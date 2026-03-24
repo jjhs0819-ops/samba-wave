@@ -819,67 +819,51 @@ class SambaCategoryService:
         market: str,
         session: "AsyncSession",
     ) -> int:
-        """매핑 대상 카테고리의 상품이 해당 마켓에 등록(전송 완료)되었는지 확인.
+        """매핑 대상 카테고리의 상품이 해당 마켓에 실제 등록되어 있는지 확인.
 
+        registered_accounts 필드 기준으로 판단 (실제 등록 상태 추적).
         Returns: 등록된 상품 수
         """
         from sqlmodel import select
         from backend.domain.samba.collector.model import SambaCollectedProduct
-        from backend.domain.samba.shipment.model import SambaShipment
         from backend.domain.samba.account.model import SambaMarketAccount
 
         # 1) 매핑 조회 → source_site + source_category 쌍 수집
-        target_mappings = []
+        target_cats: set[tuple[str, str]] = set()
         for mid in mapping_ids:
             m = await self.mapping_repo.get_async(mid)
             if m:
-                target_mappings.append((m.source_site, m.source_category))
+                target_cats.add((m.source_site, m.source_category))
 
-        if not target_mappings:
+        if not target_cats:
             return 0
 
-        # 2) 해당 카테고리의 상품 ID 수집
-        stmt = select(SambaCollectedProduct.id, SambaCollectedProduct.source_site,
-                       SambaCollectedProduct.category1, SambaCollectedProduct.category2,
-                       SambaCollectedProduct.category3, SambaCollectedProduct.category4,
-                       SambaCollectedProduct.category)
-        result = await session.execute(stmt)
-        product_ids: List[str] = []
-        for row in result.all():
-            pid, site = row[0], row[1]
-            cats = [row[2], row[3], row[4], row[5]]
-            cats = [c for c in cats if c]
-            if not cats and row[6]:
-                cats = [c.strip() for c in row[6].split(">") if c.strip()]
-            leaf = " > ".join(cats)
-            if (site, leaf) in target_mappings:
-                product_ids.append(pid)
-
-        if not product_ids:
-            return 0
-
-        # 3) 해당 마켓 계정 ID 조회
+        # 2) 해당 마켓 계정 ID 조회
         stmt_acc = select(SambaMarketAccount.id).where(
             SambaMarketAccount.market_type == market
         )
         acc_result = await session.execute(stmt_acc)
-        account_ids = [r[0] for r in acc_result.all()]
+        account_ids = set(r[0] for r in acc_result.all())
         if not account_ids:
             return 0
 
-        # 4) 전송 완료된 shipment 확인
-        stmt_ship = select(SambaShipment).where(
-            SambaShipment.product_id.in_(product_ids),
-            SambaShipment.status == "completed",
-        )
-        ship_result = await session.execute(stmt_ship)
+        # 3) 상품의 registered_accounts에 해당 마켓 계정이 있는지 확인
+        stmt = select(SambaCollectedProduct)
+        result = await session.execute(stmt)
         count = 0
-        for ship in ship_result.scalars().all():
-            if ship.target_account_ids:
-                for aid in ship.target_account_ids:
-                    if aid in account_ids:
-                        count += 1
-                        break
+        for p in result.scalars().all():
+            site = p.source_site or ""
+            cats = [p.category1, p.category2, p.category3, p.category4]
+            cats = [c for c in cats if c]
+            if not cats and p.category:
+                cats = [c.strip() for c in p.category.split(">") if c.strip()]
+            leaf = " > ".join(cats)
+            if (site, leaf) not in target_cats:
+                continue
+            # registered_accounts에 해당 마켓 계정이 있는지 확인
+            reg_accs = p.registered_accounts or []
+            if any(aid in account_ids for aid in reg_accs):
+                count += 1
         return count
 
     # ==================== Market Category Seed ====================
@@ -1620,34 +1604,47 @@ class SambaCategoryService:
             cat_entries = []
             for idx, item in enumerate(batch):
                 sample_str = ", ".join(item["samples"][:3]) if item["samples"] else ""
-                cat_entries.append(
-                    f'{idx + 1}. [{item["site"]}] {item["leaf_path"]}'
-                    + (f' (상품: {sample_str})' if sample_str else '')
-                )
+                tag_str = ", ".join(item.get("tags", [])[:5])
+                entry = f'{idx + 1}. [{item["site"]}] {item["leaf_path"]}'
+                if sample_str:
+                    entry += f' | 상품: {sample_str}'
+                if tag_str:
+                    entry += f' | 태그: {tag_str}'
+                cat_entries.append(entry)
 
-            # 마켓별 실제 카테고리 목록 (키워드 관련 카테고리만 필터링)
+            # 마켓별 카테고리 필터 — leaf 키워드 우선
             cat_list_section = ""
             if has_cat_list:
-                # 배치 내 키워드 추출 (필터링용)
-                batch_keywords: set[str] = set()
+                # leaf 키워드: 각 아이템의 마지막 세그먼트 + 태그
+                leaf_kw: set[str] = set()
+                parent_kw: set[str] = set()
                 for item in batch:
-                    for seg in item["leaf_path"].split(">"):
-                        seg = seg.strip()
-                        if len(seg) >= 2:
-                            batch_keywords.add(seg)
+                    segs = [s.strip() for s in item["leaf_path"].split(">") if s.strip()]
+                    if segs:
+                        leaf_kw.add(segs[-1])
+                        for s in segs[:-1]:
+                            if len(s) >= 2:
+                                parent_kw.add(s)
+                    for t in (item.get("tags") or [])[:3]:
+                        if t and len(t) >= 2:
+                            leaf_kw.add(t)
                     for s in (item.get("samples") or [])[:2]:
                         for word in s.split():
                             if len(word) >= 2:
-                                batch_keywords.add(word)
+                                leaf_kw.add(word)
 
                 lines = []
                 for m, cats in market_cat_lists.items():
-                    # 키워드 관련 카테고리만 필터 (최대 30개)
-                    relevant = [c for c in cats if any(kw in c for kw in batch_keywords)]
-                    if not relevant:
-                        relevant = cats[:20]
+                    leaf_matches = [c for c in cats if any(kw in c for kw in leaf_kw)]
+                    if len(leaf_matches) >= 5:
+                        relevant = leaf_matches[:20]
                     else:
-                        relevant = relevant[:30]
+                        all_kw = leaf_kw | parent_kw
+                        relevant = [c for c in cats if any(kw in c for kw in all_kw)]
+                        if not relevant:
+                            relevant = cats[:15]
+                        else:
+                            relevant = relevant[:20]
                     lines.append(f"- {market_labels.get(m, m)}:\n" + "\n".join(f"  {c}" for c in relevant))
                 cat_list_section = "\n[마켓 실제 카테고리 (이 중에서만 선택)]\n" + "\n".join(lines) + "\n"
 
@@ -1659,6 +1656,7 @@ class SambaCategoryService:
 JSON만 응답:
 {json.dumps({str(i + 1): {m: "" for m in target_markets} for i in range(len(batch))}, ensure_ascii=False)}"""
 
+            # 멀티모달 메시지 구성 (배치 내 이미지 + 텍스트)
             # API 호출 (재시도 포함)
             for attempt in range(3):
                 try:
@@ -1725,6 +1723,7 @@ JSON만 응답:
         source_site: str,
         source_category: str,
         sample_products: List[str],
+        sample_tags: Optional[List[str]] = None,
         target_markets: Optional[List[str]] = None,
         api_key: Optional[str] = None,
     ) -> Dict[str, str]:
@@ -1751,31 +1750,52 @@ JSON만 응답:
         if not market_cats:
             return {}
 
-        # 프롬프트 구성
-        market_list_str = "\n".join(
-            f"- {market}: {json.dumps(cats, ensure_ascii=False)}"
-            for market, cats in market_cats.items()
-        )
-        sample_str = ", ".join(sample_products[:5]) if sample_products else "(없음)"
+        # 키워드 추출 — leaf(하위) 키워드 우선, 상위는 보조
+        cat_segments = [seg.strip() for seg in source_category.split(">") if seg.strip()]
+        # leaf 키워드: 마지막 세그먼트 + 태그 + 상품명 단어
+        leaf_keywords: set[str] = set()
+        if cat_segments:
+            leaf_keywords.add(cat_segments[-1])
+        for t in (sample_tags or []):
+            if t and not t.startswith('__') and len(t) >= 2:
+                leaf_keywords.add(t)
+        for name in sample_products[:3]:
+            for word in name.split():
+                if len(word) >= 2:
+                    leaf_keywords.add(word)
+        # 상위 키워드: 카테고리 상위 세그먼트
+        parent_keywords = set(seg for seg in cat_segments[:-1] if len(seg) >= 2)
 
-        prompt = f"""소싱 상품의 카테고리를 각 판매 마켓의 카테고리에 매핑해주세요.
+        # 필터: leaf 키워드 매칭 우선 → 부족하면 상위 키워드 보조
+        market_list_parts: list[str] = []
+        for market, cats in market_cats.items():
+            # leaf 키워드와 매칭되는 카테고리
+            leaf_matches = [c for c in cats if any(kw in c for kw in leaf_keywords)]
+            if len(leaf_matches) >= 3:
+                relevant = leaf_matches[:15]
+            else:
+                # leaf 부족 → 상위 키워드로 보충
+                all_kw = leaf_keywords | parent_keywords
+                relevant = [c for c in cats if any(kw in c for kw in all_kw)]
+                if not relevant:
+                    relevant = cats[:10]
+                else:
+                    relevant = relevant[:15]
+            market_list_parts.append(f"- {market}: {json.dumps(relevant, ensure_ascii=False)}")
+        market_list_str = "\n".join(market_list_parts)
 
-[소싱 정보]
-- 사이트: {source_site}
-- 카테고리: {source_category}
-- 대표 상품명: {sample_str}
+        sample_str = ", ".join(sample_products[:3]) if sample_products else "(없음)"
+        tag_str = ", ".join([t for t in (sample_tags or []) if not t.startswith('__')][:5])
 
-[마켓별 카테고리 목록 (참고용)]
+        prompt = f"""소싱 카테고리를 마켓 카테고리에 매핑.
+
+[소싱] {source_site} | {source_category} | 상품: {sample_str} | 태그: {tag_str or '-'}
+
+[마켓 카테고리 (참고)]
 {market_list_str}
 
-규칙:
-1. 각 마켓에서 가장 적절한 카테고리를 정확히 1개만 선택하세요.
-2. 위 목록에 정확히 일치하는 카테고리가 있으면 그것을 선택하세요.
-3. 정확히 일치하는 카테고리가 없으면 상품명과 소싱 카테고리를 분석하여 해당 마켓에서 가장 적절한 카테고리 경로를 직접 생성하세요. 실제 마켓에서 사용하는 카테고리 체계를 따르세요.
-4. 절대로 빈 문자열로 응답하지 마세요. 모든 마켓에 반드시 카테고리를 매핑해야 합니다.
-5. 최하위 카테고리까지 매핑이 어려우면 가장 가까운 상위 카테고리를 사용하세요.
-
-JSON만 응답하세요 (설명 불필요):
+규칙: 목록에 있으면 선택, 없으면 마켓 실제 체계로 생성. 빈값 금지.
+JSON만:
 {json.dumps({m: "" for m in market_cats}, ensure_ascii=False)}"""
 
         client = anthropic.AsyncAnthropic(api_key=key)
@@ -1837,10 +1857,14 @@ JSON만 응답하세요 (설명 불필요):
     async def bulk_ai_mapping(
         self, api_key: str, session: "AsyncSession",
         target_markets: Optional[List[str]] = None,
+        source_site: Optional[str] = None,
+        category_prefix: Optional[str] = None,
     ) -> Dict[str, Any]:
         """미매핑 카테고리 자동 매핑 + 기존 매핑 누락 마켓 보충.
 
-        target_markets가 지정되면 해당 마켓만, 없으면 활성 계정 마켓만 대상.
+        target_markets: 대상 마켓 (미지정 시 활성 계정 마켓)
+        source_site: 소싱사이트 필터 (예: "MUSINSA")
+        category_prefix: 카테고리 경로 prefix 필터 (예: "신발")
         """
         from sqlmodel import select
         from backend.domain.samba.collector.model import SambaCollectedProduct
@@ -1871,11 +1895,15 @@ JSON만 응답하세요 (설명 불필요):
         result = await session.execute(stmt)
         products = list(result.scalars().all())
 
-        # (site, leaf_path) → 대표 상품명 목록
+        # (site, leaf_path) → 등록상품명 + 태그(1개 상품분, 그룹 동일)
         cat_samples: Dict[tuple, List[str]] = {}
+        cat_tags: Dict[tuple, List[str]] = {}
         for p in products:
             site = p.source_site or ""
             if not site:
+                continue
+            # 범위 필터
+            if source_site and site != source_site:
                 continue
             cats = [p.category1, p.category2, p.category3, p.category4]
             cats = [c for c in cats if c]
@@ -1884,9 +1912,14 @@ JSON만 응답하세요 (설명 불필요):
             if not cats:
                 continue
             leaf_path = " > ".join(cats)
+            if category_prefix and not leaf_path.startswith(category_prefix):
+                continue
             key = (site, leaf_path)
             if key not in cat_samples:
                 cat_samples[key] = []
+                # 태그는 그룹 동일 → 첫 상품 것만 수집
+                tags = [t for t in (getattr(p, 'tags', None) or []) if t and not t.startswith('__')]
+                cat_tags[key] = tags[:10]
             if len(cat_samples[key]) < 5:
                 cat_samples[key].append(p.name)
 
@@ -1919,6 +1952,7 @@ JSON만 응답하세요 (설명 불필요):
                     "site": site,
                     "leaf_path": leaf_path,
                     "samples": samples,
+                    "tags": cat_tags.get((site, leaf_path), []),
                     "target_markets": list(missing_markets),
                     "existing": existing,
                     "mode": "update",
@@ -1928,6 +1962,7 @@ JSON만 응답하세요 (설명 불필요):
                     "site": site,
                     "leaf_path": leaf_path,
                     "samples": samples,
+                    "tags": cat_tags.get((site, leaf_path), []),
                     "target_markets": list(all_market_keys),
                     "existing": None,
                     "mode": "create",

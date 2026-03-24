@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "SAMBA-WAVE (WEB)",
+  "version": "2.7.6",
+  "description": "무재고 위탁판매 솔루션 - 무신사/KREAM/소싱처 수집 연동",
+  "permissions": [
+    "cookies",
+    "storage",
+    "tabs",
+    "webRequest",
+    "scripting",
+    "activeTab",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://*.musinsa.com/*",
+    "https://kream.co.kr/*",
+    "https://*.kream.co.kr/*",
+    "https://*.a-rt.com/*",
+    "https://a-rt.com/*",
+    "https://*.okmall.com/*",
+    "https://*.lotteon.com/*",
+    "https://*.gsshop.com/*",
+    "https://*.elandmall.com/*",
+    "https://*.ssfshop.com/*",
+    "https://*.abc-mart.co.kr/*",
+    "https://*.grandstage.co.kr/*",
+    "https://sell.smartstore.naver.com/*",
+    "http://localhost:28080/*",
+    "https://samba-wave-production.up.railway.app/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://kream.co.kr/products/*", "https://www.kream.co.kr/products/*"],
+      "js": ["kream-collect.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

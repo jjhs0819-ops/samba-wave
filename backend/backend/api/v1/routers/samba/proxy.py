@@ -983,12 +983,32 @@ def _extract_seo_keywords(
     return seo
 
 
+async def _get_smartstore_tag_client(session: AsyncSession):
+    """활성 스마트스토어 계정으로 태그사전 검증용 클라이언트 생성. 없으면 None."""
+    try:
+        from backend.domain.samba.account.repository import SambaMarketAccountRepository
+        from backend.domain.samba.proxy.smartstore import SmartStoreClient
+        account_repo = SambaMarketAccountRepository(session)
+        ss_accounts = await account_repo.filter_by_async(market_type="smartstore", is_active=True)
+        if ss_accounts:
+            acc = ss_accounts[0]
+            additional = acc.additional_fields or {}
+            _cid = additional.get("clientId") or acc.api_key
+            _csec = additional.get("clientSecret") or acc.api_secret
+            if _cid and _csec:
+                logger.info("[AI태그] 스마트스토어 태그사전 검증 활성화")
+                return SmartStoreClient(_cid, _csec)
+    except Exception as e:
+        logger.warning(f"[AI태그] 스마트스토어 클라이언트 초기화 실패 (태그사전 검증 비활성): {e}")
+    return None
+
+
 @router.post("/ai-tags/generate")
 async def generate_ai_tags(
     request: dict[str, Any],
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
-    """선택 상품을 그룹별로 묶어 대표 1개로 Claude 태그 생성 후 그룹 전체에 적용."""
+    """선택 상품을 그룹별로 묶어 대표 1개로 Claude 태그 생성 후 태그사전 검증 → 그룹 전체에 적용."""
     from backend.domain.samba.collector.repository import SambaCollectedProductRepository
 
     product_ids = request.get("product_ids", [])
@@ -1038,9 +1058,14 @@ async def generate_ai_tags(
     api_calls = 0
     total_input_tokens = 0
     total_output_tokens = 0
+    total_tag_dict_validated = 0
+    total_tag_dict_rejected = 0
 
     # 금지태그/브랜드 목록 1회 로드
     ss_banned_cache, db_brands_cache = await _load_tag_filter_data(session)
+
+    # 스마트스토어 클라이언트 초기화 (태그사전 검증용)
+    ss_client = await _get_smartstore_tag_client(session)
 
     async with httpx.AsyncClient(timeout=30) as http_client:
         for gid, products in group_products.items():
@@ -1126,14 +1151,28 @@ async def generate_ai_tags(
                     if _is_valid_tag(t, banned, name_words, ss_banned, brand_words)
                 ]
 
-                # AI 태그 중복 제거 (최대 10개)
+                # AI 태그 중복 제거 (후보 전체 보존 — 태그사전 검증에서 탈락 대비)
                 seen: set[str] = set()
-                tags: list[str] = []
+                candidate_tags: list[str] = []
                 for t in ai_tags:
                     tl = t.lower().replace(" ", "")
-                    if tl not in seen and len(tags) < 10:
+                    if tl not in seen:
                         seen.add(tl)
-                        tags.append(t)
+                        candidate_tags.append(t)
+
+                if not candidate_tags:
+                    continue
+
+                # 태그사전 검증: 등록된 태그 + 비제한 태그만 10개까지 추출
+                if ss_client:
+                    validated = await ss_client.validate_tags(candidate_tags, max_count=10)
+                    tags = [v["text"] for v in validated]
+                    total_tag_dict_validated += len(tags)
+                    total_tag_dict_rejected += len(candidate_tags) - len(tags)
+                    logger.info(f"[AI태그] 그룹 {gid}: 후보 {len(candidate_tags)}개 → 태그사전 통과 {len(tags)}개")
+                else:
+                    # 스마트스토어 클라이언트 없으면 기존 방식 (최대 10개 자르기)
+                    tags = candidate_tags[:10]
 
                 if not tags:
                     continue
@@ -1161,14 +1200,17 @@ async def generate_ai_tags(
     input_cost = total_input_tokens * 3 / 1_000_000 * 1400
     output_cost = total_output_tokens * 15 / 1_000_000 * 1400
     total_cost = round(input_cost + output_cost, 1)
+    validated_msg = f", 태그사전 통과 {total_tag_dict_validated}개/제외 {total_tag_dict_rejected}개" if ss_client else ""
     return {
         "success": True,
-        "message": f"태그 생성 완료 — {total_groups}개 그룹, {total_tagged}개 상품에 복사 (₩{total_cost})",
+        "message": f"태그 생성 완료 — {total_groups}개 그룹, {total_tagged}개 상품에 복사 (₩{total_cost}{validated_msg})",
         "total_tagged": total_tagged,
         "api_calls": api_calls,
         "input_tokens": total_input_tokens,
         "output_tokens": total_output_tokens,
         "cost_krw": total_cost,
+        "tag_dict_validated": total_tag_dict_validated,
+        "tag_dict_rejected": total_tag_dict_rejected,
     }
 
 
@@ -1229,6 +1271,9 @@ async def preview_ai_tags(
     # 금지태그/브랜드 목록 1회 로드
     ss_banned_cache, db_brands_cache = await _load_tag_filter_data(session)
 
+    # 스마트스토어 클라이언트 초기화 (태그사전 검증용)
+    ss_client_preview = await _get_smartstore_tag_client(session)
+
     async with httpx.AsyncClient(timeout=30) as http_client:
         for gid, products in groups.items():
             rep = products[0]
@@ -1252,13 +1297,13 @@ async def preview_ai_tags(
                         break
             sample_str = "\n".join(f"  · {n}" for n in sample_names)
 
-            # Claude API 호출 (20개 요청)
+            # Claude API 호출 (25개 요청 — 태그사전 검증 탈락 대비 여유분)
             prompt = (
                 f"그룹 상품 정보 ({len(products)}개 상품):\n"
                 f"- 브랜드: {brand}\n"
                 f"- 카테고리: {category}\n"
                 f"- 대표 상품명 (샘플 {len(sample_names)}개):\n{sample_str}\n\n"
-                f"이 그룹의 모든 상품에 공통 적용할 검색용 태그를 20개 생성해주세요.\n"
+                f"이 그룹의 모든 상품에 공통 적용할 검색용 태그를 25개 생성해주세요.\n"
                 f"규칙:\n"
                 f"1. 소비자가 네이버에서 실제로 검색할 만한 인기 키워드\n"
                 f"2. 브랜드명('{brand}')은 제외\n"
@@ -1307,27 +1352,39 @@ async def preview_ai_tags(
                     source_site, brand, cats, rep_name, ss_banned_cache, db_brands_cache,
                 )
 
-                # 중복 제거 후 최대 20개
+                # 중복 제거 후 후보 전체 보존
                 seen: set[str] = set()
-                tags: list[str] = []
+                candidate_tags: list[str] = []
                 for t in text.split(","):
                     t = t.strip()
                     if not _is_valid_tag(t, banned, name_words, ss_banned, brand_words):
                         continue
                     tl = t.lower().replace(" ", "")
-                    if tl not in seen and len(tags) < 20:
+                    if tl not in seen:
                         seen.add(tl)
-                        tags.append(t)
+                        candidate_tags.append(t)
+
+                # 태그사전 검증
+                validated_tags: list[str] = []
+                rejected_tags: list[str] = []
+                if ss_client_preview:
+                    validated = await ss_client_preview.validate_tags(candidate_tags, max_count=10)
+                    validated_set = {v["text"] for v in validated}
+                    validated_tags = [v["text"] for v in validated]
+                    rejected_tags = [t for t in candidate_tags if t not in validated_set]
+                else:
+                    validated_tags = candidate_tags[:10]
 
                 # SEO 키워드 미리보기
-                seo_preview = _extract_seo_keywords(tags, cats, banned, name_words)
+                seo_preview = _extract_seo_keywords(validated_tags, cats, banned, name_words)
 
                 preview_results.append({
                     "group_id": gid,
                     "group_name": products[0].search_filter_id or rep_name,
                     "product_count": len(products),
                     "rep_name": rep_name,
-                    "tags": tags,
+                    "tags": validated_tags,
+                    "rejected_tags": rejected_tags,
                     "seo_keywords": seo_preview,
                 })
 

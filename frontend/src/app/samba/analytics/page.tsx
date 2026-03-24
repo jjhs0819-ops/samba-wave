@@ -80,7 +80,7 @@ export default function AnalyticsPage() {
 
     setLoading(true)
     try {
-      const allOrders = await orderApi.list(0, 9999).catch(() => [])
+      const allOrders = await orderApi.list(0, 500).catch(() => [])
       setOrders(allOrders)
     } catch {}
     setLoading(false)

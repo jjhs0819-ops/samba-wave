@@ -195,6 +195,8 @@ class LotteHomeClient:
             except (UnicodeDecodeError, LookupError):
                 xml_str = raw_bytes.decode("utf-8", errors="replace")
 
+            # XML 선언의 encoding="EUC-KR"을 제거 (이미 UTF-8로 디코딩됨)
+            xml_str = re.sub(r'<\?xml[^?]*\?>', '', xml_str).strip()
             return self._parse_lotte_response(xml_str)
 
     # ------------------------------------------------------------------
@@ -298,7 +300,7 @@ class LotteHomeClient:
         return await self._call_api(
             "searchBrandListOpenApi.lotte",
             "GET",
-            {"strCertKey": cert_key, "brnd_nm": brand_name},
+            {"subscriptionId": cert_key, "brnd_nm": brand_name},
         )
 
     async def search_categories(
@@ -310,19 +312,48 @@ class LotteHomeClient:
             "searchDispCatListOpenApi.lotte",
             "GET",
             {
-                "strCertKey": cert_key,
+                "subscriptionId": cert_key,
                 "disp_tp_cd": disp_tp_cd,
                 "md_gsgr_no": md_gsgr_no,
             },
         )
 
-    async def search_md_groups(self) -> dict[str, Any]:
-        """MD상품군 목록 조회."""
+    async def search_md_list(self, md_nm: str = "", md_id: str = "") -> dict[str, Any]:
+        """매입담당자(MD) 목록 조회."""
         cert_key = await self._ensure_auth()
+        params: dict[str, Any] = {"subscriptionId": cert_key}
+        if md_nm:
+            params["md_nm"] = md_nm
+        if md_id:
+            params["md_id"] = md_id
         return await self._call_api(
-            "searchMdGsgrListOpenApi.lotte",
+            "searchMDListOpenApi.lotte",
             "GET",
-            {"strCertKey": cert_key},
+            params,
+        )
+
+    async def search_md_groups(self, md_id: str = "") -> dict[str, Any]:
+        """MD관리상품군 조회. md_id 필수."""
+        cert_key = await self._ensure_auth()
+        if not md_id:
+            # md_id 미지정 시 자동으로 첫 번째 MD 코드 조회
+            md_result = await self.search_md_list()
+            md_data = md_result.get("data", {})
+            md_list = md_data.get("Result", md_data)
+            # MDInfoList > MDInfo에서 첫 번째 MDCode 추출
+            info_list = md_list.get("MDInfoList", {}) if isinstance(md_list, dict) else {}
+            md_info = info_list.get("MDInfo", {}) if isinstance(info_list, dict) else {}
+            if isinstance(md_info, list) and md_info:
+                md_id = md_info[0].get("MDCode", "")
+            elif isinstance(md_info, dict):
+                md_id = md_info.get("MDCode", "")
+            if not md_id:
+                return {"success": False, "message": "배정된 MD가 없습니다"}
+            logger.info(f"[롯데홈쇼핑] MD코드 자동 조회: {md_id}")
+        return await self._call_api(
+            "searchMDGsgrListOpenApi.lotte",
+            "GET",
+            {"subscriptionId": cert_key, "md_id": md_id},
         )
 
     async def search_delivery_policies(self) -> dict[str, Any]:
@@ -331,7 +362,7 @@ class LotteHomeClient:
         return await self._call_api(
             "searchDlvPolcListOpenApi.lotte",
             "GET",
-            {"strCertKey": cert_key},
+            {"subscriptionId": cert_key},
         )
 
     async def register_delivery_policy(
@@ -342,7 +373,7 @@ class LotteHomeClient:
         return await self._call_api(
             "registApiDlvPolcInfo.lotte",
             "POST",
-            {"strCertKey": cert_key, **policy_data},
+            {"subscriptionId": cert_key, **policy_data},
         )
 
     async def search_delivery_places(self) -> dict[str, Any]:
@@ -351,7 +382,7 @@ class LotteHomeClient:
         return await self._call_api(
             "searchDlvPlcListOpenApi.lotte",
             "GET",
-            {"strCertKey": cert_key},
+            {"subscriptionId": cert_key},
         )
 
     # ------------------------------------------------------------------
@@ -364,7 +395,7 @@ class LotteHomeClient:
         return await self._call_api(
             "registApiGoodsInfo.lotte",
             "POST",
-            {"strCertKey": cert_key, **goods_data},
+            {"subscriptionId": cert_key, **goods_data},
         )
 
     async def update_new_goods(
@@ -375,7 +406,7 @@ class LotteHomeClient:
         return await self._call_api(
             "upateApiNewGoodsInfo.lotte",
             "POST",
-            {"strCertKey": cert_key, "goods_req_no": goods_req_no, **goods_data},
+            {"subscriptionId": cert_key, "goods_req_no": goods_req_no, **goods_data},
         )
 
     async def update_display_goods(
@@ -386,7 +417,7 @@ class LotteHomeClient:
         return await self._call_api(
             "upateApiDisplayGoodsInfo.lotte",
             "POST",
-            {"strCertKey": cert_key, "goods_no": goods_no, **goods_data},
+            {"subscriptionId": cert_key, "goods_no": goods_no, **goods_data},
         )
 
     async def update_sale_status(
@@ -398,7 +429,7 @@ class LotteHomeClient:
             "updateGoodsSaleStat.lotte",
             "POST",
             {
-                "strCertKey": cert_key,
+                "subscriptionId": cert_key,
                 "goods_no": goods_no,
                 "sale_stat_cd": sale_stat_cd,
             },
@@ -417,7 +448,7 @@ class LotteHomeClient:
             "registStock.lotte",
             "POST",
             {
-                "strCertKey": cert_key,
+                "subscriptionId": cert_key,
                 "goods_no": goods_no,
                 "item_no": item_no,
                 "inv_qty": inv_qty,
@@ -430,7 +461,7 @@ class LotteHomeClient:
         return await self._call_api(
             "searchStockList.lotte",
             "GET",
-            {"strCertKey": cert_key, "goods_no": goods_no},
+            {"subscriptionId": cert_key, "goods_no": goods_no},
         )
 
 

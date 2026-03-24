@@ -321,9 +321,10 @@ if check_id in exempt:
    benefit_coupon_discount = s_price - couponPrice (couponPrice < s_price일 때)
    benefit_base = s_price - benefit_coupon_discount
 
-3단계: 등급할인 (benefit_base 기준, partnerDiscountOn=true일 때만)
-   ⚠️ partnerDiscountOn=false이면 등급할인 불가 상품 → grade_discount=0
-   grade_discount = benefit_base × memberDiscountRate / 100 (10원 절사) if partnerDiscountOn else 0
+3단계: 등급할인 (benefit_base 기준, grade_discount_rate > 0이면 적용)
+   ⚠️ partnerDiscountOn 필드는 신뢰 불가 — False여도 사이트는 등급할인 적용함
+   goodsPrice.memberDiscountRate가 로그인 시 정확한 값 반환 (비로그인 0, 로그인 시 등급률)
+   grade_discount = benefit_base × grade_discount_rate / 100 (10원 절사) if grade_discount_rate > 0 else 0
 
 4단계: 적립금 (benefit_base - 등급할인 기준)
    point_base = benefit_base - grade_discount
@@ -548,9 +549,16 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 ### 무신사 bestBenefitPrice 과다할인 (2026-03-20 수정)
 - **현상:** 상품 4468698에서 사이트 최대혜택가 150,890원인데 코드가 과다할인으로 수집
 - **원인 1:** `_fetch_coupons()` 쿠폰 API가 비로그인 상태에서 적용 불가한 쿠폰을 반환하여 할인액 과다 계산
-- **원인 2:** `partnerDiscountOn=false`(등급할인 불가 상품)인데 `memberDiscountRate`로 등급할인 적용
+- **~~원인 2:~~** ~~`partnerDiscountOn=false`(등급할인 불가 상품)인데 `memberDiscountRate`로 등급할인 적용~~
 - **해결 1:** bestBenefitPrice 계산에서 쿠폰 API 결과 제외, `goodsPrice.couponPrice`만 사용
-- **해결 2:** 등급할인을 `partnerDiscountOn=true`일 때만 적용. 선할인(isPrePoint)은 기존대로 `memberDiscountRate` 사용
+- **~~해결 2:~~** ~~등급할인을 `partnerDiscountOn=true`일 때만 적용~~ → 2026-03-23 되돌림 (아래 참조)
+
+### 무신사 bestBenefitPrice 과소할인 — partnerDiscountOn 가드 제거 (2026-03-23 수정)
+- **현상:** 상품 3527939에서 사이트 최대혜택가 10,210원인데 코드가 10,630원으로 수집 (420원 차이)
+- **원인:** `partnerDiscountOn=False`여도 사이트는 등급할인을 적용함. 이 필드는 등급할인 가능 여부의 신뢰할 수 있는 지표가 아님
+- **근거:** 로그인 API에서 `goodsPrice.memberDiscountRate=4.0`을 정확히 반환하므로, 이 값이 0이 아니면 등급할인 적용이 정답
+- **해결:** `partnerDiscountOn` 가드 제거 → `grade_discount_rate > 0`이면 항상 등급할인 적용
+- **추가:** GRADE_DISCOUNT_MAP에 "블랙다이아몬드" (4%) 추가, 회원 API 404 확인
 
 ### 무신사 시즌 "ALL ALL" 빈값 수집 (2026-03-22 수정)
 - **현상:** 상품 4258416에서 무신사 웹 "ALL ALL" 표시인데 season이 빈값으로 수집
@@ -585,3 +593,5 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 | 2026-03-22 | 시즌 0000/0 → ALL ALL 변환 (빈값 수집 수정) | - |
 | 2026-03-22 | 성별(sex) 빈값 → "남녀공용" 폴백 (무신사 수집) | - |
 | 2026-03-22 | 무배당발 수집 추가 — isPlusDelivery(무배+당발), isTodayReleaseGoods(비플러스 당발). API 검증 완료 | - |
+| 2026-03-23 | partnerDiscountOn 가드 제거 — False여도 사이트는 등급할인 적용. goodsPrice.memberDiscountRate 기준으로 변경 | - |
+| 2026-03-23 | GRADE_DISCOUNT_MAP에 블랙다이아몬드(4%) 추가. 회원 API(/api2/member/v1/me) 404 확인 | - |

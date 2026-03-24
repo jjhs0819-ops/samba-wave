@@ -48,7 +48,8 @@ class AiSuggestRequest(BaseModel):
     """AI 카테고리 매핑 요청."""
     source_site: str = Field(..., description="소싱사이트 (예: MUSINSA)")
     source_category: str = Field(..., description="소싱 카테고리 경로")
-    sample_products: List[str] = Field(default_factory=list, description="대표 상품명 목록 (최대 5개)")
+    sample_products: List[str] = Field(default_factory=list, description="등록 상품명 목록 (최대 5개)")
+    sample_tags: List[str] = Field(default_factory=list, description="상품 태그 목록")
     target_markets: Optional[List[str]] = Field(default=None, description="매핑할 마켓 목록 (미지정 시 전체)")
 
 
@@ -133,6 +134,7 @@ async def ai_suggest_category(
             source_site=body.source_site,
             source_category=body.source_category,
             sample_products=body.sample_products,
+            sample_tags=body.sample_tags,
             target_markets=body.target_markets,
             api_key=api_key,
         )
@@ -142,8 +144,10 @@ async def ai_suggest_category(
 
 
 class BulkAiMappingRequest(BaseModel):
-    """벌크 AI 매핑 요청 — 대상 마켓 선택."""
+    """벌크 AI 매핑 요청 — 대상 마켓 선택 + 범위 필터."""
     target_markets: Optional[List[str]] = None
+    source_site: Optional[str] = None
+    category_prefix: Optional[str] = None
 
 
 @router.post("/ai-suggest-bulk")
@@ -151,14 +155,21 @@ async def ai_suggest_bulk(
     body: Optional[BulkAiMappingRequest] = None,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """미매핑 카테고리 일괄 AI 매핑 — 선택된 마켓만 대상."""
+    """미매핑 카테고리 일괄 AI 매핑 — 선택된 마켓/범위만 대상."""
     api_key = await _get_claude_api_key(session)
     if not api_key:
         raise HTTPException(400, "Claude API Key가 설정되지 않았습니다")
     svc = _get_service(session)
     target_markets = body.target_markets if body else None
+    source_site = body.source_site if body else None
+    category_prefix = body.category_prefix if body else None
     try:
-        return await svc.bulk_ai_mapping(api_key, session, target_markets=target_markets)
+        return await svc.bulk_ai_mapping(
+            api_key, session,
+            target_markets=target_markets,
+            source_site=source_site,
+            category_prefix=category_prefix,
+        )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 

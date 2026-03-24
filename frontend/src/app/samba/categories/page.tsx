@@ -113,7 +113,7 @@ export default function CategoriesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const all = await collectorApi.listProducts(0, 9999)
+      const all = await collectorApi.listProducts(0, 500)
       console.log('[카테고리] 상품 로드:', all?.length || 0, '건')
       if (Array.isArray(all) && all.length > 0) {
         setProducts(all)
@@ -311,21 +311,18 @@ export default function CategoriesPage() {
     setBulkResult(null)
 
     if (selectedSite && selectedCat1) {
-      // 단건 모드: 선택된 카테고리 + 선택된 마켓만 AI 매핑
-      const sourceCategory = getSourceCategory()
-      const sampleNames = selectedProducts.slice(0, 5).map(p => p.name)
-
+      // 선택된 사이트+카테고리 범위의 하위 전체를 벌크 매핑 (1회 API 호출)
+      const categoryPrefix = getSourceCategory()
       try {
-        const result = await categoryApi.aiSuggest({
-          source_site: selectedSite,
-          source_category: sourceCategory,
-          sample_products: sampleNames,
-          target_markets: targetMarkets,
-        })
-        setAiResult(result)
-        setAiEdits({ ...result })
-        const callCount = targetMarkets ? 1 : 1
-        setLastAiUsage({ calls: callCount, tokens: 1800, cost: callCount * COST_PER_CALL_KRW, date: new Date().toLocaleTimeString() })
+        const result = await categoryApi.aiSuggestBulk(targetMarkets, selectedSite, categoryPrefix)
+        setBulkResult(result)
+        const totalCalls = result.mapped + result.updated
+        setLastAiUsage({ calls: totalCalls, tokens: totalCalls * 1800, cost: totalCalls * COST_PER_CALL_KRW, date: new Date().toLocaleTimeString() })
+        // 매핑 현황 새로고침
+        if (totalCalls > 0) {
+          const refreshed = await categoryApi.listMappings() as MappingRow[]
+          setMappings(refreshed)
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : '알 수 없는 오류'
         showAlert(`AI 매핑 실패: ${msg}`, 'error')
@@ -796,12 +793,15 @@ export default function CategoriesPage() {
           .filter(Boolean).join(' > ') === row.source_category
       )
       const sampleNames = rowProducts.slice(0, 5).map(p => p.name)
+      // 태그는 그룹 동일 → 첫 상품 것만
+      const sampleTags = (rowProducts[0]?.tags || []).filter((t: string) => !t.startsWith('__')).slice(0, 10)
 
       try {
         const result = await categoryApi.aiSuggest({
           source_site: row.source_site,
           source_category: row.source_category,
           sample_products: sampleNames,
+          sample_tags: sampleTags,
           target_markets: [market],
         })
         const newCat = result[market]
