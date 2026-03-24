@@ -606,33 +606,48 @@ class SmartStoreClient:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     # 1단계: 태그사전 병렬 매치 (HTTP 클라이언트 1개 공유)
-    async def _match_one(client: httpx.AsyncClient, tag: str) -> dict[str, str] | None:
+    # 정확 매치 우선 → 없으면 검색 결과 첫 번째 태그 채택
+    async def _match_one(client: httpx.AsyncClient, tag: str) -> list[dict[str, str]]:
       try:
         resp = await client.get(
           f"{self.BASE_URL}/v2/tags/recommend-tags",
           headers=headers, params={"keyword": tag},
         )
         if resp.status_code != 200:
-          return None
+          return []
         data = resp.json()
         results = data if isinstance(data, list) else (
           data.get("tags") or data.get("contents") or data.get("data") or []
         )
+        if not results:
+          return []
+        # 정확 매치 우선
         for r in results:
-          if r.get("text") == tag or r.get("tag") == tag:
-            return {
-              "code": str(r.get("code", 0)),
-              "text": r.get("text") or r.get("tag") or tag,
-            }
-        logger.info(f"[스마트스토어] 태그사전 미등록: {tag}")
+          txt = r.get("text") or r.get("tag") or ""
+          if txt == tag:
+            return [{"code": str(r.get("code", 0)), "text": txt}]
+        # 정확 매치 없으면 검색 결과 상위 2개 채택 (태그사전에 등재된 유사 태그)
+        found: list[dict[str, str]] = []
+        for r in results[:2]:
+          txt = r.get("text") or r.get("tag") or ""
+          if txt:
+            found.append({"code": str(r.get("code", 0)), "text": txt})
+        return found
       except Exception as e:
         logger.warning(f"[스마트스토어] 태그 검색 실패: {tag} — {e}")
-      return None
+      return []
 
-    search_tags = tags[:max_count * 2]
+    search_tags = tags[:max_count * 3]
     async with httpx.AsyncClient(timeout=15) as client:
       match_results = await asyncio.gather(*[_match_one(client, t) for t in search_tags])
-    matched_tags = [r for r in match_results if r is not None]
+    # 중복 제거하며 평탄화
+    seen_texts: set[str] = set()
+    matched_tags: list[dict[str, str]] = []
+    for result_list in match_results:
+      for r in result_list:
+        if r["text"] not in seen_texts:
+          seen_texts.add(r["text"])
+          matched_tags.append(r)
 
     if not matched_tags:
       logger.warning(f"[스마트스토어] 태그사전 매치 0건 (후보 {len(search_tags)}개)")
