@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
-
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
 
@@ -62,11 +60,6 @@ class TossPlugin(MarketPlugin):
         result = await client.register_product(payload)
       product_no = str(result.get("productId") or result.get("productNo") or result.get("id") or "")
       return {"success": True, "data": result, "productNo": product_no}
-    except TossApiError as e:
-      logger.error(f"[토스] 등록 실패: {e}")
-      return {"success": False, "message": str(e), "error_type": "schema_changed"}
-    except httpx.TimeoutException:
-      return {"success": False, "message": "토스 API 타임아웃", "error_type": "network"}
     except Exception as e:
-      logger.error(f"[토스] 예외: {e}")
-      return {"success": False, "message": str(e), "error_type": "unknown"}
+      logger.error(f"[토스] {'등록 실패' if isinstance(e, TossApiError) else '예외'}: {e}")
+      return {"success": False, "message": str(e), "error_type": self._classify_error(e)}

@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable, Coroutine
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -27,6 +27,31 @@ async def _get_setting(session: AsyncSession, key: str) -> Any:
   if row:
     return row.value
   return None
+
+
+async def _safe_delete(
+  market_name: str,
+  market_key: str,
+  product: dict[str, Any],
+  api_call: Callable[[str], Coroutine],
+) -> dict[str, Any]:
+  """마켓 삭제 공통 래퍼 — 상품번호 확인 + try/except 처리.
+
+  Args:
+    market_name: 로그/메시지용 마켓 이름 (예: "스마트스토어")
+    market_key: market_product_no 딕셔너리 키 (예: "smartstore")
+    product: 상품 딕셔너리
+    api_call: product_no를 받아 삭제 API를 호출하는 코루틴
+  """
+  product_no = product.get("market_product_no", {}).get(market_key, "")
+  if not product_no:
+    return {"success": True, "message": f"{market_name} 상품번호 없음 (건너뜀)"}
+  try:
+    await api_call(product_no)
+    return {"success": True, "message": f"{market_name} 삭제 완료"}
+  except Exception as e:
+    logger.error(f"[{market_name}] 삭제 실패: {e}")
+    return {"success": False, "message": f"삭제 실패: {e}"}
 
 
 # ═══════════════════════════════════════════════
@@ -161,14 +186,7 @@ async def _delete_smartstore(
     return {"success": False, "message": "스마트스토어 인증 정보 없음"}
 
   client = SmartStoreClient(client_id, client_secret)
-  product_no = product.get("market_product_no", {}).get("smartstore", "")
-  if product_no:
-    try:
-      await client.delete_product(product_no)
-      return {"success": True, "message": "스마트스토어 삭제 완료"}
-    except Exception as e:
-      return {"success": False, "message": f"삭제 실패: {e}"}
-  return {"success": True, "message": "스마트스토어 상품번호 없음 (건너뜀)"}
+  return await _safe_delete("스마트스토어", "smartstore", product, client.delete_product)
 
 
 async def _delete_coupang(
@@ -196,15 +214,8 @@ async def _delete_coupang(
   if not access_key or not secret_key:
     return {"success": False, "message": "쿠팡 인증 정보 없음"}
 
-  product_no = product.get("market_product_no", {}).get("coupang", "")
-  if product_no:
-    client = CoupangClient(access_key, secret_key, vendor_id)
-    try:
-      await client.delete_product(product_no)
-      return {"success": True, "message": "쿠팡 삭제 완료"}
-    except Exception as e:
-      return {"success": False, "message": f"삭제 실패: {e}"}
-  return {"success": True, "message": "쿠팡 상품번호 없음 (건너뜀)"}
+  client = CoupangClient(access_key, secret_key, vendor_id)
+  return await _safe_delete("쿠팡", "coupang", product, client.delete_product)
 
 
 async def _delete_lottehome(
@@ -219,18 +230,15 @@ async def _delete_lottehome(
   if not creds or not isinstance(creds, dict):
     return {"success": False, "message": "롯데홈쇼핑 설정 없음"}
 
-  product_no = product.get("market_product_no", {}).get("lottehome", "")
-  if product_no:
-    client = LotteHomeClient(
-      creds.get("userId", ""), creds.get("password", ""),
-      creds.get("agncNo", ""), creds.get("env", "test"),
-    )
-    try:
-      await client.update_sale_status(product_no, "30")  # 30 = 영구중단
-      return {"success": True, "message": "롯데홈쇼핑 삭제 완료"}
-    except Exception as e:
-      return {"success": False, "message": f"삭제 실패: {e}"}
-  return {"success": True, "message": "롯데홈쇼핑 상품번호 없음 (건너뜀)"}
+  client = LotteHomeClient(
+    creds.get("userId", ""), creds.get("password", ""),
+    creds.get("agncNo", ""), creds.get("env", "test"),
+  )
+  # 30 = 영구중단
+  return await _safe_delete(
+    "롯데홈쇼핑", "lottehome", product,
+    lambda pno: client.update_sale_status(pno, "30"),
+  )
 
 
 async def _delete_gsshop(
@@ -251,25 +259,21 @@ async def _delete_gsshop(
   if not creds or not isinstance(creds, dict):
     return {"success": False, "message": "GS샵 설정 없음"}
 
-  product_no = product.get("market_product_no", {}).get("gsshop", "")
-  if product_no:
-    sup_cd = creds.get("supCd", "") or creds.get("storeId", "") or creds.get("vendorId", "")
-    if not sup_cd and account:
-      sup_cd = getattr(account, "seller_id", "") or ""
-    client = GsShopClient(
-      sup_cd,
-      creds.get("aesKey", "") or creds.get("apiKeyProd", "") or creds.get("apiKeyDev", ""),
-      creds.get("subSupCd", ""),
-      "prod" if creds.get("apiKeyProd") else creds.get("env", "dev"),
-    )
-    try:
-      # 판매 종료일을 과거로 설정하여 즉시 판매 종료
-      past = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-      await client.update_sale_status(product_no, past)
-      return {"success": True, "message": "GS샵 삭제 완료"}
-    except Exception as e:
-      return {"success": False, "message": f"삭제 실패: {e}"}
-  return {"success": True, "message": "GS샵 상품번호 없음 (건너뜀)"}
+  sup_cd = creds.get("supCd", "") or creds.get("storeId", "") or creds.get("vendorId", "")
+  if not sup_cd and account:
+    sup_cd = getattr(account, "seller_id", "") or ""
+  client = GsShopClient(
+    sup_cd,
+    creds.get("aesKey", "") or creds.get("apiKeyProd", "") or creds.get("apiKeyDev", ""),
+    creds.get("subSupCd", ""),
+    "prod" if creds.get("apiKeyProd") else creds.get("env", "dev"),
+  )
+  # 판매 종료일을 현재로 설정하여 즉시 판매 종료
+  past = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+  return await _safe_delete(
+    "GS샵", "gsshop", product,
+    lambda pno: client.update_sale_status(pno, past),
+  )
 
 
 async def _delete_11st(
@@ -288,15 +292,8 @@ async def _delete_11st(
   if not api_key:
     return {"success": False, "message": "11번가 인증 정보 없음"}
 
-  product_no = product.get("market_product_no", {}).get("11st", "")
-  if product_no:
-    client = ElevenstClient(api_key)
-    try:
-      await client.delete_product(product_no)
-      return {"success": True, "message": "11번가 삭제 완료"}
-    except Exception as e:
-      return {"success": False, "message": f"삭제 실패: {e}"}
-  return {"success": True, "message": "11번가 상품번호 없음 (건너뜀)"}
+  client = ElevenstClient(api_key)
+  return await _safe_delete("11번가", "11st", product, client.delete_product)
 
 
 async def _delete_lotteon(
@@ -316,16 +313,9 @@ async def _delete_lotteon(
   if not api_key:
     return {"success": False, "message": "롯데ON 인증 정보 없음"}
 
-  product_no = product.get("market_product_no", {}).get("lotteon", "")
-  if product_no:
-    client = LotteonClient(api_key)
-    await client.test_auth()
-    try:
-      await client.delete_product(product_no)
-      return {"success": True, "message": "롯데ON 삭제 완료"}
-    except Exception as e:
-      return {"success": False, "message": f"삭제 실패: {e}"}
-  return {"success": True, "message": "롯데ON 상품번호 없음 (건너뜀)"}
+  client = LotteonClient(api_key)
+  await client.test_auth()
+  return await _safe_delete("롯데ON", "lotteon", product, client.delete_product)
 
 
 async def _delete_ssg(
@@ -342,16 +332,9 @@ async def _delete_ssg(
   if not api_key:
     return {"success": False, "message": "SSG 인증키 없음"}
 
-  product_no = product.get("market_product_no", {}).get("ssg", "")
-  if product_no:
-    store_id = creds.get("storeId", "6004")
-    client = SSGClient(api_key, site_no=store_id)
-    try:
-      await client.delete_product(product_no)
-      return {"success": True, "message": "SSG 삭제 완료"}
-    except Exception as e:
-      return {"success": False, "message": f"삭제 실패: {e}"}
-  return {"success": True, "message": "SSG 상품번호 없음 (건너뜀)"}
+  store_id = creds.get("storeId", "6004")
+  client = SSGClient(api_key, site_no=store_id)
+  return await _safe_delete("SSG", "ssg", product, client.delete_product)
 
 
 # 마켓별 삭제 핸들러 매핑
