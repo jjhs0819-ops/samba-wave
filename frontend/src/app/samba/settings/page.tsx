@@ -6,22 +6,37 @@ import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum, parseNum } from '@/lib/samba/styles'
 
 const MARKET_TYPES = [
-  { value: 'smartstore', label: '스마트스토어' },
+  // ── 국내 ──
+  { value: '', label: '── 국내 오픈마켓 ──', disabled: true },
   { value: 'coupang', label: '쿠팡' },
+  { value: 'smartstore', label: '스마트스토어' },
+  { value: '11st', label: '11번가' },
   { value: 'gmarket', label: 'G마켓' },
   { value: 'auction', label: '옥션' },
-  { value: '11st', label: '11번가' },
-  { value: 'lotteon', label: '롯데ON' },
   { value: 'ssg', label: '신세계몰' },
-  { value: 'kream', label: 'KREAM' },
+  { value: 'lotteon', label: '롯데ON' },
+  { value: 'toss', label: '토스' },
+  { value: '', label: '── 국내 홈쇼핑/종합몰 ──', disabled: true },
+  { value: 'gsshop', label: 'GS샵' },
+  { value: 'lottehome', label: '롯데홈쇼핑' },
+  { value: 'homeand', label: '홈앤쇼핑' },
+  { value: 'hmall', label: 'HMALL' },
+  { value: '', label: '── 국내 패션/리셀 ──', disabled: true },
   { value: 'musinsa', label: '무신사' },
+  { value: 'kream', label: 'KREAM' },
+  { value: 'poison', label: '포이즌' },
+  // ── 해외 ──
+  { value: '', label: '── 해외 마켓 ──', disabled: true },
+  { value: 'amazon', label: '아마존' },
   { value: 'ebay', label: 'eBay' },
-  { value: 'lazada', label: 'Lazada' },
+  { value: 'rakuten', label: '라쿠텐' },
   { value: 'qoo10', label: 'Qoo10' },
+  { value: 'lazada', label: 'Lazada' },
   { value: 'shopee', label: 'Shopee' },
+  { value: 'buyma', label: '바이마' },
   { value: 'shopify', label: 'Shopify' },
   { value: 'zoom', label: 'Zum(줌)' },
-]
+] as const
 
 const CLAUDE_MODELS = [
   { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (권장)' },
@@ -187,6 +202,13 @@ const STORE_MARKETS: MarketConfig[] = [
     ]},
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
+  { key: 'toss', label: '토스', authField: 'apiKey', guideUrl: 'https://shopping-docs.toss.im/dev', fields: [
+    { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
+    { name: 'storeId', label: '스토어 ID', type: 'text' },
+    { name: 'apiKey', label: 'API Key', type: 'text' },
+    { name: 'apiSecret', label: 'API Secret', type: 'password' },
+    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
+  ]},
   { key: 'ssg', label: 'SSG', authField: 'apiKey', guideUrl: 'https://opn-ssg.ssgadm.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
@@ -230,15 +252,35 @@ const STORE_MARKETS: MarketConfig[] = [
     ]},
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
-  { key: 'ebay', label: 'eBay', authField: 'oauthToken', guideUrl: 'https://developer.ebay.com/', fields: [
+  { key: 'poison', label: '포이즌', authField: 'apiKey', guideUrl: 'https://www.poizon.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
-    { name: 'storeId', label: 'eBay Seller ID', type: 'text' },
-    { name: 'clientId', label: 'App ID (Client ID)', type: 'text' },
-    { name: 'clientSecret', label: 'Cert ID (Client Secret)', type: 'password' },
-    { name: 'oauthToken', label: 'OAuth Refresh Token', type: 'password' },
-    { name: 'siteId', label: 'Site ID', type: 'select', options: [
-      { value: '0', label: 'US (0)' }, { value: '3', label: 'UK (3)' }, { value: '77', label: 'DE (77)' }, { value: '15', label: 'AU (15)' },
+    { name: 'storeId', label: '셀러 ID', type: 'text' },
+    { name: 'apiKey', label: 'API Key / Token', type: 'text' },
+    { name: 'apiSecret', label: 'API Secret', type: 'password' },
+    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
+  ]},
+  { key: 'qoo10', label: 'Qoo10', authField: 'apiKey', guideUrl: 'https://qsm.qoo10.com/', fields: [
+    { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
+    { name: 'storeId', label: 'Seller ID', type: 'text' },
+    { name: 'apiKey', label: 'API Key', type: 'text' },
+    { name: 'userKey', label: 'User Key', type: 'password' },
+    { name: 'region', label: '지역', type: 'select', options: [
+      { value: 'jp', label: 'Japan' }, { value: 'sg', label: 'Singapore' }, { value: 'global', label: 'Global' },
     ]},
+    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
+  ]},
+  { key: 'rakuten', label: '라쿠텐', authField: 'apiKey', guideUrl: 'https://webservice.rakuten.co.jp/', fields: [
+    { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
+    { name: 'storeId', label: '스토어 ID', type: 'text' },
+    { name: 'apiKey', label: 'API Key / Service Secret', type: 'text' },
+    { name: 'apiSecret', label: 'License Key', type: 'password' },
+    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
+  ]},
+  { key: 'buyma', label: '바이마', authField: 'apiKey', guideUrl: 'https://www.buyma.com/buyer/', fields: [
+    { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
+    { name: 'storeId', label: '셀러 ID', type: 'text' },
+    { name: 'apiKey', label: 'API Key / Token', type: 'text' },
+    { name: 'apiSecret', label: 'API Secret', type: 'password' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
   { key: 'lazada', label: 'Lazada', authField: 'accessToken', guideUrl: 'https://open.lazada.com/', fields: [
@@ -253,14 +295,10 @@ const STORE_MARKETS: MarketConfig[] = [
     ]},
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
-  { key: 'qoo10', label: 'Qoo10', authField: 'apiKey', guideUrl: 'https://qsm.qoo10.com/', fields: [
-    { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
-    { name: 'storeId', label: 'Seller ID', type: 'text' },
-    { name: 'apiKey', label: 'API Key', type: 'text' },
-    { name: 'userKey', label: 'User Key', type: 'password' },
-    { name: 'region', label: '지역', type: 'select', options: [
-      { value: 'jp', label: 'Japan' }, { value: 'sg', label: 'Singapore' }, { value: 'global', label: 'Global' },
-    ]},
+  { key: 'shopify', label: 'Shopify', authField: 'accessToken', guideUrl: 'https://shopify.dev/docs/api', fields: [
+    { name: 'businessName', label: '스토어명', type: 'text', placeholder: '상호명 입력' },
+    { name: 'storeId', label: '스토어 도메인', type: 'text', placeholder: 'mystore.myshopify.com' },
+    { name: 'accessToken', label: 'Admin API Access Token', type: 'password' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
   { key: 'shopee', label: 'Shopee', authField: 'accessToken', guideUrl: 'https://open.shopee.com/', fields: [
@@ -276,17 +314,30 @@ const STORE_MARKETS: MarketConfig[] = [
     ]},
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
-  { key: 'shopify', label: 'Shopify', authField: 'accessToken', guideUrl: 'https://shopify.dev/docs/api', fields: [
-    { name: 'businessName', label: '스토어명', type: 'text', placeholder: '상호명 입력' },
-    { name: 'storeId', label: '스토어 도메인', type: 'text', placeholder: 'mystore.myshopify.com' },
-    { name: 'accessToken', label: 'Admin API Access Token', type: 'password' },
-    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
-  ]},
   { key: 'zoom', label: 'Zum(줌)', authField: 'apiKey', guideUrl: 'https://shopping.zum.com/seller', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
     { name: 'apiKey', label: 'API Key', type: 'text' },
     { name: 'apiSecret', label: 'API Secret', type: 'password' },
+    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
+  ]},
+  { key: 'ebay', label: 'eBay', authField: 'oauthToken', guideUrl: 'https://developer.ebay.com/', fields: [
+    { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
+    { name: 'storeId', label: 'eBay Seller ID', type: 'text' },
+    { name: 'clientId', label: 'App ID (Client ID)', type: 'text' },
+    { name: 'clientSecret', label: 'Cert ID (Client Secret)', type: 'password' },
+    { name: 'oauthToken', label: 'OAuth Refresh Token', type: 'password' },
+    { name: 'siteId', label: 'Site ID', type: 'select', options: [
+      { value: '0', label: 'US (0)' }, { value: '3', label: 'UK (3)' }, { value: '77', label: 'DE (77)' }, { value: '15', label: 'AU (15)' },
+    ]},
+    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
+  ]},
+  { key: 'amazon', label: '아마존', authField: 'accessToken', guideUrl: 'https://developer-docs.amazon.com/sp-api/', fields: [
+    { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
+    { name: 'storeId', label: 'Seller ID', type: 'text' },
+    { name: 'accessToken', label: 'Refresh Token', type: 'password' },
+    { name: 'clientId', label: 'Client ID (LWA)', type: 'text' },
+    { name: 'clientSecret', label: 'Client Secret (LWA)', type: 'password' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
 ]
@@ -873,14 +924,18 @@ export default function SettingsPage() {
             <div style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>스토어 연결</div>
             <p style={{ fontSize: '0.8125rem', color: '#666', marginBottom: '1.25rem' }}>API 연결 및 계정 설정을 관리합니다</p>
 
-            {/* 마켓 탭바 */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 0, borderBottom: '1px solid #2D2D2D', marginBottom: '1.5rem' }}>
-              {STORE_MARKETS.map(m => (
+            {/* 마켓 탭바 — 국내/해외 구분 */}
+            {(() => {
+              const domestic = ['smartstore', 'coupang', '11st', 'gmarket', 'auction', 'lotteon', 'toss', 'ssg', 'gsshop', 'lottehome', 'homeand', 'hmall', 'musinsa', 'kream', 'poison']
+              const overseas = ['amazon', 'ebay', 'rakuten', 'qoo10', 'lazada', 'shopee', 'buyma', 'shopify', 'zoom']
+              const domesticMarkets = STORE_MARKETS.filter(m => domestic.includes(m.key))
+              const overseasMarkets = STORE_MARKETS.filter(m => overseas.includes(m.key))
+              const renderTab = (m: typeof STORE_MARKETS[number]) => (
                 <button
                   key={m.key}
                   onClick={() => setStoreTab(m.key)}
                   style={{
-                    padding: '0.5rem 1rem', background: 'none', border: 'none',
+                    padding: '0.5rem 0.75rem', background: 'none', border: 'none',
                     borderBottom: storeTab === m.key ? '2px solid #FF8C00' : '2px solid transparent',
                     color: storeTab === m.key ? '#FF8C00' : '#666',
                     fontSize: '0.8125rem', fontWeight: storeTab === m.key ? 600 : 400,
@@ -889,8 +944,19 @@ export default function SettingsPage() {
                 >
                   {m.label}
                 </button>
-              ))}
-            </div>
+              )
+              return (
+                <div style={{ borderBottom: '1px solid #2D2D2D', marginBottom: '1.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0 }}>
+                    <span style={{ fontSize: '0.68rem', color: '#FF8C00', fontWeight: 600, padding: '0.5rem 0.5rem 0.5rem 0', whiteSpace: 'nowrap' }}>국내</span>
+                    {domesticMarkets.map(renderTab)}
+                    <span style={{ width: '1px', height: '16px', background: '#3D3D3D', margin: '0 4px' }} />
+                    <span style={{ fontSize: '0.68rem', color: '#4C9AFF', fontWeight: 600, padding: '0.5rem 0.5rem 0.5rem 0', whiteSpace: 'nowrap' }}>해외</span>
+                    {overseasMarkets.map(renderTab)}
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* 마켓별 설정 폼 + 연결계정 */}
             {STORE_MARKETS.filter(m => m.key === storeTab).map(market => (
