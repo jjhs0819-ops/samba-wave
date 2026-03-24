@@ -605,37 +605,72 @@ class SmartStoreClient:
     token = await self._ensure_token()
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    # 1단계: 태그사전 순차 매치 (동시 1개 — 네이버 API 안정성 확보)
+    # 1단계: 태그사전 순차 매치 (동시 1개 + 429 재시도)
     sem = asyncio.Semaphore(1)
 
     async def _match_one(client: httpx.AsyncClient, tag: str) -> dict[str, str] | None:
       async with sem:
-        try:
-          resp = await client.get(
-            f"{self.BASE_URL}/v2/tags/recommend-tags",
-            headers=headers, params={"keyword": tag},
-          )
-          if resp.status_code != 200:
-            logger.warning(f"[스마트스토어] 태그 검색 HTTP {resp.status_code}: {tag}")
+        # 태그사전 캐시 조회 (TTL 10분)
+        from backend.domain.samba.cache import cache
+        cached = await cache.get(f"tags:search:{tag}")
+        if cached is not None:
+          return cached if cached else None  # False = 미등록 태그
+
+        # 429 재시도: 최대 3회, 지수 백오프 (1초 → 2초 → 4초)
+        for attempt in range(3):
+          try:
+            if attempt > 0:
+              await asyncio.sleep(1.0 * (2 ** (attempt - 1)))
+            resp = await client.get(
+              f"{self.BASE_URL}/v2/tags/recommend-tags",
+              headers=headers, params={"keyword": tag},
+            )
+            if resp.status_code == 429:
+              if attempt < 2:
+                logger.info(f"[스마트스토어] 태그 429 재시도 {attempt+1}/3: {tag}")
+                continue
+              logger.warning(f"[스마트스토어] 태그 429 최종 실패: {tag}")
+              # 429 에러 시 캐싱하지 않음 (재시도 필요)
+              return None
+            if resp.status_code != 200:
+              logger.warning(f"[스마트스토어] 태그 검색 HTTP {resp.status_code}: {tag}")
+              return None
+            data = resp.json()
+            results = data if isinstance(data, list) else (
+              data.get("tags") or data.get("contents") or data.get("data") or []
+            )
+            for r in results:
+              if r.get("text") == tag or r.get("tag") == tag:
+                matched = {
+                  "code": str(r.get("code", 0)),
+                  "text": r.get("text") or r.get("tag") or tag,
+                }
+                # 매치 결과 캐싱
+                await cache.set(f"tags:search:{tag}", matched, ttl=600)
+                return matched
+            logger.info(f"[스마트스토어] 태그사전 미등록: {tag} (결과 {len(results)}건)")
+            # 미등록 태그도 캐싱 (False로 구분)
+            await cache.set(f"tags:search:{tag}", False, ttl=600)
             return None
-          data = resp.json()
-          results = data if isinstance(data, list) else (
-            data.get("tags") or data.get("contents") or data.get("data") or []
-          )
-          for r in results:
-            if r.get("text") == tag or r.get("tag") == tag:
-              return {
-                "code": str(r.get("code", 0)),
-                "text": r.get("text") or r.get("tag") or tag,
-              }
-          logger.info(f"[스마트스토어] 태그사전 미등록: {tag} (결과 {len(results)}건)")
-        except Exception as e:
-          logger.warning(f"[스마트스토어] 태그 검색 실패: {tag} — {e}")
+          except Exception as e:
+            logger.warning(f"[스마트스토어] 태그 검색 실패: {tag} — {e}")
+            return None
         return None
 
-    search_tags = tags[:max_count * 2]
+    # 후보 풀 확대 (429 탈락 대비)
+    search_tags = tags[:max_count * 3]
+    # 순차 실행 + 요청 간 딜레이로 429 방지
+    match_results: list[dict[str, str] | None] = []
     async with httpx.AsyncClient(timeout=60) as client:
-      match_results = await asyncio.gather(*[_match_one(client, t) for t in search_tags])
+      for i, t in enumerate(search_tags):
+        if i > 0:
+          await asyncio.sleep(0.3)
+        result = await _match_one(client, t)
+        match_results.append(result)
+        # 이미 충분히 모았으면 조기 종료
+        valid_so_far = sum(1 for r in match_results if r is not None)
+        if valid_so_far >= max_count + 2:
+          break
     matched_tags = [r for r in match_results if r is not None]
 
     if not matched_tags:

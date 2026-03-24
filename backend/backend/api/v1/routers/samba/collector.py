@@ -14,11 +14,61 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.cache import cache
 from backend.domain.samba.proxy.musinsa import RateLimitError
 from backend.domain.samba.collector.grouping import generate_group_key, parse_color_from_name
 from backend.domain.samba.collector.refresher import _site_intervals, _site_consecutive_errors
 
 router = APIRouter(prefix="/collector", tags=["samba-collector"])
+
+
+def _build_product_data(
+    detail: dict, goods_no: str, filter_id: str, site: str,
+    cost: float, sale_price: float, original_price: float,
+    raw_cat: str, cat_parts: list, raw_detail_html: str,
+) -> dict:
+    """수집 상품 데이터 빌드 (collect_by_url / collect_by_filter 공통)."""
+    initial_snapshot = {
+        "date": datetime.now(timezone.utc).isoformat(),
+        "sale_price": sale_price,
+        "original_price": original_price,
+        "cost": cost,
+        "options": detail.get("options", []),
+    }
+    return {
+        "source_site": site,
+        "site_product_id": goods_no,
+        "search_filter_id": filter_id,
+        "name": detail.get("name", ""),
+        "brand": detail.get("brand", ""),
+        "original_price": original_price,
+        "sale_price": sale_price,
+        "cost": cost,
+        "images": detail.get("images", []),
+        "detail_images": detail.get("detailImages") or [],
+        "options": detail.get("options", []),
+        "category": raw_cat,
+        "category1": cat_parts[0] if len(cat_parts) > 0 else None,
+        "category2": cat_parts[1] if len(cat_parts) > 1 else None,
+        "category3": cat_parts[2] if len(cat_parts) > 2 else None,
+        "category4": cat_parts[3] if len(cat_parts) > 3 else None,
+        "manufacturer": detail.get("manufacturer"),
+        "origin": detail.get("origin"),
+        "material": detail.get("material"),
+        "color": detail.get("color"),
+        "style_code": detail.get("style_code", ""),
+        "sex": detail.get("sex", ""),
+        "season": detail.get("season", ""),
+        "care_instructions": detail.get("care_instructions", ""),
+        "quality_guarantee": detail.get("quality_guarantee", ""),
+        "detail_html": raw_detail_html,
+        "status": "collected",
+        "is_sold_out": detail.get("saleStatus") == "sold_out",
+        "sale_status": detail.get("saleStatus", "in_stock"),
+        "free_shipping": detail.get("freeShipping", False),
+        "same_day_delivery": detail.get("sameDayDelivery", False),
+        "price_history": [initial_snapshot],
+    }
 
 
 def _trim_history(history: list) -> list:
@@ -196,7 +246,7 @@ async def musinsa_auth_status(
 @router.get("/filters")
 async def list_filters(session: AsyncSession = Depends(get_read_session_dependency)):
     svc = _get_services(session)
-    all_filters = await svc.list_filters()
+    all_filters = await svc.list_filters(limit=10000)
     # 폴더 제외, 리프 그룹만 반환 (기존 호환성)
     filters = [f for f in all_filters if not f.is_folder]
 
@@ -299,24 +349,34 @@ async def delete_filter(
 async def get_filter_tree(session: AsyncSession = Depends(get_read_session_dependency)):
     """검색그룹 트리 구조 반환. 사이트 > 폴더 > 리프 그룹."""
     svc = _get_services(session)
-    all_filters = await svc.list_filters()
+    all_filters = await svc.list_filters(limit=10000)
 
-    # 각 필터별 수집상품 카운트
+    # 각 필터별 수집상품 카운트 — 단일 쿼리로 일괄 조회
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+    from sqlalchemy import func as _func
+
+    leaf_ids = [f.id for f in all_filters if not f.is_folder]
+    count_map: dict[str, int] = {}
+    if leaf_ids:
+        count_stmt = (
+            select(_CP.search_filter_id, _func.count().label("cnt"))
+            .where(_CP.search_filter_id.in_(leaf_ids))
+            .group_by(_CP.search_filter_id)
+        )
+        count_result = await session.execute(count_stmt)
+        for row in count_result.all():
+            count_map[row[0]] = row[1]
+
     filter_data = []
     for f in all_filters:
         data = {c.key: getattr(f, c.key) for c in f.__table__.columns}
-        if not f.is_folder:
-            count = await svc.product_repo.count_async(
-                filters={"search_filter_id": f.id}
-            )
-            data["collected_count"] = count
-        else:
-            data["collected_count"] = 0
+        data["collected_count"] = count_map.get(f.id, 0) if not f.is_folder else 0
         filter_data.append(data)
 
-    # 트리 빌드: parent_id 기반
+    # 트리 빌드: parent_id 기반 + 고아 노드 source_site별 자동 그룹핑
     by_id = {f["id"]: f for f in filter_data}
     roots = []
+    orphans_by_site: dict[str, list] = {}
     for f in filter_data:
         f["children"] = []
     for f in filter_data:
@@ -324,7 +384,30 @@ async def get_filter_tree(session: AsyncSession = Depends(get_read_session_depen
         if pid and pid in by_id:
             by_id[pid]["children"].append(f)
         elif not pid:
-            roots.append(f)
+            # 폴더는 루트, 비폴더(리프)는 source_site별 가상 폴더로
+            if f.get("is_folder"):
+                roots.append(f)
+            else:
+                site = f.get("source_site") or "기타"
+                orphans_by_site.setdefault(site, []).append(f)
+
+    # 가상 사이트 폴더 생성 (기존 폴더와 병합)
+    existing_site_folders = {r["source_site"]: r for r in roots if r.get("is_folder")}
+    for site, orphans in orphans_by_site.items():
+        if site in existing_site_folders:
+            # 기존 사이트 폴더에 고아 노드 추가
+            existing_site_folders[site]["children"].extend(orphans)
+        else:
+            # 가상 사이트 폴더 생성
+            virtual = {
+                "id": f"__virtual_{site}",
+                "source_site": site,
+                "name": site,
+                "is_folder": True,
+                "children": orphans,
+                "collected_count": 0,
+            }
+            roots.append(virtual)
 
     return roots
 
@@ -375,11 +458,171 @@ async def move_filter(
 _HEAVY_FIELDS = {"price_history", "detail_html", "detail_images", "last_sent_data", "care_instructions"}
 
 
+@router.get("/products/scroll")
+async def scroll_products(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    search: str = Query("", max_length=200),
+    search_type: str = Query("name"),
+    source_site: Optional[str] = None,
+    status: Optional[str] = None,
+    ai_filter: Optional[str] = None,
+    search_filter_id: Optional[str] = None,
+    sort_by: str = Query("collect-desc"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """서버사이드 필터/정렬/페이지네이션 — 무한스크롤용.
+
+    Returns: {items: [...], total: int, sites: [str]}
+    """
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+    from sqlalchemy import inspect as _sa_inspect, func, cast, String, text
+
+    mapper = _sa_inspect(_CP)
+    light_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]
+
+    # 기본 조건
+    conditions = []
+
+    # 텍스트 검색
+    q = search.strip()
+    if q:
+        if search_type == "name":
+            conditions.append(_CP.name.ilike(f"%{q}%"))
+        elif search_type == "no":
+            conditions.append(_CP.site_product_id.ilike(f"%{q}%"))
+        elif search_type == "filter":
+            # 검색필터 이름으로 검색 → search_filter_id 서브쿼리
+            from backend.domain.samba.collector.model import SambaSearchFilter as _SF
+            sf_ids = select(_SF.id).where(_SF.name.ilike(f"%{q}%"))
+            conditions.append(_CP.search_filter_id.in_(sf_ids))
+        elif search_type == "policy":
+            from backend.domain.samba.policy.model import SambaPolicy as _POL
+            pol_ids = select(_POL.id).where(_POL.name.ilike(f"%{q}%"))
+            conditions.append(_CP.applied_policy_id.in_(pol_ids))
+
+    # 소싱처 필터
+    if source_site:
+        conditions.append(_CP.source_site == source_site)
+
+    # 그룹(검색필터) 필터
+    if search_filter_id:
+        conditions.append(_CP.search_filter_id == search_filter_id)
+
+    # 상태 필터
+    if status == "has_orders":
+        from backend.domain.samba.order.model import SambaOrder
+        order_pids = select(SambaOrder.product_id).where(SambaOrder.product_id.isnot(None)).distinct()
+        conditions.append(_CP.id.in_(order_pids))
+    elif status == "free_ship":
+        conditions.append(_CP.free_shipping == True)
+    elif status == "same_day":
+        conditions.append(_CP.same_day_delivery == True)
+    elif status == "free_same":
+        conditions.append(_CP.free_shipping == True)
+        conditions.append(_CP.same_day_delivery == True)
+    elif status:
+        conditions.append(_CP.status == status)
+
+    # AI 필터 (JSON 태그/이미지 패턴)
+    if ai_filter == "sold_out":
+        conditions.append(or_(_CP.is_sold_out == True, _CP.sale_status == "sold_out"))
+    elif ai_filter == "ai_tag_yes":
+        conditions.append(cast(_CP.tags, String).like('%"__ai_tagged__"%'))
+    elif ai_filter == "ai_tag_no":
+        conditions.append(or_(
+            _CP.tags.is_(None),
+            ~cast(_CP.tags, String).like('%"__ai_tagged__"%'),
+        ))
+    elif ai_filter == "ai_img_yes":
+        conditions.append(or_(
+            cast(_CP.images, String).like('%/transformed/%'),
+            cast(_CP.images, String).like('%/static/images/ai_%'),
+        ))
+    elif ai_filter == "ai_img_no":
+        conditions.append(or_(
+            _CP.images.is_(None),
+            ~cast(_CP.images, String).like('%/transformed/%'),
+        ))
+    elif ai_filter == "filter_yes":
+        conditions.append(cast(_CP.tags, String).like('%"__img_filtered__"%'))
+    elif ai_filter == "filter_no":
+        conditions.append(or_(
+            _CP.tags.is_(None),
+            ~cast(_CP.tags, String).like('%"__img_filtered__"%'),
+        ))
+    elif ai_filter == "img_edit_yes":
+        conditions.append(or_(
+            cast(_CP.tags, String).like('%"__ai_image__"%'),
+            cast(_CP.tags, String).like('%"__img_filtered__"%'),
+            cast(_CP.tags, String).like('%"__img_edited__"%'),
+        ))
+    elif ai_filter == "img_edit_no":
+        conditions.append(~or_(
+            cast(_CP.tags, String).like('%"__ai_image__"%'),
+            cast(_CP.tags, String).like('%"__img_filtered__"%'),
+            cast(_CP.tags, String).like('%"__img_edited__"%'),
+        ))
+    elif ai_filter == "video_yes":
+        conditions.append(_CP.video_url.isnot(None))
+        conditions.append(_CP.video_url != "")
+    elif ai_filter == "video_no":
+        conditions.append(or_(_CP.video_url.is_(None), _CP.video_url == ""))
+    elif ai_filter == "has_orders":
+        from backend.domain.samba.order.model import SambaOrder
+        order_pids = select(SambaOrder.product_id).where(SambaOrder.product_id.isnot(None)).distinct()
+        conditions.append(_CP.id.in_(order_pids))
+
+    # 카운트 쿼리 (가볍게)
+    count_stmt = select(func.count()).select_from(_CP)
+    for c in conditions:
+        count_stmt = count_stmt.where(c)
+    total = (await session.execute(count_stmt)).scalar() or 0
+
+    # 소싱처 목록 (전체 — 필터 무관, 캐시 TTL 5분)
+    sites = await cache.get("products:sites")
+    if not sites:
+        sites_stmt = select(_CP.source_site).distinct().where(_CP.source_site.isnot(None))
+        sites_result = await session.execute(sites_stmt)
+        sites = sorted([r[0] for r in sites_result.all() if r[0]])
+        await cache.set("products:sites", sites, ttl=300)
+
+    # 데이터 쿼리
+    data_stmt = select(*light_cols)
+    for c in conditions:
+        data_stmt = data_stmt.where(c)
+
+    # 정렬
+    if sort_by == "collect-asc":
+        data_stmt = data_stmt.order_by(_CP.created_at.asc())
+    elif sort_by == "update-desc":
+        data_stmt = data_stmt.order_by(_CP.updated_at.desc().nullslast(), _CP.created_at.desc())
+    elif sort_by == "update-asc":
+        data_stmt = data_stmt.order_by(_CP.updated_at.asc().nullsfirst(), _CP.created_at.asc())
+    else:
+        data_stmt = data_stmt.order_by(_CP.created_at.desc())
+
+    data_stmt = data_stmt.offset(skip).limit(limit)
+    result = await session.execute(data_stmt)
+    rows = result.mappings().all()
+
+    return {
+        "items": [dict(r) for r in rows],
+        "total": total,
+        "sites": sites,
+    }
+
+
 @router.get("/products/counts")
 async def product_counts(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """상품 카운트 통계 (대시보드용) — 10만건이어도 즉시 응답."""
+    # 캐시 조회 (TTL 30초)
+    cached = await cache.get("products:counts")
+    if cached:
+        return cached
+
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from sqlalchemy import func, case, literal
 
@@ -390,12 +633,14 @@ async def product_counts(
         func.count(case((_CP.is_sold_out == True, literal(1)))).label("sold_out"),
     ).select_from(_CP)
     row = (await session.execute(stmt)).one()
-    return {
+    result = {
         "total": row.total,
         "registered": row.registered,
         "policy_applied": row.policy_applied,
         "sold_out": row.sold_out,
     }
+    await cache.set("products:counts", result, ttl=30)
+    return result
 
 
 @router.get("/products/category-tree")
@@ -403,6 +648,11 @@ async def product_category_tree(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """소싱처별 카테고리 트리 (카테고리매핑용) — 상품 전체 로드 없이 GROUP BY."""
+    # 캐시 조회 (TTL 5분)
+    cached = await cache.get("products:category-tree")
+    if cached:
+        return cached
+
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from sqlalchemy import func
 
@@ -417,7 +667,9 @@ async def product_category_tree(
         .order_by(_CP.source_site, _CP.category)
     )
     rows = (await session.execute(stmt)).all()
-    return [{"source_site": r[0], "category": r[1], "count": r[2]} for r in rows]
+    result = [{"source_site": r[0], "category": r[1], "count": r[2]} for r in rows]
+    await cache.set("products:category-tree", result, ttl=300)
+    return result
 
 
 @router.get("/products")
@@ -487,7 +739,10 @@ async def create_collected_product(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     svc = _get_services(session)
-    return await svc.create_collected_product(body.model_dump(exclude_unset=True))
+    result = await svc.create_collected_product(body.model_dump(exclude_unset=True))
+    # 상품 생성 시 캐시 무효화
+    await cache.clear_pattern("products:*")
+    return result
 
 
 @router.post("/products/bulk", status_code=201)
@@ -498,6 +753,8 @@ async def bulk_create_collected_products(
     svc = _get_services(session)
     items = [item.model_dump(exclude_unset=True) for item in body.items]
     created = await svc.bulk_create_collected_products(items)
+    # 상품 일괄 생성 시 캐시 무효화
+    await cache.clear_pattern("products:*")
     return {"created": len(created)}
 
 
@@ -588,17 +845,18 @@ async def bulk_delete_products(
     body: BulkProductIdsRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """상품 일괄 삭제."""
+    """상품 일괄 삭제 — 단일 DELETE 쿼리."""
+    from sqlalchemy import delete as sa_delete
     from sqlmodel import col
-    stmt = select(SambaCollectedProduct).where(
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+    stmt = sa_delete(SambaCollectedProduct).where(
         col(SambaCollectedProduct.id).in_(body.ids)
     )
-    results = await session.exec(stmt)
-    products = results.all()
-    for p in products:
-        await session.delete(p)
+    result = await session.exec(stmt)  # type: ignore[arg-type]
     await session.commit()
-    return {"deleted": len(products)}
+    # 상품 삭제 시 캐시 무효화
+    await cache.clear_pattern("products:*")
+    return {"deleted": result.rowcount}
 
 
 @router.post("/products/bulk-reset-registration")
@@ -606,20 +864,18 @@ async def bulk_reset_registration(
     body: BulkProductIdsRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """상품 마켓 등록 정보 일괄 초기화."""
+    """상품 마켓 등록 정보 일괄 초기화 — 단일 UPDATE 쿼리."""
+    from sqlalchemy import update as sa_update
     from sqlmodel import col
-    stmt = select(SambaCollectedProduct).where(
-        col(SambaCollectedProduct.id).in_(body.ids)
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+    stmt = (
+        sa_update(SambaCollectedProduct)
+        .where(col(SambaCollectedProduct.id).in_(body.ids))
+        .values(registered_accounts=None, market_product_nos=None, status="collected")
     )
-    results = await session.exec(stmt)
-    products = results.all()
-    for p in products:
-        p.registered_accounts = None
-        p.market_product_nos = None
-        p.status = "collected"
-        session.add(p)
+    result = await session.exec(stmt)  # type: ignore[arg-type]
     await session.commit()
-    return {"reset": len(products)}
+    return {"reset": result.rowcount}
 
 
 class BulkTagUpdateRequest(BaseModel):
@@ -788,10 +1044,22 @@ async def collect_by_url(
                     continue
                 targets.append(site_pid)
 
-            # 각 상품 상세 수집 → 성공 시에만 저장 (완전한 데이터만)
+            # 각 상품 상세 수집 → 배치 저장 (10건씩 flush)
             saved = 0
             skipped_preorder = 0
             skipped_boutique = 0
+            _batch_buf: list[dict] = []
+            _BATCH_SIZE = 10
+            rate_limited = False
+
+            async def _flush_batch() -> int:
+                """버퍼에 쌓인 상품을 한번에 DB 저장."""
+                if not _batch_buf:
+                    return 0
+                cnt = await svc.bulk_create_products(list(_batch_buf))
+                _batch_buf.clear()
+                return cnt
+
             for goods_no in targets:
                 try:
                     detail = await client.get_goods_detail(goods_no)
@@ -799,23 +1067,17 @@ async def collect_by_url(
                         await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
 
-                    # 예약배송 수집제외
                     if exclude_preorder and detail.get("saleStatus") == "preorder":
                         skipped_preorder += 1
                         await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
-                    # 부티끄 수집제외
                     if exclude_boutique and detail.get("isBoutique"):
                         skipped_boutique += 1
                         await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
 
-                    # 최대혜택가 체크 시 bestBenefitPrice, 미체크 시 salePrice를 원가로 사용
-                    if use_max_discount:
-                        _raw_cost = detail.get("bestBenefitPrice")
-                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
-                    else:
-                        new_cost = detail.get("salePrice") or 0
+                    _raw_cost = detail.get("bestBenefitPrice")
+                    new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
 
                     raw_cat = detail.get("category", "") or ""
                     cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
@@ -831,55 +1093,25 @@ async def collect_by_url(
                                 for img in detail_imgs
                             )
 
-                    initial_snapshot = {
-                        "date": datetime.now(timezone.utc).isoformat(),
-                        "sale_price": _sale_price,
-                        "original_price": _original_price,
-                        "cost": new_cost,
-                        "options": detail.get("options", []),
-                    }
-
-                    await svc.create_collected_product({
-                        "source_site": "MUSINSA",
-                        "site_product_id": goods_no,
-                        "search_filter_id": filter_id,
-                        "name": detail.get("name", ""),
-                        "brand": detail.get("brand", ""),
-                        "original_price": _original_price,
-                        "sale_price": _sale_price,
-                        "cost": new_cost,
-                        "images": detail.get("images", []),
-                        "detail_images": detail.get("detailImages") or [],
-                        "options": detail.get("options", []),
-                        "category": raw_cat,
-                        "category1": cat_parts[0] if len(cat_parts) > 0 else None,
-                        "category2": cat_parts[1] if len(cat_parts) > 1 else None,
-                        "category3": cat_parts[2] if len(cat_parts) > 2 else None,
-                        "category4": cat_parts[3] if len(cat_parts) > 3 else None,
-                        "manufacturer": detail.get("manufacturer"),
-                        "origin": detail.get("origin"),
-                        "material": detail.get("material"),
-                        "color": detail.get("color"),
-                        "style_code": detail.get("style_code", ""),
-                        "sex": detail.get("sex", ""),
-                        "season": detail.get("season", ""),
-                        "care_instructions": detail.get("care_instructions", ""),
-                        "quality_guarantee": detail.get("quality_guarantee", ""),
-                        "detail_html": raw_detail_html,
-                        "status": "collected",
-                        "is_sold_out": detail.get("saleStatus") == "sold_out",
-                        "sale_status": detail.get("saleStatus", "in_stock"),
-                        "free_shipping": detail.get("freeShipping", False),
-                        "same_day_delivery": detail.get("sameDayDelivery", False),
-                        "price_history": [initial_snapshot],
-                    })
+                    product_data = _build_product_data(
+                        detail, goods_no, filter_id, "MUSINSA",
+                        new_cost, _sale_price, _original_price,
+                        raw_cat, cat_parts, raw_detail_html,
+                    )
+                    _batch_buf.append(svc.prepare_product_data(product_data))
                     saved += 1
+                    if len(_batch_buf) >= _BATCH_SIZE:
+                        await _flush_batch()
                 except RateLimitError:
                     logger.warning(f"[무신사] 요청 제한 감지 — 수집 중단 (수집완료: {saved}/{len(targets)})")
+                    rate_limited = True
                     break
                 except Exception as e:
                     logger.warning(f"[수집 실패] {goods_no}: {e}")
                 await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+
+            # 잔여 버퍼 flush
+            await _flush_batch()
 
             # 검색그룹에 최근수집일 업데이트
             await svc.update_filter(filter_id, {
@@ -1200,7 +1432,7 @@ async def collect_by_filter(
         except Exception:
             return ""
 
-    keyword = search_filter.name
+    keyword = search_filter.keyword or search_filter.name
     if keyword_or_url and ("http" in keyword_or_url):
         from urllib.parse import urlparse, parse_qs
         qs = parse_qs(urlparse(keyword_or_url).query)
@@ -1363,11 +1595,9 @@ async def collect_by_filter(
                         await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
 
-                    if _use_max_discount:
-                        _raw_cost = detail.get("bestBenefitPrice")
-                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
-                    else:
-                        new_cost = detail.get("salePrice") or 0
+                    # 원가 = bestBenefitPrice (갱신과 동일 로직)
+                    _raw_cost = detail.get("bestBenefitPrice")
+                    new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
 
                     raw_cat = detail.get("category", "") or ""
                     cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
@@ -1383,48 +1613,12 @@ async def collect_by_filter(
                                 for img in detail_imgs
                             )
 
-                    initial_snapshot = {
-                        "date": datetime.now(timezone.utc).isoformat(),
-                        "sale_price": _sale_price,
-                        "original_price": _original_price,
-                        "cost": new_cost,
-                        "options": detail.get("options", []),
-                    }
-
-                    await svc.create_collected_product({
-                        "source_site": "MUSINSA",
-                        "site_product_id": goods_no,
-                        "search_filter_id": filter_id,
-                        "name": detail.get("name", ""),
-                        "brand": detail.get("brand", ""),
-                        "original_price": _original_price,
-                        "sale_price": _sale_price,
-                        "cost": new_cost,
-                        "images": detail.get("images", []),
-                        "detail_images": detail.get("detailImages") or [],
-                        "options": detail.get("options", []),
-                        "category": raw_cat,
-                        "category1": cat_parts[0] if len(cat_parts) > 0 else None,
-                        "category2": cat_parts[1] if len(cat_parts) > 1 else None,
-                        "category3": cat_parts[2] if len(cat_parts) > 2 else None,
-                        "category4": cat_parts[3] if len(cat_parts) > 3 else None,
-                        "manufacturer": detail.get("manufacturer"),
-                        "origin": detail.get("origin"),
-                        "material": detail.get("material"),
-                        "color": detail.get("color"),
-                        "style_code": detail.get("style_code", ""),
-                        "sex": detail.get("sex", ""),
-                        "season": detail.get("season", ""),
-                        "care_instructions": detail.get("care_instructions", ""),
-                        "quality_guarantee": detail.get("quality_guarantee", ""),
-                        "detail_html": raw_detail_html,
-                        "status": "collected",
-                        "is_sold_out": detail.get("saleStatus") == "sold_out",
-                        "sale_status": detail.get("saleStatus", "in_stock"),
-                        "free_shipping": detail.get("freeShipping", False),
-                        "same_day_delivery": detail.get("sameDayDelivery", False),
-                        "price_history": [initial_snapshot],
-                    })
+                    product_data = _build_product_data(
+                        detail, goods_no, filter_id, "MUSINSA",
+                        new_cost, _sale_price, _original_price,
+                        raw_cat, cat_parts, raw_detail_html,
+                    )
+                    await svc.create_collected_product(product_data)
                     total_saved += 1
                     total_enriched += 1
 
@@ -2150,13 +2344,12 @@ async def refresh_products(
 
     repo = SambaCollectedProductRepository(session)
 
-    # 대상 상품 조회
+    # 대상 상품 조회 (배치 쿼리)
     if body.product_ids:
-        products = []
-        for pid in body.product_ids:
-            p = await repo.get_async(pid)
-            if p:
-                products.append(p)
+        from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+        _stmt = select(_CP).where(_CP.id.in_(body.product_ids))
+        _result = await session.execute(_stmt)
+        products = list(_result.scalars().all())
     elif body.search_filter_ids:
         # 선택된 그룹의 상품만 조회
         products = []
@@ -2189,6 +2382,9 @@ async def refresh_products(
     # 모니터링 서비스 초기화
     from backend.domain.samba.warroom.service import SambaMonitorService
     monitor = SambaMonitorService(session)
+
+    # 상품 Map (재전송/품절 처리에서 재조회 방지)
+    product_map = {p.id: p for p in products}
 
     # 변동 감지된 상품 DB 업데이트
     now = datetime.now(timezone.utc)
@@ -2253,10 +2449,12 @@ async def refresh_products(
         history.insert(0, snapshot)
         updates["price_history"] = _trim_history(history)
 
-        # 이미지/소재/색상 — 기존에 비어있으면 갱신 (재수집 시 자동 보충)
-        if r.new_images and not product.images:
+        # 이미지/소재/색상 — 기존에 비어있고 편집 이력 없으면 갱신
+        _tags = product.tags or []
+        _img_edited = "__img_edited__" in _tags or "__img_filtered__" in _tags
+        if r.new_images and not product.images and not _img_edited:
             updates["images"] = r.new_images
-        if r.new_detail_images and not getattr(product, "detail_images", None):
+        if r.new_detail_images and not getattr(product, "detail_images", None) and not _img_edited:
             updates["detail_images"] = r.new_detail_images
         if r.new_material and not getattr(product, "material", None):
             updates["material"] = r.new_material
@@ -2324,64 +2522,89 @@ async def refresh_products(
         ship_repo = SambaShipmentRepository(session)
         ship_svc = SambaShipmentService(ship_repo, session)
 
-        # 가격 변동 상품 → 재전송 (등록된 마켓 계정으로)
+        # 가격 변동 상품 → 재전송 (계정별로 묶어서 배치 호출)
         price_changed = [pid for pid in changed_ids if pid not in soldout_ids]
+        # 계정별 상품 그룹핑
+        retransmit_groups: dict[str, list[str]] = {}
         for pid in price_changed:
-            product = await repo.get_async(pid)
+            product = product_map.get(pid)
             if product and product.registered_accounts:
-                try:
-                    await ship_svc.start_update(
-                        [pid], ["price"], product.registered_accounts, skip_unchanged=False
-                    )
-                    retransmitted += 1
-                except Exception as e:
-                    logger.error(f"[refresh] 재전송 실패 {pid}: {e}")
+                acc_key = ",".join(sorted(product.registered_accounts))
+                retransmit_groups.setdefault(acc_key, []).append(pid)
+        for acc_key, pids in retransmit_groups.items():
+            acc_ids = acc_key.split(",")
+            try:
+                await ship_svc.start_update(pids, ["price"], acc_ids, skip_unchanged=False)
+                retransmitted += len(pids)
+            except Exception as e:
+                logger.error(f"[refresh] 재전송 실패 ({len(pids)}건): {e}")
 
         # 품절 상품 → 마켓 판매중지/삭제 → 삼바 DB 삭제
+        import asyncio
         from backend.domain.samba.shipment.dispatcher import delete_from_market
         from backend.domain.samba.account.repository import SambaMarketAccountRepository
         account_repo = SambaMarketAccountRepository(session)
 
-        deleted_ids: list[str] = []
+        # 계정 배치 조회 (N+1 방지)
+        all_acc_ids = set()
         for pid in soldout_ids:
-            product = await repo.get_async(pid)
+            product = product_map.get(pid)
+            if product and product.registered_accounts:
+                all_acc_ids.update(product.registered_accounts)
+        acc_map: dict = {}
+        if all_acc_ids:
+            from backend.domain.samba.account.model import SambaMarketAccount as _MA
+            _acc_stmt = select(_MA).where(_MA.id.in_(list(all_acc_ids)))
+            _acc_result = await session.execute(_acc_stmt)
+            acc_map = {a.id: a for a in _acc_result.scalars().all()}
+
+        # 1단계: 삭제 대상 수집 (lock_delete 필터링, product_map 재사용)
+        delete_targets: list[tuple] = []  # (pid, product_dict, account_id, account)
+        deletable_pids: set[str] = set()  # DB 삭제 대상 pid
+        for pid in soldout_ids:
+            product = product_map.get(pid)
             if not product:
                 continue
-
-            # lock_delete 플래그가 켜져 있으면 삭제하지 않음
             if getattr(product, "lock_delete", False):
                 logger.info(f"[refresh] {pid} 품절이지만 lock_delete=True, 삭제 건너뜀")
                 continue
-
+            deletable_pids.add(pid)
             product_dict = product.model_dump()
-
-            # 등록된 마켓 계정에서 판매중지 시도
             if product.registered_accounts:
                 for account_id in product.registered_accounts:
-                    try:
-                        account = await account_repo.get_async(account_id)
-                        if not account:
-                            continue
-                        # 상품번호 주입
-                        m_nos = product.market_product_nos or {}
-                        product_dict["market_product_no"] = {account.market_type: m_nos.get(account_id, "")}
-                        result = await delete_from_market(
-                            session, account.market_type, product_dict, account=account
-                        )
-                        if result.get("success"):
-                            logger.info(f"[refresh] {pid} → {account.market_type} 판매중지 완료")
-                        else:
-                            logger.warning(f"[refresh] {pid} → {account.market_type} 판매중지 실패: {result.get('message')}")
-                    except Exception as e:
-                        logger.error(f"[refresh] {pid} → 마켓 삭제 오류: {e}")
+                    account = acc_map.get(account_id)
+                    if not account:
+                        continue
+                    m_nos = product.market_product_nos or {}
+                    pd = {**product_dict, "market_product_no": {account.market_type: m_nos.get(account_id, "")}}
+                    delete_targets.append((pid, pd, account_id, account))
 
-            # 삼바 DB에서 상품 삭제
-            try:
-                await repo.delete_async(pid)
-                deleted_ids.append(pid)
-                logger.info(f"[refresh] 품절 상품 삭제 완료: {pid}")
-            except Exception as e:
-                logger.error(f"[refresh] 품절 상품 DB 삭제 실패 {pid}: {e}")
+        # 2단계: 마켓 판매중지 병렬 처리 (5개씩)
+        sem = asyncio.Semaphore(5)
+        async def _do_market_delete(pid: str, pd: dict, acc: object) -> None:
+            async with sem:
+                try:
+                    result = await delete_from_market(session, acc.market_type, pd, account=acc)  # type: ignore[union-attr]
+                    if result.get("success"):
+                        logger.info(f"[refresh] {pid} → {acc.market_type} 판매중지 완료")  # type: ignore[union-attr]
+                    else:
+                        logger.warning(f"[refresh] {pid} → {acc.market_type} 판매중지 실패: {result.get('message')}")  # type: ignore[union-attr]
+                except Exception as e:
+                    logger.error(f"[refresh] {pid} → 마켓 삭제 오류: {e}")
+
+        if delete_targets:
+            await asyncio.gather(*[_do_market_delete(pid, pd, acc) for pid, pd, _, acc in delete_targets])
+
+        # 3단계: DB 일괄 삭제 (단일 쿼리)
+        deleted_ids: list[str] = []
+        if deletable_pids:
+            from sqlalchemy import delete as sa_delete
+            from sqlmodel import col
+            from backend.domain.samba.collector.model import SambaCollectedProduct
+            del_stmt = sa_delete(SambaCollectedProduct).where(col(SambaCollectedProduct.id).in_(list(deletable_pids)))
+            await session.exec(del_stmt)  # type: ignore[arg-type]
+            deleted_ids = list(deletable_pids)
+            logger.info(f"[refresh] 품절 상품 {len(deleted_ids)}건 일괄 삭제 완료")
 
         await session.commit()
 
@@ -2670,35 +2893,31 @@ async def _autotune_loop():
                         ship_repo = SambaShipmentRepository(session)
                         ship_svc = SambaShipmentService(ship_repo, session)
 
-                        # 가격 변동 → 마켓 재전송 (이미 갱신 완료 → update_items 빈 리스트로 중복 refresh 방지)
-                        for pid in changed_ids:
+                        # 가격/재고 변동 → 계정별로 묶어서 배치 재전송
+                        _all_retransmit = list(set(changed_ids) | set(stock_changed_ids))
+                        _rt_groups: dict[str, list[str]] = {}
+                        for pid in _all_retransmit:
                             product = await repo.get_async(pid)
                             if product and product.registered_accounts:
-                                try:
-                                    await ship_svc.start_update(
-                                        [pid], [], product.registered_accounts, skip_unchanged=False
-                                    )
-                                    retransmitted += 1
-                                except Exception as e:
-                                    log.error("[오토튠] 가격변동 재전송 실패 %s: %s", pid, e)
-
-                        # 재고 변동 → 마켓 재전송
-                        for pid in stock_changed_ids:
-                            product = await repo.get_async(pid)
-                            if product and product.registered_accounts:
-                                try:
-                                    await ship_svc.start_update(
-                                        [pid], [], product.registered_accounts, skip_unchanged=False
-                                    )
-                                    retransmitted += 1
-                                except Exception as e:
-                                    log.error("[오토튠] 재고변동 재전송 실패 %s: %s", pid, e)
+                                acc_key = ",".join(sorted(product.registered_accounts))
+                                _rt_groups.setdefault(acc_key, []).append(pid)
+                        for acc_key, pids in _rt_groups.items():
+                            acc_ids = acc_key.split(",")
+                            try:
+                                await ship_svc.start_update(pids, [], acc_ids, skip_unchanged=False)
+                                retransmitted += len(pids)
+                            except Exception as e:
+                                log.error("[오토튠] 재전송 실패 (%d건): %s", len(pids), e)
 
                         # 품절 → 마켓 판매중지 + DB 삭제
+                        import asyncio as _aio
                         from backend.domain.samba.shipment.dispatcher import delete_from_market
                         from backend.domain.samba.account.repository import SambaMarketAccountRepository
                         account_repo = SambaMarketAccountRepository(session)
 
+                        # 1단계: 삭제 대상 수집
+                        _del_targets: list[tuple] = []
+                        _del_pids: set[str] = set()
                         for pid in soldout_ids:
                             product = await repo.get_async(pid)
                             if not product:
@@ -2706,30 +2925,41 @@ async def _autotune_loop():
                             if getattr(product, "lock_delete", False):
                                 log.info("[오토튠] %s 품절이지만 lock_delete=True, 삭제 건너뜀", pid)
                                 continue
+                            _del_pids.add(pid)
                             product_dict = product.model_dump()
                             if product.registered_accounts:
                                 for account_id in product.registered_accounts:
-                                    try:
-                                        account = await account_repo.get_async(account_id)
-                                        if not account:
-                                            continue
-                                        m_nos = product.market_product_nos or {}
-                                        product_dict["market_product_no"] = {account.market_type: m_nos.get(account_id, "")}
-                                        result_del = await delete_from_market(
-                                            session, account.market_type, product_dict, account=account
-                                        )
-                                        if result_del.get("success"):
-                                            log.info("[오토튠] %s → %s 판매중지 완료", pid, account.market_type)
-                                        else:
-                                            log.warning("[오토튠] %s → %s 판매중지 실패: %s", pid, account.market_type, result_del.get("message"))
-                                    except Exception as e:
-                                        log.error("[오토튠] %s → 마켓 삭제 오류: %s", pid, e)
-                            try:
-                                await repo.delete_async(pid)
-                                deleted_count += 1
-                                log.info("[오토튠] 품절 상품 삭제 완료: %s", pid)
-                            except Exception as e:
-                                log.error("[오토튠] 품절 상품 DB 삭제 실패 %s: %s", pid, e)
+                                    account = await account_repo.get_async(account_id)
+                                    if not account:
+                                        continue
+                                    m_nos = product.market_product_nos or {}
+                                    pd = {**product_dict, "market_product_no": {account.market_type: m_nos.get(account_id, "")}}
+                                    _del_targets.append((pid, pd, account_id, account))
+
+                        # 2단계: 마켓 판매중지 병렬 (5개씩)
+                        _sem = _aio.Semaphore(5)
+                        async def _at_del(pid: str, pd: dict, acc: object) -> None:
+                            async with _sem:
+                                try:
+                                    r = await delete_from_market(session, acc.market_type, pd, account=acc)  # type: ignore[union-attr]
+                                    if r.get("success"):
+                                        log.info("[오토튠] %s → %s 판매중지 완료", pid, acc.market_type)  # type: ignore[union-attr]
+                                    else:
+                                        log.warning("[오토튠] %s → %s 판매중지 실패: %s", pid, acc.market_type, r.get("message"))  # type: ignore[union-attr]
+                                except Exception as e:
+                                    log.error("[오토튠] %s → 마켓 삭제 오류: %s", pid, e)
+
+                        if _del_targets:
+                            await _aio.gather(*[_at_del(pid, pd, acc) for pid, pd, _, acc in _del_targets])
+
+                        # 3단계: DB 일괄 삭제
+                        if _del_pids:
+                            from sqlalchemy import delete as sa_delete
+                            from sqlmodel import col
+                            from backend.domain.samba.collector.model import SambaCollectedProduct
+                            await session.exec(sa_delete(SambaCollectedProduct).where(col(SambaCollectedProduct.id).in_(list(_del_pids))))  # type: ignore[arg-type]
+                            deleted_count = len(_del_pids)
+                            log.info("[오토튠] 품절 상품 %d건 일괄 삭제 완료", deleted_count)
 
                         await session.commit()
 
