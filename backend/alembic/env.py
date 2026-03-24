@@ -29,6 +29,7 @@ from backend.domain.samba.contact.model import *  # noqa: F401,F403
 from backend.domain.samba.returns.model import *  # noqa: F401,F403
 from backend.domain.samba.warroom.model import *  # noqa: F401,F403
 from backend.domain.samba.user.model import *  # noqa: F401,F403
+from backend.domain.samba.job.model import *  # noqa: F401,F403
 
 config = context.config
 
