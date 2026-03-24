@@ -35,6 +35,10 @@ async def lifespan(app: FastAPI):
     # 앱 시작 시 DB 마이그레이션 자동 적용 (별도 프로세스 또는 수동 실행 권장)
     # 로컬 개발: cd backend && alembic upgrade head
 
+    # 캐시 서비스 연결 (Redis 또는 인메모리 폴백)
+    from backend.domain.samba.cache import cache
+    await cache.connect()
+
     # Startup validation
     if settings.mock_auth_enabled and settings.environment == "production":
         raise RuntimeError(

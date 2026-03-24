@@ -80,6 +80,11 @@ class BackendSettings(BaseSettings):
     scheduler_secret: str = ""
     """스케줄러 tick 엔드포인트 인증 키."""
 
+    # ===========================================
+    # Redis 설정
+    # ===========================================
+    redis_url: str | None = None  # 환경변수: REDIS_URL
+
     # 추가 허용 origin (콤마 구분, Railway 환경변수로 주입)
     cors_extra_origins: str = ""
 
