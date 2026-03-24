@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-from sqlalchemy import BigInteger, Boolean, Integer, String
+from sqlalchemy import BigInteger, Boolean, Index, Integer, String
 from sqlmodel import Column, DateTime, Field, JSON, SQLModel, Text
 
 from ulid import ULID
@@ -27,6 +27,9 @@ class SambaSearchFilter(SQLModel, table=True):
         primary_key=True,
         max_length=30,
     )
+
+    # 테넌트 격리
+    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
 
     source_site: str = Field(
         sa_column=Column(Text, nullable=False, index=True),
@@ -64,7 +67,7 @@ class SambaSearchFilter(SQLModel, table=True):
 
     # 적용 정책
     applied_policy_id: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
+        default=None, sa_column=Column(Text, nullable=True, index=True)
     )
 
     # 스마트스토어 브랜드/제조사 ID 매핑
@@ -93,12 +96,18 @@ class SambaCollectedProduct(SQLModel, table=True):
     """수집 상품 테이블 - 소싱처에서 수집한 원본 상품 데이터."""
 
     __tablename__ = "samba_collected_product"
+    __table_args__ = (
+        Index("ix_scp_status_source_site", "status", "source_site"),
+    )
 
     id: str = Field(
         default_factory=generate_collected_product_id,
         primary_key=True,
         max_length=30,
     )
+
+    # 테넌트 격리
+    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
 
     # 소싱 정보
     source_site: str = Field(
@@ -145,7 +154,7 @@ class SambaCollectedProduct(SQLModel, table=True):
     )
 
     # 정책/마켓 연동
-    applied_policy_id: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    applied_policy_id: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True, index=True))
     market_prices: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
     market_enabled: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
     registered_accounts: Optional[List[str]] = Field(
