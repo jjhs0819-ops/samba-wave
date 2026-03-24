@@ -1164,14 +1164,17 @@ async def generate_ai_tags(
                     continue
 
                 # 태그사전 검증: 등록된 태그 + 비제한 태그만 10개까지 추출
-                if ss_client:
-                    validated = await ss_client.validate_tags(candidate_tags, max_count=10)
-                    tags = [v["text"] for v in validated]
-                    total_tag_dict_validated += len(tags)
-                    total_tag_dict_rejected += len(candidate_tags) - len(tags)
-                    logger.info(f"[AI태그] 그룹 {gid}: 후보 {len(candidate_tags)}개 → 태그사전 통과 {len(tags)}개")
+                if ss_client and candidate_tags:
+                    try:
+                        validated = await ss_client.validate_tags(candidate_tags, max_count=10)
+                        tags = [v["text"] for v in validated]
+                        total_tag_dict_validated += len(tags)
+                        total_tag_dict_rejected += len(candidate_tags) - len(tags)
+                        logger.info(f"[AI태그] 그룹 {gid}: 후보 {len(candidate_tags)}개 → 태그사전 통과 {len(tags)}개")
+                    except Exception as ve:
+                        logger.error(f"[AI태그] 태그사전 검증 예외 — 후보 태그 사용: {ve}")
+                        tags = candidate_tags[:10]
                 else:
-                    # 스마트스토어 클라이언트 없으면 기존 방식 (최대 10개 자르기)
                     tags = candidate_tags[:10]
 
                 if not tags:
@@ -1367,11 +1370,17 @@ async def preview_ai_tags(
                 # 태그사전 검증
                 validated_tags: list[str] = []
                 rejected_tags: list[str] = []
-                if ss_client_preview:
-                    validated = await ss_client_preview.validate_tags(candidate_tags, max_count=10)
-                    validated_set = {v["text"] for v in validated}
-                    validated_tags = [v["text"] for v in validated]
-                    rejected_tags = [t for t in candidate_tags if t not in validated_set]
+                tag_validation_error = ""
+                if ss_client_preview and candidate_tags:
+                    try:
+                        validated = await ss_client_preview.validate_tags(candidate_tags, max_count=10)
+                        validated_set = {v["text"] for v in validated}
+                        validated_tags = [v["text"] for v in validated]
+                        rejected_tags = [t for t in candidate_tags if t not in validated_set]
+                    except Exception as ve:
+                        tag_validation_error = str(ve)
+                        logger.error(f"[AI태그] 태그사전 검증 예외 — 후보 태그 사용: {ve}")
+                        validated_tags = candidate_tags[:10]
                 else:
                     validated_tags = candidate_tags[:10]
 
@@ -1388,6 +1397,7 @@ async def preview_ai_tags(
                     "seo_keywords": seo_preview,
                     "candidate_count": len(candidate_tags),
                     "candidates": candidate_tags[:15],
+                    "validation_error": tag_validation_error,
                 })
 
             except Exception as e:
