@@ -41,6 +41,10 @@ MARKET_REQUIRED_FIELDS: dict[str, list[str]] = {
   "shopee": ["name", "sale_price"],
   "shopify": ["name", "sale_price"],
   "zoom": ["name", "sale_price"],
+  "toss": ["name", "sale_price"],
+  "rakuten": ["name", "sale_price"],
+  "amazon": ["name", "sale_price"],
+  "buyma": ["name", "sale_price"],
 }
 
 
@@ -84,6 +88,27 @@ async def dispatch_to_market(
       "message": f"필수필드 누락: {', '.join(missing)}",
     }
 
+  # 플러그인 우선 호출 — 플러그인이 등록된 마켓은 플러그인으로 처리
+  from backend.domain.samba.plugins import MARKET_PLUGINS
+  plugin = MARKET_PLUGINS.get(market_type)
+  if plugin:
+    missing_plugin = [f for f in plugin.required_fields if not product.get(f)]
+    if missing_plugin:
+      return {
+        "success": False,
+        "error_type": "schema_changed",
+        "message": f"필수필드 누락: {', '.join(missing_plugin)}",
+      }
+    try:
+      return await plugin.handle(
+        session, product, category_id,
+        account=account, existing_no=existing_product_no,
+      )
+    except Exception as e:
+      logger.error(f"[디스패처] 플러그인 {market_type} 실패: {e}")
+      return {"success": False, "message": str(e)}
+
+  # 기존 레거시 코드 유지 (폴백)
   try:
     handler = MARKET_HANDLERS.get(market_type)
     if not handler:
@@ -1170,6 +1195,145 @@ async def _handle_zoom(
   return {"success": False, "message": "Zum(줌) API 연동이 아직 구현되지 않았습니다."}
 
 
+async def _handle_toss(
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
+) -> dict[str, Any]:
+  """토스 상품 등록/수정."""
+  from backend.domain.samba.proxy.toss import TossClient, TossApiError
+
+  access_key = ""
+  secret_key = ""
+  if account:
+    extras = account.additional_fields or {}
+    access_key = extras.get("apiKey", "") or account.api_key or ""
+    secret_key = extras.get("apiSecret", "") or account.api_secret or ""
+
+  if not access_key or not secret_key:
+    return {"success": False, "message": "토스 API Key/Secret이 없습니다.", "error_type": "auth_failed"}
+
+  client = TossClient(access_key, secret_key)
+  settings = (account.additional_fields or {}) if account else {}
+  payload = TossClient.transform_product(product, category_id, settings)
+
+  try:
+    if existing_product_no:
+      result = await client.update_product(existing_product_no, payload)
+    else:
+      result = await client.register_product(payload)
+    product_no = str(result.get("productId") or result.get("productNo") or result.get("id") or "")
+    return {"success": True, "data": result, "productNo": product_no}
+  except TossApiError as e:
+    logger.error(f"[토스] 등록 실패: {e}")
+    return {"success": False, "message": str(e), "error_type": "schema_changed"}
+  except httpx.TimeoutException:
+    return {"success": False, "message": "토스 API 타임아웃", "error_type": "network"}
+  except Exception as e:
+    logger.error(f"[토스] 예외: {e}")
+    return {"success": False, "message": str(e), "error_type": "unknown"}
+
+
+async def _handle_rakuten(
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
+) -> dict[str, Any]:
+  """라쿠텐 상품 등록/수정."""
+  from backend.domain.samba.proxy.rakuten import RakutenClient, RakutenApiError
+
+  service_secret = ""
+  license_key = ""
+  if account:
+    extras = account.additional_fields or {}
+    service_secret = extras.get("apiKey", "") or account.api_key or ""
+    license_key = extras.get("apiSecret", "") or account.api_secret or ""
+
+  if not service_secret or not license_key:
+    return {"success": False, "message": "라쿠텐 serviceSecret/licenseKey가 없습니다.", "error_type": "auth_failed"}
+
+  client = RakutenClient(service_secret, license_key)
+  settings = (account.additional_fields or {}) if account else {}
+  payload = RakutenClient.transform_product(product, category_id, settings)
+  manage_number = payload.get("itemUrl") or product.get("id") or ""
+
+  try:
+    if existing_product_no:
+      result = await client.update_product(existing_product_no, payload)
+    else:
+      result = await client.register_product(payload, manage_number)
+    return {"success": True, "data": result, "productNo": manage_number}
+  except RakutenApiError as e:
+    logger.error(f"[라쿠텐] 등록 실패: {e}")
+    return {"success": False, "message": str(e), "error_type": "schema_changed"}
+  except httpx.TimeoutException:
+    return {"success": False, "message": "라쿠텐 API 타임아웃", "error_type": "network"}
+  except Exception as e:
+    logger.error(f"[라쿠텐] 예외: {e}")
+    return {"success": False, "message": str(e), "error_type": "unknown"}
+
+
+async def _handle_amazon(
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
+) -> dict[str, Any]:
+  """아마존 상품 등록/수정."""
+  from backend.domain.samba.proxy.amazon import AmazonClient, AmazonApiError
+
+  refresh_token = ""
+  client_id = ""
+  client_secret = ""
+  seller_id = ""
+  region = "fe"
+  if account:
+    extras = account.additional_fields or {}
+    refresh_token = extras.get("accessToken", "") or account.api_key or ""
+    client_id = extras.get("clientId", "")
+    client_secret = extras.get("clientSecret", "") or account.api_secret or ""
+    seller_id = extras.get("storeId", "") or account.seller_id or ""
+    region = extras.get("region", "fe")
+
+  if not refresh_token or not client_id or not client_secret:
+    return {"success": False, "message": "아마존 Refresh Token/Client ID/Secret이 없습니다.", "error_type": "auth_failed"}
+
+  client = AmazonClient(refresh_token, client_id, client_secret, seller_id, region)
+  settings = (account.additional_fields or {}) if account else {}
+  payload = AmazonClient.transform_product(product, category_id, settings)
+  sku = product.get("site_product_id") or product.get("id") or ""
+
+  try:
+    if existing_product_no:
+      result = await client.update_product(existing_product_no, payload)
+    else:
+      result = await client.register_product(payload, sku)
+    return {"success": True, "data": result, "productNo": sku}
+  except AmazonApiError as e:
+    logger.error(f"[아마존] 등록 실패: {e}")
+    return {"success": False, "message": str(e), "error_type": "schema_changed"}
+  except httpx.TimeoutException:
+    return {"success": False, "message": "아마존 API 타임아웃", "error_type": "network"}
+  except Exception as e:
+    logger.error(f"[아마존] 예외: {e}")
+    return {"success": False, "message": str(e), "error_type": "unknown"}
+
+
+async def _handle_buyma(
+  session: AsyncSession, product: dict[str, Any], category_id: str, account: Any = None, existing_product_no: str = "",
+) -> dict[str, Any]:
+  """바이마 상품 등록 — CSV 행 데이터 반환 (API 없음)."""
+  from backend.domain.samba.proxy.buyma import BuymaClient
+
+  settings = (account.additional_fields or {}) if account else {}
+  client = BuymaClient(seller_id=settings.get("storeId", ""))
+
+  try:
+    result = await client.register_product(product, category_id)
+    return {
+      "success": True,
+      "data": result,
+      "productNo": product.get("id") or "",
+      "message": result.get("message", ""),
+    }
+  except Exception as e:
+    logger.error(f"[바이마] CSV 생성 실패: {e}")
+    return {"success": False, "message": str(e), "error_type": "unknown"}
+
+
 MARKET_HANDLERS = {
   "smartstore": _handle_smartstore,
   "coupang": _handle_coupang,
@@ -1185,6 +1349,10 @@ MARKET_HANDLERS = {
   "shopee": _handle_shopee,
   "shopify": _handle_shopify,
   "zoom": _handle_zoom,
+  "toss": _handle_toss,
+  "rakuten": _handle_rakuten,
+  "amazon": _handle_amazon,
+  "buyma": _handle_buyma,
 }
 
 # 지원 마켓 목록 (프론트엔드에서 참조)
