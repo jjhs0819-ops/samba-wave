@@ -32,6 +32,7 @@ from typing import Any, Optional
 
 import httpx
 
+from backend.core.config import settings
 from backend.utils.logger import logger
 
 
@@ -67,7 +68,7 @@ class SSGClient:
     url = f"{self.BASE_URL}{path}"
     headers = self._headers()
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
       if method == "GET":
         resp = await client.get(url, headers=headers, params=params)
       elif method == "POST":

@@ -17,6 +17,7 @@ import bcrypt
 from backend.domain.samba.proxy.notice_utils import build_smartstore_notice as _build_ss_notice
 import httpx
 
+from backend.core.config import settings
 from backend.utils.logger import logger
 
 # 한국/대한민국 등 국내산 키워드
@@ -266,7 +267,7 @@ class SmartStoreClient:
     )
     client_secret_sign = base64.standard_b64encode(hashed).decode("utf-8")
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
       resp = await client.post(
         f"{self.BASE_URL}/v1/oauth2/token",
         data={
@@ -303,7 +304,7 @@ class SmartStoreClient:
       "Content-Type": "application/json",
     }
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
       if method == "GET":
         resp = await client.get(url, headers=headers, params=params)
       elif method == "POST":
@@ -706,7 +707,7 @@ class SmartStoreClient:
       referer = "https://www.musinsa.com/"
 
     # 이미지 다운로드 (클라이언트 재사용)
-    dl = _dl_client or httpx.AsyncClient(timeout=30, follow_redirects=True)
+    dl = _dl_client or httpx.AsyncClient(timeout=settings.http_timeout_default, follow_redirects=True)
     try:
       img_resp = await dl.get(image_url, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -744,7 +745,7 @@ class SmartStoreClient:
 
     # 네이버 업로드 (클라이언트 재사용 + 429 재시도)
     import asyncio as _aio_retry
-    ul = _ul_client or httpx.AsyncClient(timeout=30)
+    ul = _ul_client or httpx.AsyncClient(timeout=settings.http_timeout_default)
     try:
       for attempt in range(4):
         resp = await ul.post(

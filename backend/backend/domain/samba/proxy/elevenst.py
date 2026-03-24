@@ -14,6 +14,8 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
+from backend.core.config import settings
+
 from backend.utils.logger import logger
 
 
@@ -64,7 +66,7 @@ class ElevenstClient:
     url = f"{self.BASE_URL}{path}"
     headers = self._headers()
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
       if method == "GET":
         resp = await client.get(url, headers=headers)
       elif method == "POST":
@@ -103,7 +105,7 @@ class ElevenstClient:
     """전체 카테고리 조회. (cateservice 엔드포인트 사용)"""
     url = "https://api.11st.co.kr/rest/cateservice/category"
     headers = self._headers()
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
       resp = await client.get(url, headers=headers)
       logger.info(f"[11번가] GET /cateservice/category → {resp.status_code}")
       logger.debug(f"[11번가] 카테고리 응답: {resp.text[:500]}")
@@ -117,7 +119,7 @@ class ElevenstClient:
     """특정 카테고리 하위 조회. (cateservice 엔드포인트 사용)"""
     url = f"https://api.11st.co.kr/rest/cateservice/category/{category_id}"
     headers = self._headers()
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
       resp = await client.get(url, headers=headers)
       logger.info(f"[11번가] GET /cateservice/category/{category_id} → {resp.status_code}")
       data = self._parse_xml(resp.text)
@@ -166,7 +168,7 @@ class ElevenstClient:
 
     url = f"https://api.11st.co.kr/rest/areaservice/{area_type}"
     headers = self._headers()
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
       resp = await client.get(url, headers=headers)
       logger.info("[11번가] GET /areaservice/%s → %s", area_type, resp.status_code)
 

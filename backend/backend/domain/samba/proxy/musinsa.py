@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 import httpx
 
+from backend.core.config import settings
 from backend.utils.logger import logger
 
 
@@ -131,7 +132,7 @@ class MusinsaClient:
         if not self.cookie:
             return 0
         try:
-            timeout = httpx.Timeout(10.0, connect=5.0)
+            timeout = httpx.Timeout(settings.http_timeout_short, connect=5.0)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.get(
                     self.BASE_MEMBER,
@@ -168,7 +169,7 @@ class MusinsaClient:
         # 회원 등급 할인율 조회 (등급별 최대혜택가 계산에 필요, 외부 캐시값 있으면 스킵)
         if member_grade_rate is None:
             member_grade_rate = await self._get_member_grade_rate()
-        timeout = httpx.Timeout(30.0, connect=10.0)
+        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             # 1) 상품 상세 API
             detail_resp = await client.get(
@@ -287,20 +288,15 @@ class MusinsaClient:
             )
             logger.info(f"[무신사 가격원본] {goods_no}: couponPrice={coupon_price_raw}, "
                         f"api_best_benefit={api_best_benefit}, s_price={s_price}")
-            # 쿠폰할인: goodsPrice.couponPrice + 쿠폰 API 중 큰 할인 사용
-            # 로그인 상태에서는 쿠폰 API가 실제 적용 가능한 쿠폰을 반환
+            # 쿠폰할인: goodsPrice.couponPrice 기본 + 쿠폰 API 보충 (수집/갱신 동일)
             benefit_coupon_discount = 0
             if 0 < coupon_price_raw < s_price:
                 benefit_coupon_discount = s_price - coupon_price_raw
-
-            # 쿠폰 API로 추가 쿠폰 탐색 (갱신 모드에서는 스킵)
-            if not refresh_only:
-                benefit_coupon_discount = await self._fetch_coupons(
-                    client, goods_no, d, s_price, benefit_coupon_discount
-                )
+            # 쿠폰 API로 추가 쿠폰 탐색 (goodsPrice에 미반영된 쿠폰 보충)
+            benefit_coupon_discount = await self._fetch_coupons(
+                client, goods_no, d, s_price, benefit_coupon_discount
+            )
             coupon_applied_price = s_price - benefit_coupon_discount if benefit_coupon_discount > 0 else s_price
-
-            # bestBenefitPrice 계산도 쿠폰 API 결과 포함
             benefit_base = s_price - benefit_coupon_discount
 
             # 2단계: 등급할인 (benefit_base 기준, 10원 절사)
@@ -502,7 +498,7 @@ class MusinsaClient:
         if category:
             params["category"] = category
 
-        timeout = httpx.Timeout(30.0, connect=10.0)
+        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.get(
                 self.BASE_SEARCH,
@@ -578,7 +574,7 @@ class MusinsaClient:
 
     async def search_by_url(self, url: str) -> dict[str, Any]:
         """URL 기반 검색/리다이렉트 처리 - proxy-server.mjs /api/musinsa/search 포팅."""
-        timeout = httpx.Timeout(30.0, connect=10.0)
+        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             # onelink.me 단축 URL
             if "musinsa.onelink.me" in url:
@@ -652,7 +648,7 @@ class MusinsaClient:
         if not cookie_to_check:
             return {"isLoggedIn": False}
 
-        timeout = httpx.Timeout(10.0, connect=5.0)
+        timeout = httpx.Timeout(settings.http_timeout_short, connect=5.0)
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.get(
@@ -677,7 +673,7 @@ class MusinsaClient:
 
         self.cookie = cookie
 
-        timeout = httpx.Timeout(10.0, connect=5.0)
+        timeout = httpx.Timeout(settings.http_timeout_short, connect=5.0)
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.get(
@@ -709,7 +705,7 @@ class MusinsaClient:
     async def check_stock(self, goods_nos: list[str]) -> dict[str, Any]:
         """재고 소진 감지 - proxy-server.mjs /api/agents/stock-check 포팅."""
         results = []
-        timeout = httpx.Timeout(30.0, connect=10.0)
+        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             for goods_no in goods_nos:
                 try:
@@ -757,7 +753,7 @@ class MusinsaClient:
     ) -> dict[str, Any]:
         """가격 변동 감지 - proxy-server.mjs /api/agents/price-monitor 포팅."""
         results = []
-        timeout = httpx.Timeout(30.0, connect=10.0)
+        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             for p in products:
                 goods_no = p.get("goodsNo", "")

@@ -18,6 +18,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
+from backend.core.config import settings
 from backend.utils.logger import logger
 
 
@@ -177,7 +178,7 @@ class LotteHomeClient:
             "Accept-Charset": "euc-kr",
         }
 
-        timeout = httpx.Timeout(30.0, connect=10.0)
+        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             if method == "GET":
                 qs = self._build_query(params)

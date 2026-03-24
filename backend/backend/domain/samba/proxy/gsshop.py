@@ -21,6 +21,7 @@ import httpx
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.padding import PKCS7
 
+from backend.core.config import settings
 from backend.utils.logger import logger
 
 
@@ -112,7 +113,7 @@ class GsShopClient:
             "token": token,
         }
 
-        timeout = httpx.Timeout(30.0, connect=10.0)
+        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             if method == "GET":
                 resp = await client.get(url, headers=headers)

@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 import httpx
 
+from backend.core.config import settings
 from backend.utils.logger import logger
 
 
@@ -75,7 +76,7 @@ class CoupangClient:
       "X-Requested-By": "samba-wave",
     }
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
       if method == "GET":
         resp = await client.get(url, headers=headers)
       elif method == "POST":

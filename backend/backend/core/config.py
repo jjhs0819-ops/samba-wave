@@ -85,6 +85,13 @@ class BackendSettings(BaseSettings):
     # ===========================================
     redis_url: str | None = None  # 환경변수: REDIS_URL
 
+    # ===========================================
+    # HTTP 타임아웃 설정 (초)
+    # ===========================================
+    http_timeout_short: int = 10    # 빠른 API (검색, 조회)
+    http_timeout_default: int = 30  # 기본 API (등록, 수정)
+    http_timeout_upload: int = 60   # 이미지 업로드 등 느린 작업
+
     # 추가 허용 origin (콤마 구분, Railway 환경변수로 주입)
     cors_extra_origins: str = ""
 
