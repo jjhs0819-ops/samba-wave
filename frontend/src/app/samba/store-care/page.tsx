@@ -1,7 +1,13 @@
 'use client'
 
 import React, { useCallback, useEffect, useState } from 'react'
-import { accountApi, orderApi, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api'
+import {
+  accountApi,
+  storeCareApi,
+  type SambaMarketAccount,
+  type StoreCareSchedule,
+  type StoreCarePurchase,
+} from '@/lib/samba/api'
 
 const card = {
   background: 'rgba(30,30,30,0.5)',
@@ -36,49 +42,49 @@ function getStatusBadge(status: string) {
   )
 }
 
-// 가구매 더미 데이터 (실제 API 연동 전 UI 확인용)
-const DUMMY_SCHEDULES = [
-  { id: '1', market: 'smartstore', account_label: '메인스토어', interval_hours: 6, next_run: '2026-03-25 06:00', status: 'scheduled', daily_target: 3, daily_done: 1 },
-  { id: '2', market: 'coupang', account_label: '쿠팡 메인', interval_hours: 8, next_run: '2026-03-25 08:00', status: 'scheduled', daily_target: 2, daily_done: 0 },
-  { id: '3', market: '11st', account_label: '11번가', interval_hours: 12, next_run: '2026-03-25 12:00', status: 'paused', daily_target: 2, daily_done: 2 },
-]
-
-const DUMMY_HISTORY = [
-  { id: 'h1', market: 'smartstore', product_name: 'GJ X ALLEN IVERSON 그래픽 반팔티', amount: 32000, status: 'completed', created_at: '2026-03-24 18:32:00', order_no: 'FP-20260324-001' },
-  { id: 'h2', market: 'smartstore', product_name: '나이키 에어맥스 97', amount: 189000, status: 'completed', created_at: '2026-03-24 14:15:00', order_no: 'FP-20260324-002' },
-  { id: 'h3', market: 'coupang', product_name: '아디다스 삼바 OG', amount: 139000, status: 'failed', created_at: '2026-03-24 10:02:00', order_no: '' },
-  { id: 'h4', market: 'smartstore', product_name: '뉴발란스 993', amount: 259000, status: 'completed', created_at: '2026-03-23 22:10:00', order_no: 'FP-20260323-003' },
-  { id: 'h5', market: '11st', product_name: '나이키 덩크 로우', amount: 119000, status: 'completed', created_at: '2026-03-23 16:45:00', order_no: 'FP-20260323-004' },
-]
 
 export default function StoreCare() {
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
+  const [schedules, setSchedules] = useState<StoreCareSchedule[]>([])
+  const [purchases, setPurchases] = useState<StoreCarePurchase[]>([])
+  const [stats, setStats] = useState({ total: 0, success: 0, failed: 0, total_amount: 0 })
   const [tab, setTab] = useState<'overview' | 'schedule' | 'history'>('overview')
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const accs = await accountApi.listActive().catch(() => [])
+    const [accs, scheds, purs, st] = await Promise.all([
+      accountApi.listActive().catch(() => []),
+      storeCareApi.listSchedules().catch(() => []),
+      storeCareApi.listPurchases(50).catch(() => []),
+      storeCareApi.stats().catch(() => ({ total: 0, success: 0, failed: 0, total_amount: 0 })),
+    ])
     setAccounts(accs)
+    setSchedules(scheds)
+    setPurchases(purs)
+    setStats(st)
     setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  // KPI 계산 (더미 기반)
-  const todayPurchases = DUMMY_HISTORY.filter(h => h.created_at.startsWith('2026-03-24'))
-  const todayTotal = todayPurchases.reduce((s, h) => s + h.amount, 0)
-  const todaySuccess = todayPurchases.filter(h => h.status === 'completed').length
-  const todayFailed = todayPurchases.filter(h => h.status === 'failed').length
-  const activeSchedules = DUMMY_SCHEDULES.filter(s => s.status !== 'paused').length
+  // KPI
+  const todayTotal = stats.total_amount
+  const todaySuccess = stats.success
+  const todayFailed = stats.failed
+  const activeSchedules = schedules.filter(s => s.status !== 'paused').length
 
   // 마켓별 요약
-  const marketSummary = DUMMY_SCHEDULES.map(s => ({
-    ...s,
-    color: MARKET_COLORS[s.market] || '#888',
-    todayDone: DUMMY_HISTORY.filter(h => h.market === s.market && h.created_at.startsWith('2026-03-24') && h.status === 'completed').length,
-    todayAmount: DUMMY_HISTORY.filter(h => h.market === s.market && h.created_at.startsWith('2026-03-24') && h.status === 'completed').reduce((s, h) => s + h.amount, 0),
-  }))
+  const marketSummary = schedules.map(s => {
+    const mPurchases = purchases.filter(p => p.market_type === s.market_type && p.status === 'completed')
+    return {
+      ...s,
+      market: s.market_type,
+      color: MARKET_COLORS[s.market_type] || '#888',
+      todayDone: mPurchases.length,
+      todayAmount: mPurchases.reduce((sum, p) => sum + p.amount, 0),
+    }
+  })
 
   return (
     <div style={{ padding: '0' }}>
@@ -146,7 +152,7 @@ export default function StoreCare() {
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         {getStatusBadge(m.status)}
-                        <div style={{ fontSize: '0.68rem', color: '#555', marginTop: '4px' }}>다음: {m.next_run.split(' ')[1]}</div>
+                        <div style={{ fontSize: '0.68rem', color: '#555', marginTop: '4px' }}>다음: {m.next_run_at ? new Date(m.next_run_at).toLocaleTimeString('ko', { hour: '2-digit', minute: '2-digit' }) : '-'}</div>
                       </div>
                     </div>
                   ))}
@@ -157,9 +163,9 @@ export default function StoreCare() {
               <div style={card}>
                 <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: '#E5E5E5', marginBottom: '16px' }}>최근 가구매</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {DUMMY_HISTORY.slice(0, 5).map(h => (
+                  {purchases.slice(0, 5).map(h => (
                     <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}>
-                      <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: MARKET_COLORS[h.market] || '#888' }} />
+                      <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: MARKET_COLORS[h.market_type] || '#888' }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: '0.78rem', color: '#E5E5E5', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.product_name}</div>
                         <div style={{ fontSize: '0.68rem', color: '#8A95B0' }}>{h.created_at}</div>
@@ -207,8 +213,8 @@ export default function StoreCare() {
                     <tr key={s.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
                       <td style={{ padding: '10px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: MARKET_COLORS[s.market] || '#888' }} />
-                          <span style={{ fontSize: '0.82rem', color: '#E5E5E5' }}>{s.market}</span>
+                          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: MARKET_COLORS[s.market_type] || '#888' }} />
+                          <span style={{ fontSize: '0.82rem', color: '#E5E5E5' }}>{s.market_type}</span>
                         </div>
                       </td>
                       <td style={{ padding: '10px', fontSize: '0.82rem', color: '#C5C5C5' }}>{s.account_label}</td>
@@ -219,14 +225,20 @@ export default function StoreCare() {
                           {s.daily_done}/{s.daily_target}
                         </span>
                       </td>
-                      <td style={{ padding: '10px', textAlign: 'center', fontSize: '0.78rem', color: '#8A95B0' }}>{s.next_run}</td>
+                      <td style={{ padding: '10px', textAlign: 'center', fontSize: '0.78rem', color: '#8A95B0' }}>{s.next_run_at ? new Date(s.next_run_at).toLocaleString('ko') : '-'}</td>
                       <td style={{ padding: '10px', textAlign: 'center' }}>{getStatusBadge(s.status)}</td>
                       <td style={{ padding: '10px', textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                          <button style={{ fontSize: '0.72rem', padding: '3px 8px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer' }}>
+                          <button onClick={async () => {
+                            await storeCareApi.toggleSchedule(s.id).catch(() => {})
+                            load()
+                          }} style={{ fontSize: '0.72rem', padding: '3px 8px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer' }}>
                             {s.status === 'paused' ? '재개' : '정지'}
                           </button>
-                          <button style={{ fontSize: '0.72rem', padding: '3px 8px', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer' }}>
+                          <button onClick={async () => {
+                            await storeCareApi.deleteSchedule(s.id).catch(() => {})
+                            load()
+                          }} style={{ fontSize: '0.72rem', padding: '3px 8px', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer' }}>
                             삭제
                           </button>
                         </div>
@@ -242,6 +254,9 @@ export default function StoreCare() {
           {tab === 'history' && (
             <div style={card}>
               <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: '#E5E5E5', marginBottom: '16px' }}>가구매 이력</h3>
+              {purchases.length === 0 ? (
+                <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.85rem' }}>아직 가구매 이력이 없습니다</div>
+              ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
@@ -254,12 +269,12 @@ export default function StoreCare() {
                   </tr>
                 </thead>
                 <tbody>
-                  {DUMMY_HISTORY.map(h => (
+                  {purchases.map(h => (
                     <tr key={h.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
                       <td style={{ padding: '10px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: MARKET_COLORS[h.market] || '#888' }} />
-                          <span style={{ fontSize: '0.82rem', color: '#E5E5E5' }}>{h.market}</span>
+                          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: MARKET_COLORS[h.market_type] || '#888' }} />
+                          <span style={{ fontSize: '0.82rem', color: '#E5E5E5' }}>{h.market_type}</span>
                         </div>
                       </td>
                       <td style={{ padding: '10px', fontSize: '0.82rem', color: '#C5C5C5', maxWidth: '250px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.product_name}</td>
@@ -271,6 +286,7 @@ export default function StoreCare() {
                   ))}
                 </tbody>
               </table>
+              )}
             </div>
           )}
         </>

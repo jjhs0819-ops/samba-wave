@@ -339,6 +339,25 @@ export const collectorApi = {
     if (status) p.set("status", status);
     return request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products?${p}`);
   },
+  scrollProducts: (params: {
+    skip?: number; limit?: number; search?: string; search_type?: string;
+    source_site?: string; status?: string; ai_filter?: string;
+    search_filter_id?: string; sort_by?: string;
+  }) => {
+    const p = new URLSearchParams()
+    p.set('skip', String(params.skip ?? 0))
+    p.set('limit', String(params.limit ?? 50))
+    if (params.search) p.set('search', params.search)
+    if (params.search_type) p.set('search_type', params.search_type)
+    if (params.source_site) p.set('source_site', params.source_site)
+    if (params.status) p.set('status', params.status)
+    if (params.ai_filter) p.set('ai_filter', params.ai_filter)
+    if (params.search_filter_id) p.set('search_filter_id', params.search_filter_id)
+    if (params.sort_by) p.set('sort_by', params.sort_by)
+    return request<{ items: SambaCollectedProduct[]; total: number; sites: string[] }>(
+      `${SAMBA_PREFIX}/collector/products/scroll?${p}`
+    )
+  },
   getProductIdsWithOrders: () =>
     request<string[]>(`${SAMBA_PREFIX}/collector/products/with-orders`),
   productCounts: () =>
@@ -810,6 +829,73 @@ export const returnApi = {
   getReasons: () => request<Record<string, { value: string; label: string }[]>>(`${SAMBA_PREFIX}/returns/reasons`),
 };
 
+// ── CS Inquiries ──
+
+export interface SambaCSInquiry {
+  id: string
+  market: string
+  market_order_id?: string
+  account_name?: string
+  inquiry_type: string
+  questioner?: string
+  product_name?: string
+  product_link?: string
+  market_link?: string
+  original_link?: string
+  content: string
+  reply?: string
+  reply_status: string
+  replied_at?: string
+  inquiry_date?: string
+  collected_at: string
+  created_at: string
+}
+
+export interface CSInquiryListResponse {
+  items: SambaCSInquiry[]
+  total: number
+}
+
+export interface CSReplyTemplate {
+  name: string
+  content: string
+}
+
+export const csInquiryApi = {
+  list: (params?: {
+    skip?: number
+    limit?: number
+    market?: string
+    inquiry_type?: string
+    reply_status?: string
+    search?: string
+    sort_field?: string
+    sort_desc?: boolean
+  }) => {
+    const p = new URLSearchParams()
+    if (params?.skip) p.set('skip', String(params.skip))
+    if (params?.limit) p.set('limit', String(params.limit))
+    if (params?.market) p.set('market', params.market)
+    if (params?.inquiry_type) p.set('inquiry_type', params.inquiry_type)
+    if (params?.reply_status) p.set('reply_status', params.reply_status)
+    if (params?.search) p.set('search', params.search)
+    if (params?.sort_field) p.set('sort_field', params.sort_field)
+    if (params?.sort_desc !== undefined) p.set('sort_desc', String(params.sort_desc))
+    return request<CSInquiryListResponse>(`${SAMBA_PREFIX}/cs-inquiries?${p}`)
+  },
+  get: (id: string) => request<SambaCSInquiry>(`${SAMBA_PREFIX}/cs-inquiries/${id}`),
+  create: (data: Partial<SambaCSInquiry>) =>
+    request<SambaCSInquiry>(`${SAMBA_PREFIX}/cs-inquiries`, { method: 'POST', body: JSON.stringify(data) }),
+  reply: (id: string, reply: string) =>
+    request<SambaCSInquiry>(`${SAMBA_PREFIX}/cs-inquiries/${id}/reply`, { method: 'POST', body: JSON.stringify({ reply }) }),
+  delete: (id: string) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/${id}`, { method: 'DELETE' }),
+  batchDelete: (ids: string[]) =>
+    request<{ deleted: number }>(`${SAMBA_PREFIX}/cs-inquiries/batch-delete`, { method: 'POST', body: JSON.stringify({ ids }) }),
+  getStats: () => request<Record<string, unknown>>(`${SAMBA_PREFIX}/cs-inquiries/stats`),
+  getTemplates: () => request<Record<string, CSReplyTemplate>>(`${SAMBA_PREFIX}/cs-inquiries/templates`),
+}
+
 // ── Analytics ──
 
 export interface AnalyticsStats {
@@ -1167,4 +1253,74 @@ export const aiSourcingApi = {
       `${SAMBA_PREFIX}/ai-sourcing/create-groups`,
       { method: 'POST', body: JSON.stringify({ combinations }) }
     ),
+}
+
+// ── 스토어케어 (가구매 관리) ──
+
+export interface StoreCareSchedule {
+  id: string
+  tenant_id?: string
+  market_type: string
+  account_id: string
+  account_label: string
+  interval_hours: number
+  daily_target: number
+  daily_done: number
+  product_selection: string
+  product_ids?: string[]
+  min_price: number
+  max_price: number
+  status: string
+  next_run_at?: string
+  last_run_at?: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface StoreCarePurchase {
+  id: string
+  tenant_id?: string
+  schedule_id?: string
+  market_type: string
+  account_id: string
+  product_id?: string
+  product_name: string
+  product_no?: string
+  amount: number
+  order_no?: string
+  buyer_account?: string
+  status: string
+  error?: string
+  created_at: string
+  completed_at?: string
+}
+
+export const storeCareApi = {
+  // 통계
+  stats: () =>
+    request<{ total: number; success: number; failed: number; total_amount: number }>(
+      `${SAMBA_PREFIX}/store-care/stats`
+    ),
+  // 스케줄
+  listSchedules: () =>
+    request<StoreCareSchedule[]>(`${SAMBA_PREFIX}/store-care/schedules`),
+  createSchedule: (data: Partial<StoreCareSchedule>) =>
+    request<StoreCareSchedule>(`${SAMBA_PREFIX}/store-care/schedules`, {
+      method: 'POST', body: JSON.stringify(data),
+    }),
+  updateSchedule: (id: string, data: Partial<StoreCareSchedule>) =>
+    request<StoreCareSchedule>(`${SAMBA_PREFIX}/store-care/schedules/${id}`, {
+      method: 'PUT', body: JSON.stringify(data),
+    }),
+  toggleSchedule: (id: string) =>
+    request<StoreCareSchedule>(`${SAMBA_PREFIX}/store-care/schedules/${id}/toggle`, { method: 'POST' }),
+  deleteSchedule: (id: string) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/store-care/schedules/${id}`, { method: 'DELETE' }),
+  // 구매 이력
+  listPurchases: (limit = 50, marketType?: string) => {
+    const p = new URLSearchParams({ limit: String(limit) })
+    if (marketType) p.set('market_type', marketType)
+    return request<StoreCarePurchase[]>(`${SAMBA_PREFIX}/store-care/purchases?${p}`)
+  },
 }
