@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean
+from sqlalchemy import Boolean, String
 from sqlmodel import Column, DateTime, Field, SQLModel, Text
 
 from ulid import ULID
@@ -23,6 +23,10 @@ class SambaUser(SQLModel, table=True):
     primary_key=True,
     max_length=30,
   )
+  # 테넌트 격리
+  tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
+  # 역할: owner, admin, member
+  role: str = Field(default="member", sa_column=Column(String, default="member", nullable=True))
 
   # 인증 정보
   email: str = Field(

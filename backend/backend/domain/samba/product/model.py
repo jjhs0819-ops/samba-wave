@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-from sqlalchemy import Boolean
+from sqlalchemy import Boolean, String
 from sqlmodel import Column, DateTime, Field, JSON, SQLModel, Text
 
 from ulid import ULID
@@ -23,6 +23,8 @@ class SambaProduct(SQLModel, table=True):
         primary_key=True,
         max_length=30,
     )
+    # 테넌트 격리
+    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
 
     # 기본 정보
     name: str = Field(sa_column=Column(Text, nullable=False))

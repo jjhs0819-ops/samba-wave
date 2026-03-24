@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import Boolean
+from sqlalchemy import Boolean, String
 from sqlmodel import Column, DateTime, Field, JSON, SQLModel, Text
 
 from ulid import ULID
@@ -23,6 +23,8 @@ class SambaPolicy(SQLModel, table=True):
         primary_key=True,
         max_length=30,
     )
+    # 테넌트 격리
+    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
 
     name: str = Field(
         default="새 정책",
@@ -73,6 +75,8 @@ class SambaDetailTemplate(SQLModel, table=True):
         primary_key=True,
         max_length=30,
     )
+    # 테넌트 격리
+    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
 
     name: str = Field(
         default="새 템플릿",
@@ -112,6 +116,8 @@ class SambaNameRule(SQLModel, table=True):
         primary_key=True,
         max_length=30,
     )
+    # 테넌트 격리
+    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
 
     name: str = Field(
         default="새 규칙",
