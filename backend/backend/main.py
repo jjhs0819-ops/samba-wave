@@ -25,6 +25,7 @@ from backend.api.v1.routers.samba.proxy import router as samba_proxy_router
 from backend.api.v1.routers.samba.warroom import router as samba_warroom_router
 from backend.api.v1.routers.samba.user import router as samba_user_router
 from backend.api.v1.routers.samba.ai_sourcing import router as samba_ai_sourcing_router
+from backend.api.v1.routers.samba.tenant import router as samba_tenant_router
 from backend.middleware.error_handler import register_exception_handlers
 
 
@@ -100,6 +101,7 @@ def create_application() -> FastAPI:
     app.include_router(samba_warroom_router, prefix="/api/v1/samba")
     app.include_router(samba_user_router, prefix="/api/v1/samba")
     app.include_router(samba_ai_sourcing_router, prefix="/api/v1/samba")
+    app.include_router(samba_tenant_router, prefix="/api/v1/samba")
 
     # 로컬 이미지 저장 디렉토리 서빙 (R2 미설정 시 사용)
     static_dir = Path(__file__).resolve().parent / "static" / "images"
