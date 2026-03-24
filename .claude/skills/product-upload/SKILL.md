@@ -430,6 +430,64 @@ TRANSFORM_ONLY_EXEMPTIONS = ["B1", "B3", "B4", "B5"]
 
 `mapped_categories`에서 해당 마켓의 카테고리 코드가 빈 문자열이면 해당 계정 전송을 스킵하고 "카테고리 매핑 없음" 에러를 기록한다. 이전에는 빈 카테고리로 API를 호출하여 마켓 측에서 에러가 발생했다. (2026-03-20 추가)
 
+### 10. 롯데홈쇼핑 API 특이사항
+
+**인증 & 인코딩:**
+- 인증: `createCertification.lotte` POST → certkey 24시간 유효
+- 모든 요청: EUC-KR 인코딩 필수 (`Content-Type: application/x-www-form-urlencoded; charset=euc-kr`)
+- 응답: XML (EUC-KR)
+
+**테스트서버 제약 (2026-03-24 확인):**
+- 테스트 URL: `http://openapitst.lotteimall.com/openapi/`
+- 운영 URL: `https://openapi.lotteimall.com/openapi/`
+- 테스트서버에서 **인증 + 상품등록** API만 외부 접근 가능
+- 조회 API (배송지/카테고리/브랜드/MD 등)는 HTML 로그인 페이지 반환 (내부망 전용 추정)
+- 출고지/반품지 등록 API(`registDlvpOpenApi.lotte`)는 "사전협의된 특정 업체만 사용 가능" (에러 2062)
+- 파트너 관리자 페이지(`partnertst.lotteimall.com`)도 외부 접속 불가
+
+**필수 파라미터 3종 (상품등록 시):**
+- `dlv_polc_no`: 배송정책번호 — `searchDlvPolcListOpenApi.lotte`로 조회 (테스트서버 조회 불가, 수동 입력 필요)
+- `corp_dlvp_sn`: 반품지번호 — `searchReturnListOpenApi.lotte?dlvp_tp_cd=10` (기본반품지) 또는 `30` (반품지)
+- `corp_rls_pl_sn`: 출고지번호 — `searchReturnListOpenApi.lotte?dlvp_tp_cd=40` (기본출고지) 또는 `50` (출고지)
+- **주의**: 배송지 조회 API는 `searchDlvPlcListOpenApi`가 아니라 `searchReturnListOpenApi`가 올바른 엔드포인트
+- `_handle_lottehome`에서 creds에 값 없으면 자동 조회 로직 구현 완료 (2026-03-24)
+
+**안전인증 파라미터:**
+- `sft_cert_tgt_seq`: 안전인증대상일련번호 — 품목코드별 `searchGoodsArtcOpenApi.lotte`에서 TgtSeq 조회
+- 병행수입(`prl_imp_yn=Y`)이거나 안전인증대상이 없으면 빈값 허용
+- `sft_cert_sct_cd`: 안전인증구분코드 — 필수여부(MdtYn)가 Y인 경우만 필수
+- `sft_cert_no`: 안전인증번호 — 선택
+
+**전시카테고리:**
+- `disp_no`: 전시번호 — 필수. `searchDispNoListOpenApi.lotte`로 조회
+- `md_gsgr_no`와 별도. MD상품군번호 ≠ 전시번호
+- 테스트서버 테스트 시 전시번호를 롯데홈쇼핑 담당자에게 별도 확인 필요
+
+**테스트 계정 (2026-03-24 확인):**
+- userId: `037800LT`, password: `037800LT`, agncNo: `037800LT`
+- 배송정책번호: `3673192`
+- 반품지번호: `1967053`
+- 출고지번호: `1967054`
+
+**전시카테고리 ↔ 표준카테고리 매핑:**
+- API: `loadStdCatsByDispNo.lotte?subscriptionId=[인증키]&disp_no=[전시카테고리번호]`
+- 전시카테고리 1개 → 표준카테고리 N개 매핑 가능
+- 응답: `StdCatInfoLst > StdCatInfo[]` — `StdCatNo`(표준카테고리번호), `FullStdCatNm`(전체 경로)
+- 표준카테고리는 `BH` prefix + 8자리 코드 (예: `BH34090700`)
+
+**에러 코드:**
+| 코드 | 메시지 | 원인 |
+|------|--------|------|
+| 9001 | 인증에 실패하였습니다 | userId/password 오류 |
+| 1032 | 출고배송지가 입력되지 않았습니다 | corp_rls_pl_sn 빈값 |
+| 1005 | 필수 전시번호가 입력되지 않았습니다 | disp_no 빈값 |
+| 1018 | 대표 전시매장이 올바르지 않습니다 | disp_no 잘못된 값 |
+| 2013 | 안전인증대상일련번호 오류 | sft_cert_tgt_seq 잘못된 값 |
+| 2062 | 출고지/반품배송지 등록 API 사용 불가 | API 등록 권한 없는 협력사 |
+| 0005 | 필수파라미터 오류 | dlvp_tp_cd 등 누락 |
+| 0001 | 인증키오류 | 인증키 만료/미존재 |
+| 5001 | 유효기한 초과 | 인증키 24시간 초과 |
+
 ---
 
 ## 알려진 제한사항
@@ -475,3 +533,6 @@ TRANSFORM_ONLY_EXEMPTIONS = ["B1", "B3", "B4", "B5"]
 | 2026-03-21 | 글로벌 삭제어(SambaForbiddenWord) 상품 전송 시 적용: service._transmit_product에서 상품명 조합 후 삭제어 제거 추가 | - |
 | 2026-03-22 | retransmit() 카테고리 재조회 버그 수정: category_id="" → _resolve_category_mappings() 재호출 + account 전달 | - |
 | 2026-03-22 | 어린이제품 인증정보 자동 설정: 카테고리 API에서 certificationInfos 조회 → productCertificationInfos 자동 생성 (_build_certification_infos) | - |
+| 2026-03-24 | 롯데홈쇼핑 배송지/출고지/반품지 자동 조회 구현: _handle_lottehome에서 creds 빈값 시 searchReturnListOpenApi 자동 조회. 배송지 조회 엔드포인트 수정 (searchDlvPlcListOpenApi → searchReturnListOpenApi) | - |
+| 2026-03-24 | 롯데홈쇼핑 테스트서버 연동 검증: 인증 성공, 배송지 통과, 안전인증(sft_cert_tgt_seq 빈값+prl_imp_yn=Y) 통과, 전시카테고리(disp_no) 미해결 — 테스트서버 조회API 외부차단 | - |
+| 2026-03-24 | 스킬 문서에 롯데홈쇼핑 API 특이사항 + 에러코드 + 테스트계정 + 전시-표준카테고리 매핑API 추가 | - |

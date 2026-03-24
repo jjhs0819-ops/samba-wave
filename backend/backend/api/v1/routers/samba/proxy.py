@@ -1386,6 +1386,8 @@ async def preview_ai_tags(
                     "tags": validated_tags,
                     "rejected_tags": rejected_tags,
                     "seo_keywords": seo_preview,
+                    "candidate_count": len(candidate_tags),
+                    "candidates": candidate_tags[:15],
                 })
 
             except Exception as e:

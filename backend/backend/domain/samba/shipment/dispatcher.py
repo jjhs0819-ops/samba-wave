@@ -826,6 +826,42 @@ async def _handle_lottehome(
     return {"success": False, "message": "롯데홈쇼핑 userId/password가 없습니다."}
 
   client = LotteHomeClient(user_id, password, agnc_no, env)
+
+  # 반품지/출고지/배송정책 자동 조회 (creds에 없으면)
+  if not creds.get("corp_dlvp_sn") or not creds.get("corp_rls_pl_sn") or not creds.get("dlv_polc_no"):
+    try:
+      # 배송지(출고지/반품지) 조회
+      places = await client.search_delivery_places()
+      place_data = places.get("data", {})
+      place_result = place_data.get("Result", place_data)
+      place_list = place_result.get("DlvPlcList", place_result.get("DlvpList", {}))
+      items = place_list.get("DlvPlcInfo", place_list.get("DlvpInfo", []))
+      if isinstance(items, dict):
+        items = [items]
+      for item in (items if isinstance(items, list) else []):
+        tp = item.get("dlvp_tp_cd", "")
+        sn = item.get("corp_dlvp_sn", "")
+        if tp in ("10", "30") and not creds.get("corp_dlvp_sn") and sn:
+          creds["corp_dlvp_sn"] = sn  # 반품지
+          logger.info(f"[롯데홈쇼핑] 반품지 자동 조회: {sn}")
+        if tp in ("40", "50") and not creds.get("corp_rls_pl_sn") and sn:
+          creds["corp_rls_pl_sn"] = sn  # 출고지
+          logger.info(f"[롯데홈쇼핑] 출고지 자동 조회: {sn}")
+      # 배송정책 조회
+      if not creds.get("dlv_polc_no"):
+        policies = await client.search_delivery_policies()
+        pol_data = policies.get("data", {})
+        pol_result = pol_data.get("Result", pol_data)
+        pol_list = pol_result.get("DlvPolcList", pol_result.get("DlvPolcInfo", {}))
+        pol_items = pol_list.get("DlvPolcInfo", []) if isinstance(pol_list, dict) else pol_list
+        if isinstance(pol_items, dict):
+          pol_items = [pol_items]
+        if isinstance(pol_items, list) and pol_items:
+          creds["dlv_polc_no"] = pol_items[0].get("dlv_polc_no", "")
+          logger.info(f"[롯데홈쇼핑] 배송정책 자동 조회: {creds['dlv_polc_no']}")
+    except Exception as e:
+      logger.warning(f"[롯데홈쇼핑] 배송지/정책 자동 조회 실패: {e}")
+
   goods_data = _transform_for_lottehome(product, category_id, creds)
   result = await client.register_goods(goods_data)
 

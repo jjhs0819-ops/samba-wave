@@ -596,30 +596,46 @@ class SmartStoreClient:
   async def validate_tags(self, tags: list[str], max_count: int = 10) -> list[dict[str, str]]:
     """태그를 태그사전 검색 + 제한태그 필터링하여 사용 가능한 태그만 반환.
 
-    1) 각 태그를 recommend-tags API로 정확 매치 확인
+    1) 각 태그를 recommend-tags API로 병렬 정확 매치 확인 (공유 HTTP 클라이언트)
     2) 매치된 태그를 restricted-tags API로 제한 여부 확인
     3) 둘 다 통과한 태그만 max_count개까지 반환
     """
-    # 1단계: 태그사전 매치
-    matched_tags: list[dict[str, str]] = []
-    for tag in tags:
-      if len(matched_tags) >= max_count * 2:
-        break
-      results = await self.search_tags(tag)
-      matched = None
-      for r in results:
-        if r.get("text") == tag or r.get("tag") == tag:
-          matched = r
-          break
-      if matched:
-        matched_tags.append({
-          "code": str(matched.get("code", 0)),
-          "text": matched.get("text") or matched.get("tag") or tag,
-        })
-      else:
+    import asyncio
+
+    token = await self._ensure_token()
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    # 1단계: 태그사전 병렬 매치 (HTTP 클라이언트 1개 공유)
+    async def _match_one(client: httpx.AsyncClient, tag: str) -> dict[str, str] | None:
+      try:
+        resp = await client.get(
+          f"{self.BASE_URL}/v2/tags/recommend-tags",
+          headers=headers, params={"keyword": tag},
+        )
+        if resp.status_code != 200:
+          return None
+        data = resp.json()
+        results = data if isinstance(data, list) else (
+          data.get("tags") or data.get("contents") or data.get("data") or []
+        )
+        for r in results:
+          if r.get("text") == tag or r.get("tag") == tag:
+            return {
+              "code": str(r.get("code", 0)),
+              "text": r.get("text") or r.get("tag") or tag,
+            }
         logger.info(f"[스마트스토어] 태그사전 미등록: {tag}")
+      except Exception as e:
+        logger.warning(f"[스마트스토어] 태그 검색 실패: {tag} — {e}")
+      return None
+
+    search_tags = tags[:max_count * 2]
+    async with httpx.AsyncClient(timeout=15) as client:
+      match_results = await asyncio.gather(*[_match_one(client, t) for t in search_tags])
+    matched_tags = [r for r in match_results if r is not None]
 
     if not matched_tags:
+      logger.warning(f"[스마트스토어] 태그사전 매치 0건 (후보 {len(search_tags)}개)")
       return []
 
     # 2단계: 제한 태그 필터링
