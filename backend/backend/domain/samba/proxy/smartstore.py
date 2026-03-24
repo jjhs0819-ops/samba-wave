@@ -634,7 +634,7 @@ class SmartStoreClient:
         return None
 
     search_tags = tags[:max_count * 2]
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
       match_results = await asyncio.gather(*[_match_one(client, t) for t in search_tags])
     matched_tags = [r for r in match_results if r is not None]
 
