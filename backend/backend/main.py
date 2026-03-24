@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from pathlib import Path
@@ -26,6 +27,7 @@ from backend.api.v1.routers.samba.warroom import router as samba_warroom_router
 from backend.api.v1.routers.samba.user import router as samba_user_router
 from backend.api.v1.routers.samba.ai_sourcing import router as samba_ai_sourcing_router
 from backend.api.v1.routers.samba.tenant import router as samba_tenant_router
+from backend.api.v1.routers.samba.job import router as samba_job_router
 from backend.middleware.error_handler import register_exception_handlers
 
 
@@ -38,6 +40,11 @@ async def lifespan(app: FastAPI):
     # 캐시 서비스 연결 (Redis 또는 인메모리 폴백)
     from backend.domain.samba.cache import cache
     await cache.connect()
+
+    # 백그라운드 잡 워커 시작
+    from backend.domain.samba.job.worker import JobWorker
+    worker = JobWorker()
+    worker_task = asyncio.create_task(worker.start())
 
     # Startup validation
     if settings.mock_auth_enabled and settings.environment == "production":
@@ -55,7 +62,13 @@ async def lifespan(app: FastAPI):
         )
 
     yield
-    # Shutdown (no cleanup needed for now)
+    # Shutdown — 잡 워커 정리
+    worker.stop()
+    worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
 
 
 def create_application() -> FastAPI:
@@ -106,6 +119,7 @@ def create_application() -> FastAPI:
     app.include_router(samba_user_router, prefix="/api/v1/samba")
     app.include_router(samba_ai_sourcing_router, prefix="/api/v1/samba")
     app.include_router(samba_tenant_router, prefix="/api/v1/samba")
+    app.include_router(samba_job_router, prefix="/api/v1/samba")
 
     # 로컬 이미지 저장 디렉토리 서빙 (R2 미설정 시 사용)
     static_dir = Path(__file__).resolve().parent / "static" / "images"
