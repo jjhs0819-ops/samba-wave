@@ -605,8 +605,8 @@ class SmartStoreClient:
     token = await self._ensure_token()
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    # 1단계: 태그사전 병렬 매치 (동시 3개 제한 — 네이버 API 과부하 방지)
-    sem = asyncio.Semaphore(3)
+    # 1단계: 태그사전 순차 매치 (동시 1개 — 네이버 API 안정성 확보)
+    sem = asyncio.Semaphore(1)
 
     async def _match_one(client: httpx.AsyncClient, tag: str) -> dict[str, str] | None:
       async with sem:
@@ -634,7 +634,7 @@ class SmartStoreClient:
         return None
 
     search_tags = tags[:max_count * 2]
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
       match_results = await asyncio.gather(*[_match_one(client, t) for t in search_tags])
     matched_tags = [r for r in match_results if r is not None]
 
