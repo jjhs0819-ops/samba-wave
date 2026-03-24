@@ -160,7 +160,23 @@ async def refresh_product(product: Any, idx: int = 0, total: int = 0) -> Refresh
     """소싱처에서 최신 가격/재고 재수집."""
     source_site = getattr(product, "source_site", "")
 
-    # 소싱처별 파서 선택
+    # 소싱처 플러그인 우선 호출
+    from backend.domain.samba.plugins import SOURCING_PLUGINS
+
+    plugin = SOURCING_PLUGINS.get(source_site)
+    if plugin:
+        product._refresh_idx = idx
+        product._refresh_total = total
+        try:
+            return await plugin.refresh(product)
+        except Exception as e:
+            logger.error(f"[refresher] {product.id} ({source_site}) 플러그인 갱신 실패: {e}")
+            return RefreshResult(
+                product_id=product.id,
+                error=str(e),
+            )
+
+    # 레거시 폴백 — 소싱처별 파서 선택
     parser = SITE_PARSERS.get(source_site)
     if not parser:
         return RefreshResult(
