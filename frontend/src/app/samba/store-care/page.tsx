@@ -126,7 +126,7 @@ export default function StoreCare() {
             <div style={card}>
               <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>활성 스케줄</div>
               <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#4C9AFF' }}>{activeSchedules}개</div>
-              <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginTop: '2px' }}>전체 {DUMMY_SCHEDULES.length}개</div>
+              <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginTop: '2px' }}>전체 {schedules.length}개</div>
             </div>
             <div style={card}>
               <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>연결 마켓</div>
@@ -209,7 +209,7 @@ export default function StoreCare() {
                   </tr>
                 </thead>
                 <tbody>
-                  {DUMMY_SCHEDULES.map(s => (
+                  {schedules.map(s => (
                     <tr key={s.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
                       <td style={{ padding: '10px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
