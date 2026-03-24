@@ -2393,8 +2393,8 @@ async def refresh_products(
 
     for r in results:
         if r.error:
-            # 에러 카운트 증가
-            product = await repo.get_async(r.product_id)
+            # 에러 카운트 증가 — product_map 활용 (N+1 제거)
+            product = product_map.get(r.product_id)
             if product:
                 await repo.update_async(
                     r.product_id,
@@ -2421,8 +2421,8 @@ async def refresh_products(
             )
             continue
 
-        # 상품 조회 (변동 여부와 관계없이 이력 기록 위해)
-        product = await repo.get_async(r.product_id)
+        # 상품 조회 — product_map 활용 (N+1 제거)
+        product = product_map.get(r.product_id)
         if not product:
             continue
 

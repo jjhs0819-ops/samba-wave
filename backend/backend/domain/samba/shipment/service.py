@@ -412,8 +412,13 @@ class SambaShipmentService:
           if refresh_result.new_sale_status:
             refresh_updates["sale_status"] = refresh_result.new_sale_status
             refresh_updates["is_sold_out"] = refresh_result.new_sale_status == "sold_out"
-          if refresh_result.new_images:
+          # 이미지 편집 이력 있으면 갱신 스킵 (추적삭제 복구 방지)
+          _ptags = product_row.tags or []
+          if refresh_result.new_images and "__img_edited__" not in _ptags and "__img_filtered__" not in _ptags:
             refresh_updates["images"] = refresh_result.new_images
+          # 상세이미지도 갱신 (이미지 편집 이력 없을 때만)
+          if refresh_result.new_detail_images and "__img_edited__" not in _ptags:
+            refresh_updates["detail_images"] = refresh_result.new_detail_images
           # 가격/재고 이력 스냅샷 기록
           snapshot: dict[str, Any] = {
             "date": datetime.now(UTC).isoformat(),
@@ -464,7 +469,9 @@ class SambaShipmentService:
     # refresh_status는 최종 shipment 업데이트에서 기록
 
     # 이미지/상세페이지 업데이트 필요 여부 판단
-    needs_image = not update_items or "image" in update_items or "description" in update_items
+    # 최초 전송(미등록 상품)이면 update_items와 무관하게 항상 상세페이지 생성
+    is_first_transmit = product_row.status != "registered" and not product_row.registered_accounts
+    needs_image = is_first_transmit or not update_items or "image" in update_items or "description" in update_items
     if not needs_image:
       product_dict["_skip_image_upload"] = True
     # 가격/재고만 수정 시 404 → POST 신규등록 차단 (중복 등록 방지)
@@ -535,6 +542,7 @@ class SambaShipmentService:
       'homeand': '홈앤쇼핑', 'hmall': 'HMALL', 'kream': 'KREAM',
       'ebay': 'eBay', 'lazada': 'Lazada', 'qoo10': 'Qoo10',
       'shopee': 'Shopee', 'shopify': 'Shopify', 'zoom': 'Zum(줌)',
+      'toss': '토스', 'rakuten': '라쿠텐', 'amazon': '아마존', 'buyma': '바이마',
     }
     if not product_row.applied_policy_id:
       logger.warning(f"[전송] 상품 {product_id} 정책 미설정 — 전송 차단")
@@ -577,9 +585,16 @@ class SambaShipmentService:
 
     # 정책이 있으면 계정 필터링, 없으면 사용자 선택 전체 유지
     if policy_market_data:
+      # 배치 조회 (N+1 → 1회)
+      from sqlmodel import select as _sel
+      from backend.domain.samba.account.model import SambaMarketAccount
+      _stmt = _sel(SambaMarketAccount).where(SambaMarketAccount.id.in_(target_account_ids))
+      _res = await self.session.execute(_stmt)
+      _account_map = {a.id: a for a in _res.scalars().all()}
+
       filtered_ids = []
       for aid in target_account_ids:
-        acc = await account_repo.get_async(aid)
+        acc = _account_map.get(aid)
         if not acc:
           continue
         policy_key = MARKET_TYPE_TO_POLICY_KEY.get(acc.market_type)
@@ -608,6 +623,13 @@ class SambaShipmentService:
     transmit_error: dict[str, str] = {}
     update_mode_accounts: set[str] = set()  # PATCH 모드였던 계정 (실패해도 등록정보 보존)
 
+    # 전송 대상 계정 배치 조회 (N+1 → 1회)
+    from sqlmodel import select as _sel2
+    from backend.domain.samba.account.model import SambaMarketAccount as _SMA
+    _stmt2 = _sel2(_SMA).where(_SMA.id.in_(target_account_ids))
+    _res2 = await self.session.execute(_stmt2)
+    _dispatch_account_map = {a.id: a for a in _res2.scalars().all()}
+
     # 계정별 전송을 병렬 코루틴으로 실행
     import math
 
@@ -615,7 +637,7 @@ class SambaShipmentService:
       """단일 계정 전송 — 결과 dict 반환."""
       res: dict[str, Any] = {"account_id": account_id, "status": "failed", "error": "", "product_nos": {}, "sent_snapshot": None, "is_update": False, "clear_nos": []}
       try:
-        account = await account_repo.get_async(account_id)
+        account = _dispatch_account_map.get(account_id)
         if not account:
           res["error"] = "계정을 찾을 수 없습니다."
           return res
@@ -952,10 +974,10 @@ class SambaShipmentService:
     policy_id = product.get("applied_policy_id")
     top_img = ""
     bottom_img = ""
-    # 이미지 포함 설정 (기본값: 상단/대표/추가/하단만 포함, 상세이미지 제외)
+    # 이미지 포함 설정 (기본값: 상단/대표/추가/상세/하단 포함)
     img_checks: dict[str, bool] = {
       "topImg": True, "main": True, "sub": True,
-      "title": False, "option": False, "detail": False, "bottomImg": True,
+      "title": False, "option": False, "detail": True, "bottomImg": True,
     }
     img_order: list[str] = ["topImg", "main", "sub", "title", "option", "detail", "bottomImg"]
 
@@ -1038,13 +1060,13 @@ class SambaShipmentService:
 
     result: dict[str, str] = {}
 
-    # 대상 계정의 마켓 타입 수집
-    account_repo = SambaMarketAccountRepository(self.session)
-    market_types = set()
-    for aid in target_account_ids:
-      acc = await account_repo.get_async(aid)
-      if acc:
-        market_types.add(acc.market_type)
+    # 대상 계정의 마켓 타입 배치 조회 (N+1 → 1회)
+    from sqlmodel import select as _sel_cat
+    from backend.domain.samba.account.model import SambaMarketAccount as _SMA_cat
+    _stmt_cat = _sel_cat(_SMA_cat).where(_SMA_cat.id.in_(target_account_ids))
+    _res_cat = await self.session.execute(_stmt_cat)
+    _cat_accounts = _res_cat.scalars().all()
+    market_types = {a.market_type for a in _cat_accounts}
 
     # cat2 코드맵이 있는 모든 마켓에서 경로 → 숫자 코드 변환 시도
     code_required_markets = market_types  # 전체 대상 마켓
@@ -1103,9 +1125,15 @@ class SambaShipmentService:
 
     # 재전송
     await self.repo.update_async(shipment_id, status="transmitting")
-    account_repo = SambaMarketAccountRepository(self.session)
     new_result = dict(old_result)
     new_errors = dict(old_errors)
+
+    # 실패 계정 배치 조회 (N+1 → 1회)
+    from sqlmodel import select as _sel_rt
+    from backend.domain.samba.account.model import SambaMarketAccount as _SMA_rt
+    _stmt_rt = _sel_rt(_SMA_rt).where(_SMA_rt.id.in_(failed_accounts))
+    _res_rt = await self.session.execute(_stmt_rt)
+    _rt_account_map = {a.id: a for a in _res_rt.scalars().all()}
 
     # 카테고리 매핑 재조회
     raw_category = product_row.category or ""
@@ -1117,7 +1145,7 @@ class SambaShipmentService:
 
     for account_id in failed_accounts:
       try:
-        account = await account_repo.get_async(account_id)
+        account = _rt_account_map.get(account_id)
         if not account:
           continue
         category_id = mapped_categories.get(account.market_type, "")
@@ -1166,7 +1194,13 @@ class SambaShipmentService:
     from backend.domain.samba.shipment.dispatcher import delete_from_market
 
     product_repo = SambaCollectedProductRepository(self.session)
-    account_repo = SambaMarketAccountRepository(self.session)
+
+    # 대상 계정 배치 조회 (N+1 → 1회)
+    from sqlmodel import select as _sel_del
+    from backend.domain.samba.account.model import SambaMarketAccount as _SMA_del
+    _stmt_del = _sel_del(_SMA_del).where(_SMA_del.id.in_(target_account_ids))
+    _res_del = await self.session.execute(_stmt_del)
+    _del_account_map = {a.id: a for a in _res_del.scalars().all()}
 
     results: list[dict[str, Any]] = []
 
@@ -1186,7 +1220,7 @@ class SambaShipmentService:
         if account_id not in reg_accounts:
           continue
 
-        account = await account_repo.get_async(account_id)
+        account = _del_account_map.get(account_id)
         if not account:
           delete_results[account_id] = "계정 없음"
           continue
