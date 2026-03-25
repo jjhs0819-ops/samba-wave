@@ -1080,8 +1080,12 @@ async def collect_by_url(
                         await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
 
-                    _raw_cost = detail.get("bestBenefitPrice")
-                    new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                    # 최대혜택가 체크 시 bestBenefitPrice, 미체크 시 salePrice
+                    if use_max_discount:
+                        _raw_cost = detail.get("bestBenefitPrice")
+                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                    else:
+                        new_cost = detail.get("salePrice") or 0
 
                     raw_cat = detail.get("category", "") or ""
                     cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
@@ -2011,9 +2015,12 @@ async def collect_by_filter(
                         await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
 
-                    # 원가 = bestBenefitPrice (갱신과 동일 로직)
-                    _raw_cost = detail.get("bestBenefitPrice")
-                    new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                    # 최대혜택가 체크 시 bestBenefitPrice, 미체크 시 salePrice
+                    if _use_max_discount:
+                        _raw_cost = detail.get("bestBenefitPrice")
+                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                    else:
+                        new_cost = detail.get("salePrice") or 0
 
                     raw_cat = detail.get("category", "") or ""
                     cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []

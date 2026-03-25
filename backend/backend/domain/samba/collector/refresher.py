@@ -21,18 +21,26 @@ CONCURRENCY_PER_SITE = 5
 # 소싱처별 동시 요청 수 (개별 설정)
 SITE_CONCURRENCY: dict[str, int] = {
     "MUSINSA": 1,
+    "SSG": 1,
+    "LOTTEON": 2,
 }
 # 소싱처별 기본 인터벌 (초)
 SITE_BASE_INTERVAL: dict[str, float] = {
     "MUSINSA": 0.0,
+    "SSG": 1.0,
+    "LOTTEON": 0.5,
 }
 # 소싱처별 최소 인터벌 (초)
 SITE_MIN_INTERVAL: dict[str, float] = {
     "MUSINSA": 0.0,
+    "SSG": 0.5,
+    "LOTTEON": 0.3,
 }
 # 소싱처별 인터벌 복원 스텝 (성공 시 감소량)
 SITE_INTERVAL_STEP: dict[str, float] = {
     "MUSINSA": 0.2,
+    "SSG": 0.5,
+    "LOTTEON": 0.3,
 }
 # KREAM 확장앱 대기 타임아웃 (초)
 KREAM_TIMEOUT = 90

@@ -647,7 +647,7 @@ export default function OrdersPage() {
               <option key={type} value={type}>{name}</option>
             ))}
           </select>
-          <select style={{ ...inputStyle, width: '110px' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체사이트보기</option>{['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','GrandStage','OKmall','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}</select>
+          <select style={{ ...inputStyle, width: '110px' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체사이트보기</option>{['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','GrandStage','OKmall','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}</select>
           <select style={{ ...inputStyle, width: '112px' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
             <option value="">마켓상태 보기</option>
             {MARKET_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}

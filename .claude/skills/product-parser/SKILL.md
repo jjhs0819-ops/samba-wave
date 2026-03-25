@@ -1,6 +1,6 @@
 ---
 name: product-parser
-description: 소싱처 상품 수집·파싱·정규화 스킬. 쇼핑몰(무신사/KREAM/ABCmart/이랜드몰/올리브영 등)에서 상품 정보를 긁어오거나, 긁어온 데이터의 품질 문제를 다룰 때 사용. 핵심 트리거: ① 소싱사이트 이름 + 수집/이미지/옵션/재고/가격 관련 문제 ② 고시정보 빈값·기본값('상세 이미지 참조') 문제 — 스마트스토어 등록 중 발견되더라도 수집 데이터 문제면 이 스킬 사용 ③ 새 소싱처 수집기 개발 ④ 상세페이지 이미지 미수집 ⑤ background.js·refresher 수집 로직 수정. 제외: API 인증, 대시보드, 주문관리, DB 스키마, 카테고리 맵핑 UI.
+description: 소싱처 상품 수집·파싱·정규화 스킬. 쇼핑몰(무신사/KREAM/SSG/롯데ON/ABCmart/이랜드몰/올리브영 등)에서 상품 정보를 긁어오거나, 긁어온 데이터의 품질 문제를 다룰 때 사용. 핵심 트리거: ① 소싱사이트 이름 + 수집/이미지/옵션/재고/가격 관련 문제 ② 고시정보 빈값·기본값('상세 이미지 참조') 문제 — 스마트스토어 등록 중 발견되더라도 수집 데이터 문제면 이 스킬 사용 ③ 새 소싱처 수집기 개발 ④ 상세페이지 이미지 미수집 ⑤ background.js·refresher 수집 로직 수정. 제외: API 인증, 대시보드, 주문관리, DB 스키마, 카테고리 맵핑 UI.
 ---
 
 # Product Parser — 소싱처 상품 수집 & 마켓 등록 포맷 정돈
@@ -309,9 +309,10 @@ if check_id in exempt:
 
 **무신사 혜택가 5단계 계산 (10원 절사, 쿠폰 API 미사용):**
 ```
-⚠️ 로그인 필수 — 비로그인 수집은 차단됨. 로그인 상태에서는 쿠폰 API(_fetch_coupons)가
-   실제 적용 가능한 쿠폰을 반환하므로 bestBenefitPrice 계산에도 반영.
-   goodsPrice.couponPrice는 쿠폰 미반영인 경우가 있으므로 쿠폰 API 결과를 우선 사용.
+⚠️ 로그인 필수 — 비로그인 수집은 차단됨.
+   goodsPrice.couponPrice 기본 + 쿠폰 API(_fetch_coupons) 보충 병행.
+   goodsPrice에 미반영된 쿠폰(쿠폰받기형)을 쿠폰 API로 보충.
+   수집/갱신 모두 동일 호출 (refresh_only 분기 제거, 2026-03-24 최종 확정).
 
 1단계: 기본 판매가 선정
    raw_sale = immediateDiscountedPrice || salePrice
@@ -520,6 +521,30 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 
 ---
 
+## 소싱처별 수집 패턴 — SSG/롯데ON
+
+### SSG (신세계몰)
+- **프록시**: `proxy/ssg_sourcing.py` — SSGSourcingClient
+- **플러그인**: `plugins/sourcing/ssg.py` — site_name="SSG", concurrency=1, interval=1.0초
+- **URL 패턴**: `department.ssg.com/item/itemView.ssg?itemId={13자리}`
+- **검색**: `department.ssg.com/search.ssg?query={keyword}`
+- **가격**: originalPrice(정상가), salePrice(판매가), bestBenefitPrice(최대혜택가)
+- **최대혜택가**: 쿠폰+적립금 포함 최저가. maxDiscount 체크 시 cost=bestBenefitPrice, 미체크 시 cost=salePrice
+- **이미지 CDN**: `sitem.ssgcdn.com`
+- **주의**: robots.txt 엄격, 보수적 간격 필수
+
+### 롯데ON (LOTTEON)
+- **프록시**: `proxy/lotteon_sourcing.py` — LotteonSourcingClient
+- **플러그인**: `plugins/sourcing/lotteon.py` — site_name="LOTTEON", concurrency=2, interval=0.5초
+- **URL 패턴**: `lotteon.com/p/product/{LO+10자리}`
+- **검색**: `lotteon.com/search/search/search.ecn?q={keyword}`
+- **가격**: originalPrice, salePrice, bestBenefitPrice
+- **최대혜택가**: 쿠폰+L.POINT 포함 최저가. maxDiscount 동일 로직
+- **이미지 CDN**: `contents.lotteon.com`
+- **JSON-LD**: schema.org Product 마크업 우선 파싱, __NEXT_DATA__ 폴백
+
+---
+
 ## 알려진 이슈 & 해결 패턴
 
 ### KREAM 이미지 미수집
@@ -595,3 +620,4 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 | 2026-03-22 | 무배당발 수집 추가 — isPlusDelivery(무배+당발), isTodayReleaseGoods(비플러스 당발). API 검증 완료 | - |
 | 2026-03-23 | partnerDiscountOn 가드 제거 — False여도 사이트는 등급할인 적용. goodsPrice.memberDiscountRate 기준으로 변경 | - |
 | 2026-03-23 | GRADE_DISCOUNT_MAP에 블랙다이아몬드(4%) 추가. 회원 API(/api2/member/v1/me) 404 확인 | - |
+| 2026-03-24 | 쿠폰 API 복원 — goodsPrice.couponPrice + _fetch_coupons 병행. 수집/갱신 모두 동일 호출 (refresh_only 분기 제거). goodsPrice에 미반영된 쿠폰(쿠폰받기형)을 쿠폰 API로 보충 | - |

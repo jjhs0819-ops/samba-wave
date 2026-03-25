@@ -13,7 +13,7 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }>
   failed:       { bg: 'rgba(255,107,107,0.15)', text: '#FF6B6B', label: '실패' },
 }
 
-const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
+const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
 // 영문 market_type → 한글 정책 키 역매핑
 const MARKET_TYPE_TO_POLICY_KEY: Record<string, string> = {
@@ -23,6 +23,7 @@ const MARKET_TYPE_TO_POLICY_KEY: Record<string, string> = {
   'homeand': '홈앤쇼핑', 'hmall': 'HMALL', 'kream': 'KREAM',
   'ebay': 'eBay', 'lazada': 'Lazada', 'qoo10': 'Qoo10',
   'shopee': 'Shopee', 'shopify': 'Shopify', 'zoom': 'Zum(줌)',
+  'toss': '토스', 'rakuten': '라쿠텐', 'amazon': '아마존', 'buyma': '바이마', 'poison': '포이즌',
 }
 
 const inputStyle = {
@@ -243,8 +244,12 @@ export default function ShipmentsPage() {
 
     setTransmitting(true)
     const ts = () => new Date().toLocaleTimeString()
-    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg])
-    addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length}개`)
+    // 로그를 ref 배열로 관리 — spread O(n²) 방지
+    const logsRef: string[] = [...logMessages]
+    const pushLog = (msg: string) => { logsRef.push(msg) }
+    const flushLogs = () => setLogMessages([...logsRef])
+    pushLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length}개`)
+    flushLogs()
 
     try {
       const res = await shipmentApi.marketDelete(targetProducts, selectedAccounts)
@@ -254,20 +259,22 @@ export default function ShipmentsPage() {
         const prod = products.find(p => p.id === r.product_id)
         const prodName = prod?.name || r.product_id
         if (r.success_count > 0) {
-          addLog(`[${ts()}]   ${prodName}: ${r.success_count}개 마켓 삭제 성공`)
+          pushLog(`[${ts()}]   ${prodName}: ${r.success_count}개 마켓 삭제 성공`)
           totalSuccess += r.success_count
         }
         const fails = Object.entries(r.delete_results).filter(([, st]) => st !== 'success')
         for (const [aid, msg] of fails) {
           const acc = accounts.find(a => a.id === aid)
-          addLog(`[${ts()}]   ${prodName} → ${acc?.market_name || aid}: ${msg}`)
+          pushLog(`[${ts()}]   ${prodName} → ${acc?.market_name || aid}: ${msg}`)
           totalFail++
         }
       }
-      addLog(`[${ts()}] 마켓삭제 완료 — 성공 ${totalSuccess}건, 실패 ${totalFail}건`)
+      pushLog(`[${ts()}] 마켓삭제 완료 — 성공 ${totalSuccess}건, 실패 ${totalFail}건`)
+      flushLogs()
       await load()
     } catch (e) {
-      addLog(`[${ts()}] 마켓삭제 오류: ${e}`)
+      pushLog(`[${ts()}] 마켓삭제 오류: ${e}`)
+      flushLogs()
     }
     setTransmitting(false)
   }

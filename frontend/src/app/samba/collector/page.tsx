@@ -19,12 +19,14 @@ import { showAlert, showConfirm } from '@/components/samba/Modal'
 const SITES = [
   { id: 'MUSINSA', label: '무신사' },
   { id: 'KREAM', label: 'KREAM' },
+  { id: 'DANAWA', label: '다나와' },
   { id: 'FashionPlus', label: '패션플러스' },
   { id: 'Nike', label: 'Nike' },
   { id: 'Adidas', label: 'Adidas' },
   { id: 'ABCmart', label: 'ABC마트' },
   { id: 'GrandStage', label: '그랜드스테이지' },
   { id: 'OKmall', label: 'OKmall' },
+  { id: 'SSG', label: '신세계몰' },
   { id: 'LOTTEON', label: '롯데ON' },
   { id: 'GSShop', label: 'GSShop' },
   { id: 'ElandMall', label: '이랜드몰' },
@@ -34,12 +36,14 @@ const SITES = [
 const SITE_COLORS: Record<string, string> = {
   MUSINSA: '#4C9AFF',
   KREAM: '#51CF66',
+  DANAWA: '#FF922B',
   FashionPlus: '#CC5DE8',
   Nike: '#FF6B6B',
   Adidas: '#FFD93D',
   ABCmart: '#FF8C00',
   GrandStage: '#20C997',
   OKmall: '#F06595',
+  SSG: '#FF5A2E',
   LOTTEON: '#E10044',
   GSShop: '#6B5CE7',
   ElandMall: '#4ECDC4',
@@ -53,6 +57,12 @@ const SITE_OPTIONS: Record<string, { id: string; label: string }[]> = {
     { id: 'maxDiscount', label: '최대혜택가' },
   ],
   KREAM: [],
+  SSG: [
+    { id: 'maxDiscount', label: '최대혜택가' },
+  ],
+  LOTTEON: [
+    { id: 'maxDiscount', label: '최대혜택가' },
+  ],
 }
 
 function fmtDate(iso: string | undefined | null): string {
@@ -878,6 +888,11 @@ export default function CollectorPage() {
           fontSize: '0.8rem', color: '#888',
         }}>
           ※ 정책 우선순위: <span style={{ color: '#FF8C00' }}>[상품별 개별정책]</span> → <span style={{ color: '#FF8C00' }}>[카테고리 정책]</span> 순으로 적용됩니다
+          <span style={{ float: 'right', color: '#E5E5E5', fontWeight: 600 }}>
+            수집 <span style={{ color: '#FF8C00' }}>{filters.reduce((s, f) => s + ((f as unknown as Record<string, number>).collected_count ?? 0), 0).toLocaleString()}</span>
+            <span style={{ color: '#555' }}> / </span>
+            요청 <span style={{ color: '#FFB84D' }}>{filters.filter(f => !f.is_folder).reduce((s, f) => s + (f.requested_count ?? 0), 0).toLocaleString()}</span>
+          </span>
         </div>
 
         {/* 검색그룹 드릴다운 — 사이트 > 브랜드 > 카테고리 > 상세(링크/정책/스스브랜드/수집/요청/생성일) */}
@@ -910,12 +925,12 @@ export default function CollectorPage() {
             : allLeafInfos
           const brandMap = new Map<string, number>()
           brandLeaves.forEach(l => brandMap.set(l._brand, (brandMap.get(l._brand) || 0) + 1))
-          const brands = Array.from(brandMap.entries())
+          const brands = Array.from(brandMap.entries()).sort((a, b) => a[0].localeCompare(b[0], 'ko'))
           // 카테고리 그룹 (사이트+브랜드 교차 필터)
           let catLeaves = allLeafInfos
           if (drillSite) catLeaves = catLeaves.filter(l => l._siteId === drillSite)
           if (drillBrand) catLeaves = catLeaves.filter(l => l._brand === drillBrand)
-          const catGroups = (drillSite || drillBrand) ? catLeaves : []
+          const catGroups = (drillSite && drillBrand) ? catLeaves.sort((a, b) => a._category.localeCompare(b._category, 'ko')) : []
           // 선택된 그룹 상세
           const selectedFilter = drillGroup ? filters.find(fl => fl.id === drillGroup) : null
           const selectedCount = selectedFilter ? ((selectedFilter as unknown as Record<string, number>).collected_count ?? 0) : 0
@@ -937,12 +952,12 @@ export default function CollectorPage() {
             }}>
               {/* 헤더 */}
               <div style={{ display: 'flex', borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
-                {['사이트', '브랜드', '카테고리', '링크', '정책', '스스브랜드', '수집', '요청', '생성일/최근수집'].map((h, i) => (
+                {['사이트', '브랜드', '카테고리', '링크', '정책', '수집', '요청', '생성일/최근수집'].map((h, i) => (
                   <div key={h} style={{
                     flex: 1, minWidth: i < 3 ? '120px' : '80px', padding: '0.5rem 0.5rem',
                     fontSize: '0.72rem', fontWeight: 600,
                     color: (i === 0 && (drillEntry === 'site' || drillSite)) || (i === 1 && (drillEntry === 'brand' || drillBrand)) || (i === 2 && drillGroup) ? '#FF8C00' : '#888',
-                    borderRight: i < 8 ? '1px solid #2D2D2D' : 'none',
+                    borderRight: i < 7 ? '1px solid #2D2D2D' : 'none',
                     cursor: i < 3 ? 'pointer' : 'default',
                   }}
                   onClick={() => {
@@ -967,7 +982,7 @@ export default function CollectorPage() {
                         onMouseEnter={e => { if (drillSite !== s.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                         onMouseLeave={e => { if (drillSite !== s.id) e.currentTarget.style.background = 'transparent' }}
                       >
-                        {s.name}
+                        {s.source_site || s.name}
                         <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#555' }}>
                           {drillBrand
                             ? allLeafInfos.filter(l => l._siteId === s.id && l._brand === drillBrand).length
@@ -1006,15 +1021,45 @@ export default function CollectorPage() {
                   )) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>항목 없음</div>
                   ) : null}
                 </div>
-                {/* 4. 링크 */}
+                {/* 4. 링크 + 삭제 체크 */}
                 <div style={detColStyle}>
-                  {selectedFilter ? (selectedFilter.keyword ? (
-                    <a href={selectedFilter.keyword} target="_blank" rel="noopener noreferrer" style={{
-                      color: '#7EB5D0', fontSize: '0.7rem', wordBreak: 'break-all',
-                      textDecoration: 'underline', textUnderlineOffset: '2px',
-                    }}>{selectedFilter.keyword.replace(/https?:\/\/[^/]+/, '').slice(0, 60)}...</a>
-                  ) : <span style={{ color: '#555', fontSize: '0.75rem' }}>-</span>
-                  ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}
+                  {selectedFilter ? (() => {
+                    // 소싱 URL 결정: category_filter(저장된 URL) > 사이트별 검색URL 생성
+                    const storedUrl = (selectedFilter as Record<string, string>).category_filter || ''
+                    const kw = selectedFilter.keyword || ''
+                    const site = selectedFilter.source_site || ''
+                    const siteSearchUrls: Record<string, string> = {
+                      MUSINSA: 'https://www.musinsa.com/search/musinsa/integration?q=',
+                      KREAM: 'https://kream.co.kr/search?keyword=',
+                      ABCmart: 'https://abcmart.a-rt.com/search?q=',
+                    }
+                    // keyword가 이미 URL이면 그대로 사용
+                    const kwIsUrl = kw.startsWith('http://') || kw.startsWith('https://')
+                    const linkUrl = storedUrl || (kwIsUrl ? kw : (siteSearchUrls[site] ? siteSearchUrls[site] + encodeURIComponent(kw) : ''))
+                    return (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {linkUrl ? (
+                          <a href={linkUrl} target="_blank" rel="noopener noreferrer" style={{
+                            color: '#7EB5D0', fontSize: '0.7rem', wordBreak: 'break-all',
+                            textDecoration: 'underline', textUnderlineOffset: '2px', flex: 1,
+                          }}>{kw || linkUrl.replace(/https?:\/\/[^/]+/, '').slice(0, 40)}...</a>
+                        ) : <span style={{ color: '#555', fontSize: '0.75rem', flex: 1 }}>-</span>}
+                        <button
+                          onClick={async () => {
+                            if (!await showConfirm(`"${selectedFilter.name}" 그룹을 삭제하시겠습니까?`)) return
+                            await collectorApi.deleteFilter(selectedFilter.id)
+                            setDrillGroup(null)
+                            load(); loadTree()
+                          }}
+                          style={{
+                            background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)',
+                            color: '#FF6B6B', fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px',
+                            cursor: 'pointer', flexShrink: 0,
+                          }}
+                        >삭제</button>
+                      </div>
+                    )
+                  })() : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}
                 </div>
                 {/* 5. 정책 */}
                 <div style={detColStyle}>
@@ -1034,17 +1079,7 @@ export default function CollectorPage() {
                     </select>
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}
                 </div>
-                {/* 6. 스스브랜드 */}
-                <div style={detColStyle}>
-                  {selectedFilter ? (
-                    <span style={{ fontSize: '0.7rem', color: '#888' }}>
-                      {selectedFilter.ss_brand_name
-                        ? <>{selectedFilter.ss_brand_name}<span style={{ color: '#555' }}>({selectedFilter.ss_brand_id})</span></>
-                        : <span style={{ color: '#444' }}>자동</span>}
-                    </span>
-                  ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}
-                </div>
-                {/* 7. 수집 */}
+                {/* 6. 수집 */}
                 <div style={detColStyle}>
                   {selectedFilter ? (
                     <span onClick={() => handleGoToProducts(selectedFilter)} style={{
@@ -1465,10 +1500,10 @@ export default function CollectorPage() {
                   const entries = Object.entries(sourceMap)
                   if (entries.length === 0) return null
                   return (
-                    <div style={{ marginBottom: '14px', padding: '12px 14px', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px' }}>
+                    <div style={{ marginBottom: '14px', padding: '12px 14px', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', maxHeight: '300px', overflowY: 'auto' }}>
                       <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '8px', fontWeight: 600 }}>분석 근거 <span style={{ color: '#555', fontWeight: 400 }}>— 클릭하여 제외</span></div>
                       {entries.map(([src, data]) => (
-                        <div key={src} style={{ marginBottom: '6px', fontSize: '0.78rem', lineHeight: 1.8 }}>
+                        <div key={src} style={{ marginBottom: '6px', fontSize: '0.78rem', lineHeight: 1.8, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '2px' }}>
                           <span style={{ color: '#FFB84D', fontWeight: 600 }}>{src}</span>
                           <span style={{ color: '#666' }}> : </span>
                           {data.brands.map(brand => {
@@ -1721,7 +1756,7 @@ export default function CollectorPage() {
                     }}>다시 설정</button>
                     <button
                       onClick={async () => {
-                        const selected = aiResult.combinations.filter((c, i) => aiSelectedCombos.has(i) && !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`))
+                        const selected = aiResult.combinations.filter((c, i) => aiSelectedCombos.has(i) && !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`) && c.estimated_count >= aiMinCount)
                         if (selected.length === 0) return showAlert('조합을 선택해주세요', 'error')
                         const totalEst = selected.reduce((s, c) => s + c.estimated_count, 0)
                         const ok = await showConfirm(

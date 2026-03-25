@@ -10,7 +10,7 @@ const card = {
   borderRadius: '12px',
 }
 
-const SOURCE_SITES = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
+const SOURCE_SITES = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
 const ORDER_STATUSES = [
   { key: 'pending', label: '주문확인' },
