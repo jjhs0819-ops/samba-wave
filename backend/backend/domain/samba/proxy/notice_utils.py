@@ -333,12 +333,13 @@ def build_lotteon_notice(product: dict[str, Any]) -> dict[str, Any]:
   name = product.get("name", "")
   brand = product.get("brand", "")
 
+  as_phone = product.get("_as_phone", "")
   articles = [
     {"pdArtlCd": "0160", "pdArtlCnts": name},
     {"pdArtlCd": "0060", "pdArtlCnts": product.get("origin", "") or "상세페이지 참조"},
     {"pdArtlCd": "0070", "pdArtlCnts": product.get("manufacturer", "") or brand or "제조자 정보 없음"},
     {"pdArtlCd": "0080", "pdArtlCnts": "소비자 기본법에 따름"},
-    {"pdArtlCd": "0090", "pdArtlCnts": brand or "판매자 문의"},
+    {"pdArtlCd": "0090", "pdArtlCnts": as_phone or brand or "판매자 문의"},
   ]
 
   return {

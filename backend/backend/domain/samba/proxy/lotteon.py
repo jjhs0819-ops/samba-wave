@@ -231,6 +231,13 @@ class LotteonClient:
       base_url=self.ONPICK_URL,
     )
 
+  async def get_delivery_zones(self) -> dict[str, Any]:
+    """배송권역 그룹 목록 조회."""
+    return await self._call_api(
+      "GET",
+      "/v1/openapi/delivery/v1/zone/group/list",
+    )
+
   async def search_brand(self, keyword: str) -> dict[str, Any]:
     """브랜드 검색 (onpick-api 도메인)."""
     return await self._call_api(
@@ -261,6 +268,19 @@ class LotteonClient:
     images = (product.get("images") or [])[:10]
     sale_price = int(product.get("sale_price", 0))
     name = (product.get("name", "") or "")[:150]
+
+    # 할인율 적용 (계정 설정)
+    discount_rate = product.get("_discount_rate", 0)
+    if discount_rate:
+      sale_price = int(sale_price * (1 - discount_rate / 100))
+
+    # 재고 수량 오버라이드
+    default_stock = product.get("_stock_quantity", 0) or 999
+
+    # 반품/교환 배송비
+    return_fee = product.get("_return_fee", 0) or 0
+    exchange_fee = product.get("_exchange_fee", 0) or 0
+    jeju_fee = product.get("_jeju_fee", 0) or 0
 
     # 판매 시작/종료 일시 (현재~1년 후)
     now = datetime.now()
@@ -303,7 +323,7 @@ class LotteonClient:
     if options:
       for idx, opt in enumerate(options):
         opt_name = opt.get("name", "") or opt.get("size", "") or opt.get("value", "") or f"옵션{idx + 1}"
-        opt_stock = opt.get("stock", 999)
+        opt_stock = opt.get("stock", default_stock) or default_stock
         itm_lst.append({
           "eitmNo": f"OPT-{idx}",
           "dpYn": "Y",
@@ -321,7 +341,7 @@ class LotteonClient:
         "itmOptLst": [],
         "itmImgLst": itm_img_lst,
         "slPrc": sale_price,
-        "stkQty": 999,
+        "stkQty": default_stock,
       })
 
     detail_html = product.get("detail_html", "") or f"<p>{name}</p>"
@@ -348,7 +368,6 @@ class LotteonClient:
         # 출고지/배송비정책/회수지 번호 (거래처 사전 등록 필요)
         "owhpNo": product.get("owhp_no", ""),
         "dvCstPolNo": product.get("dv_cst_pol_no", ""),
-        "dvIslandCstPolNo": product.get("island_dv_cst_pol_no", "") or None,
         "rtrpNo": product.get("rtrp_no", ""),
         # 선물포장/메시지 여부
         "prstPckPsbYn": "N",
@@ -374,6 +393,11 @@ class LotteonClient:
         "cmbnDvPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
         "rtngPsbYn": "Y",
         "xchgPsbYn": "Y",
+        # 반품/교환 배송비 (0이면 필드 생략 — 정책번호 기본값 사용)
+        **({"rtngFee": return_fee} if return_fee else {}),
+        **({"xchgFee": exchange_fee} if exchange_fee else {}),
+        # 도서산간 추가배송비
+        **({"islandAddDlvFee": jeju_fee} if jeju_fee else {}),
         "stkMgtYn": "Y",
         "sitmYn": "Y" if options else "N",
         "itmLst": itm_lst,

@@ -17,6 +17,10 @@ class LotteonPlugin(MarketPlugin):
   policy_key = "롯데ON"
   required_fields = ["name", "sale_price"]
 
+  def _validate_category(self, category_id: str) -> str:
+    """롯데ON은 BC 접두사 카테고리 코드 허용 (BC41030100 형식)."""
+    return category_id or ""
+
   def transform(self, product: dict, category_id: str, **kwargs) -> dict:
     """상품 데이터 → 롯데ON API 포맷 변환."""
     from backend.domain.samba.proxy.lotteon import LotteonClient
@@ -124,9 +128,38 @@ class LotteonPlugin(MarketPlugin):
       except Exception as e:
         logger.warning(f"[롯데ON] 브랜드 검색 실패 (무시): {e}")
 
+    # 전시카테고리(FC...) 자동 조회
+    disp_cat_id = ""
+    try:
+      cat_result = await client.get_categories(cat_id=category_id)
+      items = cat_result.get("itemList") or []
+      if items:
+        d = items[0].get("data", {})
+        disp_list = d.get("disp_list", [])
+        if disp_list:
+          disp_cat_id = disp_list[0].get("disp_cat_id", "")
+      logger.info(f"[롯데ON] 전시카테고리 조회: {category_id} → {disp_cat_id}")
+    except Exception as e:
+      logger.warning(f"[롯데ON] 전시카테고리 조회 실패 (무시): {e}")
+
+    # 배송권역 그룹코드 자동 조회
+    dv_zn_grp_cd = ""
+    try:
+      zone_result = await client.get_delivery_zones()
+      zone_list = zone_result.get("data") or []
+      if isinstance(zone_list, list) and zone_list:
+        dv_zn_grp_cd = zone_list[0].get("dvZnGrpCd", "")
+      logger.info(f"[롯데ON] 배송권역 조회: dvZnGrpCd={dv_zn_grp_cd}")
+    except Exception as e:
+      logger.warning(f"[롯데ON] 배송권역 조회 실패 (무시): {e}")
+
     data = LotteonClient.transform_product(
-      product_copy, category_id, client.tr_grp_cd or "SR", client.tr_no
+      product_copy, category_id, client.tr_grp_cd or "SR", client.tr_no, disp_cat_id
     )
+
+    # 배송권역 그룹코드 주입
+    if dv_zn_grp_cd and data.get("spdLst"):
+      data["spdLst"][0]["dvZnGrpCd"] = dv_zn_grp_cd
 
     # ── 4. 등록 / 수정 ───────────────────────────────────────────────
     try:

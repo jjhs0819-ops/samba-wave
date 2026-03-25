@@ -650,7 +650,9 @@ class SambaShipmentService:
           logger.warning(f"[전송] 상품 {product_id} → {market_type} 카테고리 매핑 없음 (스킵)")
           return res
 
-        if market_type != "coupang" and not str(category_id).isdigit():
+        # 롯데ON은 BC 접두사 카테고리 코드 사용 (BC41030100 형식)
+        _lotteon_like = market_type in ("lotteon", "ssg")
+        if market_type != "coupang" and not _lotteon_like and not str(category_id).isdigit():
           res["error"] = f"최하단 카테고리 매핑 필요 (현재: {category_id})"
           logger.warning(f"[전송] 상품 {product_id} → {market_type} 최하단 카테고리 미매핑: '{category_id}' (스킵)")
           return res
