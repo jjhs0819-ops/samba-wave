@@ -719,16 +719,14 @@ export default function PoliciesPage() {
                   </div>
                 </>
               )}
-              {/* 스마트스토어 전용: 재고제한 */}
-              {marketPolicyTab === '스마트스토어' && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginTop: '0.5rem', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                    <span style={{ color: '#888', fontSize: '0.8125rem' }}>재고제한</span>
-                    <NumInput value={mp.maxStock || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, maxStock: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="개" />
-                    <span style={{ color: '#555', fontSize: '0.72rem' }}>0=무제한</span>
-                  </div>
+              {/* 전체 마켓 공통: 재고제한 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginTop: '0.5rem', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                  <span style={{ color: '#888', fontSize: '0.8125rem' }}>재고제한</span>
+                  <NumInput value={mp.maxStock || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, maxStock: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="개" />
+                  <span style={{ color: '#555', fontSize: '0.72rem' }}>0=무제한</span>
                 </div>
-              )}
+              </div>
               {/* GS샵 전용: MD 협의 마진율 */}
               {marketPolicyTab === 'GS샵' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
