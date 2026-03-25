@@ -926,6 +926,10 @@ async def collect_by_url(
             site = "MUSINSA"
         elif "kream.co.kr" in url:
             site = "KREAM"
+        elif "ssg.com" in url:
+            site = "SSG"
+        elif "lotteon.com" in url:
+            site = "LOTTEON"
         else:
             raise HTTPException(400, "지원하지 않는 URL입니다. source_site를 지정해주세요.")
 
@@ -1399,6 +1403,416 @@ async def collect_by_url(
                 collected = await svc.create_collected_product(kream_product_data)
                 return {"type": "single", "saved": 1, "product": collected}
 
+    # ── SSG 수집 ──
+    elif site == "SSG":
+        import re
+        from urllib.parse import urlparse, parse_qs
+        from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
+
+        parsed = urlparse(url)
+        is_search_url = "/search" in parsed.path or "query" in parsed.query
+
+        if is_search_url:
+            qs = parse_qs(parsed.query)
+            keyword = qs.get("query", [""])[0]
+            if not keyword:
+                raise HTTPException(400, "검색 URL에서 키워드를 찾을 수 없습니다")
+
+            use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
+
+            # 검색그룹 자동 생성
+            search_filter = await svc.create_filter({
+                "source_site": "SSG",
+                "name": keyword,
+                "keyword": url,
+                "requested_count": 100,
+            })
+            filter_id = search_filter.id
+
+            client = SSGSourcingClient()
+
+            # 기존 수집 수 확인
+            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            existing_count = await svc.product_repo.count_async(filters={"search_filter_id": filter_id})
+            remaining = max(0, 100 - existing_count)
+            if remaining <= 0:
+                return {"type": "search", "keyword": keyword, "filter_id": filter_id,
+                        "message": f"이미 {existing_count}개 수집됨", "saved": 0, "enriched": 0}
+
+            # 검색
+            import asyncio as _asyncio
+            all_items = []
+            max_pages = max(1, (remaining // 40) + 1)
+            for page in range(1, min(max_pages + 1, 11)):
+                try:
+                    items = await client.search_products(keyword=keyword, page=page, size=40)
+                    if not items:
+                        break
+                    all_items.extend(items)
+                    await _asyncio.sleep(_site_intervals.get("SSG", 1.0))
+                except Exception:
+                    break
+
+            if not all_items:
+                raise HTTPException(502, f"'{keyword}' 검색 결과가 없습니다")
+
+            # 중복 필터
+            candidate_ids = [str(item.get("siteProductId", item.get("goodsNo", ""))) for item in all_items]
+            existing_stmt = select(CPModel.site_product_id).where(
+                CPModel.source_site == "SSG",
+                CPModel.site_product_id.in_(candidate_ids),
+            )
+            existing_result = await session.execute(existing_stmt)
+            existing_ids = {row[0] for row in existing_result.all()}
+
+            targets = []
+            skipped_sold_out = 0
+            for item in all_items:
+                if len(targets) >= remaining:
+                    break
+                site_pid = str(item.get("siteProductId", item.get("goodsNo", "")))
+                if site_pid in existing_ids:
+                    continue
+                if item.get("isSoldOut", False):
+                    skipped_sold_out += 1
+                    continue
+                targets.append(site_pid)
+
+            # 상세 수집 + 배치 저장
+            saved = 0
+            _batch_buf: list[dict] = []
+            _BATCH_SIZE = 10
+
+            async def _flush_batch() -> int:
+                if not _batch_buf:
+                    return 0
+                cnt = await svc.bulk_create_products(list(_batch_buf))
+                _batch_buf.clear()
+                return cnt
+
+            for item_id in targets:
+                try:
+                    detail = await client.get_product_detail(item_id)
+                    if not detail or not detail.get("name"):
+                        await _asyncio.sleep(_site_intervals.get("SSG", 1.0))
+                        continue
+
+                    if use_max_discount:
+                        _raw_cost = detail.get("bestBenefitPrice")
+                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                    else:
+                        new_cost = detail.get("salePrice") or 0
+
+                    raw_cat = detail.get("category", "") or ""
+                    cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
+                    _sale_price = detail.get("salePrice", 0)
+                    _original_price = detail.get("originalPrice", 0)
+
+                    raw_detail_html = ""
+                    detail_imgs = detail.get("detailImages") or []
+                    if detail_imgs:
+                        raw_detail_html = "\n".join(
+                            f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                            for img in detail_imgs
+                        )
+
+                    product_data = _build_product_data(
+                        detail, item_id, filter_id, "SSG",
+                        new_cost, _sale_price, _original_price,
+                        raw_cat, cat_parts, raw_detail_html,
+                    )
+                    _batch_buf.append(svc.prepare_product_data(product_data))
+                    saved += 1
+                    if len(_batch_buf) >= _BATCH_SIZE:
+                        await _flush_batch()
+                except Exception as e:
+                    logger.warning(f"[SSG 수집 실패] {item_id}: {e}")
+                await _asyncio.sleep(_site_intervals.get("SSG", 1.0))
+
+            await _flush_batch()
+            await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
+
+            return {
+                "type": "search", "keyword": keyword, "filter_id": filter_id,
+                "total_found": len(all_items), "saved": saved, "enriched": saved,
+                "skipped_sold_out": skipped_sold_out,
+            }
+
+        else:
+            # 단일 상품 URL
+            match = re.search(r'itemId=(\d+)', url) or re.search(r'/item/(\d+)', url)
+            if not match:
+                raise HTTPException(400, "SSG 상품 URL에서 상품번호를 찾을 수 없습니다")
+            item_id = match.group(1)
+
+            client = SSGSourcingClient()
+            data = await client.get_product_detail(item_id)
+            if not data or not data.get("name"):
+                raise HTTPException(502, "SSG 상품 조회 실패")
+
+            initial_snapshot = {
+                "date": datetime.now(timezone.utc).isoformat(),
+                "sale_price": data.get("salePrice", 0),
+                "original_price": data.get("originalPrice", 0),
+                "options": data.get("options", []),
+            }
+            sale_status = data.get("saleStatus", "in_stock")
+            raw_detail_html = ""
+            detail_imgs = data.get("detailImages") or []
+            if detail_imgs:
+                raw_detail_html = "\n".join(
+                    f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                    for img in detail_imgs
+                )
+
+            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            existing_stmt = select(CPModel).where(
+                CPModel.source_site == "SSG", CPModel.site_product_id == item_id,
+            )
+            existing_row = (await session.execute(existing_stmt)).scalar_one_or_none()
+
+            product_data = {
+                "source_site": "SSG",
+                "site_product_id": item_id,
+                "name": data.get("name", ""),
+                "brand": data.get("brand", ""),
+                "original_price": data.get("originalPrice", 0),
+                "sale_price": data.get("salePrice", 0),
+                "cost": data.get("bestBenefitPrice") or None,
+                "images": data.get("images", []),
+                "detail_images": data.get("detailImages") or [],
+                "options": data.get("options", []),
+                "category": data.get("category", ""),
+                "category1": data.get("category1", ""),
+                "category2": data.get("category2", ""),
+                "category3": data.get("category3", ""),
+                "category4": data.get("category4", ""),
+                "detail_html": raw_detail_html,
+                "status": "collected",
+                "is_sold_out": sale_status == "sold_out",
+                "sale_status": sale_status,
+                "free_shipping": data.get("freeShipping", False),
+                "same_day_delivery": data.get("sameDayDelivery", False),
+                "price_history": [initial_snapshot],
+            }
+
+            if existing_row:
+                history = list(existing_row.price_history or [])
+                history.insert(0, initial_snapshot)
+                product_data["price_history"] = _trim_history(history)
+                if "tags" not in product_data or not product_data.get("tags"):
+                    product_data.pop("tags", None)
+                collected = await svc.update_collected_product(existing_row.id, product_data)
+                return {"type": "single", "saved": 1, "updated": True, "product": collected}
+            else:
+                collected = await svc.create_collected_product(product_data)
+                return {"type": "single", "saved": 1, "product": collected}
+
+    # ── 롯데ON 수집 ──
+    elif site == "LOTTEON":
+        import re
+        from urllib.parse import urlparse, parse_qs
+        from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
+
+        parsed = urlparse(url)
+        is_search_url = "/search/" in parsed.path or "q=" in parsed.query
+
+        if is_search_url:
+            qs = parse_qs(parsed.query)
+            keyword = qs.get("q", [""])[0]
+            if not keyword:
+                raise HTTPException(400, "검색 URL에서 키워드를 찾을 수 없습니다")
+
+            use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
+
+            # 검색그룹 자동 생성
+            search_filter = await svc.create_filter({
+                "source_site": "LOTTEON",
+                "name": keyword,
+                "keyword": url,
+                "requested_count": 100,
+            })
+            filter_id = search_filter.id
+
+            client = LotteonSourcingClient()
+
+            # 기존 수집 수 확인
+            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            existing_count = await svc.product_repo.count_async(filters={"search_filter_id": filter_id})
+            remaining = max(0, 100 - existing_count)
+            if remaining <= 0:
+                return {"type": "search", "keyword": keyword, "filter_id": filter_id,
+                        "message": f"이미 {existing_count}개 수집됨", "saved": 0, "enriched": 0}
+
+            # 검색
+            import asyncio as _asyncio
+            all_items = []
+            max_pages = max(1, (remaining // 40) + 1)
+            for page in range(1, min(max_pages + 1, 11)):
+                try:
+                    items = await client.search_products(keyword=keyword, page=page, size=40)
+                    if not items:
+                        break
+                    all_items.extend(items)
+                    await _asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
+                except Exception:
+                    break
+
+            if not all_items:
+                raise HTTPException(502, f"'{keyword}' 검색 결과가 없습니다")
+
+            # 중복 필터
+            candidate_ids = [str(item.get("siteProductId", item.get("goodsNo", ""))) for item in all_items]
+            existing_stmt = select(CPModel.site_product_id).where(
+                CPModel.source_site == "LOTTEON",
+                CPModel.site_product_id.in_(candidate_ids),
+            )
+            existing_result = await session.execute(existing_stmt)
+            existing_ids = {row[0] for row in existing_result.all()}
+
+            targets = []
+            skipped_sold_out = 0
+            for item in all_items:
+                if len(targets) >= remaining:
+                    break
+                site_pid = str(item.get("siteProductId", item.get("goodsNo", "")))
+                if site_pid in existing_ids:
+                    continue
+                if item.get("isSoldOut", False):
+                    skipped_sold_out += 1
+                    continue
+                targets.append(site_pid)
+
+            # 상세 수집 + 배치 저장
+            saved = 0
+            _batch_buf: list[dict] = []
+            _BATCH_SIZE = 10
+
+            async def _flush_batch() -> int:
+                if not _batch_buf:
+                    return 0
+                cnt = await svc.bulk_create_products(list(_batch_buf))
+                _batch_buf.clear()
+                return cnt
+
+            for item_id in targets:
+                try:
+                    detail = await client.get_product_detail(item_id)
+                    if not detail or not detail.get("name"):
+                        await _asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
+                        continue
+
+                    if use_max_discount:
+                        _raw_cost = detail.get("bestBenefitPrice")
+                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                    else:
+                        new_cost = detail.get("salePrice") or 0
+
+                    raw_cat = detail.get("category", "") or ""
+                    cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
+                    _sale_price = detail.get("salePrice", 0)
+                    _original_price = detail.get("originalPrice", 0)
+
+                    raw_detail_html = ""
+                    detail_imgs = detail.get("detailImages") or []
+                    if detail_imgs:
+                        raw_detail_html = "\n".join(
+                            f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                            for img in detail_imgs
+                        )
+
+                    product_data = _build_product_data(
+                        detail, item_id, filter_id, "LOTTEON",
+                        new_cost, _sale_price, _original_price,
+                        raw_cat, cat_parts, raw_detail_html,
+                    )
+                    _batch_buf.append(svc.prepare_product_data(product_data))
+                    saved += 1
+                    if len(_batch_buf) >= _BATCH_SIZE:
+                        await _flush_batch()
+                except Exception as e:
+                    logger.warning(f"[LOTTEON 수집 실패] {item_id}: {e}")
+                await _asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
+
+            await _flush_batch()
+            await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
+
+            return {
+                "type": "search", "keyword": keyword, "filter_id": filter_id,
+                "total_found": len(all_items), "saved": saved, "enriched": saved,
+                "skipped_sold_out": skipped_sold_out,
+            }
+
+        else:
+            # 단일 상품 URL
+            match = re.search(r'/product/(LO\d+)', url) or re.search(r'/product/(\d+)', url)
+            if not match:
+                raise HTTPException(400, "롯데ON 상품 URL에서 상품번호를 찾을 수 없습니다")
+            item_id = match.group(1)
+
+            client = LotteonSourcingClient()
+            data = await client.get_product_detail(item_id)
+            if not data or not data.get("name"):
+                raise HTTPException(502, "롯데ON 상품 조회 실패")
+
+            initial_snapshot = {
+                "date": datetime.now(timezone.utc).isoformat(),
+                "sale_price": data.get("salePrice", 0),
+                "original_price": data.get("originalPrice", 0),
+                "options": data.get("options", []),
+            }
+            sale_status = data.get("saleStatus", "in_stock")
+            raw_detail_html = ""
+            detail_imgs = data.get("detailImages") or []
+            if detail_imgs:
+                raw_detail_html = "\n".join(
+                    f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                    for img in detail_imgs
+                )
+
+            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            existing_stmt = select(CPModel).where(
+                CPModel.source_site == "LOTTEON", CPModel.site_product_id == item_id,
+            )
+            existing_row = (await session.execute(existing_stmt)).scalar_one_or_none()
+
+            product_data = {
+                "source_site": "LOTTEON",
+                "site_product_id": item_id,
+                "name": data.get("name", ""),
+                "brand": data.get("brand", ""),
+                "original_price": data.get("originalPrice", 0),
+                "sale_price": data.get("salePrice", 0),
+                "cost": data.get("bestBenefitPrice") or None,
+                "images": data.get("images", []),
+                "detail_images": data.get("detailImages") or [],
+                "options": data.get("options", []),
+                "category": data.get("category", ""),
+                "category1": data.get("category1", ""),
+                "category2": data.get("category2", ""),
+                "category3": data.get("category3", ""),
+                "category4": data.get("category4", ""),
+                "detail_html": raw_detail_html,
+                "status": "collected",
+                "is_sold_out": sale_status == "sold_out",
+                "sale_status": sale_status,
+                "free_shipping": data.get("freeShipping", False),
+                "same_day_delivery": data.get("sameDayDelivery", False),
+                "price_history": [initial_snapshot],
+            }
+
+            if existing_row:
+                history = list(existing_row.price_history or [])
+                history.insert(0, initial_snapshot)
+                product_data["price_history"] = _trim_history(history)
+                if "tags" not in product_data or not product_data.get("tags"):
+                    product_data.pop("tags", None)
+                collected = await svc.update_collected_product(existing_row.id, product_data)
+                return {"type": "single", "saved": 1, "updated": True, "product": collected}
+            else:
+                collected = await svc.create_collected_product(product_data)
+                return {"type": "single", "saved": 1, "product": collected}
+
     raise HTTPException(400, f"'{site}' 사이트 수집은 아직 지원하지 않습니다")
 
 
@@ -1412,6 +1826,8 @@ async def collect_by_filter(
     from fastapi.responses import StreamingResponse
     from backend.domain.samba.proxy.musinsa import MusinsaClient
     from backend.domain.samba.proxy.kream import KreamClient
+    from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
+    from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
 
     svc = _get_services(session)
     search_filter = await svc.filter_repo.get_async(filter_id)
@@ -1917,10 +2333,280 @@ async def collect_by_filter(
 
         return StreamingResponse(_wrap_stream(_stream_kream()), media_type="text/event-stream")
 
+    # ── SSG 수집 (collect-by-filter) ──
+    elif site == "SSG":
+        async def _stream_ssg():
+            import asyncio as _asyncio
+            from datetime import datetime, timezone
+
+            client = SSGSourcingClient()
+
+            # 요청 상품수 확인 + 기존 수집 수 차감
+            requested_count = search_filter.requested_count or 100
+            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            existing_count = await svc.product_repo.count_async(
+                filters={"search_filter_id": filter_id}
+            )
+            remaining = max(0, requested_count - existing_count)
+            if remaining <= 0:
+                yield _sse("done", {"saved": 0, "message": f"이미 {existing_count}개 수집됨 (요청: {requested_count}개)"})
+                return
+
+            # URL에서 옵션 추출
+            _use_max_discount = False
+            if keyword_or_url and "http" in keyword_or_url:
+                from urllib.parse import urlparse as _up, parse_qs as _pq
+                _qs = _pq(_up(keyword_or_url).query)
+                _use_max_discount = _qs.get("maxDiscount", [""])[0] == "1"
+
+            yield _sse("log", {"message": f"[SSG] '{keyword}' 검색 중... (목표 {remaining}개)"})
+
+            # 검색
+            all_items = []
+            max_pages = max(1, (remaining // 40) + 1)
+            for page in range(1, min(max_pages + 1, 11)):
+                try:
+                    items = await client.search_products(keyword=keyword, page=page, size=40)
+                    if not items:
+                        break
+                    all_items.extend(items)
+                    yield _sse("log", {"message": f"  페이지 {page}: {len(items)}개 발견"})
+                    await _asyncio.sleep(_site_intervals.get("SSG", 1.0))
+                except Exception as e:
+                    yield _sse("log", {"message": f"  페이지 {page} 검색 실패: {str(e)[:50]}"})
+                    break
+
+            if not all_items:
+                yield _sse("done", {"saved": 0, "message": "검색 결과가 없습니다"})
+                return
+
+            # 중복 필터
+            candidate_ids = [str(item.get("siteProductId", item.get("goodsNo", ""))) for item in all_items]
+            existing_stmt = select(CPModel.site_product_id).where(
+                CPModel.source_site == "SSG",
+                CPModel.site_product_id.in_(candidate_ids),
+            )
+            existing_result = await session.execute(existing_stmt)
+            existing_ids = {row[0] for row in existing_result.all()}
+
+            targets = []
+            skipped_sold_out = 0
+            for item in all_items:
+                if len(targets) >= remaining:
+                    break
+                site_pid = str(item.get("siteProductId", item.get("goodsNo", "")))
+                if site_pid in existing_ids:
+                    continue
+                if item.get("isSoldOut", False):
+                    skipped_sold_out += 1
+                    continue
+                targets.append(site_pid)
+
+            yield _sse("log", {"message": f"총 {len(all_items)}개 중 {len(targets)}개 수집 대상 (중복 {len(existing_ids)}개, 품절 {skipped_sold_out}개 제외)"})
+
+            # 상세 수집 + 배치 저장
+            saved = 0
+            _batch_buf: list[dict] = []
+            _BATCH_SIZE = 10
+
+            async def _flush_batch_ssg() -> int:
+                if not _batch_buf:
+                    return 0
+                cnt = await svc.bulk_create_products(list(_batch_buf))
+                _batch_buf.clear()
+                return cnt
+
+            for idx, item_id in enumerate(targets):
+                try:
+                    detail = await client.get_product_detail(item_id)
+                    if not detail or not detail.get("name"):
+                        yield _sse("log", {"message": f"  [{idx+1}/{len(targets)}] #{item_id} — 상세 없음"})
+                        await _asyncio.sleep(_site_intervals.get("SSG", 1.0))
+                        continue
+
+                    if _use_max_discount:
+                        _raw_cost = detail.get("bestBenefitPrice")
+                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                    else:
+                        new_cost = detail.get("salePrice") or 0
+
+                    raw_cat = detail.get("category", "") or ""
+                    cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
+                    _sale_price = detail.get("salePrice", 0)
+                    _original_price = detail.get("originalPrice", 0)
+
+                    raw_detail_html = ""
+                    detail_imgs = detail.get("detailImages") or []
+                    if detail_imgs:
+                        raw_detail_html = "\n".join(
+                            f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                            for img in detail_imgs
+                        )
+
+                    product_data = _build_product_data(
+                        detail, item_id, filter_id, "SSG",
+                        new_cost, _sale_price, _original_price,
+                        raw_cat, cat_parts, raw_detail_html,
+                    )
+                    _batch_buf.append(svc.prepare_product_data(product_data))
+                    saved += 1
+                    yield _sse("log", {"message": f"  [{idx+1}/{len(targets)}] {detail.get('name', '')[:30]} — 수집 완료"})
+                    if len(_batch_buf) >= _BATCH_SIZE:
+                        await _flush_batch_ssg()
+                except Exception as e:
+                    yield _sse("log", {"message": f"  [{idx+1}/{len(targets)}] #{item_id} — 실패: {str(e)[:50]}"})
+                await _asyncio.sleep(_site_intervals.get("SSG", 1.0))
+
+            await _flush_batch_ssg()
+            await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
+            yield _sse("done", {
+                "saved": saved,
+                "total_found": len(all_items),
+                "skipped_sold_out": skipped_sold_out,
+                "skipped_duplicates": len(existing_ids),
+            })
+
+        return StreamingResponse(_wrap_stream(_stream_ssg()), media_type="text/event-stream")
+
+    # ── 롯데ON 수집 (collect-by-filter) ──
+    elif site == "LOTTEON":
+        async def _stream_lotteon():
+            import asyncio as _asyncio
+            from datetime import datetime, timezone
+
+            client = LotteonSourcingClient()
+
+            # 요청 상품수 확인 + 기존 수집 수 차감
+            requested_count = search_filter.requested_count or 100
+            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            existing_count = await svc.product_repo.count_async(
+                filters={"search_filter_id": filter_id}
+            )
+            remaining = max(0, requested_count - existing_count)
+            if remaining <= 0:
+                yield _sse("done", {"saved": 0, "message": f"이미 {existing_count}개 수집됨 (요청: {requested_count}개)"})
+                return
+
+            # URL에서 옵션 추출
+            _use_max_discount = False
+            if keyword_or_url and "http" in keyword_or_url:
+                from urllib.parse import urlparse as _up, parse_qs as _pq
+                _qs = _pq(_up(keyword_or_url).query)
+                _use_max_discount = _qs.get("maxDiscount", [""])[0] == "1"
+
+            yield _sse("log", {"message": f"[LOTTEON] '{keyword}' 검색 중... (목표 {remaining}개)"})
+
+            # 검색
+            all_items = []
+            max_pages = max(1, (remaining // 40) + 1)
+            for page in range(1, min(max_pages + 1, 11)):
+                try:
+                    items = await client.search_products(keyword=keyword, page=page, size=40)
+                    if not items:
+                        break
+                    all_items.extend(items)
+                    yield _sse("log", {"message": f"  페이지 {page}: {len(items)}개 발견"})
+                    await _asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
+                except Exception as e:
+                    yield _sse("log", {"message": f"  페이지 {page} 검색 실패: {str(e)[:50]}"})
+                    break
+
+            if not all_items:
+                yield _sse("done", {"saved": 0, "message": "검색 결과가 없습니다"})
+                return
+
+            # 중복 필터
+            candidate_ids = [str(item.get("siteProductId", item.get("goodsNo", ""))) for item in all_items]
+            existing_stmt = select(CPModel.site_product_id).where(
+                CPModel.source_site == "LOTTEON",
+                CPModel.site_product_id.in_(candidate_ids),
+            )
+            existing_result = await session.execute(existing_stmt)
+            existing_ids = {row[0] for row in existing_result.all()}
+
+            targets = []
+            skipped_sold_out = 0
+            for item in all_items:
+                if len(targets) >= remaining:
+                    break
+                site_pid = str(item.get("siteProductId", item.get("goodsNo", "")))
+                if site_pid in existing_ids:
+                    continue
+                if item.get("isSoldOut", False):
+                    skipped_sold_out += 1
+                    continue
+                targets.append(site_pid)
+
+            yield _sse("log", {"message": f"총 {len(all_items)}개 중 {len(targets)}개 수집 대상 (중복 {len(existing_ids)}개, 품절 {skipped_sold_out}개 제외)"})
+
+            # 상세 수집 + 배치 저장
+            saved = 0
+            _batch_buf: list[dict] = []
+            _BATCH_SIZE = 10
+
+            async def _flush_batch_lotteon() -> int:
+                if not _batch_buf:
+                    return 0
+                cnt = await svc.bulk_create_products(list(_batch_buf))
+                _batch_buf.clear()
+                return cnt
+
+            for idx, item_id in enumerate(targets):
+                try:
+                    detail = await client.get_product_detail(item_id)
+                    if not detail or not detail.get("name"):
+                        yield _sse("log", {"message": f"  [{idx+1}/{len(targets)}] #{item_id} — 상세 없음"})
+                        await _asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
+                        continue
+
+                    if _use_max_discount:
+                        _raw_cost = detail.get("bestBenefitPrice")
+                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                    else:
+                        new_cost = detail.get("salePrice") or 0
+
+                    raw_cat = detail.get("category", "") or ""
+                    cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
+                    _sale_price = detail.get("salePrice", 0)
+                    _original_price = detail.get("originalPrice", 0)
+
+                    raw_detail_html = ""
+                    detail_imgs = detail.get("detailImages") or []
+                    if detail_imgs:
+                        raw_detail_html = "\n".join(
+                            f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                            for img in detail_imgs
+                        )
+
+                    product_data = _build_product_data(
+                        detail, item_id, filter_id, "LOTTEON",
+                        new_cost, _sale_price, _original_price,
+                        raw_cat, cat_parts, raw_detail_html,
+                    )
+                    _batch_buf.append(svc.prepare_product_data(product_data))
+                    saved += 1
+                    yield _sse("log", {"message": f"  [{idx+1}/{len(targets)}] {detail.get('name', '')[:30]} — 수집 완료"})
+                    if len(_batch_buf) >= _BATCH_SIZE:
+                        await _flush_batch_lotteon()
+                except Exception as e:
+                    yield _sse("log", {"message": f"  [{idx+1}/{len(targets)}] #{item_id} — 실패: {str(e)[:50]}"})
+                await _asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
+
+            await _flush_batch_lotteon()
+            await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
+            yield _sse("done", {
+                "saved": saved,
+                "total_found": len(all_items),
+                "skipped_sold_out": skipped_sold_out,
+                "skipped_duplicates": len(existing_ids),
+            })
+
+        return StreamingResponse(_wrap_stream(_stream_lotteon()), media_type="text/event-stream")
+
     # ── 패션플러스 / Nike / Adidas (백엔드 직접 API) ──
     DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas"}
     # ── 확장앱 기반 사이트 ──
-    EXTENSION_SITES = {"ABCmart", "GrandStage", "OKmall", "LOTTEON", "GSShop", "ElandMall", "SSF"}
+    EXTENSION_SITES = {"ABCmart", "GrandStage", "OKmall", "GSShop", "ElandMall", "SSF"}
 
     if site in DIRECT_API_SITES or site in EXTENSION_SITES:
         async def _stream_generic():
