@@ -60,19 +60,25 @@ class NikePlugin(SourcingPlugin):
 
     new_sale_price = fresh.get("sale_price")
     new_original_price = fresh.get("original_price")
+    new_options = fresh.get("options")  # 사이즈 목록
 
     old_sale_price = getattr(product, "sale_price", None)
     old_original_price = getattr(product, "original_price", None)
 
-    changed = (
+    price_changed = (
       new_sale_price is not None and new_sale_price != old_sale_price
       or new_original_price is not None and new_original_price != old_original_price
     )
+    # 재고 품절 감지: 사이즈 옵션이 비어있으면 품절
+    new_sale_status = "sold_out" if new_options == [] else "in_stock"
+    stock_changed = new_sale_status == "sold_out"
 
     return RefreshResult(
       product_id=product_id,
       new_sale_price=new_sale_price,
       new_original_price=new_original_price,
-      new_sale_status="in_stock",
-      changed=changed,
+      new_sale_status=new_sale_status,
+      new_options=new_options,
+      changed=price_changed,
+      stock_changed=stock_changed,
     )
