@@ -74,6 +74,14 @@ export const productApi = {
 
 // ── Orders ──
 
+export interface DashboardStats {
+  thisMonth: { count: number; sales: number; delivered: number; fulfillment: number }
+  lastMonth: { count: number; sales: number; delivered: number; fulfillment: number }
+  salesChange: number
+  weekly: { date: string; sales: number; count: number; delivered: number }[]
+  recentOrders: SambaOrder[]
+}
+
 export interface SambaOrder {
   id: string;
   order_number: string;
@@ -112,6 +120,7 @@ export const orderApi = {
     if (status) params.set("status", status);
     return request<SambaOrder[]>(`${SAMBA_PREFIX}/orders?${params}`);
   },
+  dashboardStats: () => request<DashboardStats>(`${SAMBA_PREFIX}/orders/dashboard-stats`),
   get: (id: string) => request<SambaOrder>(`${SAMBA_PREFIX}/orders/${id}`),
   search: (q: string) => request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/search?q=${encodeURIComponent(q)}`),
   create: (data: Partial<SambaOrder>) =>

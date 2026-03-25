@@ -40,6 +40,81 @@ async def list_orders(
     return await svc.list_orders(skip=skip, limit=limit, status=status)
 
 
+@router.get("/dashboard-stats")
+async def dashboard_stats(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """대시보드 집계 — DB에서 SUM/COUNT 후 결과만 반환 (빠름)."""
+    from sqlalchemy import select, func, case, and_, extract
+    from datetime import datetime, timedelta
+
+    now = datetime.utcnow()
+    this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if now.month == 1:
+        last_month_start = this_month_start.replace(year=now.year - 1, month=12)
+    else:
+        last_month_start = this_month_start.replace(month=now.month - 1)
+    week_ago = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # 금월 집계
+    this_month_q = select(
+        func.count().label('count'),
+        func.coalesce(func.sum(SambaOrder.sale_price), 0).label('sales'),
+        func.sum(case((SambaOrder.status == 'delivered', 1), else_=0)).label('delivered'),
+    ).where(SambaOrder.created_at >= this_month_start)
+    tm = (await session.execute(this_month_q)).one()
+
+    # 전월 집계
+    last_month_q = select(
+        func.count().label('count'),
+        func.coalesce(func.sum(SambaOrder.sale_price), 0).label('sales'),
+        func.sum(case((SambaOrder.status == 'delivered', 1), else_=0)).label('delivered'),
+    ).where(and_(SambaOrder.created_at >= last_month_start, SambaOrder.created_at < this_month_start))
+    lm = (await session.execute(last_month_q)).one()
+
+    # 최근 7일 일별 집계
+    daily_q = select(
+        func.date(SambaOrder.created_at).label('day'),
+        func.count().label('count'),
+        func.coalesce(func.sum(SambaOrder.sale_price), 0).label('sales'),
+        func.sum(case((SambaOrder.status == 'delivered', 1), else_=0)).label('delivered'),
+    ).where(SambaOrder.created_at >= week_ago).group_by(func.date(SambaOrder.created_at))
+    daily_rows = (await session.execute(daily_q)).all()
+    weekly = []
+    for i in range(7):
+        d = week_ago + timedelta(days=i)
+        day_str = d.strftime('%Y-%m-%d')
+        row = next((r for r in daily_rows if str(r.day) == day_str), None)
+        weekly.append({
+            'date': day_str,
+            'sales': float(row.sales) if row else 0,
+            'count': int(row.count) if row else 0,
+            'delivered': int(row.delivered) if row else 0,
+        })
+
+    # 최근 활동 5건
+    recent_q = select(SambaOrder).order_by(SambaOrder.created_at.desc()).limit(5)
+    recent = (await session.execute(recent_q)).scalars().all()
+
+    tm_fulfillment = round(int(tm.delivered or 0) / int(tm.count) * 100) if tm.count else 0
+    lm_fulfillment = round(int(lm.delivered or 0) / int(lm.count) * 100) if lm.count else 0
+    sales_change = round(((float(tm.sales) - float(lm.sales)) / float(lm.sales)) * 100, 1) if lm.sales else 0
+
+    return {
+        'thisMonth': {
+            'count': int(tm.count), 'sales': float(tm.sales),
+            'delivered': int(tm.delivered or 0), 'fulfillment': tm_fulfillment,
+        },
+        'lastMonth': {
+            'count': int(lm.count), 'sales': float(lm.sales),
+            'delivered': int(lm.delivered or 0), 'fulfillment': lm_fulfillment,
+        },
+        'salesChange': sales_change,
+        'weekly': weekly,
+        'recentOrders': [o.model_dump() for o in recent],
+    }
+
+
 @router.get("/search", response_model=list[SambaOrder])
 async def search_orders(
     q: str = Query(..., min_length=1),
