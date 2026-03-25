@@ -348,6 +348,7 @@ class LotteonClient:
         # 출고지/배송비정책/회수지 번호 (거래처 사전 등록 필요)
         "owhpNo": product.get("owhp_no", ""),
         "dvCstPolNo": product.get("dv_cst_pol_no", ""),
+        "islandDvCstPolNo": product.get("island_dv_cst_pol_no", "") or None,
         "rtrpNo": product.get("rtrp_no", ""),
         # 선물포장/메시지 여부
         "prstPckPsbYn": "N",
@@ -370,7 +371,7 @@ class LotteonClient:
         "dvPdTypCd": "GNRL",
         "sndBgtNday": 2,
         "dvMnsCd": "DPCL",
-        "cmbnDvPsbYn": "Y",
+        "cmbnDvPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
         "rtngPsbYn": "Y",
         "xchgPsbYn": "Y",
         "stkMgtYn": "Y",

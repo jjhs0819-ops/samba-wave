@@ -168,8 +168,10 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'storeId', label: '스토어 ID', type: 'text' },
     { name: 'apiKey', label: '롯데ON API key', type: 'text' },
     { name: 'dvCstPolNo', label: '배송정책번호', type: 'text', placeholder: '예: 3757145' },
+    { name: 'islandDvCstPolNo', label: '도서산간 배송정책번호', type: 'text', placeholder: '예: 3757146' },
     { name: 'owhpNo', label: '출고지번호', type: 'text', placeholder: '예: PLO3293317' },
     { name: 'rtrpNo', label: '회수지번호', type: 'text', placeholder: '예: PLO3293317' },
+    { name: 'cmbnDvPsbYn', label: '묶음배송', type: 'select', options: [{ value: 'Y', label: '가능' }, { value: 'N', label: '불가능' }] },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
   { key: '11st', label: '11번가', authField: 'apiKey', guideUrl: 'https://openapi.11st.co.kr/openapi/OpenApiServiceRegister.tmall', fields: [

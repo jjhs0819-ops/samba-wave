@@ -28,7 +28,6 @@ from backend.api.v1.routers.samba.user import router as samba_user_router
 from backend.api.v1.routers.samba.ai_sourcing import router as samba_ai_sourcing_router
 from backend.api.v1.routers.samba.tenant import router as samba_tenant_router
 from backend.api.v1.routers.samba.job import router as samba_job_router
-from backend.api.v1.routers.samba.cs_inquiry import router as samba_cs_inquiry_router
 from backend.api.v1.routers.samba.store_care import router as samba_store_care_router
 from backend.api.v1.routers.samba.wholesale import router as samba_wholesale_router
 from backend.api.v1.routers.samba.sns_posting import router as samba_sns_posting_router
@@ -124,7 +123,6 @@ def create_application() -> FastAPI:
     app.include_router(samba_ai_sourcing_router, prefix="/api/v1/samba")
     app.include_router(samba_tenant_router, prefix="/api/v1/samba")
     app.include_router(samba_job_router, prefix="/api/v1/samba")
-    app.include_router(samba_cs_inquiry_router, prefix="/api/v1/samba")
     app.include_router(samba_store_care_router, prefix="/api/v1/samba")
     app.include_router(samba_wholesale_router, prefix="/api/v1/samba")
     app.include_router(samba_sns_posting_router, prefix="/api/v1/samba")
