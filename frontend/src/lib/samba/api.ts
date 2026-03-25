@@ -604,6 +604,12 @@ export const proxyApi = {
   aligoRemain: () =>
     request<{ success: boolean; message: string; SMS_CNT?: number; LMS_CNT?: number; MMS_CNT?: number }>(
       `${SAMBA_PREFIX}/proxy/aligo/remain`, { method: 'POST' }),
+  sendSms: (receiver: string, message: string, title?: string) =>
+    request<{ success: boolean; message: string; msg_id?: string; msg_type?: string }>(
+      `${SAMBA_PREFIX}/proxy/aligo/send-sms`, { method: 'POST', body: JSON.stringify({ receiver, message, title: title || '' }) }),
+  sendKakao: (receiver: string, message: string, templateCode?: string, subject?: string) =>
+    request<{ success: boolean; message: string; msg_type?: string }>(
+      `${SAMBA_PREFIX}/proxy/aligo/send-kakao`, { method: 'POST', body: JSON.stringify({ receiver, message, template_code: templateCode || '', subject: subject || '' }) }),
   smartstoreAuthTest: () =>
     request<{ success: boolean; message: string; token_preview?: string }>(
       `${SAMBA_PREFIX}/proxy/smartstore/auth-test`, { method: 'POST' }),
@@ -806,6 +812,7 @@ export const contactApi = {
 export interface SambaReturn {
   id: string;
   order_id: string;
+  product_image?: string;
   type: string;
   reason?: string;
   description?: string;
@@ -813,6 +820,25 @@ export interface SambaReturn {
   requested_amount?: number;
   status: string;
   timeline?: { date: string; status: string; message: string }[];
+  product_name?: string;
+  customer_name?: string;
+  business_name?: string;
+  market?: string;
+  confirmed?: boolean;
+  order_date?: string;
+  customer_id?: string;
+  company?: string;
+  completion_detail?: string;
+  check_date?: string;
+  customer_phone?: string;
+  region?: string;
+  memo?: string;
+  return_link?: string;
+  return_request_date?: string;
+  product_location?: string;
+  return_source?: string;
+  customer_order_no?: string;
+  original_order_no?: string;
   created_at: string;
 }
 
@@ -848,6 +874,7 @@ export interface SambaCSInquiry {
   inquiry_type: string
   questioner?: string
   product_name?: string
+  product_image?: string
   product_link?: string
   market_link?: string
   original_link?: string
@@ -903,6 +930,14 @@ export const csInquiryApi = {
     request<{ deleted: number }>(`${SAMBA_PREFIX}/cs-inquiries/batch-delete`, { method: 'POST', body: JSON.stringify({ ids }) }),
   getStats: () => request<Record<string, unknown>>(`${SAMBA_PREFIX}/cs-inquiries/stats`),
   getTemplates: () => request<Record<string, CSReplyTemplate>>(`${SAMBA_PREFIX}/cs-inquiries/templates`),
+  syncFromMarkets: () =>
+    request<{ success: boolean; synced: number; errors: string[]; message: string }>(
+      `${SAMBA_PREFIX}/cs-inquiries/sync-from-markets`, { method: 'POST' }
+    ),
+  sendReply: (id: string, reply: string) =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/cs-inquiries/${id}/send-reply`, { method: 'POST', body: JSON.stringify({ reply }) }
+    ),
 }
 
 // ── Analytics ──
@@ -1149,7 +1184,7 @@ export interface SambaUser {
 export const userApi = {
   list: (skip = 0, limit = 50) =>
     request<SambaUser[]>(`${SAMBA_PREFIX}/users?skip=${skip}&limit=${limit}`),
-  create: (data: { email: string; password: string; name: string; is_admin?: boolean }) =>
+  create: (data: { email: string; password: string; name: string; invite_code?: string; is_admin?: boolean }) =>
     request<SambaUser>(`${SAMBA_PREFIX}/users`, { method: 'POST', body: JSON.stringify(data) }),
   update: (id: string, data: { name?: string; email?: string; password?: string; is_admin?: boolean; status?: string }) =>
     request<SambaUser>(`${SAMBA_PREFIX}/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

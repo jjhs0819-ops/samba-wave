@@ -112,8 +112,28 @@ export default function CSPage() {
 
   // 검색
   const handleSearch = () => {
+    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    setCsLogMessages(prev => [...prev, `[${now}] CS 문의 데이터 가져오는 중...`])
     setPage(0)
     setSearch(searchInput)
+    setTimeout(() => {
+      setCsLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] CS 문의 데이터 가져오기 완료`])
+    }, 500)
+  }
+
+  const handleFetchAllMarkets = async () => {
+    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    setCsLogMessages(prev => [...prev, `[${now}] 전체마켓 CS 문의 동기화 중...`])
+    try {
+      const result = await csInquiryApi.syncFromMarkets()
+      setCsLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] ${result.message}`])
+      // 데이터 리로드
+      setPage(0)
+      setSearch('')
+      setFilterMarket('')
+    } catch (err) {
+      setCsLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] 동기화 실패: ${err}`])
+    }
   }
 
   // 전체 선택
@@ -228,29 +248,32 @@ export default function CSPage() {
         </div>
       </div>
 
-      {/* 기간 버튼 + 계정 + 가져오기 + 날짜범위 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-        {PERIOD_BUTTONS.map(pb => (
-          <button key={pb.key} onClick={() => { setCsPeriod(pb.key) }}
-            style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: csPeriod === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csPeriod === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csPeriod === pb.key ? '#fff' : '#C5C5C5', cursor: 'pointer', whiteSpace: 'nowrap' }}
-          >{pb.label}</button>
-        ))}
-        <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
-        <select value={csSyncAccountId} onChange={e => setCsSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', minWidth: '140px' }}>
-          <option value="">전체 계정</option>
-        </select>
-        <button onClick={handleSearch} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
-        <button onClick={handleSearch} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>전체마켓 가져오기</button>
-        <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 6px' }} />
-        <input type="date" value={csCustomStart} onChange={e => setCsCustomStart(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
-        <button onClick={() => setCsStartLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: csStartLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csStartLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csStartLocked ? '#fff' : '#C5C5C5' }}>고정</button>
-        <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
-        <input type="date" value={csCustomEnd} onChange={e => setCsCustomEnd(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
-        <button onClick={() => setCsDateLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: csDateLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csDateLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csDateLocked ? '#fff' : '#C5C5C5' }}>고정</button>
+      {/* 기간 필터 바 */}
+      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.625rem 0.875rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'nowrap', alignItems: 'center' }}>
+          {PERIOD_BUTTONS.map(pb => (
+            <button key={pb.key} onClick={() => { setCsPeriod(pb.key) }}
+              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: csPeriod === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csPeriod === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csPeriod === pb.key ? '#fff' : '#C5C5C5', cursor: 'pointer', whiteSpace: 'nowrap' }}
+            >{pb.label}</button>
+          ))}
+          <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 4px' }} />
+          <select value={csSyncAccountId} onChange={e => setCsSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', minWidth: '140px' }}>
+            <option value="">전체 계정</option>
+          </select>
+          <button onClick={handleSearch} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
+          <button onClick={handleFetchAllMarkets} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>전체마켓 가져오기</button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+          <input type="date" value={csCustomStart} onChange={e => setCsCustomStart(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(csStartLocked ? { borderColor: '#C0392B', color: '#FF8C00' } : {}) }} />
+          <button onClick={() => setCsStartLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: csStartLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csStartLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csStartLocked ? '#fff' : '#C5C5C5' }}>고정</button>
+          <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
+          <input type="date" value={csCustomEnd} onChange={e => setCsCustomEnd(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
+          <button onClick={() => setCsDateLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: csDateLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csDateLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csDateLocked ? '#fff' : '#C5C5C5' }}>고정</button>
+        </div>
       </div>
 
-      {/* 검색 + 필터 드롭다운 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+      {/* 필터 바 */}
+      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
         <select style={{ ...inputStyle, width: '80px', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="customer">고객</option>
           <option value="order_number">주문번호</option>
@@ -292,7 +315,7 @@ export default function CSPage() {
             <option value="replied">답변완료</option>
           </select>
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
-          <select style={{ ...inputStyle, width: '88px' }} onClick={() => setSortDesc(!sortDesc)}>
+          <select style={{ ...inputStyle, width: '88px' }} onChange={() => setSortDesc(!sortDesc)}>
             <option>-- 정렬 --</option>
             <option>문의일자▲</option>
             <option>문의일자▼</option>
