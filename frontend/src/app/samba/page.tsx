@@ -21,6 +21,8 @@ export default function SambaDashboard() {
   const [loading, setLoading] = useState(true)
 
   const now = new Date()
+  const year = now.getFullYear()
+  const month = now.getMonth()
 
   const load = useCallback(async () => {
     setLoading(true)
