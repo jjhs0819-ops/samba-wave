@@ -26,8 +26,9 @@ export default function SambaDashboard() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    // 대시보드는 최근 주문 20건 + 상품 카운트만 (빠른 로딩)
     const [o, counts] = await Promise.all([
-      orderApi.list(0, 200).catch(() => []),
+      orderApi.list(0, 20).catch(() => []),
       collectorApi.productCounts().catch(() => ({ total: 0, registered: 0, policy_applied: 0, sold_out: 0 })),
     ])
     setOrders(o)
@@ -90,7 +91,7 @@ export default function SambaDashboard() {
   // 전월대비 증감
   const salesChange = lastMonthSales > 0 ? (((thisMonthSales - lastMonthSales) / lastMonthSales) * 100).toFixed(1) : '0'
 
-  if (loading) {
+  if (loading && orders.length === 0) {
     return <div style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</div>
   }
 
