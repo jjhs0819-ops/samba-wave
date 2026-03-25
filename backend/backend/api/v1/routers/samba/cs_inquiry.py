@@ -148,25 +148,45 @@ async def sync_cs_from_markets(
 
             client = SmartStoreClient(client_id, client_secret)
 
-            # 최근 30일 문의 조회
-            end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            start_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+            # 최근 30일 문의 조회 (KST 기준 ISO 8601)
+            from zoneinfo import ZoneInfo
+            kst = ZoneInfo("Asia/Seoul")
+            now_kst = datetime.now(kst)
+            # 종료일은 내일 자정 (당일 문의 포함)
+            end_date = (now_kst + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00.000+09:00")
+            start_date = (now_kst - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00.000+09:00")
 
             result = await client.get_inquiries(
-                search_start_date=start_date,
-                search_end_date=end_date,
+                from_date=start_date,
+                to_date=end_date,
                 size=100,
             )
 
-            data = result.get("data", {})
-            contents = data.get("contents", [])
-            if not contents:
-                contents = data.get("list", [])
-            if not contents and isinstance(data, list):
+            # 응답 구조 디버깅
+            logger.info(f"[CS동기화] API 응답 키: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+            data = result.get("data", result)
+            if isinstance(data, dict):
+                logger.info(f"[CS동기화] data 키: {list(data.keys())}")
+
+            # 다양한 응답 구조 대응
+            contents = []
+            if isinstance(data, dict):
+                contents = data.get("contents", [])
+                if not contents:
+                    contents = data.get("content", [])
+                if not contents:
+                    # 응답 자체가 페이지네이션 래핑된 경우
+                    for key in data:
+                        val = data[key]
+                        if isinstance(val, list) and val:
+                            contents = val
+                            logger.info(f"[CS동기화] '{key}' 키에서 {len(val)}건 발견")
+                            break
+            elif isinstance(data, list):
                 contents = data
 
             for item in contents:
-                inquiry_no = str(item.get("inquiryNo", item.get("id", "")))
+                inquiry_no = str(item.get("questionId", item.get("inquiryNo", item.get("id", ""))))
                 if not inquiry_no:
                     continue
 
@@ -180,36 +200,28 @@ async def sync_cs_from_markets(
                 if existing.scalar_one_or_none():
                     continue
 
-                # 문의 유형 매핑
-                inquiry_type = "general"
-                raw_type = item.get("inquiryType", item.get("type", ""))
-                if raw_type in ("PRODUCT", "product"):
-                    inquiry_type = "product_question"
-                elif raw_type in ("DELIVERY", "delivery"):
-                    inquiry_type = "delivery"
-                elif raw_type in ("EXCHANGE", "RETURN"):
-                    inquiry_type = "exchange_return"
+                # 문의 유형: 상품 Q&A
+                inquiry_type = "product_question"
 
-                # 답변 여부
+                # 답변 여부 (API 응답 필드: answered, answer)
                 is_answered = item.get("answered", False)
-                reply_content = item.get("answerContent", item.get("answer", ""))
-                answer_no = str(item.get("inquiryCommentNo", "")) if item.get("inquiryCommentNo") else None
+                reply_content = item.get("answer", "")
 
                 inquiry_data = {
                     "market": "스마트스토어",
                     "market_inquiry_no": inquiry_no,
-                    "market_answer_no": answer_no,
-                    "market_order_id": str(item.get("orderNo", item.get("orderId", ""))) or None,
+                    "market_answer_no": None,
+                    "market_order_id": None,
                     "account_name": account_name,
                     "inquiry_type": inquiry_type,
-                    "questioner": item.get("questioner", item.get("writerNickname", item.get("buyerNid", ""))),
-                    "product_name": item.get("productName", item.get("productTitle", "")),
-                    "product_image": item.get("productImageUrl", ""),
-                    "content": item.get("content", item.get("inquiryContent", item.get("question", ""))),
+                    "questioner": item.get("maskedWriterId", ""),
+                    "product_name": item.get("productName", ""),
+                    "product_image": "",
+                    "content": item.get("question", ""),
                     "reply": reply_content if is_answered else None,
                     "reply_status": "replied" if is_answered else "pending",
-                    "inquiry_date": item.get("inquiryDate", item.get("createDate", None)),
-                    "replied_at": item.get("answerDate", None) if is_answered else None,
+                    "inquiry_date": item.get("createDate", None),
+                    "replied_at": None,
                 }
 
                 await svc.create_inquiry(inquiry_data)

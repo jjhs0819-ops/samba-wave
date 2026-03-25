@@ -1521,33 +1521,35 @@ class SmartStoreClient:
 
   async def get_inquiries(
     self,
-    search_start_date: str = "",
-    search_end_date: str = "",
+    from_date: str = "",
+    to_date: str = "",
     page: int = 1,
     size: int = 100,
     answered: Optional[bool] = None,
   ) -> dict[str, Any]:
-    """고객 문의 목록 조회.
+    """고객 문의(Q&A) 목록 조회.
+
+    GET /v1/contents/qnas
 
     Args:
-      search_start_date: 조회 시작일 (yyyy-MM-dd)
-      search_end_date: 조회 종료일 (yyyy-MM-dd)
-      page: 페이지 번호
-      size: 페이지 크기
+      from_date: 조회 시작일시 (ISO 8601, 예: 2026-03-01T00:00:00.000+09:00)
+      to_date: 조회 종료일시 (ISO 8601)
+      page: 페이지 번호 (1부터)
+      size: 페이지 크기 (최대 100)
       answered: 답변 여부 (None=전체, True=답변완료, False=미답변)
     """
     params: dict[str, Any] = {
       "page": page,
       "size": size,
     }
-    if search_start_date:
-      params["searchStartDate"] = search_start_date
-    if search_end_date:
-      params["searchEndDate"] = search_end_date
+    if from_date:
+      params["fromDate"] = from_date
+    if to_date:
+      params["toDate"] = to_date
     if answered is not None:
       params["answered"] = str(answered).lower()
 
-    return await self._call_api("GET", "/v1/pay-merchant/inquiries", params=params)
+    return await self._call_api("GET", "/v1/contents/qnas", params=params)
 
   async def answer_inquiry(
     self,

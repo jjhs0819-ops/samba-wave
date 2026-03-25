@@ -35,7 +35,7 @@ const PERIOD_BUTTONS = [
   { key: '1month', label: '1개월' },
   { key: '3months', label: '3개월' },
   { key: '6months', label: '6개월' },
-  { key: 'year', label: '올해' },
+  { key: 'thisyear', label: '올해' },
   { key: 'all', label: '전체' },
 ]
 
@@ -59,7 +59,7 @@ export default function CSPage() {
 
   // 로그 + 기간 + 필터 추가 상태
   const [csLogMessages, setCsLogMessages] = useState<string[]>(['[대기] CS 문의 가져오기 결과가 여기에 표시됩니다...'])
-  const [csPeriod, setCsPeriod] = useState('all')
+  const [csPeriod, setCsPeriod] = useState('thisyear')
   const [csSyncAccountId, setCsSyncAccountId] = useState('')
   const [csCustomStart, setCsCustomStart] = useState('')
   const [csCustomEnd, setCsCustomEnd] = useState('')

@@ -80,7 +80,7 @@ export default function OrdersPage() {
   const [channels, setChannels] = useState<SambaChannel[]>([])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [loading, setLoading] = useState(true)
-  const [period, setPeriod] = useState('all')
+  const [period, setPeriod] = useState('thisyear')
   const [marketFilter, setMarketFilter] = useState('')
   const [marketStatus, setMarketStatus] = useState('')
   const [siteFilter, setSiteFilter] = useState('')
@@ -113,6 +113,10 @@ export default function OrdersPage() {
   const [urlModalOrderId, setUrlModalOrderId] = useState('')
   const [urlModalInput, setUrlModalInput] = useState('')
   const [urlModalSaving, setUrlModalSaving] = useState(false)
+  // SMS/카카오 발송 모달
+  const [msgModal, setMsgModal] = useState<{ type: 'sms' | 'kakao'; order: SambaOrder } | null>(null)
+  const [msgText, setMsgText] = useState('')
+  const [msgSending, setMsgSending] = useState(false)
   // 검색 카테고리
   const [searchCategory, setSearchCategory] = useState('customer')
   // 일자 고정
@@ -237,6 +241,43 @@ export default function OrdersPage() {
       else await orderApi.create(payload)
       setShowForm(false); setEditingId(null); setForm({ ...emptyForm }); loadOrders()
     } catch (e) { showAlert(e instanceof Error ? e.message : '저장 실패', 'error') }
+  }
+
+  // SMS/카카오 발송
+  const openMsgModal = (type: 'sms' | 'kakao', order: SambaOrder) => {
+    if (!order.customer_phone) {
+      showAlert('고객 전화번호가 없습니다', 'error')
+      return
+    }
+    setMsgModal({ type, order })
+    setMsgText('')
+  }
+
+  const handleSendMsg = async () => {
+    if (!msgModal || !msgText.trim()) {
+      showAlert('메시지를 입력해주세요', 'error')
+      return
+    }
+    setMsgSending(true)
+    try {
+      const phone = msgModal.order.customer_phone || ''
+      let res: { success: boolean; message: string }
+      if (msgModal.type === 'sms') {
+        res = await proxyApi.sendSms(phone, msgText)
+      } else {
+        res = await proxyApi.sendKakao(phone, msgText)
+      }
+      if (res.success) {
+        showAlert(res.message, 'success')
+        setMsgModal(null)
+        setMsgText('')
+      } else {
+        showAlert(res.message, 'error')
+      }
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '발송 실패', 'error')
+    }
+    setMsgSending(false)
   }
 
   const handleStatusChange = async (id: string, status: string) => {
@@ -730,6 +771,8 @@ export default function OrdersPage() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
                           <span style={{ fontSize: '0.75rem', color: '#888', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
                           <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '4px', color: '#4C9AFF', cursor: 'pointer' }}>주문번호복사</button>
+                          <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>SMS</button>
+                          <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(255,211,61,0.1)', border: '1px solid rgba(255,211,61,0.3)', borderRadius: '4px', color: '#FFD93D', cursor: 'pointer' }}>KAKAO</button>
                         </div>
                         {/* 상품주문번호 + 주문번호 같은 행 */}
                         <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
@@ -973,6 +1016,84 @@ export default function OrdersPage() {
               <button onClick={() => setShowUrlModal(false)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>
               <button onClick={handleUrlSubmit} disabled={urlModalSaving} style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: urlModalSaving ? 'not-allowed' : 'pointer' }}>
                 {urlModalSaving ? '저장중...' : '등록'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SMS/카카오 발송 모달 */}
+      {msgModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '480px', maxWidth: '90vw' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+              <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5' }}>
+                {msgModal.type === 'sms' ? 'SMS 발송' : '카카오톡 발송'}
+              </h3>
+              <button onClick={() => setMsgModal(null)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {/* 주문 정보 */}
+            <div style={{ background: '#111', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.8125rem' }}>
+              <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '0.375rem' }}>
+                <div><span style={{ color: '#666' }}>수신자: </span><span style={{ color: '#E5E5E5' }}>{msgModal.order.customer_name || '-'}</span></div>
+                <div><span style={{ color: '#666' }}>전화번호: </span><span style={{ color: '#E5E5E5' }}>{msgModal.order.customer_phone}</span></div>
+              </div>
+              <div>
+                <span style={{ color: '#666' }}>상품: </span>
+                <span style={{ color: '#aaa' }}>{msgModal.order.product_name || '-'}</span>
+              </div>
+            </div>
+
+            {/* 빠른 템플릿 */}
+            <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+              {[
+                { label: '배송안내', msg: '안녕하세요 고객님, 주문하신 상품이 발송되었습니다. 배송 완료까지 2~3일 소요될 수 있습니다.' },
+                { label: '배송지연', msg: '안녕하세요 고객님, 현재 물량이 많아 배송이 다소 지연되고 있습니다. 양해 부탁드립니다.' },
+                { label: '품절안내', msg: '안녕하세요 고객님, 주문하신 상품이 품절되어 안내드립니다. 취소 처리 도와드리겠습니다.' },
+                { label: '취소완료', msg: '안녕하세요 고객님, 요청하신 주문건 취소 완료되었습니다.' },
+              ].map(t => (
+                <button
+                  key={t.label}
+                  onClick={() => setMsgText(t.msg)}
+                  style={{ fontSize: '0.6875rem', padding: '0.25rem 0.5rem', background: '#222', border: '1px solid #333', borderRadius: '4px', color: '#aaa', cursor: 'pointer' }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* 메시지 입력 */}
+            <textarea
+              value={msgText}
+              onChange={e => setMsgText(e.target.value)}
+              placeholder="메시지를 입력하세요"
+              rows={5}
+              style={{ width: '100%', padding: '0.625rem 0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', fontSize: '0.875rem', outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', boxSizing: 'border-box' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem', marginBottom: '1rem' }}>
+              <span style={{ fontSize: '0.75rem', color: '#555' }}>
+                {msgText.length > 0 ? `${new TextEncoder().encode(msgText).length}바이트` : ''}
+                {msgText.length > 0 && new TextEncoder().encode(msgText).length > 90 ? ' (LMS)' : ''}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button onClick={() => setMsgModal(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>
+              <button
+                onClick={handleSendMsg}
+                disabled={msgSending}
+                style={{
+                  padding: '0.625rem 1.25rem',
+                  background: msgModal.type === 'sms' ? '#51CF66' : '#FFD93D',
+                  border: 'none', borderRadius: '8px',
+                  color: msgModal.type === 'sms' ? '#fff' : '#1A1A1A',
+                  fontSize: '0.875rem', fontWeight: 600,
+                  cursor: msgSending ? 'not-allowed' : 'pointer',
+                  opacity: msgSending ? 0.6 : 1,
+                }}
+              >
+                {msgSending ? '발송중...' : msgModal.type === 'sms' ? 'SMS 발송' : '카카오 발송'}
               </button>
             </div>
           </div>

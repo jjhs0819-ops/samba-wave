@@ -60,7 +60,7 @@ const PERIOD_BUTTONS = [
   { key: '1month', label: '1개월' },
   { key: '3months', label: '3개월' },
   { key: '6months', label: '6개월' },
-  { key: 'year', label: '올해' },
+  { key: 'thisyear', label: '올해' },
   { key: 'all', label: '전체' },
 ]
 
@@ -76,7 +76,7 @@ export default function ReturnsPage() {
 
   // 로그 + 검색/필터 상태
   const [logMessages, setLogMessages] = useState<string[]>(['[대기] 반품교환 가져오기 결과가 여기에 표시됩니다...'])
-  const [period, setPeriod] = useState('all')
+  const [period, setPeriod] = useState('thisyear')
   const [syncAccountId, setSyncAccountId] = useState('')
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
@@ -104,7 +104,19 @@ export default function ReturnsPage() {
   useEffect(() => { load() }, [load])
 
   // 가져오기 버튼 핸들러 (load 래핑)
-  const loadReturns = () => { load() }
+  const loadReturns = async () => {
+    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    setLogMessages(prev => [...prev, `[${now}] 반품교환 데이터 가져오는 중...`])
+    await load()
+    setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] 반품교환 데이터 가져오기 완료`])
+  }
+
+  const loadAllMarkets = async () => {
+    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    setLogMessages(prev => [...prev, `[${now}] 전체마켓 반품교환 데이터 동기화 중...`])
+    await load()
+    setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] 전체마켓 동기화 완료 (${returns.length}건)`])
+  }
 
   const handleSubmit = async () => {
     try {
@@ -208,29 +220,32 @@ export default function ReturnsPage() {
         </div>
       </div>
 
-      {/* 기간 선택 + 계정 + 가져오기 + 날짜 범위 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-        {PERIOD_BUTTONS.map(pb => (
-          <button key={pb.key} onClick={() => { setPeriod(pb.key) }}
-            style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: 'pointer', whiteSpace: 'nowrap' }}
-          >{pb.label}</button>
-        ))}
-        <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
-        <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', minWidth: '140px' }}>
-          <option value="">전체 계정</option>
-        </select>
-        <button onClick={loadReturns} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
-        <button onClick={loadReturns} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>전체마켓 가져오기</button>
-        <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 6px' }} />
-        <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
-        <button onClick={() => setStartLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: startLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: startLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: startLocked ? '#fff' : '#C5C5C5' }}>고정</button>
-        <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
-        <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
-        <button onClick={() => setDateLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: dateLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: dateLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: dateLocked ? '#fff' : '#C5C5C5' }}>고정</button>
+      {/* 기간 필터 바 */}
+      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.625rem 0.875rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'nowrap', alignItems: 'center' }}>
+          {PERIOD_BUTTONS.map(pb => (
+            <button key={pb.key} onClick={() => { setPeriod(pb.key) }}
+              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: 'pointer', whiteSpace: 'nowrap' }}
+            >{pb.label}</button>
+          ))}
+          <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 4px' }} />
+          <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', minWidth: '140px' }}>
+            <option value="">전체 계정</option>
+          </select>
+          <button onClick={loadReturns} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
+          <button onClick={loadAllMarkets} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>전체마켓 가져오기</button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+          <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: '#C0392B', color: '#FF8C00' } : {}) }} />
+          <button onClick={() => setStartLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: startLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: startLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: startLocked ? '#fff' : '#C5C5C5' }}>고정</button>
+          <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
+          <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
+          <button onClick={() => setDateLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: dateLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: dateLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: dateLocked ? '#fff' : '#C5C5C5' }}>고정</button>
+        </div>
       </div>
 
-      {/* 검색 + 필터 드롭다운 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+      {/* 필터 바 */}
+      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
         <select style={{ ...inputStyle, width: '80px', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="customer">고객</option>
           <option value="order_number">주문번호</option>
