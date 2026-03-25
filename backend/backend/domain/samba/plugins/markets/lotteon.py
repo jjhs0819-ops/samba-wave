@@ -72,9 +72,24 @@ class LotteonPlugin(MarketPlugin):
 
     product_copy["owhp_no"] = extras.get("owhpNo", "")
     product_copy["dv_cst_pol_no"] = extras.get("dvCstPolNo", "")
-    product_copy["island_dv_cst_pol_no"] = extras.get("islandDvCstPolNo", "")
+    product_copy["island_dv_cst_pol_no"] = extras.get("dvIslandCstPolNo", "")
     product_copy["rtrp_no"] = extras.get("rtrpNo", "")
-    product_copy["cmbn_dv_psb_yn"] = extras.get("cmbnDvPsbYn", "Y")
+    product_copy["cmbn_dv_psb_yn"] = extras.get("bundleDelivery", "Y")
+    # 계정 추가 설정 주입
+    if extras.get("asPhone"):
+      product_copy["_as_phone"] = extras["asPhone"]
+    if extras.get("asMessage"):
+      product_copy["_as_message"] = extras["asMessage"]
+    if extras.get("discountRate"):
+      product_copy["_discount_rate"] = int(extras["discountRate"])
+    if extras.get("returnFee"):
+      product_copy["_return_fee"] = int(extras["returnFee"])
+    if extras.get("exchangeFee"):
+      product_copy["_exchange_fee"] = int(extras["exchangeFee"])
+    if extras.get("jejuFee"):
+      product_copy["_jeju_fee"] = int(extras["jejuFee"])
+    if extras.get("stockQuantity"):
+      product_copy["_stock_quantity"] = int(extras["stockQuantity"])
 
     # ── 2. 정책 설정 주입 ────────────────────────────────────────────
     policy_id = product.get("applied_policy_id")

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { orderApi, collectorApi, type SambaOrder } from "@/lib/samba/api"
+import { orderApi, collectorApi, type SambaOrder, type DashboardStats } from "@/lib/samba/api"
 
 const card = {
   background: 'rgba(30,30,30,0.5)',
@@ -16,7 +16,7 @@ function formatShortDate(d: Date) {
 }
 
 export default function SambaDashboard() {
-  const [orders, setOrders] = useState<SambaOrder[]>([])
+  const [stats, setStats] = useState<DashboardStats | null>(null)
   const [collectedCount, setCollectedCount] = useState(0)
   const [loading, setLoading] = useState(true)
 
@@ -26,72 +26,40 @@ export default function SambaDashboard() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    // 대시보드는 최근 주문 20건 + 상품 카운트만 (빠른 로딩)
-    const [o, counts] = await Promise.all([
-      orderApi.list(0, 20).catch(() => []),
+    // DB에서 집계된 결과만 받음 (빠름)
+    const [s, counts] = await Promise.all([
+      orderApi.dashboardStats().catch(() => null),
       collectorApi.productCounts().catch(() => ({ total: 0, registered: 0, policy_applied: 0, sold_out: 0 })),
     ])
-    setOrders(o)
+    setStats(s)
     setCollectedCount(counts.total)
     setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  // KPI 계산
-  const totalSales = orders.reduce((s, o) => s + (o.sale_price || 0), 0)
-  const thisMonthOrders = orders.filter(o => {
-    const d = new Date(o.created_at)
-    return d.getFullYear() === year && d.getMonth() === month
-  })
-  const thisMonthCount = thisMonthOrders.length
-  const lastMonthOrders = orders.filter(o => {
-    const d = new Date(o.created_at)
-    const lm = month === 0 ? 11 : month - 1
-    const ly = month === 0 ? year - 1 : year
-    return d.getFullYear() === ly && d.getMonth() === lm
-  })
+  // 집계 데이터에서 KPI 추출
+  const thisMonthSales = stats?.thisMonth.sales || 0
+  const thisMonthCount = stats?.thisMonth.count || 0
+  const thisMonthFulfillment = stats?.thisMonth.fulfillment || 0
+  const lastMonthSales = stats?.lastMonth.sales || 0
+  const lastMonthFulfillment = stats?.lastMonth.fulfillment || 0
+  const salesChange = stats?.salesChange || 0
+  const weeklyData = (stats?.weekly || []).map(w => ({
+    date: new Date(w.date),
+    totalSale: w.sales,
+    deliveredSale: w.delivered > 0 && w.count > 0 ? Math.round(w.sales * w.delivered / w.count) : 0,
+    rate: w.count > 0 ? Math.round(w.delivered / w.count * 100) : 0,
+  }))
+  const orders = stats?.recentOrders || []
+  const fulfillmentRate = thisMonthFulfillment
+  const totalSales = thisMonthSales
+  const lastMonthDeliveredSales = stats?.lastMonth.delivered && stats?.lastMonth.count
+    ? Math.round(lastMonthSales * stats.lastMonth.delivered / stats.lastMonth.count) : 0
+  const thisMonthDeliveredSales = stats?.thisMonth.delivered && stats?.thisMonth.count
+    ? Math.round(thisMonthSales * stats.thisMonth.delivered / stats.thisMonth.count) : 0
 
-  // 주문이행율 (배송완료 / 전체)
-  const deliveredCount = thisMonthOrders.filter(o => o.status === 'delivered').length
-  const fulfillmentRate = thisMonthCount > 0 ? Math.round((deliveredCount / thisMonthCount) * 100) : 100
-
-  // 등록된 상품 수
-  const registeredCount = 0 // 수집상품 중 registered_accounts가 있는 것
-
-  // 최근 일주일 매출 데이터
-  const weeklyData = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(now)
-    d.setDate(now.getDate() - (6 - i))
-    d.setHours(0, 0, 0, 0)
-    const nextD = new Date(d)
-    nextD.setDate(nextD.getDate() + 1)
-
-    const dayOrders = orders.filter(o => {
-      const od = new Date(o.created_at)
-      return od >= d && od < nextD
-    })
-    const totalSale = dayOrders.reduce((s, o) => s + (o.sale_price || 0), 0)
-    const deliveredSale = dayOrders.filter(o => o.status === 'delivered').reduce((s, o) => s + (o.sale_price || 0), 0)
-    const rate = dayOrders.length > 0 ? Math.round((dayOrders.filter(o => o.status === 'delivered').length / dayOrders.length) * 100) : 0
-
-    return { date: d, totalSale, deliveredSale, rate }
-  })
-
-  // 금월/전월 비교
-  const thisMonthSales = thisMonthOrders.reduce((s, o) => s + (o.sale_price || 0), 0)
-  const thisMonthDeliveredSales = thisMonthOrders.filter(o => o.status === 'delivered').reduce((s, o) => s + (o.sale_price || 0), 0)
-  const thisMonthFulfillment = thisMonthCount > 0 ? Math.round((deliveredCount / thisMonthCount) * 100) : 0
-
-  const lastMonthSales = lastMonthOrders.reduce((s, o) => s + (o.sale_price || 0), 0)
-  const lastMonthDelivered = lastMonthOrders.filter(o => o.status === 'delivered')
-  const lastMonthDeliveredSales = lastMonthDelivered.reduce((s, o) => s + (o.sale_price || 0), 0)
-  const lastMonthFulfillment = lastMonthOrders.length > 0 ? Math.round((lastMonthDelivered.length / lastMonthOrders.length) * 100) : 0
-
-  // 전월대비 증감
-  const salesChange = lastMonthSales > 0 ? (((thisMonthSales - lastMonthSales) / lastMonthSales) * 100).toFixed(1) : '0'
-
-  if (loading && orders.length === 0) {
+  if (loading && !stats) {
     return <div style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</div>
   }
 

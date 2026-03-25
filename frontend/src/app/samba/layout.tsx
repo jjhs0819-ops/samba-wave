@@ -40,8 +40,8 @@ export default function SambaLayout({
   const [currentUser, setCurrentUser] = useState<SambaUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
 
-  // 로그인 페이지는 인증 체크 없이 렌더링
-  const isLoginPage = pathname === "/samba/login";
+  // 로그인/회원가입 페이지는 인증 체크 없이 렌더링
+  const isLoginPage = pathname === "/samba/login" || pathname === "/samba/sign-up";
 
   useEffect(() => {
     if (isLoginPage) {

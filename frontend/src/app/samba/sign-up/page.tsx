@@ -1,35 +1,56 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { userApi } from '@/lib/samba/api'
 
-export default function SambaLoginPage() {
+export default function SambaSignUpPage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const justRegistered = searchParams.get('registered') === '1'
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [passwordConfirm, setPasswordConfirm] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    if (!email.trim() || !password.trim()) {
-      setError('이메일과 비밀번호를 입력해주세요')
+
+    if (!name.trim() || !email.trim() || !password.trim()) {
+      setError('모든 항목을 입력해주세요')
       return
     }
+    if (password !== passwordConfirm) {
+      setError('비밀번호가 일치하지 않습니다')
+      return
+    }
+    if (password.length < 6) {
+      setError('비밀번호는 6자 이상이어야 합니다')
+      return
+    }
+
     setSubmitting(true)
     try {
-      const user = await userApi.login(email, password)
-      localStorage.setItem('samba_user', JSON.stringify(user))
-      router.replace('/samba')
+      await userApi.create({ email, password, name })
+      router.replace('/samba/login?registered=1')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '로그인에 실패했습니다')
+      setError(err instanceof Error ? err.message : '회원가입에 실패했습니다')
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const inputStyle = {
+    width: '100%',
+    padding: '0.625rem 0.75rem',
+    fontSize: '0.875rem',
+    background: '#111520',
+    border: '1px solid #2A3040',
+    borderRadius: '8px',
+    color: '#E5E5E5',
+    outline: 'none',
+    boxSizing: 'border-box' as const,
   }
 
   return (
@@ -58,22 +79,32 @@ export default function SambaLoginPage() {
             style={{ borderRadius: '12px', margin: '0 auto 0.75rem' }}
           />
           <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#E5E5E5', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-            SAMBA WAVE
+            회원가입
           </h1>
           <p style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.25rem' }}>
-            무재고 위탁판매 솔루션
+            SAMBA WAVE 계정 만들기
           </p>
         </div>
 
-        {/* 가입 완료 안내 */}
-        {justRegistered && (
-          <p style={{ fontSize: '0.8125rem', color: '#51CF66', marginBottom: '1rem', textAlign: 'center' }}>
-            회원가입이 완료되었습니다. 로그인해주세요.
-          </p>
-        )}
-
         {/* 폼 */}
         <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'block', fontSize: '0.8125rem', color: '#888', marginBottom: '0.375rem' }}>
+              이름
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoComplete="name"
+              autoFocus
+              placeholder="홍길동"
+              style={inputStyle}
+              onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = '#2A3040' }}
+            />
+          </div>
+
           <div style={{ marginBottom: '1rem' }}>
             <label style={{ display: 'block', fontSize: '0.8125rem', color: '#888', marginBottom: '0.375rem' }}>
               이메일
@@ -83,24 +114,14 @@ export default function SambaLoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
-              autoFocus
-              style={{
-                width: '100%',
-                padding: '0.625rem 0.75rem',
-                fontSize: '0.875rem',
-                background: '#111520',
-                border: '1px solid #2A3040',
-                borderRadius: '8px',
-                color: '#E5E5E5',
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
+              placeholder="example@email.com"
+              style={inputStyle}
               onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}
               onBlur={(e) => { e.currentTarget.style.borderColor = '#2A3040' }}
             />
           </div>
 
-          <div style={{ marginBottom: '1.5rem' }}>
+          <div style={{ marginBottom: '1rem' }}>
             <label style={{ display: 'block', fontSize: '0.8125rem', color: '#888', marginBottom: '0.375rem' }}>
               비밀번호
             </label>
@@ -108,18 +129,25 @@ export default function SambaLoginPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              style={{
-                width: '100%',
-                padding: '0.625rem 0.75rem',
-                fontSize: '0.875rem',
-                background: '#111520',
-                border: '1px solid #2A3040',
-                borderRadius: '8px',
-                color: '#E5E5E5',
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
+              autoComplete="new-password"
+              placeholder="6자 이상"
+              style={inputStyle}
+              onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = '#2A3040' }}
+            />
+          </div>
+
+          <div style={{ marginBottom: '1.5rem' }}>
+            <label style={{ display: 'block', fontSize: '0.8125rem', color: '#888', marginBottom: '0.375rem' }}>
+              비밀번호 확인
+            </label>
+            <input
+              type="password"
+              value={passwordConfirm}
+              onChange={(e) => setPasswordConfirm(e.target.value)}
+              autoComplete="new-password"
+              placeholder="비밀번호 재입력"
+              style={inputStyle}
               onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}
               onBlur={(e) => { e.currentTarget.style.borderColor = '#2A3040' }}
             />
@@ -149,20 +177,20 @@ export default function SambaLoginPage() {
             onMouseEnter={(e) => { if (!submitting) e.currentTarget.style.background = '#FFB84D' }}
             onMouseLeave={(e) => { if (!submitting) e.currentTarget.style.background = '#FF8C00' }}
           >
-            {submitting ? '로그인 중...' : '로그인'}
+            {submitting ? '가입 중...' : '회원가입'}
           </button>
         </form>
 
-        {/* 회원가입 링크 */}
+        {/* 로그인 링크 */}
         <p style={{ textAlign: 'center', marginTop: '1.25rem', fontSize: '0.8125rem', color: '#666' }}>
-          계정이 없으신가요?{' '}
+          이미 계정이 있으신가요?{' '}
           <a
-            href="/samba/sign-up"
+            href="/samba/login"
             style={{ color: '#FF8C00', fontWeight: 600, textDecoration: 'none' }}
             onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline' }}
             onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none' }}
           >
-            회원가입
+            로그인
           </a>
         </p>
       </div>
