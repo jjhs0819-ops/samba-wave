@@ -1515,6 +1515,71 @@ class SmartStoreClient:
 
     return payload
 
+  # ------------------------------------------------------------------
+  # CS 문의 관리
+  # ------------------------------------------------------------------
+
+  async def get_inquiries(
+    self,
+    search_start_date: str = "",
+    search_end_date: str = "",
+    page: int = 1,
+    size: int = 100,
+    answered: Optional[bool] = None,
+  ) -> dict[str, Any]:
+    """고객 문의 목록 조회.
+
+    Args:
+      search_start_date: 조회 시작일 (yyyy-MM-dd)
+      search_end_date: 조회 종료일 (yyyy-MM-dd)
+      page: 페이지 번호
+      size: 페이지 크기
+      answered: 답변 여부 (None=전체, True=답변완료, False=미답변)
+    """
+    params: dict[str, Any] = {
+      "page": page,
+      "size": size,
+    }
+    if search_start_date:
+      params["searchStartDate"] = search_start_date
+    if search_end_date:
+      params["searchEndDate"] = search_end_date
+    if answered is not None:
+      params["answered"] = str(answered).lower()
+
+    return await self._call_api("GET", "/v1/pay-merchant/inquiries", params=params)
+
+  async def answer_inquiry(
+    self,
+    inquiry_no: int,
+    answer_comment: str,
+  ) -> dict[str, Any]:
+    """고객 문의 답변 등록.
+
+    POST /v1/pay-merchant/inquiries/{inquiryNo}/answer
+    """
+    return await self._call_api(
+      "POST",
+      f"/v1/pay-merchant/inquiries/{inquiry_no}/answer",
+      body={"answerComment": answer_comment},
+    )
+
+  async def update_inquiry_answer(
+    self,
+    inquiry_no: int,
+    answer_content_id: int,
+    answer_comment: str,
+  ) -> dict[str, Any]:
+    """고객 문의 답변 수정.
+
+    PUT /v1/pay-merchant/inquiries/{inquiryNo}/answer/{answerContentId}
+    """
+    return await self._call_api(
+      "PUT",
+      f"/v1/pay-merchant/inquiries/{inquiry_no}/answer/{answer_content_id}",
+      body={"answerComment": answer_comment},
+    )
+
 
 class SmartStoreApiError(Exception):
   """스마트스토어 API 에러."""

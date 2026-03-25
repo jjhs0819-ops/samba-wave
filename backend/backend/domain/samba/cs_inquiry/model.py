@@ -28,6 +28,14 @@ class SambaCSInquiry(SQLModel, table=True):
     market_order_id: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True, index=True)
     )
+    # 마켓측 문의 번호 (스마트스토어: inquiryNo)
+    market_inquiry_no: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True, index=True)
+    )
+    # 마켓측 답변 번호 (스마트스토어: inquiryCommentNo)
+    market_answer_no: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     account_name: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
@@ -43,6 +51,9 @@ class SambaCSInquiry(SQLModel, table=True):
 
     # 상품 정보
     product_name: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    product_image: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
     product_link: Optional[str] = Field(

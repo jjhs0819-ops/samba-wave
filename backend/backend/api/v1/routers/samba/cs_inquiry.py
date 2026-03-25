@@ -109,6 +109,189 @@ async def reply_cs_inquiry(
     return updated
 
 
+@router.post("/sync-from-markets")
+async def sync_cs_from_markets(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """마켓에서 CS 문의 동기화 (스마트스토어 고객문의 + 톡톡)."""
+    import logging
+    from datetime import datetime, timedelta, timezone
+    from sqlmodel import select
+    from backend.domain.samba.forbidden.model import SambaSettings
+    from backend.domain.samba.proxy.smartstore import SmartStoreClient
+    from backend.domain.samba.cs_inquiry.model import SambaCSInquiry
+
+    logger = logging.getLogger(__name__)
+    svc = _write_service(session)
+    synced = 0
+    errors = []
+
+    # 스마트스토어 계정 조회
+    try:
+        settings_result = await session.execute(
+            select(SambaSettings).where(SambaSettings.key.like("store_smartstore%"))
+        )
+        ss_settings = settings_result.scalars().all()
+    except Exception as e:
+        raise HTTPException(500, f"설정 조회 실패: {e}")
+
+    for setting in ss_settings:
+        try:
+            import json
+            config = json.loads(setting.value) if isinstance(setting.value, str) else setting.value
+            client_id = config.get("clientId", "")
+            client_secret = config.get("clientSecret", "")
+            account_name = config.get("businessName", "") or config.get("storeId", "")
+
+            if not client_id or not client_secret:
+                continue
+
+            client = SmartStoreClient(client_id, client_secret)
+
+            # 최근 30일 문의 조회
+            end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            start_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+
+            result = await client.get_inquiries(
+                search_start_date=start_date,
+                search_end_date=end_date,
+                size=100,
+            )
+
+            data = result.get("data", {})
+            contents = data.get("contents", [])
+            if not contents:
+                contents = data.get("list", [])
+            if not contents and isinstance(data, list):
+                contents = data
+
+            for item in contents:
+                inquiry_no = str(item.get("inquiryNo", item.get("id", "")))
+                if not inquiry_no:
+                    continue
+
+                # 중복 체크
+                existing = await session.execute(
+                    select(SambaCSInquiry).where(
+                        SambaCSInquiry.market == "스마트스토어",
+                        SambaCSInquiry.market_inquiry_no == inquiry_no,
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue
+
+                # 문의 유형 매핑
+                inquiry_type = "general"
+                raw_type = item.get("inquiryType", item.get("type", ""))
+                if raw_type in ("PRODUCT", "product"):
+                    inquiry_type = "product_question"
+                elif raw_type in ("DELIVERY", "delivery"):
+                    inquiry_type = "delivery"
+                elif raw_type in ("EXCHANGE", "RETURN"):
+                    inquiry_type = "exchange_return"
+
+                # 답변 여부
+                is_answered = item.get("answered", False)
+                reply_content = item.get("answerContent", item.get("answer", ""))
+                answer_no = str(item.get("inquiryCommentNo", "")) if item.get("inquiryCommentNo") else None
+
+                inquiry_data = {
+                    "market": "스마트스토어",
+                    "market_inquiry_no": inquiry_no,
+                    "market_answer_no": answer_no,
+                    "market_order_id": str(item.get("orderNo", item.get("orderId", ""))) or None,
+                    "account_name": account_name,
+                    "inquiry_type": inquiry_type,
+                    "questioner": item.get("questioner", item.get("writerNickname", item.get("buyerNid", ""))),
+                    "product_name": item.get("productName", item.get("productTitle", "")),
+                    "product_image": item.get("productImageUrl", ""),
+                    "content": item.get("content", item.get("inquiryContent", item.get("question", ""))),
+                    "reply": reply_content if is_answered else None,
+                    "reply_status": "replied" if is_answered else "pending",
+                    "inquiry_date": item.get("inquiryDate", item.get("createDate", None)),
+                    "replied_at": item.get("answerDate", None) if is_answered else None,
+                }
+
+                await svc.create_inquiry(inquiry_data)
+                synced += 1
+
+            logger.info(f"[CS동기화] 스마트스토어({account_name}): {len(contents)}건 조회, {synced}건 동기화")
+
+        except Exception as e:
+            logger.error(f"[CS동기화] 스마트스토어 동기화 실패: {e}")
+            errors.append(str(e))
+
+    return {
+        "success": True,
+        "synced": synced,
+        "errors": errors,
+        "message": f"CS 문의 {synced}건 동기화 완료" + (f" (에러 {len(errors)}건)" if errors else ""),
+    }
+
+
+@router.post("/{inquiry_id}/send-reply")
+async def send_reply_to_market(
+    inquiry_id: str,
+    body: CSInquiryReply,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """CS 문의 답변을 마켓에 전송."""
+    import json
+    from datetime import datetime, timezone
+    from sqlmodel import select
+    from backend.domain.samba.forbidden.model import SambaSettings
+    from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
+    svc = _write_service(session)
+    inquiry = await svc.get_inquiry(inquiry_id)
+    if not inquiry:
+        raise HTTPException(404, "문의를 찾을 수 없습니다")
+
+    if not inquiry.market_inquiry_no:
+        raise HTTPException(400, "마켓 문의 번호가 없습니다 (수동 등록 문의는 마켓 전송 불가)")
+
+    if inquiry.market == "스마트스토어":
+        # 스마트스토어 계정 조회
+        settings_result = await session.execute(
+            select(SambaSettings).where(SambaSettings.key.like("store_smartstore%"))
+        )
+        ss_settings = settings_result.scalars().first()
+        if not ss_settings:
+            raise HTTPException(400, "스마트스토어 계정 설정이 없습니다")
+
+        config = json.loads(ss_settings.value) if isinstance(ss_settings.value, str) else ss_settings.value
+        client = SmartStoreClient(config["clientId"], config["clientSecret"])
+
+        inquiry_no = int(inquiry.market_inquiry_no)
+
+        if inquiry.market_answer_no:
+            # 기존 답변 수정
+            result = await client.update_inquiry_answer(
+                inquiry_no, int(inquiry.market_answer_no), body.reply,
+            )
+        else:
+            # 새 답변 등록
+            result = await client.answer_inquiry(inquiry_no, body.reply)
+
+        # 답변 번호 저장
+        answer_data = result.get("data", {})
+        answer_no = str(answer_data.get("inquiryCommentNo", ""))
+
+        from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
+        repo = SambaCSInquiryRepository(session)
+        await repo.update_async(
+            inquiry_id,
+            reply=body.reply,
+            reply_status="replied",
+            market_answer_no=answer_no if answer_no else inquiry.market_answer_no,
+            replied_at=datetime.now(timezone.utc),
+        )
+
+        return {"success": True, "message": "스마트스토어에 답변 전송 완료", "data": result.get("data")}
+
+    raise HTTPException(400, f"'{inquiry.market}' 마켓은 아직 답변 전송을 지원하지 않습니다")
+
+
 @router.post("/batch-delete")
 async def batch_delete_cs_inquiries(
     body: CSInquiryBatchDelete,
