@@ -143,6 +143,8 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
     { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
     { name: '_info_storeMember', label: '알림받기 동의고객 포인트는 셀러센터에서 직접 설정', type: 'info' },
+    { name: '_divider_talktalk', label: '네이버 톡톡', type: 'divider' },
+    { name: 'talktalkApiKey', label: '톡톡 API KEY', type: 'text', placeholder: '파트너센터 > 보내기 API 설정에서 발급' },
   ]},
   { key: 'gmarket', label: '지마켓', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },

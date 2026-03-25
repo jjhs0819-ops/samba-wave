@@ -301,6 +301,49 @@ async def send_reply_to_market(
 
         return {"success": True, "message": "스마트스토어에 답변 전송 완료", "data": result.get("data")}
 
+    # 톡톡 문의는 톡톡 API로 답변
+    if inquiry.inquiry_type == "talktalk" and inquiry.questioner:
+        api_key = ""
+        try:
+            result = await session.execute(
+                select(SambaSettings).where(SambaSettings.key == "talktalk_api_key")
+            )
+            row = result.scalar_one_or_none()
+            api_key = (row.value if row and row.value else "") or ""
+        except Exception:
+            pass
+
+        if not api_key:
+            raise HTTPException(400, "톡톡 API KEY가 설정되지 않았습니다")
+
+        import httpx
+        payload = {
+            "event": "send",
+            "user": inquiry.questioner,
+            "textContent": {"text": body.reply},
+        }
+        async with httpx.AsyncClient(timeout=15.0) as http_client:
+            resp = await http_client.post(
+                "https://gw.talk.naver.com/chatbot/v1/event",
+                json=payload,
+                headers={"Content-Type": "application/json;charset=UTF-8", "Authorization": api_key},
+            )
+
+        if not resp.is_success:
+            raise HTTPException(502, f"톡톡 답변 발송 실패: {resp.status_code}")
+
+        # DB 업데이트
+        from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
+        repo = SambaCSInquiryRepository(session)
+        await repo.update_async(
+            inquiry_id,
+            reply=body.reply,
+            reply_status="replied",
+            replied_at=datetime.now(timezone.utc),
+        )
+
+        return {"success": True, "message": "톡톡으로 답변 발송 완료"}
+
     raise HTTPException(400, f"'{inquiry.market}' 마켓은 아직 답변 전송을 지원하지 않습니다")
 
 

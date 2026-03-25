@@ -19,6 +19,7 @@ const INQUIRY_TYPE_MAP: Record<string, { label: string; color: string }> = {
   call_center: { label: '콜센터문의', color: '#FF6B6B' },
   delivery: { label: '배송문의', color: '#51CF66' },
   exchange_return: { label: '교환/반품', color: '#c084fc' },
+  talktalk: { label: '톡톡', color: '#51CF66' },
 }
 
 // 마켓 리스트
@@ -347,10 +348,16 @@ export default function CSPage() {
                     사진
                   </th>
                   <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'left', whiteSpace: 'nowrap' }}>
-                    마켓<br /><span style={{ fontSize: '0.75rem' }}>(주문번호)</span>
+                    마켓
                   </th>
                   <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'left', whiteSpace: 'nowrap' }}>
-                    문의유형<br /><span style={{ fontSize: '0.75rem' }}>(질문자)</span>
+                    주문번호
+                  </th>
+                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'left', whiteSpace: 'nowrap' }}>
+                    문의유형
+                  </th>
+                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'left', whiteSpace: 'nowrap' }}>
+                    고객
                   </th>
                   <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'left', minWidth: '400px' }}>문의내용</th>
                   <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'center', whiteSpace: 'nowrap' }}>답변여부</th>
@@ -399,27 +406,35 @@ export default function CSPage() {
                         )}
                       </td>
 
-                      {/* 마켓/주문번호 */}
+                      {/* 마켓 */}
                       <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-                        <div style={{ fontWeight: 600, color: '#E5E5E5', marginBottom: '0.25rem' }}>
+                        <div style={{ fontWeight: 600, color: '#E5E5E5' }}>
                           {item.market}
                         </div>
                         {item.account_name && (
-                          <div style={{ fontSize: '0.75rem', color: '#666' }}>{item.account_name}</div>
-                        )}
-                        {item.market_order_id && (
-                          <div style={{ fontSize: '0.75rem', color: '#555' }}>({item.market_order_id})</div>
+                          <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.125rem' }}>{item.account_name}</div>
                         )}
                       </td>
 
-                      {/* 문의유형/질문자 */}
+                      {/* 주문번호 */}
+                      <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                        <div style={{ fontSize: '0.8125rem', color: '#AAA' }}>
+                          {item.market_order_id || '-'}
+                        </div>
+                      </td>
+
+                      {/* 문의유형 */}
                       <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top' }}>
                         <span style={{ padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600, background: `${tp.color}22`, color: tp.color }}>
                           {tp.label}
                         </span>
-                        {item.questioner && (
-                          <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.375rem' }}>({item.questioner})</div>
-                        )}
+                      </td>
+
+                      {/* 고객 */}
+                      <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top' }}>
+                        <div style={{ fontSize: '0.8125rem', color: '#AAA' }}>
+                          {item.questioner || '-'}
+                        </div>
                       </td>
 
                       {/* 문의내용 */}
