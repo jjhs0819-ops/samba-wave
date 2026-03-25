@@ -27,7 +27,7 @@ export default function SambaDashboard() {
   const load = useCallback(async () => {
     setLoading(true)
     const [o, counts] = await Promise.all([
-      orderApi.list(0, 500).catch(() => []),
+      orderApi.list(0, 200).catch(() => []),
       collectorApi.productCounts().catch(() => ({ total: 0, registered: 0, policy_applied: 0, sold_out: 0 })),
     ])
     setOrders(o)

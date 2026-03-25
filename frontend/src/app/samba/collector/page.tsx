@@ -150,6 +150,7 @@ export default function CollectorPage() {
   const [aiExcludedKeywords, setAiExcludedKeywords] = useState<Set<string>>(new Set())
   const [aiMinCount, setAiMinCount] = useState(0) // 최소 상품수 필터
   const [aiCreating, setAiCreating] = useState(false)
+  const [aiSourceSite, setAiSourceSite] = useState('MUSINSA') // 수집 소싱처 선택
 
   const logRef = useRef<HTMLDivElement>(null);
   const collectAbortRef = useRef<AbortController | null>(null);
@@ -1283,6 +1284,22 @@ export default function CollectorPage() {
                   </div>
                 </div>
 
+                {/* 수집 소싱처 선택 */}
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ fontSize: '0.82rem', color: '#C5C5C5', fontWeight: 600, display: 'block', marginBottom: '8px' }}>수집 소싱처</label>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {SITES.map(s => (
+                      <button key={s.id} onClick={() => setAiSourceSite(s.id)} style={{
+                        padding: '6px 14px', borderRadius: '6px', fontSize: '0.78rem', cursor: 'pointer',
+                        fontWeight: aiSourceSite === s.id ? 700 : 400,
+                        background: aiSourceSite === s.id ? 'rgba(255,140,0,0.15)' : '#111',
+                        border: aiSourceSite === s.id ? '1px solid #FF8C00' : '1px solid #2D2D2D',
+                        color: aiSourceSite === s.id ? '#FF8C00' : '#888',
+                      }}>{s.label}</button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* 자동 조회 범위 */}
                 <div style={{
                   background: 'rgba(108,92,231,0.08)', border: '1px solid rgba(108,92,231,0.25)',
@@ -1483,6 +1500,16 @@ export default function CollectorPage() {
                       <div style={{ fontSize: '0.72rem', color: '#888' }}>{s.label}</div>
                     </div>
                   ))}
+                </div>
+
+                {/* 선택된 소싱처 표시 */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px',
+                  background: 'rgba(255,140,0,0.06)', border: '1px solid rgba(255,140,0,0.2)',
+                  borderRadius: '8px', padding: '8px 14px',
+                }}>
+                  <span style={{ fontSize: '0.78rem', color: '#FF8C00', fontWeight: 600 }}>수집 소싱처: {SITES.find(s => s.id === aiSourceSite)?.label || aiSourceSite}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#666' }}>그룹명: {aiSourceSite}_브랜드_키워드</span>
                 </div>
 
                 {/* 근거 데이터 */}
@@ -1756,11 +1783,14 @@ export default function CollectorPage() {
                     }}>다시 설정</button>
                     <button
                       onClick={async () => {
-                        const selected = aiResult.combinations.filter((c, i) => aiSelectedCombos.has(i) && !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`) && c.estimated_count >= aiMinCount)
+                        const selected = aiResult.combinations
+                          .filter((c, i) => aiSelectedCombos.has(i) && !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`) && c.estimated_count >= aiMinCount)
+                          .map(c => ({ ...c, source_site: aiSourceSite }))
                         if (selected.length === 0) return showAlert('조합을 선택해주세요', 'error')
                         const totalEst = selected.reduce((s, c) => s + c.estimated_count, 0)
+                        const site = SITES.find(s => s.id === aiSourceSite)
                         const ok = await showConfirm(
-                          `${selected.length}개 검색그룹을 생성하시겠습니까?\n(예상 상품수: ${totalEst.toLocaleString()}개)`
+                          `${selected.length}개 검색그룹을 생성하시겠습니까?\n소싱처: ${site?.label || aiSourceSite}\n예상 상품수: ${totalEst.toLocaleString()}개`
                         )
                         if (!ok) return
                         setAiCreating(true)

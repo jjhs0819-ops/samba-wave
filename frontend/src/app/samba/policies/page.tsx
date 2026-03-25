@@ -70,12 +70,18 @@ const MARKET_KEY_MAP: Record<string, string> = {
   'Shopee': 'shopee',
   'Shopify': 'shopify',
   'Zum(줌)': 'zoom',
+  '플레이오토': 'playauto',
+  '카페24': 'cafe24',
 }
 
-const POLICY_MARKETS = [
-  '쿠팡', '신세계몰', '스마트스토어', '11번가', '지마켓', '옥션', 'GS샵', '롯데ON', '롯데홈쇼핑', '홈앤쇼핑', 'HMALL', 'KREAM',
-  'eBay', 'Lazada', 'Qoo10', 'Shopee', 'Shopify', 'Zum(줌)',
+const POLICY_MARKETS_DOMESTIC = [
+  '스마트스토어', '지마켓', '옥션', '쿠팡', '롯데ON', '11번가', '토스', '신세계몰',
+  'GS샵', '롯데홈쇼핑', '홈앤쇼핑', 'HMALL', 'KREAM', '플레이오토', '카페24',
 ]
+const POLICY_MARKETS_OVERSEAS = [
+  'Qoo10', '라쿠텐', '바이마', 'Lazada', 'Shopify', 'Shopee', 'Zum(줌)', 'eBay', '아마존', '포이즌',
+]
+const POLICY_MARKETS = [...POLICY_MARKETS_DOMESTIC, ...POLICY_MARKETS_OVERSEAS]
 
 const defaultPricing: PricingForm = {
   marginRate: 15,
@@ -618,12 +624,23 @@ export default function PoliciesPage() {
               <h4 style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#FF8C00', textTransform: 'uppercase', letterSpacing: '0.05em' }}>마켓정책 설정</h4>
               <span style={{ fontSize: '0.75rem', color: '#888' }}>** 마켓 선택 후 전송에 필요한 기본 설정값 입력</span>
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginBottom: '1rem' }}>
-              {POLICY_MARKETS.map(m => (
-                <button key={m} onClick={() => setMarketPolicyTab(m)}
-                  style={{ padding: '0.375rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer', border: marketPolicyTab === m ? '1px solid #FF8C00' : '1px solid #2D2D2D', background: marketPolicyTab === m ? 'rgba(255,140,0,0.12)' : 'transparent', color: marketPolicyTab === m ? '#FF8C00' : '#888' }}
-                >{m}</button>
-              ))}
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', alignItems: 'center', marginBottom: '0.375rem' }}>
+                <span style={{ fontSize: '0.68rem', color: '#FF8C00', fontWeight: 600, padding: '0.25rem 0.375rem 0.25rem 0', whiteSpace: 'nowrap' }}>국내</span>
+                {POLICY_MARKETS_DOMESTIC.map(m => (
+                  <button key={m} onClick={() => setMarketPolicyTab(m)}
+                    style={{ padding: '0.375rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer', border: marketPolicyTab === m ? '1px solid #FF8C00' : '1px solid #2D2D2D', background: marketPolicyTab === m ? 'rgba(255,140,0,0.12)' : 'transparent', color: marketPolicyTab === m ? '#FF8C00' : '#888' }}
+                  >{m}</button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.68rem', color: '#4C9AFF', fontWeight: 600, padding: '0.25rem 0.375rem 0.25rem 0', whiteSpace: 'nowrap' }}>해외</span>
+                {POLICY_MARKETS_OVERSEAS.map(m => (
+                  <button key={m} onClick={() => setMarketPolicyTab(m)}
+                    style={{ padding: '0.375rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer', border: marketPolicyTab === m ? '1px solid #FF8C00' : '1px solid #2D2D2D', background: marketPolicyTab === m ? 'rgba(255,140,0,0.12)' : 'transparent', color: marketPolicyTab === m ? '#FF8C00' : '#888' }}
+                  >{m}</button>
+                ))}
+              </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
               {/* 연결 계정 선택 */}

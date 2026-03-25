@@ -24,7 +24,9 @@ const MARKET_TYPES = [
   { value: '', label: '── 국내 패션/리셀 ──', disabled: true },
   { value: 'musinsa', label: '무신사' },
   { value: 'kream', label: 'KREAM' },
-  { value: 'poison', label: '포이즌' },
+  { value: '', label: '── 국내 종합솔루션 ──', disabled: true },
+  { value: 'playauto', label: '플레이오토' },
+  { value: 'cafe24', label: '카페24' },
   // ── 해외 ──
   { value: '', label: '── 해외 마켓 ──', disabled: true },
   { value: 'amazon', label: '아마존' },
@@ -36,6 +38,8 @@ const MARKET_TYPES = [
   { value: 'buyma', label: '바이마' },
   { value: 'shopify', label: 'Shopify' },
   { value: 'zoom', label: 'Zum(줌)' },
+  { value: '', label: '── 해외 패션/리셀 ──', disabled: true },
+  { value: 'poison', label: '포이즌' },
 ] as const
 
 const CLAUDE_MODELS = [
@@ -338,6 +342,21 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'accessToken', label: 'Refresh Token', type: 'password' },
     { name: 'clientId', label: 'Client ID (LWA)', type: 'text' },
     { name: 'clientSecret', label: 'Client Secret (LWA)', type: 'password' },
+    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
+  ]},
+  { key: 'playauto', label: '플레이오토', authField: 'apiKey', guideUrl: 'https://www.plto.com', fields: [
+    { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
+    { name: 'storeId', label: '판매자 ID', type: 'text' },
+    { name: 'apiKey', label: 'API Key', type: 'text' },
+    { name: 'apiSecret', label: 'API Secret', type: 'password' },
+    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
+  ]},
+  { key: 'cafe24', label: '카페24', authField: 'accessToken', guideUrl: 'https://developers.cafe24.com', fields: [
+    { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
+    { name: 'storeId', label: '쇼핑몰 ID (mall_id)', type: 'text' },
+    { name: 'clientId', label: 'Client ID', type: 'text' },
+    { name: 'clientSecret', label: 'Client Secret', type: 'password' },
+    { name: 'accessToken', label: 'Access Token', type: 'password' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
   ]},
 ]
@@ -926,8 +945,8 @@ export default function SettingsPage() {
 
             {/* 마켓 탭바 — 국내/해외 구분 */}
             {(() => {
-              const domestic = ['smartstore', 'coupang', '11st', 'gmarket', 'auction', 'lotteon', 'toss', 'ssg', 'gsshop', 'lottehome', 'homeand', 'hmall', 'musinsa', 'kream', 'poison']
-              const overseas = ['amazon', 'ebay', 'rakuten', 'qoo10', 'lazada', 'shopee', 'buyma', 'shopify', 'zoom']
+              const domestic = ['smartstore', 'coupang', '11st', 'gmarket', 'auction', 'lotteon', 'toss', 'ssg', 'gsshop', 'lottehome', 'homeand', 'hmall', 'musinsa', 'kream', 'playauto', 'cafe24']
+              const overseas = ['amazon', 'ebay', 'rakuten', 'qoo10', 'lazada', 'shopee', 'buyma', 'shopify', 'zoom', 'poison']
               const domesticMarkets = STORE_MARKETS.filter(m => domestic.includes(m.key))
               const overseasMarkets = STORE_MARKETS.filter(m => overseas.includes(m.key))
               const renderTab = (m: typeof STORE_MARKETS[number]) => (
@@ -950,7 +969,8 @@ export default function SettingsPage() {
                   <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0 }}>
                     <span style={{ fontSize: '0.68rem', color: '#FF8C00', fontWeight: 600, padding: '0.5rem 0.5rem 0.5rem 0', whiteSpace: 'nowrap' }}>국내</span>
                     {domesticMarkets.map(renderTab)}
-                    <span style={{ width: '1px', height: '16px', background: '#3D3D3D', margin: '0 4px' }} />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0 }}>
                     <span style={{ fontSize: '0.68rem', color: '#4C9AFF', fontWeight: 600, padding: '0.5rem 0.5rem 0.5rem 0', whiteSpace: 'nowrap' }}>해외</span>
                     {overseasMarkets.map(renderTab)}
                   </div>
