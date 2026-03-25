@@ -86,6 +86,14 @@ class BackendSettings(BaseSettings):
     redis_url: str | None = None  # 환경변수: REDIS_URL
 
     # ===========================================
+    # 네이버 API 설정 (스마트스토어 소싱용)
+    # ===========================================
+    naver_client_id: str = ""
+    """네이버 검색 API Client ID."""
+    naver_client_secret: str = ""
+    """네이버 검색 API Client Secret."""
+
+    # ===========================================
     # HTTP 타임아웃 설정 (초)
     # ===========================================
     http_timeout_short: int = 10    # 빠른 API (검색, 조회)

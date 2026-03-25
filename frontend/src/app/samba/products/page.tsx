@@ -64,8 +64,12 @@ export default function ProductsPage() {
   const PAGE_SIZE = 50;
 
   // Filters
-  const [searchType, setSearchType] = useState("name");
-  const [searchQ, setSearchQ] = useState("");
+  const _initSearchType = searchParams.get("search_type") || "name";
+  const _initSearch = searchParams.get("search") || "";
+  // ID 검색은 내부 필터용 — 검색창에 표시하지 않음
+  const [_idFilter] = useState(_initSearchType === "id" ? _initSearch : "");
+  const [searchType, setSearchType] = useState(_initSearchType === "id" ? "name" : _initSearchType);
+  const [searchQ, setSearchQ] = useState(_initSearchType === "id" ? "" : _initSearch);
   const [siteFilter, setSiteFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [aiFilter, setAiFilter] = useState("");
@@ -147,8 +151,8 @@ export default function ProductsPage() {
       const res = await collectorApi.scrollProducts({
         skip: currentSkip,
         limit: PAGE_SIZE,
-        search: searchQ.trim() || undefined,
-        search_type: searchQ.trim() ? searchType : undefined,
+        search: searchQ.trim() || _idFilter || undefined,
+        search_type: searchQ.trim() ? searchType : (_idFilter ? "id" : undefined),
         source_site: siteFilter || undefined,
         status: statusParam,
         ai_filter: aiParam,
@@ -789,6 +793,7 @@ export default function ProductsPage() {
           <select value={searchType} onChange={(e) => setSearchType(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px", color: "#C5C5C5", width: "90px" }}>
             <option value="name">상품명</option>
+            <option value="name_all">상품명+등록명</option>
             <option value="filter">그룹</option>
             <option value="no">상품번호</option>
             <option value="policy">정책</option>

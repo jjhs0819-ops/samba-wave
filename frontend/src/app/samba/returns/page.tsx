@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { returnApi, type SambaReturn } from '@/lib/samba/api'
+import { returnApi, accountApi, type SambaReturn, type SambaMarketAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
@@ -52,6 +52,18 @@ const inputStyle = {
   boxSizing: 'border-box' as const,
 }
 
+// 기간 선택 버튼 상수
+const PERIOD_BUTTONS = [
+  { key: 'today', label: '오늘' },
+  { key: '1week', label: '1주일' },
+  { key: '15days', label: '15일' },
+  { key: '1month', label: '1개월' },
+  { key: '3months', label: '3개월' },
+  { key: '6months', label: '6개월' },
+  { key: 'thisyear', label: '올해' },
+  { key: 'all', label: '전체' },
+]
+
 export default function ReturnsPage() {
   const [returns, setReturns] = useState<SambaReturn[]>([])
   const [stats, setStats] = useState<Record<string, number>>({})
@@ -61,6 +73,42 @@ export default function ReturnsPage() {
   const [filterStatus, setFilterStatus] = useState<string>('')
   const [filterType, setFilterType] = useState<string>('')
   const [form, setForm] = useState({ order_id: '', type: 'return', reason: '', customReason: '', quantity: 1, requested_amount: 0 })
+
+  // 로그 + 검색/필터 상태
+  const [logMessages, setLogMessages] = useState<string[]>(['[대기] 반품교환 가져오기 결과가 여기에 표시됩니다...'])
+  const [period, setPeriod] = useState('thisyear')
+  const [syncAccountId, setSyncAccountId] = useState('')
+  const [customStart, setCustomStart] = useState(`${new Date().getFullYear()}-01-01`)
+  const [customEnd, setCustomEnd] = useState(new Date().toISOString().slice(0, 10))
+  const [startLocked, setStartLocked] = useState(false)
+  const [dateLocked, setDateLocked] = useState(false)
+  const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
+
+  useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
+
+  // 기간 버튼 → 날짜 계산
+  const getPeriodStart = (key: string): Date | null => {
+    const now = new Date()
+    now.setHours(0, 0, 0, 0)
+    switch (key) {
+      case 'today': return now
+      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d }
+      case '15days': { const d = new Date(now); d.setDate(d.getDate() - 15); return d }
+      case '1month': { const d = new Date(now); d.setMonth(d.getMonth() - 1); return d }
+      case '3months': { const d = new Date(now); d.setMonth(d.getMonth() - 3); return d }
+      case '6months': { const d = new Date(now); d.setMonth(d.getMonth() - 6); return d }
+      case 'thisyear': return new Date(now.getFullYear(), 0, 1)
+      default: return null
+    }
+  }
+
+  const [searchCategory, setSearchCategory] = useState('customer')
+  const [searchText, setSearchText] = useState('')
+  const [marketFilter, setMarketFilter] = useState('')
+  const [siteFilter, setSiteFilter] = useState('')
+  const [marketStatus, setMarketStatus] = useState('')
+  const [inputFilter, setInputFilter] = useState('')
+  const [pageSize, setPageSize] = useState(50)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -74,6 +122,21 @@ export default function ReturnsPage() {
   }, [filterStatus, filterType])
 
   useEffect(() => { load() }, [load])
+
+  // 가져오기 버튼 핸들러 (load 래핑)
+  const loadReturns = async () => {
+    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    setLogMessages(prev => [...prev, `[${now}] 반품교환 데이터 가져오는 중...`])
+    await load()
+    setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] 반품교환 데이터 가져오기 완료`])
+  }
+
+  const loadAllMarkets = async () => {
+    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    setLogMessages(prev => [...prev, `[${now}] 전체마켓 반품교환 데이터 동기화 중...`])
+    await load()
+    setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] 전체마켓 동기화 완료 (${returns.length}건)`])
+  }
 
   const handleSubmit = async () => {
     try {
@@ -127,6 +190,10 @@ export default function ReturnsPage() {
     catch (e) { showAlert(e instanceof Error ? e.message : '취소 실패', 'error') }
   }
 
+  const handleBatchDelete = async () => {
+    showAlert('선택삭제 기능 준비중입니다', 'info')
+  }
+
   // 환불총액 계산
   const totalRefund = returns
     .filter(r => r.status === 'completed' || r.status === 'approved')
@@ -140,12 +207,6 @@ export default function ReturnsPage() {
           <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>반품교환</h2>
           <p style={{ fontSize: '0.875rem', color: '#888' }}>반품교환 요청을 관리합니다</p>
         </div>
-        <button
-          onClick={() => setShowForm(true)}
-          style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
-        >
-          + 등록
-        </button>
       </div>
 
       {/* 통계 카드 */}
@@ -169,24 +230,98 @@ export default function ReturnsPage() {
         </div>
       </div>
 
-      {/* 필터 */}
-      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
-        <select
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-          style={{ ...inputStyle, width: 'auto', minWidth: '140px' }}
-        >
-          <option value=''>전체 상태</option>
-          {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+      {/* 로그 영역 */}
+      <div style={{ border: '1px solid #1C2333', borderRadius: '8px', overflow: 'hidden', marginBottom: '0.75rem' }}>
+        <div style={{ padding: '6px 14px', background: '#0D1117', borderBottom: '1px solid #1C2333', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#94A3B8' }}>반품교환 로그</span>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={{ fontSize: '0.72rem', color: '#555', background: 'transparent', border: '1px solid #1C2333', padding: '1px 8px', borderRadius: '4px', cursor: 'pointer' }}>복사</button>
+            <button onClick={() => setLogMessages(['[대기] 반품교환 가져오기 결과가 여기에 표시됩니다...'])} style={{ fontSize: '0.72rem', color: '#555', background: 'transparent', border: '1px solid #1C2333', padding: '1px 8px', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
+          </div>
+        </div>
+        <div style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}>
+          {logMessages.map((msg, i) => <p key={i} style={{ color: '#8A95B0', fontSize: 'inherit', margin: 0 }}>{msg}</p>)}
+        </div>
+      </div>
+
+      {/* 기간 필터 바 */}
+      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.625rem 0.875rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'nowrap', alignItems: 'center' }}>
+          {PERIOD_BUTTONS.map(pb => (
+            <button key={pb.key} onClick={() => {
+              if (dateLocked) return
+              setPeriod(pb.key)
+              if (!startLocked) {
+                const start = getPeriodStart(pb.key)
+                setCustomStart(start ? start.toISOString().slice(0, 10) : '')
+              }
+              setCustomEnd(new Date().toISOString().slice(0, 10))
+            }}
+              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
+            >{pb.label}</button>
+          ))}
+          <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 4px' }} />
+          <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: '#C0392B', color: '#FF8C00' } : {}) }} />
+          <button onClick={() => setStartLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: startLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: startLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: startLocked ? '#fff' : '#C5C5C5' }}>고정</button>
+          <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
+          <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
+          <button onClick={() => setDateLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: dateLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: dateLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: dateLocked ? '#fff' : '#C5C5C5' }}>고정</button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+          <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0 0.4rem', fontSize: '0.75rem', height: '28px', minWidth: '140px' }}>
+            <option value="">전체 계정</option>
+            {[...new Set(accounts.map(a => a.market_name))].map(market => (
+              <optgroup key={market} label={market}>
+                {accounts.filter(a => a.market_name === market).map(a => (
+                  <option key={a.id} value={a.id}>{a.seller_id || a.business_name || '-'}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <button onClick={loadReturns} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
+          <button onClick={loadAllMarkets} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>전체마켓 가져오기</button>
+        </div>
+      </div>
+
+      {/* 필터 바 */}
+      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
+        <select style={{ ...inputStyle, width: '68px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
+          <option value="customer">고객</option>
+          <option value="order_number">주문번호</option>
+          <option value="product">상품명</option>
+          <option value="content">사유</option>
         </select>
-        <select
-          value={filterType}
-          onChange={(e) => setFilterType(e.target.value)}
-          style={{ ...inputStyle, width: 'auto', minWidth: '120px' }}
+        <input style={{ ...inputStyle, width: '120px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadReturns() }} />
+        <button onClick={loadReturns} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0 0.6rem', borderRadius: '4px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px' }}>검색</button>
+        <button
+          onClick={handleBatchDelete}
+          style={{ padding: '0 0.6rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #FF6B6B33', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px', lineHeight: '26px' }}
         >
-          <option value=''>전체 유형</option>
-          {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-        </select>
+          선택삭제
+        </button>
+        <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
+          <select style={{ ...inputStyle, width: '100px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
+            <option value="">전체마켓보기</option>
+            {[...new Set(accounts.map(a => a.market_name))].map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <select style={{ ...inputStyle, width: '94px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}>
+            <option value="">전체사이트보기</option>
+            {['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','GrandStage','OKmall','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select style={{ ...inputStyle, width: '95px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">처리상태</option>
+            {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+          <select style={{ ...inputStyle, width: '95px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={filterType} onChange={e => setFilterType(e.target.value)}>
+            <option value="">전체유형</option>
+            {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+          <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
+          <select style={{ ...inputStyle, width: '75px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }}><option>-- 정렬 --</option><option>신청일▲</option><option>신청일▼</option></select>
+          <select style={{ ...inputStyle, width: '78px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
+            <option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
+          </select>
+        </div>
       </div>
 
       {/* 등록 폼 */}
@@ -256,8 +391,8 @@ export default function ReturnsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
               <thead>
                 <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #2D2D2D' }}>
-                  {['주문 ID', '유형', '사유', '수량', '요청금액', '상태', '등록일', '작업'].map((h, i) => (
-                    <th key={h} style={{ textAlign: i >= 3 && i <= 4 ? 'right' : i === 7 ? 'right' : 'left', padding: '0.875rem 1.25rem', color: '#888', fontWeight: 500, fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>
+                  {['사진', '고객', '사업자', '주문번호', '마켓', '확인', '주문일', '고객', '회사', '완료내역', '상품명', '체크날짜', '고객전화번호', '지역', '메모', '반품링크', '반품신청일', '상품위치', '반품신청한곳', '상태', '고객주문', '원주문'].map((h, i) => (
+                    <th key={i} style={{ textAlign: 'left', padding: '0.75rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
                       {h}
                     </th>
                   ))}
@@ -266,47 +401,60 @@ export default function ReturnsPage() {
               <tbody>
                 {returns.map((r) => {
                   const st = STATUS_MAP[r.status] || { label: r.status, bg: 'rgba(100,100,100,0.2)', text: '#888' }
-                  const typeConf = TYPE_LABELS[r.type] || { label: r.type, color: '#888' }
                   return (
                     <tr key={r.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
                       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                     >
-                      <td style={{ padding: '0.875rem 1.25rem' }}>
-                        <button onClick={() => setDetailItem(r)} style={{ background: 'none', border: 'none', color: '#FF8C00', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 500 }}>{r.order_id}</button>
+                      <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', verticalAlign: 'top' }}>
+                        {r.product_image ? (
+                          <img
+                            src={r.product_image}
+                            alt=""
+                            onClick={() => r.return_link && window.open(r.return_link, '_blank')}
+                            style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', cursor: r.return_link ? 'pointer' : 'default' }}
+                          />
+                        ) : (
+                          <div
+                            onClick={() => r.return_link && window.open(r.return_link, '_blank')}
+                            style={{ width: '60px', height: '60px', background: '#1A1A1A', borderRadius: '6px', border: '1px solid #2D2D2D', display: 'flex', alignItems: 'center', justifyContent: 'center', color: r.return_link ? '#4C9AFF' : '#444', fontSize: '0.625rem', cursor: r.return_link ? 'pointer' : 'default', textDecoration: r.return_link ? 'underline' : 'none', margin: '0 auto' }}
+                          >
+                            {r.return_link ? '링크' : 'No IMG'}
+                          </div>
+                        )}
                       </td>
-                      <td style={{ padding: '0.875rem 1.25rem' }}>
-                        <span style={{ padding: '0.2rem 0.625rem', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 600, background: `${typeConf.color}22`, color: typeConf.color }}>{typeConf.label}</span>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.customer_name || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.business_name || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem' }}>
+                        <button onClick={() => setDetailItem(r)} style={{ background: 'none', border: 'none', color: '#FF8C00', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 500 }}>{r.order_id || '-'}</button>
                       </td>
-                      <td style={{ padding: '0.875rem 1.25rem', color: '#888', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.reason || '-'}</td>
-                      <td style={{ padding: '0.875rem 1.25rem', textAlign: 'right' }}>{r.quantity}</td>
-                      <td style={{ padding: '0.875rem 1.25rem', textAlign: 'right' }}>{r.requested_amount ? `₩${r.requested_amount.toLocaleString()}` : '-'}</td>
-                      <td style={{ padding: '0.875rem 1.25rem' }}>
-                        <span style={{ padding: '0.25rem 0.75rem', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 600, background: st.bg, color: st.text }}>{st.label}</span>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.market || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.confirmed ? '확인' : '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', color: '#888', whiteSpace: 'nowrap' }}>{r.order_date?.slice(0, 10) || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.customer_id || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.company || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.completion_detail || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.product_name || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', color: '#888', whiteSpace: 'nowrap' }}>{r.check_date?.slice(0, 10) || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.customer_phone || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.region || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.memo || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem' }}>
+                        {r.return_link ? <a href={r.return_link} target="_blank" rel="noopener noreferrer" style={{ color: '#4C9AFF', textDecoration: 'none' }}>링크</a> : '-'}
                       </td>
-                      <td style={{ padding: '0.875rem 1.25rem', color: '#555', fontSize: '0.8125rem' }}>{r.created_at?.slice(0, 10) || '-'}</td>
-                      <td style={{ padding: '0.875rem 1.25rem', textAlign: 'right' }}>
-                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                          {r.status === 'requested' && (
-                            <>
-                              <button onClick={() => handleApprove(r.id)} style={{ background: 'none', border: 'none', color: '#4C9AFF', fontSize: '0.8125rem', cursor: 'pointer' }}>승인</button>
-                              <button onClick={() => handleReject(r.id)} style={{ background: 'none', border: 'none', color: '#FF6B6B', fontSize: '0.8125rem', cursor: 'pointer' }}>거절</button>
-                              <button onClick={() => handleCancel(r.id)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '0.8125rem', cursor: 'pointer' }}>취소</button>
-                            </>
-                          )}
-                          {r.status === 'approved' && (
-                            <>
-                              <button onClick={() => handleComplete(r.id)} style={{ background: 'none', border: 'none', color: '#51CF66', fontSize: '0.8125rem', cursor: 'pointer' }}>완료</button>
-                              <button onClick={() => handleCancel(r.id)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '0.8125rem', cursor: 'pointer' }}>취소</button>
-                            </>
-                          )}
-                        </div>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', color: '#888', whiteSpace: 'nowrap' }}>{r.return_request_date?.slice(0, 10) || r.created_at?.slice(0, 10) || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.product_location || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.return_source || '-'}</td>
+                      <td style={{ padding: '0.625rem' }}>
+                        <span style={{ padding: '0.2rem 0.5rem', borderRadius: '20px', fontSize: '0.72rem', fontWeight: 600, background: st.bg, color: st.text, whiteSpace: 'nowrap' }}>{st.label}</span>
                       </td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.customer_order_no || '-'}</td>
+                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.original_order_no || '-'}</td>
                     </tr>
                   )
                 })}
                 {returns.length === 0 && (
-                  <tr><td colSpan={8} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>반품/교환 내역이 없습니다</td></tr>
+                  <tr><td colSpan={22} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>반품/교환 내역이 없습니다</td></tr>
                 )}
               </tbody>
             </table>

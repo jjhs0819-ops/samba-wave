@@ -1,13 +1,15 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { orderApi, channelApi, accountApi, proxyApi, type SambaOrder, type SambaChannel, type SambaMarketAccount } from '@/lib/samba/api'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { orderApi, channelApi, accountApi, proxyApi, collectorApi, type SambaOrder, type SambaChannel, type SambaMarketAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   pending:    { label: '주문접수', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
   wait_ship:  { label: '배송대기중', bg: 'rgba(100,149,237,0.15)', text: '#6495ED' },
   arrived:    { label: '사무실도착', bg: 'rgba(72,209,204,0.15)', text: '#48D1CC' },
+  ship_failed: { label: '송장전송실패', bg: 'rgba(255,50,50,0.2)', text: '#FF3232' },
   shipping:   { label: '국내배송중', bg: 'rgba(76,154,255,0.15)', text: '#4C9AFF' },
   delivered:  { label: '배송완료', bg: 'rgba(81,207,102,0.15)', text: '#51CF66' },
   cancelling: { label: '취소중', bg: 'rgba(255,165,0,0.15)', text: '#FFA500' },
@@ -20,7 +22,7 @@ const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = 
   exchanged:  { label: '교환완료', bg: 'rgba(144,238,144,0.15)', text: '#90EE90' },
 }
 
-const SHIPPING_COMPANIES = ['CJ대한통운', '한진택배', '롯데택배', '로젠택배', '우체국택배', '경동택배', '합동택배', '기타']
+const SHIPPING_COMPANIES = ['CJ대한통운', '한진택배', '롯데택배', '로젠택배', '우체국택배', '경동택배', '대신택배', '일양로지스', '편의점택배', 'DHL', '직접배송', '기타']
 
 const PERIOD_BUTTONS = [
   { key: 'today', label: '오늘' },
@@ -33,7 +35,7 @@ const PERIOD_BUTTONS = [
   { key: 'all', label: '전체' },
 ]
 
-const MARKET_STATUS_OPTIONS = ['일반', '송장전송완료', '송장전송실패', '교환요청', '취소요청', '반품요청', '배송완료']
+const MARKET_STATUS_OPTIONS = ['일반', '발송대기', '교환요청', '취소요청', '반품요청', '배송완료']
 
 // 택배사별 배송조회 URL
 const TRACKING_URLS: Record<string, string> = {
@@ -76,16 +78,17 @@ const ACTION_BUTTONS = [
 ] as const
 
 export default function OrdersPage() {
+  const searchParams = useSearchParams()
   const [orders, setOrders] = useState<SambaOrder[]>([])
   const [channels, setChannels] = useState<SambaChannel[]>([])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [loading, setLoading] = useState(true)
-  const [period, setPeriod] = useState('all')
+  const [period, setPeriod] = useState('thisyear')
   const [marketFilter, setMarketFilter] = useState('')
   const [marketStatus, setMarketStatus] = useState('')
   const [siteFilter, setSiteFilter] = useState('')
   const [inputFilter, setInputFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('active')
   const [searchText, setSearchText] = useState('')
   const [pageSize, setPageSize] = useState(50)
   const [logMessages, setLogMessages] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
@@ -95,8 +98,9 @@ export default function OrdersPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncAccountId, setSyncAccountId] = useState('')
   const [form, setForm] = useState<OrderForm>({ ...emptyForm })
-  // 인라인 원가/배송비 수정용 상태
+  // 인라인 원가/배송비/송장 수정용 상태
   const [editingCosts, setEditingCosts] = useState<Record<string, string>>({})
+  const [editingTrackings, setEditingTrackings] = useState<Record<string, string>>({})
   const [editingShipFees, setEditingShipFees] = useState<Record<string, string>>({})
   // 직배/까대기/선물 토글 상태
   const [activeActions, setActiveActions] = useState<Record<string, string | null>>({})
@@ -113,18 +117,49 @@ export default function OrdersPage() {
   const [urlModalOrderId, setUrlModalOrderId] = useState('')
   const [urlModalInput, setUrlModalInput] = useState('')
   const [urlModalSaving, setUrlModalSaving] = useState(false)
+  // SMS/카카오 발송 모달
+  const [msgModal, setMsgModal] = useState<{ type: 'sms' | 'kakao'; order: SambaOrder } | null>(null)
+  const [msgText, setMsgText] = useState('')
+  const [msgSending, setMsgSending] = useState(false)
+  const msgTextRef = useRef<HTMLTextAreaElement>(null)
+  // 취소 알림 설정 (URL 파라미터 alarm=1이면 자동 오픈)
+  const [showAlarmSetting, setShowAlarmSetting] = useState(searchParams.get('alarm') === '1')
+  const [alarmHour, setAlarmHour] = useState('1')
+  const [alarmMin, setAlarmMin] = useState('0')
+  const [sleepStart, setSleepStart] = useState('23:00')
+  const [sleepEnd, setSleepEnd] = useState('07:00')
+
+  const MSG_VARIABLE_TAGS = [
+    { tag: '{{sellerName}}', label: '판매자명' },
+    { tag: '{{marketName}}', label: '판매마켓이름' },
+    { tag: '{{OrderName}}', label: '주문번호' },
+    { tag: '{{rvcName}}', label: '수취인명' },
+    { tag: '{{rcvHPNo}}', label: '수취인휴대폰번호' },
+    { tag: '{{goodsName}}', label: '상품명' },
+  ]
+
+  const insertMsgTag = (tag: string) => {
+    const el = msgTextRef.current
+    if (!el) { setMsgText(prev => prev + tag); return }
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    const newVal = msgText.slice(0, start) + tag + msgText.slice(end)
+    setMsgText(newVal)
+    requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = start + tag.length; el.focus() })
+  }
   // 검색 카테고리
   const [searchCategory, setSearchCategory] = useState('customer')
   // 일자 고정
   const [dateLocked, setDateLocked] = useState(false)
-  const [customStart, setCustomStart] = useState('')
+  const [customStart, setCustomStart] = useState(`${new Date().getFullYear()}-01-01`)
   const [startLocked, setStartLocked] = useState(false)
-  const [customEnd, setCustomEnd] = useState('')
+  const [customEnd, setCustomEnd] = useState(new Date().toISOString().slice(0, 10))
 
   const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
       setOrders(await orderApi.list(0, pageSize))
+      setEditingTrackings({})
     } catch { /* ignore */ }
     setLoading(false)
   }, [pageSize])
@@ -149,7 +184,7 @@ export default function OrdersPage() {
     const label = acc ? `${acc.market_name}(${acc.seller_id || '-'})` : syncAccountId
     const daysMap: Record<string, number> = {
       today: 1, '1week': 7, '15days': 15, '1month': 30,
-      '3months': 90, '6months': 180, thisyear: 365, all: 365,
+      '3months': 90, '6months': 180, thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
     }
     const days = daysMap[period] || 7
     setLogMessages(prev => [...prev, `[${ts()}] ${label} 주문 가져오기 시작 (최근 ${days}일)...`])
@@ -171,7 +206,7 @@ export default function OrdersPage() {
         totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
       }
       if (totalCancelRequested > 0) {
-        showNotification(`취소/반품/교환 요청 ${totalCancelRequested}건이 감지되었습니다. 확인이 필요합니다.`)
+        showNotification(`주문 취소요청 ${totalCancelRequested}건이 감지되었습니다. 확인이 필요합니다.`)
       }
       await loadOrders()
     } catch (e) {
@@ -185,7 +220,7 @@ export default function OrdersPage() {
     const ts = () => new Date().toLocaleTimeString()
     const daysMap: Record<string, number> = {
       today: 1, '1week': 7, '15days': 15, '1month': 30,
-      '3months': 90, '6months': 180, thisyear: 365, all: 365,
+      '3months': 90, '6months': 180, thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
     }
     const days = daysMap[period] || 7
     setLogMessages(prev => [...prev, `[${ts()}] 전체마켓 주문 동기화 시작 (최근 ${days}일)...`])
@@ -208,7 +243,7 @@ export default function OrdersPage() {
         totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
       }
       if (totalCancelRequested > 0) {
-        showNotification(`취소/반품/교환 요청 ${totalCancelRequested}건이 감지되었습니다. 확인이 필요합니다.`)
+        showNotification(`주문 취소요청 ${totalCancelRequested}건이 감지되었습니다. 확인이 필요합니다.`)
       }
       await loadOrders()
     } catch (e) {
@@ -237,6 +272,43 @@ export default function OrdersPage() {
       else await orderApi.create(payload)
       setShowForm(false); setEditingId(null); setForm({ ...emptyForm }); loadOrders()
     } catch (e) { showAlert(e instanceof Error ? e.message : '저장 실패', 'error') }
+  }
+
+  // SMS/카카오 발송
+  const openMsgModal = (type: 'sms' | 'kakao', order: SambaOrder) => {
+    if (!order.customer_phone) {
+      showAlert('고객 전화번호가 없습니다', 'error')
+      return
+    }
+    setMsgModal({ type, order })
+    setMsgText('')
+  }
+
+  const handleSendMsg = async () => {
+    if (!msgModal || !msgText.trim()) {
+      showAlert('메시지를 입력해주세요', 'error')
+      return
+    }
+    setMsgSending(true)
+    try {
+      const phone = msgModal.order.customer_phone || ''
+      let res: { success: boolean; message: string }
+      if (msgModal.type === 'sms') {
+        res = await proxyApi.sendSms(phone, msgText)
+      } else {
+        res = await proxyApi.sendKakao(phone, msgText)
+      }
+      if (res.success) {
+        showAlert(res.message, 'success')
+        setMsgModal(null)
+        setMsgText('')
+      } else {
+        showAlert(res.message, 'error')
+      }
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '발송 실패', 'error')
+    }
+    setMsgSending(false)
   }
 
   const handleStatusChange = async (id: string, status: string) => {
@@ -303,19 +375,36 @@ export default function OrdersPage() {
     const baseUrl = TRACKING_URLS[shippingCompany] || TRACKING_URLS['CJ대한통운']
     window.open(`${baseUrl}${trackingNumber}`, '_blank')
   }
-  const handleSourceLink = (o: SambaOrder) => {
-    if (!o.source_site || !o.product_id) {
-      showAlert('소싱처 정보가 없습니다', 'error')
+  const handleSourceLink = async (o: SambaOrder) => {
+    // 1. 소싱처 정보가 있으면 직접 이동
+    if (o.source_site && o.product_id) {
+      const siteUrls: Record<string, string> = {
+        MUSINSA: `https://www.musinsa.com/app/goods/${o.product_id}`,
+        KREAM: `https://kream.co.kr/products/${o.product_id}`,
+        LOTTEON: `https://www.lotteon.com/product/${o.product_id}`,
+        SSG: `https://www.ssg.com/item/itemView.ssg?itemId=${o.product_id}`,
+        Nike: `https://www.nike.com/kr/t/${o.product_id}`,
+        ABCmart: `https://abcmart.a-rt.com/product/detail?goodsId=${o.product_id}`,
+      }
+      const url = siteUrls[o.source_site]
+      if (url) { window.open(url, '_blank'); return }
+    }
+    // 2. product_id가 URL이면 직접 열기
+    if (o.product_id && o.product_id.startsWith('http')) {
+      window.open(o.product_id, '_blank')
       return
     }
-    const siteUrls: Record<string, string> = {
-      MUSINSA: `https://www.musinsa.com/app/goods/${o.product_id}`,
-      Nike: `https://www.nike.com/kr/t/${o.product_id}`,
-      ABCmart: `https://abcmart.a-rt.com/product/detail?goodsId=${o.product_id}`,
+    // 3. 마켓 상품번호로 수집상품 역추적
+    if (o.product_id) {
+      try {
+        const res = await collectorApi.lookupByMarketNo(o.product_id)
+        if (res.found && res.original_link) {
+          window.open(res.original_link, '_blank')
+          return
+        }
+      } catch { /* ignore */ }
     }
-    const url = siteUrls[o.source_site]
-    if (url) window.open(url, '_blank')
-    else showAlert(`${o.source_site} 원문링크 미지원`, 'error')
+    showAlert('소싱처 원문링크 정보가 없습니다', 'info')
   }
   const handleMarketLink = (o: SambaOrder) => {
     const acc = accounts.find(a => a.id === o.channel_id)
@@ -400,12 +489,20 @@ export default function OrdersPage() {
     setUrlModalSaving(false)
   }
 
-  // 이미지 클릭 → product_id URL 또는 product_image URL로 이동
+  // 이미지 클릭 → 마켓 상품 페이지 또는 이미지 URL로 이동
   const handleImageClick = (o: SambaOrder) => {
-    // product_id가 URL이면 해당 페이지로 이동 (미등록 입력으로 등록된 경우)
+    // product_id가 URL이면 해당 페이지로 이동
     if (o.product_id && o.product_id.startsWith('http')) {
       window.open(o.product_id, '_blank')
-    } else if (o.product_image && o.product_image.startsWith('http')) {
+      return
+    }
+    // 마켓 상품번호가 있으면 마켓 상품 페이지로 이동
+    if (o.product_id && o.channel_id) {
+      handleMarketLink(o)
+      return
+    }
+    // 이미지 URL이 있으면 이미지 열기
+    if (o.product_image && o.product_image.startsWith('http')) {
       window.open(o.product_image, '_blank')
     }
   }
@@ -453,14 +550,19 @@ export default function OrdersPage() {
       if (orderDate > end) return false
     }
     if (marketFilter) {
-      // channel_id(계정 ID)로 계정 조회 → market_type 비교
-      const acc = accounts.find(a => a.id === o.channel_id)
-      if (acc) {
-        if (acc.market_type !== marketFilter) return false
-      } else {
-        // 계정 매칭 실패 시 channel_name에 마켓명 포함 여부로 판단
-        const marketName = accounts.find(a => a.market_type === marketFilter)?.market_name || marketFilter
-        if (!o.channel_name?.includes(marketName)) return false
+      if (marketFilter.startsWith('acc:')) {
+        // 개별 계정 필터
+        if (o.channel_id !== marketFilter.slice(4)) return false
+      } else if (marketFilter.startsWith('type:')) {
+        // 마켓 유형 필터
+        const mtype = marketFilter.slice(5)
+        const acc = accounts.find(a => a.id === o.channel_id)
+        if (acc) {
+          if (acc.market_type !== mtype) return false
+        } else {
+          const marketName = accounts.find(a => a.market_type === mtype)?.market_name || mtype
+          if (!o.channel_name?.includes(marketName)) return false
+        }
       }
     }
     if (siteFilter) {
@@ -470,7 +572,9 @@ export default function OrdersPage() {
       if (o.shipping_status !== marketStatus) return false
     }
     if (statusFilter) {
-      if (o.status !== statusFilter) return false
+      if (statusFilter === 'active') {
+        if (!['pending', 'wait_ship', 'arrived'].includes(o.status)) return false
+      } else if (o.status !== statusFilter) return false
     }
     if (inputFilter) {
       const action = activeActions[o.id]
@@ -502,27 +606,26 @@ export default function OrdersPage() {
 
   return (
     <div style={{ color: '#E5E5E5' }}>
-      {/* 우측상단 알람 */}
+      {/* 취소/반품/교환 요청 경고 — 클릭 전 사라지지 않는 모달 */}
       {notifications.length > 0 && (
-        <div style={{ position: 'fixed', top: '1rem', right: '1rem', zIndex: 9999, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {notifications.map(n => (
-            <div key={n.id} style={{
-              background: 'rgba(255, 80, 80, 0.95)',
-              border: '1px solid #FF4444',
-              borderRadius: '8px',
-              padding: '0.75rem 1rem',
-              color: '#FFF',
-              fontSize: '0.875rem',
-              fontWeight: 600,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-              maxWidth: '320px',
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem',
-            }}>
-              <span>{n.message}</span>
-              <button onClick={() => setNotifications(prev => prev.filter(x => x.id !== n.id))}
-                style={{ background: 'none', border: 'none', color: '#FFF', cursor: 'pointer', fontSize: '1rem', padding: '0 0.25rem', flexShrink: 0 }}>✕</button>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#1A1A1A', border: '2px solid #FF4444', borderRadius: '16px', padding: '2rem', maxWidth: '420px', width: '90%', boxShadow: '0 8px 32px rgba(255,68,68,0.3)' }}>
+            <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+              <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>&#9888;</div>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#FF6B6B', marginBottom: '0.5rem' }}>주문 취소요청 감지</h3>
             </div>
-          ))}
+            {notifications.map(n => (
+              <div key={n.id} style={{ background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '0.75rem', color: '#FF6B6B', fontSize: '0.9375rem', fontWeight: 600 }}>
+                {n.message}
+              </div>
+            ))}
+            <button
+              onClick={() => setNotifications([])}
+              style={{ width: '100%', padding: '0.75rem', background: '#FF4444', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '1rem', fontWeight: 700, cursor: 'pointer', marginTop: '0.5rem' }}
+            >
+              확인했습니다
+            </button>
+          </div>
         </div>
       )}
 
@@ -572,7 +675,7 @@ export default function OrdersPage() {
             <button onClick={() => setLogMessages(['[대기] 로그가 초기화되었습니다.'])} style={{ fontSize: '0.72rem', color: '#555', background: 'transparent', border: '1px solid #1C2333', padding: '1px 8px', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
           </div>
         </div>
-        <div style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}>
+        <div ref={el => { if (el) el.scrollTop = el.scrollHeight }} style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}>
           {logMessages.map((msg, i) => <p key={i} style={{ color: '#8A95B0', fontSize: 'inherit', margin: 0 }}>{msg}</p>)}
         </div>
       </div>
@@ -584,7 +687,6 @@ export default function OrdersPage() {
             <button key={pb.key} onClick={() => {
               if (dateLocked) return
               setPeriod(pb.key)
-              // 프리셋 선택 시 시작일이 고정 상태가 아니면 자동 계산
               if (!startLocked) {
                 const start = getPeriodStart(pb.key)
                 setCustomStart(start ? start.toISOString().slice(0, 10) : '')
@@ -595,15 +697,6 @@ export default function OrdersPage() {
             >{pb.label}</button>
           ))}
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 4px' }} />
-          <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', minWidth: '140px' }}>
-            <option value="">전체 계정</option>
-            {accounts.map(a => <option key={a.id} value={a.id}>{a.market_name}({a.seller_id || a.account_label || '-'})</option>)}
-          </select>
-          <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '동기화 중...' : '가져오기'}</button>
-          <button onClick={handleSyncFromMarkets} disabled={syncing}
-            style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: syncing ? '#333' : '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '동기화 중...' : '전체마켓 가져오기'}</button>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
           <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)}
             style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: '#C0392B', color: '#FF8C00' } : {}) }} />
           <button
@@ -614,7 +707,7 @@ export default function OrdersPage() {
               border: startLocked ? '1px solid #C0392B' : '1px solid #3D3D3D',
               color: startLocked ? '#fff' : '#C5C5C5',
             }}
-          >{startLocked ? '고정' : '고정'}</button>
+          >고정</button>
           <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
           <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)}
             style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
@@ -626,7 +719,29 @@ export default function OrdersPage() {
               border: dateLocked ? '1px solid #C0392B' : '1px solid #3D3D3D',
               color: dateLocked ? '#fff' : '#C5C5C5',
             }}
-          >{dateLocked ? '고정' : '고정'}</button>
+          >고정</button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+          <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '200px' }}>
+            <option value="">전체 계정</option>
+            {(() => {
+              const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
+              const items: { value: string; label: string; isGroup: boolean }[] = []
+              marketTypes.forEach(([, name]) => {
+                const accs = accounts.filter(a => a.market_name === name)
+                accs.forEach(a => {
+                  const label = `${name} ${a.business_name || ''} ${a.seller_id || ''}`.trim()
+                  items.push({ value: a.id, label, isGroup: false })
+                })
+              })
+              return items.map(item => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))
+            })()}
+          </select>
+          <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '동기화 중...' : '가져오기'}</button>
+          <button onClick={handleSyncFromMarkets} disabled={syncing}
+            style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: syncing ? '#333' : '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '동기화 중...' : '전체마켓 가져오기'}</button>
         </div>
       </div>
 
@@ -641,11 +756,22 @@ export default function OrdersPage() {
         <input style={{ ...inputStyle, width: '140px' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
         <button style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>검색</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
-          <select style={{ ...inputStyle, width: '118px' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '200px', fontSize: '0.72rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체마켓보기</option>
-            {[...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()].map(([type, name]) => (
-              <option key={type} value={type}>{name}</option>
-            ))}
+            {(() => {
+              const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
+              const items: { value: string; label: string; isGroup: boolean }[] = []
+              marketTypes.forEach(([type, name]) => {
+                items.push({ value: `type:${type}`, label: name, isGroup: true })
+                accounts.filter(a => a.market_type === type).forEach(a => {
+                  const label = `${name} ${a.business_name || ''} ${a.seller_id || ''}`.trim()
+                  items.push({ value: `acc:${a.id}`, label: `  ${label}`, isGroup: false })
+                })
+              })
+              return items.map(item => (
+                <option key={item.value} value={item.value} style={{ fontWeight: item.isGroup ? 600 : 400 }}>{item.label}</option>
+              ))
+            })()}
           </select>
           <select style={{ ...inputStyle, width: '110px' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체사이트보기</option>{['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','GrandStage','OKmall','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}</select>
           <select style={{ ...inputStyle, width: '112px' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
@@ -660,9 +786,10 @@ export default function OrdersPage() {
             <option value="kkadaegi">까대기</option>
             <option value="gift">선물</option>
           </select>
-          <select style={{ ...inputStyle, width: '112px' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="">주문상태</option>
-            {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          <select style={{ ...inputStyle, width: '130px' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="active">접수/대기/사무실</option>
+            <option value="">전체 주문상태</option>
+            {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
           </select>
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
           <select style={{ ...inputStyle, width: '88px' }}><option>-- 정렬 --</option><option>주문일자▲</option><option>주문일자▼</option></select>
@@ -705,9 +832,9 @@ export default function OrdersPage() {
                   </td>
                   {/* 주문정보 */}
                   <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8125rem', position: 'relative' }}>
-                    {/* 우측 상단: 주문일시 + 삭제 */}
+                    {/* 우측 상단: 주문일 + 삭제 */}
                     <div style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleString('ko-KR')}</span>
+                      <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
                       <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
                     </div>
 
@@ -730,6 +857,8 @@ export default function OrdersPage() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
                           <span style={{ fontSize: '0.75rem', color: '#888', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
                           <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '4px', color: '#4C9AFF', cursor: 'pointer' }}>주문번호복사</button>
+                          <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>SMS</button>
+                          <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(255,211,61,0.1)', border: '1px solid rgba(255,211,61,0.3)', borderRadius: '4px', color: '#FFD93D', cursor: 'pointer' }}>KAKAO</button>
                         </div>
                         {/* 상품주문번호 + 주문번호 같은 행 */}
                         <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
@@ -738,9 +867,14 @@ export default function OrdersPage() {
                             <div><span style={{ color: '#666' }}>주문번호 </span><span style={{ fontFamily: 'monospace', color: '#B0B0B0' }}>{o.shipment_id}</span></div>
                           )}
                         </div>
-                        {/* 상품명 + 수량 */}
+                        {/* 상품명 + 옵션 + 수량 */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{o.product_name || '-'}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{o.product_name || '-'}</span>
+                            {o.product_option && (
+                              <span style={{ color: '#FF8C00', fontSize: '0.75rem', display: 'block', marginTop: '0.125rem' }}>[옵션] {o.product_option}</span>
+                            )}
+                          </div>
                           <span style={{ fontSize: '2.25rem', fontWeight: 700, color: '#888', flexShrink: 0 }}>수량: <span style={{ color: '#E5E5E5' }}>{o.quantity}</span></span>
                         </div>
                       </div>
@@ -750,10 +884,25 @@ export default function OrdersPage() {
                     <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                       <button onClick={() => handleDanawa(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'rgba(255,140,0,0.12)', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#FF8C00', cursor: 'pointer' }}>다나와</button>
                       <button onClick={() => handleNaver(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'rgba(81,207,102,0.12)', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>네이버</button>
-                      <button onClick={() => showAlert('상품정보 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>상품정보</button>
+                      <button onClick={async () => {
+                        if (o.product_id) {
+                          try {
+                            const res = await collectorApi.lookupByMarketNo(o.product_id)
+                            if (res.found && res.id) {
+                              window.open(`/samba/products?search=${encodeURIComponent(res.id)}&search_type=id&highlight=${res.id}`, '_blank')
+                              return
+                            }
+                          } catch { /* ignore */ }
+                        }
+                        if (o.product_name) {
+                          window.open(`/samba/products?search=${encodeURIComponent(o.product_name)}`, '_blank')
+                        } else {
+                          showAlert('상품 정보가 없습니다', 'info')
+                        }
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>상품정보</button>
                       <button onClick={() => showAlert('가격변경이력 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>가격변경이력</button>
-                      <button onClick={() => handleSourceLink(o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>원문링크</button>
-                      <button onClick={() => handleMarketLink(o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>판매마켓링크</button>
+                      <button onClick={() => handleSourceLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #444', borderRadius: '3px', color: (o.source_site && o.product_id) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원문링크</button>
+                      <button onClick={() => handleMarketLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #444', borderRadius: '3px', color: o.channel_id ? '#51CF66' : '#555', cursor: 'pointer' }}>판매링크</button>
                       <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>미등록 입력</button>
                       <button onClick={() => handleTracking(o.shipping_company || '', o.tracking_number || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>배송조회</button>
                       <button onClick={() => showAlert('업데이트 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>업데이트</button>
@@ -802,9 +951,10 @@ export default function OrdersPage() {
                             fontSize: '0.75rem',
                             fontWeight: 600,
                             cursor: 'pointer',
+                            color: o.status === 'ship_failed' ? '#FF3232' : inputStyle.color,
                           }}
                         >
-                          {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                          {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
                         </select>
                         <div style={{
                           flex: 1,
@@ -885,17 +1035,102 @@ export default function OrdersPage() {
                         />
                       </div>
 
-                      {/* 택배사 + 송장번호 */}
-                      <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}>
-                        <select style={{ ...inputStyle, flex: 1, fontSize: '0.72rem' }} defaultValue={o.shipping_company || ''}>
+                      {/* 택배사 + 송장번호 + 전송 */}
+                      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                        <select
+                          key={`${o.id}-${o.shipping_company}-${o.status}`}
+                          id={`ship-co-${o.id}`}
+                          style={{ ...inputStyle, flex: 1, fontSize: '0.72rem' }}
+                          defaultValue={o.shipping_company || ''}
+                          onChange={async e => {
+                            const co = e.target.value
+                            const tn = (document.getElementById(`ship-tn-${o.id}`) as HTMLInputElement)?.value.trim() || ''
+                            const alreadyShipped = o.shipping_status === '송장전송완료'
+                            if (co && tn && alreadyShipped) {
+                              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                              try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
+                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
+                              loadOrders()
+                            } else if (co && tn) {
+                              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 중... (${co} ${tn})`])
+                              try {
+                                const res = await orderApi.shipOrder(o.id, co, tn)
+                                if (!res.market_sent) {
+                                  await orderApi.updateStatus(o.id, 'ship_failed')
+                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                } else {
+                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                }
+                                loadOrders()
+                              } catch (err) {
+                                await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
+                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 실패`])
+                                loadOrders()
+                              }
+                            } else if (co) {
+                              try { await orderApi.update(o.id, { shipping_company: co }) } catch { /* ignore */ }
+                            }
+                          }}
+                        >
                           <option value="">택배사</option>
                           {SHIPPING_COMPANIES.map(sc => <option key={sc} value={sc}>{sc}</option>)}
                         </select>
-                        <input style={{ ...inputStyle, flex: 1, fontSize: '0.72rem' }} value={o.tracking_number || ''} readOnly placeholder="송장번호" />
+                        <input
+                          id={`ship-tn-${o.id}`}
+                          style={{ ...inputStyle, flex: 1.5, fontSize: '0.72rem' }}
+                          value={editingTrackings[o.id] ?? o.tracking_number ?? ''}
+                          placeholder="송장번호"
+                          onChange={e => setEditingTrackings(prev => ({ ...prev, [o.id]: e.target.value }))}
+                          onBlur={async e => {
+                            const tn = e.target.value.trim()
+                            const co = (document.getElementById(`ship-co-${o.id}`) as HTMLSelectElement)?.value || ''
+                            const changed = tn !== (o.tracking_number || '')
+                            const retry = o.status === 'ship_failed'
+                            const alreadyShipped = o.shipping_status === '송장전송완료'
+                            if (co && tn && changed && alreadyShipped) {
+                              // 이미 발송된 주문 — DB만 저장, 마켓 수정은 판매자센터에서
+                              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                              try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
+                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
+                              loadOrders()
+                            } else if (co && tn && (changed || retry)) {
+                              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 중... (${co} ${tn})`])
+                              try {
+                                const res = await orderApi.shipOrder(o.id, co, tn)
+                                if (!res.market_sent) {
+                                  await orderApi.updateStatus(o.id, 'ship_failed')
+                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                } else {
+                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                }
+                                loadOrders()
+                              } catch (err) {
+                                await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
+                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 실패`])
+                                loadOrders()
+                              }
+                            } else if (tn && tn !== (o.tracking_number || '')) {
+                              try { await orderApi.update(o.id, { tracking_number: tn }) } catch { /* ignore */ }
+                            }
+                          }}
+                          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                        />
                       </div>
 
                       {/* 간단메모 */}
-                      <textarea style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', height: '3rem', lineHeight: '1.4' }} placeholder="간단메모" defaultValue={o.notes || ''} />
+                      <textarea
+                        style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', height: '3rem', lineHeight: '1.4' }}
+                        placeholder="간단메모"
+                        defaultValue={o.notes || ''}
+                        onBlur={async e => {
+                          const val = e.target.value.trim()
+                          if (val !== (o.notes || '')) {
+                            try { await orderApi.update(o.id, { notes: val }) } catch { /* ignore */ }
+                          }
+                        }}
+                      />
                     </div>
                   </td>
                 </tr>
@@ -974,6 +1209,169 @@ export default function OrdersPage() {
               <button onClick={handleUrlSubmit} disabled={urlModalSaving} style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: urlModalSaving ? 'not-allowed' : 'pointer' }}>
                 {urlModalSaving ? '저장중...' : '등록'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SMS/카카오 발송 모달 */}
+      {msgModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '720px', maxWidth: '90vw', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+              <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5' }}>
+                {msgModal.type === 'sms' ? 'SMS 발송' : '카카오톡 발송'}
+              </h3>
+              <button onClick={() => setMsgModal(null)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {/* 주문 정보 */}
+            <div style={{ background: '#111', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.8125rem' }}>
+              <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '0.375rem' }}>
+                <div><span style={{ color: '#666' }}>수신자: </span><span style={{ color: '#E5E5E5' }}>{msgModal.order.customer_name || '-'}</span></div>
+                <div><span style={{ color: '#666' }}>전화번호: </span><span style={{ color: '#E5E5E5' }}>{msgModal.order.customer_phone}</span></div>
+              </div>
+              <div>
+                <span style={{ color: '#666' }}>상품: </span>
+                <span style={{ color: '#aaa' }}>{msgModal.order.product_name || '-'}</span>
+              </div>
+            </div>
+
+            {/* 빠른 템플릿 카드 */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              {[
+                { label: '주문취소안내', msg: '{{marketName}} 주문취소안내\n주문상품 : {{goodsName}}\n\n안녕하세요, {{rvcName}} 고객님.\n\n해당 상품이 일시적으로 시스템 오류로 노출되어 주문이 접수된 것으로 확인되었습니다.\n\n불편을 드려 정말 죄송합니다.\n\n빠른 환불 처리를 위해 "단순취소" 사유로 주문취소 해주시면 확인 후 바로 환불도와드리겠습니다.\n\n불편을 드려 진심으로 죄송하며, 더 나은 서비스로 보답드리겠습니다. 감사합니다.' },
+                { label: '가격변동 취소', msg: '{{marketName}} 가격변동 안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님\n\n해당 제품 공급처에서 가격을 변동하여 안내드립니다.\n취소 후 재주문 부탁드립니다.' },
+                { label: '국내상품 발주안내', msg: '{{marketName}} 주문상품 발주 완료\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님^^ 발주 완료되었습니다. 배송완료까지 영업일기준 2~3일정도 소요됩니다.' },
+                { label: '반품비', msg: '{{marketName}} 반품비 안내\n상품명 : {{goodsName}}\n\n반품비 안내드립니다.\n교환비용 8,000원 발생(고객변심)하므로 따로 개별 문자 안내드리겠습니다.' },
+                { label: '반품안내문자', msg: '{{marketName}} 반품 안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님\n반품신청으로 무자안내드립니다.\n교환 접수시 회수기사님 방문2-3일내 이루어지며 회수된 상품 해당부서로 이동하여 검수진행과정 진행됩니다.' },
+                { label: '발주 후 품절', msg: '{{marketName}} 품절안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님. 저희가 해당 제품 발주를 넣었는데 공급처에서 품절이라고 연락이 왔습니다.\n취소 처리 도와드리겠습니다.' },
+              ].map(t => (
+                <div
+                  key={t.label}
+                  onClick={() => setMsgText(t.msg)}
+                  style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.625rem', cursor: 'pointer', transition: 'border-color 0.15s' }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = '#FF8C00')}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = '#2D2D2D')}
+                >
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#E5E5E5', marginBottom: '0.375rem' }}>{t.label}</div>
+                  <div style={{ fontSize: '0.625rem', color: '#777', lineHeight: '1.4', maxHeight: '3.5rem', overflow: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{t.msg.slice(0, 80)}...</div>
+                </div>
+              ))}
+            </div>
+
+            {/* 변수 태그 버튼 */}
+            <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+              {MSG_VARIABLE_TAGS.map(v => (
+                <button
+                  key={v.tag}
+                  type="button"
+                  onClick={() => insertMsgTag(v.tag)}
+                  style={{ padding: '0.2rem 0.5rem', fontSize: '0.6875rem', background: '#1A1A1A', border: '1px solid #444', borderRadius: '4px', color: '#FF8C00', cursor: 'pointer' }}
+                >{v.tag} <span style={{ color: '#888' }}>{v.label}</span></button>
+              ))}
+            </div>
+
+            {/* 메시지 입력 */}
+            <textarea
+              ref={msgTextRef}
+              value={msgText}
+              onChange={e => setMsgText(e.target.value)}
+              placeholder="메시지를 입력하세요"
+              rows={5}
+              style={{ width: '100%', padding: '0.625rem 0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', fontSize: '0.875rem', outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', boxSizing: 'border-box' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem', marginBottom: '1rem' }}>
+              <span style={{ fontSize: '0.75rem', color: '#555' }}>
+                {msgText.length > 0 ? `${new TextEncoder().encode(msgText).length}바이트` : ''}
+                {msgText.length > 0 && new TextEncoder().encode(msgText).length > 90 ? ' (LMS)' : ''}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button onClick={() => setMsgModal(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>
+              <button
+                onClick={handleSendMsg}
+                disabled={msgSending}
+                style={{
+                  padding: '0.625rem 1.25rem',
+                  background: msgModal.type === 'sms' ? '#51CF66' : '#FFD93D',
+                  border: 'none', borderRadius: '8px',
+                  color: msgModal.type === 'sms' ? '#fff' : '#1A1A1A',
+                  fontSize: '0.875rem', fontWeight: 600,
+                  cursor: msgSending ? 'not-allowed' : 'pointer',
+                  opacity: msgSending ? 0.6 : 1,
+                }}
+              >
+                {msgSending ? '발송중...' : msgModal.type === 'sms' ? 'SMS 발송' : '카카오 발송'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 취소 알림 설정 모달 */}
+      {showAlarmSetting && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '400px', maxWidth: '90vw' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+              <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5' }}>취소 알림 설정</h3>
+              <button onClick={() => setShowAlarmSetting(false)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {/* 수집 주기 */}
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label style={{ fontSize: '0.8125rem', color: '#888', display: 'block', marginBottom: '0.5rem' }}>취소주문 수집 주기</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  type="number" min="0" max="23"
+                  value={alarmHour}
+                  onChange={e => setAlarmHour(e.target.value)}
+                  style={{ width: '60px', padding: '0.4rem 0.5rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', fontSize: '0.875rem', textAlign: 'center', outline: 'none' }}
+                />
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>시간</span>
+                <input
+                  type="number" min="0" max="59"
+                  value={alarmMin}
+                  onChange={e => setAlarmMin(e.target.value)}
+                  style={{ width: '60px', padding: '0.4rem 0.5rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', fontSize: '0.875rem', textAlign: 'center', outline: 'none' }}
+                />
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>분</span>
+              </div>
+            </div>
+
+            {/* 수면타임 */}
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ fontSize: '0.8125rem', color: '#888', display: 'block', marginBottom: '0.5rem' }}>수면타임</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ color: '#666', fontSize: '0.8125rem' }}>시작</span>
+                <input
+                  type="time"
+                  value={sleepStart}
+                  onChange={e => setSleepStart(e.target.value)}
+                  style={{ padding: '0.4rem 0.5rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', fontSize: '0.875rem', outline: 'none' }}
+                />
+                <span style={{ color: '#555', fontSize: '0.875rem' }}>~</span>
+                <span style={{ color: '#666', fontSize: '0.8125rem' }}>종료</span>
+                <input
+                  type="time"
+                  value={sleepEnd}
+                  onChange={e => setSleepEnd(e.target.value)}
+                  style={{ padding: '0.4rem 0.5rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', fontSize: '0.875rem', outline: 'none' }}
+                />
+              </div>
+              <p style={{ fontSize: '0.72rem', color: '#555', marginTop: '0.375rem' }}>수면타임 동안은 취소주문 수집을 하지 않습니다</p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowAlarmSetting(false)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>
+              <button
+                onClick={() => {
+                  showAlert(`수집 주기: ${alarmHour}시간 ${alarmMin}분 / 수면타임: ${sleepStart} ~ ${sleepEnd} 저장완료`, 'success')
+                  setShowAlarmSetting(false)
+                }}
+                style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
+              >저장</button>
             </div>
           </div>
         </div>

@@ -166,8 +166,8 @@ class LotteHomePlugin(MarketPlugin):
     # 반품지/출고지/배송정책 자동 조회 (auth_creds에 없으면)
     if not auth_creds.get("corp_dlvp_sn") or not auth_creds.get("corp_rls_pl_sn") or not auth_creds.get("dlv_polc_no"):
       try:
-        # 배송지(출고지/반품지) 조회
-        places = await client.search_delivery_places()
+        # 출고지/반품배송지 조회
+        places = await client.search_return_places()
         place_data = places.get("data", {})
         place_result = place_data.get("Result", place_data)
         place_list = place_result.get("DlvPlcList", place_result.get("DlvpList", {}))

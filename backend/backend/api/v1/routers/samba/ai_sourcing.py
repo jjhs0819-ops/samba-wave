@@ -206,6 +206,7 @@ async def analyze_full(
         from backend.domain.samba.ai_sourcing.service import (
           BrandKeywordPair, _ALL_CATEGORY_KEYWORDS,
         )
+        # 브랜드/키워드 목록은 정적이므로 정렬 결과를 재사용
         _known_brands = [
           "나이키", "아디다스", "뉴발란스", "푸마", "크록스", "스케쳐스",
           "반스", "컨버스", "노스페이스", "파타고니아", "아식스",
@@ -213,8 +214,11 @@ async def analyze_full(
           "무신사스탠다드", "무신사 스탠다드", "탑텐", "스파오", "필라",
           "리바이스", "칼하트", "커버낫", "마르디메크르디",
         ]
-        _sorted_brands = sorted(_known_brands, key=len, reverse=True)
-        _sorted_kws = sorted(_ALL_CATEGORY_KEYWORDS, key=len, reverse=True)
+        if not hasattr(analyze_ai_sourcing, '_cached_sorted_brands'):
+          analyze_ai_sourcing._cached_sorted_brands = sorted(_known_brands, key=len, reverse=True)
+          analyze_ai_sourcing._cached_sorted_kws = sorted(_ALL_CATEGORY_KEYWORDS, key=len, reverse=True)
+        _sorted_brands = analyze_ai_sourcing._cached_sorted_brands
+        _sorted_kws = analyze_ai_sourcing._cached_sorted_kws
         kw_pairs_added = 0
         for kw_item in search_keywords_raw:
           kw_text = kw_item.get("keyword", "")
@@ -447,8 +451,8 @@ async def create_groups(req: CreateGroupsRequest):
       estimated_count = combo.get("estimated_count", 100)
       search_url = combo.get("search_url", "")
 
-      # 그룹명: "MUSINSA_나이키_운동화" — 키워드 기반
-      group_name = f"{source_site}_{brand}_{keyword}"
+      # 그룹명: "브랜드_키워드" (사이트 접두사 제거 — 트리에서 source_site로 구분)
+      group_name = f"{brand}_{keyword}" if keyword else brand
 
       # keyword: "브랜드 키워드" 형태로 검색그룹에 저장
       search_keyword = f"{brand} {keyword}" if keyword else brand
@@ -457,7 +461,7 @@ async def create_groups(req: CreateGroupsRequest):
         source_site=source_site,
         name=group_name,
         keyword=search_keyword,
-        category_filter="",
+        category_filter=search_url,  # 소싱 URL 저장
         requested_count=estimated_count,
         exclude_sold_out=True,
         is_active=True,

@@ -489,6 +489,9 @@ async def scroll_products(
     if q:
         if search_type == "name":
             conditions.append(_CP.name.ilike(f"%{q}%"))
+        elif search_type == "name_all":
+            # 상품명 + 등록상품명(name_en) 동시 검색
+            conditions.append(or_(_CP.name.ilike(f"%{q}%"), _CP.name_en.ilike(f"%{q}%")))
         elif search_type == "no":
             conditions.append(_CP.site_product_id.ilike(f"%{q}%"))
         elif search_type == "filter":
@@ -496,6 +499,8 @@ async def scroll_products(
             from backend.domain.samba.collector.model import SambaSearchFilter as _SF
             sf_ids = select(_SF.id).where(_SF.name.ilike(f"%{q}%"))
             conditions.append(_CP.search_filter_id.in_(sf_ids))
+        elif search_type == "id":
+            conditions.append(_CP.id == q)
         elif search_type == "policy":
             from backend.domain.samba.policy.model import SambaPolicy as _POL
             pol_ids = select(_POL.id).where(_POL.name.ilike(f"%{q}%"))
@@ -743,6 +748,46 @@ async def create_collected_product(
     # 상품 생성 시 캐시 무효화
     await cache.clear_pattern("products:*")
     return result
+
+
+@router.get("/products/lookup-by-market-no/{market_product_no}")
+async def lookup_by_market_product_no(
+    market_product_no: str,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """마켓 상품번호로 수집상품 조회 (원문링크/이미지 등 반환)."""
+    from sqlalchemy import text as sa_text
+    sql = sa_text(
+        "SELECT id, source_site, site_product_id, name, images "
+        "FROM samba_collected_product "
+        "WHERE market_product_nos::text LIKE :pattern "
+        "LIMIT 1"
+    )
+    result = await session.execute(sql, {"pattern": f'%"{market_product_no}"%'})
+    row = result.fetchone()
+    if not row:
+        return {"found": False}
+    pid, source_site, site_product_id, name, images = row
+    sourcing_urls = {
+        "MUSINSA": f"https://www.musinsa.com/app/goods/{site_product_id}",
+        "KREAM": f"https://kream.co.kr/products/{site_product_id}",
+        "LOTTEON": f"https://www.lotteon.com/product/{site_product_id}",
+        "SSG": f"https://www.ssg.com/item/itemView.ssg?itemId={site_product_id}",
+        "ABCmart": f"https://abcmart.a-rt.com/product/{site_product_id}",
+        "FashionPlus": f"https://www.fashionplus.co.kr/goods/{site_product_id}",
+        "Nike": f"https://www.nike.com/kr/t/{site_product_id}",
+        "Adidas": f"https://www.adidas.co.kr/{site_product_id}",
+    }
+    thumb = images[0] if images and isinstance(images, list) and images else ""
+    return {
+        "found": True,
+        "id": pid,
+        "source_site": source_site,
+        "site_product_id": site_product_id,
+        "name": name,
+        "original_link": sourcing_urls.get(source_site, ""),
+        "product_image": thumb,
+    }
 
 
 @router.post("/products/bulk", status_code=201)

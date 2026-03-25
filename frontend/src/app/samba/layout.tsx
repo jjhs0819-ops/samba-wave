@@ -219,9 +219,10 @@ export default function SambaLayout({
 
           {/* 알림 + 계정관리 + 사용자 정보 + 로그아웃 */}
           <div className="flex items-center gap-3">
-            {/* 알림 아이콘 */}
-            <button
-              title="알림"
+            {/* 취소 알림 설정 */}
+            <Link
+              href="/samba/orders?alarm=1"
+              title="취소 알림 설정"
               style={{
                 width: "32px",
                 height: "32px",
@@ -232,19 +233,19 @@ export default function SambaLayout({
                 border: "none",
                 borderRadius: "6px",
                 cursor: "pointer",
-                color: "#888",
+                color: "#FFD93D",
                 fontSize: "1.125rem",
                 transition: "color 0.15s, border-color 0.15s, background 0.15s",
                 position: "relative",
               }}
               onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.background = "rgba(255,140,0,0.08)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = "#888"; e.currentTarget.style.background = "transparent"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = "#FFD93D"; e.currentTarget.style.background = "transparent"; }}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
                 <path d="M13.73 21a2 2 0 0 1-3.46 0" />
               </svg>
-            </button>
+            </Link>
             {/* 계정관리 아이콘 */}
             <Link
               href="/samba/users"
