@@ -1026,7 +1026,7 @@ export default function CollectorPage() {
                 <div style={detColStyle}>
                   {selectedFilter ? (() => {
                     // 소싱 URL 결정: category_filter(저장된 URL) > 사이트별 검색URL 생성
-                    const storedUrl = (selectedFilter as Record<string, string>).category_filter || ''
+                    const storedUrl = (selectedFilter as unknown as Record<string, string>).category_filter || ''
                     const kw = selectedFilter.keyword || ''
                     const site = selectedFilter.source_site || ''
                     const siteSearchUrls: Record<string, string> = {
