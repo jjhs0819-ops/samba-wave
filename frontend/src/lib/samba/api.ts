@@ -1324,3 +1324,49 @@ export const storeCareApi = {
     return request<StoreCarePurchase[]>(`${SAMBA_PREFIX}/store-care/purchases?${p}`)
   },
 }
+
+export const snsApi = {
+  // WP 사이트
+  connectWp: (data: { site_url: string, username: string, app_password: string }) =>
+    request(`${SAMBA_PREFIX}/sns/wordpress/connect`, { method: 'POST', body: JSON.stringify(data) }),
+  listWpSites: () => request(`${SAMBA_PREFIX}/sns/wordpress/sites`),
+
+  // 키워드 그룹
+  createKeywordGroup: (data: { name: string, category: string, keywords: string[] }) =>
+    request(`${SAMBA_PREFIX}/sns/keywords`, { method: 'POST', body: JSON.stringify(data) }),
+  listKeywordGroups: () => request(`${SAMBA_PREFIX}/sns/keywords`),
+  deleteKeywordGroup: (id: string) =>
+    request(`${SAMBA_PREFIX}/sns/keywords/${id}`, { method: 'DELETE' }),
+
+  // 이슈 검색
+  searchIssues: (data: { category: string, keywords?: string[] }) =>
+    request(`${SAMBA_PREFIX}/sns/issue-search`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // 발행
+  publish: (data: { wp_site_id: string, issue: Record<string, string>, category: string, language?: string }) =>
+    request(`${SAMBA_PREFIX}/sns/publish`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // 자동 포스팅
+  saveAutoConfig: (data: { wp_site_id: string, interval_minutes?: number, max_daily_posts?: number, language?: string, product_banner_html?: string }) =>
+    request(`${SAMBA_PREFIX}/sns/auto-posting/config`, { method: 'POST', body: JSON.stringify(data) }),
+  getAutoPostingUrl: (wpSiteId: string) => `${SAMBA_PREFIX}/sns/auto-posting/start/${wpSiteId}`,
+  stopAutoPosting: (wpSiteId: string) =>
+    request(`${SAMBA_PREFIX}/sns/auto-posting/stop/${wpSiteId}`, { method: 'POST' }),
+
+  // 이력 + 대시보드
+  listPosts: (page?: number, status?: string) =>
+    request(`${SAMBA_PREFIX}/sns/posts?page=${page || 1}${status ? '&status=' + status : ''}`),
+  getDashboard: () => request(`${SAMBA_PREFIX}/sns/dashboard`),
+}
+
+export const wholesaleApi = {
+  search: (data: { source: string, keyword: string, page?: number }) =>
+    request(`${SAMBA_PREFIX}/wholesale/search`, { method: 'POST', body: JSON.stringify(data) }),
+  listProducts: (params?: { source?: string, keyword?: string, page?: number }) => {
+    const q = new URLSearchParams()
+    if (params?.source) q.set('source', params.source)
+    if (params?.keyword) q.set('keyword', params.keyword)
+    q.set('page', String(params?.page || 1))
+    return request(`${SAMBA_PREFIX}/wholesale/products?${q.toString()}`)
+  },
+}
