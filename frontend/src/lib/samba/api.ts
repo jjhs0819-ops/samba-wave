@@ -90,6 +90,7 @@ export interface SambaOrder {
   product_id?: string;
   product_name?: string;
   product_image?: string;
+  product_option?: string;
   source_site?: string;
   customer_name?: string;
   customer_phone?: string;
@@ -136,6 +137,10 @@ export const orderApi = {
       `${SAMBA_PREFIX}/orders/sync-from-markets`, { method: "POST", body: JSON.stringify({ days, account_id: accountId || undefined }) }),
   approveCancel: (id: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/approve-cancel`, { method: "POST" }),
+  shipOrder: (id: string, shippingCompany: string, trackingNumber: string) =>
+    request<{ ok: boolean; market_sent: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/ship`, {
+      method: "POST", body: JSON.stringify({ shipping_company: shippingCompany, tracking_number: trackingNumber }),
+    }),
   fetchProductImage: (url: string) =>
     request<{ image_url: string }>(`${SAMBA_PREFIX}/orders/fetch-product-image`, {
       method: "POST", body: JSON.stringify({ url }),
@@ -348,6 +353,9 @@ export const collectorApi = {
     if (status) p.set("status", status);
     return request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products?${p}`);
   },
+  lookupByMarketNo: (marketProductNo: string) =>
+    request<{ found: boolean; id?: string; source_site?: string; site_product_id?: string; original_link?: string; product_image?: string }>(
+      `${SAMBA_PREFIX}/collector/products/lookup-by-market-no/${marketProductNo}`),
   scrollProducts: (params: {
     skip?: number; limit?: number; search?: string; search_type?: string;
     source_site?: string; status?: string; ai_filter?: string;
@@ -873,6 +881,7 @@ export interface SambaCSInquiry {
   account_name?: string
   inquiry_type: string
   questioner?: string
+  collected_product_id?: string
   product_name?: string
   product_image?: string
   product_link?: string
@@ -926,10 +935,16 @@ export const csInquiryApi = {
     request<SambaCSInquiry>(`${SAMBA_PREFIX}/cs-inquiries/${id}/reply`, { method: 'POST', body: JSON.stringify({ reply }) }),
   delete: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/${id}`, { method: 'DELETE' }),
+  hide: (id: string) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/${id}/hide`, { method: 'POST' }),
   batchDelete: (ids: string[]) =>
     request<{ deleted: number }>(`${SAMBA_PREFIX}/cs-inquiries/batch-delete`, { method: 'POST', body: JSON.stringify({ ids }) }),
   getStats: () => request<Record<string, unknown>>(`${SAMBA_PREFIX}/cs-inquiries/stats`),
   getTemplates: () => request<Record<string, CSReplyTemplate>>(`${SAMBA_PREFIX}/cs-inquiries/templates`),
+  addTemplate: (key: string, name: string, content: string) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates`, { method: 'POST', body: JSON.stringify({ key, name, content }) }),
+  deleteTemplate: (key: string) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates/${key}`, { method: 'DELETE' }),
   syncFromMarkets: () =>
     request<{ success: boolean; synced: number; errors: string[]; message: string }>(
       `${SAMBA_PREFIX}/cs-inquiries/sync-from-markets`, { method: 'POST' }

@@ -1,0 +1,56 @@
+#!/bin/bash
+# post-merge hook — 머지 시 플러그인 변경 감지 → 스킬 자동 업데이트
+
+# 머지 전후로 변경된 파일 목록
+CHANGED_FILES=$(git diff-tree -r --name-only --no-commit-id ORIG_HEAD HEAD 2>/dev/null)
+
+# 플러그인/프록시 파일 변경 감지
+MARKET_CHANGES=$(echo "$CHANGED_FILES" | grep -E "plugins/markets/|proxy/" | grep -v "__init__\|base\|stub" || true)
+SOURCING_CHANGES=$(echo "$CHANGED_FILES" | grep -E "plugins/sourcing/|proxy/" | grep -v "__init__\|base\|stub" || true)
+ORDER_CHANGES=$(echo "$CHANGED_FILES" | grep -E "order/" || true)
+
+# 변경 없으면 종료
+if [ -z "$MARKET_CHANGES" ] && [ -z "$SOURCING_CHANGES" ] && [ -z "$ORDER_CHANGES" ]; then
+  exit 0
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🔄 플러그인 변경 감지 — 스킬 자동 업데이트"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# 변경된 파일 목록 구성
+ALL_PLUGIN_CHANGES=""
+SKILL_TARGETS=""
+
+if [ -n "$SOURCING_CHANGES" ]; then
+  echo "📦 소싱처 변경: $SOURCING_CHANGES"
+  ALL_PLUGIN_CHANGES="$ALL_PLUGIN_CHANGES $SOURCING_CHANGES"
+  SKILL_TARGETS="$SKILL_TARGETS product-parser"
+fi
+
+if [ -n "$MARKET_CHANGES" ]; then
+  echo "🏪 판매처 변경: $MARKET_CHANGES"
+  ALL_PLUGIN_CHANGES="$ALL_PLUGIN_CHANGES $MARKET_CHANGES"
+  SKILL_TARGETS="$SKILL_TARGETS product-upload"
+fi
+
+if [ -n "$ORDER_CHANGES" ]; then
+  echo "📋 주문 변경: $ORDER_CHANGES"
+  ALL_PLUGIN_CHANGES="$ALL_PLUGIN_CHANGES $ORDER_CHANGES"
+  SKILL_TARGETS="$SKILL_TARGETS order-collector"
+fi
+
+echo ""
+echo "⏳ Claude Code로 스킬 업데이트 중..."
+
+# Claude Code 비대화형 실행
+claude -p "방금 머지된 코드에서 플러그인 변경이 감지됐어. 변경된 파일: $ALL_PLUGIN_CHANGES. 이 코드를 분석해서 $SKILL_TARGETS 스킬에 노하우(파싱 패턴, API 특이사항, rate limit, 에러 처리 등)를 반영해줘. 스킬 파일만 수정하고 다른 코드는 건드리지 마." --allowedTools Edit,Read,Grep,Glob 2>/dev/null
+
+if [ $? -eq 0 ]; then
+  echo "✅ 스킬 업데이트 완료"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+else
+  echo "⚠️ 스킬 자동 업데이트 실패 — 수동으로 확인하세요"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi

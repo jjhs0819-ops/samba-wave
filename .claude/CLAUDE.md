@@ -19,6 +19,12 @@
 
 ## 스킬관련 수정시 skill 업데이트 진행할것
 
+## 브랜치 기반 파일 수정 제한 [중요]
+- 현재 브랜치가 `feature/XXX-plugin`이면 → `plugins/markets/XXX.py`와 `proxy/XXX.py`만 수정
+- 현재 브랜치가 `feature/XXX-sourcing`이면 → `plugins/sourcing/XXX.py`와 `proxy/XXX.py`(또는 `proxy/XXX_sourcing.py`)만 수정
+- 위 파일 외 다른 파일 수정이 필요하면 → 수정하지 말고 "이 파일도 수정이 필요합니다. 팀장에게 확인하세요"라고 안내
+- `__init__.py`, `market_base.py`, `sourcing_base.py`, `collector/` 폴더는 절대 수정 금지
+
 ## 코드 반영 규칙
 - 요청 분석 후 변경 내용을 먼저 설명만 할 것
 - "반영해줘" / "적용해줘" 명령이 있을 때만 실제 파일 수정

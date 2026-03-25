@@ -358,10 +358,12 @@ class LotteHomeClient:
         )
 
     async def search_delivery_policies(self) -> dict[str, Any]:
-        """배송비정책 목록 조회."""
+        """배송비정책 목록 조회.
+        수정: searchDlvPolcListOpenApi → searchDlvPolcInfoListOpenApi (롯데홈쇼핑 담당자 확인)
+        """
         cert_key = await self._ensure_auth()
         return await self._call_api(
-            "searchDlvPolcListOpenApi.lotte",
+            "searchDlvPolcInfoListOpenApi.lotte",
             "GET",
             {"subscriptionId": cert_key},
         )
@@ -377,13 +379,42 @@ class LotteHomeClient:
             {"subscriptionId": cert_key, **policy_data},
         )
 
-    async def search_delivery_places(self) -> dict[str, Any]:
-        """배송지 목록 조회."""
+    async def search_return_places(self) -> dict[str, Any]:
+        """출고지/반품배송지 목록 조회.
+        수정: searchDlvPlcListOpenApi → searchReturnListOpenApi (롯데홈쇼핑 담당자 확인)
+        """
         cert_key = await self._ensure_auth()
         return await self._call_api(
-            "searchDlvPlcListOpenApi.lotte",
+            "searchReturnListOpenApi.lotte",
             "GET",
             {"subscriptionId": cert_key},
+        )
+
+    async def register_delivery_place(
+        self, place_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """출고지/반품배송지 등록. (권한 부여 완료: 037800LT)"""
+        cert_key = await self._ensure_auth()
+        return await self._call_api(
+            "registDlvpOpenApi.lotte",
+            "POST",
+            {"subscriptionId": cert_key, **place_data},
+        )
+
+    async def search_goods_article_codes(
+        self, artc_cd: str = ""
+    ) -> dict[str, Any]:
+        """품목별 항목코드정보 조회.
+        수정: searchGoodsArtcOpenApi → searchGoodsArtcItemCdListOpenApi (롯데홈쇼핑 담당자 확인)
+        """
+        cert_key = await self._ensure_auth()
+        params: dict[str, Any] = {"subscriptionId": cert_key}
+        if artc_cd:
+            params["artc_cd"] = artc_cd
+        return await self._call_api(
+            "searchGoodsArtcItemCdListOpenApi.lotte",
+            "GET",
+            params,
         )
 
     # ------------------------------------------------------------------

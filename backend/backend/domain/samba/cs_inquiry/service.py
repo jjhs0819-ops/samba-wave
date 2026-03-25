@@ -110,12 +110,18 @@ class SambaCSInquiryService:
     # ==================== 삭제 ====================
 
     async def delete_inquiry(self, inquiry_id: str) -> bool:
-        return await self.repo.delete_async(inquiry_id)
+        """문의 삭제 (숨김 처리 — 동기화 시 중복 방지)."""
+        updated = await self.repo.update_async(inquiry_id, is_hidden=True)
+        return updated is not None
 
     async def delete_batch(self, ids: List[str]) -> int:
-        """선택 삭제."""
-        count = await self.repo.delete_batch(ids)
-        logger.info(f"CS 문의 {count}건 일괄 삭제")
+        """선택 삭제 (숨김 처리)."""
+        count = 0
+        for _id in ids:
+            result = await self.repo.update_async(_id, is_hidden=True)
+            if result:
+                count += 1
+        logger.info(f"CS 문의 {count}건 숨김 처리")
         return count
 
     # ==================== 통계 ====================

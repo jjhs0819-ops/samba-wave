@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { csInquiryApi, type SambaCSInquiry, type CSReplyTemplate } from '@/lib/samba/api'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { csInquiryApi, accountApi, type SambaCSInquiry, type CSReplyTemplate, type SambaMarketAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle } from '@/lib/samba/styles'
 
@@ -13,13 +13,13 @@ const REPLY_STATUS_MAP: Record<string, { label: string; bg: string; text: string
 
 // 문의 유형 맵
 const INQUIRY_TYPE_MAP: Record<string, { label: string; color: string }> = {
-  general: { label: '일반문의', color: '#888' },
-  product: { label: '상품문의', color: '#4C9AFF' },
-  qna: { label: 'QNA', color: '#FF8C00' },
-  call_center: { label: '콜센터문의', color: '#FF6B6B' },
-  delivery: { label: '배송문의', color: '#51CF66' },
-  exchange_return: { label: '교환/반품', color: '#c084fc' },
-  talktalk: { label: '톡톡', color: '#51CF66' },
+  general: { label: '주문문의', color: '#FF8C00' },
+  product: { label: '주문문의', color: '#FF8C00' },
+  qna: { label: '상품문의', color: '#4C9AFF' },
+  call_center: { label: '주문문의', color: '#FF8C00' },
+  delivery: { label: '주문문의', color: '#FF8C00' },
+  exchange_return: { label: '주문문의', color: '#FF8C00' },
+  product_question: { label: '상품문의', color: '#4C9AFF' },
 }
 
 // 마켓 리스트
@@ -51,7 +51,7 @@ export default function CSPage() {
   // 필터
   const [filterMarket, setFilterMarket] = useState('')
   const [filterType, setFilterType] = useState('')
-  const [filterStatus, setFilterStatus] = useState('')
+  const [filterStatus, setFilterStatus] = useState('pending')
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [sortDesc, setSortDesc] = useState(true)
@@ -62,8 +62,9 @@ export default function CSPage() {
   const [csLogMessages, setCsLogMessages] = useState<string[]>(['[대기] CS 문의 가져오기 결과가 여기에 표시됩니다...'])
   const [csPeriod, setCsPeriod] = useState('thisyear')
   const [csSyncAccountId, setCsSyncAccountId] = useState('')
-  const [csCustomStart, setCsCustomStart] = useState('')
-  const [csCustomEnd, setCsCustomEnd] = useState('')
+  const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
+  const [csCustomStart, setCsCustomStart] = useState(`${new Date().getFullYear()}-01-01`)
+  const [csCustomEnd, setCsCustomEnd] = useState(new Date().toISOString().slice(0, 10))
   const [csStartLocked, setCsStartLocked] = useState(false)
   const [csDateLocked, setCsDateLocked] = useState(false)
   const [searchCategory, setSearchCategory] = useState('customer')
@@ -81,6 +82,31 @@ export default function CSPage() {
 
   // 템플릿 관리 모달
   const [showTemplateManager, setShowTemplateManager] = useState(false)
+  const [tplName, setTplName] = useState('')
+  const [tplContent, setTplContent] = useState('')
+  const tplContentRef = useRef<HTMLTextAreaElement>(null)
+  const replyTextRef = useRef<HTMLTextAreaElement>(null)
+
+  // 변수 태그 목록 (CS/SMS/카카오 공통)
+  const VARIABLE_TAGS = [
+    { tag: '{{sellerName}}', label: '판매자명' },
+    { tag: '{{marketName}}', label: '판매마켓이름' },
+    { tag: '{{OrderName}}', label: '주문번호' },
+    { tag: '{{rvcName}}', label: '수취인명' },
+    { tag: '{{rcvHPNo}}', label: '수취인휴대폰번호' },
+    { tag: '{{goodsName}}', label: '상품명' },
+  ]
+
+  // textarea에 태그 삽입
+  const insertTag = (ref: React.RefObject<HTMLTextAreaElement | null>, setter: (v: string) => void, getter: string, tag: string) => {
+    const el = ref.current
+    if (!el) { setter(getter + tag); return }
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    const newVal = getter.slice(0, start) + tag + getter.slice(end)
+    setter(newVal)
+    requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = start + tag.length; el.focus() })
+  }
 
   // 데이터 로드
   const load = useCallback(async () => {
@@ -110,16 +136,49 @@ export default function CSPage() {
   }, [filterMarket, filterType, filterStatus, search, sortDesc, pageSize, page])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
+
+  // 기간 버튼 → 날짜 계산
+  const getPeriodStart = (key: string): Date | null => {
+    const now = new Date()
+    now.setHours(0, 0, 0, 0)
+    switch (key) {
+      case 'today': return now
+      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d }
+      case '15days': { const d = new Date(now); d.setDate(d.getDate() - 15); return d }
+      case '1month': { const d = new Date(now); d.setMonth(d.getMonth() - 1); return d }
+      case '3months': { const d = new Date(now); d.setMonth(d.getMonth() - 3); return d }
+      case '6months': { const d = new Date(now); d.setMonth(d.getMonth() - 6); return d }
+      case 'thisyear': return new Date(now.getFullYear(), 0, 1)
+      default: return null
+    }
+  }
 
   // 검색
-  const handleSearch = () => {
-    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    setCsLogMessages(prev => [...prev, `[${now}] CS 문의 데이터 가져오는 중...`])
-    setPage(0)
-    setSearch(searchInput)
-    setTimeout(() => {
-      setCsLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] CS 문의 데이터 가져오기 완료`])
-    }, 500)
+  const handleSearch = async () => {
+    const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    const label = csSyncAccountId
+      ? accounts.find(a => a.id === csSyncAccountId)?.market_name || csSyncAccountId
+      : '전체마켓'
+    setCsLogMessages(prev => [...prev, `[${ts()}] ${label} CS 문의 동기화 중...`])
+    try {
+      const result = await csInquiryApi.syncFromMarkets()
+      setCsLogMessages(prev => [...prev, `[${ts()}] ${result.message}`])
+      setPage(0)
+      setSearch('')
+      setSearchInput('')
+      const [data, st, tpl] = await Promise.all([
+        csInquiryApi.list({ skip: 0, limit: pageSize, sort_desc: sortDesc }).catch(() => ({ items: [], total: 0 })),
+        csInquiryApi.getStats().catch(() => ({})),
+        csInquiryApi.getTemplates().catch(() => ({})),
+      ])
+      setInquiries(data.items)
+      setTotal(data.total)
+      setStats(st)
+      setTemplates(tpl)
+    } catch (err) {
+      setCsLogMessages(prev => [...prev, `[${ts()}] 동기화 실패: ${err}`])
+    }
   }
 
   const handleFetchAllMarkets = async () => {
@@ -128,10 +187,22 @@ export default function CSPage() {
     try {
       const result = await csInquiryApi.syncFromMarkets()
       setCsLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] ${result.message}`])
-      // 데이터 리로드
+      // 필터 초기화 후 page=0 첫 페이지 데이터 직접 조회
       setPage(0)
       setSearch('')
+      setSearchInput('')
       setFilterMarket('')
+      setFilterType('')
+      setFilterStatus('')
+      const [data, st, tpl] = await Promise.all([
+        csInquiryApi.list({ skip: 0, limit: pageSize, sort_desc: sortDesc }).catch(() => ({ items: [], total: 0 })),
+        csInquiryApi.getStats().catch(() => ({})),
+        csInquiryApi.getTemplates().catch(() => ({})),
+      ])
+      setInquiries(data.items)
+      setTotal(data.total)
+      setStats(st)
+      setTemplates(tpl)
     } catch (err) {
       setCsLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] 동기화 실패: ${err}`])
     }
@@ -177,11 +248,18 @@ export default function CSPage() {
       return
     }
     try {
-      await csInquiryApi.reply(replyModal.id, replyText)
+      const res = await csInquiryApi.reply(replyModal.id, replyText)
+      const marketMsg = (res as Record<string, unknown>).market_message as string
+      const marketSent = (res as Record<string, unknown>).market_sent as boolean
       setReplyModal(null)
       setReplyText('')
       setSelectedTemplate('')
-      load()
+      await load()
+      if (marketSent) {
+        showAlert(marketMsg || '답변 등록 + 마켓 전송 완료', 'success')
+      } else if (marketMsg) {
+        showAlert(`답변 저장 완료 (${marketMsg})`, 'info')
+      }
     } catch (e) {
       showAlert(e instanceof Error ? e.message : '답변 등록 실패', 'error')
     }
@@ -206,6 +284,17 @@ export default function CSPage() {
     }
   }
 
+  // 숨기기
+  const handleHide = async (id: string) => {
+    if (!await showConfirm('이 문의를 숨기시겠습니까?')) return
+    try {
+      await csInquiryApi.hide(id)
+      load()
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '숨기기 실패', 'error')
+    }
+  }
+
   // 날짜 포맷
   const fmtDate = (d?: string) => {
     if (!d) return '-'
@@ -215,7 +304,7 @@ export default function CSPage() {
     const day = String(dt.getDate()).padStart(2, '0')
     const h = String(dt.getHours()).padStart(2, '0')
     const min = String(dt.getMinutes()).padStart(2, '0')
-    return `${y}-${m}-${day}\n[${h}:${min}]`
+    return `${y}-${m}-${day} ${h}:${min}`
   }
 
   const totalPages = Math.ceil(total / pageSize)
@@ -244,7 +333,7 @@ export default function CSPage() {
             <button onClick={() => setCsLogMessages(['[대기] CS 문의 가져오기 결과가 여기에 표시됩니다...'])} style={{ fontSize: '0.72rem', color: '#555', background: 'transparent', border: '1px solid #1C2333', padding: '1px 8px', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
           </div>
         </div>
-        <div style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}>
+        <div ref={el => { if (el) el.scrollTop = el.scrollHeight }} style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}>
           {csLogMessages.map((msg, i) => <p key={i} style={{ color: '#8A95B0', fontSize: 'inherit', margin: 0 }}>{msg}</p>)}
         </div>
       </div>
@@ -253,75 +342,84 @@ export default function CSPage() {
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.625rem 0.875rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
         <div style={{ display: 'flex', gap: '4px', flexWrap: 'nowrap', alignItems: 'center' }}>
           {PERIOD_BUTTONS.map(pb => (
-            <button key={pb.key} onClick={() => { setCsPeriod(pb.key) }}
-              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: csPeriod === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csPeriod === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csPeriod === pb.key ? '#fff' : '#C5C5C5', cursor: 'pointer', whiteSpace: 'nowrap' }}
+            <button key={pb.key} onClick={() => {
+              if (csDateLocked) return
+              setCsPeriod(pb.key)
+              if (!csStartLocked) {
+                const start = getPeriodStart(pb.key)
+                setCsCustomStart(start ? start.toISOString().slice(0, 10) : '')
+              }
+              setCsCustomEnd(new Date().toISOString().slice(0, 10))
+            }}
+              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: csPeriod === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csPeriod === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csPeriod === pb.key ? '#fff' : '#C5C5C5', cursor: csDateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: csDateLocked && csPeriod !== pb.key ? 0.5 : 1 }}
             >{pb.label}</button>
           ))}
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 4px' }} />
-          <select value={csSyncAccountId} onChange={e => setCsSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', minWidth: '140px' }}>
-            <option value="">전체 계정</option>
-          </select>
-          <button onClick={handleSearch} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
-          <button onClick={handleFetchAllMarkets} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>전체마켓 가져오기</button>
+          <input type="date" value={csCustomStart} onChange={e => setCsCustomStart(e.target.value)} style={{ ...inputStyle, padding: '0 0.4rem', fontSize: '0.75rem', height: '28px', ...(csStartLocked ? { borderColor: '#C0392B', color: '#FF8C00' } : {}) }} />
+          <button onClick={() => setCsStartLocked(p => !p)} style={{ padding: '0 0.5rem', fontSize: '0.72rem', height: '28px', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: csStartLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csStartLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csStartLocked ? '#fff' : '#C5C5C5' }}>고정</button>
+          <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
+          <input type="date" value={csCustomEnd} onChange={e => setCsCustomEnd(e.target.value)} style={{ ...inputStyle, padding: '0 0.4rem', fontSize: '0.75rem', height: '28px' }} />
+          <button onClick={() => setCsDateLocked(p => !p)} style={{ padding: '0 0.5rem', fontSize: '0.72rem', height: '28px', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: csDateLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csDateLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csDateLocked ? '#fff' : '#C5C5C5' }}>고정</button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-          <input type="date" value={csCustomStart} onChange={e => setCsCustomStart(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(csStartLocked ? { borderColor: '#C0392B', color: '#FF8C00' } : {}) }} />
-          <button onClick={() => setCsStartLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: csStartLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csStartLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csStartLocked ? '#fff' : '#C5C5C5' }}>고정</button>
-          <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
-          <input type="date" value={csCustomEnd} onChange={e => setCsCustomEnd(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
-          <button onClick={() => setCsDateLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: csDateLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csDateLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csDateLocked ? '#fff' : '#C5C5C5' }}>고정</button>
+          <select value={csSyncAccountId} onChange={e => setCsSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0 0.4rem', fontSize: '0.75rem', height: '28px', minWidth: '140px' }}>
+            <option value="">전체 계정</option>
+            {[...new Set(accounts.map(a => a.market_name))].map(market => (
+              <optgroup key={market} label={market}>
+                {accounts.filter(a => a.market_name === market).map(a => (
+                  <option key={a.id} value={a.id}>{a.seller_id || a.business_name || '-'}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <button onClick={handleSearch} style={{ padding: '0 0.65rem', fontSize: '0.75rem', height: '28px', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
+          <button onClick={handleFetchAllMarkets} style={{ padding: '0 0.65rem', fontSize: '0.75rem', height: '28px', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>전체마켓 가져오기</button>
         </div>
       </div>
 
       {/* 필터 바 */}
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
-        <select style={{ ...inputStyle, width: '80px', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
+        <select style={{ ...inputStyle, width: '68px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="customer">고객</option>
           <option value="order_number">주문번호</option>
           <option value="product_id">상품번호</option>
           <option value="content">문의내용</option>
         </select>
-        <input style={{ ...inputStyle, width: '140px' }} value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSearch() }} />
-        <button onClick={handleSearch} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>검색</button>
+        <input style={{ ...inputStyle, width: '120px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSearch() }} />
+        <button onClick={handleSearch} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0 0.6rem', borderRadius: '4px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px' }}>검색</button>
         <button
           onClick={() => setShowTemplateManager(true)}
-          style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '5px', color: '#C5C5C5', cursor: 'pointer', whiteSpace: 'nowrap', marginLeft: '4px' }}
+          style={{ padding: '0 0.6rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#C5C5C5', cursor: 'pointer', whiteSpace: 'nowrap', marginLeft: '4px', height: '28px', lineHeight: '26px' }}
         >
           답변템플릿 관리
         </button>
         <button
           onClick={handleBatchDelete}
-          style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #FF6B6B33', borderRadius: '5px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap' }}
+          style={{ padding: '0 0.6rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #FF6B6B33', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px', lineHeight: '26px' }}
         >
           선택삭제
         </button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
-          <select style={{ ...inputStyle, width: '118px' }} value={filterMarket} onChange={e => { setFilterMarket(e.target.value); setPage(0) }}>
+          <select style={{ ...inputStyle, width: '100px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={filterMarket} onChange={e => { setFilterMarket(e.target.value); setPage(0) }}>
             <option value="">전체마켓보기</option>
             {MARKETS.filter(m => m !== '전체마켓').map(m => <option key={m} value={m}>{m}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '110px' }} value={csSiteFilter} onChange={e => setCsSiteFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '94px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={csSiteFilter} onChange={e => setCsSiteFilter(e.target.value)}>
             <option value="">전체사이트보기</option>
             {['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','GrandStage','OKmall','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '112px' }} value={csMarketStatus} onChange={e => setCsMarketStatus(e.target.value)}>
-            <option value="">마켓상태 보기</option>
-          </select>
-          <select style={{ ...inputStyle, width: '118px' }} value={csInputFilter} onChange={e => setCsInputFilter(e.target.value)}>
-            <option value="">입력값</option>
-          </select>
-          <select style={{ ...inputStyle, width: '112px' }} value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(0) }}>
-            <option value="">주문상태</option>
+          <select style={{ ...inputStyle, width: '95px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(0) }}>
+            <option value="">답변상태</option>
             <option value="pending">미답변</option>
             <option value="replied">답변완료</option>
           </select>
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
-          <select style={{ ...inputStyle, width: '88px' }} onChange={() => setSortDesc(!sortDesc)}>
+          <select style={{ ...inputStyle, width: '75px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} onChange={() => setSortDesc(!sortDesc)}>
             <option>-- 정렬 --</option>
             <option>문의일자▲</option>
             <option>문의일자▼</option>
           </select>
-          <select style={{ ...inputStyle, width: '92px' }} value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(0) }}>
+          <select style={{ ...inputStyle, width: '78px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(0) }}>
             <option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
           </select>
         </div>
@@ -345,23 +443,23 @@ export default function CSPage() {
                     />
                   </th>
                   <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'center', whiteSpace: 'nowrap', width: '80px' }}>
-                    사진
+                    상품
                   </th>
-                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'left', whiteSpace: 'nowrap' }}>
+                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'center', whiteSpace: 'nowrap' }}>
                     마켓
                   </th>
-                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'left', whiteSpace: 'nowrap' }}>
+                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'center', whiteSpace: 'nowrap' }}>
                     주문번호
                   </th>
-                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'left', whiteSpace: 'nowrap' }}>
+                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'center', whiteSpace: 'nowrap' }}>
                     문의유형
                   </th>
-                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'left', whiteSpace: 'nowrap' }}>
+                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'center', whiteSpace: 'nowrap' }}>
                     고객
                   </th>
-                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'left', minWidth: '400px' }}>문의내용</th>
+                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'center', minWidth: '400px' }}>문의내용</th>
                   <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'center', whiteSpace: 'nowrap' }}>답변여부</th>
-                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <th style={{ padding: '0.75rem 1rem', color: '#888', fontWeight: 500, textAlign: 'center', whiteSpace: 'nowrap' }}>
                     문의일시<br /><span style={{ fontSize: '0.75rem' }}>(문의수집일자)</span>
                   </th>
                 </tr>
@@ -404,10 +502,13 @@ export default function CSPage() {
                             {item.product_link ? '링크' : 'No IMG'}
                           </div>
                         )}
+                        {item.market_inquiry_no && (
+                          <div style={{ fontSize: '0.6rem', color: '#555', marginTop: '0.25rem', wordBreak: 'break-all' }}>{item.market_inquiry_no}</div>
+                        )}
                       </td>
 
                       {/* 마켓 */}
-                      <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                      <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top', whiteSpace: 'nowrap', textAlign: 'center' }}>
                         <div style={{ fontWeight: 600, color: '#E5E5E5' }}>
                           {item.market}
                         </div>
@@ -416,22 +517,47 @@ export default function CSPage() {
                         )}
                       </td>
 
-                      {/* 주문번호 */}
-                      <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-                        <div style={{ fontSize: '0.8125rem', color: '#AAA' }}>
+                      {/* 주문번호 + 링크버튼 */}
+                      <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top' }}>
+                        <div style={{ fontSize: '0.8125rem', color: '#AAA', textAlign: 'center' }}>
                           {item.market_order_id || '-'}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginTop: '0.375rem', alignItems: 'center' }}>
+                          <button
+                            onClick={() => item.original_link ? window.open(item.original_link, '_blank') : showAlert('소싱처 원문링크가 없습니다', 'info')}
+                            style={{ fontSize: '0.72rem', padding: '0.15rem 0.375rem', border: '1px solid #444', borderRadius: '3px', color: item.original_link ? '#4C9AFF' : '#555', background: 'transparent', cursor: 'pointer', width: '100%', textAlign: 'center' }}
+                          >원문링크</button>
+                          <button
+                            onClick={() => {
+                              const link = item.product_link || item.market_link
+                              link ? window.open(link, '_blank') : showAlert('판매 구매페이지 링크가 없습니다', 'info')
+                            }}
+                            style={{ fontSize: '0.72rem', padding: '0.15rem 0.375rem', border: '1px solid #444', borderRadius: '3px', color: (item.product_link || item.market_link) ? '#51CF66' : '#555', background: 'transparent', cursor: 'pointer', width: '100%', textAlign: 'center' }}
+                          >판매링크</button>
+                          <button
+                            onClick={() => {
+                              if (item.collected_product_id) {
+                                window.open(`/samba/products?search=${encodeURIComponent(item.collected_product_id)}&search_type=id&highlight=${item.collected_product_id}`, '_blank')
+                              } else if (item.product_name) {
+                                window.open(`/samba/products?search=${encodeURIComponent(item.product_name)}`, '_blank')
+                              } else {
+                                showAlert('연결된 상품 정보가 없습니다', 'info')
+                              }
+                            }}
+                            style={{ fontSize: '0.72rem', padding: '0.15rem 0.375rem', border: '1px solid #444', borderRadius: '3px', color: item.collected_product_id ? '#FF8C00' : '#555', background: 'transparent', cursor: 'pointer', width: '100%', textAlign: 'center' }}
+                          >상품정보</button>
                         </div>
                       </td>
 
                       {/* 문의유형 */}
-                      <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top' }}>
+                      <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top', textAlign: 'center' }}>
                         <span style={{ padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600, background: `${tp.color}22`, color: tp.color }}>
                           {tp.label}
                         </span>
                       </td>
 
                       {/* 고객 */}
-                      <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top' }}>
+                      <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top', textAlign: 'center' }}>
                         <div style={{ fontSize: '0.8125rem', color: '#AAA' }}>
                           {item.questioner || '-'}
                         </div>
@@ -439,31 +565,20 @@ export default function CSPage() {
 
                       {/* 문의내용 */}
                       <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top' }}>
-                        {/* 상품명 + 링크 */}
-                        {item.product_name && (
-                          <div style={{ marginBottom: '0.5rem' }}>
+                        {/* 상품명 + 답변 + 링크 */}
+                        <div style={{ marginBottom: '0.5rem' }}>
+                          {item.product_name && (
                             <span style={{ fontWeight: 600, color: '#E5E5E5', fontSize: '0.8125rem' }}>
                               {item.product_name}
                             </span>
-                            <div style={{ display: 'flex', gap: '0.375rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
-                              {item.product_link && (
-                                <a href={item.product_link} target="_blank" rel="noreferrer" style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', border: '1px solid #444', borderRadius: '3px', color: '#888', textDecoration: 'none' }}>
-                                  상품링크
-                                </a>
-                              )}
-                              {item.market_link && (
-                                <a href={item.market_link} target="_blank" rel="noreferrer" style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', border: '1px solid #444', borderRadius: '3px', color: '#888', textDecoration: 'none' }}>
-                                  판매마켓링크
-                                </a>
-                              )}
-                              {item.original_link && (
-                                <a href={item.original_link} target="_blank" rel="noreferrer" style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', border: '1px solid #444', borderRadius: '3px', color: '#888', textDecoration: 'none' }}>
-                                  원문링크
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                        )}
+                          )}
+                          <button
+                            onClick={() => { setReplyModal(item); setReplyText(item.reply || ''); setSelectedTemplate('') }}
+                            style={{ marginLeft: item.product_name ? '0.375rem' : 0, padding: '0.1rem 0.4rem', background: item.reply_status === 'pending' ? 'rgba(255,140,0,0.15)' : 'rgba(81,207,102,0.1)', border: `1px solid ${item.reply_status === 'pending' ? 'rgba(255,140,0,0.3)' : 'rgba(81,207,102,0.3)'}`, borderRadius: '4px', color: item.reply_status === 'pending' ? '#FF8C00' : '#51CF66', fontSize: '0.6875rem', cursor: 'pointer', whiteSpace: 'nowrap', verticalAlign: 'middle' }}
+                          >
+                            {item.reply_status === 'pending' ? '답변' : '답변수정'}
+                          </button>
+                        </div>
 
                         {/* 문의 내용 */}
                         <div style={{ color: '#ccc', fontSize: '0.8125rem', lineHeight: '1.5', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
@@ -501,27 +616,25 @@ export default function CSPage() {
                       </td>
 
                       {/* 문의일시 + 액션 */}
-                      <td style={{ padding: '0.75rem 1rem', textAlign: 'right', verticalAlign: 'top', whiteSpace: 'pre-line' }}>
+                      <td style={{ padding: '0.75rem 1rem', textAlign: 'center', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
                         <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>
                           {fmtDate(item.inquiry_date)}
                         </div>
                         <div style={{ fontSize: '0.6875rem', color: '#555', marginBottom: '0.5rem' }}>
                           {fmtDate(item.collected_at)}
                         </div>
-                        <div style={{ display: 'flex', gap: '0.375rem', justifyContent: 'flex-end' }}>
-                          {item.reply_status === 'pending' && (
-                            <button
-                              onClick={() => { setReplyModal(item); setReplyText(''); setSelectedTemplate('') }}
-                              style={{ padding: '0.25rem 0.5rem', background: 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '4px', color: '#FF8C00', fontSize: '0.6875rem', cursor: 'pointer' }}
-                            >
-                              답변
-                            </button>
-                          )}
+                        <div style={{ display: 'flex', gap: '0.375rem', justifyContent: 'center' }}>
                           <button
                             onClick={() => handleDelete(item.id)}
                             style={{ padding: '0.25rem 0.5rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.2)', borderRadius: '4px', color: '#FF6B6B', fontSize: '0.6875rem', cursor: 'pointer' }}
                           >
                             삭제
+                          </button>
+                          <button
+                            onClick={() => handleHide(item.id)}
+                            style={{ padding: '0.25rem 0.5rem', background: 'rgba(136,136,136,0.1)', border: '1px solid rgba(136,136,136,0.2)', borderRadius: '4px', color: '#888', fontSize: '0.6875rem', cursor: 'pointer' }}
+                          >
+                            숨기기
                           </button>
                         </div>
                       </td>
@@ -567,60 +680,59 @@ export default function CSPage() {
       {/* 답변 모달 */}
       {replyModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '560px', maxWidth: '90vw', maxHeight: '80vh', overflowY: 'auto' }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '720px', maxWidth: '90vw', maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
               <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5' }}>답변 작성</h3>
               <button onClick={() => setReplyModal(null)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
             </div>
 
             {/* 문의 정보 */}
-            <div style={{ background: '#111', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
-              <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem', fontSize: '0.8125rem' }}>
-                <span style={{ color: '#888' }}>마켓:</span>
-                <span style={{ color: '#E5E5E5', fontWeight: 600 }}>{replyModal.market}</span>
-                {replyModal.questioner && (
-                  <>
-                    <span style={{ color: '#888' }}>질문자:</span>
-                    <span style={{ color: '#E5E5E5' }}>{replyModal.questioner}</span>
-                  </>
-                )}
+            <div style={{ background: '#111', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.8125rem' }}>
+              <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '0.375rem' }}>
+                <div><span style={{ color: '#666' }}>마켓: </span><span style={{ color: '#E5E5E5', fontWeight: 600 }}>{replyModal.market}</span></div>
+                {replyModal.questioner && <div><span style={{ color: '#666' }}>질문자: </span><span style={{ color: '#E5E5E5' }}>{replyModal.questioner}</span></div>}
               </div>
-              {replyModal.product_name && (
-                <div style={{ fontSize: '0.8125rem', color: '#aaa', marginBottom: '0.5rem' }}>
-                  {replyModal.product_name}
-                </div>
-              )}
-              <div style={{ fontSize: '0.8125rem', color: '#ccc', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>
-                {replyModal.content}
-              </div>
+              {replyModal.product_name && <div style={{ color: '#aaa', marginBottom: '0.375rem' }}>{replyModal.product_name}</div>}
+              <div style={{ color: '#ccc', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>{replyModal.content}</div>
             </div>
 
-            {/* 템플릿 선택 */}
-            <div style={{ marginBottom: '0.75rem' }}>
-              <label style={{ fontSize: '0.75rem', color: '#888', display: 'block', marginBottom: '0.375rem' }}>답변 템플릿</label>
-              <select
-                value={selectedTemplate}
-                onChange={e => applyTemplate(e.target.value)}
-                style={inputStyle}
-              >
-                <option value="">직접 입력</option>
-                {Object.entries(templates).map(([key, tpl]) => (
-                  <option key={key} value={key}>{tpl.name}</option>
-                ))}
-              </select>
+            {/* 템플릿 카드 그리드 */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              {Object.entries(templates).map(([key, tpl]) => (
+                <div
+                  key={key}
+                  onClick={() => { setSelectedTemplate(key); setReplyText(tpl.content) }}
+                  style={{ background: selectedTemplate === key ? 'rgba(255,140,0,0.08)' : '#111', border: `1px solid ${selectedTemplate === key ? '#FF8C00' : '#2D2D2D'}`, borderRadius: '8px', padding: '0.625rem', cursor: 'pointer', transition: 'border-color 0.15s' }}
+                  onMouseEnter={e => { if (selectedTemplate !== key) e.currentTarget.style.borderColor = '#444' }}
+                  onMouseLeave={e => { if (selectedTemplate !== key) e.currentTarget.style.borderColor = '#2D2D2D' }}
+                >
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: selectedTemplate === key ? '#FF8C00' : '#E5E5E5', marginBottom: '0.375rem' }}>{tpl.name}</div>
+                  <div style={{ fontSize: '0.625rem', color: '#777', lineHeight: '1.4', maxHeight: '3.5rem', overflow: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{tpl.content.slice(0, 80)}...</div>
+                </div>
+              ))}
+            </div>
+
+            {/* 변수 태그 버튼 */}
+            <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+              {VARIABLE_TAGS.map(v => (
+                <button
+                  key={v.tag}
+                  type="button"
+                  onClick={() => insertTag(replyTextRef, setReplyText, replyText, v.tag)}
+                  style={{ padding: '0.2rem 0.5rem', fontSize: '0.6875rem', background: '#1A1A1A', border: '1px solid #444', borderRadius: '4px', color: '#FF8C00', cursor: 'pointer' }}
+                >{v.tag} <span style={{ color: '#888' }}>{v.label}</span></button>
+              ))}
             </div>
 
             {/* 답변 입력 */}
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '0.75rem', color: '#888', display: 'block', marginBottom: '0.375rem' }}>답변 내용</label>
-              <textarea
-                value={replyText}
-                onChange={e => setReplyText(e.target.value)}
-                placeholder="답변 내용을 입력하세요"
-                rows={6}
-                style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5' }}
-              />
-            </div>
+            <textarea
+              ref={replyTextRef}
+              value={replyText}
+              onChange={e => setReplyText(e.target.value)}
+              placeholder="답변 내용을 입력하세요"
+              rows={6}
+              style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', marginBottom: '1rem' }}
+            />
 
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
               <button onClick={() => setReplyModal(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>
@@ -639,14 +751,76 @@ export default function CSPage() {
               <button onClick={() => setShowTemplateManager(false)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {/* 템플릿 추가 폼 */}
+            <div style={{ background: '#111', borderRadius: '8px', padding: '1rem', border: '1px solid #2A2A2A', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <input
+                  placeholder="템플릿 이름"
+                  value={tplName}
+                  onChange={e => setTplName(e.target.value)}
+                  style={{ ...inputStyle, flex: 1 }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                {VARIABLE_TAGS.map(v => (
+                  <button
+                    key={v.tag}
+                    type="button"
+                    onClick={() => insertTag(tplContentRef, setTplContent, tplContent, v.tag)}
+                    style={{ padding: '0.2rem 0.5rem', fontSize: '0.6875rem', background: '#1A1A1A', border: '1px solid #444', borderRadius: '4px', color: '#FF8C00', cursor: 'pointer' }}
+                  >{v.tag} <span style={{ color: '#888' }}>{v.label}</span></button>
+                ))}
+              </div>
+              <textarea
+                ref={tplContentRef}
+                placeholder="템플릿 내용"
+                value={tplContent}
+                onChange={e => setTplContent(e.target.value)}
+                rows={5}
+                style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', marginBottom: '0.5rem' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={async () => {
+                    if (!tplName.trim() || !tplContent.trim()) {
+                      showAlert('이름과 내용을 입력해주세요', 'error')
+                      return
+                    }
+                    const key = tplName.trim().replace(/\s+/g, '_').toLowerCase()
+                    try {
+                      await csInquiryApi.addTemplate(key, tplName.trim(), tplContent.trim())
+                      setTplName('')
+                      setTplContent('')
+                      load()
+                    } catch (e) {
+                      showAlert(e instanceof Error ? e.message : '템플릿 추가 실패', 'error')
+                    }
+                  }}
+                  style={{ padding: '0.4rem 1rem', background: '#FF8C00', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer' }}
+                >추가</button>
+              </div>
+            </div>
+
+            {/* 기존 템플릿 목록 */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {Object.entries(templates).map(([key, tpl]) => (
-                <div key={key} style={{ background: '#111', borderRadius: '8px', padding: '1rem', border: '1px solid #2A2A2A' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                <div key={key} style={{ background: '#111', borderRadius: '8px', padding: '0.75rem 1rem', border: '1px solid #2A2A2A' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.375rem' }}>
                     <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FF8C00' }}>{tpl.name}</span>
-                    <span style={{ fontSize: '0.6875rem', color: '#555', fontFamily: 'monospace' }}>{key}</span>
+                    <button
+                      onClick={async () => {
+                        if (!await showConfirm(`"${tpl.name}" 템플릿을 삭제하시겠습니까?`)) return
+                        try {
+                          await csInquiryApi.deleteTemplate(key)
+                          load()
+                        } catch (e) {
+                          showAlert(e instanceof Error ? e.message : '삭제 실패', 'error')
+                        }
+                      }}
+                      style={{ padding: '0.15rem 0.5rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.2)', borderRadius: '4px', color: '#FF6B6B', fontSize: '0.6875rem', cursor: 'pointer' }}
+                    >삭제</button>
                   </div>
-                  <p style={{ fontSize: '0.8125rem', color: '#aaa', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>
+                  <p style={{ fontSize: '0.8125rem', color: '#aaa', lineHeight: '1.5', whiteSpace: 'pre-wrap', margin: 0 }}>
                     {tpl.content}
                   </p>
                 </div>
@@ -657,10 +831,6 @@ export default function CSPage() {
                 </div>
               )}
             </div>
-
-            <p style={{ fontSize: '0.75rem', color: '#555', marginTop: '1rem' }}>
-              * 템플릿 추가/수정은 백엔드 서비스에서 관리됩니다
-            </p>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
               <button onClick={() => setShowTemplateManager(false)} style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>닫기</button>

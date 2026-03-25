@@ -6,6 +6,7 @@ import { userApi } from '@/lib/samba/api'
 
 export default function SambaSignUpPage() {
   const router = useRouter()
+  const [inviteCode, setInviteCode] = useState('')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -17,7 +18,7 @@ export default function SambaSignUpPage() {
     e.preventDefault()
     setError('')
 
-    if (!name.trim() || !email.trim() || !password.trim()) {
+    if (!inviteCode.trim() || !name.trim() || !email.trim() || !password.trim()) {
       setError('모든 항목을 입력해주세요')
       return
     }
@@ -32,7 +33,7 @@ export default function SambaSignUpPage() {
 
     setSubmitting(true)
     try {
-      await userApi.create({ email, password, name })
+      await userApi.create({ email, password, name, invite_code: inviteCode })
       router.replace('/samba/login?registered=1')
     } catch (err) {
       setError(err instanceof Error ? err.message : '회원가입에 실패했습니다')
@@ -90,6 +91,22 @@ export default function SambaSignUpPage() {
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '1rem' }}>
             <label style={{ display: 'block', fontSize: '0.8125rem', color: '#888', marginBottom: '0.375rem' }}>
+              초대 코드
+            </label>
+            <input
+              type="text"
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value)}
+              autoFocus
+              placeholder="팀장에게 받은 초대 코드"
+              style={inputStyle}
+              onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = '#2A3040' }}
+            />
+          </div>
+
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'block', fontSize: '0.8125rem', color: '#888', marginBottom: '0.375rem' }}>
               이름
             </label>
             <input
@@ -97,7 +114,6 @@ export default function SambaSignUpPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoComplete="name"
-              autoFocus
               placeholder="홍길동"
               style={inputStyle}
               onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}

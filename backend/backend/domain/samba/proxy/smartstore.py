@@ -923,6 +923,71 @@ class SmartStoreClient:
     logger.info(f"[스마트스토어] 발주확인 {len(product_order_ids)}건 요청")
     return result
 
+  # 택배사 코드 매핑 (한글 → 네이버 코드)
+  # 네이버 커머스 API 공식 DeliveryCompanyType enum
+  # 롯데택배 = HYUNDAI (구 현대택배 인수 → 레거시 코드 유지)
+  DELIVERY_COMPANY_MAP: dict[str, str] = {
+    "CJ대한통운": "CJGLS",
+    "한진택배": "HANJIN",
+    "롯데택배": "HYUNDAI",       # 롯데글로벌로지스 (구 현대택배)
+    "로젠택배": "LOGEN",
+    "우체국택배": "EPOST",
+    "경동택배": "KDEXP",
+    "대신택배": "DAESIN",
+    "일양로지스": "ILYANG",
+    "편의점택배": "CVSNET",
+    "DHL": "DHL",
+    "직접배송": "ONSLF_DLV",
+    "기타": "DLV_COM_ETC",
+  }
+
+  async def ship_product_order(
+    self,
+    product_order_id: str,
+    delivery_company: str,
+    tracking_number: str,
+  ) -> dict[str, Any]:
+    """발송처리 (송장번호 전송).
+
+    Commerce API: POST /v1/pay-order/seller/product-orders/dispatch
+
+    Args:
+      product_order_id: 상품주문번호
+      delivery_company: 택배사 (한글 또는 네이버 코드)
+      tracking_number: 송장번호
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    company_code = self.DELIVERY_COMPANY_MAP.get(delivery_company, delivery_company)
+    now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%dT%H:%M:%S.000+09:00")
+
+    body = {
+      "dispatchProductOrders": [{
+        "productOrderId": product_order_id,
+        "deliveryMethod": "DELIVERY",
+        "deliveryCompanyCode": company_code,
+        "trackingNumber": tracking_number,
+        "dispatchDate": now,
+      }]
+    }
+    result = await self._call_api(
+      "POST",
+      "/v1/pay-order/seller/product-orders/dispatch",
+      body=body,
+    )
+    # 응답에서 성공/실패 확인
+    data = result.get("data", {})
+    success_ids = data.get("successProductOrderIds", [])
+    fail_infos = data.get("failProductOrderInfos", [])
+
+    if fail_infos:
+      fail_msg = fail_infos[0].get("message", "알 수 없는 오류")
+      raise SmartStoreApiError(f"발송처리 실패: {fail_msg}")
+
+    logger.info(f"[스마트스토어] 발송처리 {product_order_id} → {company_code} {tracking_number}")
+    return result
+
   async def approve_cancel(self, product_order_id: str) -> dict[str, Any]:
     """취소요청 승인.
 
@@ -1551,12 +1616,60 @@ class SmartStoreClient:
 
     return await self._call_api("GET", "/v1/contents/qnas", params=params)
 
+  async def get_purchase_inquiries(
+    self,
+    start_date: str = "",
+    end_date: str = "",
+    page: int = 1,
+    size: int = 100,
+    answered: Optional[bool] = None,
+  ) -> dict[str, Any]:
+    """고객문의(구매 후 1:1 문의) 목록 조회.
+
+    GET /v1/pay-user/inquiries
+
+    Args:
+      start_date: 조회 시작일 (LocalDate, 예: 2026-03-01)
+      end_date: 조회 종료일 (LocalDate, 예: 2026-03-26)
+      page: 페이지 번호 (1부터)
+      size: 페이지 크기 (최대 100)
+      answered: 답변 여부 필터
+    """
+    params: dict[str, Any] = {
+      "page": page,
+      "size": size,
+    }
+    if start_date:
+      params["startSearchDate"] = start_date
+    if end_date:
+      params["endSearchDate"] = end_date
+    if answered is not None:
+      params["answered"] = str(answered).lower()
+
+    return await self._call_api("GET", "/v1/pay-user/inquiries", params=params)
+
+  async def answer_product_qna(
+    self,
+    question_id: int,
+    comment_content: str,
+  ) -> dict[str, Any]:
+    """상품문의(Q&A) 답변 등록/수정.
+
+    PUT /v1/contents/qnas/{questionId}
+    응답: 204 No Content (성공 시 빈 body)
+    """
+    return await self._call_api(
+      "PUT",
+      f"/v1/contents/qnas/{question_id}",
+      body={"commentContent": comment_content},
+    )
+
   async def answer_inquiry(
     self,
     inquiry_no: int,
     answer_comment: str,
   ) -> dict[str, Any]:
-    """고객 문의 답변 등록.
+    """고객문의(1:1) 답변 등록.
 
     POST /v1/pay-merchant/inquiries/{inquiryNo}/answer
     """
@@ -1572,7 +1685,7 @@ class SmartStoreClient:
     answer_content_id: int,
     answer_comment: str,
   ) -> dict[str, Any]:
-    """고객 문의 답변 수정.
+    """고객문의(1:1) 답변 수정.
 
     PUT /v1/pay-merchant/inquiries/{inquiryNo}/answer/{answerContentId}
     """

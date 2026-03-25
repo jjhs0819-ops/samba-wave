@@ -12,6 +12,7 @@ class CSInquiryCreate(BaseModel):
     inquiry_type: str = "general"
     questioner: Optional[str] = None
     product_name: Optional[str] = None
+    product_image: Optional[str] = None
     product_link: Optional[str] = None
     market_link: Optional[str] = None
     original_link: Optional[str] = None

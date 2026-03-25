@@ -28,6 +28,11 @@ class SambaReturn(SQLModel, table=True):
         sa_column=Column(Text, nullable=False, index=True),
     )
 
+    # 상품 이미지
+    product_image: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
     # 유형: return, exchange, cancel
     type: str = Field(sa_column=Column(Text, nullable=False))
 
