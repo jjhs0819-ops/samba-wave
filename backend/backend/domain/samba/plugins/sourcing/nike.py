@@ -26,8 +26,9 @@ class NikePlugin(SourcingPlugin):
     """나이키 키워드 검색."""
     from backend.domain.samba.proxy.nike import NikeClient
 
+    max_count = int(filters.get("max_count", 100))
     client = NikeClient()
-    result = await self.safe_call(client.search(keyword))
+    result = await self.safe_call(client.search(keyword, max_count=max_count))
     return result.get("products", [])
 
   async def get_detail(self, site_product_id: str) -> dict:
