@@ -108,6 +108,7 @@ function getSourceUrl(sourceSite: string, siteProductId: string | undefined): st
   if (!siteProductId) return ''
   if (sourceSite === 'MUSINSA') return `https://www.musinsa.com/products/${siteProductId}`
   if (sourceSite === 'KREAM') return `https://kream.co.kr/products/${siteProductId}`
+  if (sourceSite === 'NIKE') return `https://www.nike.com/kr/t/-/-/${siteProductId}`
   return ''
 }
 

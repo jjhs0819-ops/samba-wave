@@ -50,7 +50,7 @@ class NikeClient:
   )
   PAGE_SIZE = 24
 
-  async def search(self, keyword: str, page: int = 1, max_count: int = 24) -> dict[str, Any]:
+  async def search(self, keyword: str, page: int = 1, max_count: int = 500) -> dict[str, Any]:
     """키워드 검색 — 1페이지: HTML __NEXT_DATA__ 파싱, 2페이지~: Nike API 호출.
 
     nike-api-caller-id 헤더값이 핵심:
@@ -337,19 +337,35 @@ class NikeClient:
       size_labels = re.findall(r'<label[^>]*>\s*(\d{3})\s*</label>', html)
       options = [{"size": s, "stock": 1} for s in dict.fromkeys(size_labels)]
 
-    # 소재/정보고시: productInfo.productDetails + featuresAndBenefits
+    # 상품 정보 섹션 (featuresAndBenefits, productDetails)
     product_info = prod_data.get("productInfo") or {}
     features = product_info.get("featuresAndBenefits") or []
     details = product_info.get("productDetails") or []
 
-    # material: productDetails body 항목들을 합침
+    # material: productDetails body 항목들을 합침 (Nike는 구조화 소재 없음 — 제품 특성 정보 사용)
     material_lines = []
     for section in details:
       material_lines.extend(section.get("body") or [])
     material = ", ".join(material_lines) if material_lines else ""
 
-    # detail_html: 상품 특징 + 상품 상세 정보 텍스트로 구성
+    # 품번 (selectedProduct 또는 productGroups에서 styleCode)
+    style_code = (
+      sp.get("styleCode")
+      or prod_data.get("styleCode")
+      or (style_color.split("-")[0] if "-" in style_color else style_color)
+    )
+
+    # 제조사 (나이키 고정값)
+    manufacturer = "Nike Inc / (유)나이키코리아"
+
+    # detail_html: 상품설명 + 슬로건 + 상품특징 + 상품상세
     html_parts = []
+    product_description = product_info.get("productDescription") or ""
+    reason_to_buy = product_info.get("reasonToBuy") or ""
+    if product_description:
+      html_parts.append(f"<p>{product_description}</p>")
+    if reason_to_buy:
+      html_parts.append(f"<p><em>{reason_to_buy}</em></p>")
     for section in features + details:
       header = section.get("header", "")
       body = section.get("body") or []
@@ -373,6 +389,9 @@ class NikeClient:
       "color": color,
       "origin": origin,
       "material": material,
+      "style_code": style_code,
+      "sex": gender_kr,
+      "manufacturer": manufacturer,
       "options": options,
       "detail_html": detail_html,
     }
