@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from backend.domain.samba.proxy.base_client import BaseProxyClient
 from backend.utils.logger import logger
 
 
@@ -26,8 +27,11 @@ class Cafe24ApiError(Exception):
     super().__init__(f"[{status}] {code}: {message}")
 
 
-class Cafe24Client:
+class Cafe24Client(BaseProxyClient):
   """카페24 Admin REST API 클라이언트."""
+
+  timeout = 60.0
+  market_name = "카페24"
 
   def __init__(
     self,
@@ -37,6 +41,7 @@ class Cafe24Client:
     access_token: str = "",
     refresh_token: str = "",
   ):
+    super().__init__()
     self.mall_id = mall_id
     self.client_id = client_id
     self.client_secret = client_secret
@@ -64,6 +69,7 @@ class Cafe24Client:
     import base64
     credentials = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode()).decode()
 
+    # 토큰 갱신은 별도 클라이언트로 진행 (base_url이 다름)
     async with httpx.AsyncClient(timeout=30) as client:
       resp = await client.post(
         url,
@@ -85,7 +91,34 @@ class Cafe24Client:
     logger.info(f"[카페24] 토큰 갱신 성공: mall={self.mall_id}")
     return self.access_token
 
-  # ── 공통 API 호출 ──────────────────────────────
+  # ── BaseProxyClient 오버라이드 ──────────────────
+
+  async def _build_headers(self, method: str, path: str) -> dict[str, str]:
+    """OAuth2 Bearer 토큰 인증 헤더 생성."""
+    token = await self.ensure_token()
+    return {
+      "Authorization": f"Bearer {token}",
+      "Content-Type": "application/json",
+      "X-Cafe24-Api-Version": "2024-06-01",
+    }
+
+  async def _check_error(self, resp: httpx.Response, data: dict[str, Any]) -> None:
+    """카페24 에러 포맷 처리 + Rate Limit(429) + 토큰 만료(401) 대응."""
+    # Rate Limit 모니터링
+    call_limit = resp.headers.get("X-Api-Call-Limit", "")
+    remaining = resp.headers.get("x-ratelimit-remaining", "")
+    if call_limit:
+      logger.debug(f"[카페24] Rate: {call_limit}, remaining={remaining}")
+
+    if resp.status_code >= 400:
+      error = data.get("error", {}) if isinstance(data.get("error"), dict) else {}
+      raise Cafe24ApiError(
+        resp.status_code,
+        error.get("code", str(resp.status_code)),
+        error.get("message", data.get("error_description", str(data))),
+      )
+
+  # ── 공통 API 호출 (Rate Limit + 토큰 갱신 재시도) ──
 
   async def _call_api(
     self,
@@ -96,45 +129,23 @@ class Cafe24Client:
     retry_on_token: bool = True,
   ) -> dict[str, Any]:
     """공통 API 호출 — Rate Limit 대응 + 토큰 자동 갱신."""
-    token = await self.ensure_token()
-    url = f"{self.base_url}{path}"
-    headers = {
-      "Authorization": f"Bearer {token}",
-      "Content-Type": "application/json",
-      "X-Cafe24-Api-Version": "2024-06-01",
-    }
+    try:
+      return await super()._call_api(method, path, body=body, params=params)
+    except Cafe24ApiError as exc:
+      # 429 Too Many Requests → 대기 후 재시도
+      if exc.status == 429:
+        logger.warning("[카페24] Rate Limit 초과 → 2초 대기 후 재시도")
+        await asyncio.sleep(2)
+        return await super()._call_api(method, path, body=body, params=params)
 
-    async with httpx.AsyncClient(timeout=60) as client:
-      resp = await client.request(method, url, json=body, params=params, headers=headers)
+      # 401 → 토큰 갱신 후 재시도 (1회만)
+      if exc.status == 401 and retry_on_token and self.refresh_token:
+        logger.info("[카페24] 401 → 토큰 갱신 후 재시도")
+        self.access_token = ""
+        await self.ensure_token()
+        return await super()._call_api(method, path, body=body, params=params)
 
-    # Rate Limit 모니터링
-    call_limit = resp.headers.get("X-Api-Call-Limit", "")
-    remaining = resp.headers.get("x-ratelimit-remaining", "")
-    if call_limit:
-      logger.debug(f"[카페24] Rate: {call_limit}, remaining={remaining}")
-
-    # 429 Too Many Requests → 대기 후 재시도
-    if resp.status_code == 429:
-      logger.warning("[카페24] Rate Limit 초과 → 2초 대기 후 재시도")
-      await asyncio.sleep(2)
-      return await self._call_api(method, path, body, params, retry_on_token=False)
-
-    # 401 → 토큰 갱신 후 재시도 (1회만)
-    if resp.status_code == 401 and retry_on_token and self.refresh_token:
-      logger.info("[카페24] 401 → 토큰 갱신 후 재시도")
-      self.access_token = ""
-      await self.ensure_token()
-      return await self._call_api(method, path, body, params, retry_on_token=False)
-
-    data = resp.json()
-    if resp.status_code >= 400:
-      error = data.get("error", {}) if isinstance(data.get("error"), dict) else {}
-      raise Cafe24ApiError(
-        resp.status_code,
-        error.get("code", str(resp.status_code)),
-        error.get("message", data.get("error_description", str(data))),
-      )
-    return data
+      raise
 
   # ── 카테고리 ────────────────────────────────────
 

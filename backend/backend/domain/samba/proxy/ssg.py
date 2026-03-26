@@ -33,25 +33,42 @@ from typing import Any, Optional
 import httpx
 
 from backend.core.config import settings
+from backend.domain.samba.proxy.base_client import BaseProxyClient
 from backend.utils.logger import logger
 
 
-class SSGClient:
+class SSGClient(BaseProxyClient):
   """SSG Open API 클라이언트."""
 
-  BASE_URL = "https://eapi.ssgadm.com"
+  base_url = "https://eapi.ssgadm.com"
+  timeout = 60.0
+  market_name = "SSG"
 
   def __init__(self, api_key: str, site_no: str = "6004") -> None:
     """api_key: 업체 인증키, site_no: 사이트번호 (기본 신세계몰)."""
+    super().__init__()
     self.api_key = api_key
     self.site_no = site_no
 
-  def _headers(self, accept: str = "application/json") -> dict[str, str]:
+  # ── BaseProxyClient 오버라이드 ──────────────────
+
+  async def _build_headers(self, method: str, path: str) -> dict[str, str]:
+    """SSG API 키 인증 헤더 생성."""
     return {
       "Authorization": self.api_key,
       "Content-Type": "application/json",
-      "Accept": accept,
+      "Accept": "application/json",
     }
+
+  async def _check_error(self, resp: httpx.Response, data: dict[str, Any]) -> None:
+    """SSG 에러 포맷 처리 — HTTP 에러 시 result.resultDesc 추출."""
+    if not resp.is_success:
+      result_obj = data.get("result", {}) if isinstance(data, dict) else {}
+      desc = ""
+      if isinstance(result_obj, dict):
+        desc = result_obj.get("resultDesc", "") or result_obj.get("resultMessage", "")
+      msg = desc or data.get("message", "") or data.get("msg", "") or str(data)[:300]
+      raise SSGApiError(f"HTTP {resp.status_code}: {msg}")
 
   async def _call_api(
     self,
@@ -59,45 +76,18 @@ class SSGClient:
     path: str,
     body: Optional[dict[str, Any]] = None,
     params: Optional[dict[str, str]] = None,
+    content: Optional[str] = None,
+    extra_headers: Optional[dict[str, str]] = None,
   ) -> dict[str, Any]:
-    """공통 API 호출.
-
-    SSG는 에러 시 HTTP 500을 반환하면서도 JSON body에 에러 내용을 담으므로
-    500 응답도 JSON 파싱 후 반환한다.
-    """
-    url = f"{self.BASE_URL}{path}"
-    headers = self._headers()
-
+    """공통 API 호출 — 네트워크 에러를 SSGApiError로 변환."""
     try:
-      async with httpx.AsyncClient(timeout=60) as client:
-        if method == "GET":
-          resp = await client.get(url, headers=headers, params=params)
-        elif method == "POST":
-          resp = await client.post(url, headers=headers, json=body or {})
-        elif method == "PUT":
-          resp = await client.put(url, headers=headers, json=body or {})
-        elif method == "DELETE":
-          resp = await client.delete(url, headers=headers, params=params)
-        else:
-          raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
-
-        try:
-          data = resp.json()
-        except Exception:
-          data = {"raw": resp.text}
-
-        logger.info(f"[SSG] {method} {path} → {resp.status_code}")
-
-        # SSG는 500 응답에도 JSON 에러를 담아 보냄 — 에러 내용 추출
-        if not resp.is_success:
-          result_obj = data.get("result", {}) if isinstance(data, dict) else {}
-          desc = ""
-          if isinstance(result_obj, dict):
-            desc = result_obj.get("resultDesc", "") or result_obj.get("resultMessage", "")
-          msg = desc or data.get("message", "") or data.get("msg", "") or resp.text[:300]
-          raise SSGApiError(f"HTTP {resp.status_code}: {msg}")
-
-        return data
+      logger.info(f"[SSG] {method} {path}")
+      return await super()._call_api(
+        method, path, body=body, params=params,
+        content=content, extra_headers=extra_headers,
+      )
+    except SSGApiError:
+      raise
     except httpx.ConnectError as exc:
       raise SSGApiError(f"SSG 서버 연결 실패: {exc}") from exc
     except httpx.TimeoutException as exc:

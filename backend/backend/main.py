@@ -15,6 +15,9 @@ from backend.api.v1.routers.samba.order import router as samba_order_router
 from backend.api.v1.routers.samba.channel import router as samba_channel_router
 from backend.api.v1.routers.samba.policy import router as samba_policy_router
 from backend.api.v1.routers.samba.collector import router as samba_collector_router
+from backend.api.v1.routers.samba.collector_collection import router as samba_collector_collection_router
+from backend.api.v1.routers.samba.collector_refresh import router as samba_collector_refresh_router
+from backend.api.v1.routers.samba.collector_autotune import router as samba_collector_autotune_router
 from backend.api.v1.routers.samba.category import router as samba_category_router
 from backend.api.v1.routers.samba.account import router as samba_account_router
 from backend.api.v1.routers.samba.shipment import router as samba_shipment_router
@@ -112,6 +115,9 @@ def create_application() -> FastAPI:
     app.include_router(samba_channel_router, prefix="/api/v1/samba")
     app.include_router(samba_policy_router, prefix="/api/v1/samba")
     app.include_router(samba_collector_router, prefix="/api/v1/samba")
+    app.include_router(samba_collector_collection_router, prefix="/api/v1/samba")
+    app.include_router(samba_collector_refresh_router, prefix="/api/v1/samba")
+    app.include_router(samba_collector_autotune_router, prefix="/api/v1/samba")
     app.include_router(samba_category_router, prefix="/api/v1/samba")
     app.include_router(samba_account_router, prefix="/api/v1/samba")
     app.include_router(samba_shipment_router, prefix="/api/v1/samba")

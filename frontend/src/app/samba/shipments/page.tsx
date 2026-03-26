@@ -96,24 +96,22 @@ export default function ShipmentsPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    // URL에서 선택된 상품 ID 먼저 확인
+    const preIds = new URLSearchParams(window.location.search).get('selected')?.split(',').filter(Boolean) || []
+
+    // 선택된 상품이 있으면 해당 상품만 조회, 없으면 scroll API (light 필드)
+    const productPromise = preIds.length > 0
+      ? collectorApi.getProductsByIds(preIds).catch(() => [] as SambaCollectedProduct[])
+      : collectorApi.scrollProducts({ skip: 0, limit: 200 }).then(r => r.items).catch(() => [] as SambaCollectedProduct[])
+
     const [p, a, s, f, pol, cm] = await Promise.all([
-      collectorApi.listProducts(0, 500).catch(() => [] as SambaCollectedProduct[]),
+      productPromise,
       accountApi.listActive().catch(() => []),
       shipmentApi.list(0, 100).catch(() => []),
       collectorApi.listFilters().catch(() => []),
       policyApi.list().catch(() => []),
       categoryApi.listMappings().catch(() => []),
     ])
-    // URL에서 넘어온 선택 상품 중 500개 로드에 누락된 것이 있으면 추가 조회
-    const preIds = new URLSearchParams(window.location.search).get('selected')?.split(',') || []
-    if (preIds.length > 0) {
-      const loadedIds = new Set(p.map((x: SambaCollectedProduct) => x.id))
-      const missingIds = preIds.filter(id => id && !loadedIds.has(id))
-      if (missingIds.length > 0) {
-        const extras = await collectorApi.getProductsByIds(missingIds).catch(() => [])
-        if (extras.length > 0) p.push(...extras)
-      }
-    }
     setProducts(p)
     setAccounts(a)
     setShipments(s)

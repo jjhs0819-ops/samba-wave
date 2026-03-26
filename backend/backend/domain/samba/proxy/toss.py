@@ -14,15 +14,19 @@ from typing import Any, Optional
 
 import httpx
 
+from backend.domain.samba.proxy.base_client import BaseProxyClient
 from backend.utils.logger import logger
 
 
-class TossClient:
+class TossClient(BaseProxyClient):
   """토스 커머스 API 클라이언트."""
 
-  BASE_URL = "https://api-shopping.toss.im"
+  base_url = "https://api-shopping.toss.im"
+  timeout = 30.0
+  market_name = "토스"
 
   def __init__(self, access_key: str, secret_key: str) -> None:
+    super().__init__()
     self.access_key = access_key
     self.secret_key = secret_key
 
@@ -40,8 +44,10 @@ class TossClient:
     ).hexdigest()
     return signature
 
-  def _headers(self, method: str, path: str) -> dict[str, str]:
-    """인증 헤더 생성."""
+  # ── BaseProxyClient 오버라이드 ──────────────────
+
+  async def _build_headers(self, method: str, path: str) -> dict[str, str]:
+    """HMAC-SHA256 인증 헤더 생성."""
     timestamp = str(int(time.time() * 1000))
     signature = self._generate_signature(method, path, timestamp)
     return {
@@ -54,44 +60,17 @@ class TossClient:
       "Content-Type": "application/json",
     }
 
-  # ------------------------------------------------------------------
-  # 공통 API 호출
-  # ------------------------------------------------------------------
+  async def _check_error(self, resp: httpx.Response, data: dict[str, Any]) -> None:
+    """토스 에러 포맷 처리."""
+    if resp.status_code >= 400:
+      text = str(data.get("_raw", "")) if "_raw" in data else str(data)
+      raise TossApiError(f"HTTP {resp.status_code}: {text[:500]}")
 
-  async def _call_api(
-    self,
-    method: str,
-    path: str,
-    body: Optional[dict[str, Any]] = None,
-    params: Optional[dict[str, Any]] = None,
-  ) -> dict[str, Any]:
-    """공통 API 호출."""
-    url = f"{self.BASE_URL}{path}"
-    headers = self._headers(method, path)
-
-    async with httpx.AsyncClient(timeout=30) as client:
-      if method.upper() == "GET":
-        resp = await client.get(url, headers=headers, params=params)
-      elif method.upper() == "POST":
-        resp = await client.post(url, headers=headers, json=body or {})
-      elif method.upper() == "PUT":
-        resp = await client.put(url, headers=headers, json=body or {})
-      elif method.upper() == "PATCH":
-        resp = await client.patch(url, headers=headers, json=body or {})
-      elif method.upper() == "DELETE":
-        resp = await client.delete(url, headers=headers)
-      else:
-        raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
-
-      logger.info(f"[토스] {method.upper()} {path} → {resp.status_code}")
-
-      if resp.status_code >= 400:
-        text = resp.text[:500]
-        raise TossApiError(f"HTTP {resp.status_code}: {text}")
-
-      if resp.status_code == 204:
-        return {}
-      return resp.json()
+  async def _parse_response(self, resp: httpx.Response) -> dict[str, Any]:
+    """응답 파싱 — 204 No Content 처리."""
+    if resp.status_code == 204:
+      return {}
+    return await super()._parse_response(resp)
 
   # ------------------------------------------------------------------
   # 상품 변환
