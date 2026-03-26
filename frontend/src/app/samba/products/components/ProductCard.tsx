@@ -104,12 +104,12 @@ export function calcPrice(
   return { price, marginAmt, usedMin, feeAmt, calcStr: `₩${fmt(price)} = ${parts.join(' + ')}` }
 }
 
-function getSourceUrl(sourceSite: string, siteProductId: string | undefined): string {
+function getSourceUrl(sourceSite: string, siteProductId: string | undefined, videoUrl?: string | null): string {
   if (!siteProductId) return ''
   const site = (sourceSite || '').toUpperCase()
   if (site === 'MUSINSA') return `https://www.musinsa.com/products/${siteProductId}`
   if (site === 'KREAM') return `https://kream.co.kr/products/${siteProductId}`
-  if (site === 'NIKE') return `https://www.nike.com/kr/w?q=${siteProductId}`
+  if (site === 'NIKE') return videoUrl || `https://www.nike.com/kr/w?q=${siteProductId}`
   return ''
 }
 
@@ -961,7 +961,7 @@ const ProductCard = React.memo(function ProductCard({
               <span style={{ color: '#FFFFFF', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{p.name}</span>
               <button onClick={(e) => { e.stopPropagation(); openPriceHistory() }}
                 style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>이력</button>
-              <button onClick={(e) => { e.stopPropagation(); const url = getSourceUrl(p.source_site, p.site_product_id); if (url) window.open(url, '_blank') }}
+              <button onClick={(e) => { e.stopPropagation(); const url = getSourceUrl(p.source_site, p.site_product_id, p.video_url); if (url) window.open(url, '_blank') }}
                 style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>원문</button>
               <button onClick={(e) => { e.stopPropagation(); onEnrich(p.id) }}
                 style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>업데이트</button>
@@ -1017,7 +1017,7 @@ const ProductCard = React.memo(function ProductCard({
               }}>가격변경이력</button>
             <button
               onClick={() => {
-                const url = getSourceUrl(p.source_site, p.site_product_id)
+                const url = getSourceUrl(p.source_site, p.site_product_id, p.video_url)
                 if (url) window.open(url, '_blank')
               }}
               style={{

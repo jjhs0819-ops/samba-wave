@@ -237,6 +237,7 @@ class NikeClient:
           "category2": category1,
           "category3": "",
           "color": color,
+          "video_url": url,  # 나이키 PDP URL 저장 (영상 없으므로 원문링크용으로 활용)
           "url": url,
           "options": [],
           "detail_html": "",
@@ -392,6 +393,7 @@ class NikeClient:
       "style_code": style_code,
       "sex": gender_kr,
       "manufacturer": manufacturer,
+      "video_url": product_info.get("url") or "",  # 나이키 PDP URL (원문링크용)
       "options": options,
       "detail_html": detail_html,
     }
