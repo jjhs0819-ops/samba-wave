@@ -534,6 +534,94 @@ async def sync_cs_from_markets(
             logger.error(f"[CS동기화] 스마트스토어 동기화 실패: {e}")
             errors.append(str(e))
 
+    # ── 롯데ON CS 문의 동기화 ──────────────────────────────────────────────
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+    account_repo = SambaMarketAccountRepository(session)
+    lotteon_accounts = await account_repo.filter_by_async(market_type="lotteon", is_active=True)
+
+    for acct in lotteon_accounts:
+        try:
+            from backend.domain.samba.proxy.lotteon import LotteonClient
+            acct_extras = acct.additional_fields or {}
+            api_key = acct_extras.get("apiKey", "") or acct.api_key or ""
+            if not api_key:
+                logger.warning(f"[CS동기화] 롯데ON({acct.seller_id}) API Key 없음 — 건너뜀")
+                continue
+
+            lotteon_client = LotteonClient(api_key)
+            await lotteon_client.test_auth()
+            cs_items = await lotteon_client.get_cs_inquiries(days=30)
+            logger.info(f"[CS동기화] 롯데ON({acct.seller_id}): {len(cs_items)}건 조회")
+
+            for item in cs_items:
+                # 문의 번호 추출 (응답 구조 확인 후 보정 예정)
+                inquiry_no = str(
+                    item.get("qnaNo") or item.get("csNo") or item.get("inquiryNo")
+                    or item.get("id") or ""
+                )
+                if not inquiry_no:
+                    continue
+
+                # 중복 체크
+                existing = await session.execute(
+                    select(SambaCSInquiry).where(
+                        SambaCSInquiry.market == "롯데ON",
+                        SambaCSInquiry.market_inquiry_no == inquiry_no,
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue
+
+                is_answered = bool(
+                    item.get("ansYn") == "Y" or item.get("answered")
+                    or item.get("reply") or item.get("answerContent")
+                )
+                reply_content = (
+                    item.get("answerContent") or item.get("reply")
+                    or item.get("ansCntn") or ""
+                )
+                raw_date = item.get("regDt") or item.get("createDate") or item.get("qnaRegDt")
+                parsed_date = None
+                if raw_date:
+                    try:
+                        from dateutil.parser import parse as parse_dt
+                        parsed_date = parse_dt(str(raw_date))
+                    except Exception:
+                        parsed_date = None
+
+                product_no = str(
+                    item.get("spdNo") or item.get("pdNo") or item.get("productNo") or ""
+                )
+                product_name = item.get("spdNm") or item.get("pdNm") or item.get("productName") or ""
+                question_content = (
+                    item.get("qnaCntn") or item.get("question") or item.get("content") or item.get("cntn") or ""
+                )
+
+                logger.info(
+                    f"[CS동기화] 롯데ON 문의 파싱: no={inquiry_no!r} keys={list(item.keys())[:10]}"
+                )
+
+                inquiry_data = {
+                    "market": "롯데ON",
+                    "market_inquiry_no": inquiry_no,
+                    "account_name": acct.seller_id or acct.market_name,
+                    "inquiry_type": "product_question",
+                    "questioner": item.get("buyerNm") or item.get("custNm") or "",
+                    "market_product_no": product_no,
+                    "product_name": product_name,
+                    "content": question_content,
+                    "reply": reply_content if is_answered else None,
+                    "reply_status": "replied" if is_answered else "pending",
+                    "inquiry_date": parsed_date,
+                }
+                await svc.create_inquiry(inquiry_data)
+                synced += 1
+
+            logger.info(f"[CS동기화] 롯데ON({acct.seller_id}): {synced}건 동기화 완료")
+        except Exception as e:
+            logger.error(f"[CS동기화] 롯데ON 동기화 실패: {e}")
+            errors.append(f"롯데ON: {e}")
+
     # 미연결 CS 문의 일괄 매칭 (market_product_no → market_product_nos)
     linked = 0
     try:
