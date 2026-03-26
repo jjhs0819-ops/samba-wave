@@ -781,7 +781,7 @@ export default function CollectorPage() {
               const productIds: string[] = []
               let skippedAi = 0
               for (const gid of selectedIds) {
-                const group = results.find(r => r.id === gid)
+                const group = filters.find((r: SambaSearchFilter) => r.id === gid)
                 if (group?.products) {
                   for (const p of group.products as { id: string; tags?: string[] }[]) {
                     if ((p.tags || []).includes('__ai_image__')) { skippedAi++; continue }
