@@ -937,9 +937,9 @@ async def regenerate_preset_image(
     desc = custom_desc or preset["desc"]
     prompt = (
         f"{desc}의 전신 사진을 생성해주세요. "
-        "흰색 기본 라운드넥 티셔츠와 연한 블루 데님 청바지를 입고 있는 전신 사진. "
-        "흰색 운동화. 자연스러운 포즈. "
-        "밝은 라이트그레이 스튜디오 배경. 전문 패션 화보 스타일."
+        "블랙 오버사이즈 크루넥과 와이드 슬랙스를 입고 있는 전신 사진. "
+        "미니멀한 블랙 더비슈즈. 런웨이 워킹 자세, 쿨하고 무심한 표정. "
+        "라이트그레이 스튜디오 배경. 파리 하이패션 에디토리얼 스타일, AI 느낌이 나지 않는 실제 화보처럼."
     )
 
     body = {
@@ -1124,29 +1124,28 @@ def _has_overlap_suffix(word: str, existing: list[str], min_suffix: int = 2) -> 
 
 
 def _extract_seo_keywords(
-    tags: list[str], cats: list, banned: set[str], name_words: set[str], max_count: int = 3
+    candidates: list[str], cats: list, banned: set[str], name_words: set[str],
+    final_tags: list[str] | None = None, max_count: int = 3,
 ) -> list[str]:
-    """태그 목록에서 SEO 키워드 추출 — 의미 중복 최소화.
+    """최종 검증 태그에서 최고 SEO 키워드 3개 추출.
 
-    '로고티셔츠', '그래픽티셔츠', '레이어드티셔츠'처럼 접미어가 겹치는
-    키워드가 여러 개 선택되지 않도록 접미어 중복 검사를 수행한다.
+    최종 태그 앞쪽(1~10번째)이 가장 검색량 높은 핵심 키워드이므로
+    여기서 우선 추출하고, 부족하면 나머지 후보에서 보충한다.
     """
-    # 태그 자체를 SEO 제외 대상으로 등록 (태그와 겹치면 안 됨)
-    tag_lower_set = {t.lower().replace(" ", "") for t in tags}
     seo: list[str] = []
-    # 태그 뒤쪽(11번째~)부터 우선 탐색, 부족하면 앞쪽도 탐색
-    ordered = list(tags[10:]) + list(tags[:10])
-    for kw in ordered:
+    # 최종 태그(검증 통과, 검색량 높은 순) → 나머지 후보 순으로 탐색
+    best_first = list(final_tags or []) + [c for c in candidates if c not in (final_tags or [])]
+    for kw in best_first:
         cleaned = kw
         for cat_part in cats:
             if cat_part:
                 cleaned = cleaned.replace(cat_part, "").strip()
-        for word in cleaned.split():
+        words = cleaned.split() if " " in cleaned else [cleaned]
+        for word in words:
             w = word.strip()
             wl = w.lower().replace(" ", "")
-            if len(w) < 2 or wl in banned or wl in name_words or wl in tag_lower_set or w in seo:
+            if len(w) < 2 or wl in banned or wl in name_words or w in seo:
                 continue
-            # 접미어 중복 검사 (예: 기존 '로고티셔츠' → '그래픽티셔츠' 차단)
             if _has_overlap_suffix(w, seo):
                 continue
             seo.append(w)
@@ -1354,8 +1353,8 @@ async def generate_ai_tags(
                 if not tags:
                     continue
 
-                # SEO 키워드 추출
-                seo_kws = _extract_seo_keywords(tags, cats, banned, name_words)
+                # SEO 키워드 추출 (검증 전 전체 후보에서 추출, 최종 태그 제외)
+                seo_kws = _extract_seo_keywords(candidate_tags, cats, banned, name_words, tags)
 
                 # 태그 생성 후 그룹 전체 상품 조회 → 벌크 적용
                 all_in_group = await repo.filter_by_async(search_filter_id=gid, limit=10000)
@@ -1558,8 +1557,8 @@ async def preview_ai_tags(
                 else:
                     validated_tags = candidate_tags[:10]
 
-                # SEO 키워드 미리보기
-                seo_preview = _extract_seo_keywords(validated_tags, cats, banned, name_words)
+                # SEO 키워드 미리보기 (전체 후보에서 추출, 최종 태그 제외)
+                seo_preview = _extract_seo_keywords(candidate_tags, cats, banned, name_words, validated_tags)
 
                 preview_results.append({
                     "group_id": gid,

@@ -208,7 +208,8 @@ class LotteonClient:
   # ------------------------------------------------------------------
 
   async def get_categories(
-    self, cat_id: str = "", depth: str = "", parent_id: str = ""
+    self, cat_id: str = "", depth: str = "", parent_id: str = "",
+    skip: int = 0, limit: int = 500,
   ) -> dict[str, Any]:
     """표준카테고리 조회 (onpick-api 도메인).
 
@@ -216,8 +217,14 @@ class LotteonClient:
       cat_id: filter_1 — 특정 카테고리 ID 조회
       depth: filter_3 — 뎁스 레벨 (1~4)
       parent_id: filter_2 — 부모 카테고리 ID로 하위 목록 조회
+      skip: 페이지네이션 시작 위치
+      limit: 페이지당 건수 (최대 500)
     """
-    params: dict[str, str] = {"job": "cheetahStandardCategory"}
+    params: dict[str, str] = {
+      "job": "cheetahStandardCategory",
+      "skip": str(skip),
+      "limit": str(limit),
+    }
     if cat_id:
       params["filter_1"] = cat_id
     if parent_id:

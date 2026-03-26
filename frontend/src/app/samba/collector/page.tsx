@@ -128,6 +128,7 @@ export default function CollectorPage() {
   // Group table filters
   const [siteFilter, setSiteFilter] = useState("");
   const [aiFilter, setAiFilter] = useState("");
+  const [collectFilter, setCollectFilter] = useState("")
   const [marketRegFilter, setMarketRegFilter] = useState("")
   const [tagRegFilter, setTagRegFilter] = useState("")
   const [policyRegFilter, setPolicyRegFilter] = useState("")
@@ -447,6 +448,15 @@ export default function CollectorPage() {
         case 'ai_img_no': return aiImgCount === 0
         default: return true
       }
+    })
+  }
+  if (collectFilter) {
+    displayedFilters = displayedFilters.filter((f) => {
+      const r = f as unknown as Record<string, number>
+      const cnt = r.collected_count ?? 0
+      if (collectFilter === 'collected') return cnt > 0
+      if (collectFilter === 'uncollected') return cnt === 0
+      return true
     })
   }
   if (marketRegFilter) {
@@ -803,6 +813,12 @@ export default function CollectorPage() {
         }}>
           <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', margin: 0 }}>검색그룹 목록</h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            <select value={collectFilter} onChange={e => setCollectFilter(e.target.value)}
+              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: collectFilter ? '#F59E0B' : '#888', cursor: 'pointer' }}>
+              <option value="">상품수집</option>
+              <option value="collected">수집</option>
+              <option value="uncollected">미수집</option>
+            </select>
             <select value={marketRegFilter} onChange={e => setMarketRegFilter(e.target.value)}
               style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: marketRegFilter ? '#4C9AFF' : '#888', cursor: 'pointer' }}>
               <option value="">마켓등록</option>
@@ -910,16 +926,26 @@ export default function CollectorPage() {
             return result
           }
           // 전체 사이트별 리프 + 브랜드/카테고리 파싱 (크로스 필터용)
-          const allLeafInfos = tree.flatMap(s =>
+          const allLeafInfosRaw = tree.flatMap(s =>
             getAllLeaves(s).map(l => {
               const parsed = parseGroupName(l.name, s.source_site || '')
               return { ...l, _siteId: s.id, _siteSite: s.source_site || '', _brand: parsed.brand, _category: parsed.category }
             })
           )
+          // 상품수집 드롭박스 필터 적용
+          const allLeafInfos = collectFilter
+            ? allLeafInfosRaw.filter(l => {
+                const cnt = (l as unknown as Record<string, number>).collected_count ?? 0
+                return collectFilter === 'collected' ? cnt > 0 : cnt === 0
+              })
+            : allLeafInfosRaw
           // 크로스 필터: 사이트 목록 (선택된 브랜드 기준 필터)
-          const filteredSites = drillBrand
-            ? tree.filter(s => allLeafInfos.some(l => l._siteId === s.id && l._brand === drillBrand))
+          const baseSites = collectFilter
+            ? tree.filter(s => allLeafInfos.some(l => l._siteId === s.id))
             : tree
+          const filteredSites = drillBrand
+            ? baseSites.filter(s => allLeafInfos.some(l => l._siteId === s.id && l._brand === drillBrand))
+            : baseSites
           // 크로스 필터: 브랜드 목록 (선택된 사이트 기준 필터)
           const brandLeaves = drillSite
             ? allLeafInfos.filter(l => l._siteId === drillSite)

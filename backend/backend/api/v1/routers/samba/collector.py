@@ -21,6 +21,19 @@ from backend.domain.samba.collector.refresher import _site_intervals, _site_cons
 
 router = APIRouter(prefix="/collector", tags=["samba-collector"])
 
+# HTML 태그 및 불필요 문자 정제 (상품명/브랜드/옵션 등에서 제거)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _clean_text(value: str) -> str:
+    """HTML 태그 제거 + 연속 공백 정리."""
+    if not value:
+        return value
+    cleaned = _HTML_TAG_RE.sub(" ", value)
+    cleaned = _WHITESPACE_RE.sub(" ", cleaned)
+    return cleaned.strip()
+
 
 def _build_product_data(
     detail: dict, goods_no: str, filter_id: str, site: str,
@@ -35,32 +48,45 @@ def _build_product_data(
         "cost": cost,
         "options": detail.get("options", []),
     }
+    # 옵션 정제 (옵션명에서도 HTML 태그 제거)
+    raw_options = detail.get("options", [])
+    cleaned_options = []
+    for opt in raw_options:
+        if isinstance(opt, dict):
+            cleaned_opt = {**opt}
+            for k in ("name", "value", "label"):
+                if k in cleaned_opt and isinstance(cleaned_opt[k], str):
+                    cleaned_opt[k] = _clean_text(cleaned_opt[k])
+            cleaned_options.append(cleaned_opt)
+        else:
+            cleaned_options.append(opt)
+
     return {
         "source_site": site,
         "site_product_id": goods_no,
         "search_filter_id": filter_id,
-        "name": detail.get("name", ""),
-        "brand": detail.get("brand", ""),
+        "name": _clean_text(detail.get("name", "")),
+        "brand": _clean_text(detail.get("brand", "")),
         "original_price": original_price,
         "sale_price": sale_price,
         "cost": cost,
         "images": detail.get("images", []),
         "detail_images": detail.get("detailImages") or [],
-        "options": detail.get("options", []),
+        "options": cleaned_options,
         "category": raw_cat,
         "category1": cat_parts[0] if len(cat_parts) > 0 else None,
         "category2": cat_parts[1] if len(cat_parts) > 1 else None,
         "category3": cat_parts[2] if len(cat_parts) > 2 else None,
         "category4": cat_parts[3] if len(cat_parts) > 3 else None,
-        "manufacturer": detail.get("manufacturer"),
-        "origin": detail.get("origin"),
-        "material": detail.get("material"),
-        "color": detail.get("color"),
-        "style_code": detail.get("style_code", ""),
+        "manufacturer": _clean_text(detail.get("manufacturer") or ""),
+        "origin": _clean_text(detail.get("origin") or ""),
+        "material": _clean_text(detail.get("material") or ""),
+        "color": _clean_text(detail.get("color") or ""),
+        "style_code": _clean_text(detail.get("style_code", "")),
         "sex": detail.get("sex", ""),
         "season": detail.get("season", ""),
-        "care_instructions": detail.get("care_instructions", ""),
-        "quality_guarantee": detail.get("quality_guarantee", ""),
+        "care_instructions": _clean_text(detail.get("care_instructions", "")),
+        "quality_guarantee": _clean_text(detail.get("quality_guarantee", "")),
         "detail_html": raw_detail_html,
         "status": "collected",
         "is_sold_out": detail.get("saleStatus") == "sold_out",
@@ -736,6 +762,22 @@ async def get_collected_product(
     if not p:
         raise HTTPException(404, "상품을 찾을 수 없습니다")
     return p
+
+
+@router.get("/products/{product_id}/price-history")
+async def get_price_history(
+    product_id: str,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """가격변경이력만 경량 조회 (price_history 컬럼만 SELECT)."""
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+    from sqlalchemy import select as _sel
+    stmt = _sel(_CP.price_history).where(_CP.id == product_id)
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(404, "상품을 찾을 수 없습니다")
+    return row or []
 
 
 @router.post("/products", status_code=201)
@@ -2909,9 +2951,19 @@ async def enrich_product(
         history.insert(0, snapshot)
         updates["price_history"] = _trim_history(history)
 
-        # 옵션 보강
+        # 옵션 보강 (HTML 태그 정제)
         if detail.get("options"):
-            updates["options"] = detail["options"]
+            cleaned = []
+            for opt in detail["options"]:
+                if isinstance(opt, dict):
+                    co = {**opt}
+                    for k in ("name", "value", "label"):
+                        if k in co and isinstance(co[k], str):
+                            co[k] = _clean_text(co[k])
+                    cleaned.append(co)
+                else:
+                    cleaned.append(opt)
+            updates["options"] = cleaned
 
         # 이미지 보강
         if detail.get("images"):

@@ -68,36 +68,42 @@ class SSGClient:
     url = f"{self.BASE_URL}{path}"
     headers = self._headers()
 
-    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-      if method == "GET":
-        resp = await client.get(url, headers=headers, params=params)
-      elif method == "POST":
-        resp = await client.post(url, headers=headers, json=body or {})
-      elif method == "PUT":
-        resp = await client.put(url, headers=headers, json=body or {})
-      elif method == "DELETE":
-        resp = await client.delete(url, headers=headers, params=params)
-      else:
-        raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
+    try:
+      async with httpx.AsyncClient(timeout=60) as client:
+        if method == "GET":
+          resp = await client.get(url, headers=headers, params=params)
+        elif method == "POST":
+          resp = await client.post(url, headers=headers, json=body or {})
+        elif method == "PUT":
+          resp = await client.put(url, headers=headers, json=body or {})
+        elif method == "DELETE":
+          resp = await client.delete(url, headers=headers, params=params)
+        else:
+          raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
 
-      try:
-        data = resp.json()
-      except Exception:
-        data = {"raw": resp.text}
+        try:
+          data = resp.json()
+        except Exception:
+          data = {"raw": resp.text}
 
-      logger.info(f"[SSG] {method} {path} → {resp.status_code}")
+        logger.info(f"[SSG] {method} {path} → {resp.status_code}")
 
-      # SSG는 500 응답에도 JSON 에러를 담아 보냄 — 에러 내용 추출
-      if not resp.is_success:
-        # SSG JSON 에러 응답에서 상세 메시지 추출
-        result_obj = data.get("result", {}) if isinstance(data, dict) else {}
-        desc = ""
-        if isinstance(result_obj, dict):
-          desc = result_obj.get("resultDesc", "") or result_obj.get("resultMessage", "")
-        msg = desc or data.get("message", "") or data.get("msg", "") or resp.text[:300]
-        raise SSGApiError(f"HTTP {resp.status_code}: {msg}")
+        # SSG는 500 응답에도 JSON 에러를 담아 보냄 — 에러 내용 추출
+        if not resp.is_success:
+          result_obj = data.get("result", {}) if isinstance(data, dict) else {}
+          desc = ""
+          if isinstance(result_obj, dict):
+            desc = result_obj.get("resultDesc", "") or result_obj.get("resultMessage", "")
+          msg = desc or data.get("message", "") or data.get("msg", "") or resp.text[:300]
+          raise SSGApiError(f"HTTP {resp.status_code}: {msg}")
 
-      return data
+        return data
+    except httpx.ConnectError as exc:
+      raise SSGApiError(f"SSG 서버 연결 실패: {exc}") from exc
+    except httpx.TimeoutException as exc:
+      raise SSGApiError(f"SSG 서버 응답 타임아웃 (60초): {exc}") from exc
+    except httpx.HTTPError as exc:
+      raise SSGApiError(f"SSG HTTP 에러: {exc}") from exc
 
   # ------------------------------------------------------------------
   # 인증 테스트
@@ -167,11 +173,23 @@ class SSGClient:
     return await self._call_api("GET", "/venInfo/0.1/listBrand.ssg", params=params or None)
 
   async def get_categories(self, std_ctg_id: str = "") -> dict[str, Any]:
-    """표준카테고리 조회."""
+    """표준카테고리 조회 (구버전)."""
     params: dict[str, str] = {}
     if std_ctg_id:
       params["stdCtgId"] = std_ctg_id
     return await self._call_api("GET", "/venInfo/0.1/listStdCtg.ssg", params=params or None)
+
+  async def get_categories_v2(
+    self, page: int = 1, page_size: int = 500,
+    item_reg_div_cd: str = "10",
+  ) -> dict[str, Any]:
+    """표준카테고리 조회 v0.2 (경로 포함, 페이징 지원)."""
+    params: dict[str, str] = {
+      "itemRegDivCd": item_reg_div_cd,
+      "page": str(page),
+      "pageSize": str(page_size),
+    }
+    return await self._call_api("GET", "/venInfo/0.2/listStdCtgKeyPath.ssg", params=params)
 
   async def get_shipping_policies(self) -> dict[str, Any]:
     """배송비정책 목록 조회."""

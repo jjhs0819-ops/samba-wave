@@ -28,6 +28,364 @@ def _filter_overseas(categories: list[str]) -> list[str]:
     return [c for c in categories if not any(kw in c for kw in _OVERSEAS_KEYWORDS)]
 
 
+# ══════════════════════════════════════════════
+# 성별 감지
+# ══════════════════════════════════════════════
+_FEMALE_SIGNALS = frozenset({
+    "여성", "우먼", "우먼스", "여자", "걸즈", "레이디",
+    "women", "woman", "ladies", "girl",
+})
+_MALE_SIGNALS = frozenset({
+    "남성", "맨즈", "남자", "보이즈", "젠틀맨",
+    "men", "man", "boys",
+})
+# 카테고리 자체가 여성 전용인 키워드
+_FEMALE_ONLY_CATS = ("원피스", "스커트", "레깅스", "브라렛")
+
+
+def _detect_gender(
+    product_names: List[str],
+    tags: Optional[List[str]] = None,
+    source_category: str = "",
+) -> str:
+    """상품명·태그·소싱 카테고리에서 성별 감지. 'male' | 'female' | 'unisex'."""
+    # 카테고리 자체가 여성 전용이면 바로 반환
+    if any(fc in source_category for fc in _FEMALE_ONLY_CATS):
+        return "female"
+
+    text = " ".join((product_names or [])[:5] + (tags or [])).lower()
+
+    f_score = sum(1 for kw in _FEMALE_SIGNALS if kw in text)
+    m_score = sum(1 for kw in _MALE_SIGNALS if kw in text)
+
+    if f_score > m_score:
+        return "female"
+    if m_score > f_score:
+        return "male"
+    return "unisex"
+
+
+# 스마트스토어: 남성→여성 카테고리 변환 맵
+_SS_M_TO_F: dict[str, str] = {
+    # 의류
+    "패션의류 > 남성의류 > 티셔츠": "패션의류 > 여성의류 > 티셔츠",
+    "패션의류 > 남성의류 > 셔츠/남방": "패션의류 > 여성의류 > 블라우스",
+    "패션의류 > 남성의류 > 니트 > 풀오버": "패션의류 > 여성의류 > 니트/스웨터",
+    "패션의류 > 남성의류 > 니트 > 카디건": "패션의류 > 여성의류 > 니트/스웨터",
+    "패션의류 > 남성의류 > 점퍼": "패션의류 > 여성의류 > 아우터 > 자켓",
+    "패션의류 > 남성의류 > 트레이닝복": "패션의류 > 여성의류 > 팬츠/청바지",
+    "패션의류 > 남성의류 > 청바지": "패션의류 > 여성의류 > 팬츠/청바지",
+    "패션의류 > 남성의류 > 바지": "패션의류 > 여성의류 > 팬츠/청바지",
+    "패션의류 > 남성의류 > 점프슈트": "패션의류 > 여성의류 > 원피스",
+    "패션의류 > 남성의류 > 아우터 > 후드집업": "패션의류 > 여성의류 > 아우터 > 자켓",
+    "패션의류 > 남성의류 > 아우터 > 레더재킷": "패션의류 > 여성의류 > 아우터 > 자켓",
+    "패션의류 > 남성의류 > 아우터 > 무스탕": "패션의류 > 여성의류 > 아우터 > 코트",
+    "패션의류 > 남성의류 > 아우터 > 재킷": "패션의류 > 여성의류 > 아우터 > 자켓",
+    "패션의류 > 남성의류 > 아우터 > 숏코트": "패션의류 > 여성의류 > 아우터 > 코트",
+    "패션의류 > 남성의류 > 아우터 > 롱코트": "패션의류 > 여성의류 > 아우터 > 코트",
+    "패션의류 > 남성의류 > 아우터 > 패딩": "패션의류 > 여성의류 > 아우터 > 패딩",
+    "패션의류 > 남성의류 > 아우터 > 베스트": "패션의류 > 여성의류 > 아우터 > 자켓",
+    # 신발
+    "패션잡화 > 남성신발 > 스니커즈": "패션의류 > 여성신발 > 스니커즈",
+    "패션잡화 > 남성신발 > 운동화 > 러닝화": "패션의류 > 여성신발 > 스니커즈",
+    "패션잡화 > 남성신발 > 운동화 > 워킹화": "패션의류 > 여성신발 > 스니커즈",
+    "패션잡화 > 남성신발 > 구두": "패션의류 > 여성신발 > 플랫/로퍼",
+    "패션잡화 > 남성신발 > 샌들": "패션의류 > 여성신발 > 샌들/슬리퍼",
+    "패션잡화 > 남성신발 > 부츠": "패션의류 > 여성신발 > 부츠",
+}
+
+# 롯데ON: 남성→여성 카테고리 변환 맵
+_LOTTEON_M_TO_F: dict[str, str] = {
+    "패션의류 > 남성의류 > 티셔츠": "패션의류 > 여성의류 > 티셔츠",
+    "패션의류 > 남성의류 > 맨투맨/스웨트셔츠": "패션의류 > 여성의류 > 맨투맨/스웨트셔츠",
+    "패션의류 > 남성의류 > 후드티셔츠": "패션의류 > 여성의류 > 후드티셔츠",
+    "패션의류 > 남성의류 > 니트/스웨터": "패션의류 > 여성의류 > 니트/스웨터",
+    "패션의류 > 남성의류 > 셔츠": "패션의류 > 여성의류 > 블라우스",
+    "패션의류 > 남성의류 > 가디건": "패션의류 > 여성의류 > 가디건",
+    "패션의류 > 남성의류 > 후드집업": "패션의류 > 여성의류 > 후드집업",
+    "패션의류 > 남성의류 > 점퍼/재킷": "패션의류 > 여성의류 > 점퍼/재킷",
+    "패션의류 > 남성의류 > 트레이닝복": "패션의류 > 여성의류 > 트레이닝복",
+    "패션의류 > 남성의류 > 패딩": "패션의류 > 여성의류 > 패딩",
+    "패션의류 > 남성의류 > 청바지": "패션의류 > 여성의류 > 청바지",
+    "패션의류 > 남성의류 > 바지": "패션의류 > 여성의류 > 바지",
+    "패션잡화 > 남성화 > 스니커즈": "패션잡화 > 여성화 > 스니커즈",
+    "패션잡화 > 남성화 > 운동화": "패션잡화 > 여성화 > 운동화",
+}
+
+# 마켓별 변환 맵 레지스트리
+_MARKET_M_TO_F: dict[str, dict[str, str]] = {
+    "smartstore": _SS_M_TO_F,
+    "lotteon": _LOTTEON_M_TO_F,
+}
+
+
+def _apply_gender(category: str, market: str, gender: str) -> str:
+    """룰 매핑 결과에 성별을 적용. female이면 남성→여성 변환."""
+    if gender != "female":
+        return category
+    m_to_f = _MARKET_M_TO_F.get(market)
+    if not m_to_f:
+        return category
+    return m_to_f.get(category, category)
+
+
+# ══════════════════════════════════════════════
+# 1단계: 무신사→스마트스토어 룰 기반 매핑 테이블
+# ══════════════════════════════════════════════
+_MUSINSA_SS_RULES: dict[str, str] = {
+    # ── 상의 ──
+    "상의 > 반소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "상의 > 긴소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "상의 > 피케/카라 티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "상의 > 맨투맨/스웨트셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "상의 > 후드 티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "상의 > 민소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "상의 > 니트/스웨터": "패션의류 > 남성의류 > 니트 > 풀오버",
+    "상의 > 셔츠/블라우스": "패션의류 > 남성의류 > 셔츠/남방",
+    "상의 > 기타 상의": "패션의류 > 남성의류 > 티셔츠",
+    # ── 아우터 ──
+    "아우터 > 후드 집업": "패션의류 > 남성의류 > 아우터 > 후드집업",
+    "아우터 > 카디건": "패션의류 > 남성의류 > 니트 > 카디건",
+    "아우터 > 블루종/MA-1": "패션의류 > 남성의류 > 점퍼",
+    "아우터 > 레더/라이더스 재킷": "패션의류 > 남성의류 > 아우터 > 레더재킷",
+    "아우터 > 무스탕/퍼": "패션의류 > 남성의류 > 아우터 > 무스탕",
+    "아우터 > 트러커 재킷": "패션의류 > 남성의류 > 아우터 > 재킷",
+    "아우터 > 수트/블레이저 재킷": "패션의류 > 남성의류 > 아우터 > 재킷",
+    "아우터 > 나일론/코치 재킷": "패션의류 > 남성의류 > 점퍼",
+    "아우터 > 트레이닝 재킷": "패션의류 > 남성의류 > 트레이닝복",
+    "아우터 > 환절기 코트": "패션의류 > 남성의류 > 아우터 > 숏코트",
+    "아우터 > 롱코트": "패션의류 > 남성의류 > 아우터 > 롱코트",
+    "아우터 > 숏코트": "패션의류 > 남성의류 > 아우터 > 숏코트",
+    "아우터 > 패딩": "패션의류 > 남성의류 > 아우터 > 패딩",
+    "아우터 > 숏패딩/패딩조끼": "패션의류 > 남성의류 > 아우터 > 패딩",
+    "아우터 > 롱패딩/패딩코트": "패션의류 > 남성의류 > 아우터 > 패딩",
+    "아우터 > 플리스/뽀글이": "패션의류 > 남성의류 > 점퍼",
+    "아우터 > 사파리/헌팅 재킷": "패션의류 > 남성의류 > 아우터 > 재킷",
+    "아우터 > 기타 아우터": "패션의류 > 남성의류 > 점퍼",
+    "아우터 > 아노락 재킷": "패션의류 > 남성의류 > 점퍼",
+    "아우터 > 베스트": "패션의류 > 남성의류 > 아우터 > 베스트",
+    # ── 바지 ──
+    "바지 > 데님 팬츠": "패션의류 > 남성의류 > 청바지",
+    "바지 > 코튼 팬츠": "패션의류 > 남성의류 > 바지",
+    "바지 > 슈트 팬츠/슬랙스": "패션의류 > 남성의류 > 바지",
+    "바지 > 트레이닝/조거 팬츠": "패션의류 > 남성의류 > 트레이닝복",
+    "바지 > 숏팬츠": "패션의류 > 남성의류 > 바지",
+    "바지 > 레깅스": "패션의류 > 여성의류 > 레깅스",
+    "바지 > 점프 슈트/오버올": "패션의류 > 남성의류 > 점프슈트",
+    "바지 > 기타 바지": "패션의류 > 남성의류 > 바지",
+    # ── 원피스/스커트 ──
+    "원피스/스커트 > 미니원피스": "패션의류 > 여성의류 > 원피스",
+    "원피스/스커트 > 미디원피스": "패션의류 > 여성의류 > 원피스",
+    "원피스/스커트 > 맥시원피스": "패션의류 > 여성의류 > 원피스",
+    "원피스/스커트 > 미니스커트": "패션의류 > 여성의류 > 스커트",
+    "원피스/스커트 > 미디스커트": "패션의류 > 여성의류 > 스커트",
+    "원피스/스커트 > 롱스커트": "패션의류 > 여성의류 > 스커트",
+    # ── 신발 ──
+    "신발 > 스니커즈": "패션잡화 > 남성신발 > 스니커즈",
+    "신발 > 캔버스/단화": "패션잡화 > 남성신발 > 스니커즈",
+    "신발 > 스포츠화 > 런닝화": "패션잡화 > 남성신발 > 운동화 > 러닝화",
+    "신발 > 스포츠화 > 기타 운동화": "패션잡화 > 남성신발 > 운동화 > 워킹화",
+    "신발 > 스포츠화 > 등산화": "스포츠/레저 > 등산 > 등산화",
+    "신발 > 구두": "패션잡화 > 남성신발 > 구두",
+    "신발 > 샌들/슬리퍼": "패션잡화 > 남성신발 > 샌들",
+    "신발 > 부츠": "패션잡화 > 남성신발 > 부츠",
+    "신발 > 기타 신발": "패션잡화 > 남성신발 > 스니커즈",
+    # ── 가방 (성별 무관) ──
+    "가방 > 백팩": "패션잡화 > 가방 > 백팩",
+    "가방 > 크로스백": "패션잡화 > 가방 > 크로스백",
+    "가방 > 숄더백": "패션잡화 > 가방 > 숄더백",
+    "가방 > 토트백": "패션잡화 > 가방 > 토트백",
+    "가방 > 에코백": "패션잡화 > 가방 > 에코백/캔버스백",
+    "가방 > 클러치 백": "패션잡화 > 가방 > 클러치/파우치",
+    "가방 > 웨이스트 백": "패션잡화 > 가방 > 힙색/웨이스트백",
+    "가방 > 캐리어": "패션잡화 > 가방 > 여행용 가방",
+    # ── 모자 ──
+    "모자 > 캡/야구 모자": "패션잡화 > 모자 > 캡모자",
+    "모자 > 비니": "패션잡화 > 모자 > 비니",
+    "모자 > 버킷/사파리햇": "패션잡화 > 모자 > 버킷햇",
+    # ── 뷰티 ──
+    "뷰티 > 베이스메이크업 > 블러셔": "화장품/미용 > 색조메이크업 > 블러셔",
+    "뷰티 > 베이스메이크업 > 파운데이션": "화장품/미용 > 베이스메이크업 > 파운데이션",
+    "뷰티 > 베이스메이크업 > 쿠션": "화장품/미용 > 베이스메이크업 > 쿠션",
+    "뷰티 > 베이스메이크업 > 프라이머": "화장품/미용 > 베이스메이크업 > 프라이머",
+    "뷰티 > 스킨케어 > 클렌징": "화장품/미용 > 스킨케어 > 클렌징",
+    "뷰티 > 스킨케어 > 스킨/토너": "화장품/미용 > 스킨케어 > 스킨/토너",
+    "뷰티 > 스킨케어 > 에센스/세럼": "화장품/미용 > 스킨케어 > 에센스/세럼/앰플",
+    "뷰티 > 스킨케어 > 로션/크림": "화장품/미용 > 스킨케어 > 로션/크림",
+    "뷰티 > 스킨케어 > 선크림": "화장품/미용 > 스킨케어 > 선케어",
+    "뷰티 > 향수/탈취 > 향수": "화장품/미용 > 향수",
+    "뷰티 > 뷰티 디바이스/소품 > 메이크업소품 > 기타 소품": "화장품/미용 > 뷰티소품 > 페이스소품 > 퍼프",
+    # ── 스포츠/레저 ──
+    "스포츠/레저 > 상의 > 반소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "스포츠/레저 > 상의 > 긴소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "스포츠/레저 > 상의 > 반소매티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "스포츠/레저 > 상의 > 나시/민소매": "패션의류 > 남성의류 > 티셔츠",
+    "스포츠/레저 > 하의 > 숏팬츠": "패션의류 > 남성의류 > 바지",
+    "스포츠/레저 > 하의 > 트레이닝팬츠": "패션의류 > 남성의류 > 트레이닝복",
+    "스포츠/레저 > 아우터 > 기타 점퍼/재킷": "패션의류 > 남성의류 > 점퍼",
+    "스포츠/레저 > 아우터 > 트레이닝 재킷": "패션의류 > 남성의류 > 트레이닝복",
+    "스포츠/레저 > 아우터 > 바람막이": "패션의류 > 남성의류 > 점퍼",
+    "스포츠/레저 > 신발 > 라이프스타일화": "패션잡화 > 남성신발 > 스니커즈",
+    "스포츠/레저 > 신발 > 런닝화": "패션잡화 > 남성신발 > 운동화 > 러닝화",
+    "스포츠/레저 > 신발 > 축구화": "스포츠/레저 > 축구 > 축구화",
+    "스포츠/레저 > 신발 > 등산화": "스포츠/레저 > 등산 > 등산화",
+}
+
+
+# ── 무신사→롯데ON 룰 매핑 ──
+_MUSINSA_LOTTEON_RULES: dict[str, str] = {
+    "상의 > 반소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "상의 > 긴소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "상의 > 피케/카라 티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "상의 > 맨투맨/스웨트셔츠": "패션의류 > 남성의류 > 맨투맨/스웨트셔츠",
+    "상의 > 후드 티셔츠": "패션의류 > 남성의류 > 후드티셔츠",
+    "상의 > 민소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "상의 > 니트/스웨터": "패션의류 > 남성의류 > 니트/스웨터",
+    "상의 > 셔츠/블라우스": "패션의류 > 남성의류 > 셔츠",
+    "아우터 > 카디건": "패션의류 > 남성의류 > 가디건",
+    "아우터 > 후드 집업": "패션의류 > 남성의류 > 후드집업",
+    "아우터 > 블루종/MA-1": "패션의류 > 남성의류 > 점퍼/재킷",
+    "아우터 > 나일론/코치 재킷": "패션의류 > 남성의류 > 점퍼/재킷",
+    "아우터 > 트레이닝 재킷": "패션의류 > 남성의류 > 트레이닝복",
+    "아우터 > 기타 아우터": "패션의류 > 남성의류 > 점퍼/재킷",
+    "아우터 > 패딩": "패션의류 > 남성의류 > 패딩",
+    "아우터 > 레더/라이더스 재킷": "패션의류 > 남성의류 > 점퍼/재킷",
+    "바지 > 점프 슈트/오버올": "패션의류 > 여성의류 > 점프수트/오버올",
+    "바지 > 데님 팬츠": "패션의류 > 남성의류 > 청바지",
+    "바지 > 코튼 팬츠": "패션의류 > 남성의류 > 바지",
+    "바지 > 슈트 팬츠/슬랙스": "패션의류 > 남성의류 > 바지",
+    "바지 > 트레이닝/조거 팬츠": "패션의류 > 남성의류 > 트레이닝복",
+    "원피스/스커트 > 미니원피스": "패션의류 > 여성의류 > 원피스",
+    "원피스/스커트 > 미디원피스": "패션의류 > 여성의류 > 원피스",
+    "원피스/스커트 > 맥시원피스": "패션의류 > 여성의류 > 원피스",
+    "신발 > 스니커즈": "패션잡화 > 남성화 > 스니커즈",
+    "신발 > 스포츠화 > 기타 운동화": "패션잡화 > 남성화 > 운동화",
+    "신발 > 스포츠화 > 등산화": "스포츠/레저 > 등산 > 등산화",
+    "뷰티 > 베이스메이크업 > 블러셔": "뷰티 > 메이크업 > 베이스메이크업 > 블러셔",
+    "뷰티 > 뷰티 디바이스/소품 > 메이크업소품 > 기타 소품": "뷰티 > 메이크업 > 메이크업도구 > 퍼프/스펀지",
+    "스포츠/레저 > 상의 > 반소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "스포츠/레저 > 상의 > 반소매티셔츠": "패션의류 > 남성의류 > 티셔츠",
+    "스포츠/레저 > 아우터 > 기타 점퍼/재킷": "패션의류 > 남성의류 > 점퍼/재킷",
+    "스포츠/레저 > 아우터 > 트레이닝 재킷": "패션의류 > 남성의류 > 트레이닝복",
+    "스포츠/레저 > 신발 > 라이프스타일화": "패션잡화 > 남성화 > 스니커즈",
+}
+
+# 마켓별 룰 테이블 레지스트리
+_MARKET_RULES: dict[str, dict[str, str]] = {
+    "smartstore": _MUSINSA_SS_RULES,
+    "lotteon": _MUSINSA_LOTTEON_RULES,
+}
+
+
+def _rule_match(
+    source_site: str, source_category: str, market: str,
+    gender: str = "unisex",
+) -> Optional[str]:
+    """1단계: 룰 기반 매핑. 정확히 매칭되면 반환, 없으면 None.
+
+    gender가 'female'이면 남성 카테고리를 여성으로 변환.
+    """
+    if source_site != "MUSINSA":
+        return None
+    rules = _MARKET_RULES.get(market)
+    if not rules:
+        return None
+    result = rules.get(source_category)
+    if result and gender == "female":
+        result = _apply_gender(result, market, gender)
+    return result
+
+
+def _similarity_match_smartstore(
+    source_category: str, market_cats: list[str]
+) -> Optional[str]:
+    """2단계: 키워드 유사도 매칭. 소싱 카테고리의 leaf 키워드로 가장 적합한 마켓 카테고리를 찾는다."""
+    segs = [s.strip() for s in source_category.split(">") if s.strip()]
+    if not segs:
+        return None
+
+    leaf = segs[-1]
+    # 동의어 확장
+    keywords = _expand_synonyms({leaf})
+    if len(segs) > 1:
+        keywords |= _expand_synonyms({segs[-2]})
+
+    # 1차: leaf 키워드가 포함된 카테고리 필터
+    candidates = [c for c in market_cats if any(kw in c for kw in keywords)]
+    if not candidates:
+        return None
+
+    # 패션의류 우선 (의류 카테고리는 패션의류 하위가 가장 적합)
+    fashion = [c for c in candidates if c.startswith("패션의류") or c.startswith("패션잡화")]
+    if fashion:
+        candidates = fashion
+
+    # 가장 짧은 경로(= 가장 넓은 카테고리)를 선택하면 안전
+    # 대신 가장 많은 키워드가 매칭되는 카테고리 선택
+    best = None
+    best_score = 0
+    for c in candidates:
+        score = sum(1 for kw in keywords if kw in c)
+        if score > best_score:
+            best_score = score
+            best = c
+    return best
+
+
+# 소싱↔마켓 용어 차이 보완용 동의어 맵
+_SYNONYM_MAP: dict[str, list[str]] = {
+    "반소매": ["반팔", "반소매", "숏슬리브"],
+    "반팔": ["반소매", "반팔", "숏슬리브"],
+    "긴소매": ["긴팔", "긴소매", "장소매", "롱슬리브"],
+    "긴팔": ["긴소매", "긴팔", "장소매"],
+    "티셔츠": ["티셔츠", "티", "반팔티", "긴팔티"],
+    "니트": ["니트", "스웨터", "니트웨어"],
+    "스웨터": ["니트", "스웨터"],
+    "맨투맨": ["맨투맨", "스웨트셔츠", "스웻셔츠", "맨투맨/스웨트셔츠"],
+    "후드": ["후드", "후디", "후드티"],
+    "점퍼": ["점퍼", "재킷", "자켓", "잠바"],
+    "재킷": ["재킷", "자켓", "점퍼", "재킷/점퍼"],
+    "바지": ["바지", "팬츠", "하의"],
+    "팬츠": ["바지", "팬츠", "하의"],
+    "슬랙스": ["슬랙스", "정장바지", "드레스팬츠"],
+    "블라우스": ["블라우스", "셔츠", "셔츠/블라우스"],
+    "셔츠": ["셔츠", "블라우스", "남방"],
+    "원피스": ["원피스", "드레스"],
+    "운동화": ["운동화", "스니커즈", "러닝화", "런닝화"],
+    "스니커즈": ["스니커즈", "운동화", "캐주얼화"],
+    "점프슈트": ["점프슈트", "점프수트", "올인원"],
+    "오버올": ["오버올", "멜빵바지", "점프수트"],
+    "카라": ["카라", "폴로", "피케"],
+    "피케": ["피케", "폴로", "카라"],
+    "레깅스": ["레깅스", "타이츠", "스패츠"],
+    "숏팬츠": ["숏팬츠", "반바지", "숏츠", "쇼트팬츠"],
+    "반바지": ["반바지", "숏팬츠", "숏츠", "쇼트팬츠"],
+    "코트": ["코트", "롱코트", "하프코트"],
+    "패딩": ["패딩", "다운재킷", "다운", "패딩점퍼"],
+    "조거": ["조거", "조거팬츠", "트레이닝"],
+    "트레이닝": ["트레이닝", "트레이닝복", "조거", "운동복"],
+    "상의": ["상의", "탑", "톱", "의류"],
+    "하의": ["하의", "바지", "팬츠", "보텀"],
+    "아우터": ["아우터", "외투", "겉옷", "자켓"],
+    "신발": ["신발", "슈즈", "풋웨어"],
+    "가방": ["가방", "백", "백팩"],
+}
+
+
+def _expand_synonyms(keywords: set[str]) -> set[str]:
+    """키워드 집합에 동의어를 추가하여 매칭률을 높인다."""
+    expanded = set(keywords)
+    for kw in keywords:
+        # 정확히 매칭되는 동의어
+        if kw in _SYNONYM_MAP:
+            expanded.update(_SYNONYM_MAP[kw])
+        # 키워드에 포함된 동의어 (예: "반소매 티셔츠" → "반팔", "티셔츠" 등)
+        for syn_key, syn_values in _SYNONYM_MAP.items():
+            if syn_key in kw:
+                expanded.update(syn_values)
+    return expanded
+
+
 # 마켓별 카테고리 데이터 (검색/추천용 참조 목록)
 # AI 매핑 시에는 이 목록을 참고하되, 목록에 없는 카테고리도 AI가 생성 가능
 MARKET_CATEGORIES: Dict[str, List[str]] = {
@@ -600,6 +958,74 @@ MARKET_CATEGORIES: Dict[str, List[str]] = {
         "테크 > 이어폰/헤드폰",
         "테크 > 스피커",
     ],
+    "quten": [
+        "패션 > 남성의류 > 티셔츠",
+        "패션 > 남성의류 > 팬츠",
+        "패션 > 여성의류 > 원피스",
+        "패션 > 신발 > 스니커즈",
+        "패션 > 가방 > 백팩",
+        "뷰티 > 스킨케어 > 에센스",
+    ],
+    "toss": [
+        "패션 > 남성의류 > 티셔츠",
+        "패션 > 남성의류 > 팬츠",
+        "패션 > 여성의류 > 원피스",
+        "패션 > 신발 > 스니커즈",
+        "패션 > 가방 > 백팩",
+        "뷰티 > 스킨케어 > 에센스",
+    ],
+    "rakuten": [
+        "Fashion > Men's Clothing > T-Shirts",
+        "Fashion > Men's Clothing > Pants",
+        "Fashion > Women's Clothing > Dresses",
+        "Fashion > Shoes > Sneakers",
+        "Fashion > Bags > Backpacks",
+        "Health & Beauty > Skin Care > Essence",
+    ],
+    "amazon": [
+        "Clothing, Shoes & Jewelry > Men > Clothing > Shirts",
+        "Clothing, Shoes & Jewelry > Men > Clothing > Pants",
+        "Clothing, Shoes & Jewelry > Women > Clothing > Dresses",
+        "Clothing, Shoes & Jewelry > Men > Shoes > Athletic",
+        "Clothing, Shoes & Jewelry > Women > Handbags & Wallets",
+        "Beauty & Personal Care > Skin Care > Face > Serums",
+    ],
+    "buyma": [
+        "ファッション > メンズ > トップス",
+        "ファッション > メンズ > ボトムス",
+        "ファッション > レディース > ワンピース",
+        "シューズ > メンズ > スニーカー",
+        "バッグ > メンズ > バックパック",
+        "ビューティー > スキンケア > 美容液",
+    ],
+    "poison": [
+        "신발 > 스니커즈",
+        "신발 > 부츠",
+        "의류 > 상의",
+        "의류 > 하의",
+        "가방 > 백팩",
+        "패션잡화 > 모자",
+    ],
+    "playauto": [
+        # 플레이오토 자체 카테고리 체계
+        "패션의류 > 남성의류 > 티셔츠",
+        "패션의류 > 남성의류 > 팬츠",
+        "패션의류 > 여성의류 > 원피스",
+        "패션의류 > 여성의류 > 블라우스",
+        "패션잡화 > 신발 > 스니커즈",
+        "패션잡화 > 가방 > 백팩",
+        "뷰티 > 스킨케어 > 에센스",
+    ],
+    "cafe24": [
+        # 카페24 자체 카테고리 체계
+        "패션 > 남성의류 > 상의",
+        "패션 > 남성의류 > 하의",
+        "패션 > 여성의류 > 원피스",
+        "패션 > 여성의류 > 블라우스",
+        "패션 > 신발 > 스니커즈",
+        "패션 > 가방 > 백팩",
+        "뷰티 > 스킨케어 > 에센스",
+    ],
 }
 
 
@@ -1129,6 +1555,7 @@ class SambaCategoryService:
             "coupang": self._sync_coupang,
             "11st": self._sync_elevenst,
             "lottehome": self._sync_lottehome,
+            "cafe24": self._sync_cafe24,
         }
         method = sync_methods.get(market_type)
         if not method:
@@ -1410,23 +1837,31 @@ class SambaCategoryService:
         leaf_ids: List[str] = []
 
         for depth in ["1", "2", "3", "4"]:
-            try:
-                raw = await client.get_categories(depth=depth)
-                items = raw.get("itemList", [])
-                if not items:
+            skip = 0
+            page_size = 500
+            while True:
+                try:
+                    raw = await client.get_categories(depth=depth, skip=skip, limit=page_size)
+                    items = raw.get("itemList", [])
+                    if not items:
+                        break
+                    for item in items:
+                        d = item.get("data", item)
+                        cat_id = d.get("std_cat_id", "")
+                        cat_nm = d.get("std_cat_nm", "")
+                        parent_id = d.get("upr_std_cat_id", "0")
+                        if cat_id and cat_nm:
+                            node_map[cat_id] = cat_nm
+                            parent_map[cat_id] = parent_id
+                            if depth == "4" or d.get("leaf_yn") == "Y":
+                                leaf_ids.append(cat_id)
+                    # 다음 페이지 없으면 종료
+                    if len(items) < page_size:
+                        break
+                    skip += page_size
+                except Exception:
                     break
-                for item in items:
-                    d = item.get("data", item)
-                    cat_id = d.get("std_cat_id", "")
-                    cat_nm = d.get("std_cat_nm", "")
-                    parent_id = d.get("upr_std_cat_id", "0")
-                    if cat_id and cat_nm:
-                        node_map[cat_id] = cat_nm
-                        parent_map[cat_id] = parent_id
-                        if depth == "4" or d.get("leaf_yn") == "Y":
-                            leaf_ids.append(cat_id)
-            except Exception:
-                break
+            logger.info(f"[롯데ON 카테고리] depth {depth}: {len(node_map)}개 누적")
 
         # leaf가 없으면 가장 깊은 뎁스를 leaf로 사용
         if not leaf_ids:
@@ -1449,6 +1884,75 @@ class SambaCategoryService:
             if path:
                 categories.append(path)
                 code_map[path] = cat_id
+
+        return categories, code_map if code_map else None
+
+    async def _sync_cafe24(self, account) -> tuple:
+        """카페24 카테고리 동기화. (카테고리목록, 코드맵) 반환.
+
+        카페24 카테고리는 계층 구조 (parent_category_no)를 경로로 변환.
+        """
+        from backend.domain.samba.proxy.cafe24 import Cafe24Client
+
+        extra = account.additional_fields or {}
+        mall_id = extra.get("mallId") or account.seller_id or ""
+        client_id = extra.get("clientId") or ""
+        client_secret = extra.get("clientSecret") or account.api_secret or ""
+        access_token = extra.get("accessToken") or account.api_key or ""
+        refresh_token = extra.get("refreshToken") or ""
+
+        if not mall_id:
+            raise ValueError("카페24 Mall ID가 없습니다")
+        if not client_id or not client_secret:
+            raise ValueError("카페24 Client ID/Secret이 없습니다")
+
+        client = Cafe24Client(
+            mall_id=mall_id,
+            client_id=client_id,
+            client_secret=client_secret,
+            access_token=access_token,
+            refresh_token=refresh_token,
+        )
+        raw_cats = await client.get_categories()
+
+        # 카테고리 번호 → 정보 매핑
+        cat_by_no: Dict[int, dict] = {}
+        for c in raw_cats:
+            cat_no = c.get("category_no")
+            if cat_no:
+                cat_by_no[cat_no] = c
+
+        # 경로 생성 함수
+        def _build_path(cat_no: int) -> str:
+            parts = []
+            visited = set()
+            current = cat_no
+            while current and current in cat_by_no and current not in visited:
+                visited.add(current)
+                info = cat_by_no[current]
+                parts.insert(0, info.get("category_name", ""))
+                current = info.get("parent_category_no", 0)
+            return " > ".join(p for p in parts if p)
+
+        categories: List[str] = []
+        code_map: Dict[str, str] = {}
+        for c in raw_cats:
+            cat_no = c.get("category_no")
+            name = c.get("category_name", "")
+            if not cat_no or not name:
+                continue
+            path = _build_path(cat_no)
+            if path:
+                categories.append(path)
+                code_map[path] = str(cat_no)
+
+        # 토큰 갱신 시 계정에 저장
+        if client.access_token != access_token:
+            extra["accessToken"] = client.access_token
+            if client.refresh_token:
+                extra["refreshToken"] = client.refresh_token
+            account.additional_fields = extra
+            self.tree_repo.session.add(account)
 
         return categories, code_map if code_map else None
 
@@ -1488,29 +1992,71 @@ class SambaCategoryService:
         return categories, code_map if code_map else None
 
     async def _sync_ssg(self, account) -> tuple:
-        """SSG 카테고리 동기화. (카테고리목록, 코드맵) 반환."""
-        from backend.domain.samba.proxy.ssg import SSGClient
+        """SSG 카테고리 동기화 v2 (페이징 + 경로 포함). (카테고리목록, 코드맵) 반환."""
+        from backend.domain.samba.proxy.ssg import SSGClient, SSGApiError
 
         extra = account.additional_fields or {}
         api_key = extra.get("apiKey") or account.api_key or ""
         if not api_key:
             raise ValueError("SSG API Key가 없습니다")
         client = SSGClient(api_key=api_key)
-        raw = await client.get_categories()
+
         categories: List[str] = []
         code_map: Dict[str, str] = {}
-        items = raw.get("data", raw) if isinstance(raw, dict) else raw
-        if isinstance(items, list):
+        page = 1
+        page_size = 500
+
+        while True:
+            try:
+                raw = await client.get_categories_v2(page=page, page_size=page_size)
+            except SSGApiError as exc:
+                if page == 1:
+                    raise ValueError(f"SSG 카테고리 조회 실패: {exc}") from exc
+                logger.warning("[SSG] page %d 조회 실패, 기존 %d건 저장: %s", page, len(categories), exc)
+                break
+
+            # 실제 응답: {"result": {"stdctgs": [{"stdctg": [...items...]}]}}
+            result_obj = raw.get("result", {})
+            if not isinstance(result_obj, dict):
+                result_obj = {}
+            stdctgs_wrapper = result_obj.get("stdctgs", [])
+            items: list = []
+            if isinstance(stdctgs_wrapper, list) and stdctgs_wrapper:
+                first = stdctgs_wrapper[0]
+                if isinstance(first, dict):
+                    stdctg = first.get("stdctg", [])
+                    items = stdctg if isinstance(stdctg, list) else [stdctg] if isinstance(stdctg, dict) else []
+
+            if not items:
+                if page == 1:
+                    raise ValueError("SSG 카테고리 응답이 비어있습니다. API Key를 확인해주세요.")
+                break
+
             for item in items:
-                name = item.get("wholeCategoryName") or item.get("stdCtgNm") or item.get("categoryName") or item.get("name", "")
-                cat_id = str(item.get("stdCtgId") or item.get("categoryId") or item.get("id", ""))
-                if name:
-                    normalized = " > ".join(
-                        seg.strip() for seg in name.split(">") if seg.strip()
-                    )
-                    categories.append(normalized)
-                    if cat_id:
-                        code_map[normalized] = cat_id
+                if not isinstance(item, dict):
+                    continue
+                path = item.get("stdCtgKeyPath", "")
+                if not path:
+                    parts = [
+                        item.get("stdCtgLclsNm", ""),
+                        item.get("stdCtgMclsNm", ""),
+                        item.get("stdCtgSclsNm", ""),
+                        item.get("stdCtgDclsNm", ""),
+                    ]
+                    path = " > ".join(p for p in parts if p)
+                if not path:
+                    continue
+                normalized = " > ".join(seg.strip() for seg in path.split(">") if seg.strip())
+                cat_id = str(item.get("stdCtgDclsId") or item.get("stdCtgSclsId") or "")
+                categories.append(normalized)
+                if cat_id:
+                    code_map[normalized] = cat_id
+
+            logger.info(f"[SSG 카테고리] page {page}: {len(items)}건, 누적 {len(categories)}개")
+            if len(items) < page_size:
+                break
+            page += 1
+
         return categories, code_map if code_map else None
 
     async def _sync_gsshop(self, account) -> tuple:
@@ -1612,16 +2158,19 @@ class SambaCategoryService:
 
             cat_entries = []
             for idx, item in enumerate(batch):
-                sample_str = ", ".join(item["samples"][:3]) if item["samples"] else ""
                 tag_str = ", ".join(item.get("tags", [])[:5])
+                seo_str = ", ".join(item.get("seo", [])[:5])
+                group_str = ", ".join(item.get("groups", [])[:3])
                 entry = f'{idx + 1}. [{item["site"]}] {item["leaf_path"]}'
-                if sample_str:
-                    entry += f' | 상품: {sample_str}'
+                if seo_str:
+                    entry += f' | SEO: {seo_str}'
                 if tag_str:
                     entry += f' | 태그: {tag_str}'
+                if group_str:
+                    entry += f' | 그룹: {group_str}'
                 cat_entries.append(entry)
 
-            # 마켓별 카테고리 필터 — leaf 키워드 우선
+            # 마켓별 카테고리 필터 — leaf 키워드 우선 + 동의어 확장
             cat_list_section = ""
             if has_cat_list:
                 # leaf 키워드: 각 아이템의 마지막 세그먼트 + 태그
@@ -1637,31 +2186,45 @@ class SambaCategoryService:
                     for t in (item.get("tags") or [])[:3]:
                         if t and len(t) >= 2:
                             leaf_kw.add(t)
-                    for s in (item.get("samples") or [])[:2]:
-                        for word in s.split():
-                            if len(word) >= 2:
-                                leaf_kw.add(word)
+                    for kw in (item.get("seo") or [])[:5]:
+                        if kw and len(kw) >= 2:
+                            leaf_kw.add(kw)
+                    for g in (item.get("groups") or [])[:3]:
+                        if g and len(g) >= 2:
+                            leaf_kw.add(g)
+
+                # 동의어 확장 — 소싱 키워드와 마켓 카테고리 용어 차이 보완
+                leaf_kw = _expand_synonyms(leaf_kw)
+                parent_kw = _expand_synonyms(parent_kw)
 
                 lines = []
+                has_enough_matches = True
                 for m, cats in market_cat_lists.items():
                     leaf_matches = [c for c in cats if any(kw in c for kw in leaf_kw)]
                     if len(leaf_matches) >= 5:
-                        relevant = leaf_matches[:20]
+                        relevant = leaf_matches[:30]
                     else:
                         all_kw = leaf_kw | parent_kw
                         relevant = [c for c in cats if any(kw in c for kw in all_kw)]
-                        if not relevant:
-                            relevant = cats[:15]
-                        else:
-                            relevant = relevant[:20]
-                    lines.append(f"- {market_labels.get(m, m)}:\n" + "\n".join(f"  {c}" for c in relevant))
-                cat_list_section = "\n[마켓 실제 카테고리 (이 중에서만 선택)]\n" + "\n".join(lines) + "\n"
+                        if len(relevant) < 3:
+                            has_enough_matches = False
+                        relevant = relevant[:30] if relevant else []
+                    if relevant:
+                        lines.append(f"- {market_labels.get(m, m)}:\n" + "\n".join(f"  {c}" for c in relevant))
+
+                if lines and has_enough_matches:
+                    cat_list_section = "\n[마켓 실제 카테고리 (참고 목록)]\n" + "\n".join(lines) + "\n"
+                    cat_rule = "목록에 있으면 우선 선택하되, 적합한 항목이 없으면 해당 마켓의 실제 카테고리 체계에 맞게 생성."
+                else:
+                    cat_list_section = ""
+                    cat_rule = "각 마켓의 실제 카테고리 체계(대분류 > 중분류 > 소분류)에 맞게 정확한 카테고리 경로를 생성."
 
             prompt = f"""소싱 카테고리를 판매 마켓 카테고리에 매핑.
+소비자가 검색할 키워드와 가장 일치하는 카테고리를 선택하세요.
 
 {chr(10).join(cat_entries)}
 {cat_list_section}
-규칙: 반드시 위 목록에 있는 카테고리 경로를 그대로 사용. 임의 생성 금지. 빈값 금지.
+규칙: {cat_rule} 빈값 금지.
 JSON만 응답:
 {json.dumps({str(i + 1): {m: "" for m in target_markets} for i in range(len(batch))}, ensure_ascii=False)}"""
 
@@ -1736,22 +2299,51 @@ JSON만 응답:
         target_markets: Optional[List[str]] = None,
         api_key: Optional[str] = None,
     ) -> Dict[str, str]:
-        """Claude API를 사용하여 소싱 카테고리를 마켓별 카테고리로 매핑 추천.
+        """카테고리 매핑 추천. 룰→유사도→AI 3단계.
 
         DB에 저장된 마켓 카테고리를 우선 사용하고, 없으면 하드코딩 fallback.
         """
+        markets = target_markets or list(MARKET_CATEGORIES.keys())
+        result: Dict[str, str] = {}
+
+        # 성별 감지 (상품명, 태그, 카테고리에서 추출)
+        gender = _detect_gender(sample_products, sample_tags, source_category)
+
+        # 1단계: 룰 기반 매핑 (모든 마켓)
+        for m in markets:
+            rule = _rule_match(source_site, source_category, m, gender)
+            if rule:
+                result[m] = rule
+                logger.info(f"[매핑-룰] {source_site} > {source_category} → {m}: {rule} (성별:{gender})")
+
+        # 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만)
+        for m in markets:
+            if m in result:
+                continue
+            cats = await self._get_market_categories(m)
+            if cats:
+                sim = _similarity_match_smartstore(source_category, cats)
+                if sim:
+                    result[m] = sim
+                    logger.info(f"[매핑-유사도] {source_site} > {source_category} → {m}: {sim}")
+
+        # 1~2단계에서 모든 마켓 해결되면 AI 호출 불필요
+        remaining_markets = [m for m in markets if m not in result]
+        if not remaining_markets:
+            return result
+
+        # 3단계: AI 호출 (나머지 마켓만)
         from backend.core.config import settings
 
         key = api_key or settings.anthropic_api_key
         if not key:
-            raise ValueError("ANTHROPIC_API_KEY가 설정되지 않았습니다")
+            return result  # AI 키 없으면 1~2단계 결과만 반환
 
         import anthropic
 
-        markets = target_markets or list(MARKET_CATEGORIES.keys())
         # DB 우선 조회 후 하드코딩 fallback
         market_cats: Dict[str, List[str]] = {}
-        for m in markets:
+        for m in remaining_markets:
             cats = await self._get_market_categories(m)
             if cats:
                 market_cats[m] = cats
@@ -1774,6 +2366,10 @@ JSON만 응답:
                     leaf_keywords.add(word)
         # 상위 키워드: 카테고리 상위 세그먼트
         parent_keywords = set(seg for seg in cat_segments[:-1] if len(seg) >= 2)
+
+        # 동의어 확장
+        leaf_keywords = _expand_synonyms(leaf_keywords)
+        parent_keywords = _expand_synonyms(parent_keywords)
 
         # 필터: leaf 키워드 매칭 우선 → 부족하면 상위 키워드 보조
         market_list_parts: list[str] = []
@@ -1852,14 +2448,15 @@ JSON만:
                             market, suggested,
                         )
 
-            return validated
+            # 1~2단계 결과와 AI 결과 병합 (1~2단계 우선)
+            return {**validated, **result}
 
         except json.JSONDecodeError as e:
             logger.error("AI 응답 JSON 파싱 실패: %s", e)
-            raise ValueError(f"AI 응답 파싱 실패: {e}") from e
+            return result  # AI 실패해도 1~2단계 결과는 반환
         except anthropic.APIError as e:
             logger.error("Claude API 오류: %s", e)
-            raise ValueError(f"Claude API 오류: {e}") from e
+            return result  # AI 실패해도 1~2단계 결과는 반환
 
     # ==================== Bulk AI Mapping ====================
 
@@ -1904,9 +2501,11 @@ JSON만:
         result = await session.execute(stmt)
         products = list(result.scalars().all())
 
-        # (site, leaf_path) → 등록상품명 + 태그(1개 상품분, 그룹 동일)
+        # (site, leaf_path) → 태그 + SEO키워드 + 그룹명
         cat_samples: Dict[tuple, List[str]] = {}
         cat_tags: Dict[tuple, List[str]] = {}
+        cat_seo: Dict[tuple, List[str]] = {}
+        cat_groups: Dict[tuple, set[str]] = {}
         for p in products:
             site = p.source_site or ""
             if not site:
@@ -1926,11 +2525,24 @@ JSON만:
             key = (site, leaf_path)
             if key not in cat_samples:
                 cat_samples[key] = []
-                # 태그는 그룹 동일 → 첫 상품 것만 수집
+                # 태그
                 tags = [t for t in (getattr(p, 'tags', None) or []) if t and not t.startswith('__')]
                 cat_tags[key] = tags[:10]
+                # SEO 키워드
+                cat_seo[key] = []
+                # 그룹명
+                cat_groups[key] = set()
+            # 상품명 수집 (성별 감지용, 최대 5개)
             if len(cat_samples[key]) < 5:
                 cat_samples[key].append(p.name)
+            # SEO 키워드 수집 (중복 제거)
+            for kw in (getattr(p, 'seo_keywords', None) or []):
+                if kw and kw not in cat_seo[key] and len(cat_seo[key]) < 10:
+                    cat_seo[key].append(kw)
+            # 그룹명 수집
+            gk = getattr(p, 'group_key', None)
+            if gk and len(cat_groups[key]) < 3:
+                cat_groups[key].add(gk)
 
         if not cat_samples:
             return {"mapped": 0, "updated": 0, "skipped": 0, "errors": []}
@@ -1944,41 +2556,101 @@ JSON만:
         mapped = 0
         updated = 0
         skipped = 0
+        rule_mapped = 0
+        similarity_mapped = 0
         errors: List[str] = []
 
-        # AI 호출 대상 수집 (배치 처리)
+        # DB 스마트스토어 카테고리 목록 (2단계 유사도 매칭용)
+        ss_cats: list[str] = []
+        if "smartstore" in all_market_keys:
+            ss_cats = await self._get_market_categories("smartstore")
+
+        # ── 3단계 매핑 전략 ──
+        # AI 호출 대상만 별도 수집
         batch_items: List[Dict[str, Any]] = []
         for (site, leaf_path), samples in cat_samples.items():
             existing = existing_map.get((site, leaf_path))
+            current_targets = (existing.target_mappings or {}) if existing else {}
+            missing_markets = all_market_keys - set(current_targets.keys())
 
-            if existing:
-                current_targets = existing.target_mappings or {}
-                missing_markets = all_market_keys - set(current_targets.keys())
-                if not missing_markets:
-                    skipped += 1
+            if not missing_markets:
+                skipped += 1
+                continue
+
+            # 성별 감지 (상품명 + 태그 + 카테고리)
+            tags_for_gender = cat_tags.get((site, leaf_path), [])
+            gender = _detect_gender(samples, tags_for_gender, leaf_path)
+
+            # ── 1단계: 룰 기반 매핑 (모든 마켓) ──
+            resolved: Dict[str, str] = {}
+            for mk in list(missing_markets):
+                rule_result = _rule_match(site, leaf_path, mk, gender)
+                if rule_result:
+                    resolved[mk] = rule_result
+                    logger.info(f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})")
+
+            # ── 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만) ──
+            for mk in list(missing_markets):
+                if mk in resolved:
                     continue
+                mk_cats = ss_cats if mk == "smartstore" else await self._get_market_categories(mk)
+                if mk_cats:
+                    sim_result = _similarity_match_smartstore(leaf_path, mk_cats)
+                    if sim_result:
+                        resolved[mk] = sim_result
+                        logger.info(f"[매핑-유사도] {site} > {leaf_path} → {mk}: {sim_result}")
+
+            # 1~2단계에서 해결된 마켓 저장
+            if resolved:
+                if existing:
+                    new_targets = {**current_targets, **resolved}
+                    try:
+                        await self.update_mapping(existing.id, {"target_mappings": new_targets})
+                        updated += 1
+                    except Exception as e:
+                        errors.append(f"[저장실패] {site} > {leaf_path}: {e}")
+                else:
+                    try:
+                        await self.create_mapping({
+                            "source_site": site,
+                            "source_category": leaf_path,
+                            "target_mappings": resolved,
+                        })
+                        mapped += 1
+                    except Exception as e:
+                        errors.append(f"[저장실패] {site} > {leaf_path}: {e}")
+                    # create 후 existing_map 갱신 (AI 단계에서 참조)
+                    new_existing = await self.mapping_repo.find_by_async(
+                        source_site=site, source_category=leaf_path
+                    )
+                    if new_existing:
+                        existing = new_existing
+                        existing_map[(site, leaf_path)] = new_existing
+                        current_targets = new_existing.target_mappings or {}
+
+                if resolved:
+                    cnt = len(resolved)
+                    rule_mapped += cnt
+                    missing_markets -= set(resolved.keys())
+
+            # ── 3단계: 나머지 마켓은 AI에 위임 ──
+            if missing_markets:
                 batch_items.append({
                     "site": site,
                     "leaf_path": leaf_path,
                     "samples": samples,
                     "tags": cat_tags.get((site, leaf_path), []),
+                    "seo": cat_seo.get((site, leaf_path), []),
+                    "groups": list(cat_groups.get((site, leaf_path), set())),
                     "target_markets": list(missing_markets),
                     "existing": existing,
-                    "mode": "update",
-                })
-            else:
-                batch_items.append({
-                    "site": site,
-                    "leaf_path": leaf_path,
-                    "samples": samples,
-                    "tags": cat_tags.get((site, leaf_path), []),
-                    "target_markets": list(all_market_keys),
-                    "existing": None,
-                    "mode": "create",
+                    "mode": "update" if existing else "create",
                 })
 
+        logger.info(f"[벌크매핑] 1~2단계 완료: 룰/유사도={rule_mapped}건, AI대상={len(batch_items)}건, 스킵={skipped}건")
+
         if not batch_items:
-            return {"mapped": mapped, "updated": updated, "skipped": skipped, "errors": errors}
+            return {"mapped": mapped, "updated": updated, "skipped": skipped, "rule_mapped": rule_mapped, "errors": errors}
 
         # 배치 AI 호출 + 빈 결과 재시도 (최대 2회)
         remaining_items = batch_items
@@ -2047,4 +2719,4 @@ JSON만:
                 import asyncio
                 await asyncio.sleep(3)
 
-        return {"mapped": mapped, "updated": updated, "skipped": skipped, "errors": errors}
+        return {"mapped": mapped, "updated": updated, "skipped": skipped, "rule_mapped": rule_mapped, "errors": errors}

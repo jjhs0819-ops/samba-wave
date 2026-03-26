@@ -2,45 +2,12 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { accountApi, collectorApi, forbiddenApi, proxyApi, API_BASE, type SambaMarketAccount } from '@/lib/samba/api'
+import { MARKET_SELECT_OPTIONS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum, parseNum } from '@/lib/samba/styles'
 
-const MARKET_TYPES = [
-  // ── 국내 ──
-  { value: '', label: '── 국내 오픈마켓 ──', disabled: true },
-  { value: 'coupang', label: '쿠팡' },
-  { value: 'smartstore', label: '스마트스토어' },
-  { value: '11st', label: '11번가' },
-  { value: 'gmarket', label: 'G마켓' },
-  { value: 'auction', label: '옥션' },
-  { value: 'ssg', label: '신세계몰' },
-  { value: 'lotteon', label: '롯데ON' },
-  { value: 'toss', label: '토스' },
-  { value: '', label: '── 국내 홈쇼핑/종합몰 ──', disabled: true },
-  { value: 'gsshop', label: 'GS샵' },
-  { value: 'lottehome', label: '롯데홈쇼핑' },
-  { value: 'homeand', label: '홈앤쇼핑' },
-  { value: 'hmall', label: 'HMALL' },
-  { value: '', label: '── 국내 패션/리셀 ──', disabled: true },
-  { value: 'musinsa', label: '무신사' },
-  { value: 'kream', label: 'KREAM' },
-  { value: '', label: '── 국내 종합솔루션 ──', disabled: true },
-  { value: 'playauto', label: '플레이오토' },
-  { value: 'cafe24', label: '카페24' },
-  // ── 해외 ──
-  { value: '', label: '── 해외 마켓 ──', disabled: true },
-  { value: 'amazon', label: '아마존' },
-  { value: 'ebay', label: 'eBay' },
-  { value: 'rakuten', label: '라쿠텐' },
-  { value: 'qoo10', label: 'Qoo10' },
-  { value: 'lazada', label: 'Lazada' },
-  { value: 'shopee', label: 'Shopee' },
-  { value: 'buyma', label: '바이마' },
-  { value: 'shopify', label: 'Shopify' },
-  { value: 'zoom', label: 'Zum(줌)' },
-  { value: '', label: '── 해외 패션/리셀 ──', disabled: true },
-  { value: 'poison', label: '포이즌' },
-] as const
+// 마켓 셀렉트 옵션 (markets.ts 단일 소스)
+const MARKET_TYPES = MARKET_SELECT_OPTIONS
 
 const CLAUDE_MODELS = [
   { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (권장)' },
@@ -930,6 +897,7 @@ export default function SettingsPage() {
   const [editingDesc, setEditingDesc] = useState('')
   const [editingLabel, setEditingLabel] = useState('')
   const [regenerating, setRegenerating] = useState<string | null>(null)
+  const [presetZoom, setPresetZoom] = useState<string | null>(null)
 
   // 금지어/삭제어 (전역)
   const [forbiddenText, setForbiddenText] = useState('')
@@ -1890,35 +1858,38 @@ export default function SettingsPage() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '1rem' }}>
           {presets.map(p => (
             <div key={p.key} style={{ background: 'rgba(30,30,30,0.6)', borderRadius: '8px', border: '1px solid #2D2D2D', overflow: 'hidden' }}>
-              <div
-                style={{ position: 'relative', paddingTop: '120%', background: '#1A1A1A', cursor: 'pointer' }}
-                onClick={() => {
-                  const input = document.createElement('input')
-                  input.type = 'file'
-                  input.accept = 'image/*'
-                  input.onchange = async (e) => {
-                    const file = (e.target as HTMLInputElement).files?.[0]
-                    if (!file) return
-                    setRegenerating(p.key)
-                    try {
-                      const res = await proxyApi.uploadPresetImage(p.key, file)
-                      if (res.success) { showAlert(res.message, 'success'); await loadPresets() }
-                      else showAlert(res.message, 'error')
-                    } catch { showAlert('업로드 실패', 'error') }
-                    finally { setRegenerating(null) }
-                  }
-                  input.click()
-                }}
-              >
+              <div style={{ position: 'relative', paddingTop: '120%', background: '#1A1A1A' }}>
                 {p.image ? (
                   <img
                     src={`${API_BASE}${p.image}?t=${Date.now()}`}
                     alt={p.label}
-                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }}
+                    onClick={() => setPresetZoom(`${API_BASE}${p.image}?t=${Date.now()}`)}
                   />
                 ) : (
-                  <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: '#555', fontSize: '0.7rem', textAlign: 'center' }}>클릭하여<br/>이미지 등록</div>
+                  <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: '#555', fontSize: '0.7rem', textAlign: 'center' }}>이미지 없음</div>
                 )}
+                {/* 이미지 업로드 버튼 */}
+                <button
+                  style={{ position: 'absolute', bottom: 4, right: 4, background: 'rgba(0,0,0,0.7)', border: '1px solid #555', color: '#CCC', borderRadius: '4px', padding: '2px 6px', fontSize: '0.6rem', cursor: 'pointer' }}
+                  onClick={() => {
+                    const input = document.createElement('input')
+                    input.type = 'file'
+                    input.accept = 'image/*'
+                    input.onchange = async (e) => {
+                      const file = (e.target as HTMLInputElement).files?.[0]
+                      if (!file) return
+                      setRegenerating(p.key)
+                      try {
+                        const res = await proxyApi.uploadPresetImage(p.key, file)
+                        if (res.success) { showAlert(res.message, 'success'); await loadPresets() }
+                        else showAlert(res.message, 'error')
+                      } catch { showAlert('업로드 실패', 'error') }
+                      finally { setRegenerating(null) }
+                    }
+                    input.click()
+                  }}
+                >업로드</button>
                 {regenerating === p.key && (
                   <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FF8C00', fontSize: '0.75rem' }}>
                     처리중...
@@ -2179,6 +2150,15 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {/* 프리셋 이미지 확대 모달 */}
+      {presetZoom && (
+        <div
+          onClick={() => setPresetZoom(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'zoom-out' }}
+        >
+          <img src={presetZoom} alt="프리셋 확대" style={{ maxWidth: '90vw', maxHeight: '90vh', objectFit: 'contain', borderRadius: '8px' }} />
+        </div>
+      )}
     </div>
   )
 }

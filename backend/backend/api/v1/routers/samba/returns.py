@@ -226,6 +226,23 @@ _CLAIM_STATUS_MAP: dict[str, str] = {
     "EXCHANGE_REJECT": "rejected",
 }
 
+# claimStatus → 한글 CS 표시명
+_CLAIM_STATUS_DISPLAY: dict[str, str] = {
+    "CANCEL_REQUEST": "취소요청",
+    "CANCELING": "취소중",
+    "CANCEL_DONE": "취소완료",
+    "CANCEL_REJECT": "취소거부",
+    "RETURN_REQUEST": "반품요청",
+    "COLLECTING": "수거중",
+    "COLLECT_DONE": "수거완료",
+    "RETURN_DONE": "반품완료",
+    "RETURN_REJECT": "반품거부",
+    "EXCHANGE_REQUEST": "교환요청",
+    "EXCHANGING": "교환중",
+    "EXCHANGE_DONE": "교환완료",
+    "EXCHANGE_REJECT": "교환거부",
+}
+
 # claimStatus → 한글 타임라인 메시지
 _CLAIM_STATUS_LABEL: dict[str, str] = {
     "CANCEL_REQUEST": "취소 요청이 접수되었습니다.",
@@ -350,6 +367,7 @@ async def sync_returns_from_markets(
                         "type": return_type,
                         "status": _CLAIM_STATUS_MAP[claim_status],
                         "claim_status_raw": claim_status,
+                        "display_status": _CLAIM_STATUS_DISPLAY.get(claim_status, claim_status),
                         "reason": claim_reason,
                         "quantity": quantity,
                         "requested_amount": float(sale_price),
@@ -369,14 +387,20 @@ async def sync_returns_from_markets(
                         continue
 
                     order_id = existing_order.id
-                    # 이미 동일한 반품 기록이 있는지 확인 (order_id + type)
+                    # 이미 동일한 반품 기록이 있는지 확인 (order_id 기준)
                     existing_returns = await svc.repo.filter_by_async(
-                        order_id=order_id, type=claim["type"]
+                        order_id=order_id
                     )
 
                     if existing_returns:
-                        # 기존 반품: 상태 업데이트 (마켓 상태가 더 진행되었으면 갱신)
-                        existing_ret = existing_returns[0]
+                        # 같은 타입 우선, 없으면 첫 번째 레코드 사용
+                        existing_ret = next(
+                            (r for r in existing_returns if r.type == claim["type"]),
+                            existing_returns[0]
+                        )
+                        # 타입이 변경된 경우 (교환→반품 등) 업데이트
+                        if existing_ret.type != claim["type"]:
+                            await svc.repo.update_async(existing_ret.id, type=claim["type"])
                         new_status = claim["status"]
                         # 상태 진행도: requested → approved → completed/rejected
                         status_priority = {"requested": 0, "approved": 1, "completed": 2, "rejected": 2, "cancelled": 2}
@@ -388,7 +412,7 @@ async def sync_returns_from_markets(
                                 "status": new_status,
                                 "message": _CLAIM_STATUS_LABEL.get(claim["claim_status_raw"], f"상태: {new_status}"),
                             })
-                            update_data: dict[str, Any] = {"status": new_status, "timeline": timeline}
+                            update_data: dict[str, Any] = {"status": new_status, "timeline": timeline, "market_order_status": claim["display_status"]}
                             if new_status == "approved":
                                 update_data["approval_date"] = datetime.now(UTC)
                             elif new_status == "completed":
@@ -445,7 +469,7 @@ async def sync_returns_from_markets(
                         "customer_address": existing_order.customer_address,
                         "business_name": account.business_name or account.market_name or label,
                         "market": market_label_map.get(market_type, market_type),
-                        "market_order_status": existing_order.shipping_status,
+                        "market_order_status": claim["display_status"],
                         "order_date": existing_order.created_at,
                         "status": claim["status"],
                         "timeline": timeline_entries,

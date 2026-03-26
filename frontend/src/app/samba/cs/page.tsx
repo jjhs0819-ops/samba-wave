@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { csInquiryApi, accountApi, type SambaCSInquiry, type CSReplyTemplate, type SambaMarketAccount } from '@/lib/samba/api'
+import { CS_MARKET_FILTERS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle } from '@/lib/samba/styles'
 
@@ -19,14 +20,13 @@ const INQUIRY_TYPE_MAP: Record<string, { label: string; color: string }> = {
   call_center: { label: '주문문의', color: '#FF8C00' },
   delivery: { label: '주문문의', color: '#FF8C00' },
   exchange_return: { label: '주문문의', color: '#FF8C00' },
+  exchange_request: { label: '교환요청', color: '#FFB6C1' },
+  cancel_request: { label: '취소요청', color: '#FF5050' },
   product_question: { label: '상품문의', color: '#4C9AFF' },
 }
 
-// 마켓 리스트
-const MARKETS = [
-  '전체마켓', '스마트스토어', '쿠팡', '11번가', '롯데ON',
-  'SSG', '롯데홈쇼핑', 'GS샵', 'KREAM', 'Toss',
-]
+// 마켓 리스트 (@/lib/samba/markets에서 import)
+const MARKETS = CS_MARKET_FILTERS
 
 // 기간 버튼
 const PERIOD_BUTTONS = [
@@ -78,6 +78,39 @@ export default function CSPage() {
   const [replyModal, setReplyModal] = useState<SambaCSInquiry | null>(null)
   const [replyText, setReplyText] = useState('')
   const [selectedTemplate, setSelectedTemplate] = useState('')
+
+  // 교환/취소 액션 모달
+  const [exchangeActionItem, setExchangeActionItem] = useState<SambaCSInquiry | null>(null)
+
+  const handleExchangeAction = async (item: SambaCSInquiry, action: string) => {
+    if (!item.market_order_id) {
+      showAlert('주문번호가 없습니다', 'error')
+      return
+    }
+    const labels: Record<string, string> = { reship: '교환재배송', reject: '교환거부', convert_return: '반품변경' }
+    if (!await showConfirm(`${item.market_order_id} 주문을 ${labels[action] || action} 처리하시겠습니까?`)) return
+    try {
+      const order = await orderApi.findByOrderNumber(item.market_order_id)
+      if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
+      const res = await orderApi.exchangeAction(order.id, action)
+      showAlert(res.message || `${labels[action]} 완료`, 'success')
+      setExchangeActionItem(null)
+    } catch (e) { showAlert(e instanceof Error ? e.message : `${labels[action]} 실패`, 'error') }
+  }
+
+  const handleCancelApprove = async (item: SambaCSInquiry) => {
+    if (!item.market_order_id) {
+      showAlert('주문번호가 없습니다', 'error')
+      return
+    }
+    if (!await showConfirm(`${item.market_order_id} 주문의 취소요청을 승인하시겠습니까?`)) return
+    try {
+      const order = await orderApi.findByOrderNumber(item.market_order_id)
+      if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
+      const res = await orderApi.approveCancel(order.id)
+      showAlert(res.message || '취소승인 완료', 'success')
+    } catch (e) { showAlert(e instanceof Error ? e.message : '취소승인 실패', 'error') }
+  }
 
   // 템플릿 관리 모달
   const [showTemplateManager, setShowTemplateManager] = useState(false)
@@ -550,9 +583,25 @@ export default function CSPage() {
 
                       {/* 문의유형 */}
                       <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top', textAlign: 'center' }}>
-                        <span style={{ padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600, background: `${tp.color}22`, color: tp.color }}>
-                          {tp.label}
-                        </span>
+                        {item.inquiry_type === 'exchange_request' ? (
+                          <button
+                            onClick={() => setExchangeActionItem(item)}
+                            style={{ padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600, background: `${tp.color}22`, color: tp.color, border: `1px solid ${tp.color}44`, cursor: 'pointer' }}
+                          >
+                            {tp.label}
+                          </button>
+                        ) : item.inquiry_type === 'cancel_request' ? (
+                          <button
+                            onClick={() => handleCancelApprove(item)}
+                            style={{ padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600, background: `${tp.color}22`, color: tp.color, border: `1px solid ${tp.color}44`, cursor: 'pointer' }}
+                          >
+                            {tp.label}
+                          </button>
+                        ) : (
+                          <span style={{ padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600, background: `${tp.color}22`, color: tp.color }}>
+                            {tp.label}
+                          </span>
+                        )}
                       </td>
 
                       {/* 고객 */}
@@ -833,6 +882,32 @@ export default function CSPage() {
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
               <button onClick={() => setShowTemplateManager(false)} style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 교환 액션 선택 모달 */}
+      {exchangeActionItem && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '360px', maxWidth: '90vw' }}>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.5rem' }}>교환요청 처리</h3>
+            <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '1.5rem' }}>주문번호: {exchangeActionItem.market_order_id || '-'}</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <button
+                onClick={() => handleExchangeAction(exchangeActionItem, 'reship')}
+                style={{ padding: '0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '8px', color: '#4C9AFF', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
+              >교환재배송</button>
+              <button
+                onClick={() => handleExchangeAction(exchangeActionItem, 'reject')}
+                style={{ padding: '0.75rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '8px', color: '#FF6B6B', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
+              >교환거부</button>
+              <button
+                onClick={() => handleExchangeAction(exchangeActionItem, 'convert_return')}
+                style={{ padding: '0.75rem', background: 'rgba(255,165,0,0.1)', border: '1px solid rgba(255,165,0,0.3)', borderRadius: '8px', color: '#FFA500', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
+              >반품변경</button>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button onClick={() => setExchangeActionItem(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>닫기</button>
             </div>
           </div>
         </div>
