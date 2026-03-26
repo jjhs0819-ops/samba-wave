@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { collectorApi, categoryApi, accountApi, type SambaCollectedProduct } from '@/lib/samba/api'
+import { MARKET_LABELS } from '@/lib/samba/markets'
 import { showAlert } from '@/components/samba/Modal'
 
 const card = {
@@ -27,32 +28,7 @@ interface MappingRow {
   target_mappings: Record<string, string>
 }
 
-// 마켓 한글명 (12개 전체)
-const MARKET_LABELS: Record<string, string> = {
-  smartstore: '스마트스토어',
-  gmarket: 'G마켓',
-  auction: '옥션',
-  coupang: '쿠팡',
-  lotteon: '롯데ON',
-  '11st': '11번가',
-  toss: '토스',
-  ssg: 'SSG',
-  gsshop: 'GS샵',
-  lottehome: '롯데홈쇼핑',
-  homeand: '홈앤쇼핑',
-  hmall: 'HMALL',
-  kream: 'KREAM',
-  poison: '포이즌',
-  qoo10: 'Qoo10',
-  rakuten: '라쿠텐',
-  buyma: '바이마',
-  lazada: 'Lazada',
-  shopify: 'Shopify',
-  shopee: 'Shopee',
-  zoom: 'Zum(줌)',
-  ebay: 'eBay',
-  amazon: '아마존',
-}
+// MARKET_LABELS는 @/lib/samba/markets에서 import
 
 // AI 매핑 비용 추정 근거:
 // Claude Sonnet 4 ($3/M input, $15/M output, 환율 ₩1,450)
@@ -100,12 +76,17 @@ export default function CategoriesPage() {
   // 카테고리 검색 드롭다운
   const [suggestions, setSuggestions] = useState<string[]>([])
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 마켓별 카테고리 수
+  const [marketCatCounts, setMarketCatCounts] = useState<Record<string, number>>({})
   // 마켓별 AI 리매핑 로딩 상태
   const [marketAiLoading, setMarketAiLoading] = useState<string | null>(null)
   // 마켓별 AI 진행 모달
   const [marketAiProgress, setMarketAiProgress] = useState<{ market: string; current: number; total: number; success: number; fail: number } | null>(null)
-  // 카테고리 동기화 로딩
+  // 카테고리 동기화
   const [seedLoading, setSeedLoading] = useState(false)
+  const [syncModalOpen, setSyncModalOpen] = useState(false)
+  const [syncSelected, setSyncSelected] = useState<Record<string, boolean>>({})
+  const [syncProgress, setSyncProgress] = useState<Record<string, { status: string; count?: number; error?: string }>>({})
   // 최근 AI 사용량 기록
   const [lastAiUsage, setLastAiUsage] = useState<{ calls: number; tokens: number; cost: number; date: string } | null>(null)
   // 활성 계정 마켓 목록 (벌크 매핑 마켓 선택용)
@@ -151,6 +132,11 @@ export default function CategoriesPage() {
     } catch (e) {
       console.error('[카테고리] 활성 계정 로드 실패:', e)
     }
+    // 마켓별 카테고리 수 로드
+    try {
+      const counts = await categoryApi.getMarketCategoryCounts()
+      setMarketCatCounts(counts)
+    } catch { /* 무시 */ }
     setLoading(false)
   }, [])
 
@@ -194,21 +180,29 @@ export default function CategoriesPage() {
 
   const handleSiteClick = (site: string) => {
     setSelectedSite(selectedSite === site ? null : site)
+    // 하위 선택 초기화
+    setSelectedCat1(null); setSelectedCat2(null); setSelectedCat3(null); setSelectedCat4(null)
     setSelectedProducts([]); setSelectedPath('')
   }
 
   const handleCat1Click = (cat: string) => {
     setSelectedCat1(selectedCat1 === cat ? null : cat)
+    // 하위 선택 초기화
+    setSelectedCat2(null); setSelectedCat3(null); setSelectedCat4(null)
     setSelectedProducts([]); setSelectedPath('')
   }
 
   const handleCat2Click = (cat: string) => {
     setSelectedCat2(selectedCat2 === cat ? null : cat)
+    // 하위 선택 초기화
+    setSelectedCat3(null); setSelectedCat4(null)
     setSelectedProducts([]); setSelectedPath('')
   }
 
   const handleCat3Click = (cat: string) => {
     setSelectedCat3(selectedCat3 === cat ? null : cat)
+    // 하위 선택 초기화
+    setSelectedCat4(null)
     setSelectedProducts([]); setSelectedPath('')
   }
 
@@ -723,18 +717,23 @@ export default function CategoriesPage() {
     }
     const ids = filteredMappings.map(m => m.id)
     try {
-      // 전체 마켓 등록 상품 일괄 확인 (1회 API 호출)
-      const check = await categoryApi.checkAllMarketsRegistered(ids)
-      const blockedMarkets = Object.entries(check.blocked)
-      if (blockedMarkets.length > 0) {
-        const details = blockedMarkets.map(([mk, cnt]) => `${MARKET_LABELS[mk] || mk} ${cnt}건`).join(', ')
-        showAlert(`등록된 상품이 있어 삭제할 수 없습니다: ${details}`, 'error')
+      // 등록 상품이 없는 매핑만 필터
+      const check = await categoryApi.checkRegisteredPerMapping(ids)
+      const deletableIds = ids.filter(id => !check.registered_ids?.includes(id))
+      const blockedCount = ids.length - deletableIds.length
+
+      if (deletableIds.length === 0) {
+        showAlert(`전체 ${ids.length}건 모두 등록 상품이 있어 삭제할 수 없습니다`, 'error')
         return
       }
-      // 일괄 삭제 (1회 API 호출)
-      const result = await categoryApi.bulkDeleteMappings(ids)
-      setMappings(prev => prev.filter(m => !ids.includes(m.id)))
-      showAlert(`${result.deleted}건 매핑 삭제 완료`, 'success')
+
+      // 등록 상품 없는 것만 삭제
+      const result = await categoryApi.bulkDeleteMappings(deletableIds)
+      setMappings(prev => prev.filter(m => !deletableIds.includes(m.id)))
+      const msg = blockedCount > 0
+        ? `${result.deleted}건 삭제 완료 (등록 상품 있는 ${blockedCount}건은 유지)`
+        : `${result.deleted}건 매핑 삭제 완료`
+      showAlert(msg, 'success')
     } catch (e) {
       const msg = e instanceof Error ? e.message : '삭제 실패'
       showAlert(`매핑 삭제 실패: ${msg}`, 'error')
@@ -811,10 +810,24 @@ export default function CategoriesPage() {
         })
         const newCat = result[market]
         if (newCat) {
-          const updatedTargets = { ...row.target_mappings, [market]: newCat }
-          await categoryApi.updateMapping(row.id, { target_mappings: updatedTargets })
-          const idx = updatedMappings.findIndex(m => m.id === row.id)
-          if (idx >= 0) updatedMappings[idx] = { ...updatedMappings[idx], target_mappings: updatedTargets }
+          if (row.id.startsWith('unmapped_')) {
+            // 미매핑 → 신규 생성
+            const created = await categoryApi.createMapping({
+              source_site: row.source_site,
+              source_category: row.source_category,
+              target_mappings: { [market]: newCat },
+            })
+            if (created && typeof created === 'object' && 'id' in created) {
+              const idx = updatedMappings.findIndex(m => m.id === row.id)
+              if (idx >= 0) updatedMappings[idx] = created as typeof row
+              else updatedMappings.push(created as typeof row)
+            }
+          } else {
+            const updatedTargets = { ...row.target_mappings, [market]: newCat }
+            await categoryApi.updateMapping(row.id, { target_mappings: updatedTargets })
+            const idx = updatedMappings.findIndex(m => m.id === row.id)
+            if (idx >= 0) updatedMappings[idx] = { ...updatedMappings[idx], target_mappings: updatedTargets }
+          }
           successCount++
         }
       } catch {
@@ -851,31 +864,21 @@ export default function CategoriesPage() {
 
   return (
     <div style={{ color: '#E5E5E5' }}>
+      {/* 단계 연결 */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '0.25rem' }}>
+        <a href="/samba/policies" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>← 정책관리</a>
+        <a href="/samba/shipments" style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none' }}>상품전송 →</a>
+      </div>
       {/* 헤더 + 카테고리 동기화 */}
       <div style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>카테고리 매핑</h2>
         <button
-          onClick={async () => {
-            if (seedLoading) return
-            setSeedLoading(true)
-            try {
-              // 마켓 API에서 실제 카테고리 동기화 (코드맵 포함)
-              const syncResult = await categoryApi.syncAll()
-              const syncResults = syncResult.results || {}
-              const entries = Object.values(syncResults) as Record<string, unknown>[]
-              const apiOk = entries.filter((r) => r.ok).length
-              const apiFail = entries.filter((r) => !r.ok).length
-              const total = entries.reduce((sum, r) => sum + ((r.ok ? (r as Record<string, number>).count : 0) || 0), 0)
-
-              showAlert(
-                `카테고리 동기화 완료\n성공: ${apiOk}개 마켓 / 실패: ${apiFail}개 / 총 ${total}개 카테고리`,
-                'success'
-              )
-            } catch (e) {
-              showAlert(`동기화 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
-            } finally {
-              setSeedLoading(false)
-            }
+          onClick={() => {
+            const initial: Record<string, boolean> = {}
+            Object.keys(MARKET_LABELS).forEach(mk => { initial[mk] = true })
+            setSyncSelected(initial)
+            setSyncProgress({})
+            setSyncModalOpen(true)
           }}
           disabled={seedLoading}
           style={{
@@ -888,7 +891,6 @@ export default function CategoriesPage() {
             color: seedLoading ? '#666' : '#51CF66',
             cursor: seedLoading ? 'not-allowed' : 'pointer',
           }}
-          title="계정 등록된 마켓은 API로 동기화(무료), 나머지는 AI로 최신화합니다. AI 비용 $1 내외."
         >{seedLoading ? '동기화 중...' : '마켓 카테고리 동기화'}</button>
       </div>
 
@@ -982,22 +984,20 @@ export default function CategoriesPage() {
           <div style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>카테고리 트리를 로딩 중...</div>
         ) : (
           <div style={{ display: 'flex' }}>
-            {/* 사이트: 진입점이거나 다른 레벨 선택 시 연관 표시 */}
+            {/* 사이트: 항상 표시 */}
             <div style={colStyle}>
-              {(catEntry === 0 || selectedCat1 || selectedCat2 || selectedCat3 || selectedCat4) ? (
-                getCrossSites().length === 0 ? (
-                  <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>수집 상품이 없습니다</div>
-                ) : getCrossSites().map(site => (
-                  <div key={site} style={itemStyle(selectedSite === site)} onClick={() => handleSiteClick(site)}
-                    onMouseEnter={e => { if (selectedSite !== site) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                    onMouseLeave={e => { if (selectedSite !== site) e.currentTarget.style.background = 'transparent' }}
-                  >{site}</div>
-                ))
-              ) : null}
+              {getCrossSites().length === 0 ? (
+                <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>수집 상품이 없습니다</div>
+              ) : getCrossSites().map(site => (
+                <div key={site} style={itemStyle(selectedSite === site)} onClick={() => handleSiteClick(site)}
+                  onMouseEnter={e => { if (selectedSite !== site) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                  onMouseLeave={e => { if (selectedSite !== site) e.currentTarget.style.background = 'transparent' }}
+                >{site}</div>
+              ))}
             </div>
-            {/* 대분류: 진입점이거나 다른 레벨 선택 시 연관 표시 */}
+            {/* 대분류: 사이트 선택 후 표시 */}
             <div style={colStyle}>
-              {(catEntry === 1 || selectedSite || selectedCat2 || selectedCat3 || selectedCat4) ? (
+              {selectedSite ? (
                 getCat1List().map(cat => (
                   <div key={cat} style={itemStyle(selectedCat1 === cat)} onClick={() => handleCat1Click(cat)}
                     onMouseEnter={e => { if (selectedCat1 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
@@ -1006,9 +1006,9 @@ export default function CategoriesPage() {
                 ))
               ) : null}
             </div>
-            {/* 중분류 */}
+            {/* 중분류: 대분류 선택 후 표시 */}
             <div style={colStyle}>
-              {(catEntry === 2 || selectedSite || selectedCat1 || selectedCat3 || selectedCat4) ? (
+              {selectedCat1 ? (
                 getCat2List().map(cat => (
                   <div key={cat} style={itemStyle(selectedCat2 === cat)} onClick={() => handleCat2Click(cat)}
                     onMouseEnter={e => { if (selectedCat2 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
@@ -1017,9 +1017,9 @@ export default function CategoriesPage() {
                 ))
               ) : null}
             </div>
-            {/* 소분류 */}
+            {/* 소분류: 중분류 선택 후 표시 */}
             <div style={colStyle}>
-              {(catEntry === 3 || selectedSite || selectedCat1 || selectedCat2 || selectedCat4) ? (
+              {selectedCat2 ? (
                 getCat3List().map(cat => (
                   <div key={cat} style={itemStyle(selectedCat3 === cat)} onClick={() => handleCat3Click(cat)}
                     onMouseEnter={e => { if (selectedCat3 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
@@ -1028,9 +1028,9 @@ export default function CategoriesPage() {
                 ))
               ) : null}
             </div>
-            {/* 세분류 */}
+            {/* 세분류: 소분류 선택 후 표시 */}
             <div style={{ ...colStyle, borderRight: 'none' }}>
-              {(catEntry === 4 || selectedSite || selectedCat1 || selectedCat2 || selectedCat3) ? (
+              {selectedCat3 ? (
                 getCat4List().map(cat => (
                   <div key={cat} style={itemStyle(selectedCat4 === cat)} onClick={() => handleCat4Click(cat)}
                     onMouseEnter={e => { if (selectedCat4 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
@@ -1062,6 +1062,7 @@ export default function CategoriesPage() {
                   <th style={{ padding: '0.625rem 0.75rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap' }}>소싱 카테고리</th>
                   {marketKeys.map(mk => (
                     <th key={mk} style={{ padding: '0.625rem 0.5rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                         <span>{MARKET_LABELS[mk]}</span>
                         <button
@@ -1108,6 +1109,10 @@ export default function CategoriesPage() {
                           onMouseLeave={e => { e.currentTarget.style.color = '#444' }}
                           title={`${MARKET_LABELS[mk]} 카테고리 일괄 삭제 (${filteredMappings.length}건)`}
                         >✕</button>
+                      </div>
+                      <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? '#51CF66' : '#FF6B6B' }}>
+                        {(marketCatCounts[mk] || 0).toLocaleString()}개
+                      </span>
                       </div>
                     </th>
                   ))}
@@ -1694,6 +1699,108 @@ export default function CategoriesPage() {
                 onClick={handleAiMarketConfirm}
                 style={{ padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px', border: 'none', background: '#FF8C00', color: '#FFF', cursor: 'pointer', fontWeight: 600 }}
               >AI 매핑 시작</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 카테고리 동기화 마켓 선택 모달 */}
+      {syncModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '480px', maxWidth: '90vw' }}>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>마켓 카테고리 동기화</h3>
+            <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '1rem' }}>동기화할 마켓을 선택하세요. API 계정이 등록된 마켓만 동기화됩니다.</p>
+
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+              <button
+                onClick={() => {
+                  const all: Record<string, boolean> = {}
+                  Object.keys(MARKET_LABELS).forEach(mk => { all[mk] = true })
+                  setSyncSelected(all)
+                }}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', background: 'transparent', border: '1px solid #3D3D3D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}
+              >전체선택</button>
+              <button
+                onClick={() => setSyncSelected({})}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', background: 'transparent', border: '1px solid #3D3D3D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}
+              >전체해제</button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '1.25rem' }}>
+              {Object.entries(MARKET_LABELS).map(([mk, label]) => (
+                <label key={mk} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', cursor: 'pointer', padding: '0.375rem 0.5rem', background: syncSelected[mk] ? 'rgba(81,207,102,0.1)' : 'rgba(30,30,30,0.5)', border: `1px solid ${syncSelected[mk] ? 'rgba(81,207,102,0.3)' : '#2D2D2D'}`, borderRadius: '6px' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!syncSelected[mk]}
+                    onChange={e => setSyncSelected(prev => ({ ...prev, [mk]: e.target.checked }))}
+                    style={{ accentColor: '#51CF66', width: '14px', height: '14px' }}
+                  />
+                  <span style={{ fontSize: '0.8125rem', color: syncSelected[mk] ? '#E5E5E5' : '#666' }}>{label}</span>
+                  <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? '#51CF66' : '#FF6B6B', marginLeft: 'auto' }}>{(marketCatCounts[mk] || 0).toLocaleString()}</span>
+                  {syncProgress[mk] && (() => {
+                    const p = syncProgress[mk]
+                    if (p.status === 'loading') return <span style={{ fontSize: '0.625rem', color: '#FF8C00' }}>...</span>
+                    if (p.status === 'ok') return <span style={{ fontSize: '0.625rem', color: '#51CF66' }}>{p.count?.toLocaleString()}</span>
+                    return <span style={{ fontSize: '0.625rem', color: '#FF6B6B' }}>X</span>
+                  })()}
+                </label>
+              ))}
+            </div>
+
+            {/* 동기화 결과 */}
+            {Object.values(syncProgress).some(p => p.status !== 'loading') && (
+              <div style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', maxHeight: '200px', overflowY: 'auto' }}>
+                <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem', fontWeight: 600 }}>동기화 결과</p>
+                {Object.entries(syncProgress)
+                  .filter(([, p]) => p.status !== 'loading')
+                  .map(([mk, p]) => (
+                    <div key={mk} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.25rem 0', borderBottom: '1px solid #1C1C1C' }}>
+                      <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>{MARKET_LABELS[mk] || mk}</span>
+                      {p.status === 'ok' ? (
+                        <span style={{ fontSize: '0.8125rem', color: '#51CF66', fontWeight: 600 }}>{p.count?.toLocaleString()}개</span>
+                      ) : (
+                        <span style={{ fontSize: '0.8125rem', color: '#FF6B6B' }}>{p.error || '실패'}</span>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setSyncModalOpen(false)}
+                disabled={seedLoading}
+                style={{ padding: '0.5rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}
+              >닫기</button>
+              <button
+                onClick={async () => {
+                  const selected = Object.keys(syncSelected).filter(mk => syncSelected[mk])
+                  if (selected.length === 0) { showAlert('마켓을 선택하세요', 'info'); return }
+                  setSeedLoading(true)
+                  let okCount = 0
+                  let failCount = 0
+                  for (const mk of selected) {
+                    setSyncProgress(prev => ({ ...prev, [mk]: { status: 'loading' } }))
+                    try {
+                      const res = await categoryApi.syncMarket(mk)
+                      if (res.ok) {
+                        setSyncProgress(prev => ({ ...prev, [mk]: { status: 'ok', count: res.count } }))
+                        setMarketCatCounts(prev => ({ ...prev, [mk]: res.count }))
+                        okCount++
+                      } else {
+                        setSyncProgress(prev => ({ ...prev, [mk]: { status: 'fail', error: '응답 오류' } }))
+                        failCount++
+                      }
+                    } catch (err) {
+                      setSyncProgress(prev => ({ ...prev, [mk]: { status: 'fail', error: err instanceof Error ? err.message : '실패' } }))
+                      failCount++
+                    }
+                  }
+                  setSeedLoading(false)
+                }}
+                disabled={seedLoading}
+                style={{ padding: '0.5rem 1.25rem', background: seedLoading ? '#333' : '#51CF66', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: seedLoading ? 'not-allowed' : 'pointer' }}
+              >{seedLoading ? '동기화 중...' : '동기화 시작'}</button>
             </div>
           </div>
         </div>

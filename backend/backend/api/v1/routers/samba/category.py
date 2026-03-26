@@ -236,6 +236,27 @@ async def check_all_markets_registered(
     return {"blocked": blocked}
 
 
+@router.post("/mappings/check-registered-per-mapping")
+async def check_registered_per_mapping(
+    body: BulkDeleteRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """매핑별로 등록 상품이 있는지 개별 확인. registered_ids에 등록 상품이 있는 매핑 ID 반환."""
+    svc = _get_service(session)
+    from backend.domain.samba.category.service import MARKET_CATEGORIES
+    registered_ids: list[str] = []
+    for mid in body.mapping_ids:
+        has_product = False
+        for market in MARKET_CATEGORIES:
+            count = await svc.check_market_registered([mid], market, session)
+            if count > 0:
+                has_product = True
+                break
+        if has_product:
+            registered_ids.append(mid)
+    return {"registered_ids": registered_ids}
+
+
 @router.post("/mappings/bulk-delete")
 async def bulk_delete_mappings(
     body: BulkDeleteRequest,
@@ -269,6 +290,20 @@ async def clear_market_column(
 
 # ── Market Category Seed ──
 
+@router.get("/markets/counts")
+async def get_market_category_counts(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """마켓별 DB 카테고리 수 반환."""
+    from sqlmodel import select
+    from backend.domain.samba.category.model import SambaCategoryTree
+    result = await session.execute(select(SambaCategoryTree))
+    counts: dict[str, int] = {}
+    for tree in result.scalars().all():
+        counts[tree.site_name] = len(tree.cat1) if tree.cat1 else 0
+    return counts
+
+
 @router.post("/markets/seed")
 async def seed_market_categories(
     session: AsyncSession = Depends(get_write_session_dependency),
@@ -285,13 +320,14 @@ async def sync_market_categories(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     """마켓 API에서 실시간 카테고리를 조회하여 DB에 동기화."""
-    from backend.domain.samba.category.service import SambaCategoryService
     svc = _get_service(session)
     try:
         result = await svc.sync_market_from_api(market_type, session)
         return {"ok": True, "market": market_type, **result}
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    except Exception as e:
+        raise HTTPException(500, f"카테고리 동기화 중 오류: {e}") from e
 
 
 @router.post("/markets/sync-all")

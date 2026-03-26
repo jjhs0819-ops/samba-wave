@@ -728,12 +728,24 @@ function setupAlarm() {
       console.log('[KREAM] chrome.alarms 설정: 30초 주기')
     }
   })
+  // 쿠키 동기화 alarm (5분 주기)
+  chrome.alarms.get('cookieSync', (alarm) => {
+    if (!alarm) {
+      chrome.alarms.create('cookieSync', { periodInMinutes: 5 })
+      console.log('[쿠키] chrome.alarms 설정: 5분 주기 동기화')
+    }
+  })
 }
 
 // alarm 이벤트 핸들러
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'kreamPoll') {
     runPollCycle()
+  }
+  // 쿠키 동기화 — 변경된 쿠키가 있으면 백엔드 재전송
+  if (alarm.name === 'cookieSync') {
+    if (capturedCookie) sendCookiesToProxy(capturedCookie).catch(() => {})
+    if (kreamCookie) sendKreamCookiesToProxy(kreamCookie).catch(() => {})
   }
 })
 

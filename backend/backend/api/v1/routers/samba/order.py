@@ -124,6 +124,19 @@ async def search_orders(
     return await svc.search_orders(q)
 
 
+@router.get("/find-by-number")
+async def find_by_order_number(
+    order_number: str = Query(...),
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """상품주문번호로 주문 조회."""
+    svc = _read_service(session)
+    order = await svc.repo.find_by_async(order_number=order_number)
+    if not order:
+        return None
+    return {"id": order.id, "order_number": order.order_number}
+
+
 @router.get("/{order_id}", response_model=SambaOrder)
 async def get_order(
     order_id: str,
@@ -242,6 +255,183 @@ async def approve_cancel(
         return {"ok": True, "message": "취소승인 완료"}
     else:
         raise HTTPException(status_code=400, detail=f"{account.market_type} 취소승인 미지원")
+
+
+# ══════════════════════════════════════════════
+# 교환 처리 (재배송 / 거부 / 반품변경)
+# ══════════════════════════════════════════════
+
+
+class ExchangeActionBody(BaseModel):
+    action: str  # "reship" | "reject" | "convert_return"
+    reason: Optional[str] = None
+
+
+@router.post("/{order_id}/exchange-action")
+async def exchange_action(
+    order_id: str,
+    body: ExchangeActionBody,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """교환요청에 대한 처리 (재배송/거부/반품변경)."""
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+    from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+
+    svc = _write_service(session)
+    order = await svc.get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+    if not order.order_number:
+        raise HTTPException(status_code=400, detail="상품주문번호가 없습니다")
+    if not order.channel_id:
+        raise HTTPException(status_code=400, detail="마켓 계정 정보가 없습니다")
+
+    account_repo = SambaMarketAccountRepository(session)
+    account = await account_repo.get_async(order.channel_id)
+    if not account:
+        raise HTTPException(status_code=400, detail="마켓 계정을 찾을 수 없습니다")
+
+    if account.market_type == "smartstore":
+        from backend.domain.samba.proxy.smartstore import SmartStoreClient
+        extras = account.additional_fields or {}
+        client_id = extras.get("clientId", "") or account.api_key or ""
+        client_secret = extras.get("clientSecret", "") or account.api_secret or ""
+        if not client_id or not client_secret:
+            settings_repo = SambaSettingsRepository(session)
+            row = await settings_repo.find_by_async(key="store_smartstore")
+            if row and isinstance(row.value, dict):
+                client_id = client_id or row.value.get("clientId", "")
+                client_secret = client_secret or row.value.get("clientSecret", "")
+        if not client_id or not client_secret:
+            raise HTTPException(status_code=400, detail="스마트스토어 인증정보 없음")
+
+        client = SmartStoreClient(client_id, client_secret)
+        action_labels = {"reship": "교환재배송", "reject": "교환거부", "convert_return": "반품변경"}
+        label = action_labels.get(body.action, body.action)
+
+        try:
+            if body.action == "reship":
+                await client.approve_exchange(order.order_number)
+                new_status = "교환완료"
+            elif body.action == "reject":
+                await client.reject_exchange(order.order_number, body.reason or "판매자 교환 거부")
+                new_status = "교환거부"
+            elif body.action == "convert_return":
+                await client.convert_exchange_to_return(order.order_number)
+                new_status = "반품변경"
+            else:
+                raise HTTPException(status_code=400, detail=f"알 수 없는 액션: {body.action}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"{label} 실패: {e}")
+
+        await svc.update_order(order_id, {"shipping_status": new_status})
+        logger.info(f"[교환처리] {order.order_number} {label} 완료")
+        return {"ok": True, "message": f"{label} 완료"}
+    else:
+        raise HTTPException(status_code=400, detail=f"{account.market_type} 교환처리 미지원")
+
+
+# ══════════════════════════════════════════════
+# 반품 처리 (승인 / 거부)
+# ══════════════════════════════════════════════
+
+
+class ReturnActionBody(BaseModel):
+    action: str  # "approve" | "reject"
+    reason: Optional[str] = None
+
+
+@router.post("/{order_id}/return-action")
+async def return_action(
+    order_id: str,
+    body: ReturnActionBody,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """반품요청에 대한 처리 (승인/거부)."""
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+    from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+
+    svc = _write_service(session)
+    order = await svc.get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+    if not order.order_number:
+        raise HTTPException(status_code=400, detail="상품주문번호가 없습니다")
+    if not order.channel_id:
+        raise HTTPException(status_code=400, detail="마켓 계정 정보가 없습니다")
+
+    account_repo = SambaMarketAccountRepository(session)
+    account = await account_repo.get_async(order.channel_id)
+    if not account:
+        raise HTTPException(status_code=400, detail="마켓 계정을 찾을 수 없습니다")
+
+    if account.market_type == "smartstore":
+        from backend.domain.samba.proxy.smartstore import SmartStoreClient
+        extras = account.additional_fields or {}
+        client_id = extras.get("clientId", "") or account.api_key or ""
+        client_secret = extras.get("clientSecret", "") or account.api_secret or ""
+        if not client_id or not client_secret:
+            settings_repo = SambaSettingsRepository(session)
+            row = await settings_repo.find_by_async(key="store_smartstore")
+            if row and isinstance(row.value, dict):
+                client_id = client_id or row.value.get("clientId", "")
+                client_secret = client_secret or row.value.get("clientSecret", "")
+        if not client_id or not client_secret:
+            raise HTTPException(status_code=400, detail="스마트스토어 인증정보 없음")
+
+        client = SmartStoreClient(client_id, client_secret)
+        label = "반품승인" if body.action == "approve" else "반품거부"
+
+        try:
+            if body.action == "approve":
+                try:
+                    await client.approve_return(order.order_number)
+                except Exception as first_err:
+                    if "환불보류" in str(first_err):
+                        # 환불보류 해제 후 재시도
+                        logger.info(f"[반품처리] {order.order_number} 환불보류 감지 → 보류해제 후 재시도")
+                        await client.release_return_hold(order.order_number)
+                        await client.approve_return(order.order_number)
+                    else:
+                        raise
+                new_status = "반품승인"
+            elif body.action == "reject":
+                await client.reject_return(order.order_number, body.reason or "판매자 반품 거부")
+                new_status = "반품거부"
+            else:
+                raise HTTPException(status_code=400, detail=f"알 수 없는 액션: {body.action}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"{label} 실패: {e}")
+
+        await svc.update_order(order_id, {"shipping_status": new_status})
+
+        # 반품교환(samba_return) 레코드도 상태 업데이트
+        from backend.domain.samba.returns.repository import SambaReturnRepository
+        from datetime import UTC, datetime
+        return_repo = SambaReturnRepository(session)
+        existing_returns = await return_repo.filter_by_async(order_id=order_id)
+        if existing_returns:
+            ret = existing_returns[0]
+            if body.action == "approve":
+                await return_repo.update_async(ret.id,
+                    status="completed",
+                    market_order_status="반품완료",
+                    completion_date=datetime.now(UTC),
+                )
+            elif body.action == "reject":
+                await return_repo.update_async(ret.id,
+                    status="rejected",
+                    market_order_status="반품거부",
+                )
+
+        logger.info(f"[반품처리] {order.order_number} {label} 완료")
+        return {"ok": True, "message": f"{label} 완료"}
+    else:
+        raise HTTPException(status_code=400, detail=f"{account.market_type} 반품처리 미지원")
 
 
 # ══════════════════════════════════════════════

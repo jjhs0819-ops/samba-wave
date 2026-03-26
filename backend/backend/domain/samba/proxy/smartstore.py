@@ -326,6 +326,10 @@ class SmartStoreClient:
 
       logger.info(f"[스마트스토어] {method} {path} → {resp.status_code}")
 
+      # claim 관련 API는 응답 body 전체 로깅 (디버깅용)
+      if "/claim/" in path:
+        logger.info(f"[스마트스토어] claim 응답 body: {data}")
+
       if not resp.is_success:
         # 네이버 API는 invalidInputs 배열로 상세 에러 제공
         msg = data.get("message", "") or data.get("reason", "") or text[:200]
@@ -998,6 +1002,91 @@ class SmartStoreClient:
       f"/v1/pay-order/seller/product-orders/{product_order_id}/claim/cancel/approve",
     )
     logger.info(f"[스마트스토어] 취소승인 완료: {product_order_id}")
+    return result
+
+  async def reject_exchange(self, product_order_id: str, reason: str = "판매자 교환 거부") -> dict[str, Any]:
+    """교환요청 거부.
+
+    Commerce API: POST /v1/pay-order/seller/product-orders/{id}/claim/exchange/reject
+    rejectExchangeReason 필수: PRODUCT_INSUFFICIENT, ETC 등
+    """
+    result = await self._call_api(
+      "POST",
+      f"/v1/pay-order/seller/product-orders/{product_order_id}/claim/exchange/reject",
+      body={"rejectExchangeReason": reason},
+    )
+    logger.info(f"[스마트스토어] 교환거부 완료: {product_order_id}")
+    return result
+
+  async def approve_exchange(self, product_order_id: str) -> dict[str, Any]:
+    """교환 재배송 승인.
+
+    Commerce API: POST /v1/pay-order/seller/product-orders/{id}/claim/exchange/approve
+    """
+    result = await self._call_api(
+      "POST",
+      f"/v1/pay-order/seller/product-orders/{product_order_id}/claim/exchange/approve",
+    )
+    logger.info(f"[스마트스토어] 교환재배송 승인 완료: {product_order_id}")
+    return result
+
+  async def convert_exchange_to_return(self, product_order_id: str) -> dict[str, Any]:
+    """교환 → 반품 변경 (교환 거부 처리).
+
+    교환 거부 사유에 '반품으로 변경'을 명시.
+    반품 요청은 구매자가 직접 진행해야 하므로 교환 거부까지만 API 호출.
+    """
+    result = await self._call_api(
+      "POST",
+      f"/v1/pay-order/seller/product-orders/{product_order_id}/claim/exchange/reject",
+      body={"rejectExchangeReason": "반품으로 변경"},
+    )
+    logger.info(f"[스마트스토어] 교환→반품 변경 완료 (교환거부): {product_order_id}")
+    return result
+
+  async def approve_return(self, product_order_id: str) -> dict[str, Any]:
+    """반품 승인.
+
+    Commerce API: POST /v1/pay-order/seller/product-orders/{id}/claim/return/approve
+    """
+    result = await self._call_api(
+      "POST",
+      f"/v1/pay-order/seller/product-orders/{product_order_id}/claim/return/approve",
+    )
+    # 응답 검증: data 안에 실패 정보가 있을 수 있음
+    data = result.get("data", result) if isinstance(result, dict) else result
+    if isinstance(data, dict):
+      fail_infos = data.get("failProductOrderInfos") or data.get("failReturns") or []
+      if fail_infos:
+        fail_msg = fail_infos[0].get("message", "") if isinstance(fail_infos[0], dict) else str(fail_infos[0])
+        logger.error(f"[스마트스토어] 반품승인 실패 응답: {fail_infos}")
+        raise SmartStoreApiError(f"반품승인 실패: {fail_msg}")
+    logger.info(f"[스마트스토어] 반품승인 완료: {product_order_id} 응답: {result}")
+    return result
+
+  async def release_return_hold(self, product_order_id: str) -> dict[str, Any]:
+    """반품 환불보류 해제.
+
+    Commerce API: POST /v1/pay-order/seller/product-orders/{id}/claim/return/holdback/release
+    """
+    result = await self._call_api(
+      "POST",
+      f"/v1/pay-order/seller/product-orders/{product_order_id}/claim/return/holdback/release",
+    )
+    logger.info(f"[스마트스토어] 반품 보류해제 완료: {product_order_id}")
+    return result
+
+  async def reject_return(self, product_order_id: str, reason: str = "판매자 반품 거부") -> dict[str, Any]:
+    """반품 거부.
+
+    Commerce API: POST /v1/pay-order/seller/product-orders/{id}/claim/return/reject
+    """
+    result = await self._call_api(
+      "POST",
+      f"/v1/pay-order/seller/product-orders/{product_order_id}/claim/return/reject",
+      body={"rejectReturnReason": reason},
+    )
+    logger.info(f"[스마트스토어] 반품거부 완료: {product_order_id}")
     return result
 
   # ------------------------------------------------------------------

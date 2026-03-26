@@ -37,6 +37,9 @@ SUPPORTED_MARKETS: List[Dict[str, Any]] = [
         "group": "국내",
         "api_fields": ["userId", "password", "agncNo"],
     },
+    {"id": "homeand", "name": "홈앤쇼핑", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
+    {"id": "hmall", "name": "HMALL", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
+    {"id": "toss", "name": "토스", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
     # Integration solution
     {"id": "playauto", "name": "플레이오토", "group": "연동솔루션", "api_fields": ["apiKey", "userId"]},
     # Overseas

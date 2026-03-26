@@ -641,6 +641,11 @@ export default function OrdersPage() {
         }
       `}</style>
 
+      {/* 관련 페이지 연결 */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '0.25rem' }}>
+        <a href="/samba/returns" style={{ fontSize: '0.75rem', color: '#FF8C00', textDecoration: 'none' }}>반품교환 →</a>
+        <a href="/samba/cs" style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none' }}>CS →</a>
+      </div>
       {/* 헤더 */}
       <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>

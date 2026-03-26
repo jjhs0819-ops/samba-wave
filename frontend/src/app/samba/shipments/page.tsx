@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { shipmentApi, accountApi, collectorApi, policyApi, type SambaShipment, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
+import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, type SambaShipment, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
+import { MARKET_TYPE_TO_POLICY_KEY as SHARED_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 
 const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
@@ -15,16 +16,8 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }>
 
 const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
-// 영문 market_type → 한글 정책 키 역매핑
-const MARKET_TYPE_TO_POLICY_KEY: Record<string, string> = {
-  'coupang': '쿠팡', 'ssg': '신세계몰', 'smartstore': '스마트스토어',
-  '11st': '11번가', 'gmarket': '지마켓', 'auction': '옥션',
-  'gsshop': 'GS샵', 'lotteon': '롯데ON', 'lottehome': '롯데홈쇼핑',
-  'homeand': '홈앤쇼핑', 'hmall': 'HMALL', 'kream': 'KREAM',
-  'ebay': 'eBay', 'lazada': 'Lazada', 'qoo10': 'Qoo10',
-  'shopee': 'Shopee', 'shopify': 'Shopify', 'zoom': 'Zum(줌)',
-  'toss': '토스', 'rakuten': '라쿠텐', 'amazon': '아마존', 'buyma': '바이마', 'poison': '포이즌',
-}
+// 영문 market_type → 한글 정책 키 (markets.ts에서 import)
+const MARKET_TYPE_TO_POLICY_KEY = SHARED_POLICY_KEY
 
 const inputStyle = {
   padding: '4px 8px',
@@ -98,20 +91,25 @@ export default function ShipmentsPage() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [transmitting])
 
+  // 카테고리 매핑 데이터
+  const [categoryMappings, setCategoryMappings] = useState<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>([])
+
   const load = useCallback(async () => {
     setLoading(true)
-    const [p, a, s, f, pol] = await Promise.all([
+    const [p, a, s, f, pol, cm] = await Promise.all([
       collectorApi.listProducts(0, 500).catch(() => []),
       accountApi.listActive().catch(() => []),
       shipmentApi.list(0, 100).catch(() => []),
       collectorApi.listFilters().catch(() => []),
       policyApi.list().catch(() => []),
+      categoryApi.listMappings().catch(() => []),
     ])
     setProducts(p)
     setAccounts(a)
     setShipments(s)
     setFilters(f)
     setPolicies(pol)
+    setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
     setLoading(false)
   }, [])
 
@@ -122,10 +120,11 @@ export default function ShipmentsPage() {
   const preSelectedIds = searchParams.get('selected')?.split(',') || []
   const preSelectedSites = searchParams.get('sites')?.split(',') || []
   const autoAll = searchParams.get('autoAll') === '1'
+  const priceOnly = searchParams.get('priceOnly') === '1'
   const initializedRef = useRef(false)
   useEffect(() => {
     if (initializedRef.current) return
-    if (products.length === 0) return
+    if (products.length === 0 || policies.length === 0) return
     initializedRef.current = true
 
     if (preSelectedIds.length > 0) {
@@ -136,12 +135,36 @@ export default function ShipmentsPage() {
       setSelectedSites(preSelectedSites.filter(s => s))
     }
     if (autoAll && accounts.length > 0) {
-      setUpdateItems({ all: true, price: true, thumb: true, detail: true })
-      const allTypes = [...new Set(accounts.map(a => a.market_type))]
-      setSelectedMarkets(allTypes)
-      setSelectedAccounts(getAccountIdsByMarkets(allTypes))
+      setUpdateItems(priceOnly
+        ? { all: false, price: true, thumb: false, detail: false }
+        : { all: true, price: true, thumb: true, detail: true }
+      )
+      // 선택된 상품의 카테고리 매핑에 연결된 마켓만 체크
+      const selectedProds = preSelectedIds.map(id => products.find(p => p.id === id)).filter(Boolean)
+      const mappedMarketTypes = new Set<string>()
+      for (const prod of selectedProds) {
+        if (!prod) continue
+        const cats = [prod.category1, prod.category2, prod.category3, prod.category4].filter(Boolean)
+        const catPath = cats.join(' > ')
+        if (!catPath) continue
+        const mapping = categoryMappings.find(m =>
+          m.source_site === prod.source_site && m.source_category === catPath
+        )
+        if (mapping?.target_mappings) {
+          for (const marketKey of Object.keys(mapping.target_mappings)) {
+            if (mapping.target_mappings[marketKey]) {
+              mappedMarketTypes.add(marketKey)
+            }
+          }
+        }
+      }
+      const targetTypes = mappedMarketTypes.size > 0
+        ? [...mappedMarketTypes].filter(t => accounts.some(a => a.market_type === t))
+        : [...new Set(accounts.map(a => a.market_type))]
+      setSelectedMarkets(targetTypes)
+      setSelectedAccounts(getAccountIdsByMarkets(targetTypes))
     }
-  }, [products, accounts]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [products, accounts, policies, categoryMappings]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleProduct = (id: string) => setSelectedProducts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   const toggleAllProducts = () => setSelectedProducts(prev => prev.length === filteredProducts.length ? [] : filteredProducts.map(p => p.id))
@@ -511,8 +534,12 @@ export default function ShipmentsPage() {
 
   return (
     <div style={{ color: '#E5E5E5' }}>
-      {/* 헤더 */}
-      <div style={{ marginBottom: '1.25rem' }} />
+      {/* 이전 단계 연결 */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <a href="/samba/policies" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>← 정책관리</a>
+        <a href="/samba/categories" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>← 카테고리매핑</a>
+        <a href="/samba/products" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>← 상품관리</a>
+      </div>
 
       {/* 전송 설정 패널 */}
       <div style={{ background: 'rgba(14,14,20,0.98)', border: '1px solid #1E2030', borderRadius: '8px', marginBottom: '10px', fontSize: '0.8rem' }}>

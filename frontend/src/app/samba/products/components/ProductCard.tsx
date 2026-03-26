@@ -236,8 +236,8 @@ const ProductCard = React.memo(function ProductCard({
   const openPriceHistory = useCallback(() => {
     setShowPriceHistoryModal(true)
     setPriceHistoryData(null)
-    collectorApi.getProduct(p.id).then(detail => {
-      setPriceHistoryData(((detail as unknown as Record<string, unknown>).price_history as Record<string, unknown>[]) || [])
+    collectorApi.getPriceHistory(p.id).then(data => {
+      setPriceHistoryData(data || [])
     }).catch(() => setPriceHistoryData([]))
   }, [p.id])
   const [showImageModal, setShowImageModal] = useState(false)
@@ -998,17 +998,7 @@ const ProductCard = React.memo(function ProductCard({
               )}
             </div>
           )}
-          {/* 무배당발 배지 */}
-          {(p.free_shipping || p.same_day_delivery) && (
-            <div style={{ display: 'flex', gap: '3px', width: '100%' }}>
-              {p.free_shipping && (
-                <span style={{ fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', background: 'transparent', color: '#4C9AFF', border: '1px solid rgba(76,154,255,0.3)', flex: 1, textAlign: 'center' }}>무배</span>
-              )}
-              {p.same_day_delivery && (
-                <span style={{ fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', background: 'transparent', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.3)', flex: 1, textAlign: 'center' }}>당발</span>
-              )}
-            </div>
-          )}
+          {/* 무배당발 배지 — 제거됨 */}
         </div>
 
         {/* Right: Detail info */}
