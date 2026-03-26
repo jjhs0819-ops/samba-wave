@@ -97,7 +97,7 @@ export default function ShipmentsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     const [p, a, s, f, pol, cm] = await Promise.all([
-      collectorApi.listProducts(0, 500).catch(() => []),
+      collectorApi.listProducts(0, 500).catch(() => [] as SambaCollectedProduct[]),
       accountApi.listActive().catch(() => []),
       shipmentApi.list(0, 100).catch(() => []),
       collectorApi.listFilters().catch(() => []),
