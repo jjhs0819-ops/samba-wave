@@ -2780,6 +2780,17 @@ async def collect_by_filter(
                         if existing:
                             continue
 
+                    # Nike: 상세 정보 추가 수집 (care_instructions, manufacturer, origin, material, sex 등)
+                    if site == "Nike" and p_id and client:
+                        try:
+                            detail = await client.get_detail(p_id)
+                            if not detail.get("error"):
+                                for k, v in detail.items():
+                                    if v not in (None, "", []) and k not in ("site_product_id", "source_site"):
+                                        item[k] = v
+                        except Exception as _de:
+                            yield _sse("log", {"message": f"  [{p_id}] 상세조회 실패(기본정보로 저장): {_de}"})
+
                     images = item.get("images", [])
                     product_data = {
                         "source_site": site,
