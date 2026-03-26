@@ -446,8 +446,11 @@ class NikeClient:
         elif item.startswith("품질보증") and not quality_guarantee:
           quality_guarantee = item
 
-    # care_instructions가 비어있으면 카테고리별 공식 취급주의 안내로 채움
-    if not care_instructions:
+    # care_instructions 정리: 유니코드 줄바꿈 제거
+    care_instructions = care_instructions.replace("\u2028", " ").replace("\u2029", " ").strip()
+
+    # care_instructions가 비어있거나 '자세히 보기' 링크 참조만 있는 경우 → 공식 안내 전문으로 대체
+    if not care_instructions or "자세히 보기" in care_instructions:
       care_key = CAT_MAP.get(product_type.upper(), "")
       if not care_key:
         # productType 없을 때 category1(이미 한국어)로 fallback
