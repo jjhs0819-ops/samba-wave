@@ -92,43 +92,60 @@ class SSGSourcingClient:
         size: int = 40,
         **filters: Any,
     ) -> list[dict[str, Any]]:
-        """SSG 상품 검색.
+        """신세계백화점 브랜드 검색.
 
-        Next.js 서버사이드 렌더링된 HTML의 script 태그 내 dataList JSON을 파싱한다.
+        1단계: keyword로 검색 → 브랜드 필터에서 keyword로 시작하는 브랜드 ID 전부 수집
+        2단계: 수집된 repBrandId를 파이프(|)로 결합한 URL로 상품 수집
 
-        Args:
-            keyword: 검색 키워드
-            page: 페이지 번호 (1부터)
-            size: 페이지당 결과 수
-            **filters: 추가 필터
-
-        Returns:
-            표준 상품 dict 리스트
-
-        Raises:
-            RateLimitError: 429/403 응답 시
+        예) keyword='아디다스' → 아디다스|아디다스오리지널스|아디다스키즈|아디다스골프
         """
-        search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page={page}"
         logger.info(f'[SSG] 검색 시작: "{keyword}" (page={page})')
 
         try:
             async with httpx.AsyncClient(
                 timeout=self._timeout, follow_redirects=True
             ) as client:
-                resp = await client.get(search_url, headers=self._headers())
+                # 1단계: page=1로 브랜드 필터 목록 조회
+                if page == 1:
+                    first_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
+                    resp = await client.get(first_url, headers=self._headers())
+                    if resp.status_code in (429, 403):
+                        raise RateLimitError(int(resp.status_code))
+                    if resp.status_code != 200:
+                        logger.warning(f"[SSG] 검색 페이지 HTTP {resp.status_code}")
+                        return []
+                    first_html = resp.text
+                    brand_ids = self._extract_matching_brand_ids(first_html, keyword)
+                    logger.info(f'[SSG] 매칭 브랜드: {len(brand_ids)}개 → {brand_ids}')
+                else:
+                    # page > 1: filters에서 brand_ids 전달받음
+                    brand_ids = filters.get("brand_ids", [])
+                    first_html = None
 
-                if resp.status_code in (429, 403):
-                    retry_after = int(resp.headers.get("Retry-After", "60"))
-                    logger.warning(f"[SSG] 차단 감지 HTTP {resp.status_code}")
-                    raise RateLimitError(resp.status_code, retry_after)
+                # 2단계: 브랜드 필터 적용 URL로 수집
+                search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page={page}"
+                if brand_ids:
+                    search_url += f"&repBrandId={'|'.join(brand_ids)}"
 
-                if resp.status_code != 200:
-                    logger.warning(f"[SSG] 검색 페이지 HTTP {resp.status_code}")
-                    return []
+                # page=1은 이미 가져온 HTML 재사용, page>1은 새로 요청
+                if page == 1 and brand_ids:
+                    # 브랜드 필터 적용 URL로 재요청
+                    resp2 = await client.get(search_url, headers=self._headers())
+                    if resp2.status_code in (429, 403):
+                        raise RateLimitError(int(resp2.status_code))
+                    html = resp2.text if resp2.status_code == 200 else first_html
+                elif page == 1:
+                    html = first_html
+                else:
+                    resp = await client.get(search_url, headers=self._headers())
+                    if resp.status_code in (429, 403):
+                        raise RateLimitError(int(resp.status_code))
+                    if resp.status_code != 200:
+                        return []
+                    html = resp.text
 
-            html = resp.text
             products = self._parse_search_html(html, keyword)
-            logger.info(f'[SSG] 검색 완료: "{keyword}" -> {len(products)}개')
+            logger.info(f'[SSG] 검색 완료: "{keyword}" page={page} -> {len(products)}개')
             return products
 
         except RateLimitError:
@@ -139,6 +156,52 @@ class SSGSourcingClient:
         except Exception as e:
             logger.error(f"[SSG] 검색 실패: {keyword} — {e}")
             return []
+
+    def _extract_matching_brand_ids(self, html: str, keyword: str) -> list[str]:
+        """__NEXT_DATA__에서 keyword로 시작하는 브랜드 ID 목록 추출.
+
+        예) keyword='아디다스' → ['2000000507', '2000000509', '2000047294', '2000000510']
+        """
+        m = re.search(
+            r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        if not m:
+            return []
+
+        try:
+            next_data = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            return []
+
+        queries = (
+            next_data.get("props", {})
+            .get("pageProps", {})
+            .get("dehydratedState", {})
+            .get("queries", [])
+        )
+
+        brand_ids: list[str] = []
+        seen: set[str] = set()
+
+        for q in queries:
+            if "useTemplateFilterQuery" not in (q.get("queryKey") or []):
+                continue
+            filters_data = q.get("state", {}).get("data") or []
+            for f in filters_data:
+                if f.get("filterType") != "brandFilter":
+                    continue
+                for unit in f.get("unitList", []):
+                    for item in unit.get("dataList", []):
+                        name = item.get("name", "")
+                        value = item.get("value", "")
+                        # keyword로 시작하는 브랜드 전부 선택
+                        if name.startswith(keyword) and value and value not in seen:
+                            brand_ids.append(value)
+                            seen.add(value)
+
+        return brand_ids
 
     def _parse_search_html(
         self, html: str, keyword: str
