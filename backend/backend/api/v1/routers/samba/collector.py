@@ -2800,6 +2800,12 @@ async def collect_by_filter(
                         "color": item.get("color", ""),
                         "origin": item.get("origin", ""),
                         "material": item.get("material", ""),
+                        "video_url": item.get("video_url", ""),
+                        "style_code": item.get("style_code", ""),
+                        "sex": item.get("sex", ""),
+                        "manufacturer": item.get("manufacturer", ""),
+                        "care_instructions": item.get("care_instructions", ""),
+                        "quality_guarantee": item.get("quality_guarantee", ""),
                         "similar_no": None,
                         "group_key": generate_group_key(
                             brand=item.get("brand", ""),
@@ -3010,6 +3016,43 @@ async def enrich_product(
         snapshot = _build_kream_price_snapshot(
             sale_p, pd.get("originalPrice") or product.original_price, cost_p, opts
         )
+        history = list(product.price_history or [])
+        history.insert(0, snapshot)
+        updates["price_history"] = _trim_history(history)
+
+        updated = await svc.update_collected_product(product_id, updates)
+        return {"success": True, "enriched_fields": list(updates.keys()), "product": updated}
+
+    if product.source_site == "Nike" and product.site_product_id:
+        from backend.domain.samba.proxy.nike import NikeClient
+        from datetime import datetime, timezone
+        try:
+            detail = await NikeClient().get_detail(product.site_product_id)
+        except Exception as e:
+            raise HTTPException(502, f"Nike 상세 조회 실패: {e}")
+        if detail.get("error"):
+            raise HTTPException(502, detail["error"])
+
+        updates = {}
+        for field in ("style_code", "sex", "manufacturer", "origin", "material",
+                      "care_instructions", "quality_guarantee", "color", "video_url",
+                      "detail_html", "images", "options"):
+            val = detail.get(field)
+            if val is not None and val != "" and val != []:
+                updates[field] = val
+
+        sale_price = detail.get("sale_price")
+        original_price = detail.get("original_price")
+        if sale_price is not None:
+            updates["sale_price"] = sale_price
+        if original_price is not None:
+            updates["original_price"] = original_price
+
+        snapshot = {
+            "date": datetime.now(timezone.utc).isoformat(),
+            "sale_price": sale_price or product.sale_price,
+            "original_price": original_price or product.original_price,
+        }
         history = list(product.price_history or [])
         history.insert(0, snapshot)
         updates["price_history"] = _trim_history(history)

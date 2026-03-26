@@ -318,12 +318,20 @@ class NikeClient:
     )
     origin = ", ".join(origin_list) if origin_list else ""
 
-    # 카테고리
-    gender = (sp.get("genders") or prod_data.get("genders") or [""])[0]
-    gender_map = {"WOMEN": "여성", "MEN": "남성", "UNISEX": "공용", "KIDS": "키즈"}
-    gender_kr = gender_map.get(gender, gender)
+    # 카테고리/성별
     product_type = sp.get("productType", "") or prod_data.get("productType", "")
     category1 = CAT_MAP.get(product_type, product_type)
+
+    # taxonomyLabels.Gender → 이미 한국어로 제공 ("남성"/"여성"/"키즈" 등)
+    taxonomy = prod_data.get("taxonomyLabels") or sp.get("taxonomyLabels") or {}
+    gender_labels = taxonomy.get("Gender") or []
+    if gender_labels:
+      gender_kr = gender_labels[0]
+    else:
+      # fallback: genders 영문 코드 → 한국어 변환
+      gender_en = (sp.get("genders") or prod_data.get("genders") or [""])[0]
+      gender_map = {"WOMEN": "여성", "MEN": "남성", "UNISEX": "공용", "KIDS": "키즈"}
+      gender_kr = gender_map.get(gender_en, gender_en)
 
     # 사이즈 옵션: productGroups.sizes → localizedLabel + status(ACTIVE=재고있음)
     sizes_data = prod_data.get("sizes") or []
@@ -343,10 +351,13 @@ class NikeClient:
     features = product_info.get("featuresAndBenefits") or []
     details = product_info.get("productDetails") or []
 
-    # material: productDetails body 항목들을 합침 (Nike는 구조화 소재 없음 — 제품 특성 정보 사용)
+    # material: productDetails body 중 '%' 포함 항목만 (소재 비율)
+    # ex) "100% 면", "나일론 80% / 폴리에스터 20%"
     material_lines = []
     for section in details:
-      material_lines.extend(section.get("body") or [])
+      for item in (section.get("body") or []):
+        if "%" in item:
+          material_lines.append(item)
     material = ", ".join(material_lines) if material_lines else ""
 
     # 품번 (selectedProduct 또는 productGroups에서 styleCode)
@@ -356,8 +367,41 @@ class NikeClient:
       or (style_color.split("-")[0] if "-" in style_color else style_color)
     )
 
-    # 제조사 (나이키 고정값)
-    manufacturer = "Nike Inc / (유)나이키코리아"
+    # moreInfo: 고시정보 HTML 배열 파싱
+    # moreInfo[0]: 제조연월, moreInfo[1]: A/S·세탁방법·품질보증, moreInfo[2]: 제조자/수입자
+    more_info = prod_data.get("moreInfo") or sp.get("moreInfo") or []
+
+    def _li_texts(html_parts: list) -> list[str]:
+      """HTML 파트 목록에서 li 텍스트(태그 제거) 추출."""
+      combined = "".join(html_parts if isinstance(html_parts, list) else [str(html_parts)])
+      items = re.findall(r'<li>(.*?)</li>', combined, re.DOTALL)
+      return [re.sub(r'<[^>]+>', '', it).strip() for it in items]
+
+    # 제조사: moreInfo[2] → "제조자/수입자" li에서 추출
+    manufacturer = "Nike Inc / (유)나이키코리아"  # 기본값
+    if len(more_info) > 2:
+      for item in _li_texts(more_info[2]):
+        if "수입자" in item or "제조자" in item:
+          manufacturer = item.split("표기:")[-1].strip() if "표기:" in item else item
+          break
+
+    # 세탁방법 / 품질보증: moreInfo[1] → 각 li 시작 키워드로 분류
+    care_instructions = ""
+    quality_guarantee = ""
+    if len(more_info) > 1:
+      for item in _li_texts(more_info[1]):
+        if item.startswith("세탁방법") and not care_instructions:
+          care_instructions = item
+        elif item.startswith("품질보증") and not quality_guarantee:
+          quality_guarantee = item
+
+    # PDP URL (원문링크): pdpUrl.url 우선, productInfo.url fallback
+    pdp_url_obj = prod_data.get("pdpUrl") or {}
+    video_url = (
+      (pdp_url_obj.get("url") if isinstance(pdp_url_obj, dict) else "")
+      or product_info.get("url")
+      or ""
+    )
 
     # detail_html: 상품설명 + 슬로건 + 상품특징 + 상품상세
     html_parts = []
@@ -393,7 +437,9 @@ class NikeClient:
       "style_code": style_code,
       "sex": gender_kr,
       "manufacturer": manufacturer,
-      "video_url": product_info.get("url") or "",  # 나이키 PDP URL (원문링크용)
+      "care_instructions": care_instructions,
+      "quality_guarantee": quality_guarantee,
+      "video_url": video_url,
       "options": options,
       "detail_html": detail_html,
     }
