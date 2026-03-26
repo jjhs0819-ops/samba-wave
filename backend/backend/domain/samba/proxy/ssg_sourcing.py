@@ -1,19 +1,23 @@
-"""SSG(신세계몰) 소싱용 웹 스크래핑 클라이언트 - httpx 기반.
+"""신세계백화점(department.ssg.com) 소싱용 웹 스크래핑 클라이언트 - httpx 기반.
 
 주의: proxy/ssg.py는 판매처(마켓) 등록용 Open API 클라이언트이므로,
 소싱(상품 수집)용은 이 파일에서 별도로 관리한다.
 
+소싱 대상:
+  - https://department.ssg.com/ (신세계백화점 온라인전용 상품만 취급)
+  - siteNo=6009 (신세계백화점 고정)
+  - 일반 SSG.COM 마켓플레이스 판매자 상품 제외
+
 SSG 사이트 정보:
-  - 검색: https://www.ssg.com/search.ssg?query={keyword}
-  - 상세: https://www.ssg.com/item/itemView.ssg?itemId={13자리}
+  - 검색: https://department.ssg.com/search?query={keyword}&page={n}
+  - 상세: https://department.ssg.com/item/itemView.ssg?itemId={13자리}&siteNo=6009
   - 이미지 CDN: sitem.ssgcdn.com
-  - robots.txt 엄격 → 보수적 간격 필수 (1초+ 권장)
 
 파싱 전략:
+  - 검색 결과: HTML 내 <script id="__NEXT_DATA__"> 태그 JSON 파싱
+               queries → fetchSearchItemListArea → ITEM_UNIT_LIST → dataList
   - 상세 조회: HTML 내 var resultItemObj / uitemObjList JS 변수 파싱 (1순위)
                og: 메타태그 + CSS 패턴 폴백 (2순위)
-  - 검색 결과: Next.js 페이지 script 태그 내 dataList JSON 파싱 (1순위)
-               HTML 블록 파싱 폴백 (2순위)
 """
 
 from __future__ import annotations
@@ -39,16 +43,16 @@ class RateLimitError(Exception):
 
 
 class SSGSourcingClient:
-    """SSG 소싱용 웹 스크래핑 클라이언트 (검색, 상세).
+    """신세계백화점(department.ssg.com) 소싱용 웹 스크래핑 클라이언트 (검색, 상세).
 
-    SSG.COM 상품 페이지 HTML을 파싱하여 상품 검색/상세 정보를 추출한다.
-    상세 페이지는 var resultItemObj JS 변수, 검색 페이지는 Next.js dataList JSON을 활용한다.
-    robots.txt가 엄격하므로 보수적 간격으로 요청해야 한다.
+    신세계백화점 온라인 전용 상품만 수집한다 (siteNo=6009).
+    일반 SSG.COM 마켓플레이스 판매자 상품은 수집하지 않는다.
     """
 
-    BASE = "https://www.ssg.com"
-    SEARCH_URL = "https://www.ssg.com/search.ssg"
-    ITEM_URL = "https://www.ssg.com/item/itemView.ssg"
+    BASE = "https://department.ssg.com"
+    SEARCH_URL = "https://department.ssg.com/search"
+    ITEM_URL = "https://department.ssg.com/item/itemView.ssg"
+    SITE_NO = "6009"
 
     HEADERS: dict[str, str] = {
         "User-Agent": (
@@ -60,7 +64,7 @@ class SSGSourcingClient:
         "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
-        "Referer": "https://www.ssg.com/",
+        "Referer": "https://department.ssg.com/",
     }
 
     def __init__(self, cookie: str = "") -> None:
@@ -104,10 +108,7 @@ class SSGSourcingClient:
         Raises:
             RateLimitError: 429/403 응답 시
         """
-        search_url = (
-            f"{self.SEARCH_URL}?query={quote(keyword)}"
-            f"&page={page}&count={min(size, 60)}"
-        )
+        search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page={page}"
         logger.info(f'[SSG] 검색 시작: "{keyword}" (page={page})')
 
         try:
@@ -157,85 +158,52 @@ class SSGSourcingClient:
         return self._parse_search_blocks(html)
 
     def _parse_datalist_json(self, html: str) -> list[dict[str, Any]]:
-        """Next.js 페이지에 내장된 dataList JSON에서 상품 목록 추출."""
-        products: list[dict[str, Any]] = []
-        seen: set[str] = set()
+        """department.ssg.com 검색 HTML의 __NEXT_DATA__ script 태그에서 상품 목록 추출.
 
-        # dataList 배열 시작 위치 탐색 (itemId/itemName이 포함된 것)
-        start_marker = re.search(r'"dataList"\s*:\s*\[', html)
-        if not start_marker:
-            return []
-
-        # 브라켓 카운터로 배열 끝 위치 탐색
-        array_start = start_marker.end() - 1  # '[' 포함
-        depth = 0
-        array_end = array_start
-        i = array_start
-        while i < len(html):
-            ch = html[i]
-            if ch == '\\':
-                i += 2
-                continue
-            if ch in ('"', "'"):
-                q = ch
-                i += 1
-                while i < len(html) and html[i] != q:
-                    if html[i] == '\\':
-                        i += 1
-                    i += 1
-            elif ch == '[':
-                depth += 1
-            elif ch == ']':
-                depth -= 1
-                if depth == 0:
-                    array_end = i + 1
-                    break
-            i += 1
-
-        if array_end <= array_start:
+        구조: <script id="__NEXT_DATA__" type="application/json">{...}</script>
+             → props.pageProps.dehydratedState.queries
+             → [fetchSearchItemListArea].state.data.areaList
+             → [unitType==ITEM_UNIT_LIST].dataList
+        """
+        # __NEXT_DATA__ script 태그 추출
+        m = re.search(
+            r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        if not m:
             return []
 
         try:
-            data_list = json.loads(html[array_start:array_end])
+            next_data = json.loads(m.group(1))
         except json.JSONDecodeError:
             return []
 
-        # itemId/itemName 없으면 다음 dataList 탐색
-        if not data_list or not isinstance(data_list[0], dict) or "itemId" not in data_list[0]:
-            # 다음 dataList 탐색
-            next_start = re.search(r'"dataList"\s*:\s*\[', html[array_end:])
-            if next_start:
-                offset = array_end + next_start.end() - 1
-                depth = 0
-                array_end2 = offset
-                i = offset
-                while i < len(html):
-                    ch = html[i]
-                    if ch == '\\':
-                        i += 2
-                        continue
-                    if ch in ('"', "'"):
-                        q = ch
-                        i += 1
-                        while i < len(html) and html[i] != q:
-                            if html[i] == '\\':
-                                i += 1
-                            i += 1
-                    elif ch == '[':
-                        depth += 1
-                    elif ch == ']':
-                        depth -= 1
-                        if depth == 0:
-                            array_end2 = i + 1
-                            break
-                    i += 1
-                try:
-                    data_list = json.loads(html[offset:array_end2])
-                except json.JSONDecodeError:
-                    return []
+        queries = (
+            next_data.get("props", {})
+            .get("pageProps", {})
+            .get("dehydratedState", {})
+            .get("queries", [])
+        )
 
-        if not data_list or not isinstance(data_list[0], dict) or "itemId" not in data_list[0]:
+        data_list: list[dict] = []
+        for q in queries:
+            qkey = q.get("queryKey") or []
+            if "fetchSearchItemListArea" not in qkey:
+                continue
+            area_list = q.get("state", {}).get("data", {}).get("areaList", [])
+            for area in area_list:
+                if area.get("unitType") == "ITEM_UNIT_LIST":
+                    data_list = area.get("dataList") or []
+                    break
+            if data_list:
+                break
+
+        if not data_list:
             return []
+
+        products: list[dict[str, Any]] = []
+        seen: set[str] = set()
 
         for item in data_list:
             item_id = str(item.get("itemId", ""))
@@ -273,19 +241,26 @@ class SSGSourcingClient:
             # 품절 여부
             is_sold_out = bool(item.get("soldOutMessage", "").strip())
 
+            # itemUrl이 department.ssg.com 도메인인지 확인
+            item_url = item.get("itemDetailLink") or item.get("itemUrl") or (
+                f"{self.ITEM_URL}?itemId={item_id}&siteNo={self.SITE_NO}"
+            )
+
             products.append({
                 "siteProductId": item_id,
                 "goodsNo": item_id,
                 "name": item_name,
                 "brand": item.get("brandName", ""),
+                "brandEngNm": item.get("brandEngNm", ""),
                 "salePrice": sale_price,
                 "originalPrice": original_price,
                 "discountRate": discount_rate,
                 "image": image,
                 "freeShipping": free_shipping,
                 "isSoldOut": is_sold_out,
-                "sourceUrl": item.get("itemUrl", f"{self.ITEM_URL}?itemId={item_id}"),
-                "siteName": item.get("siteName", ""),
+                "sourceUrl": item_url,
+                "siteNo": item.get("siteNo", self.SITE_NO),
+                "salestrNo": str(item.get("salestrNo", "")),
             })
 
         return products
@@ -340,7 +315,7 @@ class SSGSourcingClient:
         Raises:
             RateLimitError: 429/403 응답 시
         """
-        url = f"{self.ITEM_URL}?itemId={item_id}"
+        url = f"{self.ITEM_URL}?itemId={item_id}&siteNo={self.SITE_NO}"
         logger.info(f"[SSG] 상세 조회: {item_id}")
 
         try:
@@ -463,7 +438,18 @@ class SSGSourcingClient:
         name = obj.get("itemNm", "").strip()
         brand = obj.get("repBrandNm") or obj.get("brandNm", "")
         brand_code = str(obj.get("repBrandId") or obj.get("brandId", ""))
-        sell_price = self._safe_int(obj.get("sellprc", 0))
+
+        # department.ssg.com: resultItemObj.sellprc = 정상가 (할인 전 원가)
+        # 실제 할인가(최적가)는 HTML cdtl_price point 클래스에 렌더링됨
+        original_price = self._safe_int(obj.get("sellprc", 0))
+        sale_price_html = self._extract_dept_sale_price(html)
+        sell_price = sale_price_html if sale_price_html else original_price
+
+        # 할인율 계산
+        discount_rate = 0
+        if original_price > 0 and sell_price < original_price:
+            discount_rate = round((original_price - sell_price) / original_price * 100)
+
         best_amt = self._safe_int(obj.get("bestAmt", 0)) or sell_price
 
         # 품절 판단: soldOut 필드 (Y/N)
@@ -517,7 +503,7 @@ class SSGSourcingClient:
             "id": f"col_ssg_{item_id}_{timestamp}",
             "sourceSite": "SSG",
             "siteProductId": str(item_id),
-            "sourceUrl": f"{self.BASE}/item/itemView.ssg?itemId={item_id}",
+            "sourceUrl": f"{self.BASE}/item/itemView.ssg?itemId={item_id}&siteNo={self.SITE_NO}",
             "name": name,
             "nameEn": "",
             "nameJa": "",
@@ -532,12 +518,12 @@ class SSGSourcingClient:
             "detailImages": detail_images,
             "detailHtml": detail_html,
             "options": options,
-            "originalPrice": sell_price,   # SSG는 resultItemObj에 정상가 별도 없음 → 판매가로 대체
+            "originalPrice": original_price,
             "salePrice": sell_price,
             "bestBenefitPrice": best_amt,
-            "couponPrice": best_amt,        # SSG는 쿠폰가와 혜택가를 구분하지 않음
+            "couponPrice": best_amt,
             "memberDiscountRate": 0,
-            "discountRate": 0,
+            "discountRate": discount_rate,
             "origin": "",
             "material": "",
             "manufacturer": "",
@@ -692,7 +678,7 @@ class SSGSourcingClient:
             "id": f"col_ssg_{item_id}_{timestamp}",
             "sourceSite": "SSG",
             "siteProductId": str(item_id),
-            "sourceUrl": f"{self.BASE}/item/itemView.ssg?itemId={item_id}",
+            "sourceUrl": f"{self.BASE}/item/itemView.ssg?itemId={item_id}&siteNo={self.SITE_NO}",
             "name": name,
             "nameEn": "",
             "nameJa": "",
@@ -1041,6 +1027,22 @@ class SSGSourcingClient:
         converted = re.sub(r',\s*([}\]])', r'\1', converted)
 
         return converted
+
+    @staticmethod
+    def _extract_dept_sale_price(html: str) -> int:
+        """department.ssg.com 상세 페이지에서 최적가(할인가) 추출.
+
+        resultItemObj.sellprc는 정상가이므로, HTML의 cdtl_price point 클래스에서
+        실제 할인가를 추출한다.
+        """
+        m = re.search(
+            r'cdtl_price\s+point[^>]*>.*?ssg_price[^>]*>([\d,]+)',
+            html,
+            re.DOTALL,
+        )
+        if m:
+            return int(m.group(1).replace(",", ""))
+        return 0
 
     def _normalize_image(self, url: str) -> str:
         """이미지 URL 정규화."""
