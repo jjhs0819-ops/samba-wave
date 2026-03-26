@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Optional
 from xml.etree import ElementTree as ET
 
@@ -229,7 +228,9 @@ class ElevenstClient:
 
     # 계정 설정값 (없으면 기본값)
     tax_type = cfg.get("taxType", "01")
-    delivery_type = cfg.get("deliveryType", "DV_FREE")
+    # 스마트스토어 배송 코드 → 11번가 숫자 코드 변환
+    _DLV_MAP = {"DV_FREE": "01", "FREE": "01", "DV_CHARGE": "03", "CHARGE": "03", "DV_COND_FREE": "04", "CONDITIONAL_FREE": "04"}
+    delivery_type = _DLV_MAP.get(cfg.get("deliveryType", "DV_FREE"), "01")
     delivery_fee = int(cfg.get("deliveryFee", 0) or 0)
     return_fee = int(cfg.get("returnFee", 4000) or 4000)
     exchange_fee = int(cfg.get("exchangeFee", 8000) or 8000)
@@ -272,8 +273,6 @@ class ElevenstClient:
   <brand>{_escape_xml(brand)}</brand>
   <selPrc>{sale_price}</selPrc>
   <selMthdCd>01</selMthdCd>
-  <aplBgnDy>{datetime.now().strftime('%Y%m%d')}</aplBgnDy>
-  <aplEndDy>{(datetime.now().replace(year=datetime.now().year + 1)).strftime('%Y%m%d')}</aplEndDy>
   <prdWeight>0</prdWeight>
   <dlvCnFee>{delivery_fee}</dlvCnFee>
   <dlvGrntYn>Y</dlvGrntYn>
