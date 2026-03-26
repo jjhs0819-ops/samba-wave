@@ -777,17 +777,19 @@ export default function CollectorPage() {
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
-              // 그룹에 속한 상품 중 AI 미변환 상품만 추출
+              // 그룹에 속한 상품 조회 → AI 미변환 상품만 추출
               const productIds: string[] = []
               let skippedAi = 0
               for (const gid of selectedIds) {
-                const group = filters.find((r: SambaSearchFilter) => r.id === gid)
-                if (group?.products) {
-                  for (const p of group.products as { id: string; tags?: string[] }[]) {
-                    if ((p.tags || []).includes('__ai_image__')) { skippedAi++; continue }
-                    productIds.push(p.id)
+                try {
+                  const products = await collectorApi.listProducts(0, 10000, gid)
+                  if (Array.isArray(products)) {
+                    for (const p of products) {
+                      if ((p.tags || []).includes('__ai_image__')) { skippedAi++; continue }
+                      productIds.push(p.id)
+                    }
                   }
-                }
+                } catch { /* 스킵 */ }
               }
               if (productIds.length === 0) { showAlert(skippedAi > 0 ? `모든 상품이 이미 AI 변환 완료 (${skippedAi}건 스킵)` : '선택된 그룹에 상품이 없습니다'); return }
               const skipMsg = skippedAi > 0 ? `\n(AI 변환 완료 ${skippedAi}건 스킵)` : ''
