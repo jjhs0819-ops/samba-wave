@@ -28,9 +28,83 @@ class SambaReturn(SQLModel, table=True):
         sa_column=Column(Text, nullable=False, index=True),
     )
 
+    # 주문번호 (마켓 상품주문번호 — 사용자에게 표시되는 번호)
+    order_number: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
     # 상품 이미지
     product_image: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 상품명
+    product_name: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 고객명
+    customer_name: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 사업자명 (마켓 계정명)
+    business_name: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 판매 마켓
+    market: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 고객 전화번호
+    customer_phone: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 확인 여부
+    confirmed: bool = Field(default=False)
+
+    # 주문일
+    order_date: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+
+    # 체크날짜
+    check_date: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+
+    # 정산금액
+    settlement_amount: Optional[float] = Field(default=None)
+
+    # 환수금액
+    recovery_amount: Optional[float] = Field(default=None)
+
+    # 메모
+    memo: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 상품위치 (배송지 시/군)
+    product_location: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 전체 배송 주소
+    customer_address: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 마켓 주문상태 (교환요청, 취소완료 등)
+    market_order_status: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 완료내역 (진행중, 취소, 교환, 반품)
+    completion_detail: Optional[str] = Field(
+        default="진행중", sa_column=Column(Text, nullable=True)
     )
 
     # 유형: return, exchange, cancel
@@ -64,6 +138,16 @@ class SambaReturn(SQLModel, table=True):
     )
     completion_date: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+
+    # 고객주문 반품 상태
+    customer_order_no: Optional[str] = Field(
+        default="return_incomplete", sa_column=Column(Text, nullable=True)
+    )
+
+    # 원주문 반품 상태
+    original_order_no: Optional[str] = Field(
+        default="return_incomplete", sa_column=Column(Text, nullable=True)
     )
 
     # 메모 [{date, message}]

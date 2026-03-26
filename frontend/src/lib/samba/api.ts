@@ -820,6 +820,7 @@ export const contactApi = {
 export interface SambaReturn {
   id: string;
   order_id: string;
+  order_number?: string;
   product_image?: string;
   type: string;
   reason?: string;
@@ -833,7 +834,10 @@ export interface SambaReturn {
   business_name?: string;
   market?: string;
   confirmed?: boolean;
+  market_order_status?: string;
   order_date?: string;
+  settlement_amount?: number;
+  recovery_amount?: number;
   customer_id?: string;
   company?: string;
   completion_detail?: string;
@@ -844,6 +848,7 @@ export interface SambaReturn {
   return_link?: string;
   return_request_date?: string;
   product_location?: string;
+  customer_address?: string;
   return_source?: string;
   customer_order_no?: string;
   original_order_no?: string;
@@ -870,6 +875,15 @@ export const returnApi = {
     request<SambaReturn>(`${SAMBA_PREFIX}/returns/${id}/note`, { method: "POST", body: JSON.stringify({ note }) }),
   getStats: () => request<Record<string, number>>(`${SAMBA_PREFIX}/returns/stats`),
   getReasons: () => request<Record<string, { value: string; label: string }[]>>(`${SAMBA_PREFIX}/returns/reasons`),
+  syncFromMarkets: (days = 30, accountId?: string) => {
+    const body: Record<string, unknown> = { days }
+    if (accountId) body.account_id = accountId
+    return request<{ total_synced: number; results: { account: string; status: string; fetched?: number; synced?: number; message?: string }[] }>(
+      `${SAMBA_PREFIX}/returns/sync-from-markets`, { method: "POST", body: JSON.stringify(body) }
+    )
+  },
+  patch: (id: string, data: { confirmed?: boolean; settlement_amount?: number; recovery_amount?: number; check_date?: string; memo?: string; product_location?: string; completion_detail?: string; status?: string; customer_order_no?: string; original_order_no?: string }) =>
+    request<SambaReturn>(`${SAMBA_PREFIX}/returns/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 };
 
 // ── CS Inquiries ──
@@ -892,6 +906,7 @@ export interface SambaCSInquiry {
   reply_status: string
   replied_at?: string
   inquiry_date?: string
+  market_inquiry_no?: string
   collected_at: string
   created_at: string
 }
