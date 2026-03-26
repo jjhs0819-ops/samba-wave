@@ -118,7 +118,8 @@ class BaseRepository(Generic[ModelType]):
             await self.session.commit()
             await self.session.refresh(entity)
 
-            logger.debug(f"Created {self.model.__name__} with id {entity.id}")  # type: ignore[attr-defined]  # SQLModel dynamic attribute
+            entity_id = getattr(entity, "id", None) or getattr(entity, "key", "?")
+            logger.debug(f"Created {self.model.__name__} with id {entity_id}")
             created_entity: ModelType = entity
             return created_entity
 

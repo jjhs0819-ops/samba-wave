@@ -14,6 +14,10 @@ from backend.domain.samba.warroom.repository import SambaMonitorEventRepository
 from backend.utils.logger import logger
 
 
+_RETENTION_DAYS = 30  # 이벤트 보존 기간
+_emit_counter = 0  # 100회마다 정리 실행
+
+
 class SambaMonitorService:
   def __init__(self, session: AsyncSession):
     self.session = session
@@ -31,6 +35,7 @@ class SambaMonitorService:
     detail: Optional[Any] = None,
   ) -> None:
     """이벤트 기록 — 메인 로직을 방해하지 않도록 try/except 감싸기."""
+    global _emit_counter
     try:
       event = SambaMonitorEvent(
         event_type=event_type,
@@ -44,6 +49,15 @@ class SambaMonitorService:
       )
       self.session.add(event)
       await self.session.flush()
+
+      # 100회마다 30일 이전 이벤트 자동 정리
+      _emit_counter += 1
+      if _emit_counter >= 100:
+        _emit_counter = 0
+        cutoff = datetime.now(timezone.utc) - timedelta(days=_RETENTION_DAYS)
+        deleted = await self.repo.cleanup_old(cutoff)
+        if deleted:
+          logger.info(f"[monitor] {_RETENTION_DAYS}일 이전 이벤트 {deleted}건 정리")
     except Exception as e:
       logger.warning(f"[monitor] 이벤트 기록 실패: {e}")
 

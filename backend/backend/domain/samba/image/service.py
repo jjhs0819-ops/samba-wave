@@ -26,68 +26,68 @@ PRESET_IMAGE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "stati
 # 모델 프리셋 (12개) — image: 참조 이미지 파일명
 # ──────────────────────────────────────────────
 MODEL_PRESETS: dict[str, dict[str, str]] = {
-  # 성인 여성
+  # 성인 여성 — 파리 하이패션 런웨이 모델
   "female_v1": {
-    "label": "성인여성 — 청순 생머리",
-    "desc": "25세 한국인 여성, 어깨 아래 긴 생머리, 슬림 체형, 165cm, 환한 미소, 한쪽 손 주머니에 넣은 포즈, 밝은 피부",
+    "label": "여성 — 쿨 스트레이트",
+    "desc": "22세 백인 서양인 여성 패션모델, 쇄골 아래 길이 스트레이트 브론드 헤어, 날카로운 턱선, 높은 광대뼈, 170cm, 긴 목선, 무표정에 가까운 쿨한 눈빛, 한쪽 어깨를 살짝 앞으로 내민 런웨이 포즈, 파리 꾸레쥬 컬렉션 런웨이 모델",
     "image": "female_v1.png",
   },
   "female_v2": {
-    "label": "성인여성 — 시크 단발",
-    "desc": "25세 한국인 여성, 귀 아래 짧은 단발, 슬림 체형, 163cm, 차분하고 세련된 분위기, 양손 자연스럽게 내린 포즈",
+    "label": "여성 — 샤프 보브컷",
+    "desc": "23세 백인 서양인 여성 패션모델, 턱선 애쉬브라운 보브컷, 샤프한 이목구비, 각진 어깨라인, 172cm, 시선을 약간 내린 언뉘 표정, 체중을 한쪽 다리에 실은 콘트라포스토 자세, 파리 꾸레쥬 컬렉션 런웨이 모델",
     "image": "female_v2.png",
   },
   "female_v3": {
-    "label": "성인여성 — 건강 웨이브",
-    "desc": "25세 한국인 여성, 어깨 아래 긴 웨이브 갈색머리, 슬림 체형, 167cm, 밝고 건강한 미소, 한쪽 손 주머니에 넣은 포즈",
+    "label": "여성 — 에포트리스 웨이브",
+    "desc": "21세 백인 서양인 여성 패션모델, 센터파팅 느슨한 다크브라운 웨이브, 얇은 눈썹, 길고 가는 팔다리, 174cm, 입술을 살짝 벌린 무심한 표정, 손끝을 허벅지에 가볍게 댄 이지 포즈, 파리 꾸레쥬 컬렉션 런웨이 모델",
     "image": "female_v3.png",
   },
-  # 성인 남성
+  # 성인 남성 — 파리 하이패션 런웨이 모델
   "male_v1": {
-    "label": "성인남성 — 깔끔 슬림",
-    "desc": "27세 한국인 남성, 짧은 앞머리 내린 스타일, 슬림 체형, 176cm, 밝은 미소, 라이트그레이 슬랙스 착용, 깔끔한 느낌",
+    "label": "남성 — 클린 크롭",
+    "desc": "24세 백인 서양인 남성 패션모델, 짧은 텍스처드 브론드 크롭, 날카로운 턱선, 좁은 얼굴형, 183cm, 무표정의 날카로운 눈빛, 양손을 자연스럽게 늘어뜨린 런웨이 워킹 포즈, 파리 꾸레쥬 컬렉션 런웨이 모델",
     "image": "male_v1.png",
   },
   "male_v2": {
-    "label": "성인남성 — 남성미 근육",
-    "desc": "27세 한국인 남성, 짧은 투블럭 머리, 넓은 어깨 근육질 체형, 180cm, 진지한 표정, 검은색 슬랙스 착용, 강인한 분위기",
+    "label": "남성 — 슬릭백 스트롱",
+    "desc": "25세 백인 서양인 남성 패션모델, 다크브라운 슬릭백 헤어, 강한 골격, 넓은 어깨에 긴 팔다리, 186cm, 턱을 살짝 든 도도한 시선, 한 발 앞으로 내딛는 스트라이드 포즈, 파리 꾸레쥬 컬렉션 런웨이 모델",
     "image": "male_v2.png",
   },
   "male_v3": {
-    "label": "성인남성 — 훈남 스타일",
-    "desc": "27세 한국인 남성, 자연스러운 가르마 머리, 슬림 체형, 178cm, 부드러운 미소, 한쪽 손 주머니에 넣은 포즈, 따뜻한 훈남 이미지",
+    "label": "남성 — 앤드로지너스",
+    "desc": "23세 백인 서양인 남성 패션모델, 센터파팅 내추럴 라이트브라운 헤어, 섬세한 이목구비, 가는 체형, 182cm, 살짝 고개 돌린 사이드 시선, 안드로지너스한 분위기, 손을 가볍게 주머니에 걸친 포즈, 파리 꾸레쥬 컬렉션 런웨이 모델",
     "image": "male_v3.png",
   },
   # 키즈 여아
   "kids_girl_v1": {
     "label": "키즈여아 — 긴머리 차분",
-    "desc": "8세 한국인 여아, 어깨 아래 긴 생머리, 130cm, 차분하게 서있는 포즈, 양손 자연스럽게 내림",
+    "desc": "8세 백인 서양인 여아, 어깨 아래 긴 생머리, 130cm, 차분하게 서있는 포즈, 양손 자연스럽게 내림",
     "image": "kids_girl_v1.png",
   },
   "kids_girl_v2": {
     "label": "키즈여아 — 단발 활발",
-    "desc": "8세 한국인 여아, 턱선 단발머리, 128cm, 양팔 벌린 활발한 포즈, 밝은 표정",
+    "desc": "8세 백인 서양인 여아, 턱선 단발머리, 128cm, 양팔 벌린 활발한 포즈, 밝은 표정",
     "image": "kids_girl_v2.png",
   },
   "kids_girl_v3": {
     "label": "키즈여아 — 양갈래 귀여움",
-    "desc": "8세 한국인 여아, 양갈래 묶은머리, 130cm, 귀여운 미소, 자연스러운 포즈",
+    "desc": "8세 백인 서양인 여아, 양갈래 묶은머리, 130cm, 귀여운 미소, 자연스러운 포즈",
     "image": "kids_girl_v3.png",
   },
   # 키즈 남아
   "kids_boy_v1": {
     "label": "키즈남아 — 밝은 정면",
-    "desc": "8세 한국인 남아, 짧은 머리, 130cm, 밝은 미소, 양손 주머니에 넣고 정면 포즈",
+    "desc": "8세 백인 서양인 남아, 짧은 머리, 130cm, 밝은 미소, 양손 주머니에 넣고 정면 포즈",
     "image": "kids_boy_v1.png",
   },
   "kids_boy_v2": {
     "label": "키즈남아 — 장난꾸러기",
-    "desc": "8세 한국인 남아, 짧은 머리, 128cm, 한쪽 다리 들고 점프하는 역동적 포즈, 장난꾸러기 표정",
+    "desc": "8세 백인 서양인 남아, 짧은 머리, 128cm, 한쪽 다리 들고 점프하는 역동적 포즈, 장난꾸러기 표정",
     "image": "kids_boy_v2.png",
   },
   "kids_boy_v3": {
     "label": "키즈남아 — 차분한",
-    "desc": "8세 한국인 남아, 약간 긴 앞머리, 130cm, 양손 내리고 차분하게 서있는 포즈, 반바지 착용",
+    "desc": "8세 백인 서양인 남아, 약간 긴 앞머리, 130cm, 양손 내리고 차분하게 서있는 포즈, 반바지 착용",
     "image": "kids_boy_v3.png",
   },
 }
@@ -149,44 +149,82 @@ def _get_category_prompt(category: str, mode: str, model_desc: str) -> str:
     scene = scene_map.get(cat_type, scene_map["general"])
     return f"이 상품 사진을 참고해서, {scene} 연출컷을 만들어주세요. 상품의 색상, 디자인, 로고, 디테일을 100% 정확하게 유지해주세요. 전문 매거진 에디토리얼 스타일."
 
-  # mode == "video" — 영상용 전신 라이프스타일 연출
+  # mode == "video" — 하이패션 에디토리얼 전신 연출
   if mode == "video":
     video_map = {
-      "hiking_shoes": f"이 등산화 사진을 참고해서, {model_desc}이(가) 이 신발을 신고 산길을 걷고 있는 전신 사진을 생성해주세요. 등산복 차림, 자연스러운 산속 배경, 나무와 흙길, 자연광, 아웃도어 라이프스타일 감성.",
-      "sneakers": f"이 운동화 사진을 참고해서, {model_desc}이(가) 이 신발을 신고 도심 거리를 걷고 있는 전신 사진을 생성해주세요. 캐주얼 코디, 카페 거리/도심 보도, 자연스러운 워킹 포즈, 스트릿 패션 감성.",
-      "dress_shoes": f"이 구두 사진을 참고해서, {model_desc}이(가) 이 구두를 신고 서 있는 전신 사진을 생성해주세요. 정장/슬랙스 코디, 고급 로비나 대리석 바닥, 비즈니스 캐주얼 분위기.",
-      "sandals": f"이 샌들 사진을 참고해서, {model_desc}이(가) 이 샌들을 신고 해변가를 걷고 있는 전신 사진을 생성해주세요. 여름 캐주얼 코디, 모래사장/보드워크 배경, 밝은 자연광.",
-      "boots": f"이 부츠 사진을 참고해서, {model_desc}이(가) 이 부츠를 신고 가을 거리에 서 있는 전신 사진을 생성해주세요. 코트/니트 매치, 낙엽이 있는 공원길, 따뜻한 톤.",
-      "shoes": f"이 신발 사진을 참고해서, {model_desc}이(가) 이 신발을 신고 깔끔한 거리를 걷고 있는 전신 사진을 생성해주세요. 캐주얼 코디, 도심 배경, 자연스러운 포즈.",
-      "outer": f"이 아우터 사진을 참고해서, {model_desc}이(가) 이 아우터를 입고 도심 거리를 걷고 있는 전신 사진을 생성해주세요. 심플한 이너, 가로수길/도심 배경, 바람에 살짝 날리는 느낌.",
-      "top": f"이 상의 사진을 참고해서, {model_desc}이(가) 이 옷을 입고 카페에 앉아 있는 전신 사진을 생성해주세요. 자연스러운 일상 포즈, 밝고 깔끔한 카페 인테리어 배경.",
-      "bottom": f"이 하의 사진을 참고해서, {model_desc}이(가) 이 옷을 입고 거리를 걷고 있는 전신 사진을 생성해주세요. 심플한 상의 매치, 도심/공원 배경, 자연스러운 워킹 포즈.",
-      "bag": f"이 가방 사진을 참고해서, {model_desc}이(가) 이 가방을 메고 거리를 걷고 있는 전신 사진을 생성해주세요. 캐주얼 코디, 도심 쇼핑거리 배경, 자연스러운 포즈.",
-      "hat": f"이 모자 사진을 참고해서, {model_desc}이(가) 이 모자를 쓰고 야외에서 포즈를 취하고 있는 전신 사진을 생성해주세요. 캐주얼 코디, 공원/거리 배경, 밝은 자연광.",
-      "beauty": f"이 뷰티 제품 사진을 참고해서, {model_desc}이(가) 이 제품을 손에 들고 화장대 앞에 앉아 있는 상반신 사진을 생성해주세요. 밝은 조명, 깔끔한 뷰티룸 배경.",
-      "general": f"이 상품 사진을 참고해서, {model_desc}이(가) 이 상품을 사용하고 있는 전신 사진을 생성해주세요. 자연스러운 일상 공간 배경, 라이프스타일 감성.",
+      "hiking_shoes": f"이 등산화 사진을 참고해서, {model_desc}이(가) 이 신발을 신고 바위 위에 한 발을 올려놓은 채 먼 산을 응시하는 전신 사진을 생성해주세요. 테크니컬 아우터와 카고팬츠, 안개 낀 산속 새벽빛, 무표정하고 강인한 눈빛, 하이패션 아웃도어 에디토리얼.",
+      "sneakers": f"이 운동화 사진을 참고해서, {model_desc}이(가) 이 신발을 신고 콘크리트 도심 골목에서 한 발을 앞으로 내딛는 런웨이 워킹 전신 사진을 생성해주세요. 오버사이즈 코트에 와이드팬츠, 무심한 시선으로 카메라 옆을 응시, 스트릿 하이패션 무드.",
+      "dress_shoes": f"이 구두 사진을 참고해서, {model_desc}이(가) 이 구두를 신고 대리석 계단에 서 있는 전신 사진을 생성해주세요. 테일러드 수트, 한 손을 주머니에 넣고 턱을 살짝 든 자세, 쿨한 무표정, 클래식 하이패션 에디토리얼.",
+      "sandals": f"이 샌들 사진을 참고해서, {model_desc}이(가) 이 샌들을 신고 백사장 위를 걸어가는 전신 사진을 생성해주세요. 리넨 셔츠와 와이드팬츠, 바람에 옷이 자연스럽게 날리는 순간포착, 시선은 수평선 너머, 리조트 에디토리얼.",
+      "boots": f"이 부츠 사진을 참고해서, {model_desc}이(가) 이 부츠를 신고 젖은 도시 거리에 서 있는 전신 사진을 생성해주세요. 롱코트에 턱을 숨기고 한쪽 무릎을 살짝 구부린 포즈, 가로등 불빛 반사, 차가운 무표정, 시네마틱 에디토리얼.",
+      "shoes": f"이 신발 사진을 참고해서, {model_desc}이(가) 이 신발을 신고 미니멀한 콘크리트 공간에서 걸어가는 전신 사진을 생성해주세요. 모노톤 스타일링, 자신감 있는 스트라이드, 쿨한 시선, 하이패션 에디토리얼.",
+      "outer": f"이 아우터 사진을 참고해서, {model_desc}이(가) 이 아우터를 입고 도심 빌딩 사이 빈 거리를 걸어오는 전신 사진을 생성해주세요. 한 손으로 옷깃을 잡고 바람에 맞서는 포즈, 시선은 카메라 너머 먼 곳, 런웨이 에디토리얼.",
+      "top": f"이 상의 사진을 참고해서, {model_desc}이(가) 이 옷을 입고 콘크리트 벽에 어깨를 기대 선 전신 사진을 생성해주세요. 한쪽 팔을 자연스럽게 늘어뜨리고 살짝 고개를 기울인 포즈, 무심한 눈빛, 미니멀 하이패션 무드.",
+      "bottom": f"이 하의 사진을 참고해서, {model_desc}이(가) 이 옷을 입고 빈 런웨이 같은 긴 복도를 걸어오는 전신 사진을 생성해주세요. 미니멀한 상의 매치, 자신감 있는 스트라이드, 정면을 똑바로 응시, 런웨이 에디토리얼.",
+      "bag": f"이 가방 사진을 참고해서, {model_desc}이(가) 이 가방을 한 손에 가볍게 들고 계단을 내려오는 전신 사진을 생성해주세요. 모노톤 스타일링, 시선을 살짝 내린 언뉘 표정, 하이패션 스트릿 에디토리얼.",
+      "hat": f"이 모자 사진을 참고해서, {model_desc}이(가) 이 모자를 쓰고 역광 속 도시 옥상에서 포즈를 취하는 전신 사진을 생성해주세요. 미니멀 코디, 턱을 살짝 든 자세로 하늘을 응시, 시네마틱 하이패션 에디토리얼.",
+      "beauty": f"이 뷰티 제품 사진을 참고해서, {model_desc}이(가) 이 제품을 턱 아래로 가볍게 든 클로즈업 사진을 생성해주세요. 글로시한 피부, 입술을 살짝 벌린 무심한 표정, 소프트 사이드 라이팅, 하이엔드 뷰티 에디토리얼.",
+      "general": f"이 상품 사진을 참고해서, {model_desc}이(가) 이 상품을 사용하고 있는 전신 사진을 생성해주세요. 미니멀한 콘크리트 배경, 런웨이 모델의 자신감 있는 자세, 무표정의 쿨한 눈빛, 하이패션 에디토리얼.",
     }
     prompt = video_map.get(cat_type, video_map["general"])
-    return prompt + " 상품의 색상, 디자인, 로고, 디테일을 100% 정확하게 유지해주세요. 전문 패션 화보 스타일, 9:16 세로 구도."
+    return prompt + " 상품의 색상, 디자인, 로고, 디테일을 100% 정확하게 유지해주세요. 파리 하이패션 에디토리얼 스타일, AI 느낌이 나지 않는 실제 화보처럼, 9:16 세로 구도."
 
-  # mode == "model"
+  # mode == "model" — 하이패션 착용컷
   model_prompt_map = {
-    "hiking_shoes": f"이 등산화 사진을 참고해서, {model_desc}이(가) 이 신발을 착용한 발 클로즈업 사진을 생성해주세요. 무릎 아래만 보이는 구도, 등산복/카고팬츠에 흰색 양말, 측면 각도, 라이트그레이 배경.",
-    "sneakers": f"이 운동화 사진을 참고해서, {model_desc}이(가) 이 신발을 착용한 발 클로즈업 사진을 생성해주세요. 무릎 아래만 보이는 구도, 조거팬츠에 숏양말, 측면 각도, 깔끔한 배경.",
-    "dress_shoes": f"이 구두 사진을 참고해서, {model_desc}이(가) 이 신발을 착용한 발 클로즈업 사진을 생성해주세요. 무릎 아래만 보이는 구도, 정장바지/슬랙스, 측면 각도, 깔끔한 배경.",
-    "sandals": f"이 샌들 사진을 참고해서, {model_desc}이(가) 이 신발을 착용한 발 클로즈업 사진을 생성해주세요. 무릎 아래만 보이는 구도, 맨발, 측면 각도, 밝은 배경.",
-    "boots": f"이 부츠 사진을 참고해서, {model_desc}이(가) 이 부츠를 착용한 사진을 생성해주세요. 무릎 아래만 보이는 구도, 스키니진/원피스, 측면 각도, 깔끔한 배경.",
-    "shoes": f"이 신발 사진을 참고해서, {model_desc}이(가) 이 신발을 착용한 발 클로즈업 사진을 생성해주세요. 무릎 아래만 보이는 구도, 흰 양말, 측면 각도, 깔끔한 배경.",
-    "outer": f"이 아우터 사진을 참고해서, {model_desc}이(가) 이 아우터를 입고 있는 상반신 사진을 생성해주세요. 안에 심플한 흰 티셔츠, 자연스러운 포즈, 흰색 스튜디오 배경.",
-    "top": f"이 상의 사진을 참고해서, {model_desc}이(가) 이 옷을 입고 있는 상반신 사진을 생성해주세요. 자연스러운 포즈, 흰색 스튜디오 배경, 전문 패션 화보 스타일.",
-    "bottom": f"이 하의 사진을 참고해서, {model_desc}이(가) 이 옷을 입고 있는 전신 사진을 생성해주세요. 심플한 흰 티셔츠 매치, 자연스러운 포즈, 흰색 스튜디오 배경.",
-    "bag": f"이 가방 사진을 참고해서, {model_desc}이(가) 이 가방을 들고/메고 있는 상반신 사진을 생성해주세요. 심플한 의상, 자연스러운 포즈, 흰색 스튜디오 배경.",
-    "hat": f"이 모자 사진을 참고해서, {model_desc}이(가) 이 모자를 쓰고 있는 상반신 사진을 생성해주세요. 심플한 의상, 자연스러운 포즈, 흰색 스튜디오 배경.",
-    "beauty": f"이 뷰티 제품 사진을 참고해서, {model_desc}이(가) 이 제품을 손에 들고 있는 클로즈업 사진을 생성해주세요. 깨끗한 피부, 자연스러운 포즈, 밝은 배경.",
-    "general": f"이 상품 사진을 참고해서, {model_desc}이(가) 이 상품을 사용/착용하고 있는 사진을 생성해주세요. 자연스러운 포즈, 흰색 스튜디오 배경.",
+    "hiking_shoes": f"이 등산화 사진을 참고해서, {model_desc}이(가) 이 신발을 착용한 발 클로즈업 사진을 생성해주세요. 무릎 아래만 보이는 구도, 테크니컬 카고팬츠에 기능성 양말, 한 발을 바위에 올린 역동적 각도, 콘크리트 그레이 배경.",
+    "sneakers": f"이 운동화 사진을 참고해서, {model_desc}이(가) 이 신발을 착용한 발 클로즈업 사진을 생성해주세요. 무릎 아래만 보이는 구도, 와이드 팬츠에 노쇼 양말, 한 발을 살짝 들어 올린 워킹 순간포착, 깨끗한 콘크리트 바닥.",
+    "dress_shoes": f"이 구두 사진을 참고해서, {model_desc}이(가) 이 신발을 착용한 발 클로즈업 사진을 생성해주세요. 무릎 아래만 보이는 구도, 테일러드 슬랙스, 다리를 교차한 우아한 자세, 대리석 바닥 배경.",
+    "sandals": f"이 샌들 사진을 참고해서, {model_desc}이(가) 이 신발을 착용한 발 클로즈업 사진을 생성해주세요. 무릎 아래만 보이는 구도, 맨발에 앵클릿, 한 발을 앞으로 내민 자세, 밝은 자연광 배경.",
+    "boots": f"이 부츠 사진을 참고해서, {model_desc}이(가) 이 부츠를 착용한 사진을 생성해주세요. 무릎 아래만 보이는 구도, 슬림 팬츠를 부츠 안에 넣은 스타일링, 체중을 한쪽에 실은 자세, 젖은 아스팔트 배경.",
+    "shoes": f"이 신발 사진을 참고해서, {model_desc}이(가) 이 신발을 착용한 발 클로즈업 사진을 생성해주세요. 무릎 아래만 보이는 구도, 크롭 팬츠에 노쇼 양말, 워킹 순간포착 각도, 미니멀 그레이 배경.",
+    "outer": f"이 아우터 사진을 참고해서, {model_desc}이(가) 이 아우터를 입고 있는 상반신 사진을 생성해주세요. 안에 심플한 블랙 터틀넥, 한 손으로 옷깃을 잡고 살짝 몸을 비튼 포즈, 쿨한 무표정, 라이트그레이 스튜디오 배경.",
+    "top": f"이 상의 사진을 참고해서, {model_desc}이(가) 이 옷을 입고 있는 상반신 사진을 생성해주세요. 한쪽 팔꿈치를 가볍게 구부리고 시선을 카메라 옆으로 던진 포즈, 무심한 언뉘 표정, 라이트그레이 스튜디오 배경.",
+    "bottom": f"이 하의 사진을 참고해서, {model_desc}이(가) 이 옷을 입고 있는 전신 사진을 생성해주세요. 미니멀 블랙 탑 매치, 한 발 앞으로 내딛는 런웨이 워킹 포즈, 정면 응시, 라이트그레이 스튜디오 배경.",
+    "bag": f"이 가방 사진을 참고해서, {model_desc}이(가) 이 가방을 한 손에 가볍게 들고 있는 상반신 사진을 생성해주세요. 모노톤 의상, 턱을 살짝 든 자세로 시선을 내린 포즈, 라이트그레이 스튜디오 배경.",
+    "hat": f"이 모자 사진을 참고해서, {model_desc}이(가) 이 모자를 쓰고 있는 상반신 사진을 생성해주세요. 모노톤 의상, 살짝 고개를 돌려 사이드 프로필이 보이는 포즈, 쿨한 눈빛, 라이트그레이 스튜디오 배경.",
+    "beauty": f"이 뷰티 제품 사진을 참고해서, {model_desc}이(가) 이 제품을 턱선 옆에 가볍게 든 클로즈업 사진을 생성해주세요. 글로시한 피부, 입술을 살짝 벌린 무심한 표정, 소프트 사이드 라이팅, 밝은 배경.",
+    "general": f"이 상품 사진을 참고해서, {model_desc}이(가) 이 상품을 사용/착용하고 있는 사진을 생성해주세요. 런웨이 모델의 자신감 있는 자세, 쿨한 무표정, 라이트그레이 스튜디오 배경.",
   }
   prompt = model_prompt_map.get(cat_type, model_prompt_map["general"])
-  return prompt + " 상품의 색상, 디자인, 로고, 디테일을 100% 정확하게 유지해주세요. 전문 패션 화보 스타일."
+  return prompt + (
+    " 상품의 색상, 디자인, 로고, 디테일을 100% 정확하게 유지해주세요."
+    " 파리 하이패션 에디토리얼 스타일, AI 느낌이 나지 않는 실제 화보처럼."
+    " 매우 중요: 배경색이 이미지 전체 캔버스를 빈틈없이 채워야 합니다. 흰색 여백, 테두리, 빈 공간이 절대 없어야 합니다."
+    " 절대 금지: 원본 상품 이미지에 없는 로고, 텍스트, 스폰서명, 브랜드 마크를 추가하지 마세요."
+    " 원본에 보이는 것만 정확히 재현하고, 당신이 알고 있는 지식으로 없는 요소를 추가하지 마세요."
+  )
+
+
+# 성별·연령 키워드 → 프리셋 그룹 매핑
+_GENDER_AGE_KEYWORDS: list[tuple[list[str], str]] = [
+  # 키즈 우선 (키즈 여아 > 키즈 남아 > 키즈 공용)
+  (["키즈여아", "여아", "걸즈", "girls", "girl"], "kids_girl"),
+  (["키즈남아", "남아", "보이즈", "boys", "boy"], "kids_boy"),
+  (["키즈", "아동", "주니어", "유아", "어린이", "kids", "junior", "child"], "kids_girl"),  # 성별 불명 시 여아 기본
+  # 성인
+  (["여성", "우먼", "우먼스", "레이디", "women", "woman", "ladies", "wmns", "여자"], "female"),
+  (["남성", "맨즈", "멘즈", "men", "man", "남자"], "male"),
+  (["남녀공용", "유니섹스", "unisex", "공용"], "female"),  # 공용은 여성 기본
+]
+
+def _detect_gender_age_from_text(category: str, name: str, brand: str = "") -> str | None:
+  """카테고리 + 상품명 텍스트에서 성별·연령 그룹 판별.
+
+  반환: 'female' | 'male' | 'kids_girl' | 'kids_boy' | None (판별 불가)
+  """
+  text = f"{category} {name} {brand}".lower().replace(" ", "")
+  for keywords, group in _GENDER_AGE_KEYWORDS:
+    for kw in keywords:
+      if kw.lower().replace(" ", "") in text:
+        return group
+  return None
+
+
+def _pick_preset_from_group(group: str) -> str:
+  """그룹명으로 프리셋 키 랜덤 선택."""
+  import random
+  presets = [k for k in MODEL_PRESETS if k.startswith(group)]
+  return random.choice(presets) if presets else "female_v1"
 
 
 class ImageTransformService:
@@ -303,6 +341,36 @@ class ImageTransformService:
     return True
 
   @staticmethod
+  def _is_same_image(img_a: bytes, img_b: bytes) -> bool:
+    """두 이미지가 동일/유사한지 판별 (축소 후 픽셀 비교).
+
+    Gemini가 프리셋을 재인코딩해도 감지할 수 있도록
+    32x32 축소 후 평균 색상 차이로 비교.
+    """
+    if img_a == img_b:
+      return True
+    if not img_a or not img_b:
+      return False
+    try:
+      from PIL import Image
+      a = Image.open(io.BytesIO(img_a)).convert("RGB").resize((32, 32))
+      b = Image.open(io.BytesIO(img_b)).convert("RGB").resize((32, 32))
+      pixels_a = list(a.getdata())
+      pixels_b = list(b.getdata())
+      # 평균 픽셀 차이 계산
+      total_diff = sum(
+        abs(pa[0] - pb[0]) + abs(pa[1] - pb[1]) + abs(pa[2] - pb[2])
+        for pa, pb in zip(pixels_a, pixels_b)
+      )
+      avg_diff = total_diff / (32 * 32 * 3)
+      # 평균 차이가 15 이하면 동일 이미지로 판단
+      return avg_diff < 15
+    except Exception:
+      # PIL 실패 시 바이트 크기 비교 fallback
+      ratio = abs(len(img_a) - len(img_b)) / max(len(img_a), len(img_b))
+      return ratio < 0.03 and img_a[:2048] == img_b[:2048]
+
+  @staticmethod
   def _detect_mime(data: bytes) -> str:
     """이미지 바이트에서 MIME 타입 감지."""
     if data[:4] == b"\x89PNG":
@@ -310,6 +378,73 @@ class ImageTransformService:
     if data[:4] == b"RIFF":
       return "image/webp"
     return "image/jpeg"
+
+  async def _detect_gender_from_image(self, api_key: str, model: str, image_bytes: bytes) -> str:
+    """Gemini로 이미지 분석하여 성별·연령 판별. fallback용."""
+    prompt = (
+      "이 상품 이미지를 보고 타겟 성별과 연령대를 판별해주세요.\n"
+      "반드시 다음 중 하나만 답하세요: female, male, kids_girl, kids_boy\n"
+      "다른 설명 없이 단어 하나만 출력하세요."
+    )
+    parts: list[dict[str, Any]] = [
+      {"text": prompt},
+      {"inline_data": {
+        "mime_type": self._detect_mime(image_bytes),
+        "data": base64.b64encode(image_bytes).decode("ascii"),
+      }},
+    ]
+    # 텍스트 전용 모델 사용 (이미지 생성 불필요)
+    text_model = model.replace("-image", "") if "-image" in model else model
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{text_model}:generateContent?key={api_key}"
+    try:
+      async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(url, json={
+          "contents": [{"parts": parts}],
+          "generationConfig": {"maxOutputTokens": 20},
+        })
+        resp.raise_for_status()
+        data = resp.json()
+        text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip().lower()
+        for group in ("kids_girl", "kids_boy", "female", "male"):
+          if group in text:
+            return group
+    except Exception as e:
+      logger.warning(f"[이미지] Gemini 성별 판별 실패: {e}")
+    return "female"  # 판별 실패 시 여성 기본
+
+  async def _resolve_preset_for_product(
+    self, product: Any, api_key: str, model: str,
+  ) -> tuple[str, str, bytes | None]:
+    """상품별 최적 프리셋 자동 결정. (preset_key, model_desc, ref_image) 반환."""
+    category = " > ".join(filter(None, [
+      getattr(product, "category1", ""),
+      getattr(product, "category2", ""),
+      getattr(product, "category3", ""),
+    ]))
+    name = product.name or ""
+    brand = product.brand or ""
+
+    # 1) 카테고리 + 상품명으로 판별
+    group = _detect_gender_age_from_text(category, name, brand)
+
+    # 2) 판별 불가 → Gemini 이미지 분석
+    if not group:
+      product_images = product.images or []
+      if product_images:
+        try:
+          img = await self._download_image(product_images[0])
+          group = await self._detect_gender_from_image(api_key, model, img)
+          logger.info(f"[이미지] {product.id} Gemini 성별 판별: {group}")
+        except Exception:
+          group = "female"
+      else:
+        group = "female"
+
+    preset_key = _pick_preset_from_group(group)
+    preset = MODEL_PRESETS[preset_key]
+    ref_image = await self._load_preset_image(preset_key)
+    logger.info(f"[이미지] {product.id} 자동 프리셋: {preset_key} ({preset['label']})")
+    return preset_key, preset["desc"], ref_image
 
   async def _load_preset_image(self, preset_key: str) -> bytes | None:
     """프리셋 참조 이미지 로드 — 로컬 → R2 CDN 순서로 fallback."""
@@ -347,18 +482,60 @@ class ImageTransformService:
   async def _transform_image_gemini(
     self, api_key: str, model: str, image_bytes: bytes,
     prompt: str, ref_image_bytes: bytes | None = None,
+    design_ref_bytes: bytes | None = None,
   ) -> bytes:
-    """Gemini API로 이미지 변환. 참조 모델 이미지가 있으면 함께 전송."""
+    """Gemini API로 이미지 변환.
+
+    ref_image_bytes: 모델 프리셋 참조 이미지
+    design_ref_bytes: 대표이미지 (디자인 기준 — 추가이미지 변환 시 사용)
+    """
     parts: list[dict[str, Any]] = []
 
-    # 참조 모델 이미지가 있으면 먼저 추가
     if ref_image_bytes:
-      ref_prompt = (
-        "첫 번째 이미지는 참조 모델입니다. "
-        "이 모델과 동일한 얼굴, 체형, 분위기를 유지하면서 "
-        "두 번째 상품 이미지의 옷/신발을 착용한 사진을 생성해주세요. "
+      # 상품 이미지를 먼저 보내고, 모델 프리셋을 나중에 → 상품 디자인 우선
+      main_prompt = (
+        "첫 번째 이미지는 반드시 착용/사용해야 할 상품입니다. "
+        "이 상품의 색상, 로고, 패턴, 텍스트, 디자인을 100% 정확하게 재현하세요. "
+        "절대로 상품의 디자인을 변경하거나 다른 옷으로 대체하지 마세요. "
+        "절대 금지: 원본 이미지에 없는 로고, 텍스트, 스폰서명을 추가하지 마세요. "
+        "당신이 알고 있는 브랜드 지식으로 없는 요소를 만들어내지 마세요. 보이는 것만 재현하세요. "
       )
-      parts.append({"text": ref_prompt + prompt})
+      last_img_label = "마지막 이미지는" if design_ref_bytes else "두 번째 이미지는"
+      main_prompt += (
+        f"\n[중요: 모델 교체 규칙]\n"
+        "첫 번째 이미지에 사람/모델이 있다면, 그 사람의 얼굴, 헤어스타일, 피부색, 체형을 모두 무시하세요. "
+        "오직 그 사람이 입고 있는 '옷/상품'만 추출하세요. "
+        f"{last_img_label} 새로운 모델의 참조입니다. "
+        "생성할 이미지의 모델은 반드시 이 참조 이미지의 얼굴, 헤어스타일, 피부색, 체형을 사용하세요. "
+        "원본 상품 이미지에 있던 모델의 외모는 절대 사용하지 마세요. 완전히 다른 사람으로 교체하는 것입니다. "
+        "모델은 반드시 백인 서양인(Caucasian)이어야 합니다. "
+        "반드시 첫 번째 이미지의 상품을 착용한 사진을 생성해야 합니다. "
+        "첫 번째 이미지가 앞면이면 앞면 착용컷, 뒷면이면 뒷면 착용컷을 생성하세요. 이미지의 각도를 그대로 존중하세요. "
+        "배경이 캔버스 전체를 빈틈없이 채워야 하며, 흰색 테두리나 여백이 절대 없어야 합니다. "
+      )
+      if design_ref_bytes:
+        main_prompt += (
+          "두 번째 이미지는 동일 상품의 대표 이미지입니다. 상품의 전체 디자인(색상, 브랜드, 소재감) 참고용으로만 사용하세요. "
+          "단, 각도는 반드시 첫 번째 이미지를 따르세요. "
+        )
+      parts.append({"text": main_prompt + prompt})
+
+      # 1) 상품 이미지 (최우선)
+      parts.append({
+        "inline_data": {
+          "mime_type": self._detect_mime(image_bytes),
+          "data": base64.b64encode(image_bytes).decode("ascii"),
+        }
+      })
+      # 2) 디자인 기준 대표이미지 (있으면)
+      if design_ref_bytes:
+        parts.append({
+          "inline_data": {
+            "mime_type": self._detect_mime(design_ref_bytes),
+            "data": base64.b64encode(design_ref_bytes).decode("ascii"),
+          }
+        })
+      # 3) 모델 프리셋 (얼굴/체형만 참고)
       parts.append({
         "inline_data": {
           "mime_type": self._detect_mime(ref_image_bytes),
@@ -367,14 +544,13 @@ class ImageTransformService:
       })
     else:
       parts.append({"text": prompt})
-
-    # 상품 이미지 추가
-    parts.append({
-      "inline_data": {
-        "mime_type": self._detect_mime(image_bytes),
-        "data": base64.b64encode(image_bytes).decode("ascii"),
-      }
-    })
+      # 상품 이미지만
+      parts.append({
+        "inline_data": {
+          "mime_type": self._detect_mime(image_bytes),
+          "data": base64.b64encode(image_bytes).decode("ascii"),
+        }
+      })
 
     body = {
       "contents": [{"parts": parts}],
@@ -397,7 +573,11 @@ class ImageTransformService:
       parts_resp = candidates[0].get("content", {}).get("parts", [])
       for part in parts_resp:
         if "inlineData" in part:
-          return base64.b64decode(part["inlineData"]["data"])
+          result = base64.b64decode(part["inlineData"]["data"])
+          # 참조 프리셋 이미지가 그대로 반환된 경우 거부
+          if ref_image_bytes and self._is_same_image(result, ref_image_bytes):
+            raise ValueError("Gemini가 참조 프리셋 이미지를 그대로 반환 — 변환 실패")
+          return result
 
       raise ValueError("Gemini 응답에 이미지 없음")
 
@@ -469,14 +649,17 @@ class ImageTransformService:
     """여러 상품의 이미지를 일괄 변환."""
     from backend.domain.samba.collector.repository import SambaCollectedProductRepository
     repo = SambaCollectedProductRepository(self.session)
-    api_key, model = await self._get_gemini_config()
+    api_key, gemini_model = await self._get_gemini_config()
 
-    # 모델 프리셋 설명 + 참조 이미지 로드
-    preset = MODEL_PRESETS.get(model_preset, MODEL_PRESETS["female_v1"])
-    model_desc = preset["desc"]
-    ref_image: bytes | None = None
-    if mode == "model":
-      ref_image = await self._load_preset_image(model_preset)
+    is_auto = model_preset == "auto"
+
+    # auto가 아니면 기존처럼 고정 프리셋
+    if not is_auto:
+      preset = MODEL_PRESETS.get(model_preset, MODEL_PRESETS["female_v1"])
+      fixed_model_desc = preset["desc"]
+      fixed_ref_image: bytes | None = None
+      if mode == "model":
+        fixed_ref_image = await self._load_preset_image(model_preset)
 
     results: list[dict[str, Any]] = []
     total_transformed = 0
@@ -499,21 +682,40 @@ class ImageTransformService:
       update_data: dict[str, Any] = {}
       product_images = product.images or []
 
+      # auto 모드: 상품별 프리셋 자동 결정
+      if is_auto and mode == "model":
+        _, model_desc, ref_image = await self._resolve_preset_for_product(
+          product, api_key, gemini_model,
+        )
+      elif not is_auto:
+        model_desc = fixed_model_desc
+        ref_image = fixed_ref_image
+      else:
+        model_desc = ""
+        ref_image = None
+
       # 프롬프트 생성
       prompt = _get_category_prompt(category, mode, model_desc)
 
       # ── 모델 착용 모드: 대표1장 + 추가3장 고정 생성 ──
       if mode == "model" and product_images:
+        # 0) 대표이미지 다운로드 (디자인 기준으로 재사용)
+        thumb_bytes: bytes | None = None
+        try:
+          thumb_bytes = await self._download_image(product_images[0])
+        except Exception as e:
+          logger.error(f"[이미지] {pid} 대표이미지 다운로드 실패: {e}")
+
         # 1) 대표이미지 변환
         new_thumb_url = None
-        try:
-          img = await self._download_image(product_images[0])
-          transformed = await self._transform_image_gemini(api_key, model, img, prompt, ref_image)
-          new_thumb_url = await self._save_image(transformed, product_images[0])
-          product_result["transformed"] += 1
-        except Exception as e:
-          logger.error(f"[이미지] {pid} 대표이미지 변환 실패: {e}")
-          product_result["failed"] += 1
+        if thumb_bytes:
+          try:
+            transformed = await self._transform_image_gemini(api_key, gemini_model, thumb_bytes, prompt, ref_image)
+            new_thumb_url = await self._save_image(transformed, product_images[0])
+            product_result["transformed"] += 1
+          except Exception as e:
+            logger.error(f"[이미지] {pid} 대표이미지 변환 실패: {e}")
+            product_result["failed"] += 1
 
         # 2) 추가이미지 소스 결정: 추가이미지 있으면 사용, 없으면 상세이미지 참고
         raw_additional = list(product_images[1:]) if len(product_images) > 1 else []
@@ -533,13 +735,13 @@ class ImageTransformService:
           if additional_sources:
             logger.info(f"[이미지] {pid} 추가이미지 없음 → 상세이미지 {len(additional_sources)}장 참고")
 
-        # 3) 소스에서 최대 3개 뽑아 변환 → 추가이미지 3장 생성
+        # 3) 소스에서 최대 2개 뽑아 변환 → 추가이미지 2장 생성
         #    다운로드 후 이미지 비율도 2차 검증하여 배너 제거
         new_additional: list[str] = []
         src_idx = 0
         attempts = 0
         max_attempts = max(len(additional_sources) * 2, 6) if additional_sources else 3
-        while len(new_additional) < 3 and attempts < max_attempts:
+        while len(new_additional) < 2 and attempts < max_attempts:
           if additional_sources:
             src_url = additional_sources[src_idx % len(additional_sources)]
             src_idx += 1
@@ -552,7 +754,10 @@ class ImageTransformService:
             if additional_sources and not self._is_product_image(src_url, img):
               logger.info(f"[이미지] {pid} 비상품 이미지 스킵 (비율 이상): {src_url[:80]}")
               continue
-            transformed = await self._transform_image_gemini(api_key, model, img, prompt, ref_image)
+            transformed = await self._transform_image_gemini(
+              api_key, gemini_model, img, prompt, ref_image,
+              design_ref_bytes=thumb_bytes,
+            )
             new_url = await self._save_image(transformed, src_url)
             new_additional.append(new_url)
             product_result["transformed"] += 1
@@ -574,7 +779,7 @@ class ImageTransformService:
         # 대표이미지 변환
         try:
           img = await self._download_image(product_images[0])
-          transformed = await self._transform_image_gemini(api_key, model, img, prompt, ref_image)
+          transformed = await self._transform_image_gemini(api_key, gemini_model, img, prompt, ref_image)
           new_url = await self._save_image(transformed, product_images[0])
           updated_images = list(product_images)
           updated_images[0] = new_url
@@ -590,7 +795,7 @@ class ImageTransformService:
           for idx in range(1, len(base_images)):
             try:
               img = await self._download_image(base_images[idx])
-              transformed = await self._transform_image_gemini(api_key, model, img, prompt, ref_image)
+              transformed = await self._transform_image_gemini(api_key, gemini_model, img, prompt, ref_image)
               new_url = await self._save_image(transformed, base_images[idx])
               base_images[idx] = new_url
               product_result["transformed"] += 1
@@ -604,7 +809,7 @@ class ImageTransformService:
           for img_url in (product.detail_images or []):
             try:
               img = await self._download_image(img_url)
-              transformed = await self._transform_image_gemini(api_key, model, img, prompt, ref_image)
+              transformed = await self._transform_image_gemini(api_key, gemini_model, img, prompt, ref_image)
               new_url = await self._save_image(transformed, img_url)
               new_details.append(new_url)
               product_result["transformed"] += 1
@@ -624,7 +829,7 @@ class ImageTransformService:
         if use_thumbnail and product_images:
           try:
             img = await self._download_image(product_images[0])
-            transformed = await self._transform_image_gemini(api_key, model, img, prompt, ref_image)
+            transformed = await self._transform_image_gemini(api_key, gemini_model, img, prompt, ref_image)
             new_url = await self._save_image(transformed, product_images[0])
             updated_images = list(product_images)
             updated_images[0] = new_url
@@ -640,7 +845,7 @@ class ImageTransformService:
           for idx in range(1, len(base_images)):
             try:
               img = await self._download_image(base_images[idx])
-              transformed = await self._transform_image_gemini(api_key, model, img, prompt, ref_image)
+              transformed = await self._transform_image_gemini(api_key, gemini_model, img, prompt, ref_image)
               new_url = await self._save_image(transformed, base_images[idx])
               base_images[idx] = new_url
               product_result["transformed"] += 1
@@ -655,7 +860,7 @@ class ImageTransformService:
           for img_url in (product.detail_images or []):
             try:
               img = await self._download_image(img_url)
-              transformed = await self._transform_image_gemini(api_key, model, img, prompt, ref_image)
+              transformed = await self._transform_image_gemini(api_key, gemini_model, img, prompt, ref_image)
               new_url = await self._save_image(transformed, img_url)
               new_details.append(new_url)
               product_result["transformed"] += 1
@@ -665,7 +870,12 @@ class ImageTransformService:
               product_result["failed"] += 1
           update_data["detail_images"] = new_details
 
-      # DB 업데이트
+      # DB 업데이트 — __ai_image__ 태그 추가 (소싱처 최신화 시 이미지 보호)
+      if update_data and product_result["transformed"] > 0:
+        existing_tags = list(product.tags or [])
+        if "__ai_image__" not in existing_tags:
+          existing_tags.append("__ai_image__")
+          update_data["tags"] = existing_tags
       if update_data:
         try:
           await repo.update_async(pid, **update_data)

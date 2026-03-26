@@ -104,10 +104,12 @@ export function calcPrice(
   return { price, marginAmt, usedMin, feeAmt, calcStr: `₩${fmt(price)} = ${parts.join(' + ')}` }
 }
 
-function getSourceUrl(sourceSite: string, siteProductId: string | undefined): string {
+function getSourceUrl(sourceSite: string, siteProductId: string | undefined, videoUrl?: string | null): string {
   if (!siteProductId) return ''
-  if (sourceSite === 'MUSINSA') return `https://www.musinsa.com/products/${siteProductId}`
-  if (sourceSite === 'KREAM') return `https://kream.co.kr/products/${siteProductId}`
+  const site = (sourceSite || '').toUpperCase()
+  if (site === 'MUSINSA') return `https://www.musinsa.com/products/${siteProductId}`
+  if (site === 'KREAM') return `https://kream.co.kr/products/${siteProductId}`
+  if (site === 'NIKE') return videoUrl || `https://www.nike.com/kr/w?q=${siteProductId}`
   return ''
 }
 
@@ -236,12 +238,21 @@ const ProductCard = React.memo(function ProductCard({
   const openPriceHistory = useCallback(() => {
     setShowPriceHistoryModal(true)
     setPriceHistoryData(null)
-    collectorApi.getProduct(p.id).then(detail => {
-      setPriceHistoryData(((detail as unknown as Record<string, unknown>).price_history as Record<string, unknown>[]) || [])
+    collectorApi.getPriceHistory(p.id).then(data => {
+      setPriceHistoryData(data || [])
     }).catch(() => setPriceHistoryData([]))
   }, [p.id])
   const [showImageModal, setShowImageModal] = useState(false)
   const [zoomImg, setZoomImg] = useState<string | null>(null)
+  const [zoomIdx, setZoomIdx] = useState(0)
+  const [zoomList, setZoomList] = useState<string[]>([])
+  const openZoom = (url: string, images?: string[]) => {
+    const list = images || productImages || p.images || []
+    setZoomList(list)
+    const idx = list.indexOf(url)
+    setZoomIdx(idx >= 0 ? idx : 0)
+    setZoomImg(url)
+  }
   // 알림/확인 모달 (alert/confirm 대체)
   const [cardAlert, setCardAlert] = useState<{ msg: string; type?: 'success' | 'error' } | null>(null)
   const [cardConfirm, setCardConfirm] = useState<{ msg: string; onOk: () => void } | null>(null)
@@ -578,7 +589,7 @@ const ProductCard = React.memo(function ProductCard({
             border: label ? '1px solid rgba(255,140,0,0.2)' : '1px solid #2D2D2D',
           }}>
             <img src={img} alt="" loading="lazy" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-              onClick={() => setZoomImg(img)}
+              onClick={() => openZoom(img)}
               style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer' }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               {label && <span style={{ fontSize: '0.7rem', color: '#FF8C00', fontWeight: 600 }}>{label}</span>}
@@ -644,7 +655,7 @@ const ProductCard = React.memo(function ProductCard({
                         <div>
                           <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 대표이미지]</p>
                           <img src={mainImg} alt="대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                            onClick={() => setZoomImg(mainImg)}
+                            onClick={() => openZoom(mainImg)}
                             style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #2D2D2D', cursor: 'pointer' }} />
                           <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{mainImg}</p>
                         </div>
@@ -812,24 +823,33 @@ const ProductCard = React.memo(function ProductCard({
                   cursor: 'pointer',
                 }}
               >
-                <img
-                  src={zoomImg}
-                  alt=""
-                  onClick={e => e.stopPropagation()}
-                  style={{
-                    maxWidth: '90vw', maxHeight: '90vh',
-                    objectFit: 'contain', borderRadius: '8px',
-                    cursor: 'default',
-                  }}
-                />
+                {/* 왼쪽 화살표 */}
+                {zoomList.length > 1 && (
+                  <button
+                    onClick={e => { e.stopPropagation(); const prev = (zoomIdx - 1 + zoomList.length) % zoomList.length; setZoomIdx(prev); setZoomImg(zoomList[prev]) }}
+                    style={{ position: 'absolute', left: '20px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: '1px solid #555', color: '#fff', fontSize: '1.5rem', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', zIndex: 1 }}
+                  >‹</button>
+                )}
+                <div onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'default' }}>
+                  <img
+                    src={zoomList[zoomIdx] || zoomImg}
+                    alt=""
+                    style={{ maxWidth: '85vw', maxHeight: '80vh', objectFit: 'contain', borderRadius: '8px' }}
+                  />
+                  <span style={{ color: '#888', fontSize: '0.8rem' }}>
+                    {zoomIdx === 0 ? '대표' : `추가 ${zoomIdx}`} ({zoomIdx + 1}/{zoomList.length})
+                  </span>
+                </div>
+                {/* 오른쪽 화살표 */}
+                {zoomList.length > 1 && (
+                  <button
+                    onClick={e => { e.stopPropagation(); const next = (zoomIdx + 1) % zoomList.length; setZoomIdx(next); setZoomImg(zoomList[next]) }}
+                    style={{ position: 'absolute', right: '20px', top: '50%', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.5)', border: '1px solid #555', color: '#fff', fontSize: '1.5rem', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', zIndex: 1 }}
+                  >›</button>
+                )}
                 <button
                   onClick={() => setZoomImg(null)}
-                  style={{
-                    position: 'absolute', top: '20px', right: '20px',
-                    background: 'rgba(0,0,0,0.5)', border: '1px solid #555',
-                    color: '#ccc', fontSize: '1.2rem', padding: '4px 10px',
-                    borderRadius: '6px', cursor: 'pointer',
-                  }}
+                  style={{ position: 'absolute', top: '20px', right: '20px', background: 'rgba(0,0,0,0.5)', border: '1px solid #555', color: '#ccc', fontSize: '1.2rem', padding: '4px 10px', borderRadius: '6px', cursor: 'pointer' }}
                 >✕</button>
               </div>
             )}
@@ -951,15 +971,20 @@ const ProductCard = React.memo(function ProductCard({
       {(compact && !expanded) ? (
         /* 간단보기: 원 상품명 + 등록 상품명 + 브랜드 + 원가 한 줄 */
         <div style={{ padding: '8px 14px', display: 'flex', gap: '10px', alignItems: 'center', fontSize: '0.78rem' }}>
-          <div onClick={() => { setProductImages(p.images || []); setShowImageModal(true) }} style={{ cursor: 'pointer', flexShrink: 0 }}>
-            <ProductImage src={p.images?.[0]} name={p.name} size={50} />
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
+            <div onClick={() => openZoom(p.images?.[0] || '', p.images || [])} style={{ cursor: 'pointer' }}>
+              <ProductImage src={p.images?.[0]} name={p.name} size={50} />
+            </div>
+            {(p.tags || []).includes('__ai_image__') && (
+              <span style={{ fontSize: '0.55rem', padding: '1px 4px', borderRadius: '3px', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.3)', background: 'rgba(255,140,0,0.08)' }}>AI</span>
+            )}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ color: '#FFFFFF', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{p.name}</span>
               <button onClick={(e) => { e.stopPropagation(); openPriceHistory() }}
                 style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>이력</button>
-              <button onClick={(e) => { e.stopPropagation(); const url = getSourceUrl(p.source_site, p.site_product_id); if (url) window.open(url, '_blank') }}
+              <button onClick={(e) => { e.stopPropagation(); const url = getSourceUrl(p.source_site, p.site_product_id, p.video_url); if (url) window.open(url, '_blank') }}
                 style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>원문</button>
               <button onClick={(e) => { e.stopPropagation(); onEnrich(p.id) }}
                 style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>업데이트</button>
@@ -977,7 +1002,7 @@ const ProductCard = React.memo(function ProductCard({
           width: '130px', flexShrink: 0, display: 'flex', flexDirection: 'column',
           alignItems: 'center', gap: '8px', paddingRight: '14px', borderRight: '1px solid #222',
         }}>
-          <div onClick={() => { setProductImages(p.images || []); setShowImageModal(true) }} style={{ cursor: 'pointer' }}>
+          <div onClick={() => openZoom(p.images?.[0] || '', p.images || [])} style={{ cursor: 'pointer' }}>
             <ProductImage src={p.images?.[0]} name={p.name} size={110} />
           </div>
           <button
@@ -987,28 +1012,13 @@ const ProductCard = React.memo(function ProductCard({
               border: '1px solid #2D2D2D', borderRadius: '4px', padding: '3px 10px',
               cursor: 'pointer', width: '100%',
             }}>이미지 변경</button>
-          {/* 작업 뱃지 */}
-          {((p.tags || []).includes('__img_filtered__') || (p.tags || []).includes('__ai_image__')) && (
-            <div style={{ display: 'flex', gap: '3px', width: '100%' }}>
-              {(p.tags || []).includes('__ai_image__') && (
-                <span style={{ fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', background: 'transparent', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.3)', flex: 1, textAlign: 'center' }}>AI이미지</span>
-              )}
-              {(p.tags || []).includes('__img_filtered__') && (
-                <span style={{ fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', background: 'transparent', color: '#818CF8', border: '1px solid rgba(99,102,241,0.3)', flex: 1, textAlign: 'center' }}>이미지필터링</span>
-              )}
-            </div>
+          {(p.tags || []).includes('__ai_image__') && (
+            <span style={{
+              fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', width: '100%', textAlign: 'center',
+              color: '#FF8C00', border: '1px solid rgba(255,140,0,0.3)', background: 'rgba(255,140,0,0.08)',
+            }}>AI이미지</span>
           )}
-          {/* 무배당발 배지 */}
-          {(p.free_shipping || p.same_day_delivery) && (
-            <div style={{ display: 'flex', gap: '3px', width: '100%' }}>
-              {p.free_shipping && (
-                <span style={{ fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', background: 'transparent', color: '#4C9AFF', border: '1px solid rgba(76,154,255,0.3)', flex: 1, textAlign: 'center' }}>무배</span>
-              )}
-              {p.same_day_delivery && (
-                <span style={{ fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', background: 'transparent', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.3)', flex: 1, textAlign: 'center' }}>당발</span>
-              )}
-            </div>
-          )}
+          {/* 무배당발 배지 — 제거됨 */}
         </div>
 
         {/* Right: Detail info */}
@@ -1025,7 +1035,7 @@ const ProductCard = React.memo(function ProductCard({
               }}>가격변경이력</button>
             <button
               onClick={() => {
-                const url = getSourceUrl(p.source_site, p.site_product_id)
+                const url = getSourceUrl(p.source_site, p.site_product_id, p.video_url)
                 if (url) window.open(url, '_blank')
               }}
               style={{

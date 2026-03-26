@@ -286,6 +286,10 @@ class MusinsaClient:
                 or gp.get("bestBenefitPrice")
                 or 0
             )
+            # 등급할인 관련 필드 디버그 로그
+            _grade_keys = {k: gp.get(k) for k in ("memberDiscountRate", "gradeDiscountRate", "memberGradeDiscountRate", "gradeRate", "partnerDiscountOn", "isMemberDiscount") if k in gp}
+            _d_grade_keys = {k: d.get(k) for k in ("partnerDiscountOn", "isMemberDiscount", "isPartnerDiscount", "memberBenefitOff") if k in d}
+            logger.info(f"[무신사 등급디버그] {goods_no}: gp등급필드={_grade_keys}, d등급필드={_d_grade_keys}, member_grade_rate={member_grade_rate}")
             logger.info(f"[무신사 가격원본] {goods_no}: couponPrice={coupon_price_raw}, "
                         f"api_best_benefit={api_best_benefit}, s_price={s_price}")
             # 쿠폰할인: goodsPrice.couponPrice 기본 + 쿠폰 API 보충 (수집/갱신 동일)
@@ -299,17 +303,21 @@ class MusinsaClient:
             coupon_applied_price = s_price - benefit_coupon_discount if benefit_coupon_discount > 0 else s_price
             benefit_base = s_price - benefit_coupon_discount
 
-            # 2단계: 등급할인 (benefit_base 기준, 10원 절사)
-            # partnerDiscountOn 필드는 신뢰 불가 — False여도 사이트는 등급할인 적용
-            # goodsPrice.memberDiscountRate가 로그인 시 정확한 값을 반환하므로 이를 기준으로 판단
-            grade_discount_rate = (
-                gp.get("memberDiscountRate")
-                or gp.get("gradeDiscountRate")
-                or gp.get("memberGradeDiscountRate")
-                or gp.get("gradeRate")
-                or member_grade_rate
-                or 0
+            # ── 등급 할인율 vs 등급 적립율 분리 ──
+            # 등급 할인: 상품별로 불가할 수 있음 (API가 0 반환 또는 필드 없음)
+            # 등급 적립: 유저 등급 기반, 항상 적용 (구매적립 + 적립금 선할인)
+            #
+            # 판별 기준: API goodsPrice에 memberDiscountRate > 0이면 등급할인 가능
+            #           0이거나 키 없으면 등급할인 불가 (fallback 금지)
+            _api_grade_discount = next(
+                (gp[k] for k in ("memberDiscountRate", "gradeDiscountRate", "memberGradeDiscountRate", "gradeRate")
+                 if k in gp and gp[k] is not None and gp[k] > 0),
+                0,
             )
+            grade_discount_rate = _api_grade_discount  # 등급 할인용 (상품별)
+            grade_point_rate = member_grade_rate or 0   # 등급 적립/선할인용 (유저 등급)
+
+            # 2단계: 등급할인 (benefit_base 기준, 10원 절사)
             grade_discount = int(benefit_base * grade_discount_rate / 100 / 10) * 10 if grade_discount_rate > 0 else 0
 
             # 3단계: 적립금 사용 (benefit_base - 등급할인 기준, 10원 절사)
@@ -321,21 +329,22 @@ class MusinsaClient:
             if not is_point_restricted and point_rate_pct > 0:
                 point_usage = int(point_base * point_rate_pct / 100 / 10) * 10  # 10원 절사
 
-            # 4단계: 적립 선할인 (isPrePoint=True만, 잔액 기준 × 등급율, 10원 절사)
-            # partnerDiscountOn과 무관하게 회원 등급 할인율 적용
+            # 4단계: 적립 선할인 (isPrePoint=True일 때)
+            # 구매적립 = (잔액) × 유저등급율 (10원 절사) → 선할인 = 구매적립 금액
             is_pre_point = d.get("isPrePoint") is True
             remaining = benefit_base - grade_discount - point_usage
-            pre_discount = int(remaining * grade_discount_rate / 100 / 10) * 10 if is_pre_point else 0
+            pre_discount = int(remaining * grade_point_rate / 100 / 10) * 10 if is_pre_point and grade_point_rate > 0 else 0
 
             best_benefit_price = remaining - pre_discount
 
             logger.info(
                 f"[무신사 혜택가] {goods_no}: "
                 f"할인가={s_price}, 쿠폰=-{benefit_coupon_discount}, "
-                f"benefit_base={benefit_base}, member_grade_rate={member_grade_rate}%, "
-                f"등급({grade_discount_rate}%)=-{grade_discount}, "
+                f"benefit_base={benefit_base}, "
+                f"등급할인({grade_discount_rate}%)=-{grade_discount}, "
+                f"등급적립율={grade_point_rate}%, "
                 f"적립금({point_rate_pct}%)=-{point_usage}(base={point_base}), "
-                f"선할인({grade_discount_rate}%,base={remaining + pre_discount})=-{pre_discount}, "
+                f"선할인({grade_point_rate}%,base={remaining + pre_discount})=-{pre_discount}, "
                 f"혜택가={best_benefit_price}"
             )
 

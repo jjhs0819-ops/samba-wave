@@ -56,12 +56,9 @@ export default function ProductsPage() {
   const [detailTemplates, setDetailTemplates] = useState<SambaDetailTemplate[]>([]);
   const [filterNameMap, setFilterNameMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  // 서버사이드 무한스크롤 상태
+  // 서버사이드 페이지네이션 상태
   const [serverTotal, setServerTotal] = useState(0);
   const [serverSites, setServerSites] = useState<string[]>([]);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const PAGE_SIZE = 50;
 
   // Filters
   const _initSearchType = searchParams.get("search_type") || "name";
@@ -97,7 +94,8 @@ export default function ProductsPage() {
 
   // AI 이미지 변환
   const [aiImgMode, setAiImgMode] = useState('background')
-  const [aiModelPreset, setAiModelPreset] = useState('female_v1')
+  const [aiModelPreset, setAiModelPreset] = useState('auto')
+  const [aiPresetList, setAiPresetList] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
   const [aiImgTransforming, setAiImgTransforming] = useState(false)
   const [imgFiltering, setImgFiltering] = useState(false)
   const [imgFilterScope, setImgFilterScope] = useState<'images' | 'detail' | 'all'>('images')
@@ -111,6 +109,14 @@ export default function ProductsPage() {
   useEffect(() => {
     if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
   }, [aiJobLogs])
+
+  // 프리셋 이미지 목록 로드
+  useEffect(() => {
+    proxyApi.listPresets().then(res => {
+      if (res.success) setAiPresetList(res.presets)
+    }).catch(() => {})
+  }, [])
+
 
   // 삭제 확인 모달
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: string[]; label: string } | null>(null);
@@ -134,23 +140,19 @@ export default function ProductsPage() {
   // 상품명 규칙 목록 (상품명 조합 적용용)
   const [nameRules, setNameRules] = useState<SambaNameRule[]>([]);
 
-  // 서버사이드 상품 로드 (무한스크롤)
-  const loadProducts = useCallback(async (reset = false) => {
-    if (reset) {
-      setLoading(true)
-      setAllProducts([])
-    } else {
-      setLoadingMore(true)
-    }
+  // 서버사이드 페이지네이션 상품 로드
+  const loadProducts = useCallback(async (page?: number) => {
+    const targetPage = page ?? currentPage
+    setLoading(true)
     try {
-      const currentSkip = reset ? 0 : allProducts.length
+      const skip = (targetPage - 1) * pageSize
       // status 필터에서 특수값 분리
       const statusParam = (statusFilter === 'has_orders' || statusFilter === 'free_ship' || statusFilter === 'same_day' || statusFilter === 'free_same')
         ? statusFilter : statusFilter || undefined
       const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
       const res = await collectorApi.scrollProducts({
-        skip: currentSkip,
-        limit: PAGE_SIZE,
+        skip,
+        limit: pageSize,
         search: searchQ.trim() || _idFilter || undefined,
         search_type: searchQ.trim() ? searchType : (_idFilter ? "id" : undefined),
         source_site: siteFilter || undefined,
@@ -159,25 +161,20 @@ export default function ProductsPage() {
         search_filter_id: filterByGroupId || undefined,
         sort_by: sortBy,
       })
-      if (reset) {
-        setAllProducts(res.items)
-      } else {
-        setAllProducts(prev => [...prev, ...res.items])
-      }
+      setAllProducts(res.items)
       setServerTotal(res.total)
       setServerSites(res.sites)
     } catch (e) {
       console.error("loadProducts error:", e)
     } finally {
       setLoading(false)
-      setLoadingMore(false)
     }
-  }, [allProducts.length, searchQ, searchType, siteFilter, statusFilter, aiFilter, filterByGroupId, sortBy])
+  }, [currentPage, pageSize, searchQ, searchType, siteFilter, statusFilter, aiFilter, filterByGroupId, sortBy])
 
   // 상품만 리로드 (삭제/수정 등 상품 변경 후 사용)
   const reloadProducts = useCallback(async () => {
-    await loadProducts(true)
-  }, [loadProducts])
+    await loadProducts(currentPage)
+  }, [loadProducts, currentPage])
 
   // 메타데이터 로드 (초기 1회)
   const load = useCallback(async () => {
@@ -213,37 +210,45 @@ export default function ProductsPage() {
       console.error("load error:", e)
     }
     // 상품은 별도 로드
-    await loadProducts(true)
+    await loadProducts(1)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  // 필터/정렬 변경 시 상품 리셋 로드 + 선택 초기화
+  // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화
   useEffect(() => {
     setSelectAll(false)
     setSelectedIds(new Set())
-    loadProducts(true)
+    setCurrentPage(1)
+    loadProducts(1)
   }, [searchQ, searchType, siteFilter, statusFilter, aiFilter, sortBy, filterByGroupId])
 
-  // 무한스크롤: 센티넬 감지 시 다음 페이지 로드
-  const hasMore = allProducts.length < serverTotal
+  // 페이지 변경 시 서버에서 해당 페이지 로드
+  const totalPages = Math.max(1, Math.ceil(serverTotal / pageSize))
+  const goToPage = useCallback((page: number) => {
+    const p = Math.max(1, Math.min(page, totalPages))
+    setCurrentPage(p)
+    setSelectAll(false)
+    setSelectedIds(new Set())
+    loadProducts(p)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [totalPages, loadProducts])
+
+  // pageSize 변경 시 1페이지로 리셋
   useEffect(() => {
-    if (!sentinelRef.current || !hasMore || loadingMore || loading) return
-    const observer = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting) loadProducts(false)
-    }, { threshold: 0.1 })
-    observer.observe(sentinelRef.current)
-    return () => observer.disconnect()
-  }, [hasMore, loadingMore, loading, loadProducts])
+    loadProducts(1)
+  }, [pageSize])
 
-  // 서버사이드이므로 products = allProducts (이미 필터/정렬 완료)
-  const products = allProducts
+  // highlight 시 해당 상품만 표시, 아니면 전체
+  const products = highlightProductId
+    ? allProducts.filter(p => p.id === highlightProductId)
+    : allProducts
 
-  // KPI 카드용 — counts API 사용
+  // KPI 카드용 — counts API 사용 (필터 변경 시만 재호출)
   const [kpiCounts, setKpiCounts] = useState({ total: 0, registered: 0, policy_applied: 0, sold_out: 0 })
   useEffect(() => {
     collectorApi.productCounts().then(setKpiCounts).catch(() => {})
-  }, [allProducts.length])
+  }, [siteFilter, statusFilter, aiFilter, searchQ])
   const registeredCount = kpiCounts.registered
 
   const totalCount = serverTotal;
@@ -838,7 +843,7 @@ export default function ProductsPage() {
       </div>)}
 
       {/* AI비용 + AI 이미지 변환 + 이미지 필터링 — 3단 나란히 배치 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '0.7fr 1.3fr 1fr', gap: '8px', marginBottom: '1rem' }}>
       {/* AI 비용 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(81,207,102,0.08)', border: '1px solid rgba(81,207,102,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.8125rem', color: '#51CF66', fontWeight: 600 }}>AI 비용</span>
@@ -861,11 +866,28 @@ export default function ProductsPage() {
           <option value="model">모델 착용</option>
         </select>
         {aiImgMode === 'model' && (
-          <select value={aiModelPreset} onChange={e => setAiModelPreset(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
-            <optgroup label="여성"><option value="female_v1">청순 생머리</option><option value="female_v2">시크 단발</option><option value="female_v3">건강 웨이브</option></optgroup>
-            <optgroup label="남성"><option value="male_v1">깔끔 슬림</option><option value="male_v2">남성미 근육</option><option value="male_v3">훈남 스타일</option></optgroup>
-            <optgroup label="키즈 여아"><option value="kids_girl_v1">긴머리 차분</option><option value="kids_girl_v2">단발 활발</option><option value="kids_girl_v3">양갈래 귀여움</option></optgroup>
-            <optgroup label="키즈 남아"><option value="kids_boy_v1">밝은 정면</option><option value="kids_boy_v2">장난꾸러기</option><option value="kids_boy_v3">차분한</option></optgroup>
+          <select
+            value={aiModelPreset}
+            onChange={e => setAiModelPreset(e.target.value)}
+            style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}
+          >
+            <option value="auto">자동 (성별·연령 판별)</option>
+            {['여성', '남성', '키즈 여아', '키즈 남아'].map(group => {
+              const groupPresets = aiPresetList.filter(p => {
+                if (group === '여성') return p.key.startsWith('female_')
+                if (group === '남성') return p.key.startsWith('male_')
+                if (group === '키즈 여아') return p.key.startsWith('kids_girl_')
+                return p.key.startsWith('kids_boy_')
+              })
+              if (!groupPresets.length) return null
+              return (
+                <optgroup key={group} label={group}>
+                  {groupPresets.map(p => (
+                    <option key={p.key} value={p.key}>{p.label.replace(/^.*—\s*/, '')}</option>
+                  ))}
+                </optgroup>
+              )
+            })}
           </select>
         )}
         <span style={{ fontSize: '0.78rem', color: '#888' }}>({selectedIds.size}개 상품)</span>
@@ -875,25 +897,32 @@ export default function ProductsPage() {
             const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 이미지를 변환하시겠습니까?`)
             if (!ok) return
             const ids = [...selectedIds]
+            const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
             setAiImgTransforming(true)
             setAiJobTitle(`AI 이미지변환 (${ids.length}개)`)
             setAiJobLogs([])
             setAiJobDone(false)
             setAiJobModal(true)
             const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
+            const startTime = ts()
+            addLog(`시작: ${startTime} (${ids.length}개 상품)`)
             let success = 0
             let fail = 0
             for (let i = 0; i < ids.length; i++) {
               const prod = allProducts.find(p => p.id === ids[i])
               const label = prod?.name?.slice(0, 30) || ids[i].slice(-8)
+              setAiJobTitle(`AI 이미지변환 [${i + 1}/${ids.length}] ${label}`)
               try {
                 const autoScope = { thumbnail: true, additional: true, detail: true }
                 const res = await proxyApi.transformImages([ids[i]], autoScope, aiImgMode, aiModelPreset)
-                if (res.success) { success++; addLog(`[${i + 1}/${ids.length}] ${label} — 완료`) }
-                else { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 실패: ${res.message}`) }
-              } catch (e) { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                if (res.success) { success++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 완료`) }
+                else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 실패: ${res.message}`) }
+              } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
             }
+            const endTime = ts()
+            setAiJobTitle(`AI 이미지변환 완료 (${success}/${ids.length})`)
             addLog(`\n완료: 성공 ${success}개 / 실패 ${fail}개`)
+            addLog(`시작 ${startTime} → 종료 ${endTime}`)
             setAiJobDone(true)
             setAiImgTransforming(false)
             setSelectedIds(new Set()); setSelectAll(false)
@@ -934,12 +963,14 @@ export default function ProductsPage() {
             for (let i = 0; i < ids.length; i++) {
               const prod = allProducts.find(p => p.id === ids[i])
               const label = prod?.name?.slice(0, 30) || ids[i].slice(-8)
+              setAiJobTitle(`이미지 필터링 [${i + 1}/${ids.length}] ${label}`)
               try {
                 const r = await proxyApi.filterProductImages([ids[i]], '', imgFilterScope)
                 if (r.success) { success++; addLog(`[${i + 1}/${ids.length}] ${label} — 완료`) }
                 else { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 실패`) }
               } catch (e) { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
             }
+            setAiJobTitle(`이미지 필터링 완료 (${success}/${ids.length})`)
             addLog(`\n완료: 성공 ${success}개 / 실패 ${fail}개`)
             setAiJobDone(true)
             setImgFiltering(false)
@@ -968,7 +999,6 @@ export default function ProductsPage() {
               onChange={(e) => handleSelectAll(e.target.checked)}
               style={{ accentColor: "#FF8C00", width: "13px", height: "13px", cursor: "pointer" }}
             />
-            <span style={{ fontSize: "0.8rem", color: "#666", whiteSpace: "nowrap" }}>전체선택</span>
           </label>
           <span style={{ fontSize: "0.875rem", color: "#E5E5E5", fontWeight: 600, whiteSpace: "nowrap" }}>
             상품관리 <span style={{ color: "#FF8C00" }}>( 총 <span>{totalCount}</span>개 검색 )</span>
@@ -992,7 +1022,7 @@ export default function ProductsPage() {
             fontSize: "0.78rem", padding: "4px 12px",
             border: "1px solid rgba(76,154,255,0.3)", borderRadius: "5px",
             color: "#4C9AFF", background: "rgba(76,154,255,0.08)", cursor: "pointer", whiteSpace: "nowrap",
-          }}>영상생성</button>
+          }}>영상</button>
           <button style={{
             fontSize: "0.78rem", padding: "4px 12px",
             border: "1px solid #3D3D3D", borderRadius: "5px",
@@ -1041,7 +1071,7 @@ export default function ProductsPage() {
               const sites = [...new Set(
                 Array.from(selectedIds).map(id => products.find(p => p.id === id)?.source_site).filter(Boolean)
               )].join(',')
-              router.push(`/samba/shipments?selected=${encodeURIComponent(ids)}&sites=${encodeURIComponent(sites)}&autoAll=1`)
+              router.push(`/samba/shipments?selected=${encodeURIComponent(ids)}&sites=${encodeURIComponent(sites)}&autoAll=1&priceOnly=1`)
             }}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
@@ -1056,6 +1086,24 @@ export default function ProductsPage() {
               color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}
           >상품삭제</button>
+          <button
+            onClick={async () => {
+              if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
+              const ids = [...selectedIds]
+              if (!await showConfirm(`${ids.length}개 상품을 수집차단 + 삭제하시겠습니까?\n(동일 상품이 다시 수집되지 않습니다)`)) return
+              try {
+                const res = await collectorApi.blockAndDelete(ids)
+                showAlert(`차단 ${res.blocked}건, 삭제 ${res.deleted}건 완료`, 'success')
+                setSelectedIds(new Set()); setSelectAll(false)
+                reloadProducts()
+              } catch (e) { showAlert(`수집차단 실패: ${e instanceof Error ? e.message : ''}`) }
+            }}
+            style={{
+              fontSize: "0.78rem", padding: "4px 12px",
+              border: "1px solid rgba(255,107,107,0.3)", borderRadius: "5px",
+              color: "#FF6B6B", background: "rgba(255,107,107,0.08)", cursor: "pointer", whiteSpace: "nowrap",
+            }}
+          >수집차단</button>
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
@@ -1146,6 +1194,40 @@ export default function ProductsPage() {
               color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}
           >강제삭제</button>
+          <button
+            onClick={async () => {
+              if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
+              // 선택된 상품의 group_key 수집
+              const selectedProducts = allProducts.filter(p => selectedIds.has(p.id))
+              const groupKeys = new Set(selectedProducts.map(p => p.group_key).filter(Boolean))
+              if (groupKeys.size === 0) { showAlert('선택한 상품에 그룹 정보가 없습니다'); return }
+              // 동일 그룹의 모든 상품 찾기
+              const groupIds = allProducts
+                .filter(p => p.group_key && groupKeys.has(p.group_key))
+                .map(p => p.id)
+              if (!await showConfirm(`선택한 ${selectedIds.size}건의 그룹(${groupKeys.size}개) 전체 ${groupIds.length}건을 삭제하시겠습니까?`)) return
+              setAiJobTitle(`그룹상품삭제 (${groupIds.length}건)`)
+              setAiJobLogs([`${groupKeys.size}개 그룹, ${groupIds.length}건 삭제 중...`])
+              setAiJobDone(false)
+              setAiJobModal(true)
+              const idSet = new Set(groupIds)
+              try {
+                const res = await collectorApi.bulkDeleteProducts(groupIds)
+                setAiJobLogs(prev => [...prev, `${res.deleted}건 삭제 완료 ✓`])
+                setAllProducts(prev => prev.filter(p => !idSet.has(p.id)))
+              } catch {
+                setAiJobLogs(prev => [...prev, `삭제 실패 ✗`])
+              }
+              setAiJobDone(true)
+              setSelectedIds(new Set())
+              setSelectAll(false)
+            }}
+            style={{
+              fontSize: "0.78rem", padding: "4px 12px",
+              border: "1px solid #FF6B6B", borderRadius: "5px",
+              color: "#FF6B6B", background: "rgba(255,107,107,0.1)", cursor: "pointer", whiteSpace: "nowrap",
+            }}
+          >그룹상품삭제</button>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <button
@@ -1156,7 +1238,7 @@ export default function ProductsPage() {
               color: viewMode === "compact" ? "#FF8C00" : "#C5C5C5",
               background: viewMode === "compact" ? "rgba(255,140,0,0.15)" : "transparent",
             }}
-          >간단보기</button>
+          >간단</button>
           <button
             onClick={() => setViewMode("card")}
             style={{
@@ -1165,7 +1247,7 @@ export default function ProductsPage() {
               color: viewMode === "card" ? "#FF8C00" : "#C5C5C5",
               background: viewMode === "card" ? "rgba(255,140,0,0.15)" : "transparent",
             }}
-          >건별보기</button>
+          >자세히</button>
           <button
             onClick={() => setViewMode("image")}
             style={{
@@ -1174,7 +1256,7 @@ export default function ProductsPage() {
               color: viewMode === "image" ? "#FF8C00" : "#C5C5C5",
               background: viewMode === "image" ? "rgba(255,140,0,0.15)" : "transparent",
             }}
-          >이미지만보기</button>
+          >사진</button>
           <select
             value={aiFilter}
             onChange={(e) => setAiFilter(e.target.value)}
@@ -1305,16 +1387,36 @@ export default function ProductsPage() {
         </div>
       )}
 
-      {/* 무한스크롤 센티넬 + 로딩 표시 */}
-      <div ref={sentinelRef} style={{ height: 1 }} />
-      {loadingMore && (
-        <div style={{ textAlign: 'center', padding: '16px 0', color: '#888', fontSize: '0.8rem' }}>
-          상품 불러오는 중... ({allProducts.length} / {serverTotal})
-        </div>
-      )}
-      {!hasMore && allProducts.length > 0 && (
-        <div style={{ textAlign: 'center', padding: '12px 0', color: '#555', fontSize: '0.75rem' }}>
-          전체 {fmt(serverTotal)}개 상품 로드 완료
+      {/* 페이지네이션 */}
+      {serverTotal > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem', padding: '1rem 0', flexWrap: 'wrap' }}>
+          <button onClick={() => goToPage(1)} disabled={currentPage === 1}
+            style={{ padding: '4px 8px', fontSize: '0.75rem', border: '1px solid #2D2D2D', borderRadius: '4px', background: 'transparent', color: currentPage === 1 ? '#444' : '#C5C5C5', cursor: currentPage === 1 ? 'default' : 'pointer' }}>{'<<'}</button>
+          <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1}
+            style={{ padding: '4px 8px', fontSize: '0.75rem', border: '1px solid #2D2D2D', borderRadius: '4px', background: 'transparent', color: currentPage === 1 ? '#444' : '#C5C5C5', cursor: currentPage === 1 ? 'default' : 'pointer' }}>{'<'}</button>
+          {(() => {
+            const pages: number[] = []
+            const start = Math.max(1, currentPage - 4)
+            const end = Math.min(totalPages, start + 9)
+            for (let i = start; i <= end; i++) pages.push(i)
+            return pages.map(p => (
+              <button key={p} onClick={() => goToPage(p)}
+                style={{ padding: '4px 10px', fontSize: '0.75rem', border: p === currentPage ? '1px solid #FF8C00' : '1px solid #2D2D2D', borderRadius: '4px', background: p === currentPage ? 'rgba(255,140,0,0.15)' : 'transparent', color: p === currentPage ? '#FF8C00' : '#C5C5C5', cursor: 'pointer', fontWeight: p === currentPage ? 700 : 400 }}>{p}</button>
+            ))
+          })()}
+          <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}
+            style={{ padding: '4px 8px', fontSize: '0.75rem', border: '1px solid #2D2D2D', borderRadius: '4px', background: 'transparent', color: currentPage === totalPages ? '#444' : '#C5C5C5', cursor: currentPage === totalPages ? 'default' : 'pointer' }}>{'>'}</button>
+          <button onClick={() => goToPage(totalPages)} disabled={currentPage === totalPages}
+            style={{ padding: '4px 8px', fontSize: '0.75rem', border: '1px solid #2D2D2D', borderRadius: '4px', background: 'transparent', color: currentPage === totalPages ? '#444' : '#C5C5C5', cursor: currentPage === totalPages ? 'default' : 'pointer' }}>{'>>'}</button>
+          <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: '0.5rem' }}>
+            {fmt(serverTotal)}건 / {currentPage}/{fmt(totalPages)}p
+          </span>
+          <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }}
+            style={{ marginLeft: '0.5rem', padding: '3px 6px', fontSize: '0.75rem', background: '#111520', border: '1px solid #2A3040', color: '#C5C5C5', borderRadius: '4px' }}>
+            <option value={20}>20건</option>
+            <option value={50}>50건</option>
+            <option value={100}>100건</option>
+          </select>
         </div>
       )}
     </div>

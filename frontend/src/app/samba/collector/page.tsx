@@ -104,9 +104,15 @@ export default function CollectorPage() {
   // AI 이미지 변환
   const [aiImgScope, setAiImgScope] = useState({ thumbnail: true, additional: false, detail: false })
   const [aiImgMode, setAiImgMode] = useState('background')
-  const [aiModelPreset, setAiModelPreset] = useState('female_v1')
+  const [aiModelPreset, setAiModelPreset] = useState('auto')
   const [aiImgTransforming, setAiImgTransforming] = useState(false)
-  const [presetZoomImg, setPresetZoomImg] = useState<string | null>(null)
+  const [aiPresetList, setAiPresetList] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
+  // AI 작업 진행 모달
+  const [aiJobModal, setAiJobModal] = useState(false)
+  const [aiJobTitle, setAiJobTitle] = useState('')
+  const [aiJobLogs, setAiJobLogs] = useState<string[]>([])
+  const [aiJobDone, setAiJobDone] = useState(false)
+  const aiJobLogRef = useRef<HTMLDivElement>(null)
 
   // 이미지 필터링 (모델컷/연출컷/배너 제거)
   const [imgFiltering, setImgFiltering] = useState(false)
@@ -128,6 +134,7 @@ export default function CollectorPage() {
   // Group table filters
   const [siteFilter, setSiteFilter] = useState("");
   const [aiFilter, setAiFilter] = useState("");
+  const [collectFilter, setCollectFilter] = useState("")
   const [marketRegFilter, setMarketRegFilter] = useState("")
   const [tagRegFilter, setTagRegFilter] = useState("")
   const [policyRegFilter, setPolicyRegFilter] = useState("")
@@ -174,6 +181,12 @@ export default function CollectorPage() {
   }, [])
 
   useEffect(() => { load(); loadTree(); }, [load, loadTree]);
+  useEffect(() => {
+    proxyApi.listPresets().then(res => { if (res.success) setAiPresetList(res.presets) }).catch(() => {})
+  }, [])
+  useEffect(() => {
+    if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
+  }, [aiJobLogs])
 
   // 프록시 & 무신사 인증 상태 확인
   useEffect(() => {
@@ -449,6 +462,15 @@ export default function CollectorPage() {
       }
     })
   }
+  if (collectFilter) {
+    displayedFilters = displayedFilters.filter((f) => {
+      const r = f as unknown as Record<string, number>
+      const cnt = r.collected_count ?? 0
+      if (collectFilter === 'collected') return cnt > 0
+      if (collectFilter === 'uncollected') return cnt === 0
+      return true
+    })
+  }
   if (marketRegFilter) {
     displayedFilters = displayedFilters.filter((f) => {
       const r = f as unknown as Record<string, number>
@@ -703,7 +725,7 @@ export default function CollectorPage() {
       </div>
 
       {/* AI비용 + AI이미지변환 + 이미지필터링 — 3단 나란히 배치 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginTop: '1.25rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '0.7fr 1.3fr 1fr', gap: '8px', marginTop: '1.25rem' }}>
         {/* AI 비용 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(81,207,102,0.08)', border: '1px solid rgba(81,207,102,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.8125rem', color: '#51CF66', fontWeight: 600 }}>AI 비용</span>
@@ -727,33 +749,85 @@ export default function CollectorPage() {
             <option value="model">모델 착용</option>
           </select>
           {aiImgMode === 'model' && (
-            <select value={aiModelPreset} onChange={e => setAiModelPreset(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
-              <optgroup label="여성"><option value="female_v1">청순 아이돌</option><option value="female_v2">시크 단발</option><option value="female_v3">건강 웨이브</option></optgroup>
-              <optgroup label="남성"><option value="male_v1">깔끔 아이돌</option><option value="male_v2">스포티 근육</option><option value="male_v3">부드러운 중머리</option></optgroup>
-              <optgroup label="키즈 여아"><option value="kids_girl_v1">긴머리 활발</option><option value="kids_girl_v2">단발 쾌활</option><option value="kids_girl_v3">양갈래 귀여움</option></optgroup>
-              <optgroup label="키즈 남아"><option value="kids_boy_v1">활발 밝은</option><option value="kids_boy_v2">장난꾸러기</option><option value="kids_boy_v3">차분한</option></optgroup>
+            <select
+              value={aiModelPreset}
+              onChange={e => setAiModelPreset(e.target.value)}
+              style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}
+            >
+              <option value="auto">자동 (성별·연령 판별)</option>
+              {['여성', '남성', '키즈 여아', '키즈 남아'].map(group => {
+                const groupPresets = aiPresetList.filter(p => {
+                  if (group === '여성') return p.key.startsWith('female_')
+                  if (group === '남성') return p.key.startsWith('male_')
+                  if (group === '키즈 여아') return p.key.startsWith('kids_girl_')
+                  return p.key.startsWith('kids_boy_')
+                })
+                if (!groupPresets.length) return null
+                return (
+                  <optgroup key={group} label={group}>
+                    {groupPresets.map(p => (
+                      <option key={p.key} value={p.key}>{p.label.replace(/^.*—\s*/, '')}</option>
+                    ))}
+                  </optgroup>
+                )
+              })}
             </select>
           )}
           <span style={{ fontSize: '0.78rem', color: '#888' }}>({selectedIds.size}개 그룹)</span>
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
-              const ok = await showConfirm(`선택된 ${selectedIds.size}개 그룹의 상품 이미지를 변환하시겠습니까?`)
+              // 그룹에 속한 상품 조회 → AI 미변환 상품만 추출
+              const productIds: string[] = []
+              let skippedAi = 0
+              for (const gid of selectedIds) {
+                try {
+                  const products = await collectorApi.listProducts(0, 10000, gid)
+                  if (Array.isArray(products)) {
+                    for (const p of products) {
+                      if ((p.tags || []).includes('__ai_image__')) { skippedAi++; continue }
+                      productIds.push(p.id)
+                    }
+                  }
+                } catch { /* 스킵 */ }
+              }
+              if (productIds.length === 0) { showAlert(skippedAi > 0 ? `모든 상품이 이미 AI 변환 완료 (${skippedAi}건 스킵)` : '선택된 그룹에 상품이 없습니다'); return }
+              const skipMsg = skippedAi > 0 ? `\n(AI 변환 완료 ${skippedAi}건 스킵)` : ''
+              const ok = await showConfirm(`${selectedIds.size}개 그룹 (${productIds.length}개 상품)의 이미지를 변환하시겠습니까?${skipMsg}`)
               if (!ok) return
+              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
               setAiImgTransforming(true)
-              try {
-                const res = await proxyApi.transformByGroups([...selectedIds], { thumbnail: true, additional: true, detail: true }, aiImgMode, aiModelPreset)
-                if (res.success) {
-                  showAlert(res.message, 'success')
-                  const cnt = res.total_transformed || 0
-                  setLastAiUsage({ calls: cnt, tokens: cnt * 2000, cost: cnt * 3, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
-                } else showAlert(res.message, 'error')
-              } catch (e) { showAlert(`변환 실패: ${e instanceof Error ? e.message : '오류'}`, 'error') }
-              finally { setAiImgTransforming(false); setSelectedIds(new Set()); setSelectAll(false) }
+              setAiJobTitle(`AI 이미지변환 (${productIds.length}개)`)
+              setAiJobLogs([])
+              setAiJobDone(false)
+              setAiJobModal(true)
+              const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
+              const startTime = ts()
+              addLog(`시작: ${startTime} (${productIds.length}개 상품)`)
+              let success = 0
+              let fail = 0
+              for (let i = 0; i < productIds.length; i++) {
+                const label = productIds[i].slice(-8)
+                setAiJobTitle(`AI 이미지변환 [${i + 1}/${productIds.length}]`)
+                try {
+                  const res = await proxyApi.transformImages([productIds[i]], { thumbnail: true, additional: true, detail: true }, aiImgMode, aiModelPreset)
+                  if (res.success) { success++; addLog(`[${ts()}] [${i + 1}/${productIds.length}] ${label} — 완료`) }
+                  else { fail++; addLog(`[${ts()}] [${i + 1}/${productIds.length}] ${label} — 실패: ${res.message}`) }
+                } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${productIds.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+              }
+              const endTime = ts()
+              setAiJobTitle(`AI 이미지변환 완료 (${success}/${productIds.length})`)
+              addLog(`\n완료: 성공 ${success}개 / 실패 ${fail}개`)
+              addLog(`시작 ${startTime} → 종료 ${endTime}`)
+              setAiJobDone(true)
+              setAiImgTransforming(false)
+              const cnt = success
+              setLastAiUsage({ calls: cnt, tokens: cnt * 2000, cost: cnt * 3, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
+              setSelectedIds(new Set()); setSelectAll(false)
             }}
             disabled={aiImgTransforming || selectedIds.size === 0}
             style={{ marginLeft: 'auto', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
-          >{aiImgTransforming ? '변환중...' : `변환 실행 (${selectedIds.size}개)`}</button>
+          >{aiImgTransforming ? '변환중...' : '변환 실행'}</button>
         </div>
 
         {/* 이미지 필터링 */}
@@ -803,6 +877,12 @@ export default function CollectorPage() {
         }}>
           <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', margin: 0 }}>검색그룹 목록</h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            <select value={collectFilter} onChange={e => setCollectFilter(e.target.value)}
+              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: collectFilter ? '#F59E0B' : '#888', cursor: 'pointer' }}>
+              <option value="">상품수집</option>
+              <option value="collected">수집</option>
+              <option value="uncollected">미수집</option>
+            </select>
             <select value={marketRegFilter} onChange={e => setMarketRegFilter(e.target.value)}
               style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: marketRegFilter ? '#4C9AFF' : '#888', cursor: 'pointer' }}>
               <option value="">마켓등록</option>
@@ -910,16 +990,26 @@ export default function CollectorPage() {
             return result
           }
           // 전체 사이트별 리프 + 브랜드/카테고리 파싱 (크로스 필터용)
-          const allLeafInfos = tree.flatMap(s =>
+          const allLeafInfosRaw = tree.flatMap(s =>
             getAllLeaves(s).map(l => {
               const parsed = parseGroupName(l.name, s.source_site || '')
               return { ...l, _siteId: s.id, _siteSite: s.source_site || '', _brand: parsed.brand, _category: parsed.category }
             })
           )
+          // 상품수집 드롭박스 필터 적용
+          const allLeafInfos = collectFilter
+            ? allLeafInfosRaw.filter(l => {
+                const cnt = (l as unknown as Record<string, number>).collected_count ?? 0
+                return collectFilter === 'collected' ? cnt > 0 : cnt === 0
+              })
+            : allLeafInfosRaw
           // 크로스 필터: 사이트 목록 (선택된 브랜드 기준 필터)
-          const filteredSites = drillBrand
-            ? tree.filter(s => allLeafInfos.some(l => l._siteId === s.id && l._brand === drillBrand))
+          const baseSites = collectFilter
+            ? tree.filter(s => allLeafInfos.some(l => l._siteId === s.id))
             : tree
+          const filteredSites = drillBrand
+            ? baseSites.filter(s => allLeafInfos.some(l => l._siteId === s.id && l._brand === drillBrand))
+            : baseSites
           // 크로스 필터: 브랜드 목록 (선택된 사이트 기준 필터)
           const brandLeaves = drillSite
             ? allLeafInfos.filter(l => l._siteId === drillSite)
@@ -1125,39 +1215,6 @@ export default function CollectorPage() {
         })()}
       </div>
 
-      {/* 프리셋 이미지 확대 모달 */}
-      {presetZoomImg && (
-        <div
-          onClick={() => setPresetZoomImg(null)}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 10000,
-            background: 'rgba(0,0,0,0.85)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer',
-          }}
-        >
-          <img
-            src={presetZoomImg}
-            alt="모델 프리셋"
-            onClick={e => e.stopPropagation()}
-            onError={e => { (e.target as HTMLImageElement).alt = '이미지 없음' }}
-            style={{
-              maxWidth: '90vw', maxHeight: '90vh',
-              objectFit: 'contain', borderRadius: '8px',
-              cursor: 'default',
-            }}
-          />
-          <button
-            onClick={() => setPresetZoomImg(null)}
-            style={{
-              position: 'absolute', top: '20px', right: '20px',
-              background: 'rgba(0,0,0,0.5)', border: '1px solid #555',
-              color: '#ccc', fontSize: '1.2rem', padding: '4px 10px',
-              borderRadius: '6px', cursor: 'pointer',
-            }}
-          >✕</button>
-        </div>
-      )}
 
       {/* 갱신 결과 모달 */}
       {showRefreshModal && refreshResult && (
@@ -1823,6 +1880,26 @@ export default function CollectorPage() {
         </div>
       )}
     </div>
+      {/* AI 작업 진행 모달 */}
+      {aiJobModal && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#1E1E1E', border: '1px solid #333', borderRadius: '12px', padding: '1.5rem', width: '500px', maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}>
+            <h3 style={{ margin: '0 0 0.75rem', fontSize: '0.95rem', color: '#FF8C00' }}>{aiJobTitle}</h3>
+            <div ref={aiJobLogRef} style={{ flex: 1, overflowY: 'auto', background: '#111', borderRadius: '8px', padding: '0.75rem', fontSize: '0.75rem', fontFamily: 'monospace', color: '#CCC', maxHeight: '50vh', lineHeight: 1.6 }}>
+              {aiJobLogs.map((msg, i) => {
+                let color = '#CCC'
+                if (msg.includes('완료')) color = '#51CF66'
+                if (msg.includes('실패') || msg.includes('오류')) color = '#FF6B6B'
+                if (msg.includes('시작')) color = '#4C9AFF'
+                return <div key={i} style={{ color }}>{msg}</div>
+              })}
+            </div>
+            {aiJobDone && (
+              <button onClick={() => setAiJobModal(false)} style={{ marginTop: '0.75rem', padding: '0.5rem', background: '#333', border: '1px solid #555', borderRadius: '6px', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.8rem' }}>닫기</button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

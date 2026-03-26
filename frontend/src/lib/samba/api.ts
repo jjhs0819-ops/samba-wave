@@ -137,6 +137,16 @@ export const orderApi = {
       `${SAMBA_PREFIX}/orders/sync-from-markets`, { method: "POST", body: JSON.stringify({ days, account_id: accountId || undefined }) }),
   approveCancel: (id: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/approve-cancel`, { method: "POST" }),
+  exchangeAction: (id: string, action: string, reason?: string) =>
+    request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/exchange-action`, {
+      method: "POST", body: JSON.stringify({ action, reason }),
+    }),
+  returnAction: (id: string, action: string, reason?: string) =>
+    request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/return-action`, {
+      method: "POST", body: JSON.stringify({ action, reason }),
+    }),
+  findByOrderNumber: (orderNumber: string) =>
+    request<{ id: string; order_number: string } | null>(`${SAMBA_PREFIX}/orders/find-by-number?order_number=${encodeURIComponent(orderNumber)}`),
   shipOrder: (id: string, shippingCompany: string, trackingNumber: string) =>
     request<{ ok: boolean; market_sent: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/ship`, {
       method: "POST", body: JSON.stringify({ shipping_company: shippingCompany, tracking_number: trackingNumber }),
@@ -353,6 +363,11 @@ export const collectorApi = {
     if (status) p.set("status", status);
     return request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products?${p}`);
   },
+  getProductsByIds: (ids: string[]) =>
+    request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products/by-ids`, {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
   lookupByMarketNo: (marketProductNo: string) =>
     request<{ found: boolean; id?: string; source_site?: string; site_product_id?: string; original_link?: string; product_image?: string }>(
       `${SAMBA_PREFIX}/collector/products/lookup-by-market-no/${marketProductNo}`),
@@ -384,6 +399,7 @@ export const collectorApi = {
   searchProducts: (q: string) =>
     request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products/search?q=${encodeURIComponent(q)}`),
   getProduct: (id: string) => request<SambaCollectedProduct>(`${SAMBA_PREFIX}/collector/products/${id}`),
+  getPriceHistory: (id: string) => request<Array<Record<string, unknown>>>(`${SAMBA_PREFIX}/collector/products/${id}/price-history`),
   createProduct: (data: Partial<SambaCollectedProduct>) =>
     request<SambaCollectedProduct>(`${SAMBA_PREFIX}/collector/products`, { method: "POST", body: JSON.stringify(data) }),
   bulkCreate: (items: Partial<SambaCollectedProduct>[]) =>
@@ -394,6 +410,9 @@ export const collectorApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: "DELETE" }),
   bulkDeleteProducts: (ids: string[]) =>
     request<{ deleted: number }>(`${SAMBA_PREFIX}/collector/products/bulk-delete`, { method: "POST", body: JSON.stringify({ ids }) }),
+  blockAndDelete: (productIds: string[]) =>
+    request<{ ok: boolean; blocked: number; deleted: number }>(
+      `${SAMBA_PREFIX}/collector/products/block-and-delete`, { method: "POST", body: JSON.stringify({ product_ids: productIds }) }),
   resetRegistration: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}/reset-registration`, { method: "POST" }),
   bulkResetRegistration: (ids: string[]) =>
@@ -724,6 +743,7 @@ export const proxyApi = {
 // ── Categories ──
 
 export const categoryApi = {
+  getMarketCategoryCounts: () => request<Record<string, number>>(`${SAMBA_PREFIX}/categories/markets/counts`),
   listMappings: () => request<unknown[]>(`${SAMBA_PREFIX}/categories/mappings`),
   createMapping: (data: { source_site: string; source_category: string; target_mappings?: unknown }) =>
     request<unknown>(`${SAMBA_PREFIX}/categories/mappings`, { method: "POST", body: JSON.stringify(data) }),
@@ -765,6 +785,10 @@ export const categoryApi = {
   checkAllMarketsRegistered: (mappingIds: string[]) =>
     request<{ blocked: Record<string, number> }>(
       `${SAMBA_PREFIX}/categories/mappings/check-registered-all`,
+      { method: 'POST', body: JSON.stringify({ mapping_ids: mappingIds }) }),
+  checkRegisteredPerMapping: (mappingIds: string[]) =>
+    request<{ registered_ids: string[] }>(
+      `${SAMBA_PREFIX}/categories/mappings/check-registered-per-mapping`,
       { method: 'POST', body: JSON.stringify({ mapping_ids: mappingIds }) }),
   bulkDeleteMappings: (mappingIds: string[]) =>
     request<{ ok: boolean; deleted: number }>(

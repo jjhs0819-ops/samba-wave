@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react"
 import { useSearchParams } from "next/navigation"
 import { policyApi, forbiddenApi, accountApi, detailTemplateApi, nameRuleApi, collectorApi, type SambaPolicy, type SambaMarketAccount, type SambaDetailTemplate, type SambaNameRule, type SambaCollectedProduct } from "@/lib/samba/api"
+import { MARKET_ID_BY_LABEL, POLICY_MARKETS_DOMESTIC, POLICY_MARKETS_OVERSEAS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle } from '@/lib/samba/styles'
 
@@ -50,37 +51,8 @@ interface MarketPolicyForm {
 }
 
 
-// 마켓 key → label 맵핑
-const MARKET_KEY_MAP: Record<string, string> = {
-  '쿠팡': 'coupang',
-  '신세계몰': 'ssg',
-  '스마트스토어': 'smartstore',
-  '11번가': '11st',
-  '지마켓': 'gmarket',
-  '옥션': 'auction',
-  'GS샵': 'gsshop',
-  '롯데ON': 'lotteon',
-  '롯데홈쇼핑': 'lottehome',
-  '홈앤쇼핑': 'homeand',
-  'HMALL': 'hmall',
-  'KREAM': 'kream',
-  'eBay': 'ebay',
-  'Lazada': 'lazada',
-  'Qoo10': 'qoo10',
-  'Shopee': 'shopee',
-  'Shopify': 'shopify',
-  'Zum(줌)': 'zoom',
-  '플레이오토': 'playauto',
-  '카페24': 'cafe24',
-}
-
-const POLICY_MARKETS_DOMESTIC = [
-  '스마트스토어', '지마켓', '옥션', '쿠팡', '롯데ON', '11번가', '토스', '신세계몰',
-  'GS샵', '롯데홈쇼핑', '홈앤쇼핑', 'HMALL', 'KREAM', '플레이오토', '카페24',
-]
-const POLICY_MARKETS_OVERSEAS = [
-  'Qoo10', '라쿠텐', '바이마', 'Lazada', 'Shopify', 'Shopee', 'Zum(줌)', 'eBay', '아마존', '포이즌',
-]
+// 마켓 목록은 @/lib/samba/markets에서 import
+const MARKET_KEY_MAP = MARKET_ID_BY_LABEL
 const POLICY_MARKETS = [...POLICY_MARKETS_DOMESTIC, ...POLICY_MARKETS_OVERSEAS]
 
 const defaultPricing: PricingForm = {
@@ -430,8 +402,11 @@ export default function PoliciesPage() {
 
   return (
     <div style={{ color: '#E5E5E5' }}>
-      {/* 헤더 */}
-      <div style={{ marginBottom: '1.5rem' }} />
+      {/* 헤더 + 다음 단계 연결 */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '0.75rem' }}>
+        <a href="/samba/categories" style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none' }}>카테고리매핑 →</a>
+        <a href="/samba/shipments" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>상품전송 →</a>
+      </div>
 
       {/* AI 비용 (SMS 잔여량 스타일) */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.2)', borderRadius: '8px', marginBottom: '0.75rem' }}>
@@ -1050,7 +1025,6 @@ export default function PoliciesPage() {
               if (!selectedNameRuleId) return
               const latest = nameRulesRef.current.find(x => x.id === selectedNameRuleId)
               if (!latest) return
-              console.log('[저장] name_composition:', JSON.stringify(latest.name_composition))
               try {
                 const saved = await nameRuleApi.update(latest.id, {
                   name: latest.name, prefix: latest.prefix, suffix: latest.suffix,

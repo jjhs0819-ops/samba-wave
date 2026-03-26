@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState, useCallback, Fragment } from 'react'
-import { returnApi, accountApi, type SambaReturn, type SambaMarketAccount } from '@/lib/samba/api'
+import { useEffect, useState, useCallback, useRef, Fragment } from 'react'
+import { returnApi, accountApi, orderApi, type SambaReturn, type SambaMarketAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { card, inputStyle } from '@/lib/samba/styles'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   requested: { label: '요청됨', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
@@ -46,25 +47,6 @@ const fmtMD = (d?: string | null) => {
 
 const tdCenter = { padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' as const, textAlign: 'center' as const, verticalAlign: 'middle' as const }
 
-const card = {
-  background: 'rgba(30,30,30,0.5)',
-  backdropFilter: 'blur(20px)',
-  border: '1px solid #2D2D2D',
-  borderRadius: '12px',
-}
-
-const inputStyle = {
-  width: '100%',
-  padding: '0.5rem 0.75rem',
-  background: '#1A1A1A',
-  border: '1px solid #2D2D2D',
-  borderRadius: '6px',
-  color: '#E5E5E5',
-  fontSize: '0.875rem',
-  outline: 'none',
-  boxSizing: 'border-box' as const,
-}
-
 // 기간 선택 버튼 상수
 const PERIOD_BUTTONS = [
   { key: 'lastmonth', label: '지난달' },
@@ -82,11 +64,12 @@ export default function ReturnsPage() {
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [detailItem, setDetailItem] = useState<SambaReturn | null>(null)
-  const [filterStatus, setFilterStatus] = useState<string>('requested')
+  const [filterStatus, setFilterStatus] = useState<string>('')
   const [filterType, setFilterType] = useState<string>('')
   const [form, setForm] = useState({ order_id: '', type: 'return', reason: '', customReason: '', quantity: 1, requested_amount: 0 })
 
   // 로그 + 검색/필터 상태
+  const logRef = useRef<HTMLDivElement>(null)
   const [logMessages, setLogMessages] = useState<string[]>(['[대기] 반품교환 가져오기 결과가 여기에 표시됩니다...'])
   const [period, setPeriod] = useState('thisyear')
   const [syncAccountId, setSyncAccountId] = useState('')
@@ -97,6 +80,7 @@ export default function ReturnsPage() {
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
 
   useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
+  useEffect(() => { logRef.current && (logRef.current.scrollTop = logRef.current.scrollHeight) }, [logMessages])
 
   // 기간 버튼 → 날짜 계산
   const getPeriodStart = (key: string): Date | null => {
@@ -113,6 +97,8 @@ export default function ReturnsPage() {
       default: return null
     }
   }
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   const [searchCategory, setSearchCategory] = useState('customer')
   const [searchText, setSearchText] = useState('')
@@ -217,12 +203,79 @@ export default function ReturnsPage() {
   }
 
   const handleBatchDelete = async () => {
-    showAlert('선택삭제 기능 준비중입니다', 'info')
+    if (selectedIds.size === 0) {
+      showAlert('삭제할 항목을 선택해주세요', 'info')
+      return
+    }
+    if (!await showConfirm(`${selectedIds.size}건을 삭제하시겠습니까?`)) return
+    let deleted = 0
+    for (const id of selectedIds) {
+      try {
+        await returnApi.cancel(id)
+        deleted++
+      } catch (_e) { /* 무시 */ }
+    }
+    setSelectedIds(new Set())
+    load()
+    showAlert(`${deleted}건 삭제 완료`, 'success')
+  }
+
+  // 교환/취소 액션
+  const [exchangeActionItem, setExchangeActionItem] = useState<SambaReturn | null>(null)
+
+  const handleExchangeAction = async (r: SambaReturn, action: string) => {
+    const orderNum = r.order_number || r.order_id
+    if (!orderNum) { showAlert('주문번호가 없습니다', 'error'); return }
+    const labels: Record<string, string> = { reship: '교환재배송', reject: '교환거부' }
+    if (!await showConfirm(`${orderNum} 주문을 ${labels[action]} 처리하시겠습니까?`)) return
+    try {
+      const order = await orderApi.findByOrderNumber(orderNum)
+      if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
+      const res = await orderApi.exchangeAction(order.id, action)
+      showAlert(res.message || `${labels[action]} 완료`, 'success')
+      setExchangeActionItem(null)
+      load()
+    } catch (e) { showAlert(e instanceof Error ? e.message : `${labels[action]} 실패`, 'error') }
+  }
+
+  const handleCancelApprove = async (r: SambaReturn) => {
+    const orderNum = r.order_number || r.order_id
+    if (!orderNum) { showAlert('주문번호가 없습니다', 'error'); return }
+    if (!await showConfirm(`${orderNum} 주문의 취소요청을 승인하시겠습니까?`)) return
+    try {
+      const order = await orderApi.findByOrderNumber(orderNum)
+      if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
+      const res = await orderApi.approveCancel(order.id)
+      showAlert(res.message || '취소승인 완료', 'success')
+      load()
+    } catch (e) { showAlert(e instanceof Error ? e.message : '취소승인 실패', 'error') }
+  }
+
+  const handleReturnAction = async (r: SambaReturn, action: string) => {
+    const orderNum = r.order_number || r.order_id
+    if (!orderNum) { showAlert('주문번호가 없습니다', 'error'); return }
+    const label = action === 'approve' ? '반품승인' : '반품거부'
+    if (!await showConfirm(`${orderNum} 주문을 ${label} 처리하시겠습니까?`)) return
+    try {
+      const order = await orderApi.findByOrderNumber(orderNum)
+      if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
+      const res = await orderApi.returnAction(order.id, action)
+      showAlert(res.message || `${label} 완료`, 'success')
+      load()
+    } catch (e) { showAlert(e instanceof Error ? e.message : `${label} 실패`, 'error') }
   }
 
   // 수익총액 계산 (정산금액 - 환수금액)
   const totalProfit = returns
     .reduce((sum, r) => sum + ((r.settlement_amount || 0) - (r.recovery_amount || 0)), 0)
+
+  // completion_detail 기준 통계
+  const completionCounts = {
+    total: returns.length,
+    requested: returns.filter(r => (r.completion_detail || '진행중') === '진행중').length,
+    completed: returns.filter(r => ['취소', '교환', '반품'].includes(r.completion_detail || '')).length,
+    rejected: returns.filter(r => (r.completion_detail || '') === '거부').length,
+  }
 
   return (
     <div style={{ color: '#E5E5E5' }}>
@@ -238,6 +291,11 @@ export default function ReturnsPage() {
           appearance: textfield;
         }
       `}</style>
+      {/* 관련 페이지 연결 */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '0.25rem' }}>
+        <a href="/samba/orders" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>← 주문</a>
+        <a href="/samba/cs" style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none' }}>CS →</a>
+      </div>
       {/* 헤더 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
@@ -247,17 +305,16 @@ export default function ReturnsPage() {
       </div>
 
       {/* 통계 카드 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
         {[
           { key: 'total', label: '전체', color: '#FF8C00' },
-          { key: 'requested', label: '요청됨', color: '#FFD93D' },
-          { key: 'approved', label: '승인됨', color: '#4C9AFF' },
+          { key: 'requested', label: '진행내역', color: '#FFD93D' },
           { key: 'completed', label: '완료됨', color: '#51CF66' },
           { key: 'rejected', label: '거절됨', color: '#FF6B6B' },
         ].map(({ key, label, color }) => (
           <div key={key} style={{ ...card, padding: '1rem 1.25rem' }}>
             <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.375rem' }}>{label}</p>
-            <p style={{ fontSize: '1.5rem', fontWeight: 700, color }}>{stats[key] ?? 0}</p>
+            <p style={{ fontSize: '1.5rem', fontWeight: 700, color }}>{completionCounts[key as keyof typeof completionCounts] ?? 0}{key === 'requested' ? '건' : ''}</p>
           </div>
         ))}
         {/* 수익총액 통계 */}
@@ -276,7 +333,7 @@ export default function ReturnsPage() {
             <button onClick={() => setLogMessages(['[대기] 반품교환 가져오기 결과가 여기에 표시됩니다...'])} style={{ fontSize: '0.72rem', color: '#555', background: 'transparent', border: '1px solid #1C2333', padding: '1px 8px', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
           </div>
         </div>
-        <div style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}>
+        <div ref={logRef} style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}>
           {logMessages.map((msg, i) => <p key={i} style={{ color: '#8A95B0', fontSize: 'inherit', margin: 0 }}>{msg}</p>)}
         </div>
       </div>
@@ -354,7 +411,7 @@ export default function ReturnsPage() {
               ))
             })()}
           </select>
-          <select style={{ ...inputStyle, width: '110px', fontSize: '0.75rem', padding: '0.28rem 0.4rem', height: '28px' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">완료내역</option>{['진행중','취소','교환','반품'].map(s => <option key={s} value={s}>{s}</option>)}</select>
+          <select style={{ ...inputStyle, width: '110px', fontSize: '0.75rem', padding: '0.28rem 0.4rem', height: '28px' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체내역</option>{['진행중','취소','교환','반품','거부'].map(s => <option key={s} value={s}>{s}</option>)}</select>
         </div>
       </div>
 
@@ -425,8 +482,20 @@ export default function ReturnsPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
               <thead>
                 <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #1E1E1E' }}>
+                  <th rowSpan={2} style={{ width: '36px', textAlign: 'center', padding: '0.3rem 0.5rem', verticalAlign: 'middle' }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#fff', marginBottom: '2px' }}>{selectedIds.size}</div>
+                    <input
+                      type="checkbox"
+                      checked={returns.length > 0 && selectedIds.size === returns.length}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedIds(new Set(returns.map(r => r.id)))
+                        else setSelectedIds(new Set())
+                      }}
+                      style={{ width: '13px', height: '13px', cursor: 'pointer', accentColor: '#F59E0B' }}
+                    />
+                  </th>
                   <th rowSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>사진</th>
-                  {['고객', '사업자', '주문번호', '마켓', 'CS', '주문일', '정산금액', '환수금액', '수익', '완료내역'].map((h, i) => (
+                  {['고객', '사업자', '주문번호', '마켓', 'CS', '주문일', '정산금액', '환수금액', '수익', '전체내역'].map((h, i) => (
                     <th key={i} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                   <th colSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>고객주문</th>
@@ -438,11 +507,25 @@ export default function ReturnsPage() {
                 </tr>
               </thead>
               <tbody>
-                {returns.map((r) => {
+                {returns.filter(r => !siteFilter || (r.completion_detail || '진행중') === siteFilter).map((r, idx) => {
                   const st = STATUS_MAP[r.status] || { label: r.status, bg: 'rgba(100,100,100,0.2)', text: '#888' }
                   return (
                     <Fragment key={r.id}>
                       <tr>
+                        <td rowSpan={2} style={{ width: '36px', textAlign: 'center', padding: '0.5rem', verticalAlign: 'middle' }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(r.id)}
+                            onChange={(e) => {
+                              const next = new Set(selectedIds)
+                              if (e.target.checked) next.add(r.id)
+                              else next.delete(r.id)
+                              setSelectedIds(next)
+                            }}
+                            style={{ width: '13px', height: '13px', cursor: 'pointer', accentColor: '#F59E0B' }}
+                          />
+                          <div style={{ fontSize: '0.675rem', color: '#666', marginTop: '2px' }}>{idx + 1}</div>
+                        </td>
                         <td rowSpan={2} style={{ padding: '0.625rem 0.5rem', textAlign: 'center', verticalAlign: 'middle' }}>
                         {r.product_image ? (
                           <img
@@ -466,7 +549,23 @@ export default function ReturnsPage() {
                         <button onClick={() => setDetailItem(r)} style={{ background: 'none', border: 'none', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 400 }}>{r.order_number || r.order_id || '-'}</button>
                       </td>
                       <td style={tdCenter}>{r.market || '-'}</td>
-                      <td style={{ ...tdCenter, fontSize: '0.75rem', color: r.market_order_status?.includes('완료') ? '#51CF66' : r.market_order_status?.includes('요청') ? '#FFD93D' : '#E5E5E5' }}>{r.market_order_status || '-'}</td>
+                      <td style={{ ...tdCenter, fontSize: '0.75rem' }}>
+                        {r.market_order_status?.includes('교환') && !r.market_order_status?.includes('완료') && !r.market_order_status?.includes('거부') ? (
+                          <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
+                            <button onClick={() => handleExchangeAction(r, 'reship')} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(76,154,255,0.15)', color: '#4C9AFF', border: '1px solid rgba(76,154,255,0.3)', cursor: 'pointer' }}>교환승인</button>
+                            <button onClick={() => handleExchangeAction(r, 'reject')} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(255,107,107,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.3)', cursor: 'pointer' }}>교환거부</button>
+                          </div>
+                        ) : r.market_order_status?.includes('반품') && !r.market_order_status?.includes('완료') && !r.market_order_status?.includes('거부') ? (
+                          <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
+                            <button onClick={() => handleReturnAction(r, 'approve')} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(76,154,255,0.15)', color: '#4C9AFF', border: '1px solid rgba(76,154,255,0.3)', cursor: 'pointer' }}>반품승인</button>
+                            <button onClick={() => handleReturnAction(r, 'reject')} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(255,107,107,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.3)', cursor: 'pointer' }}>반품거부</button>
+                          </div>
+                        ) : r.market_order_status?.includes('취소') && !r.market_order_status?.includes('완료') ? (
+                          <button onClick={() => handleCancelApprove(r)} style={{ padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.72rem', fontWeight: 600, background: 'rgba(255,80,80,0.15)', color: '#FF5050', border: '1px solid rgba(255,80,80,0.3)', cursor: 'pointer' }}>{r.market_order_status}</button>
+                        ) : (
+                          <span style={{ color: r.market_order_status?.includes('완료') ? '#51CF66' : r.market_order_status?.includes('거부') ? '#FF6B6B' : '#E5E5E5' }}>{r.market_order_status || '-'}</span>
+                        )}
+                      </td>
                       <td style={{ ...tdCenter, color: '#888' }}>{fmtMD(r.order_date)}</td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <input
@@ -531,6 +630,7 @@ export default function ReturnsPage() {
                           <option value="취소">취소</option>
                           <option value="교환">교환</option>
                           <option value="반품">반품</option>
+                          <option value="거부">거부</option>
                         </select>
                       </td>
                       <td colSpan={2} style={{ ...tdCenter, padding: '0.375rem' }}>
@@ -680,6 +780,23 @@ export default function ReturnsPage() {
       )}
 
 {/* 상품위치 수정 모달 */}      {locationModal && (        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '420px', maxWidth: '90vw' }}>            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>상품위치 수정</h3>            {locationModal.address && (              <div style={{ padding: '0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem', color: '#4C9AFF', lineHeight: 1.5 }}>                <span style={{ color: '#888', fontSize: '0.75rem' }}>전체 주소</span><br/>                {locationModal.address}              </div>            )}            <input style={inputStyle} placeholder="시/군/구 입력" value={locationModal.value} onChange={e => setLocationModal({ ...locationModal, value: e.target.value })} onKeyDown={async e => { if (e.key === 'Enter') { const val = locationModal.value.trim(); setReturns(prev => prev.map(x => x.id === locationModal.id ? { ...x, product_location: val } : x)); try { await returnApi.patch(locationModal.id, { product_location: val }) } catch (_e) { /* */ } setLocationModal(null) } }} autoFocus />            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>              <button onClick={() => setLocationModal(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>              <button onClick={async () => { const val = locationModal.value.trim(); setReturns(prev => prev.map(x => x.id === locationModal.id ? { ...x, product_location: val } : x)); try { await returnApi.patch(locationModal.id, { product_location: val }) } catch (_e) { /* */ } setLocationModal(null) }} style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>저장</button>            </div>          </div>        </div>      )}
+      {/* 교환 액션 선택 모달 */}
+      {exchangeActionItem && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '360px', maxWidth: '90vw' }}>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.5rem' }}>교환요청 처리</h3>
+            <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '1.5rem' }}>주문번호: {exchangeActionItem.order_number || exchangeActionItem.order_id || '-'}</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <button onClick={() => handleExchangeAction(exchangeActionItem, 'reship')} style={{ padding: '0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '8px', color: '#4C9AFF', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>교환재배송</button>
+              <button onClick={() => handleExchangeAction(exchangeActionItem, 'reject')} style={{ padding: '0.75rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '8px', color: '#FF6B6B', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>교환거부</button>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button onClick={() => setExchangeActionItem(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 상세 모달 + 타임라인 */}
       {detailItem && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>

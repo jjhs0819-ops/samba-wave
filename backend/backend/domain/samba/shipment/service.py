@@ -412,12 +412,11 @@ class SambaShipmentService:
           if refresh_result.new_sale_status:
             refresh_updates["sale_status"] = refresh_result.new_sale_status
             refresh_updates["is_sold_out"] = refresh_result.new_sale_status == "sold_out"
-          # 이미지 편집 이력 있으면 갱신 스킵 (추적삭제 복구 방지)
-          _ptags = product_row.tags or []
-          if refresh_result.new_images and "__img_edited__" not in _ptags and "__img_filtered__" not in _ptags:
+          # 이미지 갱신: update_items에 "image"가 명시적으로 체크된 경우만
+          _update_image = update_items and "image" in update_items
+          if refresh_result.new_images and _update_image:
             refresh_updates["images"] = refresh_result.new_images
-          # 상세이미지도 갱신 (이미지 편집 이력 없을 때만)
-          if refresh_result.new_detail_images and "__img_edited__" not in _ptags:
+          if refresh_result.new_detail_images and _update_image:
             refresh_updates["detail_images"] = refresh_result.new_detail_images
           # 가격/재고 이력 스냅샷 기록
           snapshot: dict[str, Any] = {

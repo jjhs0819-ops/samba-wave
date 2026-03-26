@@ -2,45 +2,12 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { accountApi, collectorApi, forbiddenApi, proxyApi, API_BASE, type SambaMarketAccount } from '@/lib/samba/api'
+import { MARKET_SELECT_OPTIONS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum, parseNum } from '@/lib/samba/styles'
 
-const MARKET_TYPES = [
-  // ── 국내 ──
-  { value: '', label: '── 국내 오픈마켓 ──', disabled: true },
-  { value: 'coupang', label: '쿠팡' },
-  { value: 'smartstore', label: '스마트스토어' },
-  { value: '11st', label: '11번가' },
-  { value: 'gmarket', label: 'G마켓' },
-  { value: 'auction', label: '옥션' },
-  { value: 'ssg', label: '신세계몰' },
-  { value: 'lotteon', label: '롯데ON' },
-  { value: 'toss', label: '토스' },
-  { value: '', label: '── 국내 홈쇼핑/종합몰 ──', disabled: true },
-  { value: 'gsshop', label: 'GS샵' },
-  { value: 'lottehome', label: '롯데홈쇼핑' },
-  { value: 'homeand', label: '홈앤쇼핑' },
-  { value: 'hmall', label: 'HMALL' },
-  { value: '', label: '── 국내 패션/리셀 ──', disabled: true },
-  { value: 'musinsa', label: '무신사' },
-  { value: 'kream', label: 'KREAM' },
-  { value: '', label: '── 국내 종합솔루션 ──', disabled: true },
-  { value: 'playauto', label: '플레이오토' },
-  { value: 'cafe24', label: '카페24' },
-  // ── 해외 ──
-  { value: '', label: '── 해외 마켓 ──', disabled: true },
-  { value: 'amazon', label: '아마존' },
-  { value: 'ebay', label: 'eBay' },
-  { value: 'rakuten', label: '라쿠텐' },
-  { value: 'qoo10', label: 'Qoo10' },
-  { value: 'lazada', label: 'Lazada' },
-  { value: 'shopee', label: 'Shopee' },
-  { value: 'buyma', label: '바이마' },
-  { value: 'shopify', label: 'Shopify' },
-  { value: 'zoom', label: 'Zum(줌)' },
-  { value: '', label: '── 해외 패션/리셀 ──', disabled: true },
-  { value: 'poison', label: '포이즌' },
-] as const
+// 마켓 셀렉트 옵션 (markets.ts 단일 소스)
+const MARKET_TYPES = MARKET_SELECT_OPTIONS
 
 const CLAUDE_MODELS = [
   { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (권장)' },
@@ -930,6 +897,7 @@ export default function SettingsPage() {
   const [editingDesc, setEditingDesc] = useState('')
   const [editingLabel, setEditingLabel] = useState('')
   const [regenerating, setRegenerating] = useState<string | null>(null)
+  const [presetZoom, setPresetZoom] = useState<string | null>(null)
 
   // 금지어/삭제어 (전역)
   const [forbiddenText, setForbiddenText] = useState('')
@@ -942,11 +910,6 @@ export default function SettingsPage() {
 
   // 태그 금지어
   const [tagBanned, setTagBanned] = useState<{ rejected: string[]; brands: string[]; source_sites: string[] }>({ rejected: [], brands: [], source_sites: [] })
-
-  // Fireworks AI 설정
-  const [fireworksApiKey, setFireworksApiKey] = useState('')
-  const [fireworksModel, setFireworksModel] = useState('accounts/fireworks/models/stable-diffusion-xl-1024-v1-0')
-  const [fireworksStatus, setFireworksStatus] = useState('')
 
   // Cloudflare R2 설정
   const [r2AccountId, setR2AccountId] = useState('')
@@ -1142,14 +1105,6 @@ export default function SettingsPage() {
         setGeminiApiKey(String(gm.apiKey || ''))
         setGeminiModel(String(gm.model || 'gemini-2.5-flash-image'))
         if (gm.apiKey) setGeminiStatus('저장됨')
-      }
-    } catch { /* ignore */ }
-    try {
-      const fw = await forbiddenApi.getSetting('fireworks').catch(() => null) as Record<string, unknown> | null
-      if (fw) {
-        setFireworksApiKey(String(fw.apiKey || ''))
-        setFireworksModel(String(fw.model || 'accounts/fireworks/models/stable-diffusion-xl-1024-v1-0'))
-        if (fw.apiKey) setFireworksStatus('저장됨')
       }
     } catch { /* ignore */ }
     try {
@@ -1382,42 +1337,6 @@ export default function SettingsPage() {
     } catch (e) {
       showAlert(`재생성 실패: ${e instanceof Error ? e.message : ''}`, 'error')
     } finally { setRegenerating(null) }
-  }
-
-  // Fireworks AI 저장
-  const saveFireworksSettings = async () => {
-    if (!fireworksApiKey) {
-      showAlert('API Key를 입력해주세요', 'error')
-      return
-    }
-    try {
-      await forbiddenApi.saveSetting('fireworks', { apiKey: fireworksApiKey, model: fireworksModel, updatedAt: new Date().toISOString() })
-      setFireworksStatus(`저장 완료 (${new Date().toLocaleTimeString('ko-KR', { hour12: false })})`)
-      showAlert('Fireworks AI 설정이 저장되었습니다', 'success')
-    } catch { showAlert('저장 실패', 'error') }
-  }
-
-  // Fireworks AI 테스트
-  const testFireworksApi = async () => {
-    if (!fireworksApiKey) {
-      showAlert('API Key를 먼저 입력해주세요', 'error')
-      return
-    }
-    setFireworksStatus('API 연결 확인 중...')
-    try {
-      await forbiddenApi.saveSetting('fireworks', { apiKey: fireworksApiKey, model: fireworksModel, updatedAt: new Date().toISOString() })
-      const result = await proxyApi.fireworksTest()
-      if (result.success) {
-        setFireworksStatus(`✓ ${result.message}`)
-        showAlert(result.message, 'success')
-      } else {
-        setFireworksStatus(`✗ ${result.message}`)
-        showAlert(result.message, 'error')
-      }
-    } catch (e) {
-      setFireworksStatus('연결 실패')
-      showAlert(`Fireworks API 연결 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
-    }
   }
 
   // Cloudflare R2 저장
@@ -1771,42 +1690,6 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Fireworks AI 연동 (이미지 변환) */}
-      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#F97316' }}>Fireworks AI 연동</span>
-          <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 이미지 변환(지재권 대응)을 위한 Fireworks AI API 설정</span>
-          <a href="https://fireworks.ai/account/api-keys" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
-          <button onClick={saveFireworksSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
-        </div>
-        <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
-            <input
-              type='password'
-              style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
-              value={fireworksApiKey}
-              onChange={(e) => setFireworksApiKey(e.target.value)}
-              placeholder='fw_...'
-            />
-            <button onClick={testFireworksApi} style={{ background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.35)', color: '#F97316', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>연결 테스트</button>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델 선택</label>
-            <select style={{ ...inputStyle, width: '360px' }} value={fireworksModel} onChange={(e) => setFireworksModel(e.target.value)}>
-              <option value="accounts/fireworks/models/stable-diffusion-xl-1024-v1-0">SDXL 1.0 (권장)</option>
-              <option value="accounts/fireworks/models/playground-v2-5-1024px-aesthetic">Playground v2.5</option>
-              <option value="accounts/fireworks/models/SSD-1B">SSD-1B (빠름)</option>
-            </select>
-          </div>
-          {fireworksStatus && (
-            <div style={{ fontSize: '0.8125rem', color: fireworksStatus.includes('저장') || fireworksStatus.includes('✓') ? '#7BAF7E' : fireworksStatus.includes('확인') ? '#FFB84D' : '#C4736E', padding: '0.4rem 0' }}>
-              {fireworksStatus}
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Cloudflare R2 연동 (이미지 저장) */}
       <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
@@ -1890,35 +1773,38 @@ export default function SettingsPage() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '1rem' }}>
           {presets.map(p => (
             <div key={p.key} style={{ background: 'rgba(30,30,30,0.6)', borderRadius: '8px', border: '1px solid #2D2D2D', overflow: 'hidden' }}>
-              <div
-                style={{ position: 'relative', paddingTop: '120%', background: '#1A1A1A', cursor: 'pointer' }}
-                onClick={() => {
-                  const input = document.createElement('input')
-                  input.type = 'file'
-                  input.accept = 'image/*'
-                  input.onchange = async (e) => {
-                    const file = (e.target as HTMLInputElement).files?.[0]
-                    if (!file) return
-                    setRegenerating(p.key)
-                    try {
-                      const res = await proxyApi.uploadPresetImage(p.key, file)
-                      if (res.success) { showAlert(res.message, 'success'); await loadPresets() }
-                      else showAlert(res.message, 'error')
-                    } catch { showAlert('업로드 실패', 'error') }
-                    finally { setRegenerating(null) }
-                  }
-                  input.click()
-                }}
-              >
+              <div style={{ position: 'relative', paddingTop: '120%', background: '#1A1A1A' }}>
                 {p.image ? (
                   <img
                     src={`${API_BASE}${p.image}?t=${Date.now()}`}
                     alt={p.label}
-                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }}
+                    onClick={() => setPresetZoom(`${API_BASE}${p.image}?t=${Date.now()}`)}
                   />
                 ) : (
-                  <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: '#555', fontSize: '0.7rem', textAlign: 'center' }}>클릭하여<br/>이미지 등록</div>
+                  <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: '#555', fontSize: '0.7rem', textAlign: 'center' }}>이미지 없음</div>
                 )}
+                {/* 이미지 업로드 버튼 */}
+                <button
+                  style={{ position: 'absolute', bottom: 4, right: 4, background: 'rgba(0,0,0,0.7)', border: '1px solid #555', color: '#CCC', borderRadius: '4px', padding: '2px 6px', fontSize: '0.6rem', cursor: 'pointer' }}
+                  onClick={() => {
+                    const input = document.createElement('input')
+                    input.type = 'file'
+                    input.accept = 'image/*'
+                    input.onchange = async (e) => {
+                      const file = (e.target as HTMLInputElement).files?.[0]
+                      if (!file) return
+                      setRegenerating(p.key)
+                      try {
+                        const res = await proxyApi.uploadPresetImage(p.key, file)
+                        if (res.success) { showAlert(res.message, 'success'); await loadPresets() }
+                        else showAlert(res.message, 'error')
+                      } catch { showAlert('업로드 실패', 'error') }
+                      finally { setRegenerating(null) }
+                    }
+                    input.click()
+                  }}
+                >업로드</button>
                 {regenerating === p.key && (
                   <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FF8C00', fontSize: '0.75rem' }}>
                     처리중...
@@ -2179,6 +2065,15 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {/* 프리셋 이미지 확대 모달 */}
+      {presetZoom && (
+        <div
+          onClick={() => setPresetZoom(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'zoom-out' }}
+        >
+          <img src={presetZoom} alt="프리셋 확대" style={{ maxWidth: '90vw', maxHeight: '90vh', objectFit: 'contain', borderRadius: '8px' }} />
+        </div>
+      )}
     </div>
   )
 }
