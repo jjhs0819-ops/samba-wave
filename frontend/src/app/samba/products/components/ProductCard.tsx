@@ -106,7 +106,7 @@ export function calcPrice(
 
 function getSourceUrl(sourceSite: string, siteProductId: string | undefined): string {
   if (!siteProductId) return ''
-  const site = sourceSite?.toUpperCase()
+  const site = (sourceSite || '').toUpperCase()
   if (site === 'MUSINSA') return `https://www.musinsa.com/products/${siteProductId}`
   if (site === 'KREAM') return `https://kream.co.kr/products/${siteProductId}`
   if (site === 'NIKE') return `https://www.nike.com/kr/t/-/-/${siteProductId}`
