@@ -2643,6 +2643,7 @@ async def collect_by_filter(
                 if site in DIRECT_API_SITES:
                     # 직접 API 호출
                     client = None
+                    requested_count = search_filter.requested_count or 100
                     if site == "FashionPlus":
                         from backend.domain.samba.proxy.fashionplus import FashionPlusClient
                         client = FashionPlusClient()
@@ -2653,8 +2654,13 @@ async def collect_by_filter(
                         from backend.domain.samba.proxy.adidas import AdidasClient
                         client = AdidasClient()
 
-                    result = await client.search(keyword)
+                    result = await client.search(keyword, max_count=requested_count)
                     items_list = result.get("products", [])
+                    total_found = result.get("total", 0)
+                    last_error = result.get("last_error", "")
+                    yield _sse("log", {"message": f"[{site}] API 총 상품수: {total_found}건, 수집됨: {len(items_list)}건"})
+                    if last_error:
+                        yield _sse("log", {"message": f"[{site}] 페이지네이션 중단 사유: {last_error}"})
                 else:
                     # 확장앱 큐 기반
                     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
@@ -2704,6 +2710,9 @@ async def collect_by_filter(
                         "category2": item.get("category2", ""),
                         "category3": item.get("category3", ""),
                         "detail_html": item.get("detail_html", ""),
+                        "color": item.get("color", ""),
+                        "origin": item.get("origin", ""),
+                        "material": item.get("material", ""),
                         "similar_no": None,
                         "group_key": generate_group_key(
                             brand=item.get("brand", ""),
