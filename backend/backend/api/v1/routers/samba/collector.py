@@ -481,7 +481,7 @@ async def move_filter(
 
 # ── Collected Products ──
 
-_HEAVY_FIELDS = {"price_history", "detail_html", "detail_images", "last_sent_data", "care_instructions"}
+_HEAVY_FIELDS = {"price_history", "detail_html", "detail_images", "last_sent_data"}
 
 
 @router.get("/products/scroll")
