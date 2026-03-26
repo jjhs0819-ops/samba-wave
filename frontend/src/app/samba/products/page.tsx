@@ -994,7 +994,6 @@ export default function ProductsPage() {
               onChange={(e) => handleSelectAll(e.target.checked)}
               style={{ accentColor: "#FF8C00", width: "13px", height: "13px", cursor: "pointer" }}
             />
-            <span style={{ fontSize: "0.8rem", color: "#666", whiteSpace: "nowrap" }}>전체선택</span>
           </label>
           <span style={{ fontSize: "0.875rem", color: "#E5E5E5", fontWeight: 600, whiteSpace: "nowrap" }}>
             상품관리 <span style={{ color: "#FF8C00" }}>( 총 <span>{totalCount}</span>개 검색 )</span>
@@ -1216,7 +1215,7 @@ export default function ProductsPage() {
               color: viewMode === "compact" ? "#FF8C00" : "#C5C5C5",
               background: viewMode === "compact" ? "rgba(255,140,0,0.15)" : "transparent",
             }}
-          >간단보기</button>
+          >간단</button>
           <button
             onClick={() => setViewMode("card")}
             style={{
@@ -1225,7 +1224,7 @@ export default function ProductsPage() {
               color: viewMode === "card" ? "#FF8C00" : "#C5C5C5",
               background: viewMode === "card" ? "rgba(255,140,0,0.15)" : "transparent",
             }}
-          >건별보기</button>
+          >자세히</button>
           <button
             onClick={() => setViewMode("image")}
             style={{
@@ -1234,7 +1233,7 @@ export default function ProductsPage() {
               color: viewMode === "image" ? "#FF8C00" : "#C5C5C5",
               background: viewMode === "image" ? "rgba(255,140,0,0.15)" : "transparent",
             }}
-          >이미지만보기</button>
+          >사진</button>
           <select
             value={aiFilter}
             onChange={(e) => setAiFilter(e.target.value)}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { csInquiryApi, accountApi, type SambaCSInquiry, type CSReplyTemplate, type SambaMarketAccount } from '@/lib/samba/api'
+import { csInquiryApi, orderApi, accountApi, type SambaCSInquiry, type CSReplyTemplate, type SambaMarketAccount } from '@/lib/samba/api'
 import { CS_MARKET_FILTERS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle } from '@/lib/samba/styles'
