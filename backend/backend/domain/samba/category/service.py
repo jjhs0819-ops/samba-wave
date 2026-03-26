@@ -19,6 +19,15 @@ from backend.domain.samba.category.repository import (
 
 logger = logging.getLogger(__name__)
 
+# 해외 관련 카테고리 필터 키워드
+_OVERSEAS_KEYWORDS = ("해외", "직구", "해외직구", "해외호텔", "해외여행")
+
+
+def _filter_overseas(categories: list[str]) -> list[str]:
+    """해외 관련 키워드가 포함된 카테고리를 제거한다."""
+    return [c for c in categories if not any(kw in c for kw in _OVERSEAS_KEYWORDS)]
+
+
 # 마켓별 카테고리 데이터 (검색/추천용 참조 목록)
 # AI 매핑 시에는 이 목록을 참고하되, 목록에 없는 카테고리도 AI가 생성 가능
 MARKET_CATEGORIES: Dict[str, List[str]] = {
@@ -139,7 +148,6 @@ MARKET_CATEGORIES: Dict[str, List[str]] = {
         "패션의류잡화 > 여성패션 > 여성잡화 > 가방 > 여성비치백/왕골가방",
         "패션의류잡화 > 여성패션 > 여성잡화 > 가방 > 여성기타캐주얼가방",
         "패션의류잡화 > 여성패션 > 여성잡화 > 가방 > 여성가방액세서리",
-        "패션의류잡화 > 여성패션 > 여성잡화 > 해외직구 > 가방",
         "패션의류잡화 > 남성패션 > 남성가방 > 백팩",
         "패션의류잡화 > 남성패션 > 남성가방 > 크로스백",
         "패션의류잡화 > 남성패션 > 남성가방 > 토트백",
@@ -659,11 +667,11 @@ class SambaCategoryService:
     # ==================== Category Suggestion ====================
 
     async def _get_market_categories(self, market: str) -> List[str]:
-        """DB에서 마켓 카테고리를 조회하고, 없으면 하드코딩 fallback."""
+        """DB에서 마켓 카테고리를 조회하고, 없으면 하드코딩 fallback. 해외 카테고리 제외."""
         tree = await self.tree_repo.get_by_site(market)
         if tree and tree.cat1:
-            return tree.cat1
-        return MARKET_CATEGORIES.get(market, [])
+            return _filter_overseas(tree.cat1)
+        return _filter_overseas(MARKET_CATEGORIES.get(market, []))
 
     async def suggest_category(
         self, source_category: str, target_market: str
@@ -801,7 +809,7 @@ class SambaCategoryService:
                     text = text[:-3].strip()
             result = json.loads(text)
             if isinstance(result, list):
-                return [str(c) for c in result[:10]]
+                return _filter_overseas([str(c) for c in result[:10]])
             return []
         except Exception as e:
             logger.warning("AI 카테고리 추천 실패 (%s): %s", target_market, e)
@@ -1013,7 +1021,8 @@ class SambaCategoryService:
 4. 주요 카테고리를 빠짐없이 작성하세요 (패션, 뷰티, 식품, 가전, 생활, 스포츠 등).
 5. 특히 패션(의류/신발/잡화)과 뷰티(스킨케어/메이크업/헤어/바디) 카테고리는 세분류까지 상세하게 작성하세요.
 6. 최소 200개 이상의 리프 카테고리를 포함해주세요.
-7. JSON 배열만 응답하세요.
+7. "해외직구", "해외", "해외호텔", "해외여행" 등 해외 관련 카테고리는 절대 포함하지 마세요.
+8. JSON 배열만 응답하세요.
 
 예시: ["패션의류 > 여성의류 > 원피스", "뷰티 > 메이크업 > 블러셔", ...]"""
 
@@ -1045,7 +1054,7 @@ class SambaCategoryService:
         if not isinstance(categories, list) or not categories:
             raise ValueError("AI 응답에서 카테고리 목록을 파싱할 수 없습니다")
 
-        categories = [str(c) for c in categories if c]
+        categories = _filter_overseas([str(c) for c in categories if c])
 
         # DB에 병합 저장
         existing = await self.tree_repo.get_by_site(market_type)

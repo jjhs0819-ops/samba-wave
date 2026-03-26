@@ -30,14 +30,13 @@ const MARKETS = [
 
 // 기간 버튼
 const PERIOD_BUTTONS = [
+  { key: 'lastmonth', label: '지난달' },
+  { key: 'thismonth', label: '이번달' },
+  { key: 'lastweek', label: '지난주' },
+  { key: 'thisweek', label: '이번주' },
+  { key: 'yesterday', label: '어제' },
   { key: 'today', label: '오늘' },
-  { key: '1week', label: '1주일' },
-  { key: '15days', label: '15일' },
-  { key: '1month', label: '1개월' },
-  { key: '3months', label: '3개월' },
-  { key: '6months', label: '6개월' },
   { key: 'thisyear', label: '올해' },
-  { key: 'all', label: '전체' },
 ]
 
 export default function CSPage() {
@@ -144,11 +143,11 @@ export default function CSPage() {
     now.setHours(0, 0, 0, 0)
     switch (key) {
       case 'today': return now
-      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d }
-      case '15days': { const d = new Date(now); d.setDate(d.getDate() - 15); return d }
-      case '1month': { const d = new Date(now); d.setMonth(d.getMonth() - 1); return d }
-      case '3months': { const d = new Date(now); d.setMonth(d.getMonth() - 3); return d }
-      case '6months': { const d = new Date(now); d.setMonth(d.getMonth() - 6); return d }
+      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
+      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() - 7); return d }
+      case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
+      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
       case 'thisyear': return new Date(now.getFullYear(), 0, 1)
       default: return null
     }
@@ -249,8 +248,8 @@ export default function CSPage() {
     }
     try {
       const res = await csInquiryApi.reply(replyModal.id, replyText)
-      const marketMsg = (res as Record<string, unknown>).market_message as string
-      const marketSent = (res as Record<string, unknown>).market_sent as boolean
+      const marketMsg = (res as unknown as Record<string, unknown>).market_message as string
+      const marketSent = (res as unknown as Record<string, unknown>).market_sent as boolean
       setReplyModal(null)
       setReplyText('')
       setSelectedTemplate('')

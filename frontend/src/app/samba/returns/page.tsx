@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Fragment } from 'react'
 import { returnApi, accountApi, type SambaReturn, type SambaMarketAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 
@@ -10,6 +10,9 @@ const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = 
   rejected:  { label: '거절됨', bg: 'rgba(255,107,107,0.15)', text: '#FF6B6B' },
   completed: { label: '완료됨', bg: 'rgba(81,207,102,0.15)', text: '#51CF66' },
   cancelled: { label: '취소됨', bg: 'rgba(100,100,100,0.2)', text: '#888' },
+  collecting:    { label: '수거중', bg: 'rgba(255,165,0,0.15)', text: '#FFA500' },
+  collected:     { label: '수거완료', bg: 'rgba(81,207,102,0.15)', text: '#51CF66' },
+  not_collected: { label: '미수거', bg: 'rgba(255,107,107,0.15)', text: '#FF6B6B' },
 }
 
 const TYPE_LABELS: Record<string, { label: string; color: string }> = {
@@ -33,6 +36,16 @@ const RETURN_REASONS = [
   { value: '품질 불만족', label: '품질 불만족' },
 ]
 
+// 날짜 → M/D 포맷 (예: "2026-03-25" → "3/25")
+const fmtMD = (d?: string | null) => {
+  if (!d) return '-'
+  const dt = new Date(d)
+  if (isNaN(dt.getTime())) return '-'
+  return `${dt.getMonth() + 1}/${dt.getDate()}`
+}
+
+const tdCenter = { padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' as const, textAlign: 'center' as const, verticalAlign: 'middle' as const }
+
 const card = {
   background: 'rgba(30,30,30,0.5)',
   backdropFilter: 'blur(20px)',
@@ -54,14 +67,13 @@ const inputStyle = {
 
 // 기간 선택 버튼 상수
 const PERIOD_BUTTONS = [
+  { key: 'lastmonth', label: '지난달' },
+  { key: 'thismonth', label: '이번달' },
+  { key: 'lastweek', label: '지난주' },
+  { key: 'thisweek', label: '이번주' },
+  { key: 'yesterday', label: '어제' },
   { key: 'today', label: '오늘' },
-  { key: '1week', label: '1주일' },
-  { key: '15days', label: '15일' },
-  { key: '1month', label: '1개월' },
-  { key: '3months', label: '3개월' },
-  { key: '6months', label: '6개월' },
   { key: 'thisyear', label: '올해' },
-  { key: 'all', label: '전체' },
 ]
 
 export default function ReturnsPage() {
@@ -70,7 +82,7 @@ export default function ReturnsPage() {
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [detailItem, setDetailItem] = useState<SambaReturn | null>(null)
-  const [filterStatus, setFilterStatus] = useState<string>('')
+  const [filterStatus, setFilterStatus] = useState<string>('requested')
   const [filterType, setFilterType] = useState<string>('')
   const [form, setForm] = useState({ order_id: '', type: 'return', reason: '', customReason: '', quantity: 1, requested_amount: 0 })
 
@@ -92,11 +104,11 @@ export default function ReturnsPage() {
     now.setHours(0, 0, 0, 0)
     switch (key) {
       case 'today': return now
-      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d }
-      case '15days': { const d = new Date(now); d.setDate(d.getDate() - 15); return d }
-      case '1month': { const d = new Date(now); d.setMonth(d.getMonth() - 1); return d }
-      case '3months': { const d = new Date(now); d.setMonth(d.getMonth() - 3); return d }
-      case '6months': { const d = new Date(now); d.setMonth(d.getMonth() - 6); return d }
+      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
+      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() - 7); return d }
+      case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
+      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
       case 'thisyear': return new Date(now.getFullYear(), 0, 1)
       default: return null
     }
@@ -105,7 +117,7 @@ export default function ReturnsPage() {
   const [searchCategory, setSearchCategory] = useState('customer')
   const [searchText, setSearchText] = useState('')
   const [marketFilter, setMarketFilter] = useState('')
-  const [siteFilter, setSiteFilter] = useState('')
+  const [siteFilter, setSiteFilter] = useState('진행중')
   const [marketStatus, setMarketStatus] = useState('')
   const [inputFilter, setInputFilter] = useState('')
   const [pageSize, setPageSize] = useState(50)
@@ -134,8 +146,21 @@ export default function ReturnsPage() {
   const loadAllMarkets = async () => {
     const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     setLogMessages(prev => [...prev, `[${now}] 전체마켓 반품교환 데이터 동기화 중...`])
+    try {
+      const syncResult = await returnApi.syncFromMarkets(30, syncAccountId || undefined)
+      const ts = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      for (const r of syncResult.results) {
+        if (r.status === 'success') {
+          setLogMessages(prev => [...prev, `[${ts}] ${r.account}: ${r.fetched ?? 0}건 조회, ${r.synced ?? 0}건 신규`])
+        } else if (r.status === 'error') {
+          setLogMessages(prev => [...prev, `[${ts}] ${r.account}: 오류 — ${r.message}`])
+        }
+      }
+      setLogMessages(prev => [...prev, `[${ts}] 동기화 완료 (신규 ${syncResult.total_synced}건)`])
+    } catch (e) {
+      setLogMessages(prev => [...prev, `[오류] 동기화 실패: ${e}`])
+    }
     await load()
-    setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] 전체마켓 동기화 완료 (${returns.length}건)`])
   }
 
   const handleSubmit = async () => {
@@ -161,6 +186,7 @@ export default function ReturnsPage() {
   }
 
   const [rejectModal, setRejectModal] = useState<{ id: string; reason: string } | null>(null)
+  const [locationModal, setLocationModal] = useState<{ id: string; value: string; address: string } | null>(null)
 
   const handleApprove = async (id: string) => {
     try { await returnApi.approve(id); load() }
@@ -194,13 +220,24 @@ export default function ReturnsPage() {
     showAlert('선택삭제 기능 준비중입니다', 'info')
   }
 
-  // 환불총액 계산
-  const totalRefund = returns
-    .filter(r => r.status === 'completed' || r.status === 'approved')
-    .reduce((sum, r) => sum + (r.requested_amount || 0), 0)
+  // 수익총액 계산 (정산금액 - 환수금액)
+  const totalProfit = returns
+    .reduce((sum, r) => sum + ((r.settlement_amount || 0) - (r.recovery_amount || 0)), 0)
 
   return (
     <div style={{ color: '#E5E5E5' }}>
+      {/* 숫자 input 스피너 제거 */}
+      <style>{`
+        input[type=number]::-webkit-outer-spin-button,
+        input[type=number]::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        input[type=number] {
+          -moz-appearance: textfield;
+          appearance: textfield;
+        }
+      `}</style>
       {/* 헤더 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
@@ -223,10 +260,10 @@ export default function ReturnsPage() {
             <p style={{ fontSize: '1.5rem', fontWeight: 700, color }}>{stats[key] ?? 0}</p>
           </div>
         ))}
-        {/* 환불총액 통계 */}
-        <div style={{ ...card, padding: '1rem 1.25rem', border: '1px solid rgba(255,107,107,0.2)' }}>
-          <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.375rem' }}>환불총액</p>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: '#FF6B6B' }}>₩{totalRefund.toLocaleString()}</p>
+        {/* 수익총액 통계 */}
+        <div style={{ ...card, padding: '1rem 1.25rem', border: `1px solid ${totalProfit >= 0 ? 'rgba(81,207,102,0.2)' : 'rgba(255,107,107,0.2)'}` }}>
+          <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.375rem' }}>수익총액</p>
+          <p style={{ fontSize: '1.25rem', fontWeight: 700, color: totalProfit >= 0 ? '#51CF66' : '#FF6B6B' }}>₩{totalProfit.toLocaleString()}</p>
         </div>
       </div>
 
@@ -285,42 +322,39 @@ export default function ReturnsPage() {
 
       {/* 필터 바 */}
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
-        <select style={{ ...inputStyle, width: '68px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
+        <select style={{ ...inputStyle, width: '80px', fontSize: '0.75rem', padding: '0.28rem 0.4rem', height: '28px' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
+          <option value="product">상품</option>
           <option value="customer">고객</option>
           <option value="order_number">주문번호</option>
-          <option value="product">상품명</option>
           <option value="content">사유</option>
         </select>
-        <input style={{ ...inputStyle, width: '120px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadReturns() }} />
-        <button onClick={loadReturns} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0 0.6rem', borderRadius: '4px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px' }}>검색</button>
+        <input style={{ ...inputStyle, width: '140px', fontSize: '0.75rem', padding: '0.28rem 0.4rem', height: '28px' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadReturns() }} />
+        <button onClick={loadReturns} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px' }}>검색</button>
         <button
           onClick={handleBatchDelete}
-          style={{ padding: '0 0.6rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #FF6B6B33', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px', lineHeight: '26px' }}
+          style={{ padding: '0 0.6rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #FF6B6B33', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px' }}
         >
           선택삭제
         </button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
-          <select style={{ ...inputStyle, width: '100px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '200px', fontSize: '0.72rem', padding: '0.28rem 0.4rem', height: '28px' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체마켓보기</option>
-            {[...new Set(accounts.map(a => a.market_name))].map(m => <option key={m} value={m}>{m}</option>)}
+            {(() => {
+              const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
+              const items: { value: string; label: string; isGroup: boolean }[] = []
+              marketTypes.forEach(([type, name]) => {
+                items.push({ value: `type:${type}`, label: name, isGroup: true })
+                accounts.filter(a => a.market_type === type).forEach(a => {
+                  const label = `${name} ${a.business_name || ''} ${a.seller_id || ''}`.trim()
+                  items.push({ value: `acc:${a.id}`, label: `  ${label}`, isGroup: false })
+                })
+              })
+              return items.map(item => (
+                <option key={item.value} value={item.value} style={{ fontWeight: item.isGroup ? 600 : 400 }}>{item.label}</option>
+              ))
+            })()}
           </select>
-          <select style={{ ...inputStyle, width: '94px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}>
-            <option value="">전체사이트보기</option>
-            {['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','GrandStage','OKmall','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <select style={{ ...inputStyle, width: '95px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-            <option value="">처리상태</option>
-            {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-          </select>
-          <select style={{ ...inputStyle, width: '95px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={filterType} onChange={e => setFilterType(e.target.value)}>
-            <option value="">전체유형</option>
-            {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-          </select>
-          <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
-          <select style={{ ...inputStyle, width: '75px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }}><option>-- 정렬 --</option><option>신청일▲</option><option>신청일▼</option></select>
-          <select style={{ ...inputStyle, width: '78px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
-            <option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
-          </select>
+          <select style={{ ...inputStyle, width: '110px', fontSize: '0.75rem', padding: '0.28rem 0.4rem', height: '28px' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">완료내역</option>{['진행중','취소','교환','반품'].map(s => <option key={s} value={s}>{s}</option>)}</select>
         </div>
       </div>
 
@@ -390,11 +424,16 @@ export default function ReturnsPage() {
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
               <thead>
+                <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #1E1E1E' }}>
+                  <th rowSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>사진</th>
+                  {['고객', '사업자', '주문번호', '마켓', 'CS', '주문일', '정산금액', '환수금액', '수익', '완료내역'].map((h, i) => (
+                    <th key={i} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                  <th colSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>고객주문</th>
+                </tr>
                 <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #2D2D2D' }}>
-                  {['사진', '고객', '사업자', '주문번호', '마켓', '확인', '주문일', '고객', '회사', '완료내역', '상품명', '체크날짜', '고객전화번호', '지역', '메모', '반품링크', '반품신청일', '상품위치', '반품신청한곳', '상태', '고객주문', '원주문'].map((h, i) => (
-                    <th key={i} style={{ textAlign: 'left', padding: '0.75rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
-                      {h}
-                    </th>
+                  {['체크날짜', '전화', '상품명', '메모', '반품링크', 'CS접수일', '지역', '반품신청한곳', '상태', '상품위치', '원주문'].map((h, i) => (
+                    <th key={i} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -402,17 +441,15 @@ export default function ReturnsPage() {
                 {returns.map((r) => {
                   const st = STATUS_MAP[r.status] || { label: r.status, bg: 'rgba(100,100,100,0.2)', text: '#888' }
                   return (
-                    <tr key={r.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', verticalAlign: 'top' }}>
+                    <Fragment key={r.id}>
+                      <tr>
+                        <td rowSpan={2} style={{ padding: '0.625rem 0.5rem', textAlign: 'center', verticalAlign: 'middle' }}>
                         {r.product_image ? (
                           <img
                             src={r.product_image}
                             alt=""
                             onClick={() => r.return_link && window.open(r.return_link, '_blank')}
-                            style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', cursor: r.return_link ? 'pointer' : 'default' }}
+                            style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', cursor: r.return_link ? 'pointer' : 'default', display: 'block', margin: '0 auto' }}
                           />
                         ) : (
                           <div
@@ -423,38 +460,197 @@ export default function ReturnsPage() {
                           </div>
                         )}
                       </td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.customer_name || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.business_name || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem' }}>
-                        <button onClick={() => setDetailItem(r)} style={{ background: 'none', border: 'none', color: '#FF8C00', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 500 }}>{r.order_id || '-'}</button>
+                      <td style={tdCenter}>{r.customer_name || '-'}</td>
+                      <td style={tdCenter}>{r.business_name || '-'}</td>
+                      <td style={{ ...tdCenter, padding: '0.625rem' }}>
+                        <button onClick={() => setDetailItem(r)} style={{ background: 'none', border: 'none', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 400 }}>{r.order_number || r.order_id || '-'}</button>
                       </td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.market || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.confirmed ? '확인' : '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', color: '#888', whiteSpace: 'nowrap' }}>{r.order_date?.slice(0, 10) || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.customer_id || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.company || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.completion_detail || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.product_name || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', color: '#888', whiteSpace: 'nowrap' }}>{r.check_date?.slice(0, 10) || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.customer_phone || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.region || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.memo || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem' }}>
+                      <td style={tdCenter}>{r.market || '-'}</td>
+                      <td style={{ ...tdCenter, fontSize: '0.75rem', color: r.market_order_status?.includes('완료') ? '#51CF66' : r.market_order_status?.includes('요청') ? '#FFD93D' : '#E5E5E5' }}>{r.market_order_status || '-'}</td>
+                      <td style={{ ...tdCenter, color: '#888' }}>{fmtMD(r.order_date)}</td>
+                      <td style={{ ...tdCenter, padding: '0.375rem' }}>
+                        <input
+                          type="text"
+                          value={r.settlement_amount != null ? r.settlement_amount.toLocaleString() : ''}
+                          placeholder="0"
+                          onFocus={(e) => { e.target.value = String(r.settlement_amount ?? '') }}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/[^0-9.-]/g, '')
+                            const num = parseFloat(raw)
+                            if (raw === '' || raw === '-') return
+                            if (!isNaN(num)) setReturns(prev => prev.map(x => x.id === r.id ? { ...x, settlement_amount: num } : x))
+                          }}
+                          onBlur={async (e) => {
+                            const num = parseFloat(e.target.value.replace(/,/g, ''))
+                            if (!isNaN(num)) {
+                              try { await returnApi.patch(r.id, { settlement_amount: num }) } catch (_e) { /* 무시 */ }
+                            }
+                          }}
+                          style={{ width: '80px', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', fontSize: '0.8rem', textAlign: 'right' }}
+                        />
+                      </td>
+                      <td style={{ ...tdCenter, padding: '0.375rem' }}>
+                        <input
+                          type="text"
+                          value={r.recovery_amount != null ? r.recovery_amount.toLocaleString() : ''}
+                          placeholder="0"
+                          onFocus={(e) => { e.target.value = String(r.recovery_amount ?? '') }}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/[^0-9.-]/g, '')
+                            const num = parseFloat(raw)
+                            if (raw === '' || raw === '-') return
+                            if (!isNaN(num)) setReturns(prev => prev.map(x => x.id === r.id ? { ...x, recovery_amount: num } : x))
+                          }}
+                          onBlur={async (e) => {
+                            const num = parseFloat(e.target.value.replace(/,/g, ''))
+                            if (!isNaN(num)) {
+                              try { await returnApi.patch(r.id, { recovery_amount: num }) } catch (_e) { /* 무시 */ }
+                            }
+                          }}
+                          style={{ width: '80px', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', fontSize: '0.8rem', textAlign: 'right' }}
+                        />
+                      </td>
+                      <td style={{ ...tdCenter, fontSize: '0.8rem' }}>
+                        {(r.settlement_amount != null || r.recovery_amount != null)
+                          ? ((r.settlement_amount ?? 0) - (r.recovery_amount ?? 0)).toLocaleString()
+                          : '-'}
+                      </td>
+                      <td style={{ ...tdCenter, padding: '0.375rem' }}>
+                        <select
+                          value={r.completion_detail || '진행중'}
+                          onChange={async (e) => {
+                            const val = e.target.value
+                            setReturns(prev => prev.map(x => x.id === r.id ? { ...x, completion_detail: val } : x))
+                            try {
+                              await returnApi.patch(r.id, { completion_detail: val })
+                            } catch (_e) { /* 무시 */ }
+                          }}
+                          style={{ padding: '0.2rem 0.3rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', fontSize: '0.75rem', cursor: 'pointer', outline: 'none' }}
+                        >
+                          <option value="진행중">진행중</option>
+                          <option value="취소">취소</option>
+                          <option value="교환">교환</option>
+                          <option value="반품">반품</option>
+                        </select>
+                      </td>
+                      <td colSpan={2} style={{ ...tdCenter, padding: '0.375rem' }}>
+                        <select
+                          value={r.customer_order_no || 'return_incomplete'}
+                          onChange={async (e) => {
+                            const val = e.target.value
+                            try {
+                              await returnApi.patch(r.id, { customer_order_no: val })
+                              setReturns(prev => prev.map(x => x.id === r.id ? { ...x, customer_order_no: val } : x))
+                            } catch (_e) { /* 무시 */ }
+                          }}
+                          style={{ padding: '0.2rem 0.3rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', fontSize: '0.75rem', cursor: 'pointer', outline: 'none' }}
+                        >
+                          <option value="return_incomplete">미완료</option>
+                          <option value="return_complete">완료</option>
+                        </select>
+                      </td>
+                      </tr>
+                      <tr style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
+                      <td style={{ ...tdCenter, padding: '0.375rem' }}>
+                        <div
+                          onClick={() => {
+                            const inp = document.getElementById(`ck-${r.id}`) as HTMLInputElement
+                            inp?.showPicker?.()
+                          }}
+                          style={{ cursor: 'pointer', fontSize: '0.8rem', color: r.check_date ? '#E5E5E5' : '#555', minWidth: '40px' }}
+                        >
+                          {fmtMD(r.check_date)}
+                        </div>
+                        <input
+                          id={`ck-${r.id}`}
+                          type="date"
+                          value={r.check_date?.slice(0, 10) || ''}
+                          onChange={async (e) => {
+                            const val = e.target.value
+                            setReturns(prev => prev.map(x => x.id === r.id ? { ...x, check_date: val } : x))
+                            try {
+                              await returnApi.patch(r.id, { check_date: val || '' })
+                            } catch (_e) { /* 무시 */ }
+                          }}
+                          style={{ width: 0, height: 0, opacity: 0, position: 'absolute', pointerEvents: 'none' }}
+                        />
+                      </td>
+                      <td style={tdCenter}>{r.customer_phone || '-'}</td>
+                      <td style={{ ...tdCenter, maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.product_name || '-'}</td>
+                      <td style={{ ...tdCenter, padding: '0.375rem' }}>
+                        <input
+                          type="text"
+                          value={r.memo || ''}
+                          placeholder=""
+                          onChange={(e) => {
+                            const val = e.target.value
+                            setReturns(prev => prev.map(x => x.id === r.id ? { ...x, memo: val } : x))
+                          }}
+                          onBlur={async (e) => {
+                            try {
+                              await returnApi.patch(r.id, { memo: e.target.value })
+                            } catch (_e) { /* 무시 */ }
+                          }}
+                          style={{ width: '100px', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', fontSize: '0.8rem', textAlign: 'center' }}
+                        />
+                      </td>
+                      <td style={tdCenter}>
                         {r.return_link ? <a href={r.return_link} target="_blank" rel="noopener noreferrer" style={{ color: '#4C9AFF', textDecoration: 'none' }}>링크</a> : '-'}
                       </td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', color: '#888', whiteSpace: 'nowrap' }}>{r.return_request_date?.slice(0, 10) || r.created_at?.slice(0, 10) || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.product_location || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.return_source || '-'}</td>
-                      <td style={{ padding: '0.625rem' }}>
-                        <span style={{ padding: '0.2rem 0.5rem', borderRadius: '20px', fontSize: '0.72rem', fontWeight: 600, background: st.bg, color: st.text, whiteSpace: 'nowrap' }}>{st.label}</span>
+                      <td style={{ ...tdCenter, color: '#888' }}>{fmtMD(r.return_request_date || r.created_at)}</td>
+                      <td style={tdCenter}>{r.region || '-'}</td>
+                      <td style={tdCenter}>{r.return_source || '-'}</td>
+                      <td style={{ ...tdCenter, padding: '0.375rem' }}>
+                        <select
+                          value={r.status}
+                          onChange={async (e) => {
+                            const val = e.target.value
+                            try {
+                              await returnApi.patch(r.id, { status: val })
+                              setReturns(prev => prev.map(x => x.id === r.id ? { ...x, status: val } : x))
+                            } catch (_e) { /* 무시 */ }
+                          }}
+                          style={{ padding: '0.2rem 0.3rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', fontSize: '0.75rem', cursor: 'pointer', outline: 'none' }}
+                        >
+                          <option value="not_collected">미수거</option>
+                          <option value="collecting">수거중</option>
+                          <option value="collected">수거완료</option>
+                        </select>
                       </td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.customer_order_no || '-'}</td>
-                      <td style={{ padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>{r.original_order_no || '-'}</td>
-                    </tr>
+                      <td style={{ ...tdCenter, padding: '0.375rem' }}>
+                        <span
+                          onClick={() => r.customer_address && showAlert(r.customer_address, 'info')}
+                          style={{ fontSize: '0.8rem', color: '#E5E5E5', cursor: r.customer_address ? 'pointer' : 'default', textDecoration: r.customer_address ? 'underline' : 'none' }}
+                        >
+                          {r.product_location || '-'}
+                        </span>
+                        <button
+                          onClick={() => setLocationModal({ id: r.id, value: r.product_location || '', address: r.customer_address || '' })}
+                          style={{ marginLeft: '4px', background: 'none', border: '1px solid #2D2D2D', borderRadius: '3px', color: '#888', fontSize: '0.6rem', padding: '1px 4px', cursor: 'pointer', verticalAlign: 'middle' }}
+                        >수정</button>
+                      </td>
+                      <td style={{ ...tdCenter, padding: '0.375rem' }}>
+                        <select
+                          value={r.original_order_no || 'return_incomplete'}
+                          onChange={async (e) => {
+                            const val = e.target.value
+                            try {
+                              await returnApi.patch(r.id, { original_order_no: val })
+                              setReturns(prev => prev.map(x => x.id === r.id ? { ...x, original_order_no: val } : x))
+                            } catch (_e) { /* 무시 */ }
+                          }}
+                          style={{ padding: '0.2rem 0.3rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', fontSize: '0.75rem', cursor: 'pointer', outline: 'none' }}
+                        >
+                          <option value="return_incomplete">미완료</option>
+                          <option value="return_complete">완료</option>
+                        </select>
+                      </td>
+                      </tr>
+                    </Fragment>
                   )
                 })}
                 {returns.length === 0 && (
-                  <tr><td colSpan={22} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>반품/교환 내역이 없습니다</td></tr>
+                  <tr><td colSpan={12} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>반품/교환 내역이 없습니다</td></tr>
                 )}
               </tbody>
             </table>
@@ -483,6 +679,7 @@ export default function ReturnsPage() {
         </div>
       )}
 
+{/* 상품위치 수정 모달 */}      {locationModal && (        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '420px', maxWidth: '90vw' }}>            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>상품위치 수정</h3>            {locationModal.address && (              <div style={{ padding: '0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem', color: '#4C9AFF', lineHeight: 1.5 }}>                <span style={{ color: '#888', fontSize: '0.75rem' }}>전체 주소</span><br/>                {locationModal.address}              </div>            )}            <input style={inputStyle} placeholder="시/군/구 입력" value={locationModal.value} onChange={e => setLocationModal({ ...locationModal, value: e.target.value })} onKeyDown={async e => { if (e.key === 'Enter') { const val = locationModal.value.trim(); setReturns(prev => prev.map(x => x.id === locationModal.id ? { ...x, product_location: val } : x)); try { await returnApi.patch(locationModal.id, { product_location: val }) } catch (_e) { /* */ } setLocationModal(null) } }} autoFocus />            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>              <button onClick={() => setLocationModal(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>              <button onClick={async () => { const val = locationModal.value.trim(); setReturns(prev => prev.map(x => x.id === locationModal.id ? { ...x, product_location: val } : x)); try { await returnApi.patch(locationModal.id, { product_location: val }) } catch (_e) { /* */ } setLocationModal(null) }} style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>저장</button>            </div>          </div>        </div>      )}
       {/* 상세 모달 + 타임라인 */}
       {detailItem && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>

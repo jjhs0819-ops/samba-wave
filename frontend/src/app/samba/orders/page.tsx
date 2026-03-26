@@ -25,14 +25,13 @@ const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = 
 const SHIPPING_COMPANIES = ['CJ대한통운', '한진택배', '롯데택배', '로젠택배', '우체국택배', '경동택배', '대신택배', '일양로지스', '편의점택배', 'DHL', '직접배송', '기타']
 
 const PERIOD_BUTTONS = [
+  { key: 'lastmonth', label: '지난달' },
+  { key: 'thismonth', label: '이번달' },
+  { key: 'lastweek', label: '지난주' },
+  { key: 'thisweek', label: '이번주' },
+  { key: 'yesterday', label: '어제' },
   { key: 'today', label: '오늘' },
-  { key: '1week', label: '1주일' },
-  { key: '15days', label: '15일' },
-  { key: '1month', label: '1개월' },
-  { key: '3months', label: '3개월' },
-  { key: '6months', label: '6개월' },
   { key: 'thisyear', label: '올해' },
-  { key: 'all', label: '전체' },
 ]
 
 const MARKET_STATUS_OPTIONS = ['일반', '발송대기', '교환요청', '취소요청', '반품요청', '배송완료']
@@ -521,11 +520,11 @@ export default function OrdersPage() {
     now.setHours(0, 0, 0, 0)
     switch (key) {
       case 'today': return now
-      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d }
-      case '15days': { const d = new Date(now); d.setDate(d.getDate() - 15); return d }
-      case '1month': { const d = new Date(now); d.setMonth(d.getMonth() - 1); return d }
-      case '3months': { const d = new Date(now); d.setMonth(d.getMonth() - 3); return d }
-      case '6months': { const d = new Date(now); d.setMonth(d.getMonth() - 6); return d }
+      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
+      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() - 7); return d }
+      case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
+      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
       case 'thisyear': return new Date(now.getFullYear(), 0, 1)
       default: return null
     }
