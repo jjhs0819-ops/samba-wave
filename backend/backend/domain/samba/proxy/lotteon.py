@@ -49,46 +49,53 @@ class LotteonClient:
     body: Optional[dict[str, Any]] = None,
     params: Optional[dict[str, str]] = None,
     base_url: Optional[str] = None,
+    _shared_client: Optional[Any] = None,
   ) -> dict[str, Any]:
-    """공통 API 호출."""
+    """공통 API 호출. _shared_client 제공 시 TCP 연결 재사용."""
     url = f"{base_url or self.BASE_URL}{path}"
     headers = self._headers()
 
-    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+    async def _do(c: Any) -> Any:
       if method == "GET":
-        resp = await client.get(url, headers=headers, params=params)
+        return await c.get(url, headers=headers, params=params)
       elif method == "POST":
-        resp = await client.post(url, headers=headers, json=body or {})
+        return await c.post(url, headers=headers, json=body or {})
       elif method == "PUT":
-        resp = await client.put(url, headers=headers, json=body or {})
+        return await c.put(url, headers=headers, json=body or {})
       elif method == "DELETE":
-        resp = await client.delete(url, headers=headers, params=params)
-      else:
-        raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
+        return await c.delete(url, headers=headers, params=params)
+      raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
 
-      try:
-        data = resp.json()
-      except Exception:
-        data = {"raw": resp.text}
+    if _shared_client is not None:
+      resp = await _do(_shared_client)
+    else:
+      async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+        resp = await _do(client)
 
-      logger.info(f"[롯데ON] {method} {path} → {resp.status_code}")
+    try:
+      data = resp.json()
+    except Exception:
+      data = {"raw": resp.text}
 
-      if not resp.is_success:
-        msg = data.get("message", "") or data.get("msg", "") or resp.text[:200]
-        raise LotteonApiError(f"HTTP {resp.status_code}: {msg}")
+    logger.info(f"[롯데ON] {method} {path} → {resp.status_code}")
 
-      # HTTP 200이어도 응답 body에 에러 코드가 있을 수 있음
-      # returnCode: 요청 레벨 에러 (카테고리 누락 등)
-      res_code = (
-        data.get("returnCode") or data.get("code")
-        or data.get("resultCode") or data.get("rspnCd") or ""
-      )
-      if res_code and res_code not in ("0000", "00", "SUCCESS"):
-        msg = data.get("message", "") or data.get("msg", "") or data.get("rspnMsgCntn", "") or str(data)
-        logger.warning(f"[롯데ON] 응답 에러 코드: {res_code} — {msg}")
-        raise LotteonApiError(f"응답 에러 ({res_code}): {msg}")
+    if not resp.is_success:
+      msg = data.get("message", "") or data.get("msg", "") or resp.text[:200]
+      raise LotteonApiError(f"HTTP {resp.status_code}: {msg}")
 
-      return data
+    # HTTP 200이어도 응답 body에 에러 코드가 있을 수 있음
+    # returnCode: 요청 레벨 에러 (카테고리 누락 등)
+    res_code = (
+      data.get("returnCode") or data.get("code")
+      or data.get("resultCode") or data.get("rspnCd") or ""
+    )
+    if res_code and res_code not in ("0000", "00", "SUCCESS"):
+      msg = data.get("message", "") or data.get("msg", "") or data.get("rspnMsgCntn", "") or str(data)
+      logger.warning(f"[롯데ON] 응답 에러 코드: {res_code} — {msg}")
+      logger.warning(f"[롯데ON] 응답 전체 body: {data}")
+      raise LotteonApiError(f"응답 에러 ({res_code}): {msg}")
+
+    return data
 
   # ------------------------------------------------------------------
   # 인증
@@ -187,11 +194,20 @@ class LotteonClient:
     )
 
   async def change_status(self, spd_lst: list[dict[str, Any]]) -> dict[str, Any]:
-    """상품 판매상태 변경 (slStatCd: SALE | SOUT | END)."""
+    """상품 판매상태 변경 (slStatCd: SALE | SOUT | END).
+
+    trGrpCd/trNo는 등록/수정 API와 동일하게 spdLst 각 아이템 안에 위치해야 함.
+    """
+    enriched = [
+      {"trGrpCd": self.tr_grp_cd or "SR", "trNo": self.tr_no, **item}
+      for item in spd_lst
+    ]
+    body: dict[str, Any] = {"spdLst": enriched}
+    logger.info(f"[롯데ON] change_status 요청 body: {body}")
     return await self._call_api(
       "POST",
       "/v1/openapi/product/v1/product/status/change",
-      body={"spdLst": spd_lst},
+      body=body,
     )
 
   async def delete_product(self, spd_no: str) -> dict[str, Any]:
@@ -199,7 +215,7 @@ class LotteonClient:
     result = await self._call_api(
       "POST",
       "/v1/openapi/product/v1/product/delete",
-      body={"spdLst": [{"selPrdNo": spd_no}]},
+      body={"spdLst": [{"spdNo": spd_no, "selPrdNo": spd_no}]},
     )
     return {"success": True, "data": result}
 
@@ -208,7 +224,11 @@ class LotteonClient:
   # ------------------------------------------------------------------
 
   async def get_categories(
-    self, cat_id: str = "", depth: str = "", parent_id: str = ""
+    self,
+    cat_id: str = "",
+    depth: str = "",
+    parent_id: str = "",
+    _shared_client: Optional[Any] = None,
   ) -> dict[str, Any]:
     """표준카테고리 조회 (onpick-api 도메인).
 
@@ -216,6 +236,7 @@ class LotteonClient:
       cat_id: filter_1 — 특정 카테고리 ID 조회
       depth: filter_3 — 뎁스 레벨 (1~4)
       parent_id: filter_2 — 부모 카테고리 ID로 하위 목록 조회
+      _shared_client: 대량 조회 시 TCP 연결 재사용용 httpx 클라이언트
     """
     params: dict[str, str] = {"job": "cheetahStandardCategory"}
     if cat_id:
@@ -229,6 +250,7 @@ class LotteonClient:
       "/cheetah/econCheetah.ecn",
       params=params,
       base_url=self.ONPICK_URL,
+      _shared_client=_shared_client,
     )
 
   async def get_delivery_zones(self) -> dict[str, Any]:
@@ -265,7 +287,17 @@ class LotteonClient:
       category_id: 표준카테고리번호 (BC...)
       disp_cat_id: 전시카테고리번호 (FC...) — 없으면 category_id 사용
     """
-    images = (product.get("images") or [])[:10]
+    # 이미지 URL 정규화: //로 시작하면 https: 추가, http로 시작하지 않으면 제외
+    def _normalize_url(url: str) -> str:
+      if url.startswith("//"):
+        return "https:" + url
+      return url
+
+    raw_images = product.get("images") or []
+    images = [_normalize_url(u) for u in raw_images if u and (u.startswith("http") or u.startswith("//"))][:10]
+    from backend.utils.logger import logger as _log
+    _log.info(f"[롯데ON] 이미지 원본: {raw_images[:3]}")
+    _log.info(f"[롯데ON] 이미지 정규화: {images[:3]}")
     sale_price = int(product.get("sale_price", 0))
     name = (product.get("name", "") or "")[:150]
 
@@ -294,13 +326,13 @@ class LotteonClient:
       fname = path.rsplit("/", 1)[-1] if "/" in path else ""
       return fname if fname else "image.jpg"
 
-    # 상품 파일 목록
+    # 상품 파일 목록 (origFileNm도 전체 URL로 설정)
     pd_file_lst = [
       {
         "fileTypCd": "PD",
         "fileDvsCd": "WDTH",
         "origImgFileNm": url,
-        "origFileNm": _extract_filename(url),
+        "origFileNm": url,
       }
       for url in images
     ]
@@ -320,22 +352,39 @@ class LotteonClient:
     # 단품(옵션) 목록
     options = product.get("options") or []
     itm_lst = []
+
+    def _detect_opt_nm(opt: dict[str, Any], all_opts: list) -> str:
+      """옵션 타입 자동 감지 (색상/사이즈/기타)."""
+      keys = set(opt.keys())
+      if "color" in keys or any("color" in str(k).lower() for k in keys):
+        return "색상"
+      if "size" in keys or any("size" in str(k).lower() for k in keys):
+        return "사이즈"
+      # 옵션값이 숫자(사이즈)인지 색상명인지 추정
+      val = opt.get("name", "") or opt.get("value", "") or ""
+      size_keywords = ["S", "M", "L", "XL", "XXL", "XS", "FREE", "프리", "스몰", "라지"]
+      if val.strip().upper() in size_keywords or (val.replace(".", "").isdigit()):
+        return "사이즈"
+      return "옵션"
+
     if options:
+      # 상품 전체 옵션에서 optNm을 한 번만 결정 (단품 간 optNm 불일치 시 9999 에러)
+      product_opt_nm = _detect_opt_nm(options[0], options)
       for idx, opt in enumerate(options):
         opt_name = opt.get("name", "") or opt.get("size", "") or opt.get("value", "") or f"옵션{idx + 1}"
         opt_stock = opt.get("stock", default_stock) or default_stock
         itm_lst.append({
-          "eitmNo": f"OPT-{idx}",
+          "eitmNo": f"OPT{idx}",
           "dpYn": "Y",
           "sortSeq": idx + 1,
-          "itmOptLst": [{"optNm": "옵션", "optVal": opt_name}],
+          "itmOptLst": [{"optNm": product_opt_nm, "optVal": opt_name}],
           "itmImgLst": itm_img_lst,
           "slPrc": sale_price,
           "stkQty": opt_stock,
         })
     else:
       itm_lst.append({
-        "eitmNo": "OPT-0",
+        "eitmNo": "OPT0",
         "dpYn": "Y",
         "sortSeq": 1,
         "itmOptLst": [],
@@ -352,6 +401,7 @@ class LotteonClient:
         "trGrpCd": tr_grp_cd,
         "trNo": tr_no,
         "scatNo": category_id,
+        # 전시카테고리(FC...)가 있으면 사용, 없으면 표준카테고리로 fallback (dcatLst는 필수)
         "dcatLst": [{"mallCd": "LTON", "lfDcatNo": disp_cat_id or category_id}],
         "slTypCd": "GNRL",
         "pdTypCd": "GNRL_GNRL",
@@ -391,6 +441,8 @@ class LotteonClient:
         "sndBgtNday": 2,
         "dvMnsCd": "DPCL",
         "cmbnDvPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
+        # 합반품여부는 합배송여부와 동일하게 설정 (롯데ON 규칙)
+        "cmbnRtngPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
         "rtngPsbYn": "Y",
         "xchgPsbYn": "Y",
         # 반품/교환 배송비 (0이면 필드 생략 — 정책번호 기본값 사용)
@@ -402,6 +454,8 @@ class LotteonClient:
         "sitmYn": "Y" if options else "N",
         "itmLst": itm_lst,
         "rtrvTypCd": "ENTP_RTRV",
+        # 배송권역 그룹코드 (GN000=전국, GN004=제주, GN006=도서산간 등)
+        "dvRgsprGrpCd": "GN000",
       }]
     }
 

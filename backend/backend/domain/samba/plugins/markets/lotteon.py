@@ -53,6 +53,32 @@ class LotteonPlugin(MarketPlugin):
         "message": "롯데ON API Key가 비어있습니다. 설정에서 해당 계정을 수정 후 저장해주세요.",
       }
 
+    # category_id가 경로 문자열(">" 포함)이면 DB 코드맵에서 변환 시도
+    if category_id and ">" in category_id:
+      from backend.domain.samba.category.repository import (
+        SambaCategoryMappingRepository,
+        SambaCategoryTreeRepository,
+      )
+      from backend.domain.samba.category.service import SambaCategoryService
+      _cat_svc = SambaCategoryService(
+        SambaCategoryMappingRepository(session),
+        SambaCategoryTreeRepository(session),
+      )
+      resolved = await _cat_svc.resolve_category_code("lotteon", category_id)
+      if resolved:
+        logger.info(f"[롯데ON] 카테고리 코드 변환: '{category_id}' → {resolved}")
+        category_id = resolved
+      else:
+        return {
+          "success": False,
+          "message": (
+            f"롯데ON 카테고리 코드를 찾을 수 없습니다. "
+            f"카테고리 설정에서 '롯데ON 동기화'를 실행한 뒤 "
+            f"AI 자동 매핑을 다시 실행해주세요. "
+            f"(현재 값: {category_id})"
+          ),
+        }
+
     client = LotteonClient(api_key)
     # 거래처 정보 자동 획득 (trGrpCd, trNo)
     await client.test_auth()
@@ -128,6 +154,32 @@ class LotteonPlugin(MarketPlugin):
       except Exception as e:
         logger.warning(f"[롯데ON] 브랜드 검색 실패 (무시): {e}")
 
+    # ── 비리프 카테고리 자동 보정 (leaf_yn="Y" 될 때까지 최대 4단계 반복 탐색) ──
+    if category_id and category_id.endswith("0000"):
+      logger.info(f"[롯데ON] 비리프 카테고리 감지 — 하위 탐색 시작: {category_id}")
+      for _step in range(4):
+        try:
+          child_result = await client.get_categories(parent_id=category_id)
+          child_items = child_result.get("itemList") or []
+          logger.info(f"[롯데ON] 하위 카테고리 조회 결과: {len(child_items)}개 (step={_step+1})")
+          if not child_items:
+            logger.warning(f"[롯데ON] 비리프 보정 중단 — 하위 없음 (parent={category_id})")
+            break
+          d = child_items[0].get("data", child_items[0])
+          child_id = d.get("std_cat_id", "") or d.get("cat_id", "") or d.get("id", "")
+          leaf_yn = d.get("leaf_yn", "")
+          if not child_id:
+            logger.warning(f"[롯데ON] 비리프 보정 중단 — std_cat_id 없음. 키: {list(d.keys())[:10]}")
+            break
+          logger.info(f"[롯데ON] 비리프 자동 보정: {category_id} → {child_id} (leaf_yn={leaf_yn})")
+          category_id = child_id
+          if leaf_yn == "Y":
+            break  # 최하위 도달
+          # leaf_yn이 "N"이거나 불분명하면 한 번 더 탐색
+        except Exception as e:
+          logger.warning(f"[롯데ON] 하위 카테고리 조회 실패 (무시): {e}")
+          break
+
     # 전시카테고리(FC...) 자동 조회
     disp_cat_id = ""
     try:
@@ -142,37 +194,54 @@ class LotteonPlugin(MarketPlugin):
     except Exception as e:
       logger.warning(f"[롯데ON] 전시카테고리 조회 실패 (무시): {e}")
 
-    # 배송권역 그룹코드 자동 조회
-    dv_zn_grp_cd = ""
-    try:
-      zone_result = await client.get_delivery_zones()
-      zone_list = zone_result.get("data") or []
-      if isinstance(zone_list, list) and zone_list:
-        dv_zn_grp_cd = zone_list[0].get("dvZnGrpCd", "")
-      logger.info(f"[롯데ON] 배송권역 조회: dvZnGrpCd={dv_zn_grp_cd}")
-    except Exception as e:
-      logger.warning(f"[롯데ON] 배송권역 조회 실패 (무시): {e}")
-
     data = LotteonClient.transform_product(
       product_copy, category_id, client.tr_grp_cd or "SR", client.tr_no, disp_cat_id
     )
 
-    # 배송권역 그룹코드 주입
-    if dv_zn_grp_cd and data.get("spdLst"):
-      data["spdLst"][0]["dvZnGrpCd"] = dv_zn_grp_cd
-
     # ── 4. 등록 / 수정 ───────────────────────────────────────────────
     try:
       if existing_no:
-        # selPrdNo 주입하여 수정 요청
+        # ── 기존 단품 eitmNo 조회 (수정 시 중복 방지) ───────────────
+        existing_eitm_nos: list[str] = []
+        try:
+          prod_resp = await client.get_product(existing_no)
+          inner = prod_resp.get("data", prod_resp)
+          if isinstance(inner, dict):
+            spd_info = inner.get("spdLst") or inner.get("spdInfo") or inner
+            if isinstance(spd_info, list) and spd_info:
+              spd_info = spd_info[0]
+            if isinstance(spd_info, dict):
+              itm_lst_raw = spd_info.get("itmLst") or []
+              existing_eitm_nos = [
+                str(itm.get("eitmNo")) for itm in itm_lst_raw if itm.get("eitmNo")
+              ]
+          logger.info(f"[롯데ON] 기존 단품 eitmNo: {existing_eitm_nos}")
+        except Exception as e:
+          logger.warning(f"[롯데ON] 기존 단품 조회 실패 (무시): {e}")
+
+        # spdNo + selPrdNo 모두 주입 (롯데ON 수정 API 필수값)
         if data.get("spdLst") and isinstance(data["spdLst"], list):
+          data["spdLst"][0]["spdNo"] = existing_no
           data["spdLst"][0]["selPrdNo"] = existing_no
+          # 수정 API는 itmLst를 "새 단품 추가"로 처리 → 기존 옵션과 중복 에러 발생
+          # 상품 헤더(이름/이미지/카테고리/가격)만 업데이트하고 itmLst는 제거
+          data["spdLst"][0].pop("itmLst", None)
+          data["spdLst"][0].pop("sitmYn", None)
         result = await client.update_product(data)
         return {"success": True, "message": "롯데ON 수정 성공", "data": result}
       else:
         result = await client.register_product(data)
-        # 등록 결과에서 상품번호 추출
-        spd_no = result.get("spdNo", "")
+        # 등록 결과에서 상품번호 추출 (spdNo 또는 epdNo)
+        spd_no = result.get("spdNo", "") or result.get("epdNo", "")
+        if not spd_no:
+          # data 배열 안에 있을 수 있음
+          data_list = result.get("data", {})
+          if isinstance(data_list, dict):
+            data_list = data_list.get("data", [])
+          if isinstance(data_list, list) and data_list:
+            item0 = data_list[0] if isinstance(data_list[0], dict) else {}
+            spd_no = item0.get("spdNo", "") or item0.get("epdNo", "")
+        logger.info(f"[롯데ON] 등록 완료 — spdNo={spd_no!r}, 원본응답 키: {list(result.keys())}")
         return {"success": True, "message": "롯데ON 등록 성공", "data": result, "product_no": spd_no}
     except Exception as e:
       action = "수정" if existing_no else "등록"
@@ -194,9 +263,9 @@ class LotteonPlugin(MarketPlugin):
     try:
       client = LotteonClient(api_key)
       await client.test_auth()
-      # SOUT = 품절/판매중지
-      await client.change_status([{"selPrdNo": product_no, "slStatCd": "SOUT"}])
-      return {"success": True, "message": "롯데ON 판매중지 완료"}
+      # END = 판매 종료 (롯데ON은 완전 삭제 API 없음, END가 가장 강한 종료 처리)
+      await client.change_status([{"spdNo": product_no, "slStatCd": "SOUT"}])
+      return {"success": True, "message": "롯데ON 판매종료 완료"}
     except Exception as e:
-      logger.error(f"[롯데ON] 판매중지 실패: {e}")
-      return {"success": False, "message": f"롯데ON 판매중지 실패: {e}"}
+      logger.error(f"[롯데ON] 판매종료 실패: {e}")
+      return {"success": False, "message": f"롯데ON 판매종료 실패: {e}"}
