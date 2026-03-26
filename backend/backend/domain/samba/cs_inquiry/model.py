@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import Boolean, String
 from sqlmodel import Column, DateTime, Field, SQLModel, Text
 
 from ulid import ULID
@@ -28,6 +29,14 @@ class SambaCSInquiry(SQLModel, table=True):
     market_order_id: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True, index=True)
     )
+    # 마켓측 문의 번호 (스마트스토어: inquiryNo)
+    market_inquiry_no: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True, index=True)
+    )
+    # 마켓측 답변 번호 (스마트스토어: inquiryCommentNo)
+    market_answer_no: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     account_name: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
@@ -41,8 +50,20 @@ class SambaCSInquiry(SQLModel, table=True):
         default=None, sa_column=Column(Text, nullable=True)
     )
 
+    # 수집상품 연결
+    collected_product_id: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True, index=True)
+    )
+    # 마켓측 상품번호 (스마트스토어: originProductNo, 쿠팡: productId 등)
+    market_product_no: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True, index=True)
+    )
+
     # 상품 정보
     product_name: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    product_image: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
     product_link: Optional[str] = Field(
@@ -65,6 +86,11 @@ class SambaCSInquiry(SQLModel, table=True):
     reply_status: str = Field(
         default="pending",
         sa_column=Column(Text, nullable=False, index=True),
+    )
+
+    # 숨김 여부
+    is_hidden: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default="false")
     )
 
     # 일시

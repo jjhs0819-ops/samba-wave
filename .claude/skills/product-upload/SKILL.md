@@ -280,7 +280,7 @@ TRANSFORM_ONLY_EXEMPTIONS = ["B1", "B3", "B4", "B5"]
 
 ---
 
-## 마켓 핸들러 인벤토리 (14개 등록)
+## 마켓 핸들러 인벤토리 (18개 등록)
 
 ### 완전 구현 (8개)
 
@@ -294,6 +294,15 @@ TRANSFORM_ONLY_EXEMPTIONS = ["B1", "B3", "B4", "B5"]
 | 롯데홈쇼핑 | `lottehome` | userId/password | JSON | agncNo/env 필요 |
 | GS샵 | `gsshop` | supCd/aesKey | JSON | subSupCd/env 필요 |
 | KREAM | `kream` | token/cookie | JSON | 사이즈별 매도 입찰 |
+
+### 신규 구현 (4개, 2026-03-24)
+
+| 마켓 | 코드 | 인증 방식 | 비고 |
+|------|------|----------|------|
+| 토스 | `toss` | HMAC-SHA256 | JSON, 실 테스트 필요 |
+| 라쿠텐 | `rakuten` | ESA Base64 | JSON 2.0 우선, XML 폴백 |
+| 아마존 | `amazon` | LWA OAuth | Listings API, AWS SigV4 미구현(추후) |
+| 바이마 | `buyma` | 없음 (CSV) | API 없음, CSV 생성 방식 |
 
 ### 스텁 (6개, API 연동 미구현)
 
@@ -465,9 +474,17 @@ TRANSFORM_ONLY_EXEMPTIONS = ["B1", "B3", "B4", "B5"]
 
 **테스트 계정 (2026-03-24 확인):**
 - userId: `037800LT`, password: `037800LT`, agncNo: `037800LT`
+- 테스트서버: 전시카테고리 `5157537`, MD상품군 `24973` (조회API 대부분 차단)
+- 테스트서버: 배송지/배송정책 등록 불가 (API 권한 없음 + 조회 API 차단)
+
+**운영 계정 (2026-03-24 등록 성공):**
+- userId: `037800LT`, password: `gemini0674@@`, agncNo: `037800LT`, env: `prod`
+- MD코드: `220056` (최예지), MD상품군: `334` (스니커즈/운동화)
+- 전시카테고리: `5158302` (롯데아이몰 > 패션슈즈 > 스니커즈/운동화 > 런닝화/워킹화)
 - 배송정책번호: `3673192`
 - 반품지번호: `1967053`
 - 출고지번호: `1967054`
+- 등록 성공: goods_no `3270343975`
 
 **전시카테고리 ↔ 표준카테고리 매핑:**
 - API: `loadStdCatsByDispNo.lotte?subscriptionId=[인증키]&disp_no=[전시카테고리번호]`
@@ -536,3 +553,4 @@ TRANSFORM_ONLY_EXEMPTIONS = ["B1", "B3", "B4", "B5"]
 | 2026-03-24 | 롯데홈쇼핑 배송지/출고지/반품지 자동 조회 구현: _handle_lottehome에서 creds 빈값 시 searchReturnListOpenApi 자동 조회. 배송지 조회 엔드포인트 수정 (searchDlvPlcListOpenApi → searchReturnListOpenApi) | - |
 | 2026-03-24 | 롯데홈쇼핑 테스트서버 연동 검증: 인증 성공, 배송지 통과, 안전인증(sft_cert_tgt_seq 빈값+prl_imp_yn=Y) 통과, 전시카테고리(disp_no) 미해결 — 테스트서버 조회API 외부차단 | - |
 | 2026-03-24 | 스킬 문서에 롯데홈쇼핑 API 특이사항 + 에러코드 + 테스트계정 + 전시-표준카테고리 매핑API 추가 | - |
+| 2026-03-24 | 4개 마켓 상품등록 구현: 토스(HMAC-SHA256), 라쿠텐(ESA), 아마존(LWA OAuth), 바이마(CSV) — 프록시 4개 + dispatcher 핸들러 4개 + UI 마켓목록 추가 | - |

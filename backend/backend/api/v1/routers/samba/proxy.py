@@ -139,6 +139,147 @@ async def aligo_remain(
 
 
 # ═══════════════════════════════════════════════
+# 알리고 SMS 발송
+# ═══════════════════════════════════════════════
+
+
+class SmsRequest(BaseModel):
+    receiver: str  # 수신 번호
+    message: str   # 메시지 내용
+    title: str = ""  # LMS 제목 (길면 자동 LMS)
+
+
+@router.post("/aligo/send-sms")
+async def aligo_send_sms(
+    body: SmsRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """알리고 SMS/LMS 발송."""
+    creds = await _get_setting(session, "aligo_sms")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "SMS 설정이 저장되지 않았습니다."}
+
+    api_key = creds.get("apiKey", "")
+    user_id = creds.get("userId", "")
+    sender = creds.get("sender", "")
+    if not api_key or not user_id or not sender:
+        return {"success": False, "message": "SMS 설정이 불완전합니다 (apiKey/userId/sender 필요)."}
+
+    # 90바이트 초과 시 LMS
+    msg_bytes = len(body.message.encode("euc-kr", errors="replace"))
+    is_lms = msg_bytes > 90
+
+    data = {
+        "key": api_key,
+        "user_id": user_id,
+        "sender": sender,
+        "receiver": body.receiver.replace("-", ""),
+        "msg": body.message,
+    }
+    if is_lms and body.title:
+        data["title"] = body.title
+
+    url = "https://apis.aligo.in/send/" if not is_lms else "https://apis.aligo.in/send/"
+
+    try:
+        async with httpx.AsyncClient(timeout=15, verify=True) as client:
+            resp = await client.post(
+                url,
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            result = resp.json()
+            if result.get("result_code") == 1 or str(result.get("result_code")) == "1":
+                return {
+                    "success": True,
+                    "message": f"{'LMS' if is_lms else 'SMS'} 발송 성공",
+                    "msg_id": result.get("msg_id"),
+                    "msg_type": "LMS" if is_lms else "SMS",
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": result.get("message", "발송 실패"),
+                }
+    except Exception as exc:
+        logger.error(f"[알리고] SMS 발송 실패: {exc}")
+        return {"success": False, "message": f"SMS 발송 실패: {exc}"}
+
+
+# ═══════════════════════════════════════════════
+# 알리고 카카오 알림톡 발송
+# ═══════════════════════════════════════════════
+
+
+class KakaoRequest(BaseModel):
+    receiver: str    # 수신 번호
+    message: str     # 메시지 내용
+    template_code: str = ""  # 카카오 템플릿 코드 (비어있으면 친구톡)
+    subject: str = ""  # 제목
+
+
+@router.post("/aligo/send-kakao")
+async def aligo_send_kakao(
+    body: KakaoRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """알리고 카카오 알림톡/친구톡 발송."""
+    creds = await _get_setting(session, "aligo_sms")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "SMS 설정이 저장되지 않았습니다."}
+
+    kakao_creds = await _get_setting(session, "aligo_kakao")
+
+    api_key = creds.get("apiKey", "")
+    user_id = creds.get("userId", "")
+    sender = creds.get("sender", "")
+    sender_key = (kakao_creds or {}).get("senderKey", "") if isinstance(kakao_creds, dict) else ""
+
+    if not api_key or not user_id:
+        return {"success": False, "message": "SMS 설정이 불완전합니다."}
+    if not sender_key:
+        return {"success": False, "message": "카카오 발신프로필 키(senderKey)가 설정되지 않았습니다. 설정 페이지에서 등록해주세요."}
+
+    data = {
+        "key": api_key,
+        "user_id": user_id,
+        "sender": sender,
+        "receiver_1": body.receiver.replace("-", ""),
+        "message_1": body.message,
+        "senderkey": sender_key,
+        "tpl_code": body.template_code,
+    }
+    if body.subject:
+        data["subject_1"] = body.subject
+
+    # 템플릿 코드가 있으면 알림톡, 없으면 친구톡
+    url = "https://kakaoapi.aligo.in/akv10/alimtalk/send/" if body.template_code else "https://kakaoapi.aligo.in/akv10/friendtalk/send/"
+
+    try:
+        async with httpx.AsyncClient(timeout=15, verify=True) as client:
+            resp = await client.post(
+                url,
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            result = resp.json()
+            if result.get("code") == 0 or str(result.get("code")) == "0":
+                return {
+                    "success": True,
+                    "message": "카카오톡 발송 성공",
+                    "msg_type": "알림톡" if body.template_code else "친구톡",
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": result.get("message", "카카오 발송 실패"),
+                }
+    except Exception as exc:
+        logger.error(f"[알리고] 카카오 발송 실패: {exc}")
+        return {"success": False, "message": f"카카오 발송 실패: {exc}"}
+
+
+# ═══════════════════════════════════════════════
 # 스마트스토어 (SmartStore) 인증 테스트
 # ═══════════════════════════════════════════════
 
@@ -962,22 +1103,55 @@ def _is_valid_tag(tag: str, banned: set[str], name_words: set[str], ss_banned: s
     return True
 
 
+def _has_overlap_suffix(word: str, existing: list[str], min_suffix: int = 2) -> bool:
+    """기존 SEO 키워드와 접미어가 겹치는지 확인.
+
+    예: 기존에 '로고티셔츠'가 있으면 '그래픽티셔츠'는 '티셔츠' 접미어 중복 → True
+    """
+    wl = word.lower()
+    for e in existing:
+        el = e.lower()
+        # 공통 접미어 검사 (뒤에서부터 매칭)
+        common = 0
+        for i in range(1, min(len(wl), len(el)) + 1):
+            if wl[-i] == el[-i]:
+                common = i
+            else:
+                break
+        if common >= min_suffix and wl != el:
+            return True
+    return False
+
+
 def _extract_seo_keywords(
     tags: list[str], cats: list, banned: set[str], name_words: set[str], max_count: int = 3
 ) -> list[str]:
-    """태그 목록에서 SEO 키워드 추출."""
+    """태그 목록에서 SEO 키워드 추출 — 의미 중복 최소화.
+
+    '로고티셔츠', '그래픽티셔츠', '레이어드티셔츠'처럼 접미어가 겹치는
+    키워드가 여러 개 선택되지 않도록 접미어 중복 검사를 수행한다.
+    """
+    # 태그 자체를 SEO 제외 대상으로 등록 (태그와 겹치면 안 됨)
+    tag_lower_set = {t.lower().replace(" ", "") for t in tags}
     seo: list[str] = []
-    for kw in tags[:5]:
+    # 태그 뒤쪽(11번째~)부터 우선 탐색, 부족하면 앞쪽도 탐색
+    ordered = list(tags[10:]) + list(tags[:10])
+    for kw in ordered:
         cleaned = kw
         for cat_part in cats:
             if cat_part:
                 cleaned = cleaned.replace(cat_part, "").strip()
         for word in cleaned.split():
             w = word.strip()
-            if len(w) >= 2 and w.lower() not in banned and w.lower() not in name_words and w not in seo:
-                seo.append(w)
-                if len(seo) >= max_count:
-                    break
+            wl = w.lower().replace(" ", "")
+            if len(w) < 2 or wl in banned or wl in name_words or wl in tag_lower_set or w in seo:
+                continue
+            # 접미어 중복 검사 (예: 기존 '로고티셔츠' → '그래픽티셔츠' 차단)
+            if _has_overlap_suffix(w, seo):
+                continue
+            seo.append(w)
+            if len(seo) >= max_count:
+                break
         if len(seo) >= max_count:
             break
     return seo
@@ -1473,13 +1647,16 @@ async def apply_ai_tags(
             else:
                 continue
 
-        # SEO 키워드: 프론트에서 수정한 값 우선, 없으면 자동 추출
+        # SEO 키워드: 프론트에서 수정한 값 우선, 없으면 자동 추출 (태그와 중복 방지)
         seo_kws: list[str] = group.get("seo_keywords", [])
         if not seo_kws:
-            for kw in tags[:5]:
+            tag_lower_set = {t.lower().replace(" ", "") for t in tags}
+            ordered = list(tags[10:]) + list(tags[:10])
+            for kw in ordered:
                 for word in kw.split():
                     w = word.strip()
-                    if len(w) >= 2 and w not in seo_kws:
+                    wl = w.lower().replace(" ", "")
+                    if len(w) >= 2 and wl not in tag_lower_set and w not in seo_kws:
                         seo_kws.append(w)
                         if len(seo_kws) >= 3:
                             break
@@ -2177,7 +2354,7 @@ async def lottehome_delivery_places(
     """롯데홈쇼핑 배송지 조회."""
     client = await _get_lotte_client(session)
     try:
-        result = await client.search_delivery_places()
+        result = await client.search_return_places()
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
         return {"success": False, "message": str(exc), "code": exc.code}

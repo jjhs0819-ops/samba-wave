@@ -245,6 +245,76 @@ async def approve_cancel(
 
 
 # ══════════════════════════════════════════════
+# 송장번호 전송 (발송처리)
+# ══════════════════════════════════════════════
+
+
+class ShipRequest(BaseModel):
+    shipping_company: str
+    tracking_number: str
+
+
+@router.post("/{order_id}/ship")
+async def ship_order(
+    order_id: str,
+    body: ShipRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """송장번호 저장 + 마켓 발송처리."""
+    svc = _write_service(session)
+    order = await svc.get_order(order_id)
+    if not order:
+        raise HTTPException(404, "주문을 찾을 수 없습니다")
+
+    # DB 저장 (마켓 전송 성공 여부와 무관하게 항상 저장)
+    await svc.update_order(order_id, {
+        "shipping_company": body.shipping_company,
+        "tracking_number": body.tracking_number,
+    })
+
+    # 마켓 송장 전송
+    market_sent = False
+    market_msg = ""
+
+    try:
+        if order.channel_id and order.order_number:
+            from backend.domain.samba.account.repository import SambaMarketAccountRepository
+            account_repo = SambaMarketAccountRepository(session)
+            account = await account_repo.get_async(order.channel_id)
+
+            if account and account.market_type == "smartstore":
+                import json
+                from sqlmodel import select
+                from backend.domain.samba.forbidden.model import SambaSettings
+                from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
+                config_result = await session.execute(
+                    select(SambaSettings).where(SambaSettings.key.like("store_smartstore%"))
+                )
+                ss_settings = config_result.scalars().first()
+                if ss_settings:
+                    config = json.loads(ss_settings.value) if isinstance(ss_settings.value, str) else ss_settings.value
+                    client = SmartStoreClient(config["clientId"], config["clientSecret"])
+                    await client.ship_product_order(
+                        order.order_number,
+                        body.shipping_company,
+                        body.tracking_number,
+                    )
+                    market_sent = True
+                    market_msg = "스마트스토어 송장 전송 완료"
+                    await svc.update_order(order_id, {"shipping_status": "송장전송완료"})
+    except Exception as e:
+        market_msg = f"송장 전송 실패: {e}"
+        logger.warning(f"[송장전송] {order.order_number}: {e}")
+
+    return {
+        "ok": True,
+        "market_sent": market_sent,
+        "message": market_msg or "송장번호 저장 완료",
+    }
+
+
+# ══════════════════════════════════════════════
 # URL에서 상품 대표이미지 추출
 # ══════════════════════════════════════════════
 
@@ -413,9 +483,41 @@ async def sync_orders_from_markets(
                 results.append({"account": label, "status": "skip", "message": f"{market_type} 주문 조회 미지원"})
                 continue
 
+            # 수집상품 매칭 캐시 구축 (마켓상품번호 → 이미지/소싱처)
+            from sqlalchemy import text as _sa_text
+            _cp_result = await session.execute(_sa_text(
+                "SELECT source_site, site_product_id, images, market_product_nos "
+                "FROM samba_collected_product WHERE market_product_nos IS NOT NULL LIMIT 50000"
+            ))
+            _mpn_cache: dict[str, dict] = {}
+            _sourcing_urls = {
+                "MUSINSA": "https://www.musinsa.com/app/goods/{}",
+                "KREAM": "https://kream.co.kr/products/{}",
+                "LOTTEON": "https://www.lotteon.com/product/{}",
+                "SSG": "https://www.ssg.com/item/itemView.ssg?itemId={}",
+                "ABCmart": "https://abcmart.a-rt.com/product/{}",
+                "Nike": "https://www.nike.com/kr/t/{}",
+            }
+            for _row in _cp_result.fetchall():
+                _site, _spid, _imgs, _mpnos = _row
+                if _mpnos and isinstance(_mpnos, dict):
+                    _thumb = _imgs[0] if _imgs and isinstance(_imgs, list) and _imgs else ""
+                    _olink = _sourcing_urls.get(_site, "").format(_spid) if _site in _sourcing_urls and _spid else ""
+                    for _k, _v in _mpnos.items():
+                        if _v:
+                            _mpn_cache[str(_v)] = {"source_site": _site, "product_image": _thumb, "original_link": _olink}
+
             # 중복 확인 후 저장 (기존 주문은 금액/상태 업데이트)
             synced = 0
             for order_data in orders_data:
+                # 수집상품 매칭 — product_image, source_site 보충
+                _pid = str(order_data.get("product_id", ""))
+                _matched = _mpn_cache.get(_pid)
+                if _matched:
+                    if not order_data.get("product_image"):
+                        order_data["product_image"] = _matched["product_image"]
+                    if not order_data.get("source_site"):
+                        order_data["source_site"] = _matched["source_site"]
                 # order_number 기준 중복 체크
                 existing = await svc.repo.find_by_async(order_number=order_data["order_number"])
                 if existing:
@@ -425,6 +527,8 @@ async def sync_orders_from_markets(
                         update_fields["sale_price"] = order_data["sale_price"]
                     if order_data.get("product_image") and not existing.product_image:
                         update_fields["product_image"] = order_data["product_image"]
+                    if order_data.get("source_site") and not existing.source_site:
+                        update_fields["source_site"] = order_data["source_site"]
                     if order_data.get("shipment_id") and not existing.shipment_id:
                         update_fields["shipment_id"] = order_data["shipment_id"]
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
@@ -571,6 +675,7 @@ def _parse_smartstore_order(
         "channel_name": account_label,
         "product_id": channel_product_no,
         "product_name": po.get("productName", ""),
+        "product_option": po.get("productOption", "") or "",
         "product_image": po.get("imageUrl", ""),
         "customer_name": orderer_name,
         "customer_phone": orderer_tel,

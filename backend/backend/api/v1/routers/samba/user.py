@@ -18,10 +18,14 @@ router = APIRouter(prefix="/users", tags=["samba-users"])
 
 # ── DTO ──
 
+INVITE_CODE = "samba_wave"
+
+
 class UserCreateDto(BaseModel):
   email: EmailStr
   password: str = Field(..., min_length=6)
   name: str = Field(..., min_length=1, max_length=50)
+  invite_code: str = Field("", description="초대 코드")
   is_admin: bool = False
 
 
@@ -86,6 +90,10 @@ async def create_user(
   session: AsyncSession = Depends(get_write_session_dependency),
 ):
   """새 사용자 계정 생성."""
+  # 초대 코드 검증
+  if body.invite_code != INVITE_CODE:
+    raise HTTPException(status_code=403, detail="초대 코드가 올바르지 않습니다")
+
   repo = SambaUserRepository(session)
 
   # 이메일 중복 검사

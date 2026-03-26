@@ -72,6 +72,39 @@ class SambaCollectorService:
         self._fill_optional_images(data)
         return await self.product_repo.create_async(**data)
 
+    def prepare_product_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """전처리만 수행 (배치 저장용). DB 저장은 별도."""
+        self._sanitize_kream_data(data)
+        self._clean_company_names(data)
+        self._fill_optional_images(data)
+        return data
+
+    async def bulk_create_products(self, items: list[Dict[str, Any]]) -> int:
+        """배치 INSERT — 전처리 완료된 데이터 리스트.
+        검색필터에 정책이 설정되어 있으면 신규 상품에 자동 적용한다.
+        모든 소싱처(무신사/롯데온/SSG 등)가 이 함수를 공통 사용.
+        """
+        if not items:
+            return 0
+        # 검색필터의 정책을 신규 상품에 자동 적용
+        filter_ids = {item.get("search_filter_id") for item in items if item.get("search_filter_id")}
+        filter_policy_map: Dict[str, str] = {}
+        if filter_ids:
+            filters = await self.filter_repo.filter_by_async(limit=len(filter_ids) + 10)
+            for f in filters:
+                if f.id in filter_ids and f.applied_policy_id:
+                    filter_policy_map[f.id] = f.applied_policy_id
+        for item in items:
+            if not item.get("applied_policy_id"):
+                fid = item.get("search_filter_id", "")
+                if fid in filter_policy_map:
+                    item["applied_policy_id"] = filter_policy_map[fid]
+        from backend.domain.samba.collector.model import SambaCollectedProduct
+        objects = [SambaCollectedProduct(**d) for d in items]
+        self.product_repo.session.add_all(objects)
+        await self.product_repo.session.commit()
+        return len(objects)
+
     async def update_collected_product(
         self, product_id: str, data: Dict[str, Any]
     ) -> Optional[SambaCollectedProduct]:
@@ -144,37 +177,35 @@ class SambaCollectorService:
 
     async def bulk_create_collected_products(
         self, items: List[Dict[str, Any]]
-    ) -> List[SambaCollectedProduct]:
-        # 검색필터의 정책을 신규 상품에 자동 적용
-        filter_ids = {item.get("search_filter_id") for item in items if item.get("search_filter_id")}
-        filter_policy_map: Dict[str, str] = {}
-        for fid in filter_ids:
-            f = await self.filter_repo.get_async(fid)
-            if f and f.applied_policy_id:
-                filter_policy_map[fid] = f.applied_policy_id
-        for item in items:
-            if not item.get("applied_policy_id"):
-                fid = item.get("search_filter_id", "")
-                if fid in filter_policy_map:
-                    item["applied_policy_id"] = filter_policy_map[fid]
-        return await self.product_repo.bulk_create_async(items)
+    ) -> List[Dict[str, Any]]:
+        """구 방식 호환 래퍼 — bulk_create_products로 위임.
+        반환값은 len() 호환용으로 입력 items를 그대로 반환.
+        """
+        await self.bulk_create_products(items)
+        return items
 
     async def apply_policy_to_filter_products(
         self, filter_id: str, policy_id: str, policy_data: Optional[Dict[str, Any]] = None
     ) -> int:
         """그룹(필터)에 적용된 정책을 해당 그룹의 모든 상품에 전파."""
+        if not policy_data:
+            # 가격 계산 불필요 → bulk update로 한 번에 처리
+            return await self.product_repo.bulk_update_by_filter(
+                filter_id, applied_policy_id=policy_id
+            )
+        # 가격 계산 필요 → 상품별 처리 (sale_price가 다름)
         products = await self.product_repo.list_by_filter(filter_id)
+        margin = policy_data.get("margin_rate", 15) / 100
+        shipping = policy_data.get("shipping_cost", 0)
+        extra = policy_data.get("extra_charge", 0)
         updated = 0
         for p in products:
-            update_data: Dict[str, Any] = {"applied_policy_id": policy_id}
-            # 정책 데이터가 있으면 market_prices 계산
-            if policy_data:
-                margin = policy_data.get("margin_rate", 15) / 100
-                shipping = policy_data.get("shipping_cost", 0)
-                extra = policy_data.get("extra_charge", 0)
-                base = p.sale_price or p.original_price or 0
-                calculated = int(base * (1 + margin) + shipping + extra)
-                update_data["market_prices"] = {"default": calculated}
-            await self.product_repo.update_async(p.id, **update_data)
+            base = p.sale_price or p.original_price or 0
+            calculated = int(base * (1 + margin) + shipping + extra)
+            await self.product_repo.update_async(
+                p.id,
+                applied_policy_id=policy_id,
+                market_prices={"default": calculated},
+            )
             updated += 1
         return updated

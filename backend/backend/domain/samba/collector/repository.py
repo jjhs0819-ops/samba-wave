@@ -58,8 +58,9 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         return await self.filter_by_async(**kwargs)
 
     async def list_by_filter(
-        self, search_filter_id: str, skip: int = 0, limit: int = 50
+        self, search_filter_id: str, skip: int = 0, limit: int = 10000
     ) -> List[SambaCollectedProduct]:
+        """필터에 속한 전체 상품 조회 (정책 전파 등에 사용)."""
         return await self.filter_by_async(
             search_filter_id=search_filter_id,
             skip=skip,
@@ -67,6 +68,20 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             order_by="created_at",
             order_by_desc=True,
         )
+
+    async def bulk_update_by_filter(
+        self, search_filter_id: str, **kwargs
+    ) -> int:
+        """search_filter_id에 해당하는 모든 상품을 한 번의 쿼리로 업데이트."""
+        from sqlalchemy import update
+        stmt = (
+            update(SambaCollectedProduct)
+            .where(SambaCollectedProduct.search_filter_id == search_filter_id)
+            .values(**kwargs)
+        )
+        result = await self.session.execute(stmt)
+        await self.session.commit()
+        return result.rowcount
 
     async def find_by_site_product_id(
         self, source_site: str, site_product_id: str

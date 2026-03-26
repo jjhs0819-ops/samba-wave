@@ -45,6 +45,7 @@ class SambaOrder(SQLModel, table=True):
     product_id: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True, index=True))
     product_name: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     product_image: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    product_option: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     source_site: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 고객 정보
