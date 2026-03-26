@@ -2767,29 +2767,6 @@ async def collect_by_filter(
                 target = min(len(items_list), search_filter.requested_count or 100)
                 target_items = items_list[:target]
 
-                # Nike: 상세 정보 병렬 수집 (동시 5개) — 순차 대비 ~5배 빠름
-                if site == "Nike" and client:
-                    _sem = _asyncio.Semaphore(5)
-
-                    async def _fetch_detail(item: dict) -> dict:
-                        p_id = str(item.get("site_product_id", ""))
-                        if not p_id:
-                            return item
-                        async with _sem:
-                            try:
-                                detail = await client.get_detail(p_id)
-                                if not detail.get("error"):
-                                    for k, v in detail.items():
-                                        if v not in (None, "", []) and k not in ("site_product_id", "source_site"):
-                                            item[k] = v
-                            except Exception:
-                                pass
-                        return item
-
-                    yield _sse("log", {"message": f"[{site}] 상세 정보 병렬 수집 중 (동시 5개)..."})
-                    target_items = list(await _asyncio.gather(*[_fetch_detail(item) for item in target_items]))
-                    yield _sse("log", {"message": f"[{site}] 상세 수집 완료"})
-
                 for item in target_items:
                     p_name = item.get("name", "")
                     p_id = str(item.get("site_product_id", ""))
