@@ -104,6 +104,16 @@ export default function ShipmentsPage() {
       policyApi.list().catch(() => []),
       categoryApi.listMappings().catch(() => []),
     ])
+    // URL에서 넘어온 선택 상품 중 500개 로드에 누락된 것이 있으면 추가 조회
+    const preIds = new URLSearchParams(window.location.search).get('selected')?.split(',') || []
+    if (preIds.length > 0) {
+      const loadedIds = new Set(p.map((x: SambaCollectedProduct) => x.id))
+      const missingIds = preIds.filter(id => id && !loadedIds.has(id))
+      if (missingIds.length > 0) {
+        const extras = await collectorApi.getProductsByIds(missingIds).catch(() => [])
+        if (extras.length > 0) p.push(...extras)
+      }
+    }
     setProducts(p)
     setAccounts(a)
     setShipments(s)

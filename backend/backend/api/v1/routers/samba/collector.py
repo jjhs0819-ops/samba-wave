@@ -1,9 +1,10 @@
 """SambaWave Collector API router - 수집 필터 + 수집 상품."""
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,36 @@ router = APIRouter(prefix="/collector", tags=["samba-collector"])
 # HTML 태그 및 불필요 문자 정제 (상품명/브랜드/옵션 등에서 제거)
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
+
+
+# 수집 블랙리스트 캐시 (서버 수명 동안 유지, 변경 시 갱신)
+_blacklist_cache: set[str] | None = None
+
+
+async def _load_blacklist(session: AsyncSession) -> set[str]:
+    """블랙리스트를 DB에서 로드하여 캐시."""
+    global _blacklist_cache
+    if _blacklist_cache is not None:
+        return _blacklist_cache
+    from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+    repo = SambaSettingsRepository(session)
+    row = await repo.find_by_async(key="collection_blacklist")
+    items = row.value if row and isinstance(row.value, list) else []
+    _blacklist_cache = {f"{b['source_site']}:{b['site_product_id']}" for b in items if b.get("source_site") and b.get("site_product_id")}
+    return _blacklist_cache
+
+
+def _invalidate_blacklist_cache():
+    """블랙리스트 캐시 무효화."""
+    global _blacklist_cache
+    _blacklist_cache = None
+
+
+async def _is_blacklisted(session: AsyncSession, source_site: str, site_product_id: str) -> bool:
+    """블랙리스트 체크 — 캐시 없으면 자동 로드."""
+    if _blacklist_cache is None:
+        await _load_blacklist(session)
+    return f"{source_site}:{site_product_id}" in (_blacklist_cache or set())
 
 
 def _clean_text(value: str) -> str:
@@ -566,14 +597,11 @@ async def scroll_products(
             ~cast(_CP.tags, String).like('%"__ai_tagged__"%'),
         ))
     elif ai_filter == "ai_img_yes":
-        conditions.append(or_(
-            cast(_CP.images, String).like('%/transformed/%'),
-            cast(_CP.images, String).like('%/static/images/ai_%'),
-        ))
+        conditions.append(cast(_CP.tags, String).like('%"__ai_image__"%'))
     elif ai_filter == "ai_img_no":
         conditions.append(or_(
-            _CP.images.is_(None),
-            ~cast(_CP.images, String).like('%/transformed/%'),
+            _CP.tags.is_(None),
+            ~cast(_CP.tags, String).like('%"__ai_image__"%'),
         ))
     elif ai_filter == "filter_yes":
         conditions.append(cast(_CP.tags, String).like('%"__img_filtered__"%'))
@@ -725,6 +753,25 @@ async def list_collected_products(
         stmt = stmt.where(_CP.source_site == source_site)
     stmt = stmt.order_by(_CP.created_at.desc()).offset(skip).limit(limit)
 
+    result = await session.execute(stmt)
+    rows = result.mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.post("/products/by-ids")
+async def get_products_by_ids(
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """ID 리스트로 상품 조회 (light 컬럼만)."""
+    ids = body.get("ids", [])
+    if not ids:
+        return []
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+    from sqlalchemy import inspect as _sa_inspect
+    mapper = _sa_inspect(_CP)
+    light_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]
+    stmt = select(*light_cols).where(_CP.id.in_(ids))
     result = await session.execute(stmt)
     rows = result.mappings().all()
     return [dict(r) for r in rows]
@@ -946,6 +993,101 @@ async def bulk_delete_products(
     return {"deleted": result.rowcount}
 
 
+class BlockProductRequest(BaseModel):
+    product_ids: list[str]
+
+
+@router.post("/products/block-and-delete")
+async def block_and_delete_products(
+    body: BlockProductRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """수집차단 + 삭제 — 블랙리스트 등록 후 상품 삭제."""
+    from sqlalchemy import delete as sa_delete
+    from sqlmodel import col, select
+    from backend.domain.samba.collector.model import SambaCollectedProduct
+    from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+
+    # 삭제 대상 상품 정보 조회
+    stmt = select(SambaCollectedProduct).where(col(SambaCollectedProduct.id).in_(body.product_ids))
+    result = await session.execute(stmt)
+    products = result.scalars().all()
+
+    if not products:
+        raise HTTPException(404, "상품을 찾을 수 없습니다")
+
+    # 블랙리스트 로드
+    settings_repo = SambaSettingsRepository(session)
+    row = await settings_repo.find_by_async(key="collection_blacklist")
+    blacklist: list[dict] = []
+    if row and isinstance(row.value, list):
+        blacklist = row.value
+
+    # 블랙리스트에 추가
+    existing_keys = {f"{b['source_site']}:{b['site_product_id']}" for b in blacklist}
+    added = 0
+    for p in products:
+        key = f"{p.source_site}:{p.site_product_id}"
+        if key not in existing_keys and p.source_site and p.site_product_id:
+            blacklist.append({
+                "source_site": p.source_site,
+                "site_product_id": p.site_product_id,
+                "name": (p.name or "")[:50],
+                "blocked_at": datetime.now(timezone.utc).isoformat(),
+            })
+            existing_keys.add(key)
+            added += 1
+
+    # 블랙리스트 저장
+    if row:
+        row.value = blacklist
+        session.add(row)
+    else:
+        from backend.domain.samba.forbidden.model import SambaSettings
+        new_row = SambaSettings(key="collection_blacklist", value=blacklist)
+        session.add(new_row)
+
+    # 상품 삭제
+    del_stmt = sa_delete(SambaCollectedProduct).where(col(SambaCollectedProduct.id).in_(body.product_ids))
+    del_result = await session.exec(del_stmt)  # type: ignore[arg-type]
+    await session.commit()
+    await cache.clear_pattern("products:*")
+    _invalidate_blacklist_cache()
+
+    return {"ok": True, "blocked": added, "deleted": del_result.rowcount}
+
+
+@router.get("/blacklist")
+async def get_collection_blacklist(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """수집 블랙리스트 조회."""
+    from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+    repo = SambaSettingsRepository(session)
+    row = await repo.find_by_async(key="collection_blacklist")
+    return row.value if row and isinstance(row.value, list) else []
+
+
+@router.post("/blacklist/unblock")
+async def unblock_products(
+    body: BlockProductRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """블랙리스트에서 해제."""
+    from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+    repo = SambaSettingsRepository(session)
+    row = await repo.find_by_async(key="collection_blacklist")
+    if not row or not isinstance(row.value, list):
+        return {"ok": True, "removed": 0}
+    remove_set = set(body.product_ids)  # site_product_id 목록
+    before = len(row.value)
+    row.value = [b for b in row.value if b.get("site_product_id") not in remove_set]
+    session.add(row)
+    await session.commit()
+    _invalidate_blacklist_cache()
+    return {"ok": True, "removed": before - len(row.value)}
+
+
 @router.post("/products/bulk-reset-registration")
 async def bulk_reset_registration(
     body: BulkProductIdsRequest,
@@ -1088,14 +1230,13 @@ async def collect_by_url(
             )
             remaining = max(0, requested_count - existing_count)
             if remaining <= 0:
-                return {
-                    "type": "search", "keyword": keyword, "filter_id": filter_id,
-                    "message": f"이미 {existing_count}개 수집됨 (요청: {requested_count}개)",
-                    "saved": 0, "enriched": 0,
-                }
+                raise HTTPException(
+                    status_code=200,
+                    detail=f"이미 {existing_count}개 수집됨 (요청: {requested_count}개)",
+                )
 
             # 필요한 만큼만 검색 (페이지당 100개)
-            import asyncio as _asyncio
+
             all_items = []
             max_pages = max(1, (remaining // 100) + 1)
             for page in range(1, min(max_pages + 1, 11)):  # 최대 10페이지
@@ -1105,7 +1246,7 @@ async def collect_by_url(
                     if not items:
                         break
                     all_items.extend(items)
-                    await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))  # 적응형 인터벌
+                    await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))  # 적응형 인터벌
                 except Exception:
                     break
 
@@ -1152,19 +1293,23 @@ async def collect_by_url(
                 return cnt
 
             for goods_no in targets:
+                # 블랙리스트 체크
+                if await _is_blacklisted(session, "MUSINSA", goods_no):
+                    logger.info(f"[수집] 블랙리스트 스킵: MUSINSA/{goods_no}")
+                    continue
                 try:
                     detail = await client.get_goods_detail(goods_no)
                     if not detail or not detail.get("name"):
-                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
 
                     if exclude_preorder and detail.get("saleStatus") == "preorder":
                         skipped_preorder += 1
-                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
                     if exclude_boutique and detail.get("isBoutique"):
                         skipped_boutique += 1
-                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
 
                     # 최대혜택가 체크 시 bestBenefitPrice, 미체크 시 salePrice
@@ -1203,7 +1348,7 @@ async def collect_by_url(
                     break
                 except Exception as e:
                     logger.warning(f"[수집 실패] {goods_no}: {e}")
-                await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
 
             # 잔여 버퍼 flush
             await _flush_batch()
@@ -1233,6 +1378,10 @@ async def collect_by_url(
             if not match:
                 raise HTTPException(400, "무신사 상품 URL에서 상품번호를 찾을 수 없습니다")
             goods_no = match.group(1)
+
+            # 블랙리스트 체크 — 수집차단된 상품 스킵
+            if await _is_blacklisted(session, "MUSINSA", goods_no):
+                raise HTTPException(400, f"수집차단된 상품입니다 ({goods_no})")
 
             cookie = await _get_musinsa_cookie()
             client = MusinsaClient(cookie=cookie)
@@ -1531,7 +1680,7 @@ async def collect_by_url(
                         "message": f"이미 {existing_count}개 수집됨", "saved": 0, "enriched": 0}
 
             # 검색
-            import asyncio as _asyncio
+
             all_items = []
             max_pages = max(1, (remaining // 40) + 1)
             for page in range(1, min(max_pages + 1, 11)):
@@ -1540,7 +1689,7 @@ async def collect_by_url(
                     if not items:
                         break
                     all_items.extend(items)
-                    await _asyncio.sleep(_site_intervals.get("SSG", 1.0))
+                    await asyncio.sleep(_site_intervals.get("SSG", 1.0))
                 except Exception:
                     break
 
@@ -1585,7 +1734,7 @@ async def collect_by_url(
                 try:
                     detail = await client.get_product_detail(item_id)
                     if not detail or not detail.get("name"):
-                        await _asyncio.sleep(_site_intervals.get("SSG", 1.0))
+                        await asyncio.sleep(_site_intervals.get("SSG", 1.0))
                         continue
 
                     if use_max_discount:
@@ -1618,7 +1767,7 @@ async def collect_by_url(
                         await _flush_batch()
                 except Exception as e:
                     logger.warning(f"[SSG 수집 실패] {item_id}: {e}")
-                await _asyncio.sleep(_site_intervals.get("SSG", 1.0))
+                await asyncio.sleep(_site_intervals.get("SSG", 1.0))
 
             await _flush_batch()
             await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
@@ -1736,7 +1885,7 @@ async def collect_by_url(
                         "message": f"이미 {existing_count}개 수집됨", "saved": 0, "enriched": 0}
 
             # 검색
-            import asyncio as _asyncio
+
             all_items = []
             max_pages = max(1, (remaining // 40) + 1)
             for page in range(1, min(max_pages + 1, 11)):
@@ -1745,7 +1894,7 @@ async def collect_by_url(
                     if not items:
                         break
                     all_items.extend(items)
-                    await _asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
+                    await asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
                 except Exception:
                     break
 
@@ -1790,7 +1939,7 @@ async def collect_by_url(
                 try:
                     detail = await client.get_product_detail(item_id)
                     if not detail or not detail.get("name"):
-                        await _asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
+                        await asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
                         continue
 
                     if use_max_discount:
@@ -1823,7 +1972,7 @@ async def collect_by_url(
                         await _flush_batch()
                 except Exception as e:
                     logger.warning(f"[LOTTEON 수집 실패] {item_id}: {e}")
-                await _asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
+                await asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
 
             await _flush_batch()
             await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
@@ -1994,7 +2143,6 @@ async def collect_by_filter(
             yield chunk
 
     async def _stream_musinsa():
-        import asyncio as _asyncio
 
         cookie = await _get_musinsa_cookie()
         if not cookie:
@@ -2048,7 +2196,7 @@ async def collect_by_filter(
                     no_more_results = True
                     break
                 yield _sse("log", {"message": f"검색 {search_page}페이지 ({len(search_items)}건)"})
-                await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))  # 적응형 인터벌
+                await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))  # 적응형 인터벌
             except Exception:
                 break
 
@@ -2086,7 +2234,7 @@ async def collect_by_filter(
                 try:
                     detail = await client.get_goods_detail(goods_no)
                     if not detail or not detail.get("name"):
-                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
 
                     p_name = detail.get("name", "")[:30]
@@ -2094,12 +2242,12 @@ async def collect_by_filter(
                     if _exclude_preorder and detail.get("saleStatus") == "preorder":
                         total_skipped_preorder += 1
                         yield _sse("log", {"message": f"  {p_name} — 예약배송 제외"})
-                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
                     if _exclude_boutique and detail.get("isBoutique"):
                         total_skipped_boutique += 1
                         yield _sse("log", {"message": f"  {p_name} — 부티끄 제외"})
-                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
 
                     # 최대혜택가 체크 시 bestBenefitPrice, 미체크 시 salePrice
@@ -2152,14 +2300,14 @@ async def collect_by_filter(
                         break
                     yield _sse("warning", {"message": f"차단 감지(HTTP {rle.status}), 속도 조절 중... (인터벌 {_site_intervals['MUSINSA']}초)"})
                     if rle.retry_after > 0:
-                        await _asyncio.sleep(rle.retry_after)
+                        await asyncio.sleep(rle.retry_after)
                     else:
-                        await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                     continue
                 except Exception as e:
                     logger.warning(f"[수집 실패] {goods_no}: {e}")
                     yield _sse("log", {"message": f"  {goods_no} — 수집 실패"})
-                await _asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
 
             if rate_limited:
                 break
@@ -2180,7 +2328,7 @@ async def collect_by_filter(
 
     elif site == "KREAM":
         async def _stream_kream():
-            import asyncio as _asyncio
+
             import re as _re
             from datetime import datetime, timezone
 
@@ -2349,7 +2497,7 @@ async def collect_by_filter(
                     })
                 except Exception as e:
                     yield _sse("log", {"message": f"  {p_name[:30]} — 저장 실패: {e}"})
-                await _asyncio.sleep(0.3)
+                await asyncio.sleep(0.3)
 
             # 상세 보강: 확장앱으로 사이즈별 빠른배송/일반배송 가격 수집
             if saved_products:
@@ -2420,7 +2568,7 @@ async def collect_by_filter(
                     except Exception as e:
                         err_msg = str(e)[:60]
                         yield _sse("log", {"message": f"  [{idx+1}/{len(saved_products)}] {product.name[:25]} — 보강 실패: {err_msg}"})
-                    await _asyncio.sleep(1.0)
+                    await asyncio.sleep(1.0)
 
             await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
             yield _sse("done", {"saved": saved, "total_found": len(items_list), "skipped_duplicates": len(existing_ids)})
@@ -2430,7 +2578,7 @@ async def collect_by_filter(
     # ── SSG 수집 (collect-by-filter) ──
     elif site == "SSG":
         async def _stream_ssg():
-            import asyncio as _asyncio
+
             from datetime import datetime, timezone
 
             client = SSGSourcingClient()
@@ -2465,7 +2613,7 @@ async def collect_by_filter(
                         break
                     all_items.extend(items)
                     yield _sse("log", {"message": f"  페이지 {page}: {len(items)}개 발견"})
-                    await _asyncio.sleep(_site_intervals.get("SSG", 1.0))
+                    await asyncio.sleep(_site_intervals.get("SSG", 1.0))
                 except Exception as e:
                     yield _sse("log", {"message": f"  페이지 {page} 검색 실패: {str(e)[:50]}"})
                     break
@@ -2515,7 +2663,7 @@ async def collect_by_filter(
                     detail = await client.get_product_detail(item_id)
                     if not detail or not detail.get("name"):
                         yield _sse("log", {"message": f"  [{idx+1}/{len(targets)}] #{item_id} — 상세 없음"})
-                        await _asyncio.sleep(_site_intervals.get("SSG", 1.0))
+                        await asyncio.sleep(_site_intervals.get("SSG", 1.0))
                         continue
 
                     if _use_max_discount:
@@ -2549,7 +2697,7 @@ async def collect_by_filter(
                         await _flush_batch_ssg()
                 except Exception as e:
                     yield _sse("log", {"message": f"  [{idx+1}/{len(targets)}] #{item_id} — 실패: {str(e)[:50]}"})
-                await _asyncio.sleep(_site_intervals.get("SSG", 1.0))
+                await asyncio.sleep(_site_intervals.get("SSG", 1.0))
 
             await _flush_batch_ssg()
             await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
@@ -2565,7 +2713,7 @@ async def collect_by_filter(
     # ── 롯데ON 수집 (collect-by-filter) ──
     elif site == "LOTTEON":
         async def _stream_lotteon():
-            import asyncio as _asyncio
+
             from datetime import datetime, timezone
 
             client = LotteonSourcingClient()
@@ -2600,7 +2748,7 @@ async def collect_by_filter(
                         break
                     all_items.extend(items)
                     yield _sse("log", {"message": f"  페이지 {page}: {len(items)}개 발견"})
-                    await _asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
+                    await asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
                 except Exception as e:
                     yield _sse("log", {"message": f"  페이지 {page} 검색 실패: {str(e)[:50]}"})
                     break
@@ -2650,7 +2798,7 @@ async def collect_by_filter(
                     detail = await client.get_product_detail(item_id)
                     if not detail or not detail.get("name"):
                         yield _sse("log", {"message": f"  [{idx+1}/{len(targets)}] #{item_id} — 상세 없음"})
-                        await _asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
+                        await asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
                         continue
 
                     if _use_max_discount:
@@ -2684,7 +2832,7 @@ async def collect_by_filter(
                         await _flush_batch_lotteon()
                 except Exception as e:
                     yield _sse("log", {"message": f"  [{idx+1}/{len(targets)}] #{item_id} — 실패: {str(e)[:50]}"})
-                await _asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
+                await asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
 
             await _flush_batch_lotteon()
             await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
@@ -2704,7 +2852,7 @@ async def collect_by_filter(
 
     if site in DIRECT_API_SITES or site in EXTENSION_SITES:
         async def _stream_generic():
-            import asyncio as _asyncio
+
             from datetime import datetime, timezone
 
             yield _sse("log", {"message": f"[{site}] 수집 시작..."})
@@ -2754,8 +2902,8 @@ async def collect_by_filter(
                     yield _sse("log", {"message": f"[{site}] 확장앱에 수집 요청 중... (최대 60초 대기)"})
                     request_id, future = SourcingQueue.add_search_job(site, keyword)
                     try:
-                        result = await _asyncio.wait_for(future, timeout=60)
-                    except _asyncio.TimeoutError:
+                        result = await asyncio.wait_for(future, timeout=60)
+                    except asyncio.TimeoutError:
                         SourcingQueue.resolvers.pop(request_id, None)
                         yield _sse("done", {"saved": 0, "message": "확장앱 응답 타임아웃. 확장앱이 실행 중인지 확인하세요."})
                         return
@@ -2832,7 +2980,7 @@ async def collect_by_filter(
                         })
                     except Exception as e:
                         yield _sse("log", {"message": f"  {p_name[:30]} — 저장 실패: {e}"})
-                    await _asyncio.sleep(0.1)
+                    await asyncio.sleep(0.1)
 
                 await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
                 yield _sse("done", {"saved": saved, "total_found": len(items_list)})
@@ -3609,9 +3757,7 @@ async def test_rate_limit(body: RateLimitTestRequest = RateLimitTestRequest()):
 # 오토튠 백그라운드 루프 (무한 반복)
 # ══════════════════════════════════════════════════════════════
 
-import asyncio as _asyncio
-
-_autotune_task: Optional[_asyncio.Task] = None
+_autotune_task: Optional[asyncio.Task] = None
 _autotune_running = False
 _autotune_last_tick: Optional[str] = None
 _autotune_cycle_count = 0
@@ -3825,18 +3971,18 @@ async def _autotune_loop():
                     log.info("[오토튠] tick 완료: 대상 %d, 갱신 %d, 재전송 %d, 품절삭제 %d", filtered_count, summary.refreshed, retransmitted, deleted_count)
                 else:
                     # 갱신 대상 없으면 5초 대기 후 재확인
-                    await _asyncio.sleep(5)
+                    await asyncio.sleep(5)
 
                 _autotune_last_tick = now.isoformat()
                 _autotune_cycle_count += 1
 
-        except _asyncio.CancelledError:
+        except asyncio.CancelledError:
             log.info("[오토튠] 루프 취소됨")
             break
         except Exception as e:
             log.error("[오토튠] tick 오류: %s", e, exc_info=True)
             # 에러 시 10초 대기 후 재시도
-            await _asyncio.sleep(10)
+            await asyncio.sleep(10)
 
     log.info("[오토튠] 루프 종료")
 
@@ -3854,7 +4000,7 @@ async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     _autotune_running = True
     _autotune_cycle_count = 0
     _autotune_target = body.target
-    _autotune_task = _asyncio.create_task(_autotune_loop())
+    _autotune_task = asyncio.create_task(_autotune_loop())
     return {"ok": True, "status": "started", "target": body.target}
 
 

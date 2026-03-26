@@ -1025,7 +1025,6 @@ export default function PoliciesPage() {
               if (!selectedNameRuleId) return
               const latest = nameRulesRef.current.find(x => x.id === selectedNameRuleId)
               if (!latest) return
-              console.log('[저장] name_composition:', JSON.stringify(latest.name_composition))
               try {
                 const saved = await nameRuleApi.update(latest.id, {
                   name: latest.name, prefix: latest.prefix, suffix: latest.suffix,

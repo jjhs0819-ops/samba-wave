@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react'
 import { returnApi, accountApi, orderApi, type SambaReturn, type SambaMarketAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { card, inputStyle } from '@/lib/samba/styles'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   requested: { label: '요청됨', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
@@ -45,25 +46,6 @@ const fmtMD = (d?: string | null) => {
 }
 
 const tdCenter = { padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' as const, textAlign: 'center' as const, verticalAlign: 'middle' as const }
-
-const card = {
-  background: 'rgba(30,30,30,0.5)',
-  backdropFilter: 'blur(20px)',
-  border: '1px solid #2D2D2D',
-  borderRadius: '12px',
-}
-
-const inputStyle = {
-  width: '100%',
-  padding: '0.5rem 0.75rem',
-  background: '#1A1A1A',
-  border: '1px solid #2D2D2D',
-  borderRadius: '6px',
-  color: '#E5E5E5',
-  fontSize: '0.875rem',
-  outline: 'none',
-  boxSizing: 'border-box' as const,
-}
 
 // 기간 선택 버튼 상수
 const PERIOD_BUTTONS = [
@@ -121,7 +103,7 @@ export default function ReturnsPage() {
   const [searchCategory, setSearchCategory] = useState('customer')
   const [searchText, setSearchText] = useState('')
   const [marketFilter, setMarketFilter] = useState('')
-  const [siteFilter, setSiteFilter] = useState('')
+  const [siteFilter, setSiteFilter] = useState('진행중')
   const [marketStatus, setMarketStatus] = useState('')
   const [inputFilter, setInputFilter] = useState('')
   const [pageSize, setPageSize] = useState(50)

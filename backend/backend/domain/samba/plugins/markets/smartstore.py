@@ -160,8 +160,14 @@ class SmartStorePlugin(MarketPlugin):
         if code_match:
           style_code = code_match.group()
 
+      # 브랜드명 정제 — "나이키 키즈" → "나이키", "아디다스 골프" → "아디다스"
+      _brand_suffixes = r'\s*(키즈|kids|kid|주니어|junior|jr|아동|유아|베이비|baby|우먼|women|맨즈|men|골프|golf|스포츠|sports|아웃도어|outdoor)\s*$'
       brand_name = product_copy.get("brand", "")
+      if brand_name:
+        brand_name = re.sub(_brand_suffixes, '', brand_name, flags=re.IGNORECASE).strip() or brand_name
       mfr_name = product_copy.get("manufacturer", "") or brand_name
+      if mfr_name:
+        mfr_name = re.sub(_brand_suffixes, '', mfr_name, flags=re.IGNORECASE).strip() or mfr_name
 
       async def _search_catalog():
         if style_code:
@@ -232,9 +238,19 @@ class SmartStorePlugin(MarketPlugin):
         else:
           logger.info(f"[스마트스토어] 카탈로그 카테고리 불일치: 카탈로그={catalog_cat}, 상품={category_id} → modelId 스킵")
         product_copy["_brand_id"] = catalog["brandId"]
+        # 카탈로그의 brandName도 함께 전달 — brandId와 brandName 일치 보장
+        if catalog.get("brandName"):
+          product_copy["brand"] = catalog["brandName"]
         product_copy["_manufacturer_id"] = catalog["manufacturerId"]
+        if catalog.get("manufacturerName"):
+          product_copy["manufacturer"] = catalog["manufacturerName"]
       if not product_copy.get("_brand_id") and brand_id:
-        product_copy["_brand_id"] = brand_id
+        # brand_id는 (id, name) 튜플 — 네이버 정확한 이름으로 덮어쓰기
+        if isinstance(brand_id, tuple):
+          product_copy["_brand_id"] = brand_id[0]
+          product_copy["brand"] = brand_id[1]
+        else:
+          product_copy["_brand_id"] = brand_id
       if not product_copy.get("_manufacturer_id") and mfr_id:
         product_copy["_manufacturer_id"] = mfr_id
       if cat_attrs:

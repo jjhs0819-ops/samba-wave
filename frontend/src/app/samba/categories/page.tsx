@@ -5,13 +5,7 @@ import { useRouter } from 'next/navigation'
 import { collectorApi, categoryApi, accountApi, type SambaCollectedProduct } from '@/lib/samba/api'
 import { MARKET_LABELS } from '@/lib/samba/markets'
 import { showAlert } from '@/components/samba/Modal'
-
-const card = {
-  background: 'rgba(30,30,30,0.5)',
-  backdropFilter: 'blur(20px)',
-  border: '1px solid #2D2D2D',
-  borderRadius: '12px',
-}
+import { card } from '@/lib/samba/styles'
 
 // 카테고리 계층 구조 타입
 interface CatLevel {
@@ -100,12 +94,10 @@ export default function CategoriesPage() {
     setLoading(true)
     try {
       const all = await collectorApi.listProducts(0, 500)
-      console.log('[카테고리] 상품 로드:', all?.length || 0, '건')
       if (Array.isArray(all) && all.length > 0) {
         setProducts(all)
         buildTree(all)
       } else {
-        console.warn('[카테고리] 상품 데이터 비어있음')
         setProducts([])
         setSites([])
       }

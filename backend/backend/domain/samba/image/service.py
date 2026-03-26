@@ -186,7 +186,13 @@ def _get_category_prompt(category: str, mode: str, model_desc: str) -> str:
     "general": f"이 상품 사진을 참고해서, {model_desc}이(가) 이 상품을 사용/착용하고 있는 사진을 생성해주세요. 런웨이 모델의 자신감 있는 자세, 쿨한 무표정, 라이트그레이 스튜디오 배경.",
   }
   prompt = model_prompt_map.get(cat_type, model_prompt_map["general"])
-  return prompt + " 상품의 색상, 디자인, 로고, 디테일을 100% 정확하게 유지해주세요. 파리 하이패션 에디토리얼 스타일, AI 느낌이 나지 않는 실제 화보처럼."
+  return prompt + (
+    " 상품의 색상, 디자인, 로고, 디테일을 100% 정확하게 유지해주세요."
+    " 파리 하이패션 에디토리얼 스타일, AI 느낌이 나지 않는 실제 화보처럼."
+    " 매우 중요: 배경색이 이미지 전체 캔버스를 빈틈없이 채워야 합니다. 흰색 여백, 테두리, 빈 공간이 절대 없어야 합니다."
+    " 절대 금지: 원본 상품 이미지에 없는 로고, 텍스트, 스폰서명, 브랜드 마크를 추가하지 마세요."
+    " 원본에 보이는 것만 정확히 재현하고, 당신이 알고 있는 지식으로 없는 요소를 추가하지 마세요."
+  )
 
 
 # 성별·연령 키워드 → 프리셋 그룹 매핑
@@ -335,6 +341,36 @@ class ImageTransformService:
     return True
 
   @staticmethod
+  def _is_same_image(img_a: bytes, img_b: bytes) -> bool:
+    """두 이미지가 동일/유사한지 판별 (축소 후 픽셀 비교).
+
+    Gemini가 프리셋을 재인코딩해도 감지할 수 있도록
+    32x32 축소 후 평균 색상 차이로 비교.
+    """
+    if img_a == img_b:
+      return True
+    if not img_a or not img_b:
+      return False
+    try:
+      from PIL import Image
+      a = Image.open(io.BytesIO(img_a)).convert("RGB").resize((32, 32))
+      b = Image.open(io.BytesIO(img_b)).convert("RGB").resize((32, 32))
+      pixels_a = list(a.getdata())
+      pixels_b = list(b.getdata())
+      # 평균 픽셀 차이 계산
+      total_diff = sum(
+        abs(pa[0] - pb[0]) + abs(pa[1] - pb[1]) + abs(pa[2] - pb[2])
+        for pa, pb in zip(pixels_a, pixels_b)
+      )
+      avg_diff = total_diff / (32 * 32 * 3)
+      # 평균 차이가 15 이하면 동일 이미지로 판단
+      return avg_diff < 15
+    except Exception:
+      # PIL 실패 시 바이트 크기 비교 fallback
+      ratio = abs(len(img_a) - len(img_b)) / max(len(img_a), len(img_b))
+      return ratio < 0.03 and img_a[:2048] == img_b[:2048]
+
+  @staticmethod
   def _detect_mime(data: bytes) -> str:
     """이미지 바이트에서 MIME 타입 감지."""
     if data[:4] == b"\x89PNG":
@@ -446,18 +482,60 @@ class ImageTransformService:
   async def _transform_image_gemini(
     self, api_key: str, model: str, image_bytes: bytes,
     prompt: str, ref_image_bytes: bytes | None = None,
+    design_ref_bytes: bytes | None = None,
   ) -> bytes:
-    """Gemini API로 이미지 변환. 참조 모델 이미지가 있으면 함께 전송."""
+    """Gemini API로 이미지 변환.
+
+    ref_image_bytes: 모델 프리셋 참조 이미지
+    design_ref_bytes: 대표이미지 (디자인 기준 — 추가이미지 변환 시 사용)
+    """
     parts: list[dict[str, Any]] = []
 
-    # 참조 모델 이미지가 있으면 먼저 추가
     if ref_image_bytes:
-      ref_prompt = (
-        "첫 번째 이미지는 참조 모델입니다. "
-        "이 모델과 동일한 얼굴, 체형, 분위기를 유지하면서 "
-        "두 번째 상품 이미지의 옷/신발을 착용한 사진을 생성해주세요. "
+      # 상품 이미지를 먼저 보내고, 모델 프리셋을 나중에 → 상품 디자인 우선
+      main_prompt = (
+        "첫 번째 이미지는 반드시 착용/사용해야 할 상품입니다. "
+        "이 상품의 색상, 로고, 패턴, 텍스트, 디자인을 100% 정확하게 재현하세요. "
+        "절대로 상품의 디자인을 변경하거나 다른 옷으로 대체하지 마세요. "
+        "절대 금지: 원본 이미지에 없는 로고, 텍스트, 스폰서명을 추가하지 마세요. "
+        "당신이 알고 있는 브랜드 지식으로 없는 요소를 만들어내지 마세요. 보이는 것만 재현하세요. "
       )
-      parts.append({"text": ref_prompt + prompt})
+      last_img_label = "마지막 이미지는" if design_ref_bytes else "두 번째 이미지는"
+      main_prompt += (
+        f"\n[중요: 모델 교체 규칙]\n"
+        "첫 번째 이미지에 사람/모델이 있다면, 그 사람의 얼굴, 헤어스타일, 피부색, 체형을 모두 무시하세요. "
+        "오직 그 사람이 입고 있는 '옷/상품'만 추출하세요. "
+        f"{last_img_label} 새로운 모델의 참조입니다. "
+        "생성할 이미지의 모델은 반드시 이 참조 이미지의 얼굴, 헤어스타일, 피부색, 체형을 사용하세요. "
+        "원본 상품 이미지에 있던 모델의 외모는 절대 사용하지 마세요. 완전히 다른 사람으로 교체하는 것입니다. "
+        "모델은 반드시 백인 서양인(Caucasian)이어야 합니다. "
+        "반드시 첫 번째 이미지의 상품을 착용한 사진을 생성해야 합니다. "
+        "첫 번째 이미지가 앞면이면 앞면 착용컷, 뒷면이면 뒷면 착용컷을 생성하세요. 이미지의 각도를 그대로 존중하세요. "
+        "배경이 캔버스 전체를 빈틈없이 채워야 하며, 흰색 테두리나 여백이 절대 없어야 합니다. "
+      )
+      if design_ref_bytes:
+        main_prompt += (
+          "두 번째 이미지는 동일 상품의 대표 이미지입니다. 상품의 전체 디자인(색상, 브랜드, 소재감) 참고용으로만 사용하세요. "
+          "단, 각도는 반드시 첫 번째 이미지를 따르세요. "
+        )
+      parts.append({"text": main_prompt + prompt})
+
+      # 1) 상품 이미지 (최우선)
+      parts.append({
+        "inline_data": {
+          "mime_type": self._detect_mime(image_bytes),
+          "data": base64.b64encode(image_bytes).decode("ascii"),
+        }
+      })
+      # 2) 디자인 기준 대표이미지 (있으면)
+      if design_ref_bytes:
+        parts.append({
+          "inline_data": {
+            "mime_type": self._detect_mime(design_ref_bytes),
+            "data": base64.b64encode(design_ref_bytes).decode("ascii"),
+          }
+        })
+      # 3) 모델 프리셋 (얼굴/체형만 참고)
       parts.append({
         "inline_data": {
           "mime_type": self._detect_mime(ref_image_bytes),
@@ -466,14 +544,13 @@ class ImageTransformService:
       })
     else:
       parts.append({"text": prompt})
-
-    # 상품 이미지 추가
-    parts.append({
-      "inline_data": {
-        "mime_type": self._detect_mime(image_bytes),
-        "data": base64.b64encode(image_bytes).decode("ascii"),
-      }
-    })
+      # 상품 이미지만
+      parts.append({
+        "inline_data": {
+          "mime_type": self._detect_mime(image_bytes),
+          "data": base64.b64encode(image_bytes).decode("ascii"),
+        }
+      })
 
     body = {
       "contents": [{"parts": parts}],
@@ -496,7 +573,11 @@ class ImageTransformService:
       parts_resp = candidates[0].get("content", {}).get("parts", [])
       for part in parts_resp:
         if "inlineData" in part:
-          return base64.b64decode(part["inlineData"]["data"])
+          result = base64.b64decode(part["inlineData"]["data"])
+          # 참조 프리셋 이미지가 그대로 반환된 경우 거부
+          if ref_image_bytes and self._is_same_image(result, ref_image_bytes):
+            raise ValueError("Gemini가 참조 프리셋 이미지를 그대로 반환 — 변환 실패")
+          return result
 
       raise ValueError("Gemini 응답에 이미지 없음")
 
@@ -618,16 +699,23 @@ class ImageTransformService:
 
       # ── 모델 착용 모드: 대표1장 + 추가3장 고정 생성 ──
       if mode == "model" and product_images:
+        # 0) 대표이미지 다운로드 (디자인 기준으로 재사용)
+        thumb_bytes: bytes | None = None
+        try:
+          thumb_bytes = await self._download_image(product_images[0])
+        except Exception as e:
+          logger.error(f"[이미지] {pid} 대표이미지 다운로드 실패: {e}")
+
         # 1) 대표이미지 변환
         new_thumb_url = None
-        try:
-          img = await self._download_image(product_images[0])
-          transformed = await self._transform_image_gemini(api_key, gemini_model, img, prompt, ref_image)
-          new_thumb_url = await self._save_image(transformed, product_images[0])
-          product_result["transformed"] += 1
-        except Exception as e:
-          logger.error(f"[이미지] {pid} 대표이미지 변환 실패: {e}")
-          product_result["failed"] += 1
+        if thumb_bytes:
+          try:
+            transformed = await self._transform_image_gemini(api_key, gemini_model, thumb_bytes, prompt, ref_image)
+            new_thumb_url = await self._save_image(transformed, product_images[0])
+            product_result["transformed"] += 1
+          except Exception as e:
+            logger.error(f"[이미지] {pid} 대표이미지 변환 실패: {e}")
+            product_result["failed"] += 1
 
         # 2) 추가이미지 소스 결정: 추가이미지 있으면 사용, 없으면 상세이미지 참고
         raw_additional = list(product_images[1:]) if len(product_images) > 1 else []
@@ -647,13 +735,13 @@ class ImageTransformService:
           if additional_sources:
             logger.info(f"[이미지] {pid} 추가이미지 없음 → 상세이미지 {len(additional_sources)}장 참고")
 
-        # 3) 소스에서 최대 3개 뽑아 변환 → 추가이미지 3장 생성
+        # 3) 소스에서 최대 2개 뽑아 변환 → 추가이미지 2장 생성
         #    다운로드 후 이미지 비율도 2차 검증하여 배너 제거
         new_additional: list[str] = []
         src_idx = 0
         attempts = 0
         max_attempts = max(len(additional_sources) * 2, 6) if additional_sources else 3
-        while len(new_additional) < 3 and attempts < max_attempts:
+        while len(new_additional) < 2 and attempts < max_attempts:
           if additional_sources:
             src_url = additional_sources[src_idx % len(additional_sources)]
             src_idx += 1
@@ -666,7 +754,10 @@ class ImageTransformService:
             if additional_sources and not self._is_product_image(src_url, img):
               logger.info(f"[이미지] {pid} 비상품 이미지 스킵 (비율 이상): {src_url[:80]}")
               continue
-            transformed = await self._transform_image_gemini(api_key, gemini_model, img, prompt, ref_image)
+            transformed = await self._transform_image_gemini(
+              api_key, gemini_model, img, prompt, ref_image,
+              design_ref_bytes=thumb_bytes,
+            )
             new_url = await self._save_image(transformed, src_url)
             new_additional.append(new_url)
             product_result["transformed"] += 1
@@ -779,7 +870,12 @@ class ImageTransformService:
               product_result["failed"] += 1
           update_data["detail_images"] = new_details
 
-      # DB 업데이트
+      # DB 업데이트 — __ai_image__ 태그 추가 (소싱처 최신화 시 이미지 보호)
+      if update_data and product_result["transformed"] > 0:
+        existing_tags = list(product.tags or [])
+        if "__ai_image__" not in existing_tags:
+          existing_tags.append("__ai_image__")
+          update_data["tags"] = existing_tags
       if update_data:
         try:
           await repo.update_async(pid, **update_data)

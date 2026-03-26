@@ -911,11 +911,6 @@ export default function SettingsPage() {
   // 태그 금지어
   const [tagBanned, setTagBanned] = useState<{ rejected: string[]; brands: string[]; source_sites: string[] }>({ rejected: [], brands: [], source_sites: [] })
 
-  // Fireworks AI 설정
-  const [fireworksApiKey, setFireworksApiKey] = useState('')
-  const [fireworksModel, setFireworksModel] = useState('accounts/fireworks/models/stable-diffusion-xl-1024-v1-0')
-  const [fireworksStatus, setFireworksStatus] = useState('')
-
   // Cloudflare R2 설정
   const [r2AccountId, setR2AccountId] = useState('')
   const [r2AccessKey, setR2AccessKey] = useState('')
@@ -1110,14 +1105,6 @@ export default function SettingsPage() {
         setGeminiApiKey(String(gm.apiKey || ''))
         setGeminiModel(String(gm.model || 'gemini-2.5-flash-image'))
         if (gm.apiKey) setGeminiStatus('저장됨')
-      }
-    } catch { /* ignore */ }
-    try {
-      const fw = await forbiddenApi.getSetting('fireworks').catch(() => null) as Record<string, unknown> | null
-      if (fw) {
-        setFireworksApiKey(String(fw.apiKey || ''))
-        setFireworksModel(String(fw.model || 'accounts/fireworks/models/stable-diffusion-xl-1024-v1-0'))
-        if (fw.apiKey) setFireworksStatus('저장됨')
       }
     } catch { /* ignore */ }
     try {
@@ -1350,42 +1337,6 @@ export default function SettingsPage() {
     } catch (e) {
       showAlert(`재생성 실패: ${e instanceof Error ? e.message : ''}`, 'error')
     } finally { setRegenerating(null) }
-  }
-
-  // Fireworks AI 저장
-  const saveFireworksSettings = async () => {
-    if (!fireworksApiKey) {
-      showAlert('API Key를 입력해주세요', 'error')
-      return
-    }
-    try {
-      await forbiddenApi.saveSetting('fireworks', { apiKey: fireworksApiKey, model: fireworksModel, updatedAt: new Date().toISOString() })
-      setFireworksStatus(`저장 완료 (${new Date().toLocaleTimeString('ko-KR', { hour12: false })})`)
-      showAlert('Fireworks AI 설정이 저장되었습니다', 'success')
-    } catch { showAlert('저장 실패', 'error') }
-  }
-
-  // Fireworks AI 테스트
-  const testFireworksApi = async () => {
-    if (!fireworksApiKey) {
-      showAlert('API Key를 먼저 입력해주세요', 'error')
-      return
-    }
-    setFireworksStatus('API 연결 확인 중...')
-    try {
-      await forbiddenApi.saveSetting('fireworks', { apiKey: fireworksApiKey, model: fireworksModel, updatedAt: new Date().toISOString() })
-      const result = await proxyApi.fireworksTest()
-      if (result.success) {
-        setFireworksStatus(`✓ ${result.message}`)
-        showAlert(result.message, 'success')
-      } else {
-        setFireworksStatus(`✗ ${result.message}`)
-        showAlert(result.message, 'error')
-      }
-    } catch (e) {
-      setFireworksStatus('연결 실패')
-      showAlert(`Fireworks API 연결 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
-    }
   }
 
   // Cloudflare R2 저장
@@ -1734,42 +1685,6 @@ export default function SettingsPage() {
           {geminiStatus && (
             <div style={{ fontSize: '0.8125rem', color: geminiStatus.includes('저장') || geminiStatus.includes('✓') ? '#7BAF7E' : geminiStatus.includes('확인') ? '#FFB84D' : '#C4736E', padding: '0.4rem 0' }}>
               {geminiStatus}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Fireworks AI 연동 (이미지 변환) */}
-      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#F97316' }}>Fireworks AI 연동</span>
-          <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 이미지 변환(지재권 대응)을 위한 Fireworks AI API 설정</span>
-          <a href="https://fireworks.ai/account/api-keys" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
-          <button onClick={saveFireworksSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
-        </div>
-        <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
-            <input
-              type='password'
-              style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
-              value={fireworksApiKey}
-              onChange={(e) => setFireworksApiKey(e.target.value)}
-              placeholder='fw_...'
-            />
-            <button onClick={testFireworksApi} style={{ background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.35)', color: '#F97316', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>연결 테스트</button>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델 선택</label>
-            <select style={{ ...inputStyle, width: '360px' }} value={fireworksModel} onChange={(e) => setFireworksModel(e.target.value)}>
-              <option value="accounts/fireworks/models/stable-diffusion-xl-1024-v1-0">SDXL 1.0 (권장)</option>
-              <option value="accounts/fireworks/models/playground-v2-5-1024px-aesthetic">Playground v2.5</option>
-              <option value="accounts/fireworks/models/SSD-1B">SSD-1B (빠름)</option>
-            </select>
-          </div>
-          {fireworksStatus && (
-            <div style={{ fontSize: '0.8125rem', color: fireworksStatus.includes('저장') || fireworksStatus.includes('✓') ? '#7BAF7E' : fireworksStatus.includes('확인') ? '#FFB84D' : '#C4736E', padding: '0.4rem 0' }}>
-              {fireworksStatus}
             </div>
           )}
         </div>

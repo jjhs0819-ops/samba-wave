@@ -363,6 +363,11 @@ export const collectorApi = {
     if (status) p.set("status", status);
     return request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products?${p}`);
   },
+  getProductsByIds: (ids: string[]) =>
+    request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products/by-ids`, {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
   lookupByMarketNo: (marketProductNo: string) =>
     request<{ found: boolean; id?: string; source_site?: string; site_product_id?: string; original_link?: string; product_image?: string }>(
       `${SAMBA_PREFIX}/collector/products/lookup-by-market-no/${marketProductNo}`),
@@ -405,6 +410,9 @@ export const collectorApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: "DELETE" }),
   bulkDeleteProducts: (ids: string[]) =>
     request<{ deleted: number }>(`${SAMBA_PREFIX}/collector/products/bulk-delete`, { method: "POST", body: JSON.stringify({ ids }) }),
+  blockAndDelete: (productIds: string[]) =>
+    request<{ ok: boolean; blocked: number; deleted: number }>(
+      `${SAMBA_PREFIX}/collector/products/block-and-delete`, { method: "POST", body: JSON.stringify({ product_ids: productIds }) }),
   resetRegistration: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}/reset-registration`, { method: "POST" }),
   bulkResetRegistration: (ids: string[]) =>

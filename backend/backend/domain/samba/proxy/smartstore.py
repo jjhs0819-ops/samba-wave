@@ -175,7 +175,9 @@ def _build_combination_options(
   import re as _re
   _opt_del = option_deletion_words or []
   # 옵션명 패턴 분석: "02(235)" → 사이즈, "Black / 270" → 색상+사이즈
-  has_slash = any("/" in (o.get("name") or "") for o in options)
+  # 2단 옵션 판별: " / " (공백+슬래시+공백) 패턴이 있어야 진짜 색상/사이즈 구분
+  # "A/XS", "A/M" 같은 사이즈 코드는 1단 옵션으로 처리
+  has_slash = any(" / " in (o.get("name") or "") for o in options)
 
   if has_slash:
     # 2단 옵션: 색상 / 사이즈
@@ -195,6 +197,13 @@ def _build_combination_options(
     name = opt.get("name") or opt.get("size") or f"옵션{idx+1}"
     if _opt_del:
       name = _clean_option_name(name)
+    # 빈 옵션명 방어 — 공백/특수문자만 남은 경우
+    name = name.strip()
+    if not name or len(name.replace(" ", "")) == 0:
+      name = f"옵션{idx+1}"
+    # 스마트스토어 옵션명 최대 25자 제한
+    if len(name) > 25:
+      name = name[:25]
     stock = opt.get("stock", 0) or 0
     sold_out = opt.get("isSoldOut", False)
 
@@ -205,8 +214,12 @@ def _build_combination_options(
     opt_price = int(opt.get("price", 0) or 0)
     price_diff = max(opt_price - sale_price, 0) if opt_price > 0 else 0
 
-    if has_slash and "/" in name:
-      parts = [p.strip() for p in name.split("/", 1)]
+    if has_slash and " / " in name:
+      parts = [p.strip() for p in name.split(" / ", 1)]
+      # 분리 후 빈값 방어
+      parts = [p for p in parts if p]
+      if len(parts) == 0:
+        parts = [name.replace("/", "").strip() or f"옵션{idx+1}"]
       option_values = parts
     else:
       option_values = [name]
@@ -480,38 +493,63 @@ class SmartStoreClient:
       logger.warning(f"[스마트스토어] 카탈로그 검색 실패 ({style_code}): {e}")
     return None
 
-  async def search_brand(self, brand_name: str) -> Optional[int]:
-    """브랜드명으로 네이버 브랜드 ID 검색. 없으면 None."""
+  @staticmethod
+  def _brand_name_variants(name: str) -> list[str]:
+    """브랜드/제조사명의 검색 변형 목록 생성.
+
+    시도 순서: 원본 → 접미사 제거 → 법인명 제거 → 첫 단어만
+    """
+    import re
+    seen: set[str] = set()
+    variants: list[str] = []
+    for candidate in [
+      name,
+      # 카테고리 접미사 제거
+      re.sub(r'\s*(키즈|kids|kid|주니어|junior|jr|아동|유아|베이비|baby|우먼|women|맨즈|men|골프|golf|스포츠|sports|아웃도어|outdoor)\s*$', '', name, flags=re.IGNORECASE).strip(),
+      # 법인 접미사 제거
+      re.sub(r'\s*(AG|Inc\.?|Corp\.?|Ltd\.?|Co\.?,?\s*Ltd\.?|LLC|GmbH|S\.?A\.?)\s*$', '', name, flags=re.IGNORECASE).strip(),
+      re.sub(r'\(주\)|\(유\)|\(합\)|주식회사|㈜', '', name).strip(),
+      # 첫 단어만 (예: "아디다스 골프" → "아디다스")
+      name.split()[0] if " " in name else "",
+    ]:
+      c = candidate.strip()
+      if c and c.lower() not in seen:
+        seen.add(c.lower())
+        variants.append(c)
+    return variants
+
+  async def search_brand(self, brand_name: str) -> Optional[tuple[int, str]]:
+    """브랜드명으로 네이버 브랜드 (ID, 정확한 이름) 검색 — 자동 fallback 체인."""
     if not brand_name or brand_name in ("상세설명 참조", "상세 이미지 참조"):
       return None
-    try:
-      result = await self._call_api("GET", "/v1/product-brands", params={"name": brand_name})
-      # 네이버 API 응답: {"contents": [...]} 또는 직접 리스트
-      brands = result
-      if isinstance(result, dict):
-        brands = result.get("contents") or result.get("brands") or result.get("data") or []
-      if not isinstance(brands, list):
-        brands = []
-      logger.info(f"[스마트스토어] 브랜드 검색: {brand_name} → {len(brands)}건")
-      for b in brands:
-        if b.get("name") == brand_name:
-          return b.get("id")
-      # 정확 매치 없으면 첫 번째 결과
-      if brands:
-        return brands[0].get("id")
-    except Exception as e:
-      logger.warning(f"[스마트스토어] 브랜드 검색 실패 ({brand_name}): {e}")
+    for name in self._brand_name_variants(brand_name):
+      try:
+        result = await self._call_api("GET", "/v1/product-brands", params={"name": name})
+        brands = result
+        if isinstance(result, dict):
+          brands = result.get("contents") or result.get("brands") or result.get("data") or []
+        if not isinstance(brands, list):
+          brands = []
+        if not brands:
+          continue
+        logger.info(f"[스마트스토어] 브랜드 검색: {name} → {len(brands)}건")
+        # 정확 매치 우선
+        for b in brands:
+          if b.get("name") == name:
+            return (b.get("id"), b.get("name", name))
+        # 첫 번째 결과 — 네이버가 반환한 정확한 이름 사용
+        b = brands[0]
+        return (b.get("id"), b.get("name", name))
+      except Exception:
+        continue
+    logger.warning(f"[스마트스토어] 브랜드 검색 실패 (모든 변형 시도): {brand_name}")
     return None
 
   async def search_manufacturer(self, mfr_name: str) -> Optional[int]:
-    """제조사명으로 네이버 제조사 ID 검색. 없으면 None."""
+    """제조사명으로 네이버 제조사 ID 검색 — 자동 fallback 체인."""
     if not mfr_name:
       return None
-    import re
-    # 법인 접두사/접미사 제거: (주), 주식회사, (유), (합) 등
-    clean = re.sub(r'\(주\)|\(유\)|\(합\)|주식회사|㈜', '', mfr_name).strip()
-    names_to_try = [clean, mfr_name] if clean != mfr_name else [mfr_name]
-    for name in names_to_try:
+    for name in self._brand_name_variants(mfr_name):
       try:
         result = await self._call_api("GET", "/v1/product-manufacturers", params={"name": name})
         if isinstance(result, list) and result:
@@ -521,7 +559,7 @@ class SmartStoreClient:
           return result[0].get("id")
       except Exception:
         continue
-    logger.warning(f"[스마트스토어] 제조사 검색 실패: {mfr_name}")
+    logger.warning(f"[스마트스토어] 제조사 검색 실패 (모든 변형 시도): {mfr_name}")
     return None
 
   async def get_category_certification_infos(self, category_id: str) -> list[dict[str, Any]]:
@@ -1343,28 +1381,42 @@ class SmartStoreClient:
       # 품번 = manufactureDefineNo (셀러센터 "품번" 필드)
       data["originProduct"]["detailAttribute"]["manufactureDefineNo"] = style_code
 
+    # 브랜드명 정제 — brandId가 이미 있으면(카탈로그 매칭 완료) 정제 스킵
+    # brandId 없을 때만 접미사 제거하여 검색 성공률 높임
+    if not product.get("_brand_id"):
+      import re as _re_brand
+      _brand_suffixes = r'\s*(키즈|kids|kid|주니어|junior|jr|아동|유아|베이비|baby|우먼|women|맨즈|men|골프|golf|스포츠|sports|아웃도어|outdoor)\s*$'
+      if brand:
+        brand = _re_brand.sub(_brand_suffixes, '', brand, flags=_re_brand.IGNORECASE).strip() or brand
+      if mfr:
+        mfr = _re_brand.sub(_brand_suffixes, '', mfr, flags=_re_brand.IGNORECASE).strip() or mfr
+
     # 브랜드/제조사 — naverShoppingSearchInfo에 설정 (스마트스토어 상품주요정보)
+    # brandName은 네이버에 등록된 브랜드만 허용 — brandId 있을 때만 전송
     naver_search_info: dict[str, Any] = {}
     brand_id = product.get("_brand_id")
     mfr_id = product.get("_manufacturer_id")
     if brand_id:
       naver_search_info["brandId"] = brand_id
       naver_search_info["brandName"] = brand
-    elif brand and brand != "상세설명 참조":
-      naver_search_info["brandName"] = brand
+    # brandId 없으면 brandName 전송하지 않음 (미등록 브랜드 에러 방지)
     if mfr_id:
       naver_search_info["manufacturerId"] = mfr_id
       naver_search_info["manufacturerName"] = mfr
-    elif mfr:
+    elif mfr and mfr != "상세설명 참조":
       naver_search_info["manufacturerName"] = mfr
     # 카탈로그 모델 ID — 설정하면 모델명/브랜드/제조사/상품속성 자동 매칭
     catalog_model_id = product.get("_catalog_model_id")
     if catalog_model_id:
       naver_search_info["modelId"] = catalog_model_id
     elif style_code:
-      naver_search_info["modelName"] = style_code
-      naver_search_info["manufacturerModelName"] = style_code
+      # modelName은 50자 제한, 특수문자 제거
+      clean_code = style_code[:50].strip()
+      if clean_code:
+        naver_search_info["modelName"] = clean_code
+        naver_search_info["manufacturerModelName"] = clean_code
     if naver_search_info:
+      logger.info(f"[스마트스토어] naverShoppingSearchInfo: {naver_search_info}")
       data["originProduct"]["detailAttribute"]["naverShoppingSearchInfo"] = naver_search_info
 
     # 상품속성 (성별, 시즌 등)
