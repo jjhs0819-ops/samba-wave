@@ -487,19 +487,8 @@ async def scroll_products(
         order_pids = select(SambaOrder.product_id).where(SambaOrder.product_id.isnot(None)).distinct()
         conditions.append(_CP.id.in_(order_pids))
 
-    # 목록에 필요한 경량 컬럼만 선택 (JSON 필드 최소화)
-    _LIST_FIELDS = {
-        "id", "source_site", "search_filter_id", "site_product_id", "source_url",
-        "name", "name_en", "brand", "original_price", "sale_price", "cost",
-        "images", "options", "category", "status",
-        "applied_policy_id", "market_prices", "market_enabled",
-        "registered_accounts", "market_product_nos", "market_names",
-        "is_sold_out", "sale_status", "tags", "seo_keywords",
-        "lock_delete", "lock_stock", "free_shipping", "same_day_delivery",
-        "group_key", "group_product_no", "video_url",
-        "created_at", "updated_at",
-    }
-    list_cols = [c for c in mapper.columns if c.key in _LIST_FIELDS]
+    # 목록에 필요한 컬럼 선택 (heavy 필드만 제외)
+    list_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]
 
     # COUNT + 데이터 + 소싱처 + KPI 병렬 실행
     count_stmt = select(func.count()).select_from(_CP)
