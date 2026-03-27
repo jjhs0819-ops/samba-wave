@@ -604,16 +604,18 @@ class LotteonSourcingClient:
   # 상세 조회
   # ------------------------------------------------------------------
 
+  PBF_BASE = "https://pbf.lotteon.com"
+
   async def get_product_detail(
     self, product_no: str, refresh_only: bool = False
   ) -> dict[str, Any]:
     """롯데ON 상품 상세 정보 조회.
 
-    상품 페이지 HTML에서 JSON-LD(schema.org Product)를 우선 파싱하고,
-    없으면 __NEXT_DATA__ 또는 메타 태그에서 폴백한다.
+    1단계: 상품 페이지 HTML → JSON-LD로 기본 정보 파싱
+    2단계: HTML에서 sitmNo 추출 → pbf.lotteon.com API로 옵션/재고/이미지 보완
 
     Args:
-      product_no: 롯데ON 상품 번호 (LO + 10자리 숫자)
+      product_no: 롯데ON 상품 번호 (LO/PD/LI/LE prefix)
       refresh_only: True이면 가격/재고만 빠르게 갱신
 
     Returns:
@@ -641,24 +643,37 @@ class LotteonSourcingClient:
           logger.warning(f"[LOTTEON] 상세 페이지 HTTP {resp.status_code}: {product_no}")
           return {}
 
-      html = resp.text
-      now_iso = datetime.now(tz=timezone.utc).isoformat()
-      timestamp = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+        html = resp.text
+        now_iso = datetime.now(tz=timezone.utc).isoformat()
+        timestamp = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
 
-      # 방법 1: JSON-LD(schema.org Product) 우선 파싱
-      detail = self._parse_json_ld_detail(html, product_no, now_iso, timestamp)
-      if detail:
-        # JSON-LD에 없는 정보는 HTML에서 보완
-        self._enrich_from_html(detail, html)
+        # 방법 1: JSON-LD(schema.org Product) 우선 파싱
+        detail = self._parse_json_ld_detail(html, product_no, now_iso, timestamp)
+        if detail:
+          self._enrich_from_html(detail, html)
+        else:
+          # 방법 2: __NEXT_DATA__에서 파싱
+          detail = self._parse_next_data_detail(html, product_no, now_iso, timestamp)
+          if not detail:
+            # 방법 3: 메타 태그 + HTML 폴백
+            detail = self._parse_meta_detail(html, product_no, now_iso, timestamp)
+
+        if not detail:
+          return {}
+
+        # 2단계: pbf API로 옵션/재고/이미지 보완
+        sitm_no = self._extract_sitmno_from_html(html)
+        if sitm_no:
+          pbf_data = await self._fetch_pbf_detail(sitm_no, client)
+          if pbf_data:
+            self._enrich_from_pbf(detail, pbf_data)
+            logger.info(f"[LOTTEON] pbf 보완 완료: {product_no} (sitmNo={sitm_no})")
+          else:
+            logger.debug(f"[LOTTEON] pbf 데이터 없음: {sitm_no}")
+        else:
+          logger.debug(f"[LOTTEON] sitmNo 추출 실패: {product_no}")
+
         return detail
-
-      # 방법 2: __NEXT_DATA__에서 파싱
-      detail = self._parse_next_data_detail(html, product_no, now_iso, timestamp)
-      if detail:
-        return detail
-
-      # 방법 3: 메타 태그 + HTML 폴백
-      return self._parse_meta_detail(html, product_no, now_iso, timestamp)
 
     except RateLimitError:
       raise
@@ -668,6 +683,104 @@ class LotteonSourcingClient:
     except Exception as e:
       logger.error(f"[LOTTEON] 상세 조회 실패: {product_no} — {e}")
       return {}
+
+  def _extract_sitmno_from_html(self, html: str) -> str:
+    """HTML에서 sitmNo 추출 (HTML 엔티티 디코딩 후 파싱)."""
+    import html as html_module
+    decoded = html_module.unescape(html)
+    m = re.search(r'"sitmNo"\s*:\s*"([A-Z]{2}[0-9]+_[0-9]+)"', decoded)
+    return m.group(1) if m else ""
+
+  async def _fetch_pbf_detail(
+    self, sitm_no: str, client: httpx.AsyncClient
+  ) -> Optional[dict[str, Any]]:
+    """pbf.lotteon.com API로 옵션/재고/이미지 데이터 조회."""
+    url = f"{self.PBF_BASE}/product/v2/detail/search/base/sitm/{sitm_no}"
+    pbf_headers = {
+      **self.HEADERS,
+      "Accept": "application/json, text/plain, */*",
+      "Origin": "https://www.lotteon.com",
+    }
+    try:
+      resp = await client.get(url, headers=pbf_headers)
+      if resp.status_code != 200:
+        return None
+      body = resp.json()
+      if body.get("returnCode") != "200" and body.get("returnCode") != 200:
+        return None
+      return body.get("data")
+    except Exception as e:
+      logger.debug(f"[LOTTEON] pbf API 실패: {sitm_no} — {e}")
+      return None
+
+  def _enrich_from_pbf(self, detail: dict[str, Any], pbf: dict[str, Any]) -> None:
+    """pbf API 데이터로 detail dict 보완 (옵션/재고/이미지/가격)."""
+    # ── 가격 보완 ──────────────────────────────────────────────
+    price_info = pbf.get("priceInfo") or {}
+    sl_prc = self._safe_int(price_info.get("slPrc", 0))
+    if sl_prc > 0:
+      detail["salePrice"] = sl_prc
+
+    # ── 재고 ──────────────────────────────────────────────────
+    stck = pbf.get("stckInfo") or {}
+    stk_qty = stck.get("stkQty")
+    is_out = stk_qty is not None and stk_qty == 0
+    if stk_qty is not None:
+      detail["isOutOfStock"] = is_out
+      detail["isSoldOut"] = is_out
+      detail["saleStatus"] = "sold_out" if is_out else "in_stock"
+
+    # ── 옵션 ──────────────────────────────────────────────────
+    opt_info = pbf.get("optionInfo") or {}
+    option_groups = opt_info.get("optionList") or []
+    options: list[dict[str, Any]] = []
+
+    if option_groups:
+      # 단일 옵션 그룹 (사이즈/색상)
+      primary_group = option_groups[0]
+      for opt in primary_group.get("options", []):
+        label = opt.get("label", "").strip()
+        if not label:
+          continue
+        disabled = bool(opt.get("disabled", False))
+        options.append({
+          "name": label,
+          "price": sl_prc or detail.get("salePrice", 0),
+          "stock": 0 if disabled else (stk_qty or 1),
+          "isSoldOut": disabled,
+        })
+
+      # 멀티 옵션 그룹 (색상 + 사이즈) — label 조합
+      if len(option_groups) >= 2:
+        options = []
+        for g1_opt in option_groups[0].get("options", []):
+          for g2_opt in option_groups[1].get("options", []):
+            combined_disabled = g1_opt.get("disabled", False) or g2_opt.get("disabled", False)
+            combined_label = f"{g1_opt.get('label', '')} / {g2_opt.get('label', '')}".strip(" /")
+            options.append({
+              "name": combined_label,
+              "price": sl_prc or detail.get("salePrice", 0),
+              "stock": 0 if combined_disabled else (stk_qty or 1),
+              "isSoldOut": bool(combined_disabled),
+            })
+
+    if options:
+      detail["options"] = options
+
+    # ── 이미지 보완 ────────────────────────────────────────────
+    img_info = pbf.get("imgInfo") or {}
+    img_list = img_info.get("imageList") or []
+    pbf_images: list[str] = []
+    for img in img_list:
+      path = img.get("imgRteNm", "") + img.get("imgFileNm", "")
+      if path:
+        full_url = f"https://contents.lotteon.com/itemimage{path}"
+        pbf_images.append(self._normalize_image(full_url))
+
+    if pbf_images and not detail.get("images"):
+      detail["images"] = pbf_images[:9]
+    elif pbf_images and len(detail.get("images", [])) < 2:
+      detail["images"] = pbf_images[:9]
 
   # ------------------------------------------------------------------
   # JSON-LD 파싱 (상세)
