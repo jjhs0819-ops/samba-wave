@@ -148,6 +148,44 @@ def _build_lotteon_intro(product: dict[str, Any]) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# 상품홍보문구 자동 생성
+# ──────────────────────────────────────────────────────────────────────
+
+def _build_lotteon_promo(product: dict[str, Any]) -> str:
+  """상품홍보문구 자동 생성 — 75바이트 이내, 태그·괄호·쉼표 제거.
+
+  형식: "브랜드 카테고리 소재 색상"
+  """
+  parts: list[str] = []
+  brand = product.get("brand", "") or ""
+  category = product.get("category2") or product.get("category1") or ""
+  material = product.get("material", "") or ""
+  color = product.get("color", "") or ""
+
+  if brand:
+    parts.append(brand)
+  if category:
+    parts.append(category)
+  if material:
+    parts.append(material)
+  if color:
+    parts.append(color)
+
+  text = " ".join(parts)
+  # 태그(#), 괄호(()/[]/{}/<>), 쉼표 제거
+  text = re.sub(r'[#()\[\]{}<>,]', '', text).strip()
+  # 연속 공백 정리
+  text = re.sub(r'\s+', ' ', text).strip()
+
+  # 75바이트 이내로 자르기
+  encoded = text.encode('utf-8')
+  if len(encoded) > 75:
+    text = encoded[:75].decode('utf-8', errors='ignore').rstrip()
+
+  return text
+
+
+# ──────────────────────────────────────────────────────────────────────
 # 배송/반품 안내 HTML (epnLst NOTI 항목)
 # ──────────────────────────────────────────────────────────────────────
 
@@ -682,6 +720,12 @@ class LotteonClient:
     # ── 판매자 상품코드 (품번 있을 때만) ────────────────────────
     if style_code:
       spd["selPrdNo"] = style_code[:50]
+
+    # ── 상품홍보문구 (기간 미설정) ───────────────────────────────
+    promo = _build_lotteon_promo(product)
+    if promo:
+      spd["pdPrmotnCnts"] = promo
+      # 기간 미설정 — 날짜 필드 생략 (롯데ON 어드민 "기간미설정" 체크와 동일)
 
     return {"spdLst": [spd]}
 

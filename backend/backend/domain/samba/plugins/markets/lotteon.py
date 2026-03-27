@@ -6,10 +6,50 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
+
+# 브랜드명 접미사 목록 — 검색 전 자동 제거
+_BRAND_SUFFIXES = ["키즈", "주니어", "주니어즈", "골프", "Kids", "Junior", "Juniors", "Golf"]
+
+
+def _strip_brand_suffix(name: str) -> str:
+  """브랜드명 뒤에 붙은 접미사 제거. 예: '나이키 키즈' → '나이키'"""
+  for suffix in _BRAND_SUFFIXES:
+    if name.endswith(" " + suffix):
+      return name[:-(len(suffix) + 1)].strip()
+  return name
+
+
+async def _search_brand_no(client: Any, brand_name: str) -> str:
+  """접미사 제거 → 첫 단어만 → 스킵 순서로 브랜드 검색. brdNo 반환."""
+  stripped = _strip_brand_suffix(brand_name)
+  candidates = [stripped]
+
+  # 첫 단어만 시도 (접미사 제거 결과와 다를 때만)
+  first_word = stripped.split()[0] if stripped else ""
+  if first_word and first_word != stripped:
+    candidates.append(first_word)
+
+  for candidate in candidates:
+    try:
+      result = await client.search_brand(candidate)
+      items = result.get("itemList") or result.get("data") or []
+      if isinstance(items, list) and items:
+        item = items[0]
+        d = item.get("data", item) if isinstance(item, dict) else item
+        # 브랜드 검색 응답(cheetahBrnd)의 실제 키: brnd_id
+        brd_no = d.get("brnd_id", "") or d.get("brnd_no", "") or d.get("brdNo", "")
+        if brd_no:
+          logger.info(f"[롯데ON] 브랜드 검색 성공: {brand_name!r} → {candidate!r} brdNo={brd_no}")
+          return str(brd_no)
+    except Exception as e:
+      logger.warning(f"[롯데ON] 브랜드 검색 실패 ({candidate!r}): {e}")
+
+  logger.info(f"[롯데ON] 브랜드 검색 스킵 — 브랜드 공란으로 등록 진행: {brand_name!r}")
+  return ""
 
 
 class LotteonPlugin(MarketPlugin):
@@ -139,20 +179,12 @@ class LotteonPlugin(MarketPlugin):
         if mp.get("maxStock"):
           product_copy["_max_stock"] = int(mp["maxStock"])
 
-    # ── 3. 브랜드 검색 연동 ──────────────────────────────────────────
+    # ── 3. 브랜드 검색 (접미사 제거 → 첫 단어 → 스킵 폴백) ──────────
     brand_name = product_copy.get("brand", "")
     if brand_name and not product_copy.get("brand_no"):
-      try:
-        brand_result = await client.search_brand(brand_name)
-        # 응답 구조: data[0].brdNo
-        brand_list = (brand_result.get("data") or [])
-        if isinstance(brand_list, list) and brand_list:
-          brd_no = brand_list[0].get("brdNo", "")
-          if brd_no:
-            product_copy["brand_no"] = str(brd_no)
-            logger.info(f"[롯데ON] 브랜드 검색 성공: {brand_name} → brdNo={brd_no}")
-      except Exception as e:
-        logger.warning(f"[롯데ON] 브랜드 검색 실패 (무시): {e}")
+      brd_no = await _search_brand_no(client, brand_name)
+      if brd_no:
+        product_copy["brand_no"] = brd_no
 
     # ── 비리프 카테고리 자동 보정 (leaf_yn="Y" 될 때까지 최대 4단계 반복 탐색) ──
     if category_id and category_id.endswith("0000"):
@@ -231,18 +263,10 @@ class LotteonPlugin(MarketPlugin):
         return {"success": True, "message": "롯데ON 수정 성공", "data": result}
       else:
         result = await client.register_product(data)
-        # 등록 결과에서 상품번호 추출 (spdNo 또는 epdNo)
+        # proxy.register_product 가 spdNo를 최상위로 반환 (service.py가 result.get("spdNo")로 읽음)
         spd_no = result.get("spdNo", "") or result.get("epdNo", "")
-        if not spd_no:
-          # data 배열 안에 있을 수 있음
-          data_list = result.get("data", {})
-          if isinstance(data_list, dict):
-            data_list = data_list.get("data", [])
-          if isinstance(data_list, list) and data_list:
-            item0 = data_list[0] if isinstance(data_list[0], dict) else {}
-            spd_no = item0.get("spdNo", "") or item0.get("epdNo", "")
-        logger.info(f"[롯데ON] 등록 완료 — spdNo={spd_no!r}, 원본응답 키: {list(result.keys())}")
-        return {"success": True, "message": "롯데ON 등록 성공", "data": result, "product_no": spd_no}
+        logger.info(f"[롯데ON] 등록 완료 — spdNo={spd_no!r}")
+        return {"success": True, "message": "롯데ON 등록 성공", "data": result, "spdNo": spd_no}
     except Exception as e:
       action = "수정" if existing_no else "등록"
       logger.error(f"[롯데ON] {action} 실패: {e}")
