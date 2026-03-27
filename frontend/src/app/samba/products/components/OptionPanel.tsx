@@ -106,7 +106,7 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                 } else if (stock < 0 || stock >= 999) {
                   stockDisplay = (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      <input type="number" data-option-stock="" placeholder="직접입력" style={{ width: '70px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }} />
+                      <input type="number" data-option-stock="" placeholder="" style={{ width: '70px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }} />
                       <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>{stock >= 999 ? '충분' : '재고있음'}</span>
                     </span>
                   )
