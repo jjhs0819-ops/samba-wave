@@ -315,14 +315,18 @@ class LotteonPlugin(MarketPlugin):
         logger.warning(f"[롯데ON] 행사제외 설정 실패 (무시): {e}")
 
     # ── L.POINT 추가적립 ────────────────────────────────────────────
-    # lpointAccm > 0 일 때만 호출
-    lpoint_accm = int(extras.get("lpointAccm") or 0)
+    # UI 필드(purchasePointEnabled + purchasePointRate) 우선,
+    # lpointAccm 직접 설정값 폴백
+    purchase_enabled = extras.get("purchasePointEnabled") in (True, "true", "Y")
+    lpoint_from_ui = int(extras.get("purchasePointRate") or 0) if purchase_enabled else 0
+    lpoint_accm = int(extras.get("lpointAccm") or 0) or lpoint_from_ui
     if lpoint_accm > 0:
       try:
         accm_days = str(extras.get("lpointAccmDays") or "7")
-        lpoint_review = int(extras.get("lpointReview") or 0)
-        lpoint_photo = int(extras.get("lpointPhoto") or 0)
-        lpoint_video = int(extras.get("lpointVideo") or 0)
+        # 리뷰/사진 포인트: lpointReview/Photo 직접값 우선, UI 필드(reviewTextPoint/reviewPhotoPoint) 폴백
+        lpoint_review = int(extras.get("lpointReview") or extras.get("reviewTextPoint") or 0)
+        lpoint_photo = int(extras.get("lpointPhoto") or extras.get("reviewPhotoPoint") or 0)
+        lpoint_video = int(extras.get("lpointVideo") or extras.get("reviewVideoPoint") or 0)
         resp = await client.save_lpoint_accumulation(
           spd_no,
           accm_val1=lpoint_accm,
