@@ -1362,7 +1362,7 @@ export default function ProductsPage() {
                   accentColor: "#FF8C00", width: "14px", height: "14px", cursor: "pointer",
                 }}
               />
-              <div onClick={(e) => { e.stopPropagation(); setViewMode('card'); setExpandedIds(new Set([p.id])); }} style={{ cursor: 'pointer' }}>
+              <div onClick={(e) => { e.stopPropagation(); router.push(`/samba/products?search_type=id&search=${p.id}&highlight=${p.id}`); }} style={{ cursor: 'pointer' }}>
                 <ProductImage src={p.images?.[0]} name={p.name} size={140} />
               </div>
               {(p.free_shipping || p.same_day_delivery) && (
