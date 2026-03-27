@@ -1211,7 +1211,7 @@ export default function CollectorPage() {
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
                 {/* 8. 요청 */}
-                <div style={detColStyle}>
+                <div style={detColStyle(6)}>
                   {selectedFilter ? (
                     <input
                       key={selectedFilter.id + (selectedFilter.requested_count ?? 100)}
@@ -1232,7 +1232,7 @@ export default function CollectorPage() {
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
                 {/* 9. 생성일/최근수집 */}
-                <div style={{ ...detColStyle, borderRight: 'none' }}>
+                <div style={{ ...detColStyle(7), borderRight: 'none' }}>
                   {selectedFilter ? (
                     <div style={{ fontSize: '0.68rem', color: '#888' }}>
                       {fmtDate(selectedFilter.created_at)}<br />{fmtDate(selectedFilter.last_collected_at)}
