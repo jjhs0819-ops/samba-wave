@@ -25,49 +25,6 @@ class RateLimitError(Exception):
         super().__init__(f"HTTP {status} (retry_after={retry_after})")
 
 
-# 무신사 API 필드 매핑 — 구조 변경 시 여기만 수정
-MUSINSA_FIELDS = {
-    "normal_price": ["goodsPrice.normalPrice"],
-    "sale_price": ["goodsPrice.immediateDiscountedPrice", "goodsPrice.salePrice"],
-    "member_discount_rate": [
-        "goodsPrice.memberDiscountRate",
-        "goodsPrice.gradeDiscountRate",
-        "goodsPrice.memberGradeDiscountRate",
-        "goodsPrice.gradeRate",
-    ],
-    "coupon_price": ["goodsPrice.couponPrice"],
-    "max_benefit_price": [
-        "goodsPrice.maxBenefitPrice",
-        "goodsPrice.benefitSalePrice",
-        "goodsPrice.bestBenefitPrice",
-    ],
-    "is_sold_out": ["isSoldOut", "goodsPrice.isSoldOut", "isOutOfStock"],
-    "product_name": ["goodsNm"],
-    "product_name_en": ["goodsNmEng"],
-    "brand_name": ["brandInfo.brandName", "brand"],
-    "thumbnail": ["thumbnailImageUrl"],
-    "discount_rate": ["goodsPrice.discountRate"],
-    "is_sale": ["goodsPrice.isSale"],
-    "grade_discount_rate": ["goodsPrice.memberDiscountRate"],
-    "sale_reserve_ymdt": ["goodsPrice.saleReserveYmdt", "saleReserveYmdt"],
-}
-
-
-def _resolve_field(data: dict, paths: list[str], default=None):
-    """경로 목록에서 첫 번째 존재하는 값 반환 (fallback 체인)."""
-    for path in paths:
-        value = data
-        for key in path.split("."):
-            if not isinstance(value, dict):
-                value = None
-                break
-            value = value.get(key)
-            if value is None:
-                break
-        if value is not None:
-            return value
-    return default
-
 
 class MusinsaClient:
     """무신사 API 클라이언트 (상품 상세, 검색, 로그인 상태 확인)."""
@@ -114,39 +71,6 @@ class MusinsaClient:
             return f"https:{path}"
         return f"https://image.msscdn.net{path}"
 
-    # 무신사 회원 등급 → 할인율 매핑
-    GRADE_DISCOUNT_MAP: dict[str, float] = {
-        "일반": 1, "WELCOME": 1,
-        "브론즈": 2, "BRONZE": 2,
-        "실버": 3, "SILVER": 3,
-        "골드": 4, "GOLD": 4,
-        "플래티넘": 5, "PLATINUM": 5,
-        "다이아몬드": 5, "DIAMOND": 5,
-        "블랙다이아몬드": 4, "BLACK_DIAMOND": 4,
-        "러버": 5, "LOVER": 5,
-        "무신사": 5, "MUSINSA": 5,
-    }
-
-    async def _get_member_grade_rate(self) -> float:
-        """로그인된 회원의 등급 할인율을 조회."""
-        if not self.cookie:
-            return 0
-        try:
-            timeout = httpx.Timeout(settings.http_timeout_short, connect=5.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.get(
-                    self.BASE_MEMBER,
-                    headers={**self.HEADERS, "Cookie": self.cookie},
-                )
-                data = resp.json().get("data") or {}
-                grade_name = data.get("gradeName", "")
-                rate = self.GRADE_DISCOUNT_MAP.get(grade_name, 0)
-                logger.info(f"[무신사] 회원등급: {grade_name} → 할인율 {rate}%")
-                return rate
-        except Exception as exc:
-            logger.warning(f"[무신사] 회원등급 조회 실패: {exc}")
-            return 0
-
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -166,8 +90,6 @@ class MusinsaClient:
                 "무신사 수집은 로그인(쿠키)이 필요합니다. "
                 "확장앱에서 무신사 로그인 후 다시 시도하세요."
             )
-        # 등급할인율은 상품 API의 memberGrade.discountRate에서 직접 추출하므로
-        # _get_member_grade_rate() 별도 호출 불필요 (새 멤버십 시스템)
         timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             # 1) 상품 상세 API
@@ -269,28 +191,9 @@ class MusinsaClient:
                 if (raw_sale > 0 and (normal_p == 0 or raw_sale <= normal_p))
                 else (normal_p or raw_sale)
             )
-            member_rate = (
-                gp.get("memberDiscountRate")
-                or gp.get("gradeDiscountRate")
-                or gp.get("memberGradeDiscountRate")
-                or gp.get("gradeRate")
-                or 0
-            )
             # 최대혜택가 = 할인가 - 쿠폰 - 등급 - 적립금 - 선할인
             # 1단계: 쿠폰 할인
             coupon_price_raw = gp.get("couponPrice", 0) or 0
-            api_best_benefit = (
-                gp.get("maxBenefitPrice")
-                or gp.get("benefitSalePrice")
-                or gp.get("bestBenefitPrice")
-                or 0
-            )
-            # 등급할인 관련 필드 디버그 로그
-            _grade_keys = {k: gp.get(k) for k in ("memberDiscountRate", "partnerDiscountOn") if k in gp}
-            _mg = d.get("memberGrade") or {}
-            logger.info(f"[무신사 등급디버그] {goods_no}: gp등급={_grade_keys}, memberGrade={_mg}")
-            logger.info(f"[무신사 가격원본] {goods_no}: couponPrice={coupon_price_raw}, "
-                        f"api_best_benefit={api_best_benefit}, s_price={s_price}")
             # 쿠폰할인: goodsPrice.couponPrice 기본 + 쿠폰 API 보충 (수집/갱신 동일)
             benefit_coupon_discount = 0
             if 0 < coupon_price_raw < s_price:
@@ -299,7 +202,6 @@ class MusinsaClient:
             benefit_coupon_discount = await self._fetch_coupons(
                 client, goods_no, d, s_price, benefit_coupon_discount
             )
-            coupon_applied_price = s_price - benefit_coupon_discount if benefit_coupon_discount > 0 else s_price
             benefit_base = s_price - benefit_coupon_discount
 
             # ── 등급 할인 & 선할인 ──
@@ -406,9 +308,9 @@ class MusinsaClient:
                 "options": options,
                 "originalPrice": gp.get("normalPrice") or raw_sale or 0,
                 "salePrice": s_price,
-                "couponPrice": coupon_applied_price,
+                "couponPrice": benefit_base,
                 "bestBenefitPrice": best_benefit_price,
-                "memberDiscountRate": member_rate,
+                "memberDiscountRate": grade_discount_rate,
                 "isLoggedIn": bool(self.cookie),
                 "discountRate": gp.get("discountRate", 0),
                 "origin": essential.get("origin", ""),
