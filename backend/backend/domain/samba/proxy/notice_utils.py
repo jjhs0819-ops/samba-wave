@@ -314,38 +314,70 @@ def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str,
 
 # 롯데ON pdItmsCd 매핑
 _LOTTEON_NOTICE_CODE: dict[str, str] = {
-  "wear": "38",       # 의류
-  "shoes": "39",       # 신발
-  "bag": "40",         # 가방
-  "accessories": "41", # 패션잡화
-  "cosmetic": "42",    # 화장품
-  "food": "01",        # 식품
-  "electronics": "14", # 전자제품
-  "etc": "35",         # 기타
+  "wear": "01",        # [01]의류 — 롯데ON 어드민 확인
+  "shoes": "02",       # [02]구두/신발 — 롯데ON 어드민 확인
+  "bag": "03",         # [03]가방 — 롯데ON 어드민 확인
+  "accessories": "04", # [04]패션잡화 — 롯데ON 어드민 확인
+  "cosmetic": "35",    # 화장품 — TODO: 어드민 확인 필요
+  "food": "35",        # 식품 — TODO: 어드민 확인 필요
+  "electronics": "35", # 전자제품 — TODO: 어드민 확인 필요
+  "etc": "35",         # 기타 — TODO: 어드민 확인 필요
 }
 
 
-def build_lotteon_notice(product: dict[str, Any]) -> dict[str, Any]:
-  """상품 카테고리에 맞는 롯데ON 고시정보를 생성한다."""
+def build_lotteon_notice(product: dict[str, Any], **kwargs: str) -> dict[str, Any]:
+  """상품 카테고리에 맞는 롯데ON 고시정보를 생성한다.
+
+  pdItmsCd별 유효 pdArtlCd 코드 (롯데ON 어드민 확인):
+    01(의류): 0010소재 0020색상 0030치수 0040제조년월 0050세탁취급 0060제조국 0070제조자 0080품질보증 0090A/S
+    02(신발): 01과 동일 구조로 추정 — 어드민 재확인 필요
+    03/04:    01과 동일 구조로 추정 — 어드민 재확인 필요
+    35(기타): 0060 0070 0080 0090 사용
+  """
+  from datetime import datetime as _dt
+  import logging as _logging
+  _log = _logging.getLogger(__name__)
+
   group = detect_notice_group(product)
   code = _LOTTEON_NOTICE_CODE.get(group, "35")
+  _log.info(f"[롯데ON 고시정보] category1={product.get('category1')} group={group} pdItmsCd={code}")
 
-  name = product.get("name", "")
-  brand = product.get("brand", "")
-
+  fallback = "상세페이지 참조"
+  brand = product.get("brand", "") or ""
+  material = product.get("material", "") or fallback
+  color_text = kwargs.get("color_text") or product.get("color", "") or fallback
+  size_text = kwargs.get("size_text") or fallback
+  mfr = kwargs.get("mfr") or product.get("manufacturer", "") or brand or "제조자 정보 없음"
+  origin = product.get("origin", "") or fallback
+  quality = product.get("quality_guarantee", "") or "소비자 기본법에 따름"
   as_phone = product.get("_as_phone", "")
-  articles = [
-    {"pdArtlCd": "0160", "pdArtlCnts": name},
-    {"pdArtlCd": "0060", "pdArtlCnts": product.get("origin", "") or "상세페이지 참조"},
-    {"pdArtlCd": "0070", "pdArtlCnts": product.get("manufacturer", "") or brand or "제조자 정보 없음"},
-    {"pdArtlCd": "0080", "pdArtlCnts": "소비자 기본법에 따름"},
-    {"pdArtlCd": "0090", "pdArtlCnts": as_phone or brand or "판매자 문의"},
-  ]
+  as_contact = as_phone or (f"{brand} 고객센터" if brand else "판매자 문의")
+  care = product.get("care_instructions", "") or fallback
+  manufacture_ym = _dt.now().strftime("%Y%m")  # 제조년월 기본값
 
-  return {
-    "pdItmsCd": code,
-    "pdItmsArtlLst": articles,
-  }
+  if code in ("01", "02", "03", "04"):
+    # 의류/신발/가방/패션잡화 공통 구조
+    articles: list[dict[str, str]] = [
+      {"pdArtlCd": "0010", "pdArtlCnts": material},
+      {"pdArtlCd": "0020", "pdArtlCnts": color_text},
+      {"pdArtlCd": "0030", "pdArtlCnts": size_text},
+      {"pdArtlCd": "0040", "pdArtlCnts": manufacture_ym},
+      {"pdArtlCd": "0050", "pdArtlCnts": care},
+      {"pdArtlCd": "0060", "pdArtlCnts": origin},
+      {"pdArtlCd": "0070", "pdArtlCnts": mfr},
+      {"pdArtlCd": "0080", "pdArtlCnts": quality},
+      {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
+    ]
+  else:
+    # 기타 (35 등) — 공통 4개 항목
+    articles = [
+      {"pdArtlCd": "0060", "pdArtlCnts": origin},
+      {"pdArtlCd": "0070", "pdArtlCnts": mfr},
+      {"pdArtlCd": "0080", "pdArtlCnts": quality},
+      {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
+    ]
+
+  return {"pdItmsCd": code, "pdItmsArtlLst": articles}
 
 
 # ────────────────────────────────────────────

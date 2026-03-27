@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -19,6 +20,172 @@ import httpx
 
 from backend.core.config import settings
 from backend.utils.logger import logger
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 원산지 → 롯데ON ISO alpha-2 코드 매핑
+# ──────────────────────────────────────────────────────────────────────
+
+_LOTTEON_ORIGIN_CODE: dict[str, str] = {
+  # 국내
+  "한국": "KR", "대한민국": "KR", "국내": "KR", "국산": "KR", "korea": "KR",
+  # 아시아
+  "중국": "CN", "china": "CN",
+  "베트남": "VN", "vietnam": "VN",
+  "일본": "JP", "japan": "JP",
+  "인도": "IN", "india": "IN",
+  "인도네시아": "ID", "indonesia": "ID",
+  "태국": "TH", "thailand": "TH",
+  "캄보디아": "KH", "cambodia": "KH",
+  "방글라데시": "BD", "bangladesh": "BD",
+  "미얀마": "MM", "myanmar": "MM",
+  "필리핀": "PH", "philippines": "PH",
+  "홍콩": "HK", "hong kong": "HK",
+  "대만": "TW", "taiwan": "TW",
+  "말레이시아": "MY", "malaysia": "MY",
+  # 유럽
+  "이탈리아": "IT", "italy": "IT",
+  "프랑스": "FR", "france": "FR",
+  "독일": "DE", "germany": "DE",
+  "스페인": "ES", "spain": "ES",
+  "영국": "GB", "uk": "GB",
+  "포르투갈": "PT", "portugal": "PT",
+  # 북미
+  "미국": "US", "usa": "US", "us": "US",
+  "캐나다": "CA", "canada": "CA",
+}
+
+
+def _get_lotteon_origin_code(origin: str) -> str:
+  """원산지 텍스트 → 롯데ON ISO alpha-2 코드. 미매핑 시 KR 폴백."""
+  if not origin:
+    return "KR"
+  lower = origin.lower().strip()
+  if lower in _LOTTEON_ORIGIN_CODE:
+    return _LOTTEON_ORIGIN_CODE[lower]
+  for keyword, code in _LOTTEON_ORIGIN_CODE.items():
+    if keyword in lower or keyword in origin:
+      return code
+  return "KR"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# SEO 키워드 생성
+# ──────────────────────────────────────────────────────────────────────
+
+def _build_lotteon_keywords(product: dict[str, Any]) -> list[str]:
+  """SEO 검색 키워드 빌드 — 최대 20개, 각 30자 이내.
+
+  우선순위: seo_keywords → tags → 브랜드 → 카테고리 → 상품명 단어 분리
+  """
+  seen: set[str] = set()
+  keywords: list[str] = []
+
+  def _add(kw: str) -> None:
+    kw = kw.strip()[:30]
+    if kw and kw not in seen:
+      seen.add(kw)
+      keywords.append(kw)
+
+  for kw in (product.get("seo_keywords") or []):
+    _add(str(kw))
+  for tag in (product.get("tags") or []):
+    _add(str(tag))
+
+  brand = product.get("brand", "")
+  if brand:
+    _add(brand)
+
+  for cat_field in ("category1", "category2", "category3"):
+    cat = product.get(cat_field, "")
+    if cat:
+      _add(cat)
+
+  name = product.get("name", "")
+  for word in re.split(r"[\s\[\]()（）,./·|]+", name):
+    word = word.strip()
+    if len(word) >= 2:
+      _add(word)
+
+  return keywords[:20]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 상품 소개문 자동 생성
+# ──────────────────────────────────────────────────────────────────────
+
+def _build_lotteon_intro(product: dict[str, Any]) -> str:
+  """상품 소개문 자동 생성 — 최대 200자.
+
+  "[브랜드] 상품명 | 카테고리 | 소재: OOO, 색상: OOO, 원산지: OOO"
+  """
+  parts: list[str] = []
+  brand = product.get("brand", "")
+  name = product.get("name", "")
+  category = product.get("category2") or product.get("category1") or ""
+  material = product.get("material", "")
+  color = product.get("color", "")
+  origin = product.get("origin", "")
+
+  if brand:
+    parts.append(f"[{brand}]")
+  if name:
+    parts.append(name)
+  if category:
+    parts.append(f"| {category}")
+
+  details: list[str] = []
+  if material:
+    details.append(f"소재: {material}")
+  if color:
+    details.append(f"색상: {color}")
+  if origin:
+    details.append(f"원산지: {origin}")
+  if details:
+    parts.append("| " + ", ".join(details))
+
+  return " ".join(parts)[:200]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 배송/반품 안내 HTML (epnLst NOTI 항목)
+# ──────────────────────────────────────────────────────────────────────
+
+def _build_delivery_notice_html(return_fee: int = 0, exchange_fee: int = 0) -> str:
+  """배송·반품·교환 안내 HTML."""
+  ret_txt = f"{return_fee:,}원" if return_fee else "정책에 따름"
+  exc_txt = f"{exchange_fee:,}원" if exchange_fee else "정책에 따름"
+  return (
+    "<div style='font-family:sans-serif;font-size:14px;line-height:1.8;'>"
+    "<p><b>■ 배송 안내</b></p>"
+    "<p>· 주문일 기준 2~3 영업일 이내 발송 (주말·공휴일 제외)</p>"
+    "<p>· 배송사: CJ대한통운 (도서산간 지역은 추가 배송비 발생)</p>"
+    "<p><b>■ 반품·교환 안내</b></p>"
+    "<p>· 상품 수령 후 7일 이내 신청 가능</p>"
+    f"<p>· 단순 변심 반품 배송비: {ret_txt} / 교환 배송비: {exc_txt}</p>"
+    "<p>· 상품 불량·오배송은 판매자 부담으로 무료 반품</p>"
+    "<p>· 착용·세탁·훼손·태그 제거 후에는 반품·교환 불가</p>"
+    "</div>"
+  )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# SEO 이미지 파일명 생성
+# ──────────────────────────────────────────────────────────────────────
+
+def _make_lotteon_img_filename(brand: str, name: str, idx: int, url: str) -> str:
+  """브랜드·상품명 기반 SEO 파일명 생성. 확장자는 원본 URL에서 추출."""
+  # 확장자 추출
+  path = urlparse(url).path
+  ext = path.rsplit(".", 1)[-1].lower() if "." in path else "jpg"
+  if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
+    ext = "jpg"
+
+  # 슬러그 생성: 브랜드+상품명, 특수문자 → 하이픈
+  slug_base = f"{brand}-{name}" if brand else name
+  slug = re.sub(r"[^\w가-힣a-zA-Z0-9]", "-", slug_base)
+  slug = re.sub(r"-{2,}", "-", slug).strip("-")[:80]
+  return f"{slug}-{idx + 1:02d}.{ext}"
 
 
 class LotteonClient:
@@ -295,91 +462,115 @@ class LotteonClient:
       category_id: 표준카테고리번호 (BC...)
       disp_cat_id: 전시카테고리번호 (FC...) — 없으면 category_id 사용
     """
-    # 이미지 URL 정규화: //로 시작하면 https: 추가, http로 시작하지 않으면 제외
+    from backend.utils.logger import logger as _log
+
+    # ── 이미지 URL 정규화 ──────────────────────────────────────
     def _normalize_url(url: str) -> str:
       if url.startswith("//"):
         return "https:" + url
       return url
 
     raw_images = product.get("images") or []
-    images = [_normalize_url(u) for u in raw_images if u and (u.startswith("http") or u.startswith("//"))][:10]
-    from backend.utils.logger import logger as _log
+    images = [
+      _normalize_url(u) for u in raw_images
+      if u and (u.startswith("http") or u.startswith("//"))
+    ][:10]
     _log.info(f"[롯데ON] 이미지 원본: {raw_images[:3]}")
     _log.info(f"[롯데ON] 이미지 정규화: {images[:3]}")
+
+    # ── 기본 상품 정보 ──────────────────────────────────────────
     sale_price = int(product.get("sale_price", 0))
     name = (product.get("name", "") or "")[:150]
+    brand = product.get("brand", "") or ""
+    # 제조사: manufacturer → brand → "제조사 미확인" 순 폴백
+    manufacturer = (
+      product.get("manufacturer", "")
+      or brand
+      or "제조사 미확인"
+    )
+    style_code = product.get("style_code", "") or product.get("styleCode", "") or ""
+    origin = product.get("origin", "") or ""
 
-    # 할인율 적용 (계정 설정)
+    # ── 할인율 적용 ─────────────────────────────────────────────
     discount_rate = product.get("_discount_rate", 0)
     if discount_rate:
       sale_price = int(sale_price * (1 - discount_rate / 100))
 
-    # 재고 수량 오버라이드
+    # ── 재고 / 배송비 ───────────────────────────────────────────
     default_stock = product.get("_stock_quantity", 0) or 999
-
-    # 반품/교환 배송비
     return_fee = product.get("_return_fee", 0) or 0
     exchange_fee = product.get("_exchange_fee", 0) or 0
     jeju_fee = product.get("_jeju_fee", 0) or 0
 
-    # 판매 시작/종료 일시 (현재~1년 후)
+    # ── 판매 기간 ───────────────────────────────────────────────
     now = datetime.now()
     sl_strt = now.strftime("%Y%m%d%H%M%S")
     sl_end = (now + timedelta(days=365)).strftime("%Y%m%d%H%M%S")
 
-    # URL에서 파일명 추출 헬퍼
-    def _extract_filename(url: str) -> str:
-      """URL에서 파일명 추출. 없으면 image.jpg 반환."""
-      path = urlparse(url).path
-      fname = path.rsplit("/", 1)[-1] if "/" in path else ""
-      return fname if fname else "image.jpg"
+    # ── 옵션에서 사이즈/색상 추출 (고시정보용) ──────────────────
+    options = product.get("options") or []
+    sizes = [
+      o.get("size", "") or o.get("name", "")
+      for o in options
+      if o.get("size") or o.get("name")
+    ]
+    size_text = (
+      ", ".join(sorted(set(s for s in sizes if s)))[:200]
+      or "상세페이지 참조"
+    )
+    db_color = product.get("color", "")
+    color_part = ""
+    if " - " in (product.get("name") or ""):
+      color_part = product["name"].split(" - ", 1)[1].split("/")[0].strip()
+    color_text = db_color or (color_part[:200] if color_part else "상세페이지 참조")
 
-    # 상품 파일 목록 (origFileNm도 전체 URL로 설정)
+    # ── 이미지 파일 목록 (origFileNm, origImgFileNm 모두 URL 필수) ─
     pd_file_lst = [
       {
         "fileTypCd": "PD",
         "fileDvsCd": "WDTH",
-        "origImgFileNm": url,
         "origFileNm": url,
+        "origImgFileNm": url,
       }
-      for url in images
+      for idx, url in enumerate(images)
     ]
 
-    # 단품 이미지
+    # ── 단품 이미지 목록 ────────────────────────────────────────
     itm_img_lst = [
       {
         "epsrTypCd": "IMG",
         "epsrTypDtlCd": "IMG_SQRE",
+        "origFileNm": url,
         "origImgFileNm": url,
-        "origFileNm": _extract_filename(url),
         "rprtImgYn": "Y" if idx == 0 else "N",
       }
       for idx, url in enumerate(images)
     ]
 
-    # 단품(옵션) 목록
-    options = product.get("options") or []
-    itm_lst = []
-
-    def _detect_opt_nm(opt: dict[str, Any], all_opts: list) -> str:
+    # ── 옵션 타입 감지 ──────────────────────────────────────────
+    def _detect_opt_nm(opt: dict[str, Any]) -> str:
       """옵션 타입 자동 감지 (색상/사이즈/기타)."""
       keys = set(opt.keys())
       if "color" in keys or any("color" in str(k).lower() for k in keys):
         return "색상"
       if "size" in keys or any("size" in str(k).lower() for k in keys):
         return "사이즈"
-      # 옵션값이 숫자(사이즈)인지 색상명인지 추정
       val = opt.get("name", "") or opt.get("value", "") or ""
-      size_keywords = ["S", "M", "L", "XL", "XXL", "XS", "FREE", "프리", "스몰", "라지"]
-      if val.strip().upper() in size_keywords or (val.replace(".", "").isdigit()):
+      size_keywords = {"S", "M", "L", "XL", "XXL", "XS", "FREE", "프리", "스몰", "라지"}
+      if val.strip().upper() in size_keywords or val.replace(".", "").isdigit():
         return "사이즈"
       return "옵션"
 
+    # ── 단품(옵션) 목록 ─────────────────────────────────────────
+    itm_lst: list[dict[str, Any]] = []
     if options:
-      # 상품 전체 옵션에서 optNm을 한 번만 결정 (단품 간 optNm 불일치 시 9999 에러)
-      product_opt_nm = _detect_opt_nm(options[0], options)
+      # 상품 전체에서 optNm 한 번만 결정 (단품 간 불일치 시 9999 에러)
+      product_opt_nm = _detect_opt_nm(options[0])
       for idx, opt in enumerate(options):
-        opt_name = opt.get("name", "") or opt.get("size", "") or opt.get("value", "") or f"옵션{idx + 1}"
+        opt_name = (
+          opt.get("name", "") or opt.get("size", "") or opt.get("value", "")
+          or f"옵션{idx + 1}"
+        )
         opt_stock = opt.get("stock", default_stock) or default_stock
         itm_lst.append({
           "eitmNo": f"OPT{idx}",
@@ -401,71 +592,98 @@ class LotteonClient:
         "stkQty": default_stock,
       })
 
+    # ── 상세설명 ────────────────────────────────────────────────
     detail_html = product.get("detail_html", "") or f"<p>{name}</p>"
-    brand = product.get("brand", "")
 
-    return {
-      "spdLst": [{
-        "trGrpCd": tr_grp_cd,
-        "trNo": tr_no,
-        "scatNo": category_id,
-        # 전시카테고리(FC...)가 있으면 사용, 없으면 표준카테고리로 fallback (dcatLst는 필수)
-        "dcatLst": [{"mallCd": "LTON", "lfDcatNo": disp_cat_id or category_id}],
-        "slTypCd": "GNRL",
-        "pdTypCd": "GNRL_GNRL",
-        "spdNm": name,
-        # 브랜드번호 (brdNo) — 브랜드 API로 검색 후 번호 전달 필요
-        # 미지정 시 무브랜드로 등록
-        "brdNo": product.get("brand_no", ""),
-        "mfcrNm": brand or "제조사 미확인",
-        "oplcCd": "KR",
-        "tdfDvsCd": "01",
-        # 판매 기간 (필수)
-        "slStrtDttm": sl_strt,
-        "slEndDttm": sl_end,
-        # 출고지/배송비정책/회수지 번호 (거래처 사전 등록 필요)
-        "owhpNo": product.get("owhp_no", ""),
-        "dvCstPolNo": product.get("dv_cst_pol_no", ""),
-        "rtrpNo": product.get("rtrp_no", ""),
-        # 선물포장/메시지 여부
-        "prstPckPsbYn": "N",
-        "prstMsgPsbYn": "N",
-        "pdItmsInfo": _build_lot_notice(product),
-        "purPsbQtyInfo": {
-          "itmByMinPurYn": "N",
-          "itmByMaxPurPsbQtyYn": "N",
-          "maxPurLmtTypCd": "PERIOD",
-        },
-        "ageLmtCd": "0",
-        "prcCmprEpsrYn": "Y",
-        "pdStatCd": "NEW",
-        "dpYn": "Y",
-        "pdFileLst": pd_file_lst if pd_file_lst else None,
-        "epnLst": [{"pdEpnTypCd": "DSCRP", "cnts": detail_html}],
-        "cnclPsbYn": "Y",
-        "dmstOvsDvDvsCd": "DMST",
-        "dvProcTypCd": "LO_ENTP",
-        "dvPdTypCd": "GNRL",
-        "sndBgtNday": 2,
-        "dvMnsCd": "DPCL",
-        "cmbnDvPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
-        # 합반품여부는 합배송여부와 동일하게 설정 (롯데ON 규칙)
-        "cmbnRtngPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
-        "rtngPsbYn": "Y",
-        "xchgPsbYn": "Y",
-        # 반품/교환 배송비 (0이면 필드 생략 — 정책번호 기본값 사용)
-        **({"rtngFee": return_fee} if return_fee else {}),
-        **({"xchgFee": exchange_fee} if exchange_fee else {}),
-        # 도서산간 추가배송비
-        **({"islandAddDlvFee": jeju_fee} if jeju_fee else {}),
-        "stkMgtYn": "Y",
-        "sitmYn": "Y" if options else "N",
-        "itmLst": itm_lst,
-        "rtrvTypCd": "ENTP_RTRV",
-        # 배송권역 그룹코드 (GN000=전국, GN004=제주, GN006=도서산간 등)
-        "dvRgsprGrpCd": "GN000",
-      }]
+    # ── SEO: 검색 키워드 / 상품 소개문 ─────────────────────────
+    keywords = _build_lotteon_keywords(product)
+    intro = _build_lotteon_intro(product)
+
+    # ── 고시정보 (실제 수집 데이터 주입) ───────────────────────
+    notice = _build_lot_notice(
+      product,
+      size_text=size_text,
+      color_text=color_text,
+      mfr=manufacturer,
+    )
+
+    # ── 원산지 코드 동적 매핑 ───────────────────────────────────
+    origin_code = _get_lotteon_origin_code(origin)
+
+    spd: dict[str, Any] = {
+      "trGrpCd": tr_grp_cd,
+      "trNo": tr_no,
+      "scatNo": category_id,
+      # 전시카테고리(FC...) 있으면 사용, 없으면 표준카테고리 fallback
+      "dcatLst": [{"mallCd": "LTON", "lfDcatNo": disp_cat_id or category_id}],
+      "slTypCd": "GNRL",
+      "pdTypCd": "GNRL_GNRL",
+      "spdNm": name,
+      # 브랜드번호 — 브랜드 API 검색 후 주입 (없으면 무브랜드)
+      "brdNo": product.get("brand_no", ""),
+      # 제조사: manufacturer 우선, 없으면 brand
+      "mfcrNm": manufacturer,
+      # 원산지: 무신사 origin 필드 기반 ISO alpha-2 코드
+      "oplcCd": origin_code,
+      "tdfDvsCd": "01",
+      # 판매 기간
+      "slStrtDttm": sl_strt,
+      "slEndDttm": sl_end,
+      # 출고지/배송비정책/회수지
+      "owhpNo": product.get("owhp_no", ""),
+      "dvCstPolNo": product.get("dv_cst_pol_no", ""),
+      "rtrpNo": product.get("rtrp_no", ""),
+      # 선물포장/메시지
+      "prstPckPsbYn": "N",
+      "prstMsgPsbYn": "N",
+      "pdItmsInfo": notice,
+      "purPsbQtyInfo": {
+        "itmByMinPurYn": "N",
+        "itmByMaxPurPsbQtyYn": "N",
+        "maxPurLmtTypCd": "PERIOD",
+      },
+      "ageLmtCd": "0",
+      "prcCmprEpsrYn": "Y",
+      "pdStatCd": "NEW",
+      "dpYn": "Y",
+      "pdFileLst": pd_file_lst if pd_file_lst else None,
+      # 상세설명
+      "epnLst": [
+        {"pdEpnTypCd": "DSCRP", "cnts": detail_html},
+      ],
+      "cnclPsbYn": "Y",
+      "dmstOvsDvDvsCd": "DMST",
+      "dvProcTypCd": "LO_ENTP",
+      "dvPdTypCd": "GNRL",
+      "sndBgtNday": 2,
+      "dvMnsCd": "DPCL",
+      "cmbnDvPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
+      "cmbnRtngPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
+      "rtngPsbYn": "Y",
+      "xchgPsbYn": "Y",
+      **({"rtngFee": return_fee} if return_fee else {}),
+      **({"xchgFee": exchange_fee} if exchange_fee else {}),
+      **({"islandAddDlvFee": jeju_fee} if jeju_fee else {}),
+      "stkMgtYn": "Y",
+      "sitmYn": "Y" if options else "N",
+      "itmLst": itm_lst,
+      "rtrvTypCd": "ENTP_RTRV",
+      "dvRgsprGrpCd": "GN000",
     }
+
+    # ── SEO: 검색 키워드 (있을 때만) ────────────────────────────
+    if keywords:
+      spd["spdKeyword"] = keywords
+
+    # ── SEO: 상품 소개문 (있을 때만) ────────────────────────────
+    if intro:
+      spd["pdIntrdCnts"] = intro
+
+    # ── 판매자 상품코드 (품번 있을 때만) ────────────────────────
+    if style_code:
+      spd["selPrdNo"] = style_code[:50]
+
+    return {"spdLst": [spd]}
 
 
 class LotteonApiError(Exception):
