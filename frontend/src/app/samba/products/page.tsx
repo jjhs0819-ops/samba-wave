@@ -91,6 +91,8 @@ export default function ProductsPage() {
   }
   // AI 비용 추적
   const [lastAiUsage, setLastAiUsage] = useState<{ calls: number; tokens: number; cost: number; date: string } | null>(null);
+  // fal.ai 잔액 상태
+  const [falStatus, setFalStatus] = useState<{ status: string; message: string } | null>(null);
 
   // AI 이미지 변환
   const [aiImgMode, setAiImgMode] = useState('background')
@@ -115,6 +117,7 @@ export default function ProductsPage() {
     proxyApi.listPresets().then(res => {
       if (res.success) setAiPresetList(res.presets)
     }).catch(() => {})
+    proxyApi.falStatus().then(setFalStatus).catch(() => {})
   }, [])
 
 
@@ -239,9 +242,11 @@ export default function ProductsPage() {
 
   useEffect(() => { load() }, [load])
 
-  // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화 (디바운싱 300ms)
+  // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화 (디바운싱 300ms, 초기 로드 제외)
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const filterInitRef = useRef(true)
   useEffect(() => {
+    if (filterInitRef.current) { filterInitRef.current = false; return }
     setSelectAll(false)
     setSelectedIds(new Set())
     setCurrentPage(1)
@@ -263,8 +268,10 @@ export default function ProductsPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [totalPages, loadProducts])
 
-  // pageSize 변경 시 1페이지로 리셋
+  // pageSize 변경 시 1페이지로 리셋 (초기 로드 제외)
+  const pageSizeInitRef = useRef(true)
   useEffect(() => {
+    if (pageSizeInitRef.current) { pageSizeInitRef.current = false; return }
     loadProducts(1)
   }, [pageSize])
 
@@ -883,6 +890,13 @@ export default function ProductsPage() {
         ) : (
           <span style={{ fontSize: '0.78rem', color: '#555' }}>사용 내역 없음</span>
         )}
+        <span style={{ marginLeft: 'auto', fontSize: '0.72rem', padding: '2px 8px', borderRadius: '4px',
+          background: falStatus?.status === 'ok' ? 'rgba(81,207,102,0.15)' : falStatus?.status === 'no_balance' ? 'rgba(239,68,68,0.15)' : 'rgba(136,136,136,0.15)',
+          color: falStatus?.status === 'ok' ? '#51CF66' : falStatus?.status === 'no_balance' ? '#EF4444' : '#888',
+          border: `1px solid ${falStatus?.status === 'ok' ? 'rgba(81,207,102,0.3)' : falStatus?.status === 'no_balance' ? 'rgba(239,68,68,0.3)' : 'rgba(136,136,136,0.2)'}`,
+        }}>
+          FLUX {falStatus?.status === 'ok' ? '사용가능' : falStatus?.status === 'no_balance' ? '잔액부족' : falStatus?.status === 'no_key' ? '키 미등록' : falStatus?.message || '확인중...'}
+        </span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
@@ -941,8 +955,8 @@ export default function ProductsPage() {
               try {
                 const autoScope = { thumbnail: true, additional: true, detail: true }
                 const res = await proxyApi.transformImages([ids[i]], autoScope, aiImgMode, aiModelPreset)
-                if (res.success) { success++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 완료`) }
-                else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 실패: ${res.message}`) }
+                if (res.success && res.total_transformed > 0) { success++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 완료 (${res.total_transformed}장)`) }
+                else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`) }
               } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
             }
             const endTime = ts()
