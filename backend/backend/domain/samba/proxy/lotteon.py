@@ -736,8 +736,10 @@ class LotteonClient:
     if style_code:
       spd["selPrdNo"] = style_code[:50]
 
-    # ── 상품홍보문구 — OpenAPI가 pblcStncInfo를 지원하지 않음 (soapi 전용 필드)
-    # 홍보문구는 등록 후 어드민(soapi.lotteon.com)에서 수동 설정 필요
+    # ── 상품홍보문구 — 자동 설정 불가
+    # - OpenAPI 페이로드에 포함 시 무시됨 (200 OK 반환하지만 미반영)
+    # - soapi updateProduct → 403 (API key 권한 없음, 브라우저 세션 전용)
+    # 롯데ON 어드민에서 수동 설정 필요
     return {"spdLst": [spd]}
 
 

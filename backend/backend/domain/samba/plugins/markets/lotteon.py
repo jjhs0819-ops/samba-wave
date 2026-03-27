@@ -266,6 +266,7 @@ class LotteonPlugin(MarketPlugin):
         # proxy.register_product 가 spdNo를 최상위로 반환 (service.py가 result.get("spdNo")로 읽음)
         spd_no = result.get("spdNo", "") or result.get("epdNo", "")
         logger.info(f"[롯데ON] 등록 완료 — spdNo={spd_no!r}")
+
         return {"success": True, "message": "롯데ON 등록 성공", "data": result, "spdNo": spd_no}
     except Exception as e:
       action = "수정" if existing_no else "등록"
