@@ -299,8 +299,21 @@ export default function CollectorPage() {
 
   const handleDeleteSelectedGroups = async () => {
     if (selectedIds.size === 0) return;
-    if (!await showConfirm(`선택된 ${selectedIds.size}개 그룹을 삭제하시겠습니까?`)) return;
+    if (!await showConfirm(`선택된 ${selectedIds.size}개 그룹과 그룹 내 상품을 모두 삭제하시겠습니까?`)) return;
     for (const id of selectedIds) {
+      try {
+        const res = await collectorApi.scrollProducts({ skip: 0, limit: 10000, search_filter_id: id })
+        // 마켓 등록 상품 체크
+        const registered = res.items.filter(p => p.market_product_nos && Object.keys(p.market_product_nos).length > 0)
+        if (registered.length > 0) {
+          showAlert(`마켓등록 상품이 ${registered.length}건 있어서 삭제할 수 없습니다`, 'error')
+          continue
+        }
+        const productIds = res.items.map(p => p.id)
+        if (productIds.length > 0) {
+          await collectorApi.bulkDeleteProducts(productIds)
+        }
+      } catch { /* 상품 없으면 무시 */ }
       await collectorApi.deleteFilter(id).catch(() => {});
     }
     setSelectedIds(new Set());
@@ -1052,8 +1065,9 @@ export default function CollectorPage() {
           const selectedFilter = drillGroup ? filters.find(fl => fl.id === drillGroup) : null
           const selectedCount = selectedFilter ? ((selectedFilter as unknown as Record<string, number>).collected_count ?? 0) : 0
 
-          // 헤더·본문 너비 통일: 사이트/브랜드=7%, 카테고리=18%, 링크=18%, 정책=16%, 수집=6%, 요청=6%, 생성일=16%
-          const colW = ['7%', '7%', '18%', '18%', '16%', '6%', '6%', '16%']
+          // 헤더·본문 너비 통일 (합계 100%)
+          // 사이트8 브랜드8 카테고리12 링크36 정책10 수집8 요청8 생성일10
+          const colW = ['8%', '8%', '12%', '36%', '10%', '8%', '8%', '10%']
           const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const, textAlign: 'center' as const }
           const colStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0 })
           const detColStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0, padding: '0.5rem 0.5rem' })
@@ -1167,7 +1181,17 @@ export default function CollectorPage() {
                         ) : <span style={{ color: '#555', fontSize: '0.75rem', flex: 1 }}>-</span>}
                         <button
                           onClick={async () => {
-                            if (!await showConfirm(`"${selectedFilter.name}" 그룹을 삭제하시겠습니까?`)) return
+                            if (!await showConfirm(`"${selectedFilter.name}" 그룹과 그룹 내 상품을 모두 삭제하시겠습니까?`)) return
+                            try {
+                              const res = await collectorApi.scrollProducts({ skip: 0, limit: 10000, search_filter_id: selectedFilter.id })
+                              const registered = res.items.filter(p => p.market_product_nos && Object.keys(p.market_product_nos).length > 0)
+                              if (registered.length > 0) {
+                                showAlert(`마켓등록 상품이 ${registered.length}건 있어서 삭제할 수 없습니다`, 'error')
+                                return
+                              }
+                              const pIds = res.items.map(p => p.id)
+                              if (pIds.length > 0) await collectorApi.bulkDeleteProducts(pIds)
+                            } catch { /* 상품 없으면 무시 */ }
                             await collectorApi.deleteFilter(selectedFilter.id)
                             setDrillGroup(null)
                             load(); loadTree()
