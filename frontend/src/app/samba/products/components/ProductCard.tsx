@@ -1014,16 +1014,9 @@ const ProductCard = React.memo(function ProductCard({
           width: '130px', flexShrink: 0, display: 'flex', flexDirection: 'column',
           alignItems: 'center', gap: '8px', paddingRight: '14px', borderRight: '1px solid #222',
         }}>
-          <div onClick={() => openZoom(p.images?.[0] || '', p.images || [])} style={{ cursor: 'pointer' }}>
+          <div onClick={() => { setProductImages(p.images || []); setShowImageModal(true); }} style={{ cursor: 'pointer' }}>
             <ProductImage src={p.images?.[0]} name={p.name} size={110} />
           </div>
-          <button
-            onClick={() => { setProductImages(p.images || []); setShowImageModal(true); }}
-            style={{
-              fontSize: '0.68rem', color: '#666', background: 'transparent',
-              border: '1px solid #2D2D2D', borderRadius: '4px', padding: '3px 10px',
-              cursor: 'pointer', width: '100%',
-            }}>이미지 변경</button>
           {(p.tags || []).includes('__ai_image__') && (
             <span style={{
               fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', width: '100%', textAlign: 'center',
