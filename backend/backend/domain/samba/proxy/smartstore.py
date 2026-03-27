@@ -1258,8 +1258,16 @@ class SmartStoreClient:
           "attributeValueSeq": gender_values[target],
         })
 
-    # 사용계절 속성 — 기본값 전체(봄/여름/가을/겨울)
+    # 사용계절 속성 — 수집된 season 값 기반 매핑
     _SEASON_KEYWORDS = {"봄", "여름", "가을", "겨울"}
+    _SEASON_MAP: dict[str, list[str]] = {
+      "SS": ["봄", "여름"],
+      "ALL SS": ["봄", "여름"],
+      "FW": ["가을", "겨울"],
+      "ALL FW": ["가을", "겨울"],
+      "ALL": ["봄", "여름", "가을", "겨울"],
+    }
+    target_seasons = _SEASON_MAP.get(season.strip().upper(), ["봄", "여름", "가을", "겨울"])
     season_seq = None
     season_values: dict[str, int] = {}
     for a in cat_attrs:
@@ -1268,7 +1276,7 @@ class SmartStoreClient:
         season_seq = a["attributeSeq"]
         season_values[val] = a.get("attributeValueSeq", 0)
     if season_seq:
-      for s in ["봄", "여름", "가을", "겨울"]:
+      for s in target_seasons:
         if s in season_values:
           product_attributes.append({
             "attributeSeq": season_seq,
