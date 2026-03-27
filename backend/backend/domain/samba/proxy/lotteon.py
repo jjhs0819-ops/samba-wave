@@ -500,6 +500,61 @@ class LotteonClient:
       body=body,
     )
 
+  async def insert_quantity_discount(
+    self,
+    spd_no: str,
+    min_qty: int,
+    discount_rate: float,
+    eitm_nos: list[str] | None = None,
+  ) -> dict[str, Any]:
+    """살수록할인(수량 기준 정율 할인) 등록.
+
+    API 스펙:
+      prKndCd: PRD_MAM_BUY (살수록/배수할인)
+      fvrOffrValDvsDtlCd: QTY_DC (수량 기준 할인)
+      dcTypCd: FX=정율, FL=정액
+      dcQtyList[].minPurQty: 최소 구매수량
+      dcQtyList[].dcRt: 할인율 (정율일 때)
+      dcQtyList[].dcAmt: 할인액 (정액일 때, 정율이면 0)
+      spdList[].spdNo: 적용 상품번호
+    """
+    now = datetime.now()
+    spd_num = re.sub(r"[^0-9]", "", spd_no)[-12:]
+    ts_suffix = str(int(now.timestamp()))[-8:]
+    affil_pr_no = f"{spd_num}{ts_suffix}"  # 최대 20자
+    start_dt = now.strftime("%Y%m%d%H%M%S")
+    end_dt = (now.replace(year=now.year + 1)).strftime("%Y%m%d235959")
+    body = {
+      "saveDvsCd": "C",                         # 항상 신규 등록
+      "prKndCd": "PRD_MAM_BUY",                 # 살수록/배수할인
+      "prNo": "",                                # 신규 등록 시 빈값
+      "prNm": "삼바 살수록할인",
+      "afflPrNo": affil_pr_no,                   # 셀러 자체 프로모션번호(PK, 최대 20자)
+      "trNo": self.tr_no,
+      "aplyStrtDttm": start_dt,
+      "aplyEndDttm": end_dt,
+      "fvrOffrValDvsDtlCd": "QTY_DC",           # 수량 기준 할인
+      "dcTypCd": "FX",                           # 정율 할인
+      "dcQtyList": [
+        {
+          "minPurQty": int(min_qty),             # 최소 구매수량
+          "dcAmt": 0,                            # 정액할인액 (정율이므로 0)
+          "dcRt": float(discount_rate),          # 할인율 (%)
+        }
+      ],
+      "spdList": (
+        [{"spdNo": spd_no, "sitmNo": eitm_no} for eitm_no in eitm_nos]
+        if eitm_nos else
+        [{"spdNo": spd_no, "sitmNo": ""}]        # eitm_nos 없을 때 폴백
+      ),
+    }
+    logger.info(f"[롯데ON] 살수록할인 요청 body: {body}")
+    return await self._call_api(
+      "POST",
+      "/v1/openapi/promotion/v1/OpenApiService/insertQuantityDiscount",
+      body=body,
+    )
+
   async def update_stock(self, itm_stk_lst: list[dict[str, Any]]) -> dict[str, Any]:
     """단품 재고 변경."""
     return await self._call_api(

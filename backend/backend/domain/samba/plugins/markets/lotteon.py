@@ -235,6 +235,7 @@ class LotteonPlugin(MarketPlugin):
       if existing_no:
         # ── 기존 단품 eitmNo 조회 (수정 시 중복 방지) ───────────────
         existing_eitm_nos: list[str] = []
+        existing_sitm_nos: list[str] = []  # 통합EC판매자단품번호 — 살수록할인 API에서 사용
         try:
           prod_resp = await client.get_product(existing_no)
           inner = prod_resp.get("data", prod_resp)
@@ -247,7 +248,11 @@ class LotteonPlugin(MarketPlugin):
               existing_eitm_nos = [
                 str(itm.get("eitmNo")) for itm in itm_lst_raw if itm.get("eitmNo")
               ]
-          logger.info(f"[롯데ON] 기존 단품 eitmNo: {existing_eitm_nos}")
+              # sitmNo = 롯데ON 내부 단품번호 (예: LO2643843825_2643843826)
+              existing_sitm_nos = [
+                str(itm.get("sitmNo")) for itm in itm_lst_raw if itm.get("sitmNo")
+              ]
+          logger.info(f"[롯데ON] 기존 단품 eitmNo: {existing_eitm_nos}, sitmNo: {existing_sitm_nos}")
         except Exception as e:
           logger.warning(f"[롯데ON] 기존 단품 조회 실패 (무시): {e}")
 
@@ -261,7 +266,7 @@ class LotteonPlugin(MarketPlugin):
           data["spdLst"][0].pop("sitmYn", None)
         result = await client.update_product(data)
         # ── 수정 후 프로모션 재설정 ──────────────────────────────
-        await self._apply_promotions(client, existing_no, extras, is_update=True)
+        await self._apply_promotions(client, existing_no, extras, is_update=True, eitm_nos=existing_sitm_nos)
         return {"success": True, "message": "롯데ON 수정 성공", "data": result}
       else:
         result = await client.register_product(data)
@@ -269,9 +274,23 @@ class LotteonPlugin(MarketPlugin):
         spd_no = result.get("spdNo", "") or result.get("epdNo", "")
         logger.info(f"[롯데ON] 등록 완료 — spdNo={spd_no!r}")
 
-        # ── 등록 후 프로모션 설정 ─────────────────────────────────
+        # ── 등록 후 프로모션 설정: sitmNo 조회 후 전달 ────────────
         if spd_no:
-          await self._apply_promotions(client, spd_no, extras, is_update=False)
+          new_sitm_nos: list[str] = []
+          try:
+            prod_resp = await client.get_product(spd_no)
+            inner = prod_resp.get("data", prod_resp)
+            if isinstance(inner, dict):
+              spd_info = inner.get("spdLst") or inner.get("spdInfo") or inner
+              if isinstance(spd_info, list) and spd_info:
+                spd_info = spd_info[0]
+              if isinstance(spd_info, dict):
+                new_sitm_nos = [
+                  str(itm.get("sitmNo")) for itm in (spd_info.get("itmLst") or []) if itm.get("sitmNo")
+                ]
+          except Exception as e:
+            logger.warning(f"[롯데ON] 신규 단품 sitmNo 조회 실패 (무시): {e}")
+          await self._apply_promotions(client, spd_no, extras, is_update=False, eitm_nos=new_sitm_nos)
 
         return {"success": True, "message": "롯데ON 등록 성공", "data": result, "spdNo": spd_no}
     except Exception as e:
@@ -279,7 +298,7 @@ class LotteonPlugin(MarketPlugin):
       logger.error(f"[롯데ON] {action} 실패: {e}")
       return {"success": False, "message": f"롯데ON {action} 실패: {e}"}
 
-  async def _apply_promotions(self, client: Any, spd_no: str, extras: dict, is_update: bool = False) -> None:
+  async def _apply_promotions(self, client: Any, spd_no: str, extras: dict, is_update: bool = False, eitm_nos: list[str] | None = None) -> None:
     """등록/수정 후 프로모션 설정 — 실패해도 결과에 영향 없음."""
 
     # ── 즉시할인 ───────────────────────────────────────────────────
@@ -338,6 +357,19 @@ class LotteonPlugin(MarketPlugin):
         logger.info(f"[롯데ON] L.POINT 적립 설정 완료: {lpoint_accm}P (D+{accm_days}) → {resp}")
       except Exception as e:
         logger.warning(f"[롯데ON] L.POINT 적립 설정 실패 (무시): {e}")
+
+    # ── 살수록할인 ───────────────────────────────────────────────────
+    # UI 필드: multiPurchaseDiscount(설정안함/설정함) + multiPurchaseQty(수량) + multiPurchaseRate(할인율%)
+    logger.info(f"[롯데ON] 살수록할인 extras 확인: multiPurchaseDiscount={extras.get('multiPurchaseDiscount')!r}, qty={extras.get('multiPurchaseQty')!r}, rate={extras.get('multiPurchaseRate')!r}")
+    multi_enabled = extras.get("multiPurchaseDiscount") in ("설정함", "true", True, "Y")
+    multi_qty = int(extras.get("multiPurchaseQty") or 0)
+    multi_rate = float(extras.get("multiPurchaseRate") or 0)
+    if multi_enabled and multi_qty > 0 and multi_rate > 0:
+      try:
+        resp = await client.insert_quantity_discount(spd_no, min_qty=multi_qty, discount_rate=multi_rate, eitm_nos=eitm_nos or [])
+        logger.info(f"[롯데ON] 살수록할인 설정 완료: {multi_qty}개 이상 {multi_rate}% → {resp}")
+      except Exception as e:
+        logger.warning(f"[롯데ON] 살수록할인 설정 실패 (무시): {e}")
 
   async def delete(self, session, product_no: str, account) -> dict[str, Any]:
     """롯데ON 상품 판매중지 (SOUT 상태 변경)."""
