@@ -151,31 +151,46 @@ def _build_lotteon_intro(product: dict[str, Any]) -> str:
 # 상품홍보문구 자동 생성
 # ──────────────────────────────────────────────────────────────────────
 
+_PROMO_PHRASE: dict[str, str] = {
+  # 하의
+  "바지": "편한바지", "팬츠": "편한바지", "청바지": "편한청바지", "반바지": "편한반바지",
+  "레깅스": "슬림레깅스", "스커트": "예쁜스커트", "치마": "예쁜치마",
+  # 상의
+  "티셔츠": "편한티셔츠", "티": "편한티", "셔츠": "스타일리시셔츠",
+  "맨투맨": "편한맨투맨", "후드": "편한후드", "니트": "포근한니트", "스웨터": "포근한스웨터",
+  # 아우터
+  "자켓": "트렌디자켓", "재킷": "트렌디재킷", "코트": "세련된코트",
+  "패딩": "따뜻한패딩", "점퍼": "스타일점퍼", "집업": "편한집업",
+  # 신발
+  "스니커즈": "편한스니커즈", "운동화": "편한운동화", "신발": "편한신발",
+  "슬리퍼": "편한슬리퍼", "샌들": "시원한샌들", "구두": "세련된구두",
+  # 가방
+  "가방": "세련된가방", "백팩": "실용적백팩", "숄더백": "예쁜숄더백", "크로스백": "편한크로스백",
+  # 기타
+  "원피스": "우아한원피스", "수영복": "멋진수영복", "언더웨어": "편한언더웨어",
+}
+
+
 def _build_lotteon_promo(product: dict[str, Any]) -> str:
-  """상품홍보문구 자동 생성 — 75바이트 이내, 태그·괄호·쉼표 제거.
+  """상품홍보문구 자동 생성 — '{브랜드} {카테고리문구}' 형식, 75바이트 이내.
 
-  형식: "브랜드 카테고리 소재 색상"
+  예: '아디다스 편한바지', '나이키 편한스니커즈'
   """
-  parts: list[str] = []
   brand = product.get("brand", "") or ""
-  category = product.get("category2") or product.get("category1") or ""
-  material = product.get("material", "") or ""
-  color = product.get("color", "") or ""
+  # category2(소분류) 우선, 없으면 category1(대분류)
+  cat_raw = (product.get("category2") or product.get("category1") or "").strip()
 
-  if brand:
-    parts.append(brand)
-  if category:
-    parts.append(category)
-  if material:
-    parts.append(material)
-  if color:
-    parts.append(color)
+  # 카테고리 키워드로 문구 매핑 (부분 일치)
+  phrase = ""
+  for keyword, mapped in _PROMO_PHRASE.items():
+    if keyword in cat_raw:
+      phrase = mapped
+      break
+  if not phrase:
+    phrase = cat_raw  # 매핑 없으면 카테고리명 그대로
 
+  parts = [p for p in [brand, phrase] if p]
   text = " ".join(parts)
-  # 태그(#), 괄호(()/[]/{}/<>), 쉼표 제거
-  text = re.sub(r'[#()\[\]{}<>,]', '', text).strip()
-  # 연속 공백 정리
-  text = re.sub(r'\s+', ' ', text).strip()
 
   # 75바이트 이내로 자르기
   encoded = text.encode('utf-8')
@@ -721,12 +736,8 @@ class LotteonClient:
     if style_code:
       spd["selPrdNo"] = style_code[:50]
 
-    # ── 상품홍보문구 (기간 미설정) ───────────────────────────────
-    promo = _build_lotteon_promo(product)
-    if promo:
-      spd["pdPrmotnCnts"] = promo
-      # 기간 미설정 — 날짜 필드 생략 (롯데ON 어드민 "기간미설정" 체크와 동일)
-
+    # ── 상품홍보문구 — OpenAPI가 pblcStncInfo를 지원하지 않음 (soapi 전용 필드)
+    # 홍보문구는 등록 후 어드민(soapi.lotteon.com)에서 수동 설정 필요
     return {"spdLst": [spd]}
 
 
