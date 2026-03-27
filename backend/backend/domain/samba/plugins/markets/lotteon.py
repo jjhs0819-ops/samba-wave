@@ -30,6 +30,8 @@ _ATTR_COLOR_ID = "12438"        # 통합색상
 _ATTR_SIZE_BOTTOM_ID = "12442"  # 성인 하의 사이즈
 _ATTR_CLOTHES_TYPE_ID = "776739"  # 의류 종류
 _ATTR_ITEM_TYPE_ID = "779690"   # 품목
+_ATTR_BOTTOM_LENGTH_ID = "11780"  # 하의기장
+_ATTR_LOOK_STYLE_ID = "11809"     # 룩/스타일
 
 # 사용계절 매핑 (무신사 season → attr_val_id)
 _SEASON_MAP: dict[str, str] = {
@@ -148,6 +150,91 @@ _PANTS_FIT_MAP: dict[str, str] = {
   "핀턱": "773234579", "pintuck": "773234579",
 }
 
+# 하의기장 매핑 (상품명/카테고리 키워드 → attr_val_id, 기본: 긴바지)
+_BOTTOM_LENGTH_MAP: dict[str, str] = {
+  "반바지": "111194", "숏": "111194", "short": "111194",
+  "숏팬츠": "558495938", "3부": "558495938",
+  "7부": "111198",
+  "9부": "111200",
+}
+
+# 룩/스타일 매핑 (브랜드/상품명 키워드 → attr_val_id, 기본: 캐주얼)
+_LOOK_STYLE_MAP: dict[str, str] = {
+  # 스포츠/아웃도어 브랜드 → 아웃도어
+  "아디다스": "547698710", "나이키": "547698710", "퓨마": "547698710",
+  "리복": "547698710", "뉴발란스": "547698710", "언더아머": "547698710",
+  "컬럼비아": "547698710", "노스페이스": "547698710", "파타고니아": "547698710",
+  "살로몬": "547698710", "아식스": "547698710", "스포츠": "547698710",
+  "아웃도어": "547698710", "sport": "547698710", "outdoor": "547698710",
+  # 힙합/스트릿
+  "스트릿": "111345", "힙합": "111345", "street": "111345",
+  # 빈티지/히피
+  "빈티지": "111344", "vintage": "111344", "히피": "111344",
+  # 레트로
+  "레트로": "547919177", "retro": "547919177",
+  # 밀리터리
+  "밀리터리": "629485501", "military": "629485501",
+}
+
+# optValCd → 롯데ON 표시명 (scatAttrLst의 optVal 필드 — 필수, null 불가)
+_OPT_VAL_LABELS: dict[str, str] = {
+  # 사용계절
+  "102421": "사계절용", "102422": "봄/가을용", "102423": "여름용", "102424": "겨울용",
+  # 성별
+  "109487": "남성", "109488": "여성", "109489": "공용",
+  # 의류 주요소재
+  "112206": "면", "716573347": "폴리에스테르", "632861291": "기모",
+  "112203": "나일론", "112204": "리넨", "112205": "실크",
+  "718490456": "레이온", "876098952": "모달", "733156070": "아크릴",
+  "112190": "데님", "112196": "벨벳", "112208": "모",
+  "591014974": "캐시미어", "632861290": "코듀로이", "876098953": "플리스",
+  "547696592": "가죽", "788761126": "인조가죽", "752495629": "폴리우레탄",
+  "876098955": "새틴", "835835046": "트위드", "112207": "텐셀",
+  "547696582": "퍼(FUR)", "636940692": "앙고라",
+  # 통합색상
+  "114835": "블랙", "114794": "화이트", "114833": "네이비",
+  "114830": "그레이", "114772": "베이지", "114782": "브라운",
+  "114816": "카키", "114822": "레드", "114804": "블루",
+  "114811": "그린", "114796": "핑크", "114836": "옐로우",
+  "114818": "오렌지", "91478236": "퍼플", "114773": "아이보리",
+  "114831": "차콜", "114814": "올리브", "114823": "와인",
+  "114824": "버건디", "114839": "멀티", "114820": "코랄",
+  "114806": "스카이블루", "114802": "라벤더", "114812": "민트",
+  "114837": "머스타드", "114778": "골드", "114828": "실버",
+  "114813": "연두", "114810": "데님", "114807": "아쿠아",
+  # 의류 종류
+  "625980564": "바지/레깅스", "625980557": "자켓/코트",
+  "625980558": "점퍼/패딩", "625980559": "가디건",
+  "625980561": "니트/조끼", "625980562": "셔츠/블라우스",
+  "625980563": "티셔츠/맨투맨/후드", "625980566": "스커트",
+  "625980567": "원피스/점프수트", "628783835": "수영복/래시가드",
+  "628785579": "정장", "628785581": "트레이닝",
+  # 품목 (779690) — 카테고리별 단일값
+  "628662010": "의류",
+  # 하의기장
+  "111194": "반바지", "558495938": "숏팬츠/3부", "111198": "7부", "111200": "9부", "111202": "긴바지",
+  # 룩/스타일
+  "111334": "캐주얼", "111338": "오피스", "111340": "글램/섹시", "111342": "펑크",
+  "111344": "빈티지/히피", "111345": "힙합/스트릿", "111346": "페미닌",
+  "547698709": "마린", "547698710": "아웃도어", "547698711": "파티",
+  "547698712": "프레피", "547698713": "리조트", "547698714": "웨딩",
+  "547698715": "컨트리", "547919177": "레트로", "604509736": "로맨틱",
+  "604509737": "큐트", "629429090": "에스닉", "629485501": "밀리터리",
+  # 성인 하의 사이즈
+  "114968": "FREE", "114990": "XS", "114991": "S",
+  "114992": "M", "114993": "L", "114994": "XL",
+  "114995": "2XL", "114996": "3XL", "114997": "4XL", "114998": "5XL",
+  "803338603": "22", "114969": "23", "114970": "24", "114971": "25",
+  "114972": "26", "114973": "27", "114974": "28", "114975": "29",
+  "114976": "30", "114977": "31", "114978": "32", "114979": "33",
+  "114980": "34", "114981": "35", "114982": "36", "114984": "38",
+  "114986": "40", "91478294": "42", "91478295": "44",
+  # 팬츠 핏
+  "112026": "배기", "112027": "부츠컷", "112028": "와이드",
+  "112029": "스트레이트", "112030": "슬림", "547916208": "테이퍼드",
+  "610443195": "조거", "773234579": "핀턱",
+}
+
 
 def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[dict[str, str]]:
   """무신사 소싱 데이터 → 롯데ON scatAttrLst 변환.
@@ -163,8 +250,13 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
   attr_id_set = set(attr_ids)
 
   def _add(attr_id: str, val_id: str) -> None:
-    if attr_id in attr_id_set and val_id:
-      result.append({"optCd": attr_id, "optValCd": val_id})
+    if not (attr_id in attr_id_set and val_id):
+      return
+    opt_val = _OPT_VAL_LABELS.get(val_id, "")
+    if not opt_val:
+      logger.warning(f"[롯데ON] optVal 라벨 없음 — optCd={attr_id} optValCd={val_id} (속성 제외)")
+      return
+    result.append({"optCd": attr_id, "optValCd": val_id, "optVal": opt_val})
 
   def _keyword_match(text: str, mapping: dict[str, str]) -> str:
     """텍스트에서 첫 번째 매칭 키워드의 attr_val_id 반환."""
@@ -190,6 +282,9 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
       _add(_ATTR_SEASON_ID, "102422")  # 봄/가을용 (SS)
     elif re.search(r'\b(summer|여름)\b', combined):
       _add(_ATTR_SEASON_ID, "102423")  # 여름용
+  # 사용계절 매핑 없으면 사계절용 기본값
+  if _ATTR_SEASON_ID in attr_id_set and not any(r.get("optCd") == _ATTR_SEASON_ID for r in result):
+    _add(_ATTR_SEASON_ID, "102421")
 
   # ── 성별 ─────────────────────────────────────────────────────────
   sex = (product.get("sex") or "").lower()
@@ -231,8 +326,10 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
       size_nm = (opt.get("name") or opt.get("size") or "").strip()
       val = _SIZE_BOTTOM_MAP.get(size_nm, "")
       if val and val not in added_sizes:
-        result.append({"optCd": _ATTR_SIZE_BOTTOM_ID, "optValCd": val})
-        added_sizes.add(val)
+        opt_val_nm = _OPT_VAL_LABELS.get(val, "")
+        if opt_val_nm:
+          result.append({"optCd": _ATTR_SIZE_BOTTOM_ID, "optValCd": val, "optVal": opt_val_nm})
+          added_sizes.add(val)
 
   # ── 팬츠 핏 (상품명 + 태그에서 키워드 추출) ─────────────────────
   if _ATTR_PANTS_FIT_ID in attr_id_set:
@@ -240,6 +337,16 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
     val = _keyword_match(name_and_tags, _PANTS_FIT_MAP)
     if val:
       _add(_ATTR_PANTS_FIT_ID, val)
+
+  # ── 하의기장 (상품명/카테고리 키워드, 기본: 긴바지) ─────────────
+  if _ATTR_BOTTOM_LENGTH_ID in attr_id_set:
+    search_text = (product.get("name") or "") + " " + cat_text
+    val = _keyword_match(search_text, _BOTTOM_LENGTH_MAP)
+    _add(_ATTR_BOTTOM_LENGTH_ID, val or "111202")  # 키워드 없으면 긴바지
+
+  # ── 룩/스타일 (항상 캐주얼 고정) ───────────────────────────────
+  if _ATTR_LOOK_STYLE_ID in attr_id_set:
+    _add(_ATTR_LOOK_STYLE_ID, "111334")
 
   return result
 
@@ -468,7 +575,8 @@ class LotteonPlugin(MarketPlugin):
         f"season={product_copy.get('season')!r} "
         f"material={product_copy.get('material')!r} "
         f"color={product_copy.get('color')!r} "
-        f"category1={product_copy.get('category1')!r}"
+        f"category1={product_copy.get('category1')!r} "
+        f"name={product_copy.get('name', '')[:40]!r}"
       )
       scat_attr_lst = _build_scat_attr_lst(product_copy, category_attr_ids)
       product_copy["_scat_attr_lst"] = scat_attr_lst

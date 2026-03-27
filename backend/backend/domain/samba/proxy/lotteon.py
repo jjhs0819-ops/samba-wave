@@ -949,9 +949,11 @@ class LotteonClient:
 
     # ── 카테고리 속성정보 (scatAttrLst) ─────────────────────────
     # _scat_attr_lst: [{"optCd": attr_id, "optValCd": attr_val_id}, ...]
+    # scatAttrChgYn: 수정 API에서 속성정보 변경 여부 명시 플래그 (필요 시)
     scat_attr_lst = product.get("_scat_attr_lst") or []
     if scat_attr_lst:
       spd["scatAttrLst"] = scat_attr_lst
+      spd["scatAttrChgYn"] = "Y"
 
     # ── 상품홍보문구 — 자동 설정 불가
     # - OpenAPI 페이로드에 포함 시 무시됨 (200 OK 반환하지만 미반영)
