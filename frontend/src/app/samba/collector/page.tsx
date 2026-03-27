@@ -1052,9 +1052,9 @@ export default function CollectorPage() {
           const selectedFilter = drillGroup ? filters.find(fl => fl.id === drillGroup) : null
           const selectedCount = selectedFilter ? ((selectedFilter as unknown as Record<string, number>).collected_count ?? 0) : 0
 
-          // 헤더·본문 너비 통일: 사이트/브랜드/카테고리=15%, 나머지 5개=11%
-          const colW = ['15%', '15%', '15%', '11%', '11%', '11%', '11%', '11%']
-          const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const }
+          // 헤더·본문 너비 통일: 사이트/브랜드=7%, 카테고리=18%, 링크=18%, 정책=16%, 수집=6%, 요청=6%, 생성일=16%
+          const colW = ['7%', '7%', '18%', '18%', '16%', '6%', '6%', '16%']
+          const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const, textAlign: 'center' as const }
           const colStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0 })
           const detColStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0, padding: '0.5rem 0.5rem' })
           const itemSt = (sel: boolean) => ({
@@ -1075,7 +1075,7 @@ export default function CollectorPage() {
                 {['사이트', '브랜드', '카테고리', '링크', '정책', '수집', '요청', '생성일/최근수집'].map((h, i) => (
                   <div key={h} style={{
                     width: colW[i], flexShrink: 0, boxSizing: 'border-box' as const,
-                    padding: '0.5rem 0.5rem',
+                    padding: '0.5rem 0.5rem', textAlign: 'center' as const,
                     fontSize: '0.72rem', fontWeight: 600,
                     color: (i === 0 && (drillEntry === 'site' || drillSite)) || (i === 1 && (drillEntry === 'brand' || drillBrand)) || (i === 2 && drillGroup) ? '#FF8C00' : '#888',
                     borderRight: i < 7 ? '1px solid #2D2D2D' : 'none',
