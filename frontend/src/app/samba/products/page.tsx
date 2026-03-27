@@ -4,8 +4,14 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   collectorApi,
+  policyApi,
+  forbiddenApi,
+  accountApi,
   shipmentApi,
   proxyApi,
+  nameRuleApi,
+  categoryApi,
+  detailTemplateApi,
   type SambaCollectedProduct,
   type SambaPolicy,
   type SambaSearchFilter,
@@ -176,15 +182,21 @@ export default function ProductsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      // 메타데이터(1개 통합 API)와 상품(scroll)을 동시 호출
-      const skip = 0
+      // 메타데이터 8개 + 상품 scroll 동시 호출
       const statusParam = (statusFilter === 'has_orders' || statusFilter === 'free_ship' || statusFilter === 'same_day' || statusFilter === 'free_same')
         ? statusFilter : statusFilter || undefined
       const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
-      const [initData, productsRes] = await Promise.all([
-        collectorApi.initData().catch(() => null),
+      const [pol, filters, words, accs, orderPids, rules, mappings, tpls, productsRes] = await Promise.all([
+        policyApi.list().catch(() => []),
+        collectorApi.listFilters().catch(() => [] as SambaSearchFilter[]),
+        forbiddenApi.listWords('deletion').catch(() => []),
+        accountApi.listActive().catch(() => [] as SambaMarketAccount[]),
+        collectorApi.getProductIdsWithOrders().catch(() => [] as string[]),
+        nameRuleApi.list().catch(() => [] as SambaNameRule[]),
+        categoryApi.listMappings().catch(() => []) as Promise<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>,
+        detailTemplateApi.list().catch(() => [] as SambaDetailTemplate[]),
         collectorApi.scrollProducts({
-          skip,
+          skip: 0,
           limit: pageSize,
           search: searchQ.trim() || _idFilter || undefined,
           search_type: searchQ.trim() ? searchType : (_idFilter ? "id" : undefined),
@@ -195,28 +207,22 @@ export default function ProductsPage() {
           sort_by: sortBy,
         }).catch(() => null),
       ])
-
-      // 메타데이터 세팅
-      if (initData) {
-        setPolicies(initData.policies || [])
-        setAccounts(initData.accounts || [])
-        setDetailTemplates(initData.detail_templates || [])
-        setDeletionWords(initData.deletion_words || [])
-        setNameRules(initData.name_rules || [])
-        setOrderProductIds(new Set(initData.order_product_ids || []))
-        const nameMap: Record<string, string> = {}
-        ;(initData.filters || []).forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
-        setFilterNameMap(nameMap)
-        const mappings = initData.category_mappings || []
-        if (Array.isArray(mappings)) {
-          const map = new Map<string, Record<string, string>>()
-          mappings.forEach(m => {
-            map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {})
-          })
-          setCatMappingMap(map)
-        }
+      setPolicies(pol)
+      setAccounts(accs)
+      setDetailTemplates(tpls)
+      setDeletionWords(words.filter((w: { is_active?: boolean }) => w.is_active !== false).map((w: { word: string }) => w.word))
+      setNameRules(rules)
+      setOrderProductIds(new Set(orderPids))
+      const nameMap: Record<string, string> = {}
+      filters.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
+      setFilterNameMap(nameMap)
+      if (Array.isArray(mappings)) {
+        const map = new Map<string, Record<string, string>>()
+        mappings.forEach(m => {
+          map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {})
+        })
+        setCatMappingMap(map)
       }
-
       // 상품 데이터 세팅
       if (productsRes) {
         setAllProducts(productsRes.items)
