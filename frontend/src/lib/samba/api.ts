@@ -27,51 +27,6 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
 }
 
-// ── Products ──
-
-export interface SambaProduct {
-  id: string;
-  name: string;
-  name_en?: string;
-  name_ja?: string;
-  description?: string;
-  category?: string;
-  brand?: string;
-  source_url?: string;
-  source_site?: string;
-  site_product_id?: string;
-  source_price: number;
-  cost: number;
-  margin_rate: number;
-  sale_price?: number;
-  images?: string[];
-  options?: unknown[];
-  status: string;
-  applied_policy_id?: string;
-  market_prices?: Record<string, number>;
-  registered_accounts?: string[];
-  group_key?: string | null;
-  group_product_no?: number | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export const productApi = {
-  list: (skip = 0, limit = 50, status?: string) => {
-    const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
-    if (status) params.set("status", status);
-    return request<SambaProduct[]>(`${SAMBA_PREFIX}/products?${params}`);
-  },
-  get: (id: string) => request<SambaProduct>(`${SAMBA_PREFIX}/products/${id}`),
-  search: (q: string) => request<SambaProduct[]>(`${SAMBA_PREFIX}/products/search?q=${encodeURIComponent(q)}`),
-  create: (data: Partial<SambaProduct>) =>
-    request<SambaProduct>(`${SAMBA_PREFIX}/products`, { method: "POST", body: JSON.stringify(data) }),
-  update: (id: string, data: Partial<SambaProduct>) =>
-    request<SambaProduct>(`${SAMBA_PREFIX}/products/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-  delete: (id: string) =>
-    request<{ ok: boolean }>(`${SAMBA_PREFIX}/products/${id}`, { method: "DELETE" }),
-};
-
 // ── Orders ──
 
 export interface DashboardStats {
@@ -827,33 +782,6 @@ export const categoryApi = {
   syncAll: () =>
     request<{ ok: boolean; results: Record<string, unknown> }>(
       `${SAMBA_PREFIX}/categories/markets/sync-all`, { method: 'POST' }),
-};
-
-// ── Contacts ──
-
-export interface SambaContactLog {
-  id: string;
-  order_id?: string;
-  type: string;
-  recipient?: string;
-  message?: string;
-  status: string;
-  sent_at?: string;
-  created_at: string;
-}
-
-export const contactApi = {
-  list: (orderId?: string, status?: string) => {
-    const p = new URLSearchParams();
-    if (orderId) p.set("order_id", orderId);
-    if (status) p.set("status", status);
-    return request<SambaContactLog[]>(`${SAMBA_PREFIX}/contacts?${p}`);
-  },
-  create: (data: { order_id?: string; type: string; recipient?: string; message?: string }) =>
-    request<SambaContactLog>(`${SAMBA_PREFIX}/contacts`, { method: "POST", body: JSON.stringify(data) }),
-  delete: (id: string) => request<{ ok: boolean }>(`${SAMBA_PREFIX}/contacts/${id}`, { method: "DELETE" }),
-  getStats: () => request<Record<string, number>>(`${SAMBA_PREFIX}/contacts/stats`),
-  getTemplates: () => request<Record<string, unknown>>(`${SAMBA_PREFIX}/contacts/templates`),
 };
 
 // ── Returns ──

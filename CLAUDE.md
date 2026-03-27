@@ -66,12 +66,12 @@ pre-commit run --all-files       # Run all pre-commit hooks
 
 - Business logic organized in `backend/domain/{entity}/` directories
 - Each domain contains: `model.py` (SQLModel), `service.py` (business logic), `repository.py` (data access)
-- Domains: `user`, `auth`, `artist`, `artwork`, `admin`, `curai`, `exhibition`, `message`, `notification`, `subscription`, `shared`
+- Domains: `samba/collector`, `samba/policy`, `samba/shipment`, `samba/order`, `samba/account`, `samba/category`, `samba/image`, `samba/cs`, `samba/forbidden`, `user`, `shared`
 
 **API Structure:**
 
 - Versioned endpoints under `/api/v1/` prefix
-- Routers in `backend/api/v1/routers/`: `auth.py`, `artist.py`, `artwork.py`, `admin.py`, `curai.py`, `exhibition.py`, `message.py`, `notification.py`, `health.py`
+- Samba 라우터: `backend/api/v1/routers/samba/` (collector, policy, shipment, order, account 등)
 - DTOs in `backend/dtos/` for request/response validation
 - Main app creation in `backend/main.py` via `create_application()`
 
@@ -79,13 +79,14 @@ pre-commit run --all-files       # Run all pre-commit hooks
 
 - Settings in `backend/core/config.py` using Pydantic BaseSettings
 - Environment variables required: database credentials (read/write), JWT config
-- CORS configured for local development and production domains (qwarty.net)
+- CORS configured for local development and production domains
 
 **Deployment:**
 
-- Docker image: `206404754787.dkr.ecr.ap-northeast-2.amazonaws.com/qwarty-backend:latest`
-- Deployed to AWS ECS cluster `qwarty-backend-cluster`
-- Auto-deployment on push to `main` branch via GitHub Actions
+- Backend: Railway (Dockerfile 기반)
+- Frontend: Vercel
+- Database: Railway PostgreSQL
+- Image Storage: Cloudflare R2
 
 ## Frontend Development
 
@@ -119,15 +120,10 @@ pnpm lint         # Run ESLint
 
 - `src/app/` - Next.js App Router pages and API routes
   - Route groups: `/login`, `/sign-up`, `/artists`, `/artist`, `/account`, `/admin`, `/agent`, `/explore`, `/messages`, `/search`
-  - API routes: `/api/upload` (S3 file upload)
 - `src/components/` - Reusable React components organized by feature
 - `src/lib/` - Core utilities and configurations
   - `api.ts` - API client for backend communication
-  - `serverAuth.ts` - Server-side authentication utilities
-  - `s3Upload.ts` - AWS S3 upload utilities with compression
-  - `emailAuth.ts` - Email authentication utilities
-  - `firebase.ts` - Firebase configuration
-  - `theme.ts` - MUI theme configuration
+  - `samba/api.ts` - Samba 도메인 API 클라이언트
 - `src/hooks/` - Custom React hooks
 - `src/providers/` - React context providers
 - `src/utils/` - Utility functions
@@ -141,13 +137,13 @@ pnpm lint         # Run ESLint
 - **Styling:** Tailwind CSS 4, MUI Material (components), Emotion (CSS-in-JS)
 - **State Management:** React hooks and context providers
 - **Authentication:** JWT tokens with server-side validation
-- **File Upload:** AWS S3 with client-side compression
+- **File Upload:** Cloudflare R2
 - **Internationalization:** next-intl for i18n support
 - **UI Components:** MUI Material, Lucide React icons
 
 **Configuration:**
 
-- `next.config.ts` - Next.js config with remote image patterns (AWS S3), Turbopack enabled
+- `next.config.ts` - Next.js config with remote image patterns, Turbopack enabled
 - `tailwind.config.ts` - Tailwind CSS 4 configuration
 - `eslint.config.mjs` - ESLint configuration with TypeScript support
 - Environment variables required: API endpoint, Firebase config, AWS credentials, Kakao OAuth
@@ -159,7 +155,7 @@ pnpm lint         # Run ESLint
 Backend and frontend both require `.env` files:
 
 - `backend/.env` - Database credentials (read/write), JWT config
-- `frontend/.env` - API endpoint, Firebase, AWS S3, Kakao OAuth credentials
+- `frontend/.env` - API endpoint, Firebase, Kakao OAuth credentials
 
 ### Git Workflow
 
@@ -185,7 +181,7 @@ Backend and frontend both require `.env` files:
 - Server-side rendering (SSR) with App Router
 - Client/Server component separation
 - Server actions for API calls
-- Image optimization with S3 upload
+- Image optimization
 - Responsive design with Tailwind CSSs
 
 ### Important Notes
@@ -195,10 +191,7 @@ Backend and frontend both require `.env` files:
   - Use `get_write_session_dependency()` for FastAPI endpoints that modify data
   - Use `get_read_session_dependency()` for FastAPI endpoints that only read data
 - **Frontend API calls:** Centralized in `src/lib/api.ts`
-- **Image uploads:** S3 upload uses presigned POST URLs for direct client-side upload
-  - Flow: Client → Backend (`POST /api/v1/upload/presigned-url`) → Backend generates presigned POST → Client uploads directly to S3
-  - Backend: `backend/utils/s3.py` - `generate_presigned_post()` creates presigned POST with fields and conditions (max 50MB)
-  - Frontend: `src/lib/s3Upload.ts` - Handles compression (browser-image-compression), presigned URL request, and S3 upload
+- **Image uploads:** Cloudflare R2 (DB 설정 `cloudflare_r2` 키에 자격증명 저장)
   - Images are compressed client-side to WebP format before upload (optional, depending on function used)
   - Supports thumbnail generation: uploads both original and compressed thumbnail in parallel
 - **Authentication:** JWT-based, server-side validation in `src/lib/serverAuth.ts`

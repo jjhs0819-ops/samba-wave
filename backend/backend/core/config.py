@@ -67,12 +67,6 @@ class BackendSettings(BaseSettings):
     """Claude API 키 (카테고리 AI 매핑 등)."""
 
     # ===========================================
-    # Scheduler Configuration
-    # ===========================================
-    scheduler_secret: str = ""
-    """스케줄러 tick 엔드포인트 인증 키."""
-
-    # ===========================================
     # Redis 설정
     # ===========================================
     redis_url: str | None = None  # 환경변수: REDIS_URL
