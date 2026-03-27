@@ -984,7 +984,7 @@ const ProductCard = React.memo(function ProductCard({
         /* 간단보기: 원 상품명 + 등록 상품명 + 브랜드 + 원가 한 줄 */
         <div style={{ padding: '8px 14px', display: 'flex', gap: '10px', alignItems: 'center', fontSize: '0.78rem' }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
-            <div onClick={() => openZoom(p.images?.[0] || '', p.images || [])} style={{ cursor: 'pointer' }}>
+            <div onClick={() => { setProductImages(p.images || []); setShowImageModal(true); }} style={{ cursor: 'pointer' }}>
               <ProductImage src={p.images?.[0]} name={p.name} size={50} />
             </div>
             {(p.tags || []).includes('__ai_image__') && (

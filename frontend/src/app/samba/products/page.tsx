@@ -1362,7 +1362,9 @@ export default function ProductsPage() {
                   accentColor: "#FF8C00", width: "14px", height: "14px", cursor: "pointer",
                 }}
               />
-              <ProductImage src={p.images?.[0]} name={p.name} size={140} />
+              <div onClick={(e) => { e.stopPropagation(); setViewMode('card'); setExpandedIds(new Set([p.id])); }} style={{ cursor: 'pointer' }}>
+                <ProductImage src={p.images?.[0]} name={p.name} size={140} />
+              </div>
               {(p.free_shipping || p.same_day_delivery) && (
                 <div style={{ display: 'flex', gap: '3px', padding: '3px 8px 0' }}>
                   {p.free_shipping && <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', background: 'rgba(76,154,255,0.15)', color: '#4C9AFF', fontWeight: 600 }}>무배</span>}
