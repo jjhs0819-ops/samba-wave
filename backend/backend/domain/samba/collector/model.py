@@ -119,6 +119,8 @@ class SambaCollectedProduct(SQLModel, table=True):
     site_product_id: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True, index=True)
     )
+    # 원문링크 (소싱처 상품 페이지 URL)
+    source_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 기본 정보
     name: str = Field(sa_column=Column(Text, nullable=False))
@@ -162,6 +164,10 @@ class SambaCollectedProduct(SQLModel, table=True):
     )
     # 마켓별 등록된 상품번호: { "account_id": "product_no", ... }
     market_product_nos: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    # 마켓별 등록 상품명: { "스마트스토어": "상품명", "쿠팡": "상품명", ... }
+    market_names: Optional[Any] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
 
@@ -237,6 +243,9 @@ class SambaCollectedProduct(SQLModel, table=True):
     # 마켓별 마지막 전송 스냅샷 (스킵 판단용)
     # { "계정ID": { "sale_price": 24469, "cost": 20000, "options": [...], "sent_at": "..." } }
     last_sent_data: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+
+    # 소싱처별 추가 데이터 (매핑 안 된 필드 자동 저장)
+    extra_data: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # 그룹상품 관련
     group_key: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True, index=True))

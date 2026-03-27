@@ -4,14 +4,8 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   collectorApi,
-  policyApi,
-  forbiddenApi,
-  accountApi,
   shipmentApi,
   proxyApi,
-  nameRuleApi,
-  categoryApi,
-  detailTemplateApi,
   type SambaCollectedProduct,
   type SambaPolicy,
   type SambaSearchFilter,
@@ -140,7 +134,7 @@ export default function ProductsPage() {
   // 상품명 규칙 목록 (상품명 조합 적용용)
   const [nameRules, setNameRules] = useState<SambaNameRule[]>([]);
 
-  // 서버사이드 페이지네이션 상품 로드
+  // 서버사이드 페이지네이션 상품 로드 (counts도 함께 수신)
   const loadProducts = useCallback(async (page?: number) => {
     const targetPage = page ?? currentPage
     setLoading(true)
@@ -164,6 +158,8 @@ export default function ProductsPage() {
       setAllProducts(res.items)
       setServerTotal(res.total)
       setServerSites(res.sites)
+      // scroll 응답에 counts 포함 — 별도 API 불필요
+      if (res.counts) setKpiCounts(res.counts)
     } catch (e) {
       console.error("loadProducts error:", e)
     } finally {
@@ -176,51 +172,78 @@ export default function ProductsPage() {
     await loadProducts(currentPage)
   }, [loadProducts, currentPage])
 
-  // 메타데이터 로드 (초기 1회)
+  // 메타데이터 + 상품 병렬 로드 (초기 1회)
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [pol, filters, words, accs, orderPids, rules, mappings, tpls] = await Promise.all([
-        policyApi.list().catch(() => []),
-        collectorApi.listFilters().catch(() => [] as SambaSearchFilter[]),
-        forbiddenApi.listWords('deletion').catch(() => []),
-        accountApi.listActive().catch(() => [] as SambaMarketAccount[]),
-        collectorApi.getProductIdsWithOrders().catch(() => [] as string[]),
-        nameRuleApi.list().catch(() => [] as SambaNameRule[]),
-        categoryApi.listMappings().catch(() => []) as Promise<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>,
-        detailTemplateApi.list().catch(() => [] as SambaDetailTemplate[]),
+      // 메타데이터(1개 통합 API)와 상품(scroll)을 동시 호출
+      const skip = 0
+      const statusParam = (statusFilter === 'has_orders' || statusFilter === 'free_ship' || statusFilter === 'same_day' || statusFilter === 'free_same')
+        ? statusFilter : statusFilter || undefined
+      const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
+      const [initData, productsRes] = await Promise.all([
+        collectorApi.initData().catch(() => null),
+        collectorApi.scrollProducts({
+          skip,
+          limit: pageSize,
+          search: searchQ.trim() || _idFilter || undefined,
+          search_type: searchQ.trim() ? searchType : (_idFilter ? "id" : undefined),
+          source_site: siteFilter || undefined,
+          status: statusParam,
+          ai_filter: aiParam,
+          search_filter_id: filterByGroupId || undefined,
+          sort_by: sortBy,
+        }).catch(() => null),
       ])
-      setPolicies(pol)
-      setAccounts(accs)
-      setDetailTemplates(tpls)
-      setDeletionWords(words.filter(w => w.is_active).map(w => w.word))
-      setNameRules(rules)
-      setOrderProductIds(new Set(orderPids))
-      const nameMap: Record<string, string> = {}
-      filters.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
-      setFilterNameMap(nameMap)
-      if (Array.isArray(mappings)) {
-        const map = new Map<string, Record<string, string>>()
-        mappings.forEach(m => {
-          map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {})
-        })
-        setCatMappingMap(map)
+
+      // 메타데이터 세팅
+      if (initData) {
+        setPolicies(initData.policies || [])
+        setAccounts(initData.accounts || [])
+        setDetailTemplates(initData.detail_templates || [])
+        setDeletionWords(initData.deletion_words || [])
+        setNameRules(initData.name_rules || [])
+        setOrderProductIds(new Set(initData.order_product_ids || []))
+        const nameMap: Record<string, string> = {}
+        ;(initData.filters || []).forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
+        setFilterNameMap(nameMap)
+        const mappings = initData.category_mappings || []
+        if (Array.isArray(mappings)) {
+          const map = new Map<string, Record<string, string>>()
+          mappings.forEach(m => {
+            map.set(`${m.source_site}::${m.source_category}`, m.target_mappings || {})
+          })
+          setCatMappingMap(map)
+        }
+      }
+
+      // 상품 데이터 세팅
+      if (productsRes) {
+        setAllProducts(productsRes.items)
+        setServerTotal(productsRes.total)
+        setServerSites(productsRes.sites)
+        if (productsRes.counts) setKpiCounts(productsRes.counts)
       }
     } catch (e) {
       console.error("load error:", e)
+    } finally {
+      setLoading(false)
     }
-    // 상품은 별도 로드
-    await loadProducts(1)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화
+  // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화 (디바운싱 300ms)
+  const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     setSelectAll(false)
     setSelectedIds(new Set())
     setCurrentPage(1)
-    loadProducts(1)
+    if (filterTimerRef.current) clearTimeout(filterTimerRef.current)
+    filterTimerRef.current = setTimeout(() => {
+      loadProducts(1)
+    }, 300)
+    return () => { if (filterTimerRef.current) clearTimeout(filterTimerRef.current) }
   }, [searchQ, searchType, siteFilter, statusFilter, aiFilter, sortBy, filterByGroupId])
 
   // 페이지 변경 시 서버에서 해당 페이지 로드
@@ -244,11 +267,8 @@ export default function ProductsPage() {
     ? allProducts.filter(p => p.id === highlightProductId)
     : allProducts
 
-  // KPI 카드용 — counts API 사용 (필터 변경 시만 재호출)
+  // KPI 카드용 — scroll 응답에 counts 포함, 별도 API 호출 불필요
   const [kpiCounts, setKpiCounts] = useState({ total: 0, registered: 0, policy_applied: 0, sold_out: 0 })
-  useEffect(() => {
-    collectorApi.productCounts().then(setKpiCounts).catch(() => {})
-  }, [siteFilter, statusFilter, aiFilter, searchQ])
   const registeredCount = kpiCounts.registered
 
   const totalCount = serverTotal;

@@ -46,6 +46,15 @@ export const MARKETS = [
   { id: 'amazon', name: '아마존', url: 'https://sellercentral.amazon.com', searchUrl: 'https://www.amazon.com/s?k=' },
 ]
 
+// 마켓별 상품명 글자수 제한
+const MARKET_NAME_LIMITS: Record<string, number> = {
+  '스마트스토어': 50,
+  '쿠팡': 100,
+  '11번가': 100,
+  '지마켓': 100,
+  '옥션': 100,
+}
+
 // 숫자 포맷 유틸
 function fmt(n: number): string {
   return n.toLocaleString()
@@ -104,12 +113,15 @@ export function calcPrice(
   return { price, marginAmt, usedMin, feeAmt, calcStr: `₩${fmt(price)} = ${parts.join(' + ')}` }
 }
 
-function getSourceUrl(sourceSite: string, siteProductId: string | undefined, videoUrl?: string | null): string {
-  if (!siteProductId) return ''
-  const site = (sourceSite || '').toUpperCase()
-  if (site === 'MUSINSA') return `https://www.musinsa.com/products/${siteProductId}`
-  if (site === 'KREAM') return `https://kream.co.kr/products/${siteProductId}`
-  if (site === 'NIKE') return videoUrl || `https://www.nike.com/kr/w?q=${siteProductId}`
+function getSourceUrl(p: { source_url?: string; source_site: string; site_product_id?: string; video_url?: string | null }): string {
+  // DB에 저장된 source_url 우선 사용
+  if (p.source_url) return p.source_url
+  // fallback: 기존 데이터용 (source_url이 아직 없는 경우)
+  if (!p.site_product_id) return ''
+  const site = (p.source_site || '').toUpperCase()
+  if (site === 'MUSINSA') return `https://www.musinsa.com/products/${p.site_product_id}`
+  if (site === 'KREAM') return `https://kream.co.kr/products/${p.site_product_id}`
+  if (site === 'NIKE') return p.video_url || `https://www.nike.com/kr/w?q=${p.site_product_id}`
   return ''
 }
 
@@ -984,7 +996,7 @@ const ProductCard = React.memo(function ProductCard({
               <span style={{ color: '#FFFFFF', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{p.name}</span>
               <button onClick={(e) => { e.stopPropagation(); openPriceHistory() }}
                 style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>이력</button>
-              <button onClick={(e) => { e.stopPropagation(); const url = getSourceUrl(p.source_site, p.site_product_id, p.video_url); if (url) window.open(url, '_blank') }}
+              <button onClick={(e) => { e.stopPropagation(); const url = getSourceUrl(p); if (url) window.open(url, '_blank') }}
                 style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>원문</button>
               <button onClick={(e) => { e.stopPropagation(); onEnrich(p.id) }}
                 style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>업데이트</button>
@@ -1035,7 +1047,7 @@ const ProductCard = React.memo(function ProductCard({
               }}>가격변경이력</button>
             <button
               onClick={() => {
-                const url = getSourceUrl(p.source_site, p.site_product_id, p.video_url)
+                const url = getSourceUrl(p)
                 if (url) window.open(url, '_blank')
               }}
               style={{
@@ -1199,7 +1211,14 @@ const ProductCard = React.memo(function ProductCard({
                 </td>
               </tr>
               {/* Market price — 마켓별 또는 공통 */}
-              {marketPriceList.length > 0 ? marketPriceList.map((m) => (
+              {marketPriceList.length > 0 ? marketPriceList.map((m) => {
+                const marketNames = (p.market_names || {}) as Record<string, string>
+                const nameLimit = MARKET_NAME_LIMITS[m.marketName] || 100
+                const composedName = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))
+                const currentMarketName = marketNames[m.marketName] || ''
+                const displayName = currentMarketName || composedName
+                const isOverLimit = displayName.length > nameLimit
+                return (
                 <tr key={m.marketName} style={{ borderBottom: '1px solid #1E1E1E' }}>
                   <td style={tdLabel}>{m.marketName}</td>
                   <td style={tdVal}>
@@ -1218,10 +1237,44 @@ const ProductCard = React.memo(function ProductCard({
                         })()}
                       </div>
                       <span style={{ fontSize: '0.72rem', color: '#666' }}>{m.calcStr}</span>
+                      {/* 마켓별 등록 상품명 */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
+                        <input
+                          type="text"
+                          defaultValue={currentMarketName}
+                          placeholder={composedName.slice(0, nameLimit)}
+                          style={{
+                            width: '100%', padding: '2px 6px', fontSize: '0.72rem',
+                            background: '#1A1A1A', border: `1px solid ${isOverLimit ? '#FF6B6B' : '#2D2D2D'}`,
+                            color: isOverLimit ? '#FF6B6B' : '#C5C5C5', borderRadius: '3px', outline: 'none',
+                          }}
+                          onBlur={(e) => {
+                            const val = e.target.value.trim()
+                            if (val === currentMarketName) return
+                            const updated = { ...marketNames, [m.marketName]: val || undefined }
+                            // 빈 값이면 키 제거
+                            if (!val) delete updated[m.marketName]
+                            const clean = Object.fromEntries(Object.entries(updated).filter(([, v]) => v))
+                            collectorApi.updateProduct(p.id, { market_names: Object.keys(clean).length > 0 ? clean : undefined } as Partial<SambaCollectedProduct>).then(() => {
+                              onProductUpdate(p.id, { market_names: Object.keys(clean).length > 0 ? clean : undefined } as Partial<SambaCollectedProduct>)
+                              e.target.style.borderColor = '#51CF66'
+                              setTimeout(() => { e.target.style.borderColor = '#2D2D2D' }, 1500)
+                            }).catch(() => {
+                              e.target.style.borderColor = '#FF6B6B'
+                              setTimeout(() => { e.target.style.borderColor = '#2D2D2D' }, 1500)
+                            })
+                          }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                        />
+                        <span style={{ fontSize: '0.65rem', color: isOverLimit ? '#FF6B6B' : '#555', whiteSpace: 'nowrap' }}>
+                          {displayName.length}/{nameLimit}
+                        </span>
+                      </div>
                     </div>
                   </td>
                 </tr>
-              )) : (
+                )
+              }) : (
                 <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
                   <td style={tdLabel}>마켓가격</td>
                   <td style={tdVal}>

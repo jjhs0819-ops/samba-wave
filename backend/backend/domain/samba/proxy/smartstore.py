@@ -1137,6 +1137,15 @@ class SmartStoreClient:
     category_id: str = "",
   ) -> dict[str, Any]:
     """SambaCollectedProduct → 스마트스토어 상품 등록 데이터 변환."""
+    # 스마트스토어 상품명: market_names 우선, 없으면 name에서 50자 슬라이스
+    market_names = product.get("market_names") or {}
+    ss_name = market_names.get("스마트스토어", "")
+    if ss_name:
+      product_name = ss_name[:50]
+    else:
+      raw_name = product.get("name", "")
+      product_name = raw_name[:50]
+
     images_raw = product.get("images") or []
 
     representative = {"url": images_raw[0]} if images_raw else {}
@@ -1303,10 +1312,10 @@ class SmartStoreClient:
         "statusType": "SALE",
         "saleType": "NEW",
         "leafCategoryId": category_id or "50000803",
-        "name": product.get("name", ""),
+        "name": product_name,
         # 품번 → sellerCodeInfo.sellerManagementCode
         **({"sellerCodeInfo": {"sellerManagementCode": style_code}} if style_code else {}),
-        "detailContent": product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>",
+        "detailContent": product.get("detail_html", "") or f"<p>{product_name}</p>",
         "images": {
           "representativeImage": representative,
           "optionalImages": optional,
@@ -1352,7 +1361,7 @@ class SmartStoreClient:
         },
       },
       "smartstoreChannelProduct": {
-        "channelProductName": product.get("name", ""),
+        "channelProductName": product_name,
         "storeKeepExclusiveProduct": False,
         "naverShoppingRegistration": product.get("_naver_shopping", True),
         "channelProductDisplayStatusType": "ON",
@@ -1587,9 +1596,15 @@ class SmartStoreClient:
     first = products[0]
     brand = first.get("brand", "")
 
-    # 그룹 상품명: 모델명 (색상 제거)
-    name = first.get("name", "")
-    group_name = name.split(" - ", 1)[0].strip() if " - " in name else name
+    # 그룹 상품명: market_names 우선, 없으면 모델명(색상 제거) → 50자 슬라이스
+    first_market_names = first.get("market_names") or {}
+    ss_group_name = first_market_names.get("스마트스토어", "")
+    if ss_group_name:
+      group_name = ss_group_name[:50]
+    else:
+      name = first.get("name", "")
+      group_name = name.split(" - ", 1)[0].strip() if " - " in name else name
+      group_name = group_name[:50]
 
     # A/S 정보
     as_phone = account_settings.get("asPhone", "") or "상세페이지 참조"

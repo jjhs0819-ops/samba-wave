@@ -289,6 +289,7 @@ export interface SambaCollectedProduct {
   market_enabled?: Record<string, boolean>;
   registered_accounts?: string[];
   market_product_nos?: Record<string, string>;
+  market_names?: Record<string, string>;
   is_sold_out: boolean;
   sale_status?: string;
   kream_data?: Record<string, unknown>;
@@ -318,6 +319,8 @@ export interface SambaCollectedProduct {
   group_key?: string | null;
   group_product_no?: number | null;
   video_url?: string;
+  source_url?: string;
+  extra_data?: Record<string, unknown>;
   seo_keywords?: string[];
   free_shipping?: boolean;
   same_day_delivery?: boolean;
@@ -386,10 +389,27 @@ export const collectorApi = {
     if (params.ai_filter) p.set('ai_filter', params.ai_filter)
     if (params.search_filter_id) p.set('search_filter_id', params.search_filter_id)
     if (params.sort_by) p.set('sort_by', params.sort_by)
-    return request<{ items: SambaCollectedProduct[]; total: number; sites: string[] }>(
+    return request<{
+      items: SambaCollectedProduct[];
+      total: number;
+      sites: string[];
+      counts: { total: number; registered: number; policy_applied: number; sold_out: number };
+    }>(
       `${SAMBA_PREFIX}/collector/products/scroll?${p}`
     )
   },
+  // 초기 메타데이터 통합 API (8개 API → 1개)
+  initData: () =>
+    request<{
+      policies: SambaPolicy[];
+      filters: SambaSearchFilter[];
+      deletion_words: string[];
+      accounts: SambaMarketAccount[];
+      order_product_ids: string[];
+      name_rules: SambaNameRule[];
+      category_mappings: { source_site: string; source_category: string; target_mappings: Record<string, string> }[];
+      detail_templates: SambaDetailTemplate[];
+    }>(`${SAMBA_PREFIX}/collector/products/init-data`),
   getProductIdsWithOrders: () =>
     request<string[]>(`${SAMBA_PREFIX}/collector/products/with-orders`),
   productCounts: () =>

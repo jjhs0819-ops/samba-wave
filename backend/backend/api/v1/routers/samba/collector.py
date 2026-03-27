@@ -487,22 +487,47 @@ async def scroll_products(
         order_pids = select(SambaOrder.product_id).where(SambaOrder.product_id.isnot(None)).distinct()
         conditions.append(_CP.id.in_(order_pids))
 
-    # 카운트 쿼리 (가볍게)
+    # 목록에 필요한 경량 컬럼만 선택 (JSON 필드 최소화)
+    _LIST_FIELDS = {
+        "id", "source_site", "search_filter_id", "site_product_id",
+        "name", "name_en", "brand", "original_price", "sale_price", "cost",
+        "images", "options", "category", "status",
+        "applied_policy_id", "market_prices", "market_enabled",
+        "registered_accounts", "market_product_nos", "market_names",
+        "is_sold_out", "sale_status", "tags", "seo_keywords",
+        "lock_delete", "lock_stock", "free_shipping", "same_day_delivery",
+        "group_key", "group_product_no", "video_url",
+        "created_at", "updated_at",
+    }
+    list_cols = [c for c in mapper.columns if c.key in _LIST_FIELDS]
+
+    # COUNT + 데이터 + 소싱처 + KPI 병렬 실행
     count_stmt = select(func.count()).select_from(_CP)
     for c in conditions:
         count_stmt = count_stmt.where(c)
-    total = (await session.execute(count_stmt)).scalar() or 0
 
-    # 소싱처 목록 (전체 — 필터 무관, 캐시 TTL 5분)
+    # 소싱처 목록 (캐시 TTL 5분)
     sites = await cache.get("products:sites")
+    sites_task = None
     if not sites:
         sites_stmt = select(_CP.source_site).distinct().where(_CP.source_site.isnot(None))
-        sites_result = await session.execute(sites_stmt)
-        sites = sorted([r[0] for r in sites_result.all() if r[0]])
-        await cache.set("products:sites", sites, ttl=300)
+        sites_task = session.execute(sites_stmt)
+
+    # KPI 카운트 (캐시 TTL 30초)
+    counts = await cache.get("products:counts")
+    counts_task = None
+    if not counts:
+        from sqlalchemy import case, literal
+        counts_stmt = select(
+            func.count().label("total"),
+            func.count(case((_CP.registered_accounts != None, literal(1)))).label("registered"),
+            func.count(case((_CP.applied_policy_id != None, literal(1)))).label("policy_applied"),
+            func.count(case((_CP.is_sold_out == True, literal(1)))).label("sold_out"),
+        ).select_from(_CP)
+        counts_task = session.execute(counts_stmt)
 
     # 데이터 쿼리
-    data_stmt = select(*light_cols)
+    data_stmt = select(*list_cols)
     for c in conditions:
         data_stmt = data_stmt.where(c)
 
@@ -517,13 +542,112 @@ async def scroll_products(
         data_stmt = data_stmt.order_by(_CP.created_at.desc())
 
     data_stmt = data_stmt.offset(skip).limit(limit)
-    result = await session.execute(data_stmt)
-    rows = result.mappings().all()
+
+    # 병렬 실행
+    count_result, data_result = await asyncio.gather(
+        session.execute(count_stmt),
+        session.execute(data_stmt),
+    )
+    total = count_result.scalar() or 0
+    rows = data_result.mappings().all()
+
+    # 사이트/카운트 결과 수집
+    if sites_task:
+        sites_result = await sites_task
+        sites = sorted([r[0] for r in sites_result.all() if r[0]])
+        await cache.set("products:sites", sites, ttl=300)
+    if counts_task:
+        counts_row = (await counts_task).one()
+        counts = {
+            "total": counts_row.total,
+            "registered": counts_row.registered,
+            "policy_applied": counts_row.policy_applied,
+            "sold_out": counts_row.sold_out,
+        }
+        await cache.set("products:counts", counts, ttl=30)
 
     return {
         "items": [dict(r) for r in rows],
         "total": total,
         "sites": sites,
+        "counts": counts or {"total": 0, "registered": 0, "policy_applied": 0, "sold_out": 0},
+    }
+
+
+@router.get("/products/init-data")
+async def products_init_data(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """상품관리 페이지 초기 데이터 통합 API — 8개 API를 1개로 병합.
+
+    Returns: { policies, filters, deletion_words, accounts, order_product_ids,
+               name_rules, category_mappings, detail_templates }
+    """
+    from backend.domain.samba.policy.model import SambaPolicy
+    from backend.domain.samba.collector.model import SambaSearchFilter as _SF
+    from backend.domain.samba.forbidden.model import SambaForbiddenWord, SambaSettings
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.order.model import SambaOrder
+    from backend.domain.samba.category.model import SambaCategoryMapping
+    from sqlalchemy import func
+
+    # 모든 쿼리 병렬 실행
+    pol_task = session.execute(select(SambaPolicy).limit(50))
+    filter_task = session.execute(select(_SF).where(_SF.is_folder == False).limit(10000))
+    words_task = session.execute(
+        select(SambaForbiddenWord).where(
+            SambaForbiddenWord.type == "deletion",
+            SambaForbiddenWord.is_active == True,
+        )
+    )
+    accs_task = session.execute(
+        select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)
+    )
+    order_pids_task = session.execute(
+        select(SambaOrder.product_id).where(SambaOrder.product_id.isnot(None)).distinct()
+    )
+    mappings_task = session.execute(select(SambaCategoryMapping))
+
+    pol_r, filter_r, words_r, accs_r, order_r, map_r = await asyncio.gather(
+        pol_task, filter_task, words_task, accs_task, order_pids_task, mappings_task,
+    )
+
+    # name_rules + detail_templates (policy 도메인에 정의됨)
+    from backend.domain.samba.policy.model import SambaNameRule, SambaDetailTemplate
+    rules_r, tpl_r = await asyncio.gather(
+        session.execute(select(SambaNameRule)),
+        session.execute(select(SambaDetailTemplate)),
+    )
+
+    policies = [dict(r._mapping) if hasattr(r, '_mapping') else r for r in pol_r.scalars().all()]
+    filters = [dict(r._mapping) if hasattr(r, '_mapping') else r for r in filter_r.scalars().all()]
+    words = [r.word for r in words_r.scalars().all()]
+    accounts = [dict(r._mapping) if hasattr(r, '_mapping') else r for r in accs_r.scalars().all()]
+    order_pids = [r[0] for r in order_r.all()]
+    mappings = [dict(r._mapping) if hasattr(r, '_mapping') else r for r in map_r.scalars().all()]
+    rules = [dict(r._mapping) if hasattr(r, '_mapping') else r for r in rules_r.scalars().all()]
+    templates = [dict(r._mapping) if hasattr(r, '_mapping') else r for r in tpl_r.scalars().all()]
+
+    # SQLModel 인스턴스를 dict로 변환
+    def to_dict(obj):
+        if isinstance(obj, dict):
+            return obj
+        if hasattr(obj, 'model_dump'):
+            return obj.model_dump()
+        if hasattr(obj, '__dict__'):
+            d = {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
+            return d
+        return obj
+
+    return {
+        "policies": [to_dict(p) for p in policies],
+        "filters": [to_dict(f) for f in filters],
+        "deletion_words": words,
+        "accounts": [to_dict(a) for a in accounts],
+        "order_product_ids": order_pids,
+        "name_rules": [to_dict(r) for r in rules],
+        "category_mappings": [to_dict(m) for m in mappings],
+        "detail_templates": [to_dict(t) for t in templates],
     }
 
 
@@ -702,7 +826,7 @@ async def lookup_by_market_product_no(
     """마켓 상품번호로 수집상품 조회 (원문링크/이미지 등 반환)."""
     from sqlalchemy import text as sa_text
     sql = sa_text(
-        "SELECT id, source_site, site_product_id, name, images "
+        "SELECT id, source_site, site_product_id, name, images, source_url "
         "FROM samba_collected_product "
         "WHERE market_product_nos::text LIKE :pattern "
         "LIMIT 1"
@@ -711,17 +835,7 @@ async def lookup_by_market_product_no(
     row = result.fetchone()
     if not row:
         return {"found": False}
-    pid, source_site, site_product_id, name, images = row
-    sourcing_urls = {
-        "MUSINSA": f"https://www.musinsa.com/app/goods/{site_product_id}",
-        "KREAM": f"https://kream.co.kr/products/{site_product_id}",
-        "LOTTEON": f"https://www.lotteon.com/product/{site_product_id}",
-        "SSG": f"https://www.ssg.com/item/itemView.ssg?itemId={site_product_id}",
-        "ABCmart": f"https://abcmart.a-rt.com/product/{site_product_id}",
-        "FashionPlus": f"https://www.fashionplus.co.kr/goods/{site_product_id}",
-        "Nike": f"https://www.nike.com/kr/t/{site_product_id}",
-        "Adidas": f"https://www.adidas.co.kr/{site_product_id}",
-    }
+    pid, source_site, site_product_id, name, images, source_url = row
     thumb = images[0] if images and isinstance(images, list) and images else ""
     return {
         "found": True,
@@ -729,7 +843,7 @@ async def lookup_by_market_product_no(
         "source_site": source_site,
         "site_product_id": site_product_id,
         "name": name,
-        "original_link": sourcing_urls.get(source_site, ""),
+        "original_link": source_url or "",
         "product_image": thumb,
     }
 
