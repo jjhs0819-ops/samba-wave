@@ -1026,18 +1026,25 @@ async def collect_by_filter(
     filter_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """검색그룹 기반 재수집 — SSE 스트리밍으로 개별 상품 로그 전송."""
-    import json as _json
-    from fastapi.responses import StreamingResponse
-    from backend.domain.samba.proxy.musinsa import MusinsaClient
-    from backend.domain.samba.proxy.kream import KreamClient
-    from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
-    from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
+    """검색그룹 기반 수집 — Job 큐에 등록하여 백그라운드 실행."""
+    from backend.domain.samba.job.repository import SambaJobRepository
+    from backend.domain.samba.job.service import SambaJobService
 
     svc = _get_services(session)
     search_filter = await svc.filter_repo.get_async(filter_id)
     if not search_filter:
         raise HTTPException(404, "필터를 찾을 수 없습니다")
+
+    job_svc = SambaJobService(SambaJobRepository(session))
+    job = await job_svc.create_job({
+        "job_type": "collect",
+        "payload": {
+            "filter_id": filter_id,
+            "source_site": search_filter.source_site,
+        },
+    })
+    await session.commit()
+    return {"job_id": job.id, "status": job.status, "filter_id": filter_id}
 
     site = search_filter.source_site
     keyword_or_url = search_filter.keyword or search_filter.name

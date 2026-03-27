@@ -323,79 +323,77 @@ export default function CollectorPage() {
 
   const handleCollectGroups = async () => {
     if (selectedIds.size === 0) {
-      addLog("수집할 그룹을 선택하세요.");
-      return;
+      addLog("수집할 그룹을 선택하세요.")
+      return
     }
-    const abort = new AbortController();
-    collectAbortRef.current = abort;
-    setCollecting(true);
-    addLog(`${selectedIds.size}개 그룹 상품수집 시작...`);
+    const abort = new AbortController()
+    collectAbortRef.current = abort
+    setCollecting(true)
+    addLog(`${selectedIds.size}개 그룹 상품수집 시작...`)
+
     for (const id of selectedIds) {
-      if (abort.signal.aborted) break;
-      const f = filters.find((x) => x.id === id);
-      if (!f) continue;
-      addLog(`[${f.name}] 수집 요청 중...`);
+      if (abort.signal.aborted) break
+      const f = filters.find((x) => x.id === id)
+      if (!f) continue
+      addLog(`[${f.name}] 수집 요청 중...`)
+
       try {
+        // Job 생성
         const res = await fetch(
           `${API_BASE}/api/v1/samba/collector/collect-filter/${id}`,
-          { method: "POST", signal: abort.signal }
-        );
-
+          { method: 'POST' }
+        )
         if (!res.ok) {
-          const errData = await res.json().catch(() => null);
-          addLog(`[${f.name}] 수집 실패: ${errData?.detail || `HTTP ${res.status}`}`);
-          continue;
+          const errData = await res.json().catch(() => null)
+          addLog(`[${f.name}] 수집 실패: ${errData?.detail || `HTTP ${res.status}`}`)
+          continue
         }
+        const { job_id } = await res.json() as { job_id: string }
+        addLog(`[${f.name}] 수집 작업 시작`)
 
-        // SSE 스트리밍 수신
-        const reader = res.body?.getReader();
-        if (!reader) {
-          addLog(`[${f.name}] 스트리밍 응답 없음`);
-          continue;
-        }
+        // 폴링으로 진행률 추적
+        let lastCurrent = 0
+        while (!abort.signal.aborted) {
+          await new Promise(r => setTimeout(r, 3000))
+          if (abort.signal.aborted) break
 
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let finalData: Record<string, unknown> | null = null;
+          try {
+            const jobRes = await fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+            if (!jobRes.ok) break
+            const job = await jobRes.json() as {
+              status: string; current: number; total: number
+              progress: number; result?: { saved?: number; skipped?: number; policy?: string; message?: string }
+              error?: string
+            }
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+            if (job.current > lastCurrent) {
+              addLog(`[${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`)
+              lastCurrent = job.current
+              load()
+            }
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            const match = line.match(/^data:\s*(.+)$/m);
-            if (!match) continue;
-            try {
-              const evt = JSON.parse(match[1]);
-              if (evt.event === 'log' || evt.event === 'product') {
-                addLog(`[${f.name}] ${evt.message}`);
-              } else if (evt.event === 'done') {
-                finalData = evt;
-              }
-            } catch { /* JSON 파싱 실패 무시 */ }
+            if (job.status === 'completed') {
+              const saved = job.result?.saved ?? 0
+              const policy = job.result?.policy || ''
+              addLog(`[${f.name}] 수집 완료: ${saved}건 저장${policy ? ` | ${policy}` : ''}`)
+              break
+            }
+            if (job.status === 'failed') {
+              addLog(`[${f.name}] 수집 실패: ${job.error || '알 수 없는 오류'}`)
+              break
+            }
+          } catch {
+            // 네트워크 오류 시 재시도
           }
         }
-
-        if (finalData) {
-          const saved = finalData.saved || 0
-          addLog(`[${f.name}] 수집 완료: ${saved}건 저장`);
-        }
       } catch (e) {
-        if ((e as Error).name === 'AbortError') {
-          addLog('수집이 중단되었습니다.');
-          break;
-        }
-        addLog(`[${f.name}] 수집 오류: ${(e as Error).message}`);
+        addLog(`[${f.name}] 수집 오류: ${(e as Error).message}`)
       }
     }
-    setCollecting(false);
-    collectAbortRef.current = null;
-    load(); loadTree();
-  };
+    setCollecting(false)
+    collectAbortRef.current = null
+    load(); loadTree()
+  }
 
   const handleStopCollect = () => {
     collectAbortRef.current?.abort();
