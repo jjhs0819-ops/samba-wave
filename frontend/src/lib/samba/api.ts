@@ -4,13 +4,14 @@
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL ||
   (process.env.NODE_ENV === 'production'
-    ? 'https://samba-wave-production-b105.up.railway.app'
+    ? 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
     : 'http://localhost:28080')
 
 const SAMBA_PREFIX = `${API_BASE}/api/v1/samba`;
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
+    cache: 'no-store',
     headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
   });
@@ -639,12 +640,12 @@ export const proxyApi = {
   claudeTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/claude/test`, { method: 'POST' }),
-  geminiTest: () =>
-    request<{ success: boolean; message: string }>(
-      `${SAMBA_PREFIX}/proxy/gemini/test`, { method: 'POST' }),
   r2Test: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/r2/test`, { method: 'POST' }),
+  falStatus: () =>
+    request<{ status: string; message: string }>(
+      `${SAMBA_PREFIX}/proxy/fal/status`),
   listPresets: () =>
     request<{ success: boolean; presets: { key: string; label: string; desc: string; image: string | null }[] }>(
       `${SAMBA_PREFIX}/proxy/preset-images/list`),

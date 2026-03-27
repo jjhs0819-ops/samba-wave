@@ -886,10 +886,14 @@ export default function SettingsPage() {
   const [claudeStatus, setClaudeStatus] = useState('')
   const [aiFeatures, setAiFeatures] = useState<Record<string, boolean>>({ productName: true })
 
-  // Gemini AI 설정
+  // Gemini AI 설정 (모델컷 생성 전용)
   const [geminiApiKey, setGeminiApiKey] = useState('')
-  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash-image')
+  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash-preview-05-20')
   const [geminiStatus, setGeminiStatus] = useState('')
+
+  // FLUX (fal.ai) 이미지 생성 설정
+  const [falApiKey, setFalApiKey] = useState('')
+  const [falStatus, setFalStatus] = useState('')
 
   // 모델 프리셋
   const [presets, setPresets] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
@@ -1103,8 +1107,13 @@ export default function SettingsPage() {
       const gm = await forbiddenApi.getSetting('gemini').catch(() => null) as Record<string, unknown> | null
       if (gm) {
         setGeminiApiKey(String(gm.apiKey || ''))
-        setGeminiModel(String(gm.model || 'gemini-2.5-flash-image'))
+        setGeminiModel(String(gm.model || 'gemini-2.5-flash-preview-05-20'))
         if (gm.apiKey) setGeminiStatus('저장됨')
+      }
+      const fal = await forbiddenApi.getSetting('fal_ai').catch(() => null) as Record<string, unknown> | null
+      if (fal) {
+        setFalApiKey(String(fal.apiKey || ''))
+        if (fal.apiKey) setFalStatus('저장됨')
       }
     } catch { /* ignore */ }
     try {
@@ -1271,32 +1280,37 @@ export default function SettingsPage() {
     setAiFeatures(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
-  // Gemini AI 저장
+  // Gemini AI 저장 (모델컷 생성 전용)
   const saveGeminiSettings = async () => {
     if (!geminiApiKey) { showAlert('API Key를 입력해주세요', 'error'); return }
     try {
       await forbiddenApi.saveSetting('gemini', { apiKey: geminiApiKey, model: geminiModel, updatedAt: new Date().toISOString() })
       setGeminiStatus(`저장 완료 (${new Date().toLocaleTimeString('ko-KR', { hour12: false })})`)
-      showAlert('Gemini AI 설정이 저장되었습니다', 'success')
+      showAlert('Gemini 설정이 저장되었습니다', 'success')
     } catch { showAlert('저장 실패', 'error') }
   }
 
-  const testGeminiApi = async () => {
-    if (!geminiApiKey) { showAlert('API Key를 먼저 입력해주세요', 'error'); return }
-    setGeminiStatus('API 연결 확인 중...')
+  // FLUX (fal.ai) 저장
+  const saveFalSettings = async () => {
+    if (!falApiKey) { showAlert('API Key를 입력해주세요', 'error'); return }
     try {
-      await forbiddenApi.saveSetting('gemini', { apiKey: geminiApiKey, model: geminiModel, updatedAt: new Date().toISOString() })
-      const result = await proxyApi.geminiTest()
-      if (result.success) {
-        setGeminiStatus(`✓ ${result.message}`)
-        showAlert(result.message, 'success')
-      } else {
-        setGeminiStatus(`✗ ${result.message}`)
-        showAlert(result.message, 'error')
-      }
+      await forbiddenApi.saveSetting('fal_ai', { apiKey: falApiKey, updatedAt: new Date().toISOString() })
+      setFalStatus(`저장 완료 (${new Date().toLocaleTimeString('ko-KR', { hour12: false })})`)
+      showAlert('FLUX (fal.ai) 설정이 저장되었습니다', 'success')
+    } catch { showAlert('저장 실패', 'error') }
+  }
+
+  const testFalApi = async () => {
+    if (!falApiKey) { showAlert('API Key를 먼저 입력해주세요', 'error'); return }
+    setFalStatus('API 연결 확인 중...')
+    try {
+      await forbiddenApi.saveSetting('fal_ai', { apiKey: falApiKey, updatedAt: new Date().toISOString() })
+      // fal.ai는 별도 테스트 엔드포인트 없으므로 저장만 확인
+      setFalStatus('✓ 저장 완료')
+      showAlert('fal.ai API Key가 저장되었습니다', 'success')
     } catch (e) {
-      setGeminiStatus('연결 실패')
-      showAlert(`Gemini API 연결 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+      setFalStatus('저장 실패')
+      showAlert(`fal.ai 저장 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
     }
   }
 
@@ -1660,11 +1674,11 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Gemini AI 연동 (이미지 변환 + AI 태그) */}
+      {/* Gemini AI (모델컷 생성 전용) */}
       <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#4285F4' }}>Gemini AI 연동</span>
-          <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 이미지 변환(모델컷/배경제거/연출컷) + AI 태그 통합</span>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#4285F4' }}>Gemini AI (모델컷 전용)</span>
+          <span style={{ fontSize: '0.8125rem', color: '#666' }}>상품사진 → 모델착용컷 생성 (₩430/장)</span>
           <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4285F4', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
           <button onClick={saveGeminiSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
         </div>
@@ -1672,19 +1686,39 @@ export default function SettingsPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
             <input type='password' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)} placeholder='AIzaSy...' />
-            <button onClick={testGeminiApi} style={{ background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.35)', color: '#4285F4', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>연결 테스트</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델 선택</label>
+            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델</label>
             <select style={{ ...inputStyle, width: '300px' }} value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}>
-              <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (권장)</option>
-              <option value="gemini-3.1-flash-image-preview">Gemini 3.1 Flash Image</option>
-              <option value="gemini-3-pro-image-preview">Gemini 3 Pro Image</option>
+              <option value="gemini-2.5-flash-preview-05-20">Gemini 2.5 Flash (권장)</option>
+              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
             </select>
           </div>
           {geminiStatus && (
-            <div style={{ fontSize: '0.8125rem', color: geminiStatus.includes('저장') || geminiStatus.includes('✓') ? '#7BAF7E' : geminiStatus.includes('확인') ? '#FFB84D' : '#C4736E', padding: '0.4rem 0' }}>
+            <div style={{ fontSize: '0.8125rem', color: geminiStatus.includes('저장') ? '#7BAF7E' : '#C4736E', padding: '0.4rem 0' }}>
               {geminiStatus}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* FLUX (fal.ai) 이미지 생성 연동 */}
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#A855F7' }}>FLUX 이미지 생성 (fal.ai)</span>
+          <span style={{ fontSize: '0.8125rem', color: '#666' }}>모델착용컷 / 씬연출컷 (₩7/장) · 배경제거는 rembg 무료</span>
+          <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#A855F7', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
+          <button onClick={saveFalSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
+        </div>
+        <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
+            <input type='password' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={falApiKey} onChange={(e) => setFalApiKey(e.target.value)} placeholder='fal-xxxxxxxx...' />
+            <button onClick={testFalApi} style={{ background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.35)', color: '#A855F7', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>저장 테스트</button>
+          </div>
+          {falStatus && (
+            <div style={{ fontSize: '0.8125rem', color: falStatus.includes('저장') || falStatus.includes('✓') ? '#7BAF7E' : falStatus.includes('확인') ? '#FFB84D' : '#C4736E', padding: '0.4rem 0' }}>
+              {falStatus}
             </div>
           )}
         </div>

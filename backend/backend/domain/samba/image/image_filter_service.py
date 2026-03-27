@@ -204,24 +204,19 @@ class ImageFilterService:
   # ------------------------------------------------------------------
 
   async def _transform_to_product_cuts(self, urls: list[str]) -> list[str]:
-    """모델컷/연출컷을 Gemini AI background 모드로 변환.
+    """모델컷/연출컷을 rembg 배경제거로 변환.
 
-    기존 ImageTransformService의 메서드를 재사용한다.
+    기존 ImageTransformService의 rembg 메서드를 재사용한다.
     """
     from backend.domain.samba.image.service import ImageTransformService
 
     svc = ImageTransformService(self.session)
-    try:
-      api_key, model = await svc._get_gemini_config()
-    except ValueError as e:
-      logger.warning(f"[이미지필터] Gemini 설정 없음: {e}")
-      return []
 
     transformed_urls: list[str] = []
     for url in urls:
       try:
         img_bytes = await svc._download_image(url)
-        result_bytes = await svc._transform_image(api_key, model, img_bytes, "background")
+        result_bytes = await svc._remove_background_rembg(img_bytes)
         new_url = await svc._save_image(result_bytes, url)
         transformed_urls.append(new_url)
       except Exception as e:
