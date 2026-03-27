@@ -260,6 +260,8 @@ class LotteonPlugin(MarketPlugin):
           data["spdLst"][0].pop("itmLst", None)
           data["spdLst"][0].pop("sitmYn", None)
         result = await client.update_product(data)
+        # ── 수정 후 프로모션 재설정 ──────────────────────────────
+        await self._apply_promotions(client, existing_no, extras, is_update=True)
         return {"success": True, "message": "롯데ON 수정 성공", "data": result}
       else:
         result = await client.register_product(data)
@@ -267,11 +269,50 @@ class LotteonPlugin(MarketPlugin):
         spd_no = result.get("spdNo", "") or result.get("epdNo", "")
         logger.info(f"[롯데ON] 등록 완료 — spdNo={spd_no!r}")
 
+        # ── 등록 후 프로모션 설정 ─────────────────────────────────
+        if spd_no:
+          await self._apply_promotions(client, spd_no, extras, is_update=False)
+
         return {"success": True, "message": "롯데ON 등록 성공", "data": result, "spdNo": spd_no}
     except Exception as e:
       action = "수정" if existing_no else "등록"
       logger.error(f"[롯데ON] {action} 실패: {e}")
       return {"success": False, "message": f"롯데ON {action} 실패: {e}"}
+
+  async def _apply_promotions(self, client: Any, spd_no: str, extras: dict, is_update: bool = False) -> None:
+    """등록/수정 후 프로모션 설정 — 실패해도 결과에 영향 없음."""
+
+    # ── 즉시할인 ───────────────────────────────────────────────────
+    discount_rate = int(extras.get("discountRate") or 0)
+    if discount_rate > 0:
+      try:
+        resp = await client.save_immediate_discount(spd_no, discount_rate, is_update=is_update)
+        logger.info(f"[롯데ON] 즉시할인 설정 완료: {discount_rate}% → {resp}")
+      except Exception as e:
+        logger.warning(f"[롯데ON] 즉시할인 설정 실패 (무시): {e}")
+
+    # ── 행사 제외 설정 ──────────────────────────────────────────────
+    # additional_fields 키: ownerDiscountExclude, unitCouponExclude,
+    #   deliveryCouponExclude, cmPcsExclude, pcsExclude (Y/N)
+    exception_flags: dict[str, str] = {}
+    _flag_map = {
+      "ownerDiscountExclude": "ownrDscExYn",
+      "unitCouponExclude": "pdUtCpnExYn",
+      "deliveryCouponExclude": "dvCpnExYn",
+      "cmPcsExclude": "cmPcsDscExYn",
+      "pcsExclude": "pcsDscExYn",
+    }
+    for settings_key, api_key in _flag_map.items():
+      val = extras.get(settings_key, "")
+      if val in ("Y", "N"):
+        exception_flags[api_key] = val
+
+    if exception_flags:
+      try:
+        resp = await client.save_product_exception(spd_no, exception_flags)
+        logger.info(f"[롯데ON] 행사제외 설정 완료: {exception_flags} → {resp}")
+      except Exception as e:
+        logger.warning(f"[롯데ON] 행사제외 설정 실패 (무시): {e}")
 
   async def delete(self, session, product_no: str, account) -> dict[str, Any]:
     """롯데ON 상품 판매중지 (SOUT 상태 변경)."""

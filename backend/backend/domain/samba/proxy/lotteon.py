@@ -397,6 +397,66 @@ class LotteonClient:
       body=body,
     )
 
+  # ── 프로모션 API ───────────────────────────────────────────────────
+
+  async def save_product_exception(self, spd_no: str, flags: dict[str, str]) -> dict[str, Any]:
+    """행사 제외 설정.
+
+    flags 예시:
+      ownrDscExYn: Y/N    오너스할인 제외
+      pdUtCpnExYn: Y/N    상품단위쿠폰 제외
+      dvCpnExYn: Y/N      배송쿠폰 제외
+      cmPcsDscExYn: Y/N   가격비교채널할인(CM+PCS) 제외
+      pcsDscExYn: Y/N     가격비교(PCS)할인 제외
+    """
+    body = {"spdNo": spd_no, **flags}
+    return await self._call_api(
+      "POST",
+      "/v1/openapi/promotion/v1/OpenApiService/saveProductException",
+      body=body,
+    )
+
+  async def save_immediate_discount(
+    self,
+    spd_no: str,
+    discount_rate: int,
+    is_update: bool = False,  # 현재 미사용, 향후 기존 할인 수정 시 활용
+  ) -> dict[str, Any]:
+    """판매자할인(스토어할인) 저장.
+
+    API 스펙:
+      saveDvsCd: C=등록, U=수정(종료일만), D=삭제(시작 전만)
+      afflPrNo: 셀러 자체 프로모션번호(PK, 중복 불가)
+      dcTypCd: FX=정율, FL=정액
+      aplyStrtDttm / aplyEndDttm: yyyymmddhhmiss 포맷
+    """
+    now = datetime.now()
+    # afflPrNo: 셀러 고유 프로모션번호 (최대 20자)
+    # spdNo 숫자 부분(≤12자) + timestamp 끝 8자 = 최대 20자 이내
+    spd_num = re.sub(r"[^0-9]", "", spd_no)[-12:]  # 숫자만 추출, 최대 12자
+    ts_suffix = str(int(now.timestamp()))[-8:]       # timestamp 끝 8자리
+    affil_pr_no = f"{spd_num}{ts_suffix}"            # 최대 20자
+    start_dt = now.strftime("%Y%m%d%H%M%S")
+    # 1년 후 종료 (포맷: yyyymmddhhmiss)
+    end_dt = (now.replace(year=now.year + 1)).strftime("%Y%m%d235959")
+    body = {
+      "saveDvsCd": "C",                            # 항상 신규 등록 (U=수정은 awyDcPdRegNo 필요)
+      "awyDcPdRegNo": "",                          # 신규 등록 시 빈값
+      "afflPrNo": affil_pr_no,                      # 셀러 자체 프로모션번호(PK)
+      "trNo": self.tr_no,                           # 롯데ON 거래처번호
+      "spdNo": spd_no,
+      "aplyStrtDttm": start_dt,
+      "aplyEndDttm": end_dt,
+      "dcTypCd": "FX",                              # FX=정율, FL=정액
+      "dcVal": float(discount_rate),
+    }
+    logger.info(f"[롯데ON] 즉시할인 요청 body: {body}")
+    return await self._call_api(
+      "POST",
+      "/v1/openapi/promotion/v1/OpenApiService/saveProductImmediateDiscount",
+      body=body,
+    )
+
   async def update_stock(self, itm_stk_lst: list[dict[str, Any]]) -> dict[str, Any]:
     """단품 재고 변경."""
     return await self._call_api(
@@ -550,7 +610,9 @@ class LotteonClient:
       sale_price = int(sale_price * (1 - discount_rate / 100))
 
     # ── 재고 / 배송비 ───────────────────────────────────────────
-    default_stock = product.get("_stock_quantity", 0) or 999
+    # _stock_quantity: 설정된 경우 상한선(cap)으로 동작
+    max_stock = int(product.get("_stock_quantity") or 0)
+    default_stock = max_stock if max_stock > 0 else 999
     return_fee = product.get("_return_fee", 0) or 0
     exchange_fee = product.get("_exchange_fee", 0) or 0
     jeju_fee = product.get("_jeju_fee", 0) or 0
@@ -624,7 +686,14 @@ class LotteonClient:
           opt.get("name", "") or opt.get("size", "") or opt.get("value", "")
           or f"옵션{idx + 1}"
         )
-        opt_stock = opt.get("stock", default_stock) or default_stock
+        raw_stock = opt.get("stock")
+        if raw_stock is None or raw_stock == 0:
+          opt_stock = default_stock
+        elif max_stock > 0:
+          # _stock_quantity 설정 시 상한선으로 cap
+          opt_stock = min(int(raw_stock), max_stock)
+        else:
+          opt_stock = int(raw_stock)
         itm_lst.append({
           "eitmNo": f"OPT{idx}",
           "dpYn": "Y",
