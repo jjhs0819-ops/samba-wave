@@ -51,6 +51,9 @@ read_db_url = URL.create(
 
 def _build_db_url(user: str, password: str, host: str, port: int, name: str) -> str:
     """Build database URL with optional SSL parameter."""
+    # Cloud SQL Auth Proxy Unix 소켓 연결 (Cloud Run 환경)
+    if host.startswith("/cloudsql/"):
+        return f"postgresql+asyncpg://{user}:{password}@/{name}?host={host}"
     base_url = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{name}"
     if settings.db_ssl_required:
         return f"{base_url}?ssl=require"
