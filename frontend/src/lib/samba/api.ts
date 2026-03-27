@@ -684,9 +684,6 @@ export const proxyApi = {
   claudeTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/claude/test`, { method: 'POST' }),
-  fireworksTest: () =>
-    request<{ success: boolean; message: string }>(
-      `${SAMBA_PREFIX}/proxy/fireworks/test`, { method: 'POST' }),
   geminiTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/gemini/test`, { method: 'POST' }),
@@ -711,13 +708,13 @@ export const proxyApi = {
   },
   transformImages: (productIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
     request<{ success: boolean; message: string; total_transformed: number; total_failed: number }>(
-      `${SAMBA_PREFIX}/proxy/fireworks/transform`, {
+      `${SAMBA_PREFIX}/proxy/images/transform`, {
         method: 'POST',
         body: JSON.stringify({ product_ids: productIds, scope, mode, model_preset: modelPreset }),
       }),
   transformByGroups: (groupIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
     request<{ success: boolean; message: string; total_transformed: number; total_failed: number }>(
-      `${SAMBA_PREFIX}/proxy/fireworks/transform`, {
+      `${SAMBA_PREFIX}/proxy/images/transform`, {
         method: 'POST',
         body: JSON.stringify({ group_ids: groupIds, scope, mode, model_preset: modelPreset }),
       }),

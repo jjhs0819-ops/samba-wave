@@ -204,7 +204,7 @@ class ImageFilterService:
   # ------------------------------------------------------------------
 
   async def _transform_to_product_cuts(self, urls: list[str]) -> list[str]:
-    """모델컷/연출컷을 Fireworks AI background 모드로 변환.
+    """모델컷/연출컷을 Gemini AI background 모드로 변환.
 
     기존 ImageTransformService의 메서드를 재사용한다.
     """
@@ -212,9 +212,9 @@ class ImageFilterService:
 
     svc = ImageTransformService(self.session)
     try:
-      api_key, model = await svc._get_fireworks_config()
+      api_key, model = await svc._get_gemini_config()
     except ValueError as e:
-      logger.warning(f"[이미지필터] Fireworks 설정 없음: {e}")
+      logger.warning(f"[이미지필터] Gemini 설정 없음: {e}")
       return []
 
     transformed_urls: list[str] = []
@@ -225,7 +225,7 @@ class ImageFilterService:
         new_url = await svc._save_image(result_bytes, url)
         transformed_urls.append(new_url)
       except Exception as e:
-        logger.error(f"[이미지필터] Fireworks 변환 실패: {url[:80]} — {e}")
+        logger.error(f"[이미지필터] 이미지 변환 실패: {url[:80]} — {e}")
         transformed_urls.append(url)  # 실패 시 원본 유지
     return transformed_urls
 

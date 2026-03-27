@@ -732,38 +732,6 @@ async def claude_api_test(
         return {"success": False, "message": f"API 호출 실패: {exc}"}
 
 
-@router.post("/fireworks/test")
-async def fireworks_api_test(
-    session: AsyncSession = Depends(get_read_session_dependency),
-) -> dict[str, Any]:
-    """Fireworks AI API 키 유효성 검증."""
-    creds = await _get_setting(session, "fireworks")
-    if not creds or not isinstance(creds, dict):
-        return {"success": False, "message": "Fireworks AI 설정이 저장되지 않았습니다."}
-
-    api_key = str(creds.get("apiKey", "")).strip().encode("ascii", "ignore").decode("ascii")
-    if not api_key:
-        return {"success": False, "message": "API Key is empty"}
-
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                "https://api.fireworks.ai/inference/v1/models",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Accept": "application/json",
-                },
-            )
-            if resp.status_code == 200:
-                return {"success": True, "message": "Fireworks AI connected"}
-            else:
-                body = resp.text[:200]
-                return {"success": False, "message": f"HTTP {resp.status_code}: {body}"}
-    except Exception as exc:
-        logger.error(f"[Fireworks] API test failed: {exc}")
-        return {"success": False, "message": f"Connection failed: {str(exc)[:200]}"}
-
-
 @router.post("/gemini/test")
 async def gemini_api_test(
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -826,8 +794,8 @@ async def r2_test(
         return {"success": False, "message": f"R2 connection failed: {str(exc)[:200]}"}
 
 
-@router.post("/fireworks/transform")
-async def fireworks_transform_images(
+@router.post("/images/transform")
+async def transform_images(
     request: dict[str, Any],
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
@@ -857,7 +825,7 @@ async def fireworks_transform_images(
         result = await svc.transform_products(product_ids, scope, mode, model_preset)
         return {"success": True, **result}
     except Exception as exc:
-        logger.error(f"[Fireworks] transform failed: {exc}")
+        logger.error(f"[이미지변환] transform failed: {exc}")
         return {"success": False, "message": str(exc)[:300]}
 
 
