@@ -334,10 +334,8 @@ class LotteonPlugin(MarketPlugin):
         logger.warning(f"[롯데ON] 행사제외 설정 실패 (무시): {e}")
 
     # ── L.POINT 추가적립 ────────────────────────────────────────────
-    # UI 필드(purchasePointEnabled + purchasePointRate) 우선,
-    # lpointAccm 직접 설정값 폴백
-    purchase_enabled = extras.get("purchasePointEnabled") in (True, "true", "Y")
-    lpoint_from_ui = int(extras.get("purchasePointRate") or 0) if purchase_enabled else 0
+    # purchasePointRate > 0 이면 자동 활성화 (체크박스 제거됨)
+    lpoint_from_ui = int(extras.get("purchasePointRate") or 0)
     lpoint_accm = int(extras.get("lpointAccm") or 0) or lpoint_from_ui
     if lpoint_accm > 0:
       try:
@@ -360,7 +358,6 @@ class LotteonPlugin(MarketPlugin):
 
     # ── 살수록할인 ───────────────────────────────────────────────────
     # UI 필드: multiPurchaseDiscount(설정안함/설정함) + multiPurchaseQty(수량) + multiPurchaseRate(할인율%)
-    logger.info(f"[롯데ON] 살수록할인 extras 확인: multiPurchaseDiscount={extras.get('multiPurchaseDiscount')!r}, qty={extras.get('multiPurchaseQty')!r}, rate={extras.get('multiPurchaseRate')!r}")
     multi_enabled = extras.get("multiPurchaseDiscount") in ("설정함", "true", True, "Y")
     multi_qty = int(extras.get("multiPurchaseQty") or 0)
     multi_rate = float(extras.get("multiPurchaseRate") or 0)
