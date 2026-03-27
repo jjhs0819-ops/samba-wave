@@ -307,7 +307,7 @@ if check_id in exempt:
 | `discountRate` | 할인율 (%) |
 | `memberDiscountRate` | 회원등급 할인율 (%) |
 
-**무신사 혜택가 5단계 계산 (10원 절사, 쿠폰 API 미사용):**
+**무신사 혜택가 계산 (10원 절사):**
 ```
 ⚠️ 로그인 필수 — 비로그인 수집은 차단됨.
    goodsPrice.couponPrice 기본 + 쿠폰 API(_fetch_coupons) 보충 병행.
@@ -322,18 +322,25 @@ if check_id in exempt:
    benefit_coupon_discount = s_price - couponPrice (couponPrice < s_price일 때)
    benefit_base = s_price - benefit_coupon_discount
 
-3단계: 등급할인 (benefit_base 기준, grade_discount_rate > 0이면 적용)
-   ⚠️ partnerDiscountOn 필드는 신뢰 불가 — False여도 사이트는 등급할인 적용함
-   goodsPrice.memberDiscountRate가 로그인 시 정확한 값 반환 (비로그인 0, 로그인 시 등급률)
-   grade_discount = benefit_base × grade_discount_rate / 100 (10원 절사) if grade_discount_rate > 0 else 0
+3단계: 등급할인 (isLimitedDc=false일 때만, 2026-03-28 100개 검증 확정)
+   ⚠️ memberGrade.discountRate는 항상 0 — 사용 금지!
+     등급할인 가능 여부는 data.isLimitedDc 필드로 판별.
+     isLimitedDc=true → 등급할인 불가 (아디다스, 파타고니아 등)
+     isLimitedDc=false → goodsPrice.memberDiscountRate 적용 (나이키, 스투시, 이니스프리 등)
+     ※ isSale 여부와 무관 — 세일 상품도 isLimitedDc=false면 등급할인 적용
+   grade_discount = benefit_base × memberDiscountRate / 100 (10원 절사)
 
 4단계: 적립금 (benefit_base - 등급할인 기준)
    point_base = benefit_base - grade_discount
    point_usage = point_base × maxUsePointRate*100 / 100 (10원 절사)
 
-5단계: 적립 선할인 (isPrePoint=true만)
+5단계: 적립 선할인 (isPrePoint=true만, 2026-03-28 수정)
+   ⚠️ memberGrade.pointRate는 항상 0 — 사용 금지!
+     선할인 = 등급적립 + 구매적립
+     등급적립 = remaining × goodsPrice.memberSavePointRate / 100 (10원 절사)
+     구매적립 = goodsPrice.savePoint (API가 반환하는 고정값)
    remaining = benefit_base - 등급 - 적립금
-   pre_discount = remaining × memberDiscountRate / 100 (10원 절사)
+   pre_discount = 등급적립 + 구매적립
 
 최종: bestBenefitPrice = remaining - pre_discount
 ```
@@ -578,12 +585,23 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 - **해결 1:** bestBenefitPrice 계산에서 쿠폰 API 결과 제외, `goodsPrice.couponPrice`만 사용
 - **~~해결 2:~~** ~~등급할인을 `partnerDiscountOn=true`일 때만 적용~~ → 2026-03-23 되돌림 (아래 참조)
 
-### 무신사 bestBenefitPrice 과소할인 — partnerDiscountOn 가드 제거 (2026-03-23 수정)
-- **현상:** 상품 3527939에서 사이트 최대혜택가 10,210원인데 코드가 10,630원으로 수집 (420원 차이)
-- **원인:** `partnerDiscountOn=False`여도 사이트는 등급할인을 적용함. 이 필드는 등급할인 가능 여부의 신뢰할 수 있는 지표가 아님
-- **근거:** 로그인 API에서 `goodsPrice.memberDiscountRate=4.0`을 정확히 반환하므로, 이 값이 0이 아니면 등급할인 적용이 정답
-- **해결:** `partnerDiscountOn` 가드 제거 → `grade_discount_rate > 0`이면 항상 등급할인 적용
-- **추가:** GRADE_DISCOUNT_MAP에 "블랙다이아몬드" (4%) 추가, 회원 API 404 확인
+### ~~무신사 bestBenefitPrice 과소할인 — partnerDiscountOn 가드 제거 (2026-03-23 수정)~~ → 2026-03-27 되돌림
+- ~~**해결:** `partnerDiscountOn` 가드 제거 → `grade_discount_rate > 0`이면 항상 등급할인 적용~~
+- → **2026-03-27 원인 재분석:** `goodsPrice.memberDiscountRate=4.0`은 레거시 값으로, 모든 상품에서 유저 등급률을 반환할 뿐 상품별 등급할인 가능 여부를 반영하지 않음
+- → **최종 해결:** `memberGrade.discountRate` (새 멤버십 시스템) 사용으로 변경 (아래 참조)
+
+### 무신사 등급할인 폐지 — 새 멤버십 시스템 대응 (2026-03-27 수정)
+- **현상:** 상품 4777939에서 사이트 최대혜택가 270,440원인데 원가 259,620원으로 수집 (10,820원 차이)
+- **원인:** 무신사가 새 멤버십 시스템(NEW_MEMBER_LEVEL, NEW_MEMBER_SHIP_V2)을 도입하면서 등급할인 폐지. `goodsPrice.memberDiscountRate=4.0`은 레거시 값으로 전 상품에서 유저 등급률(블랙다이아몬드=4%)을 반환하지만, 실제 등급할인은 적용되지 않음. 사이트에서도 "등급 할인 불가"로 표시됨
+- **근거:** API 응답 `data.memberGrade = {level:9, levelName:"블랙다이아몬드", discountRate:0.0, pointRate:0.0}` — 10개 상품 전수 확인, 전부 discountRate=0.0
+- **해결:** `goodsPrice.memberDiscountRate` 대신 `data.memberGrade.discountRate`를 등급할인율로 사용. `grade_point_rate`도 `memberGrade.pointRate` 사용. `_get_member_grade_rate()` 별도 호출 제거 (불필요한 API 호출 절감)
+- **영향:** 등급할인/선할인 모두 0이 되어 혜택가 = 할인가 - 쿠폰 - 적립금
+
+### 무신사 검색 수집 시 URL 필터 무시 (2026-03-28 수정)
+- **현상:** 검색 URL에 brand=blackyakkids, maxPrice=50000 등 필터가 포함되어 있는데, 수집 시 필터가 무시되고 키워드 전체 상품이 수집됨 (9개만 나와야 하는데 667개 수집)
+- **원인 1:** `collector_collection.py`에서 URL의 `brand`, `minPrice`, `maxPrice`, `gf` 파라미터를 추출하지 않음
+- **원인 2:** `musinsa.py`의 `search_products()` 메서드가 `keyword`와 `category`만 파라미터로 받고, 브랜드/가격 필터를 무신사 API에 전달하지 않음
+- **해결:** `search_products()`에 `brand`, `min_price`, `max_price`, `gf` 파라미터 추가. `collector_collection.py`에서 URL 쿼리스트링의 필터 파라미터 추출 → API 호출 시 전달
 
 ### 무신사 시즌 "ALL ALL" 빈값 수집 (2026-03-22 수정)
 - **현상:** 상품 4258416에서 무신사 웹 "ALL ALL" 표시인데 season이 빈값으로 수집
@@ -621,3 +639,6 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 | 2026-03-23 | partnerDiscountOn 가드 제거 — False여도 사이트는 등급할인 적용. goodsPrice.memberDiscountRate 기준으로 변경 | - |
 | 2026-03-23 | GRADE_DISCOUNT_MAP에 블랙다이아몬드(4%) 추가. 회원 API(/api2/member/v1/me) 404 확인 | - |
 | 2026-03-24 | 쿠폰 API 복원 — goodsPrice.couponPrice + _fetch_coupons 병행. 수집/갱신 모두 동일 호출 (refresh_only 분기 제거). goodsPrice에 미반영된 쿠폰(쿠폰받기형)을 쿠폰 API로 보충 | - |
+| 2026-03-27 | 등급할인 폐지 대응 — goodsPrice.memberDiscountRate(레거시) 대신 memberGrade.discountRate(새 멤버십) 사용. 전 상품 0.0으로 등급할인 미적용. _get_member_grade_rate() 호출 제거 | - |
+| 2026-03-28 | 검색 수집 시 URL 필터(brand, minPrice, maxPrice, gf) 무시 버그 수정 — search_products()에 필터 파라미터 추가, collector에서 URL 파싱 후 전달 | - |
+| 2026-03-28 | **최대혜택가 대규모 검증 (83개 상품 × 크롬캡쳐 비교)** — 4가지 수정: (1) 등급할인 조건 `isLimitedDc=False` 발견, (2) 선할인 `memberSavePointRate+savePoint`, (3) isSale 무관 확인, (4) 쿠폰 API에 `specialtyCodes` 파라미터 추가 (beauty/sneaker 등 카테고리 쿠폰 누락 해결) | - |

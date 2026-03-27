@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timezone
 
 from sqlmodel.ext.asyncio.session import AsyncSession
+from backend.domain.samba.collector.grouping import generate_group_key, parse_color_from_name
 
 
 # ── 상수 ──
@@ -130,12 +131,19 @@ def _build_product_data(
     "manufacturer": _clean_text(detail.get("manufacturer") or ""),
     "origin": _clean_text(detail.get("origin") or ""),
     "material": _clean_text(detail.get("material") or ""),
-    "color": _clean_text(detail.get("color") or ""),
-    "style_code": _clean_text(detail.get("style_code", "")),
+    "color": _clean_text(detail.get("color") or "") or parse_color_from_name(detail.get("name", "")),
     "sex": detail.get("sex", ""),
     "season": detail.get("season", ""),
     "care_instructions": _clean_text(detail.get("care_instructions", "")),
     "quality_guarantee": _clean_text(detail.get("quality_guarantee", "")),
+    "similar_no": str(detail.get("similarNo", "0")),
+    "style_code": _clean_text(detail.get("styleNo", "") or detail.get("style_code", "")),
+    "group_key": generate_group_key(
+      brand=detail.get("brand", ""),
+      similar_no=str(detail.get("similarNo", "0")),
+      style_code=detail.get("styleNo", "") or detail.get("style_code", ""),
+      name=detail.get("name", ""),
+    ),
     "detail_html": raw_detail_html,
     "status": "collected",
     "is_sold_out": detail.get("saleStatus") == "sold_out",

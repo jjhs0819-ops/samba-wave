@@ -166,9 +166,8 @@ class MusinsaClient:
                 "무신사 수집은 로그인(쿠키)이 필요합니다. "
                 "확장앱에서 무신사 로그인 후 다시 시도하세요."
             )
-        # 회원 등급 할인율 조회 (등급별 최대혜택가 계산에 필요, 외부 캐시값 있으면 스킵)
-        if member_grade_rate is None:
-            member_grade_rate = await self._get_member_grade_rate()
+        # 등급할인율은 상품 API의 memberGrade.discountRate에서 직접 추출하므로
+        # _get_member_grade_rate() 별도 호출 불필요 (새 멤버십 시스템)
         timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             # 1) 상품 상세 API
@@ -287,9 +286,9 @@ class MusinsaClient:
                 or 0
             )
             # 등급할인 관련 필드 디버그 로그
-            _grade_keys = {k: gp.get(k) for k in ("memberDiscountRate", "gradeDiscountRate", "memberGradeDiscountRate", "gradeRate", "partnerDiscountOn", "isMemberDiscount") if k in gp}
-            _d_grade_keys = {k: d.get(k) for k in ("partnerDiscountOn", "isMemberDiscount", "isPartnerDiscount", "memberBenefitOff") if k in d}
-            logger.info(f"[무신사 등급디버그] {goods_no}: gp등급필드={_grade_keys}, d등급필드={_d_grade_keys}, member_grade_rate={member_grade_rate}")
+            _grade_keys = {k: gp.get(k) for k in ("memberDiscountRate", "partnerDiscountOn") if k in gp}
+            _mg = d.get("memberGrade") or {}
+            logger.info(f"[무신사 등급디버그] {goods_no}: gp등급={_grade_keys}, memberGrade={_mg}")
             logger.info(f"[무신사 가격원본] {goods_no}: couponPrice={coupon_price_raw}, "
                         f"api_best_benefit={api_best_benefit}, s_price={s_price}")
             # 쿠폰할인: goodsPrice.couponPrice 기본 + 쿠폰 API 보충 (수집/갱신 동일)
@@ -303,19 +302,17 @@ class MusinsaClient:
             coupon_applied_price = s_price - benefit_coupon_discount if benefit_coupon_discount > 0 else s_price
             benefit_base = s_price - benefit_coupon_discount
 
-            # ── 등급 할인율 vs 등급 적립율 분리 ──
-            # 등급 할인: 상품별로 불가할 수 있음 (API가 0 반환 또는 필드 없음)
-            # 등급 적립: 유저 등급 기반, 항상 적용 (구매적립 + 적립금 선할인)
-            #
-            # 판별 기준: API goodsPrice에 memberDiscountRate > 0이면 등급할인 가능
-            #           0이거나 키 없으면 등급할인 불가 (fallback 금지)
-            _api_grade_discount = next(
-                (gp[k] for k in ("memberDiscountRate", "gradeDiscountRate", "memberGradeDiscountRate", "gradeRate")
-                 if k in gp and gp[k] is not None and gp[k] > 0),
-                0,
-            )
-            grade_discount_rate = _api_grade_discount  # 등급 할인용 (상품별)
-            grade_point_rate = member_grade_rate or 0   # 등급 적립/선할인용 (유저 등급)
+            # ── 등급 할인 & 선할인 ──
+            # 등급할인 조건: isLimitedDc=False (등급할인 제한 아닌 상품만)
+            #   → goodsPrice.memberDiscountRate 사용 (memberGrade.discountRate는 항상 0)
+            # 선할인 조건: isPrePoint=True
+            #   → 등급적립(memberSavePointRate) + 구매적립(savePoint)
+            is_limited_dc = d.get("isLimitedDc") is True
+            grade_discount_rate = (
+                gp.get("memberDiscountRate", 0) or 0
+            ) if not is_limited_dc else 0
+            grade_save_point_rate = gp.get("memberSavePointRate", 0) or 0
+            save_point_value = gp.get("savePoint", 0) or 0
 
             # 2단계: 등급할인 (benefit_base 기준, 10원 절사)
             grade_discount = int(benefit_base * grade_discount_rate / 100 / 10) * 10 if grade_discount_rate > 0 else 0
@@ -330,10 +327,13 @@ class MusinsaClient:
                 point_usage = int(point_base * point_rate_pct / 100 / 10) * 10  # 10원 절사
 
             # 4단계: 적립 선할인 (isPrePoint=True일 때)
-            # 구매적립 = (잔액) × 유저등급율 (10원 절사) → 선할인 = 구매적립 금액
+            # 선할인 = 등급적립(remaining × memberSavePointRate) + 구매적립(savePoint)
             is_pre_point = d.get("isPrePoint") is True
             remaining = benefit_base - grade_discount - point_usage
-            pre_discount = int(remaining * grade_point_rate / 100 / 10) * 10 if is_pre_point and grade_point_rate > 0 else 0
+            pre_discount = 0
+            if is_pre_point:
+                grade_point = int(remaining * grade_save_point_rate / 100 / 10) * 10 if grade_save_point_rate > 0 else 0
+                pre_discount = grade_point + save_point_value
 
             best_benefit_price = remaining - pre_discount
 
@@ -341,10 +341,9 @@ class MusinsaClient:
                 f"[무신사 혜택가] {goods_no}: "
                 f"할인가={s_price}, 쿠폰=-{benefit_coupon_discount}, "
                 f"benefit_base={benefit_base}, "
-                f"등급할인({grade_discount_rate}%)=-{grade_discount}, "
-                f"등급적립율={grade_point_rate}%, "
+                f"등급할인({grade_discount_rate}%,limitedDc={is_limited_dc})=-{grade_discount}, "
                 f"적립금({point_rate_pct}%)=-{point_usage}(base={point_base}), "
-                f"선할인({grade_point_rate}%,base={remaining + pre_discount})=-{pre_discount}, "
+                f"선할인(savePtRate={grade_save_point_rate}%+savePt={save_point_value})=-{pre_discount}, "
                 f"혜택가={best_benefit_price}"
             )
 
@@ -493,6 +492,10 @@ class MusinsaClient:
         size: int = 30,
         sort: str = "POPULAR",
         category: str = "",
+        brand: str = "",
+        min_price: int | None = None,
+        max_price: int | None = None,
+        gf: str = "A",
     ) -> dict[str, Any]:
         """상품 검색 (API 방식) - proxy-server.mjs /api/musinsa/search-api 포팅."""
         size = min(size, 200)
@@ -502,10 +505,16 @@ class MusinsaClient:
             "page": str(page),
             "size": str(size),
             "sort": sort,
-            "gf": "A",
+            "gf": gf,
         }
         if category:
             params["category"] = category
+        if brand:
+            params["brand"] = brand
+        if min_price is not None:
+            params["minPrice"] = str(min_price)
+        if max_price is not None:
+            params["maxPrice"] = str(max_price)
 
         timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -1014,14 +1023,16 @@ class MusinsaClient:
     ) -> int:
         """쿠폰 API 호출."""
         try:
-            params = urlencode(
-                {
-                    "goodsNo": goods_no,
-                    "brand": d.get("brand", ""),
-                    "comId": d.get("comId", ""),
-                    "salePrice": s_price,
-                }
-            )
+            specialty = d.get("specialtyCodes") or []
+            params_dict: dict[str, Any] = {
+                "goodsNo": goods_no,
+                "brand": d.get("brand", ""),
+                "comId": d.get("comId", ""),
+                "salePrice": s_price,
+            }
+            if specialty:
+                params_dict["specialtyCodes"] = ",".join(specialty) if isinstance(specialty, list) else specialty
+            params = urlencode(params_dict)
             coupon_url = f"{self.BASE_COUPON}?{params}"
             resp = await client.get(coupon_url, headers=self._headers())
             if resp.status_code == 200:
