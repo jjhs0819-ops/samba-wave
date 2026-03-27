@@ -57,14 +57,6 @@ class BackendSettings(BaseSettings):
     """Enable mock authentication for development."""
 
     # ===========================================
-    # S3 Configuration
-    # ===========================================
-    aws_access_key_id: str = ""
-    aws_secret_access_key: str = ""
-    aws_region: str = "ap-northeast-2"
-    s3_bucket_name: str = ""
-
-    # ===========================================
     # CORS Configuration
     # ===========================================
 

@@ -1066,16 +1066,6 @@ export const detailTemplateApi = {
     }),
   delete: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/policies/detail-templates/${id}`, { method: 'DELETE' }),
-  getPresignedUrl: (id: string, position: 'top' | 'bottom', contentType: string) =>
-    request<{ upload_url: string; s3_key: string }>(
-      `${SAMBA_PREFIX}/policies/detail-templates/${id}/presigned-url`,
-      { method: 'POST', body: JSON.stringify({ position, content_type: contentType }) },
-    ),
-  confirmUpload: (id: string, position: 'top' | 'bottom', s3Key: string) =>
-    request<SambaDetailTemplate>(
-      `${SAMBA_PREFIX}/policies/detail-templates/${id}/confirm-upload`,
-      { method: 'POST', body: JSON.stringify({ position, s3_key: s3Key }) },
-    ),
 };
 
 // ── Name Rules ──
