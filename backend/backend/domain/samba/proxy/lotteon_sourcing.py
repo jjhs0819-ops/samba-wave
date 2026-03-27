@@ -743,6 +743,11 @@ class LotteonSourcingClient:
     m = re.search(r'"sitmNo"\s*:\s*"([A-Z]{2}[0-9]+_[0-9]+)"', decoded)
     return m.group(1) if m else ""
 
+  async def fetch_pbf_standalone(self, sitm_no: str) -> Optional[dict[str, Any]]:
+    """pbf.lotteon.com API 독립 호출 (새 HTTP 세션 생성) — refresh 빠른경로용."""
+    async with httpx.AsyncClient(timeout=self._timeout) as client:
+      return await self._fetch_pbf_detail(sitm_no, client)
+
   async def _fetch_pbf_detail(
     self, sitm_no: str, client: httpx.AsyncClient
   ) -> Optional[dict[str, Any]]:

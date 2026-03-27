@@ -52,8 +52,82 @@ class LotteonSourcingPlugin(SourcingPlugin):
     client = LotteonSourcingClient()
     return await self.safe_call(client.get_product_detail(site_product_id))
 
+  async def _fetch_pbf_refresh(self, sitm_no: str) -> dict:
+    """pbf API 직접 호출로 refresh용 데이터 취득 (HTML 파싱 스킵).
+
+    Args:
+      sitm_no: 롯데ON sitmNo (LE1220156946_1321122096 형태)
+
+    Returns:
+      refresh용 detail dict (빈 dict이면 실패)
+    """
+    from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
+
+    client = LotteonSourcingClient()
+    pbf = await client.fetch_pbf_standalone(sitm_no)
+    if not pbf:
+      return {}
+    return self._parse_pbf_to_detail(pbf)
+
+  def _parse_pbf_to_detail(self, pbf: dict) -> dict:
+    """pbf API 응답 → refresh용 detail dict 변환.
+
+    get_product_detail()이 반환하는 dict와 동일한 키 구조로 변환한다.
+    """
+    price_info = pbf.get("priceInfo") or {}
+    sl_prc = int(price_info.get("slPrc", 0) or 0)
+    immd_dc = int(price_info.get("immdDcAplyTotAmt", 0) or 0)
+    adtn_dc = int(price_info.get("adtnDcAplyTotAmt", 0) or 0)
+    best_benefit = sl_prc - immd_dc - adtn_dc if sl_prc > 0 else 0
+    if best_benefit <= 0 or best_benefit >= sl_prc:
+      best_benefit = sl_prc
+
+    # 재고
+    stck = pbf.get("stckInfo") or {}
+    stk_qty = stck.get("stkQty")
+    is_out = stk_qty is not None and stk_qty == 0
+
+    # 옵션
+    opt_info = pbf.get("optionInfo") or {}
+    option_groups = opt_info.get("optionList") or []
+    options: list[dict] = []
+    if option_groups:
+      primary = option_groups[0]
+      for opt in primary.get("options", []):
+        label = opt.get("label", "").strip()
+        if not label:
+          continue
+        disabled = bool(opt.get("disabled", False))
+        options.append({
+          "name": label,
+          "price": sl_prc,
+          "stock": 0 if disabled else (stk_qty or 1),
+          "isSoldOut": disabled,
+        })
+      if len(option_groups) >= 2:
+        options = []
+        for g1 in option_groups[0].get("options", []):
+          for g2 in option_groups[1].get("options", []):
+            dis = g1.get("disabled", False) or g2.get("disabled", False)
+            label = f"{g1.get('label', '')} / {g2.get('label', '')}".strip(" /")
+            options.append({
+              "name": label,
+              "price": sl_prc,
+              "stock": 0 if dis else (stk_qty or 1),
+              "isSoldOut": bool(dis),
+            })
+
+    return {
+      "salePrice": sl_prc,
+      "bestBenefitPrice": best_benefit,
+      "isOutOfStock": is_out,
+      "isSoldOut": is_out,
+      "saleStatus": "sold_out" if is_out else "in_stock",
+      "options": options,
+    }
+
   async def refresh(self, product) -> "RefreshResult":
-    """가격/재고 갱신 — 상세 페이지 재조회로 최신 데이터 추출.
+    """가격/재고 갱신 — sitmNo 있으면 pbf 직접, 없으면 상세 페이지 재조회.
 
     무신사 수준의 에러 처리 및 적응형 인터벌 조정을 포함한다:
     - 45초 타임아웃
@@ -85,11 +159,35 @@ class LotteonSourcingPlugin(SourcingPlugin):
     client = LotteonSourcingClient()
     detail = None
 
+    # sitmNo 빠른경로: product 객체에 sitmNo가 있으면 pbf 직접 호출 (HTML 스킵)
+    sitm_no = (
+      getattr(product, "sitmNo", "")
+      or getattr(product, "sitm_no", "")
+      or (getattr(product, "extra_data", None) or {}).get("sitmNo", "")
+    )
+
     try:
-      detail = await asyncio.wait_for(
-        client.get_product_detail(site_product_id),
-        timeout=45,
-      )
+      if sitm_no:
+        # HTML 파싱 없이 pbf API 직접 호출
+        raw = await asyncio.wait_for(
+          self._fetch_pbf_refresh(sitm_no),
+          timeout=20,
+        )
+        if raw:
+          detail = raw
+          logger.debug(f"[LOTTEON] refresh 빠른경로 성공: {site_product_id} (sitmNo={sitm_no})")
+        else:
+          # pbf 실패 → 기존 방식 폴백
+          logger.debug(f"[LOTTEON] pbf 빠른경로 실패, 폴백: {site_product_id}")
+          detail = await asyncio.wait_for(
+            client.get_product_detail(site_product_id),
+            timeout=45,
+          )
+      else:
+        detail = await asyncio.wait_for(
+          client.get_product_detail(site_product_id),
+          timeout=45,
+        )
       # 성공 → 인터벌 점진 복원 (최소 0.3초까지)
       _lotteon_interval = max(0.3, _lotteon_interval - 0.3)
       _lotteon_consecutive_errors = 0
