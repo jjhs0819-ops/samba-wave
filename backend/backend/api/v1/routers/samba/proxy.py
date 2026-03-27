@@ -1823,6 +1823,10 @@ async def musinsa_search_api(
     size: int = Query(30, ge=1, le=200),
     sort: str = Query("POPULAR"),
     category: str = Query(""),
+    brand: str = Query(""),
+    min_price: Optional[int] = Query(None, alias="minPrice"),
+    max_price: Optional[int] = Query(None, alias="maxPrice"),
+    gf: str = Query("A"),
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict[str, Any]:
     """무신사 상품 검색 API."""
@@ -1832,7 +1836,9 @@ async def musinsa_search_api(
     client = await _get_musinsa_client(session)
     try:
         return await client.search_products(
-            keyword=keyword, page=page, size=size, sort=sort, category=category
+            keyword=keyword, page=page, size=size, sort=sort,
+            category=category, brand=brand,
+            min_price=min_price, max_price=max_price, gf=gf,
         )
     except Exception as exc:
         logger.error(f"[무신사] 검색 실패: {exc}")
