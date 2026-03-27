@@ -500,16 +500,30 @@ class LotteonClient:
       body=body,
     )
 
+  async def search_quantity_discount_list(self, spd_no: str) -> dict[str, Any]:
+    """살수록할인 목록 조회 — 기존 프로모션 prNo 확인용.
+
+    반환 data 예시:
+      {"prList": [{"prNo": "12345", "prNm": "...", ...}]}
+    """
+    return await self._call_api(
+      "POST",
+      "/v1/openapi/promotion/v1/OpenApiService/searchQuantityDiscountList",
+      body={"spdNo": spd_no, "prKndCd": "PRD_MAM_BUY"},
+    )
+
   async def insert_quantity_discount(
     self,
     spd_no: str,
     min_qty: int,
     discount_rate: float,
     eitm_nos: list[str] | None = None,
+    pr_no: str = "",
   ) -> dict[str, Any]:
-    """살수록할인(수량 기준 정율 할인) 등록.
+    """살수록할인(수량 기준 정율 할인) 등록/수정.
 
     API 스펙:
+      saveDvsCd: C=신규, U=수정(pr_no 필수), D=삭제(pr_no 필수)
       prKndCd: PRD_MAM_BUY (살수록/배수할인)
       fvrOffrValDvsDtlCd: QTY_DC (수량 기준 할인)
       dcTypCd: FX=정율, FL=정액
@@ -524,10 +538,11 @@ class LotteonClient:
     affil_pr_no = f"{spd_num}{ts_suffix}"  # 최대 20자
     start_dt = now.strftime("%Y%m%d%H%M%S")
     end_dt = (now.replace(year=now.year + 1)).strftime("%Y%m%d235959")
+    save_dvs_cd = "U" if pr_no else "C"
     body = {
-      "saveDvsCd": "C",                         # 항상 신규 등록
+      "saveDvsCd": save_dvs_cd,                 # C=신규, U=수정
       "prKndCd": "PRD_MAM_BUY",                 # 살수록/배수할인
-      "prNo": "",                                # 신규 등록 시 빈값
+      "prNo": pr_no,                             # 수정 시 기존 prNo, 신규 시 빈값
       "prNm": "삼바 살수록할인",
       "afflPrNo": affil_pr_no,                   # 셀러 자체 프로모션번호(PK, 최대 20자)
       "trNo": self.tr_no,
@@ -644,6 +659,35 @@ class LotteonClient:
     return await self._call_api(
       "GET",
       "/v1/openapi/delivery/v1/zone/group/list",
+    )
+
+  async def get_category_attributes(self, scat_no: str) -> dict[str, Any]:
+    """표준카테고리 속성목록 조회 (onpick-api 도메인).
+
+    scatAttrLst 구성에 필요한 optCd / optValCd 조회.
+    """
+    return await self._call_api(
+      "GET",
+      "/cheetah/econCheetah.ecn",
+      params={"job": "cheetahScatAttr", "mf_1": scat_no},
+      base_url=self.ONPICK_URL,
+    )
+
+  async def get_category_attributes_by_job(self, job: str, scat_no: str, param_key: str = "mf_1") -> dict[str, Any]:
+    """표준카테고리 속성목록 조회 — job명/param키 탐색용."""
+    return await self._call_api(
+      "GET",
+      "/cheetah/econCheetah.ecn",
+      params={"job": job, param_key: scat_no},
+      base_url=self.ONPICK_URL,
+    )
+
+  async def get_category_attribute_list(self, category_id: str) -> dict[str, Any]:
+    """표준카테고리 속성목록 조회 — 메인 API 경로 시도."""
+    return await self._call_api(
+      "GET",
+      f"/v1/openapi/product/v1/category/attribute/list",
+      params={"scatNo": category_id},
     )
 
   async def search_brand(self, keyword: str) -> dict[str, Any]:
@@ -902,6 +946,12 @@ class LotteonClient:
     # ── 판매자 상품코드 (품번 있을 때만) ────────────────────────
     if style_code:
       spd["selPrdNo"] = style_code[:50]
+
+    # ── 카테고리 속성정보 (scatAttrLst) ─────────────────────────
+    # _scat_attr_lst: [{"optCd": attr_id, "optValCd": attr_val_id}, ...]
+    scat_attr_lst = product.get("_scat_attr_lst") or []
+    if scat_attr_lst:
+      spd["scatAttrLst"] = scat_attr_lst
 
     # ── 상품홍보문구 — 자동 설정 불가
     # - OpenAPI 페이로드에 포함 시 무시됨 (200 OK 반환하지만 미반영)

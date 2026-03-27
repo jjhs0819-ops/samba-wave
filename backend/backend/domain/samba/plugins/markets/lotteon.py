@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, TYPE_CHECKING
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
@@ -13,6 +14,234 @@ from backend.utils.logger import logger
 
 # 브랜드명 접미사 목록 — 검색 전 자동 제거
 _BRAND_SUFFIXES = ["키즈", "주니어", "주니어즈", "골프", "Kids", "Junior", "Juniors", "Golf"]
+
+# ──────────────────────────────────────────────────────────────────────────
+# scatAttrLst 매핑 테이블
+# attr_id: 롯데ON 속성코드 (카테고리 attr_list에서 조회)
+# attr_val_id: 롯데ON 속성값코드 (cheetahAttr API에서 확인)
+# ──────────────────────────────────────────────────────────────────────────
+
+# 알려진 attr_id → 의미 매핑 (카테고리별로 다를 수 있음)
+_ATTR_SEASON_ID = "10378"       # 사용계절
+_ATTR_SEX_ID = "11337"          # 성별
+_ATTR_PANTS_FIT_ID = "11933"    # 팬츠 핏 (카테고리 BC160501xx)
+_ATTR_MATERIAL_ID = "11974"     # 의류 주요소재
+_ATTR_COLOR_ID = "12438"        # 통합색상
+_ATTR_SIZE_BOTTOM_ID = "12442"  # 성인 하의 사이즈
+_ATTR_CLOTHES_TYPE_ID = "776739"  # 의류 종류
+_ATTR_ITEM_TYPE_ID = "779690"   # 품목
+
+# 사용계절 매핑 (무신사 season → attr_val_id)
+_SEASON_MAP: dict[str, str] = {
+  "사계절": "102421",
+  "봄": "102422", "가을": "102422", "spring": "102422", "autumn": "102422", "fall": "102422",
+  "여름": "102423", "summer": "102423",
+  "겨울": "102424", "winter": "102424",
+}
+
+# 성별 매핑 (무신사 sex → attr_val_id)
+_SEX_MAP: dict[str, str] = {
+  "남성": "109487", "남자": "109487", "male": "109487", "men": "109487", "man": "109487",
+  "여성": "109488", "여자": "109488", "female": "109488", "women": "109488", "woman": "109488",
+  "공용": "109489", "남녀": "109489", "unisex": "109489",
+}
+
+# 의류 주요소재 매핑 (무신사 material 텍스트 키워드 → attr_val_id)
+_MATERIAL_MAP: dict[str, str] = {
+  "면": "112206", "코튼": "112206", "cotton": "112206",
+  "폴리에스터": "716573347", "폴리에스텔": "716573347", "polyester": "716573347", "폴리": "716573347",
+  "기모": "632861291",
+  "나일론": "112203", "nylon": "112203",
+  "리넨": "112204", "linen": "112204",
+  "실크": "112205", "silk": "112205",
+  "레이온": "718490456", "rayon": "718490456",
+  "모달": "876098952", "modal": "876098952",
+  "아크릴": "733156070", "acrylic": "733156070",
+  "데님": "112190", "청": "112190", "denim": "112190",
+  "벨벳": "112196", "velvet": "112196",
+  "모": "112208", "울": "112208", "wool": "112208",
+  "캐시미어": "591014974", "cashmere": "591014974",
+  "코듀로이": "632861290", "corduroy": "632861290",
+  "플리스": "876098953", "fleece": "876098953",
+  "가죽": "547696592", "leather": "547696592",
+  "인조가죽": "788761126",
+  "폴리우레탄": "752495629",
+  "새틴": "876098955", "satin": "876098955",
+  "트위드": "835835046", "tweed": "835835046",
+  "텐셀": "112207", "tencel": "112207",
+  "퍼": "547696582", "fur": "547696582",
+  "앙고라": "636940692", "angora": "636940692",
+}
+
+# 통합색상 매핑 (무신사 color 텍스트 키워드 → attr_val_id)
+_COLOR_MAP: dict[str, str] = {
+  "블랙": "114835", "검정": "114835", "black": "114835",
+  "화이트": "114794", "흰": "114794", "white": "114794",
+  "네이비": "114833", "navy": "114833",
+  "그레이": "114830", "회색": "114830", "gray": "114830", "grey": "114830", "그레": "114830",
+  "베이지": "114772", "beige": "114772",
+  "브라운": "114782", "갈색": "114782", "brown": "114782",
+  "카키": "114816", "khaki": "114816",
+  "레드": "114822", "빨강": "114822", "red": "114822",
+  "블루": "114804", "파랑": "114804", "blue": "114804",
+  "그린": "114811", "초록": "114811", "green": "114811",
+  "핑크": "114796", "분홍": "114796", "pink": "114796",
+  "옐로우": "114836", "노랑": "114836", "yellow": "114836",
+  "오렌지": "114818", "orange": "114818",
+  "퍼플": "91478236", "보라": "91478236", "purple": "91478236",
+  "아이보리": "114773", "ivory": "114773",
+  "차콜": "114831", "charcoal": "114831",
+  "올리브": "114814", "olive": "114814",
+  "와인": "114823", "wine": "114823",
+  "버건디": "114824", "burgundy": "114824",
+  "멀티": "114839", "multi": "114839",
+  "코랄": "114820", "coral": "114820",
+  "스카이": "114806", "sky": "114806",
+  "라벤다": "114802", "lavender": "114802",
+  "민트": "114812", "mint": "114812",
+  "머스타드": "114837", "mustard": "114837",
+  "골드": "114778", "gold": "114778",
+  "실버": "114828", "silver": "114828",
+  "연두": "114813",
+  "데님": "114810",
+  "아쿠아": "114807", "aqua": "114807",
+}
+
+# 의류 종류 매핑 (category 텍스트 키워드 → attr_val_id)
+_CLOTHES_TYPE_MAP: dict[str, str] = {
+  "바지": "625980564", "팬츠": "625980564", "레깅스": "625980564",
+  "자켓": "625980557", "코트": "625980557",
+  "점퍼": "625980558", "패딩": "625980558", "야상": "625980558",
+  "가디건": "625980559",
+  "니트": "625980561", "조끼": "625980561",
+  "셔츠": "625980562", "블라우스": "625980562",
+  "티셔츠": "625980563", "맨투맨": "625980563", "후디": "625980563", "후드": "625980563",
+  "스커트": "625980566",
+  "원피스": "625980567", "점프수트": "625980567",
+  "수영복": "628783835", "래시가드": "628783835",
+  "정장": "628785579",
+  "트레이닝": "628785581",
+}
+
+# 성인 하의 사이즈 매핑 (옵션명 → attr_val_id)
+_SIZE_BOTTOM_MAP: dict[str, str] = {
+  "XS": "114990", "S": "114991", "M": "114992", "L": "114993",
+  "XL": "114994", "2XL": "114995", "XXL": "114995", "3XL": "114996",
+  "4XL": "114997", "5XL": "114998",
+  "22": "803338603", "23": "114969", "24": "114970", "25": "114971",
+  "26": "114972", "27": "114973", "28": "114974", "29": "114975",
+  "30": "114976", "31": "114977", "32": "114978", "33": "114979",
+  "34": "114980", "35": "114981", "36": "114982", "38": "114984",
+  "40": "114986", "42": "91478294", "44": "91478295",
+  "FREE": "114968", "free": "114968", "one size": "114968", "1size": "114968", "프리": "114968",
+}
+
+# 팬츠 핏 매핑 (상품명/태그 키워드 → attr_val_id)
+_PANTS_FIT_MAP: dict[str, str] = {
+  "배기": "112026", "baggy": "112026",
+  "부츠컷": "112027", "boot": "112027",
+  "와이드": "112028", "wide": "112028",
+  "스트레이트": "112029", "일자": "112029", "straight": "112029",
+  "슬림": "112030", "스키니": "112030", "slim": "112030", "skinny": "112030",
+  "테이퍼드": "547916208", "tapered": "547916208",
+  "조거": "610443195", "jogger": "610443195",
+  "핀턱": "773234579", "pintuck": "773234579",
+}
+
+
+def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[dict[str, str]]:
+  """무신사 소싱 데이터 → 롯데ON scatAttrLst 변환.
+
+  Args:
+    product: CollectedProduct dict (product_copy)
+    attr_ids: 카테고리에서 지원하는 attr_id 목록
+
+  Returns:
+    [{"optCd": attr_id, "optValCd": attr_val_id}, ...]
+  """
+  result: list[dict[str, str]] = []
+  attr_id_set = set(attr_ids)
+
+  def _add(attr_id: str, val_id: str) -> None:
+    if attr_id in attr_id_set and val_id:
+      result.append({"optCd": attr_id, "optValCd": val_id})
+
+  def _keyword_match(text: str, mapping: dict[str, str]) -> str:
+    """텍스트에서 첫 번째 매칭 키워드의 attr_val_id 반환."""
+    text_lower = text.lower()
+    for key, val in mapping.items():
+      if key.lower() in text_lower:
+        return val
+    return ""
+
+  # ── 사용계절 ──────────────────────────────────────────────────────
+  # "2026 SS", "FW", "AW" 등 패션 시즌 코드 지원
+  season_raw = product.get("season") or []
+  if isinstance(season_raw, str):
+    season_raw = [s.strip() for s in season_raw.replace(",", "/").split("/") if s.strip()]
+  if season_raw:
+    combined = " ".join(season_raw).lower()
+    season_set = {s for s in season_raw if s in {"봄", "여름", "가을", "겨울"}}
+    if len(season_set) >= 3 or "사계절" in combined:
+      _add(_ATTR_SEASON_ID, "102421")  # 사계절용
+    elif re.search(r'\b(fw|aw|fall|autumn|winter|겨울)\b', combined):
+      _add(_ATTR_SEASON_ID, "102424")  # 겨울용 (FW/AW)
+    elif re.search(r'\b(ss|spring|봄|가을)\b', combined):
+      _add(_ATTR_SEASON_ID, "102422")  # 봄/가을용 (SS)
+    elif re.search(r'\b(summer|여름)\b', combined):
+      _add(_ATTR_SEASON_ID, "102423")  # 여름용
+
+  # ── 성별 ─────────────────────────────────────────────────────────
+  sex = (product.get("sex") or "").lower()
+  val = _keyword_match(sex, _SEX_MAP)
+  if val:
+    _add(_ATTR_SEX_ID, val)
+
+  # ── 의류 주요소재 ─────────────────────────────────────────────────
+  material = (product.get("material") or "").lower()
+  val = _keyword_match(material, _MATERIAL_MAP)
+  if val:
+    _add(_ATTR_MATERIAL_ID, val)
+
+  # ── 통합색상 ─────────────────────────────────────────────────────
+  color = (product.get("color") or "").lower()
+  val = _keyword_match(color, _COLOR_MAP)
+  if val:
+    _add(_ATTR_COLOR_ID, val)
+
+  # ── 의류 종류 (category1~4 텍스트에서 추출) ──────────────────────
+  cat_text = " ".join(filter(None, [
+    product.get("category1") or "",
+    product.get("category2") or "",
+    product.get("category3") or "",
+    product.get("category4") or "",
+  ]))
+  val = _keyword_match(cat_text, _CLOTHES_TYPE_MAP)
+  if val:
+    _add(_ATTR_CLOTHES_TYPE_ID, val)
+
+  # ── 품목 → 고정값 의류 ────────────────────────────────────────────
+  _add(_ATTR_ITEM_TYPE_ID, "628662010")
+
+  # ── 성인 하의 사이즈 (options 에서 추출) ────────────────────────
+  if _ATTR_SIZE_BOTTOM_ID in attr_id_set:
+    options = product.get("options") or []
+    added_sizes: set[str] = set()
+    for opt in options:
+      size_nm = (opt.get("name") or opt.get("size") or "").strip()
+      val = _SIZE_BOTTOM_MAP.get(size_nm, "")
+      if val and val not in added_sizes:
+        result.append({"optCd": _ATTR_SIZE_BOTTOM_ID, "optValCd": val})
+        added_sizes.add(val)
+
+  # ── 팬츠 핏 (상품명 + 태그에서 키워드 추출) ─────────────────────
+  if _ATTR_PANTS_FIT_ID in attr_id_set:
+    name_and_tags = (product.get("name") or "") + " " + " ".join(product.get("tags") or [])
+    val = _keyword_match(name_and_tags, _PANTS_FIT_MAP)
+    if val:
+      _add(_ATTR_PANTS_FIT_ID, val)
+
+  return result
 
 
 def _strip_brand_suffix(name: str) -> str:
@@ -212,8 +441,9 @@ class LotteonPlugin(MarketPlugin):
           logger.warning(f"[롯데ON] 하위 카테고리 조회 실패 (무시): {e}")
           break
 
-    # 전시카테고리(FC...) 자동 조회
+    # 전시카테고리(FC...) + attr_list 자동 조회 (1번 API 호출로 통합)
     disp_cat_id = ""
+    category_attr_ids: list[str] = []
     try:
       cat_result = await client.get_categories(cat_id=category_id)
       items = cat_result.get("itemList") or []
@@ -222,9 +452,27 @@ class LotteonPlugin(MarketPlugin):
         disp_list = d.get("disp_list", [])
         if disp_list:
           disp_cat_id = disp_list[0].get("disp_cat_id", "")
-      logger.info(f"[롯데ON] 전시카테고리 조회: {category_id} → {disp_cat_id}")
+        # 속성 attr_id 목록 추출 (scatAttrLst 생성용)
+        category_attr_ids = [
+          str(a.get("attr_id", "")) for a in (d.get("attr_list") or []) if a.get("attr_id")
+        ]
+      logger.info(f"[롯데ON] 전시카테고리 조회: {category_id} → {disp_cat_id}, attr_ids={len(category_attr_ids)}개")
     except Exception as e:
       logger.warning(f"[롯데ON] 전시카테고리 조회 실패 (무시): {e}")
+
+    # 속성정보(scatAttrLst) 생성 — 무신사 소싱 데이터 → 롯데ON 속성값 매핑
+    if category_attr_ids:
+      # 소스 필드 디버그 (성별/계절 오매핑 원인 파악용)
+      logger.info(
+        f"[롯데ON][속성소스] sex={product_copy.get('sex')!r} "
+        f"season={product_copy.get('season')!r} "
+        f"material={product_copy.get('material')!r} "
+        f"color={product_copy.get('color')!r} "
+        f"category1={product_copy.get('category1')!r}"
+      )
+      scat_attr_lst = _build_scat_attr_lst(product_copy, category_attr_ids)
+      product_copy["_scat_attr_lst"] = scat_attr_lst
+      logger.info(f"[롯데ON] scatAttrLst 생성: {len(scat_attr_lst)}개 → {scat_attr_lst}")
 
     data = LotteonClient.transform_product(
       product_copy, category_id, client.tr_grp_cd or "SR", client.tr_no, disp_cat_id
@@ -363,10 +611,32 @@ class LotteonPlugin(MarketPlugin):
     multi_rate = float(extras.get("multiPurchaseRate") or 0)
     if multi_enabled and multi_qty > 0 and multi_rate > 0:
       try:
-        resp = await client.insert_quantity_discount(spd_no, min_qty=multi_qty, discount_rate=multi_rate, eitm_nos=eitm_nos or [])
+        # 기존 살수록할인 prNo 조회 → 있으면 update(U), 없으면 create(C)
+        existing_pr_no = ""
+        try:
+          search_resp = await client.search_quantity_discount_list(spd_no)
+          pr_list = (search_resp.get("data") or {}).get("prList") or []
+          if pr_list:
+            existing_pr_no = str(pr_list[0].get("prNo", ""))
+            logger.info(f"[롯데ON] 기존 살수록할인 발견: prNo={existing_pr_no} → 수정 모드(U)")
+        except Exception as se:
+          logger.info(f"[롯데ON] 살수록할인 목록 조회 실패 (신규 등록 진행): {se}")
+
+        resp = await client.insert_quantity_discount(
+          spd_no,
+          min_qty=multi_qty,
+          discount_rate=multi_rate,
+          eitm_nos=eitm_nos or [],
+          pr_no=existing_pr_no,
+        )
         logger.info(f"[롯데ON] 살수록할인 설정 완료: {multi_qty}개 이상 {multi_rate}% → {resp}")
       except Exception as e:
-        logger.warning(f"[롯데ON] 살수록할인 설정 실패 (무시): {e}")
+        err_str = str(e)
+        if "3000" in err_str:
+          # 3000 = 행사기간 중복 → 이미 등록된 살수록할인이 활성 상태
+          logger.info(f"[롯데ON] 살수록할인 이미 등록됨 — 기존 설정 유지 ({err_str[:80]})")
+        else:
+          logger.warning(f"[롯데ON] 살수록할인 설정 실패 (무시): {e}")
 
   async def delete(self, session, product_no: str, account) -> dict[str, Any]:
     """롯데ON 상품 판매중지 (SOUT 상태 변경)."""
