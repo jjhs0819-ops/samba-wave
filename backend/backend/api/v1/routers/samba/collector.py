@@ -489,7 +489,7 @@ async def scroll_products(
 
     # 목록에 필요한 경량 컬럼만 선택 (JSON 필드 최소화)
     _LIST_FIELDS = {
-        "id", "source_site", "search_filter_id", "site_product_id",
+        "id", "source_site", "search_filter_id", "site_product_id", "source_url",
         "name", "name_en", "brand", "original_price", "sale_price", "cost",
         "images", "options", "category", "status",
         "applied_policy_id", "market_prices", "market_enabled",
@@ -520,7 +520,7 @@ async def scroll_products(
         from sqlalchemy import case, literal
         counts_stmt = select(
             func.count().label("total"),
-            func.count(case((_CP.registered_accounts != None, literal(1)))).label("registered"),
+            func.count(case((_CP.status == "registered", literal(1)))).label("registered"),
             func.count(case((_CP.applied_policy_id != None, literal(1)))).label("policy_applied"),
             func.count(case((_CP.is_sold_out == True, literal(1)))).label("sold_out"),
         ).select_from(_CP)
@@ -543,12 +543,11 @@ async def scroll_products(
 
     data_stmt = data_stmt.offset(skip).limit(limit)
 
-    # 병렬 실행
-    count_result, data_result = await asyncio.gather(
-        session.execute(count_stmt),
-        session.execute(data_stmt),
-    )
+    # 순차 실행 (같은 세션에서 asyncio.gather 사용 시 asyncpg 충돌 방지)
+    count_result = await session.execute(count_stmt)
     total = count_result.scalar() or 0
+
+    data_result = await session.execute(data_stmt)
     rows = data_result.mappings().all()
 
     # 사이트/카운트 결과 수집
