@@ -133,11 +133,16 @@ class LotteonSourcingClient:
   ) -> list[dict[str, Any]]:
     """검색 결과 HTML에서 상품 정보 추출.
 
-    롯데ON 검색 페이지는 __NEXT_DATA__ 또는 상품 카드 구조로 제공된다.
+    롯데ON 검색 페이지는 econJs.SearchApp.create() JS 객체 안에 상품 데이터가 있다.
     """
     products: list[dict[str, Any]] = []
     seen: set[str] = set()
     now_iso = datetime.now(tz=timezone.utc).isoformat()
+
+    # 방법 0: econJs.SearchApp.create() JS 객체에서 추출 (롯데ON 실제 구조)
+    econjs_products = self._parse_search_econjs(html, now_iso)
+    if econjs_products:
+      return econjs_products
 
     # 방법 1: __NEXT_DATA__ JSON에서 추출 시도
     next_data_products = self._parse_search_next_data(html, now_iso)
@@ -150,9 +155,9 @@ class LotteonSourcingClient:
       return json_ld_products
 
     # 방법 3: HTML 상품 카드 블록에서 추출 (폴백)
-    # 롯데ON 상품 링크 패턴: /p/product/LO + 10자리 숫자
+    # 롯데ON 상품 링크 패턴: /p/product/{prefix}{숫자} (PD/LI/LO/LE 모두 허용)
     product_link_pattern = re.compile(
-      r'/p/product/(LO\d{10})',
+      r'/p/product/([A-Z]{2}\d{8,12})',
       re.IGNORECASE,
     )
 
@@ -229,6 +234,207 @@ class LotteonSourcingClient:
             "collectedAt": now_iso,
           })
 
+    return products
+
+  def _parse_search_econjs(
+    self, html: str, now_iso: str
+  ) -> list[dict[str, Any]]:
+    """econJs.SearchApp.create() JS 객체에서 검색 결과 상품 데이터 추출.
+
+    롯데ON 검색 페이지의 실제 상품 데이터는 아래 형태의 JS 코드 안에 있다:
+      econJs.SearchApp.create('.srchResultWrap', { ... products: [...] ... })
+    값 사이에 줄바꿈이 포함되어 있으므로 re.DOTALL 으로 처리한다.
+    """
+    products: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    # econJs.SearchApp.create 호출 전체 추출
+    # 두 번째 인자(객체 리터럴) 시작 중괄호부터 끝까지 추출
+    econjs_match = re.search(
+      r'econJs\.SearchApp\.create\s*\([^,]+,\s*(\{)',
+      html,
+      re.DOTALL,
+    )
+    if not econjs_match:
+      return []
+
+    # 중괄호 깊이 추적으로 전체 JSON 객체 추출
+    start_pos = econjs_match.start(1)
+    depth = 0
+    end_pos = start_pos
+    for i in range(start_pos, len(html)):
+      ch = html[i]
+      if ch == '{':
+        depth += 1
+      elif ch == '}':
+        depth -= 1
+        if depth == 0:
+          end_pos = i + 1
+          break
+
+    raw_obj = html[start_pos:end_pos]
+    if not raw_obj:
+      return []
+
+    # JS 객체를 JSON 파싱 가능하게 전처리
+    # 1) 줄바꿈/탭 → 공백
+    raw_obj = re.sub(r'[\r\n\t]+', ' ', raw_obj)
+    # 2) 후행 콤마 제거 (JSON 비표준)
+    raw_obj = re.sub(r',\s*([}\]])', r'\1', raw_obj)
+    # 3) 따옴표 없는 키 → 따옴표 있는 키로 변환 (단순 식별자만)
+    raw_obj = re.sub(r'(?<=[{,\s])([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'"\1":', raw_obj)
+
+    try:
+      obj = json.loads(raw_obj)
+    except (json.JSONDecodeError, ValueError):
+      # JSON 파싱 실패 시 상품 ID + 기본 필드만 정규식으로 추출
+      logger.debug("[LOTTEON] econJs JSON 파싱 실패 → 정규식 폴백")
+      return self._parse_search_econjs_regex(html, now_iso)
+
+    # 상품 리스트 탐색 (가능한 키 목록)
+    items: list[Any] = []
+    for key in ("products", "productList", "itemList", "items", "list"):
+      val = obj.get(key)
+      if isinstance(val, list):
+        items = val
+        break
+    # 중첩 구조 탐색 (data.products 등)
+    if not items:
+      for sub_key in ("data", "result", "searchResult"):
+        sub = obj.get(sub_key)
+        if isinstance(sub, dict):
+          for key in ("products", "productList", "itemList", "items", "list"):
+            val = sub.get(key)
+            if isinstance(val, list):
+              items = val
+              break
+        if items:
+          break
+
+    if not items:
+      logger.debug("[LOTTEON] econJs 객체에서 상품 리스트 키 없음")
+      return self._parse_search_econjs_regex(html, now_iso)
+
+    for item in items:
+      if not isinstance(item, dict):
+        continue
+
+      spd_no = str(
+        item.get("spdNo", "")
+        or item.get("sitmNo", "")
+        or item.get("productNo", "")
+        or ""
+      ).strip()
+      if not spd_no or spd_no in seen:
+        continue
+      seen.add(spd_no)
+
+      name = str(
+        item.get("spdNm", "")
+        or item.get("productName", "")
+        or item.get("name", "")
+        or ""
+      ).strip()
+      if not name:
+        continue
+
+      # 할인가(discountPrice) 우선, 없으면 price
+      sale_price = self._safe_int(
+        item.get("discountPrice", 0)
+        or item.get("sellPrc", 0)
+        or item.get("price", 0)
+      )
+      original_price = self._safe_int(
+        item.get("price", 0)
+        or item.get("norPrc", 0)
+      ) or sale_price
+
+      thumbnail = self._normalize_image(
+        str(item.get("image", "") or item.get("imageUrl", "") or item.get("mainImgUrl", "") or "")
+      )
+
+      # 품절 여부
+      is_sold_out = bool(
+        item.get("soldOut", False)
+        or item.get("soldOutYn", "N") == "Y"
+        or re.search(r'soldout|sold_out|품절', str(item), re.IGNORECASE)
+      )
+
+      brand = str(item.get("brandNm", "") or item.get("brandName", "") or "").strip()
+
+      products.append({
+        "siteProductId": spd_no,
+        "name": name,
+        "brand": brand,
+        "originalPrice": original_price,
+        "salePrice": sale_price if sale_price > 0 else original_price,
+        "thumbnailImageUrl": thumbnail,
+        "isSoldOut": is_sold_out,
+        "sourceSite": "LOTTEON",
+        "sourceUrl": f"{self.PRODUCT_URL}/{spd_no}",
+        "collectedAt": now_iso,
+      })
+
+    logger.info(f"[LOTTEON] econJs JSON 파싱 → {len(products)}개")
+    return products
+
+  def _parse_search_econjs_regex(
+    self, html: str, now_iso: str
+  ) -> list[dict[str, Any]]:
+    """econJs JSON 파싱 실패 시 정규식으로 spdNo/spdNm/price/image 개별 추출.
+
+    값 사이에 줄바꿈이 있을 수 있으므로 re.DOTALL 사용.
+    """
+    products: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    # spdNo 전체 목록 추출 (PD/LI/LO/LE 모두 포함)
+    spd_no_pattern = re.compile(
+      r'"spdNo"\s*:\s*"([A-Z]{2}\d{6,12})"',
+      re.DOTALL,
+    )
+
+    # 각 상품 블록 단위로 파싱 (spdNo 앞뒤 500자 슬라이싱)
+    for m in spd_no_pattern.finditer(html):
+      spd_no = m.group(1)
+      if spd_no in seen:
+        continue
+      seen.add(spd_no)
+
+      # 해당 상품 블록 (전후 500자)
+      block_start = max(0, m.start() - 50)
+      block_end = min(len(html), m.end() + 600)
+      block = html[block_start:block_end]
+
+      name_m = re.search(r'"spdNm"\s*:\s*"([^"]+)"', block, re.DOTALL)
+      name = name_m.group(1).strip() if name_m else ""
+      if not name:
+        continue
+
+      price_m = re.search(r'"price"\s*:\s*(\d+)', block, re.DOTALL)
+      disc_m = re.search(r'"discountPrice"\s*:\s*(\d+)', block, re.DOTALL)
+      original_price = int(price_m.group(1)) if price_m else 0
+      sale_price = int(disc_m.group(1)) if disc_m else original_price
+
+      img_m = re.search(r'"image"\s*:\s*"([^"]+)"', block, re.DOTALL)
+      thumbnail = self._normalize_image(img_m.group(1) if img_m else "")
+
+      is_sold_out = bool(re.search(r'soldout|sold_out|품절', block, re.IGNORECASE))
+
+      products.append({
+        "siteProductId": spd_no,
+        "name": name,
+        "brand": "",
+        "originalPrice": original_price,
+        "salePrice": sale_price if sale_price > 0 else original_price,
+        "thumbnailImageUrl": thumbnail,
+        "isSoldOut": is_sold_out,
+        "sourceSite": "LOTTEON",
+        "sourceUrl": f"{self.PRODUCT_URL}/{spd_no}",
+        "collectedAt": now_iso,
+      })
+
+    logger.info(f"[LOTTEON] econJs 정규식 폴백 → {len(products)}개")
     return products
 
   def _parse_search_next_data(
@@ -347,10 +553,10 @@ class LotteonSourcingClient:
           if not name:
             continue
 
-          # URL에서 상품번호 추출
+          # URL에서 상품번호 추출 (PD/LI/LO/LE 등 모든 prefix 허용)
           url = product.get("url", "")
           product_no = ""
-          no_match = re.search(r'(LO\d{10})', url)
+          no_match = re.search(r'/p/product/([A-Z]{2}\d{6,12})', url, re.IGNORECASE)
           if no_match:
             product_no = no_match.group(1)
           if not product_no:

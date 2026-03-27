@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,11 @@ if TYPE_CHECKING:
   from backend.domain.samba.collector.refresher import RefreshResult
 
 logger = logging.getLogger(__name__)
+
+# 롯데ON 소싱처 적응형 인터벌 상태
+_lotteon_interval: float = 0.5  # 현재 인터벌 (초)
+_lotteon_consecutive_errors: int = 0  # 연속 차단 횟수
+_lotteon_safe_interval: float = 999.0  # 차단 없는 최소 인터벌 기록
 
 
 class LotteonSourcingPlugin(SourcingPlugin):
@@ -47,9 +53,23 @@ class LotteonSourcingPlugin(SourcingPlugin):
     return await self.safe_call(client.get_product_detail(site_product_id))
 
   async def refresh(self, product) -> "RefreshResult":
-    """가격/재고 갱신 — 상세 페이지 재조회로 최신 데이터 추출."""
-    from backend.domain.samba.collector.refresher import RefreshResult
-    from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
+    """가격/재고 갱신 — 상세 페이지 재조회로 최신 데이터 추출.
+
+    무신사 수준의 에러 처리 및 적응형 인터벌 조정을 포함한다:
+    - 45초 타임아웃
+    - RateLimitError 차단 감지 → 인터벌 2배 증가 (최대 30초)
+    - 연속 5회 차단 시 전체 중단
+    - retry_after 있으면 대기 후 1회 재시도
+    - 성공 시 인터벌 점진 복원
+    - 가격/재고 상태 변동 판정
+    """
+    global _lotteon_interval, _lotteon_consecutive_errors, _lotteon_safe_interval
+
+    from backend.domain.samba.collector.refresher import RefreshResult, _log_refresh
+    from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient, RateLimitError
+
+    _idx = getattr(product, "_refresh_idx", 0)
+    _total = getattr(product, "_refresh_total", 0)
 
     product_id = getattr(product, "id", "")
     site_product_id = getattr(product, "site_product_id", "") or getattr(
@@ -62,56 +82,155 @@ class LotteonSourcingPlugin(SourcingPlugin):
         error="롯데ON 상품 ID 없음",
       )
 
+    client = LotteonSourcingClient()
+    detail = None
+
     try:
-      client = LotteonSourcingClient()
-      detail = await self.safe_call(
-        client.get_product_detail(site_product_id)
+      detail = await asyncio.wait_for(
+        client.get_product_detail(site_product_id),
+        timeout=45,
+      )
+      # 성공 → 인터벌 점진 복원 (최소 0.3초까지)
+      _lotteon_interval = max(0.3, _lotteon_interval - 0.3)
+      _lotteon_consecutive_errors = 0
+      if _lotteon_interval <= _lotteon_safe_interval:
+        _lotteon_safe_interval = _lotteon_interval
+
+    except RateLimitError as e:
+      # 차단 → 인터벌 2배 증가 (최대 30초)
+      _lotteon_interval = min(30.0, _lotteon_interval * 2)
+      _lotteon_consecutive_errors += 1
+      _log_refresh(
+        "LOTTEON", product_id,
+        getattr(product, "name", ""),
+        f"차단 HTTP {e.status} (연속 {_lotteon_consecutive_errors}회, 인터벌→{_lotteon_interval:.1f}s)",
+        level="warning", idx=_idx, total=_total,
       )
 
-      if not detail:
+      # 연속 5회 이상이면 해당 소싱처 전체 일시 중단
+      if _lotteon_consecutive_errors >= 5:
+        _log_refresh(
+          "LOTTEON", product_id,
+          getattr(product, "name", ""),
+          f"연속 {_lotteon_consecutive_errors}회 차단 — 일시 중단",
+          level="error", idx=_idx, total=_total,
+        )
         return RefreshResult(
           product_id=product_id,
-          error=f"롯데ON 상세 조회 실패: {site_product_id}",
+          error=f"차단 감지: HTTP {e.status} (연속 {_lotteon_consecutive_errors}회, "
+                f"인터벌 {_lotteon_interval}초)",
         )
 
-      new_sale_price = detail.get("salePrice", 0)
-      new_original_price = detail.get("originalPrice", 0)
-      is_sold_out = detail.get("isOutOfStock", False) or detail.get("isSoldOut", False)
+      # retry_after 있으면 대기 후 1회 재시도
+      if e.retry_after > 0:
+        logger.warning(f"[LOTTEON] {site_product_id} 차단({e.status}), {e.retry_after}초 후 재시도")
+        await asyncio.sleep(e.retry_after)
+        try:
+          detail = await client.get_product_detail(site_product_id)
+          _lotteon_consecutive_errors = 0
+          _log_refresh(
+            "LOTTEON", product_id,
+            getattr(product, "name", ""),
+            f"재시도 성공 (대기 {e.retry_after}s 후)",
+            idx=_idx, total=_total,
+          )
+        except Exception:
+          _log_refresh(
+            "LOTTEON", product_id,
+            getattr(product, "name", ""),
+            f"재시도 실패: HTTP {e.status}",
+            level="error", idx=_idx, total=_total,
+          )
+          return RefreshResult(product_id=product_id, error=f"차단 후 재시도 실패: HTTP {e.status}")
+      else:
+        return RefreshResult(product_id=product_id, error=f"차단: HTTP {e.status}")
 
-      # bestBenefitPrice → new_cost (실질 매입가)
-      best_benefit_price = detail.get("bestBenefitPrice", 0)
-
-      # 옵션 데이터 변환
-      new_options = None
-      raw_options = detail.get("options", [])
-      if raw_options:
-        new_options = [
-          {
-            "name": opt.get("name", ""),
-            "price": opt.get("price", 0),
-            "stock": 0 if opt.get("isSoldOut") else opt.get("stock", 1),
-            "isSoldOut": opt.get("isSoldOut", False),
-          }
-          for opt in raw_options
-        ]
-
-      return RefreshResult(
-        product_id=product_id,
-        new_sale_price=float(new_sale_price) if new_sale_price else None,
-        new_original_price=float(new_original_price) if new_original_price else None,
-        new_cost=float(best_benefit_price) if best_benefit_price else None,
-        new_sale_status="sold_out" if is_sold_out else "in_stock",
-        new_options=new_options,
-        new_images=detail.get("images"),
-        new_detail_images=detail.get("detailImages"),
-        new_free_shipping=detail.get("freeShipping"),
-        new_same_day_delivery=detail.get("sameDayDelivery"),
-        changed=True,
+    except asyncio.TimeoutError:
+      # 45초 안에 응답 없음 → 건너뛰기
+      _log_refresh(
+        "LOTTEON", product_id,
+        getattr(product, "name", ""),
+        "응답 없음 (45초 타임아웃) — 건너뜀",
+        level="warning", idx=_idx, total=_total,
       )
+      return RefreshResult(product_id=product_id, error="응답 없음: 45초 타임아웃")
 
     except Exception as e:
       logger.error(f"[LOTTEON] 갱신 실패: {site_product_id} — {e}")
+      _log_refresh(
+        "LOTTEON", product_id,
+        getattr(product, "name", ""),
+        f"실패 — {e}",
+        level="error", idx=_idx, total=_total,
+      )
+      return RefreshResult(product_id=product_id, error=f"롯데ON API 오류: {e}")
+
+    if not detail:
       return RefreshResult(
         product_id=product_id,
-        error=f"롯데ON 갱신 실패: {e}",
+        error=f"롯데ON 상세 조회 실패: {site_product_id}",
       )
+
+    # ── 데이터 추출 ──
+    new_sale_price = detail.get("salePrice") or 0
+    new_original_price = detail.get("originalPrice") or 0
+    best_benefit_price = detail.get("bestBenefitPrice")
+    if best_benefit_price is not None and best_benefit_price <= 0:
+      best_benefit_price = None
+
+    is_sold_out = detail.get("isOutOfStock", False) or detail.get("isSoldOut", False)
+    new_sale_status = "sold_out" if is_sold_out else "in_stock"
+
+    # 옵션 데이터 변환
+    new_options = None
+    raw_options = detail.get("options") or []
+    if raw_options:
+      new_options = [
+        {
+          "name": opt.get("name", ""),
+          "price": opt.get("price", 0),
+          "stock": 0 if opt.get("isSoldOut") else opt.get("stock", 1),
+          "isSoldOut": opt.get("isSoldOut", False),
+        }
+        for opt in raw_options
+      ]
+
+    # ── 변동 판정 ──
+    old_sale = getattr(product, "sale_price", 0) or 0
+    old_status = getattr(product, "sale_status", "in_stock")
+    changed = (new_sale_price != old_sale or new_sale_status != old_status)
+
+    # 옵션 재고 변동 건수
+    old_options = getattr(product, "options", None) or []
+    _stock_changes = 0
+    if new_options and old_options:
+      old_stock_map = {o.get("name", ""): o.get("stock", 0) for o in old_options}
+      for o in new_options:
+        if o.get("stock", 0) != old_stock_map.get(o.get("name", ""), 0):
+          _stock_changes += 1
+
+    # ── 갱신 로그 ──
+    _name = getattr(product, "name", "") or ""
+    _prod_label = f"{_name} ({site_product_id})" if site_product_id else _name
+    _status_label = "전송" if (changed or _stock_changes > 0) else "스킵"
+    _log_refresh(
+      "LOTTEON", product_id, _prod_label,
+      f"{_status_label} [원가 {int(old_sale):,}→{int(new_sale_price):,}, "
+      f"상태 {old_status}→{new_sale_status}, 재고변동 {_stock_changes}건]",
+      idx=_idx, total=_total,
+    )
+
+    return RefreshResult(
+      product_id=product_id,
+      new_sale_price=float(new_sale_price) if new_sale_price else None,
+      new_original_price=float(new_original_price) if new_original_price else None,
+      new_cost=float(best_benefit_price) if best_benefit_price else None,
+      new_sale_status=new_sale_status,
+      new_options=new_options,
+      new_images=detail.get("images") or None,
+      new_detail_images=detail.get("detailImages") or None,
+      new_free_shipping=detail.get("freeShipping"),
+      new_same_day_delivery=detail.get("sameDayDelivery"),
+      changed=changed,
+      stock_changed=_stock_changes > 0,
+    )
