@@ -375,25 +375,12 @@ export default function OrdersPage() {
     window.open(`${baseUrl}${trackingNumber}`, '_blank')
   }
   const handleSourceLink = async (o: SambaOrder) => {
-    // 1. 소싱처 정보가 있으면 직접 이동
-    if (o.source_site && o.product_id) {
-      const siteUrls: Record<string, string> = {
-        MUSINSA: `https://www.musinsa.com/app/goods/${o.product_id}`,
-        KREAM: `https://kream.co.kr/products/${o.product_id}`,
-        LOTTEON: `https://www.lotteon.com/product/${o.product_id}`,
-        SSG: `https://www.ssg.com/item/itemView.ssg?itemId=${o.product_id}`,
-        Nike: `https://www.nike.com/kr/t/${o.product_id}`,
-        ABCmart: `https://abcmart.a-rt.com/product/detail?goodsId=${o.product_id}`,
-      }
-      const url = siteUrls[o.source_site]
-      if (url) { window.open(url, '_blank'); return }
-    }
-    // 2. product_id가 URL이면 직접 열기
+    // 1. product_id가 URL이면 직접 열기
     if (o.product_id && o.product_id.startsWith('http')) {
       window.open(o.product_id, '_blank')
       return
     }
-    // 3. 마켓 상품번호로 수집상품 역추적
+    // 2. 마켓 상품번호로 수집상품 역추적 (source_url 포함)
     if (o.product_id) {
       try {
         const res = await collectorApi.lookupByMarketNo(o.product_id)
