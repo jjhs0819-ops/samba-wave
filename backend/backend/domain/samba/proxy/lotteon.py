@@ -917,6 +917,8 @@ class LotteonClient:
       ],
       "cnclPsbYn": "Y",
       "dmstOvsDvDvsCd": "DMST",
+      # 수입구분: 무신사 소싱 상품은 공식수입
+      "impTypCd": "01",
       "dvProcTypCd": "LO_ENTP",
       "dvPdTypCd": "GNRL",
       "sndBgtNday": 2,

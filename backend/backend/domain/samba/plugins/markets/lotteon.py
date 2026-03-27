@@ -632,6 +632,9 @@ class LotteonPlugin(MarketPlugin):
 
         # ── 등록 후 프로모션 설정: sitmNo 조회 후 전달 ────────────
         if spd_no:
+          # 롯데ON 상품 처리 대기 — 즉시 호출 시 9000/9999 에러 발생
+          import asyncio
+          await asyncio.sleep(5)
           new_sitm_nos: list[str] = []
           try:
             prod_resp = await client.get_product(spd_no)
