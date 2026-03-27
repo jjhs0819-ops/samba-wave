@@ -457,6 +457,49 @@ class LotteonClient:
       body=body,
     )
 
+  async def save_lpoint_accumulation(
+    self,
+    spd_no: str,
+    accm_val1: int = 0,
+    accm_vp_knd_cd: str = "7",
+    accm_val2: int = 0,
+    accm_val3: int = 0,
+    accm_val4: int = 0,
+  ) -> dict[str, Any]:
+    """L.POINT 추가적립 저장.
+
+    API 스펙:
+      cndAccmVal1: 구매확정시 L.POINT (>0이면 accmVpKndCd 필수)
+      accmVpKndCd: 발송일로부터 N일 이내 구매확정 시 적립 (3~8 중 택1)
+      cndAccmVal2/3/4: 리뷰/사진/동영상 포인트 (하이마트/홈쇼핑 전용, 일반은 0)
+    """
+    now = datetime.now()
+    spd_num = re.sub(r"[^0-9]", "", spd_no)[-12:]
+    ts_suffix = str(int(now.timestamp()))[-8:]
+    affil_pr_no = f"{spd_num}{ts_suffix}"
+    start_dt = now.strftime("%Y%m%d%H%M%S")
+    end_dt = (now.replace(year=now.year + 1)).strftime("%Y%m%d235959")
+    body = {
+      "saveDvsCd": "C",
+      "accmPdRegNo": "",
+      "afflPrNo": affil_pr_no,
+      "trNo": self.tr_no,
+      "aplyStrtDttm": start_dt,
+      "aplyEndDttm": end_dt,
+      "spdNo": spd_no,
+      "cndAccmVal1": accm_val1,
+      "accmVpKndCd": accm_vp_knd_cd,
+      "cndAccmVal2": accm_val2,
+      "cndAccmVal3": accm_val3,
+      "cndAccmVal4": accm_val4,
+    }
+    logger.info(f"[롯데ON] L.POINT 적립 요청 body: {body}")
+    return await self._call_api(
+      "POST",
+      "/v1/openapi/promotion/v1/OpenApiService/saveProductLPoint",
+      body=body,
+    )
+
   async def update_stock(self, itm_stk_lst: list[dict[str, Any]]) -> dict[str, Any]:
     """단품 재고 변경."""
     return await self._call_api(

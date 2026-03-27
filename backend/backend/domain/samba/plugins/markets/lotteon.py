@@ -314,6 +314,27 @@ class LotteonPlugin(MarketPlugin):
       except Exception as e:
         logger.warning(f"[롯데ON] 행사제외 설정 실패 (무시): {e}")
 
+    # ── L.POINT 추가적립 ────────────────────────────────────────────
+    # lpointAccm > 0 일 때만 호출
+    lpoint_accm = int(extras.get("lpointAccm") or 0)
+    if lpoint_accm > 0:
+      try:
+        accm_days = str(extras.get("lpointAccmDays") or "7")
+        lpoint_review = int(extras.get("lpointReview") or 0)
+        lpoint_photo = int(extras.get("lpointPhoto") or 0)
+        lpoint_video = int(extras.get("lpointVideo") or 0)
+        resp = await client.save_lpoint_accumulation(
+          spd_no,
+          accm_val1=lpoint_accm,
+          accm_vp_knd_cd=accm_days,
+          accm_val2=lpoint_review,
+          accm_val3=lpoint_photo,
+          accm_val4=lpoint_video,
+        )
+        logger.info(f"[롯데ON] L.POINT 적립 설정 완료: {lpoint_accm}P (D+{accm_days}) → {resp}")
+      except Exception as e:
+        logger.warning(f"[롯데ON] L.POINT 적립 설정 실패 (무시): {e}")
+
   async def delete(self, session, product_no: str, account) -> dict[str, Any]:
     """롯데ON 상품 판매중지 (SOUT 상태 변경)."""
     from backend.domain.samba.proxy.lotteon import LotteonClient
