@@ -893,9 +893,10 @@ class LotteonClient:
       # 판매 기간
       "slStrtDttm": sl_strt,
       "slEndDttm": sl_end,
-      # 출고지/배송비정책/회수지
+      # 출고지/배송비정책/회수지/도서산간배송정책
       "owhpNo": product.get("owhp_no", ""),
       "dvCstPolNo": product.get("dv_cst_pol_no", ""),
+      "islandDvCstPolNo": product.get("island_dv_cst_pol_no", ""),
       "rtrpNo": product.get("rtrp_no", ""),
       # 선물포장/메시지
       "prstPckPsbYn": "N",
@@ -948,6 +949,25 @@ class LotteonClient:
     # ── 판매자 상품코드 (품번 있을 때만) ────────────────────────
     if style_code:
       spd["selPrdNo"] = style_code[:50]
+
+    # ── 기타정보 ─────────────────────────────────────────────────
+    # 모델번호: 품번(style_code) 활용
+    if style_code:
+      spd["mdlNo"] = style_code[:50]
+    # 출시년월: 현재 년월 (yyyyMM)
+    spd["rlsYm"] = now.strftime("%Y%m")
+    # 온누리상품권 결제가능여부: 기본 사용안함
+    spd["onnuriPymtPsbYn"] = "N"
+    # 임직원상품 여부: 기본 해당없음
+    spd["empPrdYn"] = "N"
+    # 제품사이즈: 의류 기준 고정값 (가로29 x 세로20 x 높이16 cm)
+    spd["pdSzWdth"] = 29
+    spd["pdSzLen"] = 20
+    spd["pdSzHght"] = 16
+    # 포장사이즈: 표준 택배박스 고정값 (가로34 x 세로25 x 높이21 cm)
+    spd["pkgSzWdth"] = 34
+    spd["pkgSzLen"] = 25
+    spd["pkgSzHght"] = 21
 
     # ── 카테고리 속성정보 (scatAttrLst) ─────────────────────────
     # _scat_attr_lst: [{"optCd": attr_id, "optValCd": attr_val_id}, ...]

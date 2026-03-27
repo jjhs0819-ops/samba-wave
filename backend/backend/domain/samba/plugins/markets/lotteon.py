@@ -483,6 +483,7 @@ class LotteonPlugin(MarketPlugin):
     product_copy["cmbn_dv_psb_yn"] = extras.get("bundleDelivery", "Y")
     # 계정 추가 설정 주입
     if extras.get("asPhone"):
+      # 설정의 A/S 전화번호를 그대로 사용 (브랜드명 불포함 — 다브랜드 운영)
       product_copy["_as_phone"] = extras["asPhone"]
     if extras.get("asMessage"):
       product_copy["_as_message"] = extras["asMessage"]
