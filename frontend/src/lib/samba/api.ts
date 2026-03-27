@@ -643,6 +643,11 @@ export const proxyApi = {
   r2Test: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/r2/test`, { method: 'POST' }),
+  // 무신사 검색 상품 수 조회 (size=1로 totalCount만 가져옴)
+  musinsaSearchCount: (keyword: string, params?: Record<string, string>) => {
+    const qs = new URLSearchParams({ keyword, size: '1', ...params })
+    return request<{ success: boolean; totalCount: number }>(`${SAMBA_PREFIX}/proxy/musinsa/search-api?${qs}`)
+  },
   falStatus: () =>
     request<{ status: string; message: string }>(
       `${SAMBA_PREFIX}/proxy/fal/status`),

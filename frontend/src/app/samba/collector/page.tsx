@@ -255,14 +255,40 @@ export default function CollectorPage() {
         } catch { /* URL 파싱 실패 시 원본 유지 */ }
       }
 
+      // 무신사: 검색 API로 해당 링크의 총 상품수 조회
+      let requestedCount = 100
+      if (site === 'MUSINSA' && keyword) {
+        try {
+          const searchParams: Record<string, string> = {}
+          try {
+            const u = new URL(collectUrl)
+            const brand = u.searchParams.get('brand')
+            const minPrice = u.searchParams.get('minPrice')
+            const maxPrice = u.searchParams.get('maxPrice')
+            const gf = u.searchParams.get('gf')
+            const category = u.searchParams.get('category')
+            if (brand) searchParams.brand = brand
+            if (minPrice) searchParams.minPrice = minPrice
+            if (maxPrice) searchParams.maxPrice = maxPrice
+            if (gf) searchParams.gf = gf
+            if (category) searchParams.category = category
+          } catch { /* URL 아닌 경우 무시 */ }
+          const countResult = await proxyApi.musinsaSearchCount(keyword, searchParams)
+          if (countResult.totalCount > 0) {
+            requestedCount = countResult.totalCount
+            addLog(`검색 결과: ${requestedCount.toLocaleString()}개 상품`)
+          }
+        } catch { /* 조회 실패 시 기본값 100 유지 */ }
+      }
+
       const created = await collectorApi.createFilter({
         source_site: site,
         name: groupName,
         keyword: keywordUrl,
-        requested_count: 100,
+        requested_count: requestedCount,
       });
 
-      addLog(`그룹 생성 완료: "${created.name}" (${site})`);
+      addLog(`그룹 생성 완료: "${created.name}" (${site}, ${requestedCount.toLocaleString()}개)`);
       setCollectUrl("");
       load(); loadTree();
     } catch (e) {
@@ -1026,8 +1052,11 @@ export default function CollectorPage() {
           const selectedFilter = drillGroup ? filters.find(fl => fl.id === drillGroup) : null
           const selectedCount = selectedFilter ? ((selectedFilter as unknown as Record<string, number>).collected_count ?? 0) : 0
 
-          const colStyle = { flex: 1, minWidth: '120px', borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const }
-          const detColStyle = { flex: 1, minWidth: '80px', borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, padding: '0.5rem 0.5rem' }
+          // 헤더·본문 너비 통일: 사이트/브랜드/카테고리=15%, 나머지 5개=11%
+          const colW = ['15%', '15%', '15%', '11%', '11%', '11%', '11%', '11%']
+          const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const }
+          const colStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0 })
+          const detColStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0, padding: '0.5rem 0.5rem' })
           const itemSt = (sel: boolean) => ({
             padding: '0.5rem 0.75rem', fontSize: '0.8125rem',
             color: sel ? '#FF8C00' : '#C5C5C5', cursor: 'pointer' as const,
@@ -1045,7 +1074,8 @@ export default function CollectorPage() {
               <div style={{ display: 'flex', borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
                 {['사이트', '브랜드', '카테고리', '링크', '정책', '수집', '요청', '생성일/최근수집'].map((h, i) => (
                   <div key={h} style={{
-                    flex: 1, minWidth: i < 3 ? '120px' : '80px', padding: '0.5rem 0.5rem',
+                    width: colW[i], flexShrink: 0, boxSizing: 'border-box' as const,
+                    padding: '0.5rem 0.5rem',
                     fontSize: '0.72rem', fontWeight: 600,
                     color: (i === 0 && (drillEntry === 'site' || drillSite)) || (i === 1 && (drillEntry === 'brand' || drillBrand)) || (i === 2 && drillGroup) ? '#FF8C00' : '#888',
                     borderRight: i < 7 ? '1px solid #2D2D2D' : 'none',
@@ -1063,7 +1093,7 @@ export default function CollectorPage() {
               {/* 컬럼 */}
               <div style={{ display: 'flex' }}>
                 {/* 1. 사이트: 사이트 헤더 클릭 시 전체 표시 / 브랜드 선택 시 연관만 표시 */}
-                <div style={colStyle}>
+                <div style={colStyle(0)}>
                   {(drillEntry === 'site' || drillBrand) ? (
                     filteredSites.length === 0 ? (
                       <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>그룹 없음</div>
@@ -1084,7 +1114,7 @@ export default function CollectorPage() {
                   ) : null}
                 </div>
                 {/* 2. 브랜드: 브랜드 헤더 클릭 시 전체 표시 / 사이트 선택 시 연관만 표시 */}
-                <div style={colStyle}>
+                <div style={colStyle(1)}>
                   {(drillEntry === 'brand' || drillSite) ? (
                     brands.length > 0 ? brands.map(([brand, count]) => (
                       <div key={brand} style={itemSt(drillBrand === brand)}
@@ -1099,7 +1129,7 @@ export default function CollectorPage() {
                   ) : null}
                 </div>
                 {/* 3. 카테고리: 사이트 또는 브랜드 선택 후 연관 표시 */}
-                <div style={colStyle}>
+                <div style={colStyle(2)}>
                   {(drillSite || drillBrand) ? (catGroups.length > 0 ? catGroups.map(g => (
                     <div key={g.id} style={itemSt(drillGroup === g.id)}
                       onClick={() => { setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
@@ -1113,7 +1143,7 @@ export default function CollectorPage() {
                   ) : null}
                 </div>
                 {/* 4. 링크 + 삭제 체크 */}
-                <div style={detColStyle}>
+                <div style={detColStyle(3)}>
                   {selectedFilter ? (() => {
                     // 소싱 URL 결정: category_filter(저장된 URL) > 사이트별 검색URL 생성
                     const storedUrl = (selectedFilter as unknown as Record<string, string>).category_filter || ''
@@ -1153,7 +1183,7 @@ export default function CollectorPage() {
                   })() : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}
                 </div>
                 {/* 5. 정책 */}
-                <div style={detColStyle}>
+                <div style={detColStyle(4)}>
                   {selectedFilter ? (
                     <select
                       key={selectedFilter.id}
@@ -1171,7 +1201,7 @@ export default function CollectorPage() {
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}
                 </div>
                 {/* 6. 수집 */}
-                <div style={detColStyle}>
+                <div style={detColStyle(5)}>
                   {selectedFilter ? (
                     <span onClick={() => handleGoToProducts(selectedFilter)} style={{
                       color: selectedCount > 0 ? '#FF8C00' : '#555', fontWeight: 600, fontSize: '0.82rem',
