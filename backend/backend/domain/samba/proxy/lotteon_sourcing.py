@@ -25,6 +25,49 @@ import httpx
 from backend.utils.logger import logger
 
 
+# 롯데ON BC 카테고리 코드 → 카테고리명 하드코딩 딕셔너리 (팀장 매핑 보조용)
+_LOTTEON_SCAT_NAMES: dict[str, str] = {
+  # 패션의류
+  "BC11010100": "패션의류 > 남성의류 > 티셔츠",
+  "BC11010200": "패션의류 > 남성의류 > 셔츠/남방",
+  "BC11010300": "패션의류 > 남성의류 > 바지",
+  "BC11010400": "패션의류 > 남성의류 > 청바지",
+  "BC11010500": "패션의류 > 남성의류 > 아우터",
+  "BC11010600": "패션의류 > 남성의류 > 점퍼",
+  "BC11010700": "패션의류 > 남성의류 > 패딩",
+  "BC11010800": "패션의류 > 남성의류 > 니트/스웨터",
+  "BC11010900": "패션의류 > 남성의류 > 후드티셔츠",
+  "BC11011000": "패션의류 > 남성의류 > 맨투맨",
+  "BC11011100": "패션의류 > 남성의류 > 트레이닝복",
+  "BC11020100": "패션의류 > 여성의류 > 티셔츠",
+  "BC11020200": "패션의류 > 여성의류 > 블라우스",
+  "BC11020300": "패션의류 > 여성의류 > 원피스",
+  "BC11020400": "패션의류 > 여성의류 > 스커트",
+  "BC11020500": "패션의류 > 여성의류 > 바지",
+  "BC11020600": "패션의류 > 여성의류 > 아우터",
+  # 패션잡화
+  "BC12010100": "패션잡화 > 남성신발 > 스니커즈",
+  "BC12010200": "패션잡화 > 남성신발 > 구두",
+  "BC12010300": "패션잡화 > 남성신발 > 샌들/슬리퍼",
+  "BC12010400": "패션잡화 > 남성신발 > 부츠",
+  "BC12010500": "패션잡화 > 남성신발 > 운동화",
+  "BC12020100": "패션잡화 > 여성신발 > 스니커즈",
+  "BC12020200": "패션잡화 > 여성신발 > 구두/힐",
+  "BC12030100": "패션잡화 > 가방 > 백팩",
+  "BC12030200": "패션잡화 > 가방 > 숄더백",
+  "BC12030300": "패션잡화 > 가방 > 크로스백",
+  "BC12030400": "패션잡화 > 가방 > 토트백",
+  "BC12040100": "패션잡화 > 모자 > 캡모자",
+  "BC12040200": "패션잡화 > 모자 > 비니",
+  # 스포츠
+  "BC41030100": "스포츠/레저 > 스포츠신발 > 런닝화",
+  "BC41030200": "스포츠/레저 > 스포츠신발 > 운동화",
+  "BC41010100": "스포츠/레저 > 스포츠의류 > 상의",
+  "BC41010200": "스포츠/레저 > 스포츠의류 > 하의",
+  "BC13140700": "스포츠/레저 > 스포츠신발 > 런닝화",
+}
+
+
 class RateLimitError(Exception):
   """롯데ON 차단 감지 (429/403)."""
 
@@ -319,6 +362,9 @@ class LotteonSourcingClient:
       if not isinstance(item, dict):
         continue
 
+      # sitmNo는 별도로 보존 (LE1220156946_1321122096 형태)
+      sitm_no = str(item.get("sitmNo", "") or "").strip()
+
       spd_no = str(
         item.get("spdNo", "")
         or item.get("sitmNo", "")
@@ -364,6 +410,7 @@ class LotteonSourcingClient:
 
       products.append({
         "siteProductId": spd_no,
+        "sitmNo": sitm_no,
         "name": name,
         "brand": brand,
         "originalPrice": original_price,
@@ -419,10 +466,15 @@ class LotteonSourcingClient:
       img_m = re.search(r'"image"\s*:\s*"([^"]+)"', block, re.DOTALL)
       thumbnail = self._normalize_image(img_m.group(1) if img_m else "")
 
+      # sitmNo 추출 (LE1220156946_1321122096 형태)
+      sitm_m = re.search(r'"sitmNo"\s*:\s*"([^"]+)"', block, re.DOTALL)
+      sitm_no = sitm_m.group(1) if sitm_m else ""
+
       is_sold_out = bool(re.search(r'soldout|sold_out|품절', block, re.IGNORECASE))
 
       products.append({
         "siteProductId": spd_no,
+        "sitmNo": sitm_no,
         "name": name,
         "brand": "",
         "originalPrice": original_price,
@@ -714,12 +766,37 @@ class LotteonSourcingClient:
       return None
 
   def _enrich_from_pbf(self, detail: dict[str, Any], pbf: dict[str, Any]) -> None:
-    """pbf API 데이터로 detail dict 보완 (옵션/재고/이미지/가격)."""
+    """pbf API 데이터로 detail dict 보완 (옵션/재고/이미지/가격/카테고리)."""
     # ── 가격 보완 ──────────────────────────────────────────────
     price_info = pbf.get("priceInfo") or {}
     sl_prc = self._safe_int(price_info.get("slPrc", 0))
     if sl_prc > 0:
       detail["salePrice"] = sl_prc
+
+    # ── 최대혜택가 계산 (판매가 - 즉시할인 - 추가할인) ─────────
+    immd_dc = self._safe_int(price_info.get("immdDcAplyTotAmt", 0))
+    adtn_dc = self._safe_int(price_info.get("adtnDcAplyTotAmt", 0))
+    base_prc = sl_prc or detail.get("salePrice", 0)
+    if base_prc > 0:
+      best_benefit = base_prc - immd_dc - adtn_dc
+      if best_benefit > 0 and best_benefit < base_prc:
+        detail["bestBenefitPrice"] = best_benefit
+      else:
+        detail["bestBenefitPrice"] = base_prc
+
+    # ── 카테고리 코드 저장 및 이름 변환 ──────────────────────────
+    basic = pbf.get("basicInfo") or {}
+    scat_no = str(basic.get("scatNo", "") or "").strip()
+    if scat_no:
+      # 팀장 카테고리 룰 매핑용으로 scatNo 보존
+      detail["_lotteonScatNo"] = scat_no
+      # 하드코딩 딕셔너리에서 카테고리명 조회
+      cat_name = _LOTTEON_SCAT_NAMES.get(scat_no, "")
+      if cat_name and not detail.get("category"):
+        detail["category"] = cat_name
+        parts = cat_name.split(" > ")
+        for i, part in enumerate(parts[:4], 1):
+          detail[f"category{i}"] = part
 
     # ── 재고 ──────────────────────────────────────────────────
     stck = pbf.get("stckInfo") or {}
