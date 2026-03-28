@@ -791,6 +791,7 @@ class LotteonSourcingClient:
 
     # ── 카테고리 코드 저장 및 이름 변환 ──────────────────────────
     basic = pbf.get("basicInfo") or {}
+    logger.debug(f"[LOTTEON] pbf basicInfo keys: {list(basic.keys())}")
     scat_no = str(basic.get("scatNo", "") or "").strip()
     if scat_no:
       # 팀장 카테고리 룰 매핑용으로 scatNo 보존
@@ -802,6 +803,27 @@ class LotteonSourcingClient:
         parts = cat_name.split(" > ")
         for i, part in enumerate(parts[:4], 1):
           detail[f"category{i}"] = part
+
+    # ── 스펙 필드 (basicInfo 다중 후보 키) ─────────────────────
+    _SPEC_CANDIDATES: dict[str, list[str]] = {
+      "manufacturer": ["mfrNm", "mfr", "manufacturerNm", "manufacturerName"],
+      "origin": ["orgNm", "origin", "originNm", "madeIn", "madeInNm"],
+      "sex": ["sexTpCd", "genderType", "sex"],
+      "season": ["seasnCd", "season"],
+      "color": ["colorNm", "colorName", "color"],
+      "material": ["materialNm", "material"],
+      "style_code": ["styleNo", "modelNo", "styleCode"],
+      "care_instructions": ["careInstructions"],
+    }
+    for field, candidates in _SPEC_CANDIDATES.items():
+      if not detail.get(field):
+        for cand in candidates:
+          val = str(basic.get(cand, "") or "").strip()
+          if val:
+            if field == "sex":
+              val = self._normalize_sex(val)
+            detail[field] = val
+            break
 
     # ── 재고 ──────────────────────────────────────────────────
     stck = pbf.get("stckInfo") or {}
@@ -982,6 +1004,14 @@ class LotteonSourcingClient:
           "sameDayDelivery": same_day_delivery,
           "collectedAt": now_iso,
           "updatedAt": now_iso,
+          "manufacturer": "",
+          "origin": "",
+          "sex": "",
+          "season": "",
+          "color": "",
+          "material": "",
+          "style_code": self._extract_style_code_from_name(name.strip()),
+          "care_instructions": "",
         }
 
       except (json.JSONDecodeError, KeyError, TypeError) as e:
@@ -1135,6 +1165,28 @@ class LotteonSourcingClient:
 
       sale_status = "sold_out" if is_out_of_stock else "in_stock"
 
+      # 스펙 필드 추출
+      manufacturer = str(
+        product.get("mfrNm", "") or product.get("manufacturerNm", "") or product.get("manufacturer", "") or ""
+      ).strip()
+      origin = str(
+        product.get("orgNm", "") or product.get("originNm", "") or product.get("madeIn", "") or product.get("origin", "") or ""
+      ).strip()
+      sex_raw = str(
+        product.get("sexTpCd", "") or product.get("genderType", "") or product.get("sex", "") or ""
+      ).strip()
+      sex = self._normalize_sex(sex_raw) if sex_raw else ""
+      season = str(product.get("seasnCd", "") or product.get("season", "") or "").strip()
+      color = str(
+        product.get("colorNm", "") or product.get("colorName", "") or product.get("color", "") or ""
+      ).strip()
+      material = str(product.get("materialNm", "") or product.get("material", "") or "").strip()
+      style_code = (
+        str(product.get("styleNo", "") or product.get("modelNo", "") or product.get("styleCode", "") or "").strip()
+        or self._extract_style_code_from_name(name.strip())
+      )
+      care_instructions = str(product.get("careInstructions", "") or "").strip()
+
       return {
         "id": f"col_lotteon_{product_no}_{timestamp}",
         "sourceSite": "LOTTEON",
@@ -1159,6 +1211,14 @@ class LotteonSourcingClient:
         "sameDayDelivery": same_day_delivery,
         "collectedAt": now_iso,
         "updatedAt": now_iso,
+        "manufacturer": manufacturer,
+        "origin": origin,
+        "sex": sex,
+        "season": season,
+        "color": color,
+        "material": material,
+        "style_code": style_code,
+        "care_instructions": care_instructions,
       }
 
     except (json.JSONDecodeError, KeyError, TypeError) as e:
@@ -1245,6 +1305,63 @@ class LotteonSourcingClient:
     }
 
   # ------------------------------------------------------------------
+  # 스펙 헬퍼
+  # ------------------------------------------------------------------
+
+  def _parse_spec_table(self, html: str) -> dict[str, str]:
+    """HTML th-td 쌍에서 스펙 테이블 파싱 (제조사/원산지/소재 등)."""
+    KEY_MAP: dict[str, str] = {
+      "제조사": "manufacturer", "수입사": "manufacturer",
+      "제조국": "origin", "원산지": "origin",
+      "소재": "material", "재질": "material",
+      "성별": "sex", "시즌": "season",
+      "색상": "color", "컬러": "color",
+      "품번": "style_code", "모델번호": "style_code",
+      "취급주의": "care_instructions", "세탁": "care_instructions",
+    }
+    GARBAGE = {"상세설명참조", "상세페이지참조", "-", "없음", "해당없음", "n/a", "별도표기"}
+    result: dict[str, str] = {}
+    for th, td in re.findall(
+      r'<th[^>]*>(.*?)</th>\s*<td[^>]*>(.*?)</td>',
+      html,
+      re.DOTALL | re.IGNORECASE,
+    ):
+      key = re.sub(r'<[^>]+>', '', th).strip()
+      val = re.sub(r'<[^>]+>', '', td).strip()
+      if not key or not val:
+        continue
+      if val.lower() in GARBAGE:
+        continue
+      mapped = KEY_MAP.get(key)
+      if mapped and mapped not in result:
+        result[mapped] = val
+    return result
+
+  def _extract_style_code_from_name(self, name: str) -> str:
+    """상품명에서 품번 추출 (나이키형/아디다스형 패턴)."""
+    BLACKLIST = {"BC", "LO", "PD", "LE"}
+    for pattern in [
+      r'\b([A-Z]{2}\d{4}-\d{3})\b',
+      r'\b([A-Z]{2,3}\d{4,5}[A-Z]?\d?)\b',
+    ]:
+      for m in re.finditer(pattern, name):
+        code = m.group(1)
+        if code[:2] not in BLACKLIST:
+          return code
+    return ""
+
+  def _normalize_sex(self, val: str) -> str:
+    """성별 값 정규화."""
+    v = val.strip().lower()
+    if v in {"남녀공용", "공용", "unisex"}:
+      return "남녀공용"
+    if v in {"여성", "여자", "women", "woman"}:
+      return "여성"
+    if v in {"남성", "남자", "men", "man"}:
+      return "남성"
+    return val.strip()
+
+  # ------------------------------------------------------------------
   # HTML 보완 (JSON-LD 결과에 누락된 정보 채우기)
   # ------------------------------------------------------------------
 
@@ -1267,6 +1384,14 @@ class LotteonSourcingClient:
           detail["images"].append(img)
           if len(detail["images"]) >= 9:
             break
+
+    # 스펙 테이블 파싱 (이미 채워진 필드는 덮어쓰지 않음)
+    spec = self._parse_spec_table(html)
+    for field, val in spec.items():
+      if not detail.get(field):
+        if field == "sex":
+          val = self._normalize_sex(val)
+        detail[field] = val
 
   # ------------------------------------------------------------------
   # 가격 파싱 헬퍼
