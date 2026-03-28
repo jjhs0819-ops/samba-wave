@@ -1381,8 +1381,15 @@ async def generate_ai_tags(
                 if not tags:
                     continue
 
-                # SEO 키워드 추출 (검증 전 전체 후보에서 추출, 최종 태그 제외)
-                seo_kws = _extract_seo_keywords(candidate_tags, cats, banned, name_words, tags)
+                # SEO 키워드 추출 (전체 후보에서 추출, 최종 태그 제외) + 태그사전 검증
+                seo_kws = _extract_seo_keywords(candidate_tags, cats, banned, name_words, tags, max_count=10)
+                if ss_client and seo_kws:
+                    try:
+                        seo_validated = await ss_client.validate_tags(seo_kws, max_count=5)
+                        seo_kws = [v["text"] for v in seo_validated][:3]
+                    except Exception as se:
+                        logger.warning(f"[AI태그] SEO 태그사전 검증 실패, 원본 사용: {se}")
+                        seo_kws = seo_kws[:3]
 
                 # 태그 생성 후 그룹 전체 상품 조회 → 벌크 적용
                 all_in_group = await repo.filter_by_async(search_filter_id=gid, limit=10000)
@@ -1594,8 +1601,14 @@ async def preview_ai_tags(
                 else:
                     validated_tags = candidate_tags[:10]
 
-                # SEO 키워드 미리보기 (전체 후보에서 추출, 최종 태그 제외)
-                seo_preview = _extract_seo_keywords(candidate_tags, cats, banned, name_words, validated_tags)
+                # SEO 키워드 미리보기 (전체 후보에서 추출, 최종 태그 제외) + 태그사전 검증
+                seo_preview = _extract_seo_keywords(candidate_tags, cats, banned, name_words, validated_tags, max_count=10)
+                if ss_client_preview and seo_preview:
+                    try:
+                        seo_val = await ss_client_preview.validate_tags(seo_preview, max_count=5)
+                        seo_preview = [v["text"] for v in seo_val][:3]
+                    except Exception:
+                        seo_preview = seo_preview[:3]
 
                 preview_results.append({
                     "group_id": gid,
@@ -1872,6 +1885,63 @@ async def musinsa_goods_detail(
     except Exception as exc:
         logger.error(f"[무신사] {goods_no} 수집 실패: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/search-count")
+async def search_count(
+    source_site: str = Query(...),
+    keyword: str = Query(""),
+    url: str = Query(""),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """소싱처별 검색 총 상품수 조회."""
+    try:
+        if source_site == "MUSINSA":
+            client = await _get_musinsa_client(session)
+            params: dict[str, Any] = {"keyword": keyword, "size": 1}
+            if url:
+                from urllib.parse import urlparse, parse_qs
+                parsed = parse_qs(urlparse(url).query)
+                if "brand" in parsed: params["brand"] = parsed["brand"][0]
+                if "category" in parsed: params["category"] = parsed["category"][0]
+                if "gf" in parsed: params["gf"] = parsed["gf"][0]
+                if "minPrice" in parsed: params["min_price"] = int(parsed["minPrice"][0])
+                if "maxPrice" in parsed: params["max_price"] = int(parsed["maxPrice"][0])
+                if not keyword and "keyword" in parsed: params["keyword"] = parsed["keyword"][0]
+            result = await client.search_products(**params)
+            return {"totalCount": result.get("totalCount", 0)}
+
+        elif source_site == "FashionPlus":
+            search_word = keyword
+            if not search_word and url:
+                from urllib.parse import urlparse, parse_qs
+                parsed = parse_qs(urlparse(url).query)
+                search_word = parsed.get("searchWord", [""])[0]
+            if not search_word:
+                return {"totalCount": 0}
+            async with httpx.AsyncClient(timeout=10) as http:
+                r = await http.get(
+                    "https://www.fashionplus.co.kr/search/goods/fetch",
+                    params={"searchWord": search_word, "page": 1, "pageSize": 1, "sort": "recommend"},
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                data = r.json()
+                return {"totalCount": data.get("goodsPaginator", {}).get("totalCount", 0)}
+
+        elif source_site == "KREAM":
+            # KREAM은 확장앱 기반 수집 — 카운트 조회 불가
+            return {"totalCount": 0}
+
+        elif source_site in ("ABCmart", "Nike", "Adidas", "OliveYoung"):
+            # 이 소싱처들은 서버사이드 렌더링/확장앱 기반 — 카운트 조회 불가
+            return {"totalCount": 0}
+
+        else:
+            return {"totalCount": 0}
+
+    except Exception as e:
+        logger.warning(f"[검색카운트] {source_site} 실패: {e}")
+        return {"totalCount": 0}
 
 
 @router.get("/musinsa/search-api")

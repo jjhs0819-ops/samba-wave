@@ -325,6 +325,14 @@ export const collectorApi = {
   deleteFilter: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "DELETE" }),
 
+  // Brand Sourcing
+  brandScan: (brand: string, gf?: string, keyword?: string) =>
+    request<{ categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]; total: number; groupCount: number }>(
+      `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '' }) }),
+  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; applied_policy_id?: string; options?: Record<string, boolean> }) =>
+    request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
+      `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),
+
   // Collected Products
   listProducts: (skip = 0, limit = 50, status?: string) => {
     const p = new URLSearchParams({ skip: String(skip), limit: String(limit) });
@@ -659,6 +667,12 @@ export const proxyApi = {
   musinsaSearchCount: (keyword: string, params?: Record<string, string>) => {
     const qs = new URLSearchParams({ keyword, size: '1', ...params })
     return request<{ success: boolean; totalCount: number }>(`${SAMBA_PREFIX}/proxy/musinsa/search-api?${qs}`)
+  },
+  // 범용 소싱처 검색 카운트
+  searchCount: (sourceSite: string, keyword: string, url?: string) => {
+    const qs = new URLSearchParams({ source_site: sourceSite, keyword })
+    if (url) qs.set('url', url)
+    return request<{ totalCount: number }>(`${SAMBA_PREFIX}/proxy/search-count?${qs}`)
   },
   falStatus: () =>
     request<{ status: string; message: string }>(

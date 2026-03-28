@@ -392,44 +392,15 @@ export default function CollectorPage() {
         keywordUrl = u.toString()
       }
 
-      // 소싱처별 검색 총 상품수 조회
+      // 소싱처 범용 검색 총 상품수 조회
       let requestedCount = 100
-      if (site === 'MUSINSA' && keyword) {
-        try {
-          const searchParams: Record<string, string> = {}
-          try {
-            const u = new URL(collectUrl)
-            const brand = u.searchParams.get('brand')
-            const minPrice = u.searchParams.get('minPrice')
-            const maxPrice = u.searchParams.get('maxPrice')
-            const gf = u.searchParams.get('gf')
-            const category = u.searchParams.get('category')
-            if (brand) searchParams.brand = brand
-            if (minPrice) searchParams.minPrice = minPrice
-            if (maxPrice) searchParams.maxPrice = maxPrice
-            if (gf) searchParams.gf = gf
-            if (category) searchParams.category = category
-          } catch { /* URL 아닌 경우 무시 */ }
-          const countResult = await proxyApi.musinsaSearchCount(keyword, searchParams)
-          if (countResult.totalCount > 0) {
-            requestedCount = countResult.totalCount
-            addLog(`검색 결과: ${requestedCount.toLocaleString()}개 상품`)
-          }
-        } catch { /* 조회 실패 시 기본값 100 유지 */ }
-      } else if (site === 'FashionPlus') {
-        try {
-          const searchWord = keyword || (() => { try { return new URL(collectUrl).searchParams.get('searchWord') || '' } catch { return '' } })()
-          if (searchWord) {
-            const r = await fetch(`https://www.fashionplus.co.kr/search/goods/fetch?searchWord=${encodeURIComponent(searchWord)}&page=1&pageSize=1&sort=recommend`)
-            const data = await r.json()
-            const total = data?.goodsPaginator?.totalCount
-            if (total && total > 0) {
-              requestedCount = total
-              addLog(`검색 결과: ${requestedCount.toLocaleString()}개 상품`)
-            }
-          }
-        } catch { /* 조회 실패 시 기본값 100 유지 */ }
-      }
+      try {
+        const countResult = await proxyApi.searchCount(site, keyword, isUrl ? keywordUrl : '')
+        if (countResult.totalCount > 0) {
+          requestedCount = countResult.totalCount
+          addLog(`검색 결과: ${requestedCount.toLocaleString()}개 상품`)
+        }
+      } catch { /* 조회 실패 시 기본값 100 유지 */ }
 
       const created = await collectorApi.createFilter({
         source_site: site,
