@@ -1071,7 +1071,7 @@ class LotteonClient:
     start_date, end_date = self._date_range(days)
     data = await self._call_api(
       "GET",
-      "/api/order/list",
+      "/v1/openapi/order/v1/order/list",
       params={"startDt": start_date, "endDt": end_date},
     )
     # 응답: {"data": {"orderList": [...]}} 또는 {"data": [...]}
@@ -1092,7 +1092,7 @@ class LotteonClient:
     start_date, end_date = self._date_range(days)
     data = await self._call_api(
       "GET",
-      "/api/order/list",
+      "/v1/openapi/order/v1/order/list",
       params={
         "startDt": start_date,
         "endDt": end_date,
@@ -1116,7 +1116,7 @@ class LotteonClient:
     start_date, end_date = self._date_range(days)
     data = await self._call_api(
       "GET",
-      "/api/order/list",
+      "/v1/openapi/order/v1/order/list",
       params={
         "startDt": start_date,
         "endDt": end_date,
