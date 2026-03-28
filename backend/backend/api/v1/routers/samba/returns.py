@@ -54,9 +54,31 @@ async def list_returns(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     svc = _read_service(session)
-    return await svc.list_returns(
+    returns = await svc.list_returns(
         skip=skip, limit=limit, order_id=order_id, status=status, type=type
     )
+
+    # 주문의 ext_order_number(원주문링크)를 return_link로 매칭
+    from backend.domain.samba.order.repository import SambaOrderRepository
+    order_repo = SambaOrderRepository(session)
+    order_ids = list({r.order_id for r in returns if r.order_id})
+    if order_ids:
+        from backend.domain.samba.order.model import SambaOrder
+        from sqlmodel import select, col
+        stmt = select(SambaOrder.id, SambaOrder.ext_order_number).where(
+            col(SambaOrder.id).in_(order_ids)
+        )
+        rows = (await session.execute(stmt)).all()
+        link_map = {row.id: row.ext_order_number for row in rows if row.ext_order_number}
+    else:
+        link_map = {}
+
+    results = []
+    for r in returns:
+        data = r.model_dump() if hasattr(r, 'model_dump') else r.__dict__.copy()
+        data["return_link"] = link_map.get(r.order_id)
+        results.append(data)
+    return results
 
 
 @router.post("", status_code=201)

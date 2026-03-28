@@ -26,6 +26,8 @@ class OrderCreate(BaseModel):
 
 
 class OrderUpdate(BaseModel):
+    order_number: Optional[str] = None
+    ext_order_number: Optional[str] = None
     channel_name: Optional[str] = None
     product_id: Optional[str] = None
     product_name: Optional[str] = None
