@@ -1653,6 +1653,18 @@ export default function CollectorPage() {
                 }}
                 style={{ padding: '7px 20px', fontSize: '0.82rem', borderRadius: '6px', cursor: mappingLoading ? 'not-allowed' : 'pointer', border: '1px solid rgba(255,140,0,0.5)', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600, opacity: mappingLoading ? 0.6 : 1 }}
               >{mappingLoading ? 'AI 분석중...' : 'AI 매핑'}</button>
+              <button
+                onClick={async () => {
+                  if (!await showConfirm('이 그룹의 카테고리 매핑을 모두 초기화하시겠습니까?')) return
+                  setMappingData({})
+                  try {
+                    await collectorApi.updateFilter(mappingFilter.id, { target_mappings: {} } as Partial<SambaSearchFilter>)
+                    showAlert('매핑 초기화 완료', 'success')
+                    load(); loadTree()
+                  } catch (e) { showAlert(e instanceof Error ? e.message : '초기화 실패', 'error') }
+                }}
+                style={{ padding: '7px 20px', fontSize: '0.82rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(255,107,107,0.5)', background: 'rgba(255,107,107,0.1)', color: '#FF6B6B' }}
+              >매핑 초기화</button>
             </div>
 
             {MAPPING_MARKETS.map(m => (
@@ -1665,7 +1677,7 @@ export default function CollectorPage() {
               <button onClick={async () => {
                 try {
                   const clean = Object.fromEntries(Object.entries(mappingData).filter(([, v]) => v))
-                  await collectorApi.updateFilter(mappingFilter.id, { target_mappings: Object.keys(clean).length > 0 ? clean : undefined } as Partial<SambaSearchFilter>)
+                  await collectorApi.updateFilter(mappingFilter.id, { target_mappings: clean } as Partial<SambaSearchFilter>)
                   setShowMappingModal(false)
                   showAlert('매핑 저장 완료', 'success')
                   load(); loadTree()

@@ -130,8 +130,16 @@ class JobWorker:
 
         site = sf.source_site
 
-        # FashionPlus 등 직접 API 소싱처 처리
-        if site in ("FashionPlus", "Nike", "Adidas"):
+        # 직접 API 소싱처 (서버 HTTP)
+        DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas"}
+        # 확장앱 기반 소싱처 (소싱큐)
+        EXTENSION_SITES = {"ABCmart", "GrandStage", "OKmall", "LOTTEON", "GSShop", "ElandMall", "SSF", "SSG"}
+
+        if site in DIRECT_API_SITES:
+            await self._collect_direct_api(job, sf, session, repo)
+            return
+
+        if site in EXTENSION_SITES:
             await self._collect_direct_api(job, sf, session, repo)
             return
 
@@ -407,7 +415,8 @@ class JobWorker:
             await repo.complete_job(job.id, {"saved": 0, "message": f"이미 {existing_count}개 수집됨"})
             return
 
-        # 클라이언트 생성
+        # 클라이언트 생성 — 직접 API 소싱처
+        client = None
         if site == "FashionPlus":
             from backend.domain.samba.proxy.fashionplus import FashionPlusClient
             client = FashionPlusClient()
@@ -417,9 +426,37 @@ class JobWorker:
         elif site == "Adidas":
             from backend.domain.samba.proxy.adidas import AdidasClient
             client = AdidasClient()
+
+        # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
+        if not client:
+            from backend.domain.samba.proxy.sourcing_queue import SourcingQueue, SITE_SEARCH_URLS
+            if site not in SITE_SEARCH_URLS:
+                await repo.fail_job(job.id, f"미지원 소싱처: {site}")
+                return
+            try:
+                _req_id, _future = SourcingQueue.add_search_job(site, keyword)
+                ext_result = await asyncio.wait_for(_future, timeout=60)
+                items_list = ext_result.get("products", [])
+                logger.info(f"[잡워커] {site} 확장앱 검색 '{keyword}' → {len(items_list)}건")
+            except asyncio.TimeoutError:
+                SourcingQueue.resolvers.pop(_req_id, None)
+                await repo.fail_job(job.id, f"확장앱 응답 타임아웃. 확장앱이 실행 중인지 확인하세요.")
+                return
+            except Exception as e:
+                await repo.fail_job(job.id, f"확장앱 검색 실패: {e}")
+                return
+            # 확장앱 결과는 검색 API와 동일 포맷으로 처리 (아래 중복필터+저장 로직 공유)
+            result = {"products": items_list, "total": len(items_list)}
+
         else:
-            await repo.fail_job(job.id, f"미지원 직접 API: {site}")
-            return
+            # 직접 API 검색
+            try:
+                result = await client.search(keyword, max_count=max(remaining * 2, 100), **_search_kwargs)
+                items_list = result.get("products", [])
+                logger.info(f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건")
+            except Exception as e:
+                await repo.fail_job(job.id, f"검색 실패: {e}")
+                return
 
         await repo.update_progress(job.id, 0, remaining)
 
@@ -428,15 +465,6 @@ class JobWorker:
         if site == "FashionPlus" and _search_kwargs.get("category1Id"):
             from backend.domain.samba.proxy.fashionplus import _CATEGORY_MAP
             _category1_name = _CATEGORY_MAP.get(_search_kwargs["category1Id"], "")
-
-        try:
-            # 중복 고려하여 넉넉히 검색 (요청수의 2배 또는 최소 100건)
-            result = await client.search(keyword, max_count=max(remaining * 2, 100), **_search_kwargs)
-            items_list = result.get("products", [])
-            logger.info(f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건")
-        except Exception as e:
-            await repo.fail_job(job.id, f"검색 실패: {e}")
-            return
 
         # 중복 필터링
         candidate_ids = [str(item.get("site_product_id", "")) for item in items_list if item.get("site_product_id")]

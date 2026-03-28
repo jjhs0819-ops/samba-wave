@@ -86,12 +86,12 @@ _SS_M_TO_F: dict[str, str] = {
     "패션의류 > 남성의류 > 아우터 > 패딩": "패션의류 > 여성의류 > 아우터 > 패딩",
     "패션의류 > 남성의류 > 아우터 > 베스트": "패션의류 > 여성의류 > 아우터 > 자켓",
     # 신발
-    "패션잡화 > 남성신발 > 스니커즈": "패션의류 > 여성신발 > 스니커즈",
-    "패션잡화 > 남성신발 > 운동화 > 러닝화": "패션의류 > 여성신발 > 스니커즈",
-    "패션잡화 > 남성신발 > 운동화 > 워킹화": "패션의류 > 여성신발 > 스니커즈",
-    "패션잡화 > 남성신발 > 구두": "패션의류 > 여성신발 > 플랫/로퍼",
-    "패션잡화 > 남성신발 > 샌들": "패션의류 > 여성신발 > 샌들/슬리퍼",
-    "패션잡화 > 남성신발 > 부츠": "패션의류 > 여성신발 > 부츠",
+    "패션잡화 > 남성신발 > 스니커즈": "패션잡화 > 여성신발 > 스니커즈",
+    "패션잡화 > 남성신발 > 운동화 > 러닝화": "패션잡화 > 여성신발 > 스니커즈",
+    "패션잡화 > 남성신발 > 운동화 > 워킹화": "패션잡화 > 여성신발 > 스니커즈",
+    "패션잡화 > 남성신발 > 구두": "패션잡화 > 여성신발 > 플랫/로퍼",
+    "패션잡화 > 남성신발 > 샌들": "패션잡화 > 여성신발 > 샌들/슬리퍼",
+    "패션잡화 > 남성신발 > 부츠": "패션잡화 > 여성신발 > 부츠",
 }
 
 # 롯데ON: 남성→여성 카테고리 변환 맵
@@ -414,17 +414,18 @@ MARKET_CATEGORIES: Dict[str, List[str]] = {
         "패션의류 > 여성의류 > 아우터 > 자켓",
         "패션의류 > 여성의류 > 아우터 > 코트",
         "패션의류 > 여성의류 > 아우터 > 패딩",
-        # 신발
-        "패션의류 > 남성신발 > 스니커즈",
-        "패션의류 > 남성신발 > 운동화",
-        "패션의류 > 남성신발 > 구두/로퍼",
-        "패션의류 > 남성신발 > 샌들/슬리퍼",
-        "패션의류 > 남성신발 > 부츠",
-        "패션의류 > 여성신발 > 스니커즈",
-        "패션의류 > 여성신발 > 부츠",
-        "패션의류 > 여성신발 > 힐/펌프스",
-        "패션의류 > 여성신발 > 플랫/로퍼",
-        "패션의류 > 여성신발 > 샌들/슬리퍼",
+        # 신발 (패션잡화 하위)
+        "패션잡화 > 남성신발 > 스니커즈",
+        "패션잡화 > 남성신발 > 운동화 > 러닝화",
+        "패션잡화 > 남성신발 > 운동화 > 워킹화",
+        "패션잡화 > 남성신발 > 구두",
+        "패션잡화 > 남성신발 > 샌들",
+        "패션잡화 > 남성신발 > 부츠",
+        "패션잡화 > 여성신발 > 스니커즈",
+        "패션잡화 > 여성신발 > 부츠",
+        "패션잡화 > 여성신발 > 힐/펌프스",
+        "패션잡화 > 여성신발 > 플랫/로퍼",
+        "패션잡화 > 여성신발 > 샌들/슬리퍼",
         # 가방
         "패션잡화 > 가방 > 백팩",
         "패션잡화 > 가방 > 크로스백",
@@ -2213,11 +2214,11 @@ class SambaCategoryService:
                         lines.append(f"- {market_labels.get(m, m)}:\n" + "\n".join(f"  {c}" for c in relevant))
 
                 if lines and has_enough_matches:
-                    cat_list_section = "\n[마켓 실제 카테고리 (참고 목록)]\n" + "\n".join(lines) + "\n"
-                    cat_rule = "목록에 있으면 우선 선택하되, 적합한 항목이 없으면 해당 마켓의 실제 카테고리 체계에 맞게 생성."
+                    cat_list_section = "\n[허용된 마켓 카테고리 — 이 중에서만 선택]\n" + "\n".join(lines) + "\n"
+                    cat_rule = "각 마켓별로 위 목록에 있는 카테고리 문자열을 정확히 그대로 복사하여 선택. 목록에 없는 카테고리를 임의로 만들거나 변형 금지. 모든 마켓에 반드시 값을 채울 것."
                 else:
                     cat_list_section = ""
-                    cat_rule = "각 마켓의 실제 카테고리 체계(대분류 > 중분류 > 소분류)에 맞게 정확한 카테고리 경로를 생성."
+                    cat_rule = "각 마켓의 허용된 카테고리 중에서만 선택. 존재하지 않는 카테고리 생성 금지. 모든 마켓에 반드시 값을 채울 것."
 
             prompt = f"""소싱 카테고리를 판매 마켓 카테고리에 매핑.
 소비자가 검색할 키워드와 가장 일치하는 카테고리를 선택하세요.
@@ -2268,7 +2269,18 @@ JSON만 응답:
                         validated: Dict[str, str] = {}
                         for market, suggested in result[key_str].items():
                             if market in target_set and suggested:
-                                validated[market] = suggested
+                                # 동기화된 카테고리 목록에 있는지 검증
+                                market_cat_list = all_market_cats.get(market, [])
+                                if not market_cat_list or suggested in market_cat_list:
+                                    validated[market] = suggested
+                                else:
+                                    # 유사매칭 시도
+                                    fallback = _similarity_match_smartstore(suggested, market_cat_list)
+                                    if fallback:
+                                        logger.warning(f"[벌크매핑] AI '{suggested}' 목록에 없음 → {fallback}")
+                                        validated[market] = fallback
+                                    else:
+                                        logger.warning(f"[벌크매핑] AI '{suggested}' 목록에 없고 유사매칭 실패 → 스킵")
                         all_results.append(validated)
                     else:
                         all_results.append("AI 응답에서 누락")
@@ -2396,12 +2408,20 @@ JSON만 응답:
 
 [소싱] {source_site} | {source_category} | 상품: {sample_str} | 태그: {tag_str or '-'}
 
-[마켓 카테고리 (참고)]
+[허용된 마켓 카테고리 — 이 중에서만 선택]
 {market_list_str}
 
-규칙: 목록에 있으면 선택, 없으면 마켓 실제 체계로 생성. 빈값 금지.
+규칙:
+1. 각 마켓별로 위 목록에 있는 카테고리 문자열을 정확히 그대로 복사하여 선택.
+2. 목록에 없는 카테고리를 임의로 만들거나 변형하지 마세요.
+3. 모든 마켓에 반드시 값을 채우세요. 빈값 금지.
 JSON만:
 {json.dumps({m: "" for m in market_cats}, ensure_ascii=False)}"""
+
+        logger.info(f"[AI매핑] 프롬프트 마켓: {list(market_cats.keys())} ({len(market_cats)}개)")
+        for mk, cats_list in market_cats.items():
+            leaf_m = [c for c in cats_list if any(kw in c for kw in leaf_keywords)]
+            logger.info(f"[AI매핑] {mk}: DB {len(cats_list)}개, 키워드매칭 {len(leaf_m)}개")
 
         client = anthropic.AsyncAnthropic(api_key=key)
 
@@ -2411,7 +2431,7 @@ JSON만:
             try:
                 response = await client.messages.create(
                     model="claude-sonnet-4-20250514",
-                    max_tokens=1024,
+                    max_tokens=2048,
                     messages=[{"role": "user", "content": prompt}],
                 )
                 break
@@ -2434,22 +2454,47 @@ JSON만:
                 if text.endswith("```"):
                     text = text[:-3].strip()
 
-            result = json.loads(text)
+            ai_result = json.loads(text)
+            # AI 응답에서 누락된 마켓 확인
+            missing = [m for m in market_cats if m not in ai_result]
+            if missing:
+                logger.warning(f"[AI매핑] AI 응답에서 누락된 마켓: {missing}")
+            logger.info(f"[AI매핑] AI 응답 키: {list(ai_result.keys())}")
 
-            # 응답 검증: 마켓 키가 유효하고 값이 있으면 수용
-            # AI가 목록 외 카테고리를 생성할 수 있으므로 엄격 검증하지 않음
-            validated: Dict[str, str] = {}
-            for market, suggested in result.items():
-                if market in market_cats and suggested:
-                    validated[market] = suggested
-                    if suggested not in market_cats[market]:
-                        logger.info(
-                            "AI가 %s에 목록 외 카테고리 '%s' 생성",
-                            market, suggested,
-                        )
+            # 응답 검증: 동기화된 카테고리 목록에 있는 것만 수용
+            ai_validated: Dict[str, str] = {}
+            for market, suggested in ai_result.items():
+                if market not in market_cats or not suggested:
+                    continue
+                if suggested in market_cats[market]:
+                    ai_validated[market] = suggested
+                    logger.info(f"[AI매핑] {market}: '{suggested}' ✓ 목록에 존재")
+                else:
+                    # 목록에 없으면 유사매칭 시도
+                    fallback = _similarity_match_smartstore(suggested, market_cats[market])
+                    if fallback:
+                        logger.warning(f"[AI매핑] {market}: '{suggested}' 목록에 없음 → 유사매칭: {fallback}")
+                        ai_validated[market] = fallback
+                    else:
+                        logger.warning(f"[AI매핑] {market}: '{suggested}' 목록에 없고 유사매칭 실패 → 스킵")
 
-            # 1~2단계 결과와 AI 결과 병합 (1~2단계 우선)
-            return {**validated, **result}
+            # 1~2단계 결과 + AI 검증 결과 병합 (AI로 보충)
+            for k, v in ai_validated.items():
+                if k not in result:
+                    result[k] = v
+
+            # AI가 빠뜨린 마켓은 상품명 키워드로 유사매칭 fallback
+            for m in remaining_markets:
+                if m not in result and m in market_cats:
+                    # 상품명+태그 키워드로 직접 매칭
+                    all_kw = leaf_keywords | parent_keywords
+                    candidates = [c for c in market_cats[m] if any(kw in c for kw in all_kw)]
+                    if candidates:
+                        best = max(candidates, key=lambda c: sum(1 for kw in all_kw if kw in c))
+                        result[m] = best
+                        logger.info(f"[AI매핑] {m}: AI 누락 → 키워드 fallback: {best}")
+
+            return result
 
         except json.JSONDecodeError as e:
             logger.error("AI 응답 JSON 파싱 실패: %s", e)
@@ -2495,6 +2540,13 @@ JSON만:
 
         if not all_market_keys:
             return {"mapped": 0, "updated": 0, "skipped": 0, "errors": ["대상 마켓이 없습니다"]}
+
+        # 마켓별 동기화된 카테고리 목록 미리 로드 (검증용)
+        all_market_cats: Dict[str, List[str]] = {}
+        for mk in all_market_keys:
+            cats = await self._get_market_categories(mk)
+            if cats:
+                all_market_cats[mk] = cats
 
         # 1) 수집 상품에서 고유 (site, leaf_category, 대표 상품명) 추출
         stmt = select(SambaCollectedProduct)

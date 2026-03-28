@@ -2,10 +2,9 @@
  * SambaWave API client - 인증 없이 접근
  */
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL ||
-  (process.env.NODE_ENV === 'production'
-    ? 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
-    : 'http://localhost:28080')
+import { API_BASE_URL } from '@/config/api'
+
+export const API_BASE = API_BASE_URL
 
 const SAMBA_PREFIX = `${API_BASE}/api/v1/samba`;
 
@@ -68,6 +67,7 @@ export interface SambaOrder {
   tracking_number?: string;
   notes?: string;
   ext_order_number?: string;
+  sourcing_order_number?: string;
   source?: string;
   shipment_id?: string;
   created_at: string;

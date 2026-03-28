@@ -23,6 +23,7 @@ _CATEGORY_GROUP: dict[str, str] = {
   # 신발
   "신발": "shoes", "스니커즈": "shoes", "부츠": "shoes", "샌들": "shoes",
   "슬리퍼": "shoes", "스포츠화": "shoes", "구두": "shoes", "로퍼": "shoes",
+  "운동화": "shoes", "러닝화": "shoes", "축구화": "shoes", "농구화": "shoes",
   # 가방
   "가방": "bag", "백팩": "bag", "크로스백": "bag", "숄더백": "bag",
   "토트백": "bag", "클러치": "bag", "에코백": "bag", "캐리어": "bag",
@@ -62,6 +63,27 @@ def detect_notice_group(product: dict[str, Any]) -> str:
   for keyword, group in _CATEGORY_GROUP.items():
     if keyword in full_cat:
       return group
+
+  # 상품명에서 카테고리 추론 (카테고리 미설정 소싱처 대응)
+  name = (product.get("name") or "").lower()
+  name_hints = {
+    "shoes": ["운동화", "신발", "스니커즈", "부츠", "샌들", "슬리퍼", "러닝화", "로퍼", "구두",
+              "플라이", "에어맥스", "에어포스", "덩크", "조던", "트레이너", "베이퍼"],
+    "wear": ["티셔츠", "셔츠", "자켓", "팬츠", "후드", "맨투맨", "바지", "코트", "조거", "트레이닝"],
+    "bag": ["가방", "백팩", "크로스백", "토트백", "숄더백"],
+    "accessories": ["모자", "벨트", "지갑", "시계", "양말"],
+  }
+  for group, hints in name_hints.items():
+    for h in hints:
+      if h in name:
+        return group
+
+  # 신발 브랜드 + 카테고리 미설정 → 기본 shoes 추론
+  brand = (product.get("brand") or "").lower()
+  shoe_brands = {"나이키", "nike", "아디다스", "adidas", "뉴발란스", "new balance",
+                 "퓨마", "puma", "리복", "reebok", "아식스", "asics", "컨버스", "converse", "반스", "vans"}
+  if brand in shoe_brands:
+    return "shoes"
 
   return "etc"
 
@@ -171,6 +193,49 @@ def build_coupang_notices(product: dict[str, Any]) -> list[dict[str, str]]:
 # 3. 스마트스토어 고시정보
 # ────────────────────────────────────────────
 
+# 스마트스토어 카테고리 ID → 고시정보 그룹 매핑
+# 50000000 대역: 패션의류/잡화
+_SS_CATEGORY_GROUP: dict[str, str] = {
+  # 신발 카테고리 (50003xxx 대역)
+  "50003822": "shoes",  # 운동화 > 스니커즈
+  "50003835": "shoes",  # 운동화 > 런닝화
+  "50003801": "shoes",  # 신발
+  "50003802": "shoes",  # 남성신발
+  "50003803": "shoes",  # 여성신발
+  "50003804": "shoes",  # 아동신발
+  "50003820": "shoes",  # 운동화
+  "50003821": "shoes",  # 워킹화
+  "50003830": "shoes",  # 구두
+  "50003840": "shoes",  # 부츠
+  "50003850": "shoes",  # 샌들/슬리퍼
+}
+
+
+def _detect_group_from_ss_category(category_id: str) -> str | None:
+  """스마트스토어 카테고리 ID로 고시정보 그룹을 판별.
+  직접 매핑이 없으면 상위 카테고리 대역으로 추론.
+  """
+  if not category_id:
+    return None
+  # 1. 직접 매핑
+  if category_id in _SS_CATEGORY_GROUP:
+    return _SS_CATEGORY_GROUP[category_id]
+  # 2. 대역 추론 (5000380x~5000389x = 신발)
+  try:
+    cid = int(category_id)
+    if 50003800 <= cid <= 50003899:
+      return "shoes"
+    if 50000100 <= cid <= 50002999:
+      return "wear"
+    if 50004000 <= cid <= 50004099:
+      return "bag"
+    if 50004100 <= cid <= 50004299:
+      return "accessories"
+  except (ValueError, TypeError):
+    pass
+  return None
+
+
 # 스마트스토어 고시정보 타입 매핑
 _SMARTSTORE_NOTICE_TYPE: dict[str, str] = {
   "wear": "WEAR",
@@ -187,9 +252,13 @@ _SMARTSTORE_NOTICE_TYPE: dict[str, str] = {
 def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str, Any]:
   """상품 카테고리에 맞는 스마트스토어 고시정보를 생성한다.
 
-  kwargs: color_text, size_text, mfr, brand 등 transform_product에서 가공된 값
+  kwargs: color_text, size_text, mfr, brand, ss_category_id 등 transform_product에서 가공된 값
   """
-  group = detect_notice_group(product)
+  # 매핑된 스마트스토어 카테고리 ID로 고시정보 타입 우선 판별
+  ss_cat_id = kwargs.get("ss_category_id", "")
+  group = _detect_group_from_ss_category(ss_cat_id) if ss_cat_id else None
+  if not group:
+    group = detect_notice_group(product)
   notice_type = _SMARTSTORE_NOTICE_TYPE.get(group, "ETC")
 
   fallback = "상세 이미지 참조"
@@ -287,7 +356,7 @@ def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str,
     }
   elif notice_type == "ETC":
     notice_data = {
-      "itemName": product.get("name", "") or fallback,
+      "itemName": (product.get("name", "") or fallback)[:50],
       "modelName": fallback,
       "manufacturer": mfr,
       "afterServiceDirector": common_fields["afterServiceDirector"],
