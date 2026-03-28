@@ -581,7 +581,7 @@ class LotteonPlugin(MarketPlugin):
       )
       scat_attr_lst = _build_scat_attr_lst(product_copy, category_attr_ids)
       product_copy["_scat_attr_lst"] = scat_attr_lst
-      logger.info(f"[롯데ON] scatAttrLst 생성: {len(scat_attr_lst)}개 → {scat_attr_lst}")
+      logger.info(f"[롯데ON] scatAttrLst 생성: {len(scat_attr_lst)}개 — {[a['optVal'] for a in scat_attr_lst]}")
 
     data = LotteonClient.transform_product(
       product_copy, category_id, client.tr_grp_cd or "SR", client.tr_no, disp_cat_id

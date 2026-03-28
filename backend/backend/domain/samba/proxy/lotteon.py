@@ -730,8 +730,7 @@ class LotteonClient:
       _normalize_url(u) for u in raw_images
       if u and (u.startswith("http") or u.startswith("//"))
     ][:10]
-    _log.info(f"[롯데ON] 이미지 원본: {raw_images[:3]}")
-    _log.info(f"[롯데ON] 이미지 정규화: {images[:3]}")
+    _log.info(f"[롯데ON] 이미지: 원본 {len(raw_images)}개 → 정규화 {len(images)}개")
 
     # ── 기본 상품 정보 ──────────────────────────────────────────
     sale_price = int(product.get("sale_price", 0))
