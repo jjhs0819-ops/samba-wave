@@ -213,6 +213,7 @@ export interface SambaSearchFilter {
   ss_brand_name?: string;
   ss_manufacturer_id?: number;
   ss_manufacturer_name?: string;
+  target_mappings?: Record<string, string>;
   created_at: string;
   // 트리 구조
   parent_id?: string | null;

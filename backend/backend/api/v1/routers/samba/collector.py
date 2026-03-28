@@ -56,6 +56,7 @@ class SearchFilterUpdate(BaseModel):
     is_active: Optional[bool] = None
     requested_count: Optional[int] = None
     applied_policy_id: Optional[str] = None
+    target_mappings: Optional[dict] = None
 
 
 class CollectedProductCreate(BaseModel):
@@ -454,14 +455,16 @@ async def scroll_products(
         conditions.append(_CP.free_shipping == True)
         conditions.append(_CP.same_day_delivery == True)
     elif status == "market_registered":
-        # 마켓에 실제 등록된 상품: registered_accounts JSON 배열이 비어있지 않은 경우
+        # 마켓에 실제 등록된 상품: registered_accounts가 null/빈배열/빈문자열이 아닌 경우
         conditions.append(_CP.registered_accounts.isnot(None))
-        conditions.append(func.json_array_length(_CP.registered_accounts) > 0)
+        conditions.append(cast(_CP.registered_accounts, String) != 'null')
+        conditions.append(cast(_CP.registered_accounts, String) != '[]')
     elif status == "market_unregistered":
-        # 마켓 미등록 상품: registered_accounts가 null이거나 빈 JSON 배열
+        # 마켓 미등록 상품: registered_accounts가 null이거나 빈 배열
         conditions.append(or_(
             _CP.registered_accounts.is_(None),
-            func.json_array_length(_CP.registered_accounts) == 0,
+            cast(_CP.registered_accounts, String) == 'null',
+            cast(_CP.registered_accounts, String) == '[]',
         ))
     elif status and status in _KNOWN_STATUS_VALUES:
         conditions.append(_CP.status == status)

@@ -7,9 +7,12 @@ import {
   policyApi,
   proxyApi,
   aiSourcingApi,
+  categoryApi,
+  accountApi,
   API_BASE,
   type SambaSearchFilter,
   type SambaPolicy,
+  type SambaMarketAccount,
   type RefreshResult,
   type AISourcingResult,
   type AISourcingCombination,
@@ -126,6 +129,13 @@ export default function CollectorPage() {
   const [imgFiltering, setImgFiltering] = useState(false)
   const [imgFilterScope, setImgFilterScope] = useState<'images' | 'detail' | 'all'>('images')
 
+  // 카테고리 매핑 모달
+  const [showMappingModal, setShowMappingModal] = useState(false)
+  const [mappingFilter, setMappingFilter] = useState<SambaSearchFilter | null>(null)
+  const [mappingData, setMappingData] = useState<Record<string, string>>({})
+  const [mappingLoading, setMappingLoading] = useState(false)
+  const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
+
   // Proxy & auth status
   const [proxyStatus, setProxyStatus] = useState<"checking" | "ok" | "error">("checking");
   const [proxyText, setProxyText] = useState("프록시 서버 확인 중...");
@@ -191,6 +201,7 @@ export default function CollectorPage() {
   useEffect(() => { load(); loadTree(); }, [load, loadTree]);
   useEffect(() => {
     proxyApi.listPresets().then(res => { if (res.success) setAiPresetList(res.presets) }).catch(() => {})
+    accountApi.listActive().then(setAccounts).catch(() => {})
   }, [])
   useEffect(() => {
     if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
@@ -1116,8 +1127,8 @@ export default function CollectorPage() {
           const selectedCount = selectedFilter ? ((selectedFilter as unknown as Record<string, number>).collected_count ?? 0) : 0
 
           // 헤더·본문 너비 통일 (합계 100%)
-          // 사이트8 브랜드8 카테고리12 링크36 정책10 수집8 요청8 생성일10
-          const colW = ['8%', '8%', '12%', '36%', '10%', '8%', '8%', '10%']
+          // 사이트8 브랜드8 카테고리12 링크30 정책10 수집7 요청6 생성일10 매핑9
+          const colW = ['8%', '8%', '12%', '30%', '10%', '7%', '6%', '10%', '9%']
           const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const, textAlign: 'center' as const }
           const colStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0 })
           const detColStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0, padding: '0.5rem 0.5rem' })
@@ -1136,13 +1147,13 @@ export default function CollectorPage() {
             }}>
               {/* 헤더 */}
               <div style={{ display: 'flex', borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
-                {['사이트', '브랜드', '카테고리', '링크', '정책', '수집', '요청', '생성일/최근수집'].map((h, i) => (
+                {['사이트', '브랜드', '카테고리', '링크', '정책', '수집', '요청', '생성일/최근수집', '매핑'].map((h, i) => (
                   <div key={h} style={{
                     width: colW[i], flexShrink: 0, boxSizing: 'border-box' as const,
                     padding: '0.5rem 0.5rem', textAlign: 'center' as const,
                     fontSize: '0.72rem', fontWeight: 600,
                     color: (i === 0 && (drillEntry === 'site' || drillSite)) || (i === 1 && (drillEntry === 'brand' || drillBrand)) || (i === 2 && drillGroup) ? '#FF8C00' : '#888',
-                    borderRight: i < 7 ? '1px solid #2D2D2D' : 'none',
+                    borderRight: i < 8 ? '1px solid #2D2D2D' : 'none',
                     cursor: i < 3 ? 'pointer' : 'default',
                   }}
                   onClick={() => {
@@ -1306,12 +1317,34 @@ export default function CollectorPage() {
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
                 {/* 9. 생성일/최근수집 */}
-                <div style={{ ...detColStyle(7), borderRight: 'none' }}>
+                <div style={detColStyle(7)}>
                   {selectedFilter ? (
                     <div style={{ fontSize: '0.68rem', color: '#888' }}>
                       {fmtDate(selectedFilter.created_at)}<br />{fmtDate(selectedFilter.last_collected_at)}
                     </div>
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
+                </div>
+                {/* 10. 매핑 */}
+                <div style={{ ...detColStyle(8), borderRight: 'none' }}>
+                  {selectedFilter ? (() => {
+                    const tm = (selectedFilter as SambaSearchFilter).target_mappings || {}
+                    const mappedCount = Object.keys(tm).length
+                    return (
+                      <button
+                        onClick={() => {
+                          setMappingFilter(selectedFilter as SambaSearchFilter)
+                          setMappingData({ ...tm })
+                          setShowMappingModal(true)
+                        }}
+                        style={{
+                          padding: '0.2rem 0.5rem', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer',
+                          background: mappedCount > 0 ? 'rgba(81,207,102,0.1)' : 'rgba(255,140,0,0.1)',
+                          border: `1px solid ${mappedCount > 0 ? 'rgba(81,207,102,0.3)' : 'rgba(255,140,0,0.3)'}`,
+                          color: mappedCount > 0 ? '#51CF66' : '#FF8C00',
+                        }}
+                      >{mappedCount > 0 ? `${mappedCount}개 매핑` : '매핑'}</button>
+                    )
+                  })() : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
               </div>
             </div>
@@ -1377,6 +1410,85 @@ export default function CollectorPage() {
             >
               확인
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ 카테고리 매핑 모달 ═══ */}
+      {showMappingModal && mappingFilter && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setShowMappingModal(false)}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', padding: '28px 32px', minWidth: '500px', maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto' }}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 4px', fontSize: '1rem', fontWeight: 600, color: '#E5E5E5' }}>카테고리 매핑</h3>
+            <p style={{ margin: '0 0 16px', fontSize: '0.75rem', color: '#888' }}>
+              {mappingFilter.name} — 각 마켓별 카테고리를 지정하세요
+            </p>
+
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <button
+                disabled={mappingLoading}
+                onClick={async () => {
+                  setMappingLoading(true)
+                  try {
+                    const products = await collectorApi.scrollProducts({ skip: 0, limit: 5, search_filter_id: mappingFilter.id })
+                    const rep = products.items[0]
+                    if (!rep) { showAlert('상품이 없습니다', 'error'); return }
+                    const res = await categoryApi.aiSuggest({
+                      source_site: rep.source_site || mappingFilter.source_site,
+                      source_category: [rep.category1, rep.category2, rep.category3, rep.category4].filter(Boolean).join(' > ') || rep.category || '',
+                      sample_products: products.items.slice(0, 5).map(p => p.name || ''),
+                      sample_tags: rep.tags?.filter((t: string) => !t.startsWith('__')) || [],
+                      target_markets: accounts.filter(a => a.is_active).map(a => a.market_type),
+                    })
+                    if (res) {
+                      const newMapping: Record<string, string> = { ...mappingData }
+                      for (const [market, cat] of Object.entries(res)) {
+                        if (cat) newMapping[market] = cat as string
+                      }
+                      setMappingData(newMapping)
+                      showAlert('AI 매핑 추천 완료', 'success')
+                    }
+                  } catch (e) { showAlert(e instanceof Error ? e.message : 'AI 매핑 실패', 'error') }
+                  finally { setMappingLoading(false) }
+                }}
+                style={{ padding: '7px 20px', fontSize: '0.82rem', borderRadius: '6px', cursor: mappingLoading ? 'not-allowed' : 'pointer', border: '1px solid rgba(255,140,0,0.5)', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600, opacity: mappingLoading ? 0.6 : 1 }}
+              >{mappingLoading ? 'AI 분석중...' : 'AI 매핑'}</button>
+            </div>
+
+            {accounts.filter(a => a.is_active).map(a => (
+              <div key={a.id} style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '0.8rem', color: '#888', minWidth: '100px' }}>{a.market_name}</span>
+                <input
+                  type="text"
+                  value={mappingData[a.market_type] || ''}
+                  onChange={e => setMappingData(prev => ({ ...prev, [a.market_type]: e.target.value }))}
+                  placeholder="카테고리 경로 입력"
+                  style={{ flex: 1, fontSize: '0.78rem', padding: '5px 10px', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', outline: 'none' }}
+                />
+                {mappingData[a.market_type] && (
+                  <button onClick={() => setMappingData(prev => { const n = { ...prev }; delete n[a.market_type]; return n })}
+                    style={{ color: '#666', cursor: 'pointer', background: 'none', border: 'none', fontSize: '1rem' }}>&times;</button>
+                )}
+              </div>
+            ))}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
+              <button onClick={() => setShowMappingModal(false)}
+                style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid #3D3D3D', background: 'transparent', color: '#888' }}>취소</button>
+              <button onClick={async () => {
+                try {
+                  const clean = Object.fromEntries(Object.entries(mappingData).filter(([, v]) => v))
+                  await collectorApi.updateFilter(mappingFilter.id, { target_mappings: Object.keys(clean).length > 0 ? clean : undefined } as Partial<SambaSearchFilter>)
+                  setShowMappingModal(false)
+                  showAlert('매핑 저장 완료', 'success')
+                  load(); loadTree()
+                } catch (e) { showAlert(e instanceof Error ? e.message : '저장 실패', 'error') }
+              }}
+                style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(81,207,102,0.5)', background: 'rgba(81,207,102,0.15)', color: '#51CF66', fontWeight: 600 }}>
+                저장 ({Object.values(mappingData).filter(Boolean).length}개 마켓)
+              </button>
+            </div>
           </div>
         </div>
       )}
