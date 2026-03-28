@@ -214,21 +214,6 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
-    { name: '_divider_purchase', label: '구매/리뷰 혜택 조건', type: 'divider' },
-    { name: 'multiPurchaseDiscount', label: '복수구매할인', type: 'select', options: [
-      { value: '', label: '설정안함' }, { value: 'true', label: '설정함' },
-    ]},
-    { name: 'multiPurchaseQty', label: '복수구매 수량 (N개 이상)', type: 'number', placeholder: '2' },
-    { name: 'multiPurchaseRate', label: '복수구매 할인율 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_point', label: '포인트', type: 'divider' },
-    { name: 'purchasePointEnabled', label: '상품 구매 시 지급', type: 'checkbox' },
-    { name: 'purchasePointRate', label: '구매 적립률 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_review', label: '상품리뷰 작성시 지급', type: 'divider' },
-    { name: 'reviewPointEnabled', label: '리뷰 포인트 지급', type: 'checkbox' },
-    { name: 'reviewTextPoint', label: '텍스트 리뷰 작성', type: 'number', placeholder: '원' },
-    { name: 'reviewPhotoPoint', label: '포토/동영상 리뷰 작성', type: 'number', placeholder: '원' },
-    { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
-    { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
   ]},
   { key: '11st', label: '11번가', authField: 'apiKey', guideUrl: 'https://openapi.11st.co.kr/openapi/OpenApiServiceRegister.tmall', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
@@ -1795,13 +1780,11 @@ export default function SettingsPage() {
                         {a.chrome_profile && <span style={{ color: '#666', background: '#1A1A1A', padding: '0.05rem 0.3rem', borderRadius: '3px' }}>{chromeProfiles.find(p => p.directory === a.chrome_profile)?.name || a.chrome_profile}</span>}
                         {a.memo && <span style={{ color: '#888' }}>{a.memo}</span>}
                       </div>
-                      {(a.balance != null || (a.additional_fields as Record<string, unknown>)?.mileage != null) && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', fontSize: '0.7rem' }}>
-                          {a.balance != null && <span style={{ color: '#51CF66', fontWeight: 600 }}>머니 {a.balance.toLocaleString()}</span>}
-                          {(a.additional_fields as Record<string, unknown>)?.mileage != null && <span style={{ color: '#4C9AFF', fontWeight: 600 }}>적립금 {Number((a.additional_fields as Record<string, unknown>).mileage).toLocaleString()}</span>}
-                          {a.balance_updated_at && <span style={{ color: '#666' }}>{new Date(a.balance_updated_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
-                        </div>
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', fontSize: '0.7rem' }}>
+                        <span style={{ color: '#51CF66', fontWeight: 600 }}>머니 {(a.balance ?? 0).toLocaleString()}</span>
+                        <span style={{ color: '#4C9AFF', fontWeight: 600 }}>적립금 {Number((a.additional_fields as Record<string, unknown>)?.mileage ?? 0).toLocaleString()}</span>
+                        {a.balance_updated_at && <span style={{ color: '#666' }}>{new Date(a.balance_updated_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
+                      </div>
                       <div style={{ display: 'flex', gap: '0.25rem' }}>
                         <button onClick={() => handleFetchBalance(a.id)} disabled={balanceLoading[a.id]} style={{ padding: '0.15rem 0.4rem', fontSize: '0.68rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', color: '#51CF66', borderRadius: '4px', cursor: 'pointer', opacity: balanceLoading[a.id] ? 0.5 : 1 }}>{balanceLoading[a.id] ? '조회중' : '잔액'}</button>
                         <button onClick={() => sourcingAccountApi.toggle(a.id).then(() => loadSourcingAccounts())} style={{ padding: '0.15rem 0.4rem', fontSize: '0.68rem', background: a.is_active ? 'rgba(76,154,255,0.1)' : 'rgba(100,100,100,0.2)', border: `1px solid ${a.is_active ? 'rgba(76,154,255,0.3)' : '#555'}`, color: a.is_active ? '#4C9AFF' : '#888', borderRadius: '4px', cursor: 'pointer' }}>{a.is_active ? 'ON' : 'OFF'}</button>
@@ -1894,7 +1877,10 @@ export default function SettingsPage() {
         <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
-            <input type='password' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)} placeholder='AIzaSy...' />
+            <div style={{ display: 'flex', flex: 1, gap: '4px', alignItems: 'center' }}>
+              <input type={visiblePasswords.has('gemini_apiKey') ? 'text' : 'password'} style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)} placeholder='AIzaSy...' />
+              <button type="button" onClick={() => setVisiblePasswords(prev => { const n = new Set(prev); n.has('gemini_apiKey') ? n.delete('gemini_apiKey') : n.add('gemini_apiKey'); return n })} style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer', whiteSpace: 'nowrap' }}>{visiblePasswords.has('gemini_apiKey') ? '숨김' : '보기'}</button>
+            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델</label>
@@ -1930,7 +1916,10 @@ export default function SettingsPage() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '120px', fontSize: '0.875rem' }}>Secret Access Key</label>
-            <input type='password' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={r2SecretKey} onChange={(e) => setR2SecretKey(e.target.value)} placeholder='R2 Secret Access Key' />
+            <div style={{ display: 'flex', flex: 1, gap: '4px', alignItems: 'center' }}>
+              <input type={visiblePasswords.has('r2_secretKey') ? 'text' : 'password'} style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={r2SecretKey} onChange={(e) => setR2SecretKey(e.target.value)} placeholder='R2 Secret Access Key' />
+              <button type="button" onClick={() => setVisiblePasswords(prev => { const n = new Set(prev); n.has('r2_secretKey') ? n.delete('r2_secretKey') : n.add('r2_secretKey'); return n })} style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer', whiteSpace: 'nowrap' }}>{visiblePasswords.has('r2_secretKey') ? '숨김' : '보기'}</button>
+            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '120px', fontSize: '0.875rem' }}>Bucket Name</label>
@@ -1960,13 +1949,16 @@ export default function SettingsPage() {
         <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
-            <input
-              type='password'
-              style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
-              value={claudeApiKey}
-              onChange={(e) => setClaudeApiKey(e.target.value)}
-              placeholder='sk-ant-api03-...'
-            />
+            <div style={{ display: 'flex', flex: 1, gap: '4px', alignItems: 'center' }}>
+              <input
+                type={visiblePasswords.has('claude_apiKey') ? 'text' : 'password'}
+                style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
+                value={claudeApiKey}
+                onChange={(e) => setClaudeApiKey(e.target.value)}
+                placeholder='sk-ant-api03-...'
+              />
+              <button type="button" onClick={() => setVisiblePasswords(prev => { const n = new Set(prev); n.has('claude_apiKey') ? n.delete('claude_apiKey') : n.add('claude_apiKey'); return n })} style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer', whiteSpace: 'nowrap' }}>{visiblePasswords.has('claude_apiKey') ? '숨김' : '보기'}</button>
+            </div>
             <button onClick={testClaudeApi} style={{ background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.35)', color: '#A78BFA', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>연결 테스트</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
