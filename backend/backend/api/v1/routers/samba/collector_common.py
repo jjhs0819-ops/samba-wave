@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timezone
 
 from sqlmodel.ext.asyncio.session import AsyncSession
+from backend.domain.samba.collector.grouping import generate_group_key, parse_color_from_name
 
 
 # ── 상수 ──
@@ -12,8 +13,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
 
-# 스크롤/목록 조회 시 제외할 무거운 필드
-_HEAVY_FIELDS = {"price_history", "detail_html", "detail_images", "last_sent_data"}
+# 스크롤/목록 조회 시 제외할 무거운 필드 (source_url은 가볍고 목록에서 필요하므로 제외 안 함)
+_HEAVY_FIELDS = {"price_history", "detail_html", "detail_images", "last_sent_data", "extra_data"}
 
 
 # ── 블랙리스트 캐시 ──
@@ -61,12 +62,30 @@ def _clean_text(value: str) -> str:
 
 # ── 상품 데이터 빌드 ──
 
+# _build_product_data에서 명시적으로 매핑하는 프록시 키 목록
+# 여기에 없는 키는 extra_data에 자동 저장됨
+_KNOWN_PROXY_KEYS = {
+  "name", "brand", "images", "detailImages", "options",
+  "sourceUrl", "category", "manufacturer", "origin", "material",
+  "color", "style_code", "sex", "season", "care_instructions",
+  "quality_guarantee", "saleStatus", "freeShipping", "sameDayDelivery",
+  "originalPrice", "salePrice", "cost", "detail_html", "video_url",
+  "kreamData", "collectedAt", "updatedAt",
+}
+
+
 def _build_product_data(
   detail: dict, goods_no: str, filter_id: str, site: str,
   cost: float, sale_price: float, original_price: float,
   raw_cat: str, cat_parts: list, raw_detail_html: str,
 ) -> dict:
-  """수집 상품 데이터 빌드 (collect_by_url / collect_by_filter 공통)."""
+  """수집 상품 데이터 빌드 (collect_by_url / collect_by_filter 공통).
+
+  프록시에서 보내는 모든 데이터를 보존:
+  - 명시 매핑 필드 → DB 컬럼에 직접 저장
+  - sourceUrl → source_url 컬럼에 저장
+  - 미매핑 필드 → extra_data JSON에 자동 저장
+  """
   initial_snapshot = {
     "date": datetime.now(timezone.utc).isoformat(),
     "sale_price": sale_price,
@@ -87,10 +106,15 @@ def _build_product_data(
     else:
       cleaned_options.append(opt)
 
+  # 미매핑 필드 → extra_data에 자동 보존
+  extra = {k: v for k, v in detail.items() if k not in _KNOWN_PROXY_KEYS}
+  extra_data = extra if extra else None
+
   return {
     "source_site": site,
     "site_product_id": goods_no,
     "search_filter_id": filter_id,
+    "source_url": detail.get("sourceUrl", ""),
     "name": _clean_text(detail.get("name", "")),
     "brand": _clean_text(detail.get("brand", "")),
     "original_price": original_price,
@@ -107,12 +131,19 @@ def _build_product_data(
     "manufacturer": _clean_text(detail.get("manufacturer") or ""),
     "origin": _clean_text(detail.get("origin") or ""),
     "material": _clean_text(detail.get("material") or ""),
-    "color": _clean_text(detail.get("color") or ""),
-    "style_code": _clean_text(detail.get("style_code", "")),
+    "color": _clean_text(detail.get("color") or "") or parse_color_from_name(detail.get("name", "")),
     "sex": detail.get("sex", ""),
     "season": detail.get("season", ""),
     "care_instructions": _clean_text(detail.get("care_instructions", "")),
     "quality_guarantee": _clean_text(detail.get("quality_guarantee", "")),
+    "similar_no": str(detail.get("similarNo", "0")),
+    "style_code": _clean_text(detail.get("styleNo", "") or detail.get("style_code", "")),
+    "group_key": generate_group_key(
+      brand=detail.get("brand", ""),
+      similar_no=str(detail.get("similarNo", "0")),
+      style_code=detail.get("styleNo", "") or detail.get("style_code", ""),
+      name=detail.get("name", ""),
+    ),
     "detail_html": raw_detail_html,
     "status": "collected",
     "is_sold_out": detail.get("saleStatus") == "sold_out",
@@ -120,6 +151,7 @@ def _build_product_data(
     "free_shipping": detail.get("freeShipping", False),
     "same_day_delivery": detail.get("sameDayDelivery", False),
     "price_history": [initial_snapshot],
+    "extra_data": extra_data,
   }
 
 

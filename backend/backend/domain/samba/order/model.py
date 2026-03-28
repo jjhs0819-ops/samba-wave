@@ -46,6 +46,8 @@ class SambaOrder(SQLModel, table=True):
     product_name: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     product_image: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     product_option: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    coupang_display_name: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    source_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     source_site: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 고객 정보
@@ -82,6 +84,9 @@ class SambaOrder(SQLModel, table=True):
     shipping_company: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     tracking_number: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+
+    # 타마켓 주문번호
+    ext_order_number: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 출처
     source: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))

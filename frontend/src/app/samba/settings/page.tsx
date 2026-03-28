@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { accountApi, collectorApi, forbiddenApi, proxyApi, API_BASE, type SambaMarketAccount } from '@/lib/samba/api'
+import { accountApi, collectorApi, forbiddenApi, proxyApi, sourcingAccountApi, API_BASE, type SambaMarketAccount, type SambaSourcingAccount, type ChromeProfile } from '@/lib/samba/api'
 import { MARKET_SELECT_OPTIONS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum, parseNum } from '@/lib/samba/styles'
@@ -887,10 +887,14 @@ export default function SettingsPage() {
   const [claudeStatus, setClaudeStatus] = useState('')
   const [aiFeatures, setAiFeatures] = useState<Record<string, boolean>>({ productName: true })
 
-  // Gemini AI 설정
+  // Gemini AI 설정 (모델컷 생성 전용)
   const [geminiApiKey, setGeminiApiKey] = useState('')
-  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash-image')
+  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash-preview-05-20')
   const [geminiStatus, setGeminiStatus] = useState('')
+
+  // FLUX (fal.ai) 이미지 생성 설정
+  const [falApiKey, setFalApiKey] = useState('')
+  const [falStatus, setFalStatus] = useState('')
 
   // 모델 프리셋
   const [presets, setPresets] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
@@ -919,6 +923,16 @@ export default function SettingsPage() {
   const [r2BucketName, setR2BucketName] = useState('')
   const [r2PublicUrl, setR2PublicUrl] = useState('')
   const [r2Status, setR2Status] = useState('')
+
+  // 소싱처 계정 상태
+  const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
+  const [sourcingSites, setSourcingSites] = useState<{ id: string; name: string; group: string }[]>([])
+  const [chromeProfiles, setChromeProfiles] = useState<ChromeProfile[]>([])
+  const [sourcingTab, setSourcingTab] = useState('MUSINSA')
+  const [sourcingFormOpen, setSourcingFormOpen] = useState(false)
+  const [sourcingEditId, setSourcingEditId] = useState<string | null>(null)
+  const [sourcingForm, setSourcingForm] = useState({ site_name: 'MUSINSA', account_label: '', username: '', password: '', chrome_profile: '', memo: '' })
+  const [balanceLoading, setBalanceLoading] = useState<Record<string, boolean>>({})
 
   const loadAccounts = useCallback(async () => {
     setAccountLoading(true)
@@ -1104,8 +1118,13 @@ export default function SettingsPage() {
       const gm = await forbiddenApi.getSetting('gemini').catch(() => null) as Record<string, unknown> | null
       if (gm) {
         setGeminiApiKey(String(gm.apiKey || ''))
-        setGeminiModel(String(gm.model || 'gemini-2.5-flash-image'))
+        setGeminiModel(String(gm.model || 'gemini-2.5-flash-preview-05-20'))
         if (gm.apiKey) setGeminiStatus('저장됨')
+      }
+      const fal = await forbiddenApi.getSetting('fal_ai').catch(() => null) as Record<string, unknown> | null
+      if (fal) {
+        setFalApiKey(String(fal.apiKey || ''))
+        if (fal.apiKey) setFalStatus('저장됨')
       }
     } catch { /* ignore */ }
     try {
@@ -1121,7 +1140,20 @@ export default function SettingsPage() {
     } catch { /* ignore */ }
   }, [])
 
-  useEffect(() => { loadAccounts() }, [loadAccounts])
+  const loadSourcingAccounts = useCallback(async () => {
+    try {
+      const [accounts, sites, profiles] = await Promise.all([
+        sourcingAccountApi.list(),
+        sourcingAccountApi.getSites(),
+        sourcingAccountApi.getChromeProfiles(),
+      ])
+      setSourcingAccounts(accounts)
+      setSourcingSites(sites)
+      setChromeProfiles(profiles)
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { loadAccounts(); loadSourcingAccounts() }, [loadAccounts, loadSourcingAccounts])
 
   const loadProbeStatus = useCallback(async () => {
     try {
@@ -1272,32 +1304,37 @@ export default function SettingsPage() {
     setAiFeatures(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
-  // Gemini AI 저장
+  // Gemini AI 저장 (모델컷 생성 전용)
   const saveGeminiSettings = async () => {
     if (!geminiApiKey) { showAlert('API Key를 입력해주세요', 'error'); return }
     try {
       await forbiddenApi.saveSetting('gemini', { apiKey: geminiApiKey, model: geminiModel, updatedAt: new Date().toISOString() })
       setGeminiStatus(`저장 완료 (${new Date().toLocaleTimeString('ko-KR', { hour12: false })})`)
-      showAlert('Gemini AI 설정이 저장되었습니다', 'success')
+      showAlert('Gemini 설정이 저장되었습니다', 'success')
     } catch { showAlert('저장 실패', 'error') }
   }
 
-  const testGeminiApi = async () => {
-    if (!geminiApiKey) { showAlert('API Key를 먼저 입력해주세요', 'error'); return }
-    setGeminiStatus('API 연결 확인 중...')
+  // FLUX (fal.ai) 저장
+  const saveFalSettings = async () => {
+    if (!falApiKey) { showAlert('API Key를 입력해주세요', 'error'); return }
     try {
-      await forbiddenApi.saveSetting('gemini', { apiKey: geminiApiKey, model: geminiModel, updatedAt: new Date().toISOString() })
-      const result = await proxyApi.geminiTest()
-      if (result.success) {
-        setGeminiStatus(`✓ ${result.message}`)
-        showAlert(result.message, 'success')
-      } else {
-        setGeminiStatus(`✗ ${result.message}`)
-        showAlert(result.message, 'error')
-      }
+      await forbiddenApi.saveSetting('fal_ai', { apiKey: falApiKey, updatedAt: new Date().toISOString() })
+      setFalStatus(`저장 완료 (${new Date().toLocaleTimeString('ko-KR', { hour12: false })})`)
+      showAlert('FLUX (fal.ai) 설정이 저장되었습니다', 'success')
+    } catch { showAlert('저장 실패', 'error') }
+  }
+
+  const testFalApi = async () => {
+    if (!falApiKey) { showAlert('API Key를 먼저 입력해주세요', 'error'); return }
+    setFalStatus('API 연결 확인 중...')
+    try {
+      await forbiddenApi.saveSetting('fal_ai', { apiKey: falApiKey, updatedAt: new Date().toISOString() })
+      // fal.ai는 별도 테스트 엔드포인트 없으므로 저장만 확인
+      setFalStatus('✓ 저장 완료')
+      showAlert('fal.ai API Key가 저장되었습니다', 'success')
     } catch (e) {
-      setGeminiStatus('연결 실패')
-      showAlert(`Gemini API 연결 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+      setFalStatus('저장 실패')
+      showAlert(`fal.ai 저장 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
     }
   }
 
@@ -1376,6 +1413,68 @@ export default function SettingsPage() {
       setR2Status('연결 실패')
       showAlert(`R2 연결 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
     }
+  }
+
+  // ── 소싱처 계정 핸들러 ──
+  const handleSourcingSave = async () => {
+    if (!sourcingForm.account_label || !sourcingForm.username || !sourcingForm.password) {
+      showAlert('별칭, 아이디, 비밀번호는 필수입니다', 'error')
+      return
+    }
+    try {
+      if (sourcingEditId) {
+        await sourcingAccountApi.update(sourcingEditId, sourcingForm)
+      } else {
+        await sourcingAccountApi.create({ ...sourcingForm, site_name: sourcingTab })
+      }
+      setSourcingEditId(null)
+      setSourcingForm({ site_name: sourcingTab, account_label: '', username: '', password: '', chrome_profile: '', memo: '' })
+      loadSourcingAccounts()
+    } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
+  }
+
+  const handleSourcingDelete = async (id: string) => {
+    if (!await showConfirm('삭제하시겠습니까?')) return
+    await sourcingAccountApi.delete(id)
+    loadSourcingAccounts()
+  }
+
+  const handleSourcingEdit = (a: SambaSourcingAccount) => {
+    setSourcingEditId(a.id)
+    setSourcingForm({
+      site_name: a.site_name,
+      account_label: a.account_label,
+      username: a.username,
+      password: a.password,
+      chrome_profile: a.chrome_profile || '',
+      memo: a.memo || '',
+    })
+  }
+
+  const handleFetchBalance = async (id: string) => {
+    setBalanceLoading(prev => ({ ...prev, [id]: true }))
+    try {
+      const res = await sourcingAccountApi.fetchBalance(id)
+      showAlert(`잔액: ${res.balance.toLocaleString()}원`, 'success')
+      loadSourcingAccounts()
+    } catch (err) { showAlert(err instanceof Error ? err.message : '잔액 조회 실패', 'error') }
+    setBalanceLoading(prev => ({ ...prev, [id]: false }))
+  }
+
+  const handleFetchAllBalances = async () => {
+    setBalanceLoading(prev => {
+      const next = { ...prev }
+      sourcingAccounts.filter(a => a.site_name === sourcingTab && a.is_active).forEach(a => { next[a.id] = true })
+      return next
+    })
+    try {
+      const res = await sourcingAccountApi.fetchAllBalances(sourcingTab)
+      const failed = res.results.filter(r => r.status === 'error')
+      if (failed.length) showAlert(`${failed.length}건 조회 실패`, 'error')
+      else showAlert('전체 잔액 조회 완료', 'success')
+      loadSourcingAccounts()
+    } catch (err) { showAlert(err instanceof Error ? err.message : '전체 잔액 조회 실패', 'error') }
+    setBalanceLoading({})
   }
 
   return (
@@ -1603,6 +1702,144 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
+
+      {/* ═══════ 소싱처 계정 관리 ═══════ */}
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.5rem' }}>
+        <div style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>소싱처 계정</div>
+        <p style={{ fontSize: '0.8125rem', color: '#666', marginBottom: '1.25rem' }}>소싱처별 로그인 계정을 관리합니다</p>
+
+        {/* 소싱처 탭바 */}
+        <div style={{ borderBottom: '1px solid #2D2D2D', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0 }}>
+            {sourcingSites.map(site => {
+              const count = sourcingAccounts.filter(a => a.site_name === site.id).length
+              return (
+                <button
+                  key={site.id}
+                  onClick={() => { setSourcingTab(site.id); setSourcingEditId(null); setSourcingForm({ site_name: site.id, account_label: '', username: '', password: '', chrome_profile: '', memo: '' }) }}
+                  style={{
+                    padding: '0.5rem 0.75rem', background: 'none', border: 'none',
+                    borderBottom: sourcingTab === site.id ? '2px solid #FF8C00' : '2px solid transparent',
+                    color: sourcingTab === site.id ? '#FF8C00' : '#666',
+                    fontSize: '0.8125rem', fontWeight: sourcingTab === site.id ? 600 : 400,
+                    cursor: 'pointer', marginBottom: '-1px', whiteSpace: 'nowrap',
+                  }}
+                >{site.name}{count > 0 ? ` (${count})` : ''}</button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* 좌측: 인라인 폼 + 우측: 계정 리스트 */}
+        <div style={{ display: 'flex', gap: '2rem', alignItems: 'flex-start' }}>
+          {/* 좌측: 입력 폼 */}
+          <div style={{ flex: 1, maxWidth: '560px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+              <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#E5E5E5' }}>
+                {sourcingSites.find(s => s.id === sourcingTab)?.name || sourcingTab} 계정
+              </span>
+              {sourcingEditId && (
+                <>
+                  <span style={{ fontSize: '0.75rem', color: '#FF8C00', fontWeight: 600 }}>
+                    ({sourcingAccounts.find(a => a.id === sourcingEditId)?.account_label} 수정중)
+                  </span>
+                  <button
+                    onClick={() => { setSourcingEditId(null); setSourcingForm({ site_name: sourcingTab, account_label: '', username: '', password: '', chrome_profile: '', memo: '' }) }}
+                    style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem', background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer' }}
+                  >취소</button>
+                </>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>별칭</label>
+                <input style={{ ...inputStyle, flex: 1 }} placeholder="예: 무신사-기현" value={sourcingForm.account_label} onChange={e => setSourcingForm(prev => ({ ...prev, account_label: e.target.value }))} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>아이디</label>
+                <input style={{ ...inputStyle, flex: 1 }} placeholder="로그인 아이디" value={sourcingForm.username} onChange={e => setSourcingForm(prev => ({ ...prev, username: e.target.value }))} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>비밀번호</label>
+                <input style={{ ...inputStyle, flex: 1 }} type="password" placeholder="로그인 비밀번호" value={sourcingForm.password} onChange={e => setSourcingForm(prev => ({ ...prev, password: e.target.value }))} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>크롬 프로필</label>
+                <select style={{ ...inputStyle, flex: 1 }} value={sourcingForm.chrome_profile} onChange={e => setSourcingForm(prev => ({ ...prev, chrome_profile: e.target.value }))}>
+                  <option value="">선택 안함</option>
+                  {chromeProfiles.map(p => <option key={p.directory} value={p.directory}>{p.name} ({p.directory})</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>메모</label>
+                <input style={{ ...inputStyle, flex: 1 }} placeholder="쿠폰, 용도 등" value={sourcingForm.memo} onChange={e => setSourcingForm(prev => ({ ...prev, memo: e.target.value }))} />
+              </div>
+            </div>
+
+            {/* 저장 버튼 */}
+            <div style={{ marginTop: '1.5rem', display: 'flex', gap: '0.5rem' }}>
+              <button
+                onClick={handleSourcingSave}
+                style={{ padding: '0.625rem 1.75rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}
+              >{sourcingEditId ? '계정 수정' : '계정 추가'}</button>
+              <button
+                onClick={handleFetchAllBalances}
+                style={{ padding: '0.625rem 1.25rem', background: 'rgba(76,154,255,0.15)', border: '1px solid rgba(76,154,255,0.3)', color: '#4C9AFF', borderRadius: '6px', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer' }}
+              >전체 잔액 조회</button>
+            </div>
+          </div>
+
+          {/* 우측: 해당 소싱처 계정 리스트 */}
+          <div style={{ width: '320px', flexShrink: 0 }}>
+            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#888', marginBottom: '0.5rem' }}>등록 계정</div>
+            {(() => {
+              const siteAccounts = sourcingAccounts.filter(a => a.site_name === sourcingTab)
+              if (siteAccounts.length === 0) return (
+                <div style={{ fontSize: '0.78rem', color: '#555', padding: '0.5rem 0' }}>등록된 계정 없음</div>
+              )
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                  {siteAccounts.map(a => (
+                    <div key={a.id} style={{
+                      padding: '0.5rem 0.625rem',
+                      background: sourcingEditId === a.id ? 'rgba(255,140,0,0.08)' : 'rgba(255,255,255,0.02)',
+                      borderRadius: '6px',
+                      border: sourcingEditId === a.id ? '1px solid rgba(255,140,0,0.3)' : '1px solid rgba(45,45,45,0.5)',
+                      opacity: a.is_active ? 1 : 0.5,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                        <span style={{ flex: 1, fontSize: '0.8rem', fontWeight: 600, color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.account_label}</span>
+                        {a.chrome_profile && <span style={{ fontSize: '0.65rem', color: '#666', background: '#1A1A1A', padding: '0.05rem 0.3rem', borderRadius: '3px' }}>{chromeProfiles.find(p => p.directory === a.chrome_profile)?.name || a.chrome_profile}</span>}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem', fontSize: '0.7rem' }}>
+                        <span style={{ color: '#888', fontFamily: 'monospace' }}>{a.username}</span>
+                        {a.balance != null && <span style={{ color: '#51CF66', fontWeight: 600 }}>{a.balance.toLocaleString()}원</span>}
+                        {a.balance_updated_at && <span style={{ color: '#666' }}>{new Date(a.balance_updated_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
+                      </div>
+                      {a.memo && <div style={{ fontSize: '0.68rem', color: '#888', marginBottom: '0.25rem' }}>{a.memo}</div>}
+                      <div style={{ display: 'flex', gap: '0.25rem' }}>
+                        <button onClick={() => handleFetchBalance(a.id)} disabled={balanceLoading[a.id]} style={{ padding: '0.15rem 0.4rem', fontSize: '0.68rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', color: '#51CF66', borderRadius: '4px', cursor: 'pointer', opacity: balanceLoading[a.id] ? 0.5 : 1 }}>{balanceLoading[a.id] ? '조회중' : '잔액'}</button>
+                        <button onClick={() => sourcingAccountApi.toggle(a.id).then(() => loadSourcingAccounts())} style={{ padding: '0.15rem 0.4rem', fontSize: '0.68rem', background: a.is_active ? 'rgba(76,154,255,0.1)' : 'rgba(100,100,100,0.2)', border: `1px solid ${a.is_active ? 'rgba(76,154,255,0.3)' : '#555'}`, color: a.is_active ? '#4C9AFF' : '#888', borderRadius: '4px', cursor: 'pointer' }}>{a.is_active ? 'ON' : 'OFF'}</button>
+                        <button
+                          onClick={() => handleSourcingEdit(a)}
+                          style={{
+                            padding: '0.15rem 0.4rem', fontSize: '0.68rem', borderRadius: '4px', cursor: 'pointer',
+                            background: sourcingEditId === a.id ? 'rgba(255,140,0,0.15)' : 'rgba(60,60,60,0.8)',
+                            color: sourcingEditId === a.id ? '#FF8C00' : '#C5C5C5',
+                            border: sourcingEditId === a.id ? '1px solid #FF8C00' : '1px solid #3D3D3D',
+                          }}
+                        >{sourcingEditId === a.id ? '수정중' : '수정'}</button>
+                        <button onClick={() => handleSourcingDelete(a.id)} style={{ padding: '0.15rem 0.4rem', fontSize: '0.68rem', background: 'rgba(255,80,80,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
+          </div>
+        </div>
+      </div>
+
       {/* SMS / 카카오 알림톡 설정 */}
       <div style={{ ...card, padding: '1.5rem', marginTop: '1.5rem' }}>
 
@@ -1661,11 +1898,11 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Gemini AI 연동 (이미지 변환 + AI 태그) */}
+      {/* Gemini AI (모델컷 생성 전용) */}
       <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#4285F4' }}>Gemini AI 연동</span>
-          <span style={{ fontSize: '0.8125rem', color: '#666' }}>** 이미지 변환(모델컷/배경제거/연출컷) + AI 태그 통합</span>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#4285F4' }}>Gemini AI (모델컷 전용)</span>
+          <span style={{ fontSize: '0.8125rem', color: '#666' }}>상품사진 → 모델착용컷 생성 (₩430/장)</span>
           <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4285F4', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
           <button onClick={saveGeminiSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
         </div>
@@ -1673,19 +1910,39 @@ export default function SettingsPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
             <input type='password' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)} placeholder='AIzaSy...' />
-            <button onClick={testGeminiApi} style={{ background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.35)', color: '#4285F4', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>연결 테스트</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델 선택</label>
+            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델</label>
             <select style={{ ...inputStyle, width: '300px' }} value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}>
-              <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (권장)</option>
-              <option value="gemini-3.1-flash-image-preview">Gemini 3.1 Flash Image</option>
-              <option value="gemini-3-pro-image-preview">Gemini 3 Pro Image</option>
+              <option value="gemini-2.5-flash-preview-05-20">Gemini 2.5 Flash (권장)</option>
+              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
             </select>
           </div>
           {geminiStatus && (
-            <div style={{ fontSize: '0.8125rem', color: geminiStatus.includes('저장') || geminiStatus.includes('✓') ? '#7BAF7E' : geminiStatus.includes('확인') ? '#FFB84D' : '#C4736E', padding: '0.4rem 0' }}>
+            <div style={{ fontSize: '0.8125rem', color: geminiStatus.includes('저장') ? '#7BAF7E' : '#C4736E', padding: '0.4rem 0' }}>
               {geminiStatus}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* FLUX (fal.ai) 이미지 생성 연동 */}
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#A855F7' }}>FLUX 이미지 생성 (fal.ai)</span>
+          <span style={{ fontSize: '0.8125rem', color: '#666' }}>모델착용컷 / 씬연출컷 (₩7/장) · 배경제거는 rembg 무료</span>
+          <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#A855F7', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
+          <button onClick={saveFalSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
+        </div>
+        <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
+            <input type='password' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={falApiKey} onChange={(e) => setFalApiKey(e.target.value)} placeholder='fal-xxxxxxxx...' />
+            <button onClick={testFalApi} style={{ background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.35)', color: '#A855F7', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>저장 테스트</button>
+          </div>
+          {falStatus && (
+            <div style={{ fontSize: '0.8125rem', color: falStatus.includes('저장') || falStatus.includes('✓') ? '#7BAF7E' : falStatus.includes('확인') ? '#FFB84D' : '#C4736E', padding: '0.4rem 0' }}>
+              {falStatus}
             </div>
           )}
         </div>

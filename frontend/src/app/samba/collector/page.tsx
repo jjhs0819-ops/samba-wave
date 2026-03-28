@@ -225,8 +225,10 @@ export default function CollectorPage() {
 
       // URL에서 키워드 추출 (소싱처별 파라미터)
       let keyword = ""
+      let isUrl = false
       try {
         const parsed = new URL(collectUrl)
+        isUrl = true
         keyword = parsed.searchParams.get("keyword")
           || parsed.searchParams.get("searchWord")
           || parsed.searchParams.get("q")
@@ -246,23 +248,54 @@ export default function CollectorPage() {
       // 무신사 옵션 URL 파라미터로 저장
       let keywordUrl = collectUrl;
       if (site === "MUSINSA") {
+        // 평문 키워드인 경우 무신사 검색 URL 자동 구성
+        let u: URL
+        if (!isUrl) {
+          u = new URL("https://www.musinsa.com/search/goods")
+          u.searchParams.set("keyword", keyword)
+        } else {
+          try { u = new URL(collectUrl) } catch { u = new URL("https://www.musinsa.com/search/goods"); u.searchParams.set("keyword", keyword) }
+        }
+        if (checkedOptions['excludePreorder']) u.searchParams.set("excludePreorder", "1");
+        if (checkedOptions['excludeBoutique']) u.searchParams.set("excludeBoutique", "1");
+        if (checkedOptions['maxDiscount']) u.searchParams.set("maxDiscount", "1");
+        keywordUrl = u.toString();
+      }
+
+      // 무신사: 검색 API로 해당 링크의 총 상품수 조회
+      let requestedCount = 100
+      if (site === 'MUSINSA' && keyword) {
         try {
-          const u = new URL(collectUrl);
-          if (checkedOptions['excludePreorder']) u.searchParams.set("excludePreorder", "1");
-          if (checkedOptions['excludeBoutique']) u.searchParams.set("excludeBoutique", "1");
-          if (checkedOptions['maxDiscount']) u.searchParams.set("maxDiscount", "1");
-          keywordUrl = u.toString();
-        } catch { /* URL 파싱 실패 시 원본 유지 */ }
+          const searchParams: Record<string, string> = {}
+          try {
+            const u = new URL(collectUrl)
+            const brand = u.searchParams.get('brand')
+            const minPrice = u.searchParams.get('minPrice')
+            const maxPrice = u.searchParams.get('maxPrice')
+            const gf = u.searchParams.get('gf')
+            const category = u.searchParams.get('category')
+            if (brand) searchParams.brand = brand
+            if (minPrice) searchParams.minPrice = minPrice
+            if (maxPrice) searchParams.maxPrice = maxPrice
+            if (gf) searchParams.gf = gf
+            if (category) searchParams.category = category
+          } catch { /* URL 아닌 경우 무시 */ }
+          const countResult = await proxyApi.musinsaSearchCount(keyword, searchParams)
+          if (countResult.totalCount > 0) {
+            requestedCount = countResult.totalCount
+            addLog(`검색 결과: ${requestedCount.toLocaleString()}개 상품`)
+          }
+        } catch { /* 조회 실패 시 기본값 100 유지 */ }
       }
 
       const created = await collectorApi.createFilter({
         source_site: site,
         name: groupName,
         keyword: keywordUrl,
-        requested_count: 100,
+        requested_count: requestedCount,
       });
 
-      addLog(`그룹 생성 완료: "${created.name}" (${site})`);
+      addLog(`그룹 생성 완료: "${created.name}" (${site}, ${requestedCount.toLocaleString()}개)`);
       setCollectUrl("");
       load(); loadTree();
     } catch (e) {
@@ -273,8 +306,21 @@ export default function CollectorPage() {
 
   const handleDeleteSelectedGroups = async () => {
     if (selectedIds.size === 0) return;
-    if (!await showConfirm(`선택된 ${selectedIds.size}개 그룹을 삭제하시겠습니까?`)) return;
+    if (!await showConfirm(`선택된 ${selectedIds.size}개 그룹과 그룹 내 상품을 모두 삭제하시겠습니까?`)) return;
     for (const id of selectedIds) {
+      try {
+        const res = await collectorApi.scrollProducts({ skip: 0, limit: 10000, search_filter_id: id })
+        // 마켓 등록 상품 체크
+        const registered = res.items.filter(p => p.market_product_nos && Object.keys(p.market_product_nos).length > 0)
+        if (registered.length > 0) {
+          showAlert(`마켓등록 상품이 ${registered.length}건 있어서 삭제할 수 없습니다`, 'error')
+          continue
+        }
+        const productIds = res.items.map(p => p.id)
+        if (productIds.length > 0) {
+          await collectorApi.bulkDeleteProducts(productIds)
+        }
+      } catch { /* 상품 없으면 무시 */ }
       await collectorApi.deleteFilter(id).catch(() => {});
     }
     setSelectedIds(new Set());
@@ -284,79 +330,77 @@ export default function CollectorPage() {
 
   const handleCollectGroups = async () => {
     if (selectedIds.size === 0) {
-      addLog("수집할 그룹을 선택하세요.");
-      return;
+      addLog("수집할 그룹을 선택하세요.")
+      return
     }
-    const abort = new AbortController();
-    collectAbortRef.current = abort;
-    setCollecting(true);
-    addLog(`${selectedIds.size}개 그룹 상품수집 시작...`);
+    const abort = new AbortController()
+    collectAbortRef.current = abort
+    setCollecting(true)
+    addLog(`${selectedIds.size}개 그룹 상품수집 시작...`)
+
     for (const id of selectedIds) {
-      if (abort.signal.aborted) break;
-      const f = filters.find((x) => x.id === id);
-      if (!f) continue;
-      addLog(`[${f.name}] 수집 요청 중...`);
+      if (abort.signal.aborted) break
+      const f = filters.find((x) => x.id === id)
+      if (!f) continue
+      addLog(`[${f.name}] 수집 요청 중...`)
+
       try {
+        // Job 생성
         const res = await fetch(
           `${API_BASE}/api/v1/samba/collector/collect-filter/${id}`,
-          { method: "POST", signal: abort.signal }
-        );
-
+          { method: 'POST' }
+        )
         if (!res.ok) {
-          const errData = await res.json().catch(() => null);
-          addLog(`[${f.name}] 수집 실패: ${errData?.detail || `HTTP ${res.status}`}`);
-          continue;
+          const errData = await res.json().catch(() => null)
+          addLog(`[${f.name}] 수집 실패: ${errData?.detail || `HTTP ${res.status}`}`)
+          continue
         }
+        const { job_id } = await res.json() as { job_id: string }
+        addLog(`[${f.name}] 수집 작업 시작`)
 
-        // SSE 스트리밍 수신
-        const reader = res.body?.getReader();
-        if (!reader) {
-          addLog(`[${f.name}] 스트리밍 응답 없음`);
-          continue;
-        }
+        // 폴링으로 진행률 추적
+        let lastCurrent = 0
+        while (!abort.signal.aborted) {
+          await new Promise(r => setTimeout(r, 3000))
+          if (abort.signal.aborted) break
 
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let finalData: Record<string, unknown> | null = null;
+          try {
+            const jobRes = await fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+            if (!jobRes.ok) break
+            const job = await jobRes.json() as {
+              status: string; current: number; total: number
+              progress: number; result?: { saved?: number; skipped?: number; policy?: string; message?: string }
+              error?: string
+            }
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+            if (job.current > lastCurrent) {
+              addLog(`[${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`)
+              lastCurrent = job.current
+              load()
+            }
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            const match = line.match(/^data:\s*(.+)$/m);
-            if (!match) continue;
-            try {
-              const evt = JSON.parse(match[1]);
-              if (evt.event === 'log' || evt.event === 'product') {
-                addLog(`[${f.name}] ${evt.message}`);
-              } else if (evt.event === 'done') {
-                finalData = evt;
-              }
-            } catch { /* JSON 파싱 실패 무시 */ }
+            if (job.status === 'completed') {
+              const saved = job.result?.saved ?? 0
+              const policy = job.result?.policy || ''
+              addLog(`[${f.name}] 수집 완료: ${saved}건 저장${policy ? ` | ${policy}` : ''}`)
+              break
+            }
+            if (job.status === 'failed') {
+              addLog(`[${f.name}] 수집 실패: ${job.error || '알 수 없는 오류'}`)
+              break
+            }
+          } catch {
+            // 네트워크 오류 시 재시도
           }
         }
-
-        if (finalData) {
-          const saved = finalData.saved || 0
-          addLog(`[${f.name}] 수집 완료: ${saved}건 저장`);
-        }
       } catch (e) {
-        if ((e as Error).name === 'AbortError') {
-          addLog('수집이 중단되었습니다.');
-          break;
-        }
-        addLog(`[${f.name}] 수집 오류: ${(e as Error).message}`);
+        addLog(`[${f.name}] 수집 오류: ${(e as Error).message}`)
       }
     }
-    setCollecting(false);
-    collectAbortRef.current = null;
-    load(); loadTree();
-  };
+    setCollecting(false)
+    collectAbortRef.current = null
+    load(); loadTree()
+  }
 
   const handleStopCollect = () => {
     collectAbortRef.current?.abort();
@@ -645,12 +689,12 @@ export default function CollectorPage() {
         {/* URL 입력 */}
         <div style={{ display: "flex", gap: "0.75rem", marginBottom: "0.625rem" }}>
           <input
-            type="url"
+            type="text"
             value={collectUrl}
             onChange={(e) => setCollectUrl(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleCreateGroup()}
             placeholder={
-              selectedSite === "MUSINSA" ? "https://www.musinsa.com/search/goods?keyword=나이키" :
+              selectedSite === "MUSINSA" ? "브랜드명 또는 URL (예: 나이키, https://www.musinsa.com/search/goods?keyword=나이키)" :
               selectedSite === "KREAM" ? "https://kream.co.kr/search?keyword=나이키" :
               "URL을 입력하세요"
             }
@@ -1026,8 +1070,12 @@ export default function CollectorPage() {
           const selectedFilter = drillGroup ? filters.find(fl => fl.id === drillGroup) : null
           const selectedCount = selectedFilter ? ((selectedFilter as unknown as Record<string, number>).collected_count ?? 0) : 0
 
-          const colStyle = { flex: 1, minWidth: '120px', borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const }
-          const detColStyle = { flex: 1, minWidth: '80px', borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, padding: '0.5rem 0.5rem' }
+          // 헤더·본문 너비 통일 (합계 100%)
+          // 사이트8 브랜드8 카테고리12 링크36 정책10 수집8 요청8 생성일10
+          const colW = ['8%', '8%', '12%', '36%', '10%', '8%', '8%', '10%']
+          const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const, textAlign: 'center' as const }
+          const colStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0 })
+          const detColStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0, padding: '0.5rem 0.5rem' })
           const itemSt = (sel: boolean) => ({
             padding: '0.5rem 0.75rem', fontSize: '0.8125rem',
             color: sel ? '#FF8C00' : '#C5C5C5', cursor: 'pointer' as const,
@@ -1045,7 +1093,8 @@ export default function CollectorPage() {
               <div style={{ display: 'flex', borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
                 {['사이트', '브랜드', '카테고리', '링크', '정책', '수집', '요청', '생성일/최근수집'].map((h, i) => (
                   <div key={h} style={{
-                    flex: 1, minWidth: i < 3 ? '120px' : '80px', padding: '0.5rem 0.5rem',
+                    width: colW[i], flexShrink: 0, boxSizing: 'border-box' as const,
+                    padding: '0.5rem 0.5rem', textAlign: 'center' as const,
                     fontSize: '0.72rem', fontWeight: 600,
                     color: (i === 0 && (drillEntry === 'site' || drillSite)) || (i === 1 && (drillEntry === 'brand' || drillBrand)) || (i === 2 && drillGroup) ? '#FF8C00' : '#888',
                     borderRight: i < 7 ? '1px solid #2D2D2D' : 'none',
@@ -1063,7 +1112,7 @@ export default function CollectorPage() {
               {/* 컬럼 */}
               <div style={{ display: 'flex' }}>
                 {/* 1. 사이트: 사이트 헤더 클릭 시 전체 표시 / 브랜드 선택 시 연관만 표시 */}
-                <div style={colStyle}>
+                <div style={colStyle(0)}>
                   {(drillEntry === 'site' || drillBrand) ? (
                     filteredSites.length === 0 ? (
                       <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>그룹 없음</div>
@@ -1084,7 +1133,7 @@ export default function CollectorPage() {
                   ) : null}
                 </div>
                 {/* 2. 브랜드: 브랜드 헤더 클릭 시 전체 표시 / 사이트 선택 시 연관만 표시 */}
-                <div style={colStyle}>
+                <div style={colStyle(1)}>
                   {(drillEntry === 'brand' || drillSite) ? (
                     brands.length > 0 ? brands.map(([brand, count]) => (
                       <div key={brand} style={itemSt(drillBrand === brand)}
@@ -1099,7 +1148,7 @@ export default function CollectorPage() {
                   ) : null}
                 </div>
                 {/* 3. 카테고리: 사이트 또는 브랜드 선택 후 연관 표시 */}
-                <div style={colStyle}>
+                <div style={colStyle(2)}>
                   {(drillSite || drillBrand) ? (catGroups.length > 0 ? catGroups.map(g => (
                     <div key={g.id} style={itemSt(drillGroup === g.id)}
                       onClick={() => { setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
@@ -1113,7 +1162,7 @@ export default function CollectorPage() {
                   ) : null}
                 </div>
                 {/* 4. 링크 + 삭제 체크 */}
-                <div style={detColStyle}>
+                <div style={detColStyle(3)}>
                   {selectedFilter ? (() => {
                     // 소싱 URL 결정: category_filter(저장된 URL) > 사이트별 검색URL 생성
                     const storedUrl = (selectedFilter as unknown as Record<string, string>).category_filter || ''
@@ -1137,7 +1186,17 @@ export default function CollectorPage() {
                         ) : <span style={{ color: '#555', fontSize: '0.75rem', flex: 1 }}>-</span>}
                         <button
                           onClick={async () => {
-                            if (!await showConfirm(`"${selectedFilter.name}" 그룹을 삭제하시겠습니까?`)) return
+                            if (!await showConfirm(`"${selectedFilter.name}" 그룹과 그룹 내 상품을 모두 삭제하시겠습니까?`)) return
+                            try {
+                              const res = await collectorApi.scrollProducts({ skip: 0, limit: 10000, search_filter_id: selectedFilter.id })
+                              const registered = res.items.filter(p => p.market_product_nos && Object.keys(p.market_product_nos).length > 0)
+                              if (registered.length > 0) {
+                                showAlert(`마켓등록 상품이 ${registered.length}건 있어서 삭제할 수 없습니다`, 'error')
+                                return
+                              }
+                              const pIds = res.items.map(p => p.id)
+                              if (pIds.length > 0) await collectorApi.bulkDeleteProducts(pIds)
+                            } catch { /* 상품 없으면 무시 */ }
                             await collectorApi.deleteFilter(selectedFilter.id)
                             setDrillGroup(null)
                             load(); loadTree()
@@ -1153,7 +1212,7 @@ export default function CollectorPage() {
                   })() : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}
                 </div>
                 {/* 5. 정책 */}
-                <div style={detColStyle}>
+                <div style={detColStyle(4)}>
                   {selectedFilter ? (
                     <select
                       key={selectedFilter.id}
@@ -1171,7 +1230,7 @@ export default function CollectorPage() {
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}
                 </div>
                 {/* 6. 수집 */}
-                <div style={detColStyle}>
+                <div style={detColStyle(5)}>
                   {selectedFilter ? (
                     <span onClick={() => handleGoToProducts(selectedFilter)} style={{
                       color: selectedCount > 0 ? '#FF8C00' : '#555', fontWeight: 600, fontSize: '0.82rem',
@@ -1181,7 +1240,7 @@ export default function CollectorPage() {
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
                 {/* 8. 요청 */}
-                <div style={detColStyle}>
+                <div style={detColStyle(6)}>
                   {selectedFilter ? (
                     <input
                       key={selectedFilter.id + (selectedFilter.requested_count ?? 100)}
@@ -1202,7 +1261,7 @@ export default function CollectorPage() {
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
                 {/* 9. 생성일/최근수집 */}
-                <div style={{ ...detColStyle, borderRight: 'none' }}>
+                <div style={{ ...detColStyle(7), borderRight: 'none' }}>
                   {selectedFilter ? (
                     <div style={{ fontSize: '0.68rem', color: '#888' }}>
                       {fmtDate(selectedFilter.created_at)}<br />{fmtDate(selectedFilter.last_collected_at)}

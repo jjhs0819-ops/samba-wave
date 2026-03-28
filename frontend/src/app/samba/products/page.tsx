@@ -140,7 +140,7 @@ export default function ProductsPage() {
   // 상품명 규칙 목록 (상품명 조합 적용용)
   const [nameRules, setNameRules] = useState<SambaNameRule[]>([]);
 
-  // 서버사이드 페이지네이션 상품 로드
+  // 서버사이드 페이지네이션 상품 로드 (counts도 함께 수신)
   const loadProducts = useCallback(async (page?: number) => {
     const targetPage = page ?? currentPage
     setLoading(true)
@@ -164,6 +164,8 @@ export default function ProductsPage() {
       setAllProducts(res.items)
       setServerTotal(res.total)
       setServerSites(res.sites)
+      // scroll 응답에 counts 포함 — 별도 API 불필요
+      if (res.counts) setKpiCounts(res.counts)
     } catch (e) {
       console.error("loadProducts error:", e)
     } finally {
@@ -176,11 +178,15 @@ export default function ProductsPage() {
     await loadProducts(currentPage)
   }, [loadProducts, currentPage])
 
-  // 메타데이터 로드 (초기 1회)
+  // 메타데이터 + 상품 병렬 로드 (초기 1회)
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [pol, filters, words, accs, orderPids, rules, mappings, tpls] = await Promise.all([
+      // 메타데이터 8개 + 상품 scroll 동시 호출
+      const statusParam = (statusFilter === 'has_orders' || statusFilter === 'free_ship' || statusFilter === 'same_day' || statusFilter === 'free_same')
+        ? statusFilter : statusFilter || undefined
+      const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
+      const [pol, filters, words, accs, orderPids, rules, mappings, tpls, productsRes] = await Promise.all([
         policyApi.list().catch(() => []),
         collectorApi.listFilters().catch(() => [] as SambaSearchFilter[]),
         forbiddenApi.listWords('deletion').catch(() => []),
@@ -189,11 +195,22 @@ export default function ProductsPage() {
         nameRuleApi.list().catch(() => [] as SambaNameRule[]),
         categoryApi.listMappings().catch(() => []) as Promise<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>,
         detailTemplateApi.list().catch(() => [] as SambaDetailTemplate[]),
+        collectorApi.scrollProducts({
+          skip: 0,
+          limit: pageSize,
+          search: searchQ.trim() || _idFilter || undefined,
+          search_type: searchQ.trim() ? searchType : (_idFilter ? "id" : undefined),
+          source_site: siteFilter || undefined,
+          status: statusParam,
+          ai_filter: aiParam,
+          search_filter_id: filterByGroupId || undefined,
+          sort_by: sortBy,
+        }).catch(() => null),
       ])
       setPolicies(pol)
       setAccounts(accs)
       setDetailTemplates(tpls)
-      setDeletionWords(words.filter(w => w.is_active).map(w => w.word))
+      setDeletionWords(words.filter((w: { is_active?: boolean }) => w.is_active !== false).map((w: { word: string }) => w.word))
       setNameRules(rules)
       setOrderProductIds(new Set(orderPids))
       const nameMap: Record<string, string> = {}
@@ -206,21 +223,35 @@ export default function ProductsPage() {
         })
         setCatMappingMap(map)
       }
+      // 상품 데이터 세팅
+      if (productsRes) {
+        setAllProducts(productsRes.items)
+        setServerTotal(productsRes.total)
+        setServerSites(productsRes.sites)
+        if (productsRes.counts) setKpiCounts(productsRes.counts)
+      }
     } catch (e) {
       console.error("load error:", e)
+    } finally {
+      setLoading(false)
     }
-    // 상품은 별도 로드
-    await loadProducts(1)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화
+  // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화 (디바운싱 300ms, 초기 로드 제외)
+  const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const filterInitRef = useRef(true)
   useEffect(() => {
+    if (filterInitRef.current) { filterInitRef.current = false; return }
     setSelectAll(false)
     setSelectedIds(new Set())
     setCurrentPage(1)
-    loadProducts(1)
+    if (filterTimerRef.current) clearTimeout(filterTimerRef.current)
+    filterTimerRef.current = setTimeout(() => {
+      loadProducts(1)
+    }, 300)
+    return () => { if (filterTimerRef.current) clearTimeout(filterTimerRef.current) }
   }, [searchQ, searchType, siteFilter, statusFilter, aiFilter, sortBy, filterByGroupId])
 
   // 페이지 변경 시 서버에서 해당 페이지 로드
@@ -234,8 +265,10 @@ export default function ProductsPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [totalPages, loadProducts])
 
-  // pageSize 변경 시 1페이지로 리셋
+  // pageSize 변경 시 1페이지로 리셋 (초기 로드 제외)
+  const pageSizeInitRef = useRef(true)
   useEffect(() => {
+    if (pageSizeInitRef.current) { pageSizeInitRef.current = false; return }
     loadProducts(1)
   }, [pageSize])
 
@@ -244,11 +277,8 @@ export default function ProductsPage() {
     ? allProducts.filter(p => p.id === highlightProductId)
     : allProducts
 
-  // KPI 카드용 — counts API 사용 (필터 변경 시만 재호출)
+  // KPI 카드용 — scroll 응답에 counts 포함, 별도 API 호출 불필요
   const [kpiCounts, setKpiCounts] = useState({ total: 0, registered: 0, policy_applied: 0, sold_out: 0 })
-  useEffect(() => {
-    collectorApi.productCounts().then(setKpiCounts).catch(() => {})
-  }, [siteFilter, statusFilter, aiFilter, searchQ])
   const registeredCount = kpiCounts.registered
 
   const totalCount = serverTotal;
@@ -330,13 +360,13 @@ export default function ProductsPage() {
     try {
       const res = await collectorApi.bulkDeleteProducts(ids)
       setAiJobLogs(prev => [...prev, `${res.deleted}건 삭제 완료 ✓`])
-      setAllProducts(prev => prev.filter(p => !idSet.has(p.id)))
     } catch {
       setAiJobLogs(prev => [...prev, `삭제 실패 ✗`])
     }
     setAiJobDone(true)
     setSelectedIds(new Set())
     setSelectAll(false)
+    reloadProducts()
   }
 
   const handlePolicyChange = async (productId: string, policyId: string) => {
@@ -748,7 +778,7 @@ export default function ProductsPage() {
         }}>
           <p style={{ fontSize: "0.75rem", color: "#888", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", margin: 0 }}>수집상품 수</p>
           <p style={{ fontSize: "1.625rem", fontWeight: 800, color: "#E5E5E5", letterSpacing: "-0.02em", margin: 0 }}>
-            {allProducts.length}<span style={{ fontSize: "1rem", color: "#888", fontWeight: 500 }}>개</span>
+            {kpiCounts.total}<span style={{ fontSize: "1rem", color: "#888", fontWeight: 500 }}>개</span>
           </p>
           <p style={{ fontSize: "0.75rem", color: "#666", margin: 0 }}>등록된 상품</p>
         </div>
@@ -915,8 +945,8 @@ export default function ProductsPage() {
               try {
                 const autoScope = { thumbnail: true, additional: true, detail: true }
                 const res = await proxyApi.transformImages([ids[i]], autoScope, aiImgMode, aiModelPreset)
-                if (res.success) { success++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 완료`) }
-                else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 실패: ${res.message}`) }
+                if (res.success && res.total_transformed > 0) { success++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 완료 (${res.total_transformed}장)`) }
+                else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`) }
               } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
             }
             const endTime = ts()
@@ -1214,13 +1244,13 @@ export default function ProductsPage() {
               try {
                 const res = await collectorApi.bulkDeleteProducts(groupIds)
                 setAiJobLogs(prev => [...prev, `${res.deleted}건 삭제 완료 ✓`])
-                setAllProducts(prev => prev.filter(p => !idSet.has(p.id)))
               } catch {
                 setAiJobLogs(prev => [...prev, `삭제 실패 ✗`])
               }
               setAiJobDone(true)
               setSelectedIds(new Set())
               setSelectAll(false)
+              reloadProducts()
             }}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
@@ -1322,7 +1352,9 @@ export default function ProductsPage() {
                   accentColor: "#FF8C00", width: "14px", height: "14px", cursor: "pointer",
                 }}
               />
-              <ProductImage src={p.images?.[0]} name={p.name} size={140} />
+              <div onClick={(e) => { e.stopPropagation(); router.push(`/samba/products?search_type=id&search=${p.id}&highlight=${p.id}`); }} style={{ cursor: 'pointer' }}>
+                <ProductImage src={p.images?.[0]} name={p.name} size={140} />
+              </div>
               {(p.free_shipping || p.same_day_delivery) && (
                 <div style={{ display: 'flex', gap: '3px', padding: '3px 8px 0' }}>
                   {p.free_shipping && <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', background: 'rgba(76,154,255,0.15)', color: '#4C9AFF', fontWeight: 600 }}>무배</span>}

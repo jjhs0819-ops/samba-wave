@@ -10,11 +10,6 @@ const nextConfig: NextConfig = {
       },
       {
         protocol: 'https',
-        hostname: 'prod-apne2-ygs.s3.amazonaws.com',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
         hostname: '*.ngrok-free.app',
         pathname: '/**',
       },
