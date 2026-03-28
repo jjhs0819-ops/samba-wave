@@ -22,7 +22,6 @@ SUPPORTED_SOURCING_SITES = [
     {"id": "OliveYoung", "name": "올리브영", "group": "뷰티"},
     {"id": "FashionPlus", "name": "패션플러스", "group": "패션"},
     {"id": "GMARKET", "name": "G마켓", "group": "오픈마켓"},
-    {"id": "SMARTSTORE", "name": "스마트스토어", "group": "오픈마켓"},
     {"id": "LOTTEON", "name": "롯데ON", "group": "오픈마켓"},
     {"id": "GSShop", "name": "GS샵", "group": "오픈마켓"},
     {"id": "SSG", "name": "SSG", "group": "오픈마켓"},

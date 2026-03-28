@@ -214,22 +214,15 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
-    { name: '_divider_purchase', label: '살수록할인', type: 'divider' },
-    { name: 'multiPurchaseDiscount', label: '묶음배송 가능일때만 사용가능', type: 'select', options: [
-      { value: '', label: '설정안함' }, { value: 'true', label: '설정함' },
-    ]},
-    { name: 'multiPurchaseQty', label: '살수록 최소 수량 (N개 이상)', type: 'number', placeholder: '2' },
-    { name: 'multiPurchaseRate', label: '살수록 할인율 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_point', label: 'L.POINT 추가적립', type: 'divider' },
-    { name: 'purchasePointRate', label: '구매확정 적립 L.POINT (P)', type: 'number', placeholder: '0 (미설정, 최소 151P)' },
-    { name: 'lpointAccmDays', label: '구매확정 기준일 (D+N일)', type: 'select', options: [
-      { value: '3', label: '3일' }, { value: '4', label: '4일' }, { value: '5', label: '5일' },
-      { value: '6', label: '6일' }, { value: '7', label: '7일 (기본)' }, { value: '8', label: '8일' },
-    ]},
-    { name: '_divider_review', label: '리뷰 L.POINT 지급', type: 'divider' },
-    { name: 'reviewTextPoint', label: '리뷰작성시 L.POINT (P)', type: 'number', placeholder: '0' },
-    { name: 'reviewPhotoPoint', label: '사진첨부시 L.POINT (P)', type: 'number', placeholder: '0' },
-    { name: 'reviewVideoPoint', label: '동영상첨부시 L.POINT (P)', type: 'number', placeholder: '0' },
+    { name: '_divider_point', label: '포인트', type: 'divider' },
+    { name: 'purchasePointEnabled', label: '상품 구매 시 지급', type: 'checkbox' },
+    { name: 'purchasePointRate', label: '구매 적립률 (%)', type: 'number', placeholder: '1' },
+    { name: '_divider_review', label: '상품리뷰 작성시 지급', type: 'divider' },
+    { name: 'reviewPointEnabled', label: '리뷰 포인트 지급', type: 'checkbox' },
+    { name: 'reviewTextPoint', label: '텍스트 리뷰 작성', type: 'number', placeholder: '원' },
+    { name: 'reviewPhotoPoint', label: '포토/동영상 리뷰 작성', type: 'number', placeholder: '원' },
+    { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
+    { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
   ]},
   { key: '11st', label: '11번가', authField: 'apiKey', guideUrl: 'https://openapi.11st.co.kr/openapi/OpenApiServiceRegister.tmall', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
@@ -859,6 +852,7 @@ export default function SettingsPage() {
 
   // 스토어 연결
   const [storeTab, setStoreTab] = useState('smartstore')
+  const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set())
   const [storeData, setStoreData] = useState<Record<string, Record<string, string>>>({})
   const [savedStoreData, setSavedStoreData] = useState<Record<string, Record<string, string>>>({})
   const [storeStatus, setStoreStatus] = useState<Record<string, string>>({})
@@ -889,12 +883,9 @@ export default function SettingsPage() {
 
   // Gemini AI 설정 (모델컷 생성 전용)
   const [geminiApiKey, setGeminiApiKey] = useState('')
-  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash-preview-05-20')
+  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash')
   const [geminiStatus, setGeminiStatus] = useState('')
 
-  // FLUX (fal.ai) 이미지 생성 설정
-  const [falApiKey, setFalApiKey] = useState('')
-  const [falStatus, setFalStatus] = useState('')
 
   // 모델 프리셋
   const [presets, setPresets] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
@@ -1118,14 +1109,10 @@ export default function SettingsPage() {
       const gm = await forbiddenApi.getSetting('gemini').catch(() => null) as Record<string, unknown> | null
       if (gm) {
         setGeminiApiKey(String(gm.apiKey || ''))
-        setGeminiModel(String(gm.model || 'gemini-2.5-flash-preview-05-20'))
+        setGeminiModel(String(gm.model || 'gemini-2.5-flash'))
         if (gm.apiKey) setGeminiStatus('저장됨')
       }
-      const fal = await forbiddenApi.getSetting('fal_ai').catch(() => null) as Record<string, unknown> | null
-      if (fal) {
-        setFalApiKey(String(fal.apiKey || ''))
-        if (fal.apiKey) setFalStatus('저장됨')
-      }
+      // fal_ai: 미사용 (추후 구현)
     } catch { /* ignore */ }
     try {
       const r2 = await forbiddenApi.getSetting('cloudflare_r2').catch(() => null) as Record<string, unknown> | null
@@ -1304,6 +1291,26 @@ export default function SettingsPage() {
     setAiFeatures(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
+  // Gemini API 테스트
+  const testGeminiApi = async () => {
+    if (!geminiApiKey) { showAlert('API Key를 먼저 입력해주세요', 'error'); return }
+    setGeminiStatus('API 연결 확인 중...')
+    try {
+      await forbiddenApi.saveSetting('gemini', { apiKey: geminiApiKey, model: geminiModel, updatedAt: new Date().toISOString() })
+      const result = await proxyApi.geminiTest()
+      if (result.success) {
+        setGeminiStatus(`✓ ${result.message}`)
+        showAlert(result.message, 'success')
+      } else {
+        setGeminiStatus(`✗ ${result.message}`)
+        showAlert(result.message, 'error')
+      }
+    } catch (e) {
+      setGeminiStatus('연결 실패')
+      showAlert(`Gemini API 연결 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+    }
+  }
+
   // Gemini AI 저장 (모델컷 생성 전용)
   const saveGeminiSettings = async () => {
     if (!geminiApiKey) { showAlert('API Key를 입력해주세요', 'error'); return }
@@ -1314,29 +1321,6 @@ export default function SettingsPage() {
     } catch { showAlert('저장 실패', 'error') }
   }
 
-  // FLUX (fal.ai) 저장
-  const saveFalSettings = async () => {
-    if (!falApiKey) { showAlert('API Key를 입력해주세요', 'error'); return }
-    try {
-      await forbiddenApi.saveSetting('fal_ai', { apiKey: falApiKey, updatedAt: new Date().toISOString() })
-      setFalStatus(`저장 완료 (${new Date().toLocaleTimeString('ko-KR', { hour12: false })})`)
-      showAlert('FLUX (fal.ai) 설정이 저장되었습니다', 'success')
-    } catch { showAlert('저장 실패', 'error') }
-  }
-
-  const testFalApi = async () => {
-    if (!falApiKey) { showAlert('API Key를 먼저 입력해주세요', 'error'); return }
-    setFalStatus('API 연결 확인 중...')
-    try {
-      await forbiddenApi.saveSetting('fal_ai', { apiKey: falApiKey, updatedAt: new Date().toISOString() })
-      // fal.ai는 별도 테스트 엔드포인트 없으므로 저장만 확인
-      setFalStatus('✓ 저장 완료')
-      showAlert('fal.ai API Key가 저장되었습니다', 'success')
-    } catch (e) {
-      setFalStatus('저장 실패')
-      showAlert(`fal.ai 저장 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
-    }
-  }
 
   // 프리셋 로드
   const loadPresets = useCallback(async () => {
@@ -1454,27 +1438,17 @@ export default function SettingsPage() {
   const handleFetchBalance = async (id: string) => {
     setBalanceLoading(prev => ({ ...prev, [id]: true }))
     try {
-      const res = await sourcingAccountApi.fetchBalance(id)
-      showAlert(`잔액: ${res.balance.toLocaleString()}원`, 'success')
-      loadSourcingAccounts()
+      await loadSourcingAccounts()
+      showAlert('잔액 갱신 완료 (확장앱에서 수집된 데이터)', 'success')
     } catch (err) { showAlert(err instanceof Error ? err.message : '잔액 조회 실패', 'error') }
     setBalanceLoading(prev => ({ ...prev, [id]: false }))
   }
 
   const handleFetchAllBalances = async () => {
-    setBalanceLoading(prev => {
-      const next = { ...prev }
-      sourcingAccounts.filter(a => a.site_name === sourcingTab && a.is_active).forEach(a => { next[a.id] = true })
-      return next
-    })
     try {
-      const res = await sourcingAccountApi.fetchAllBalances(sourcingTab)
-      const failed = res.results.filter(r => r.status === 'error')
-      if (failed.length) showAlert(`${failed.length}건 조회 실패`, 'error')
-      else showAlert('전체 잔액 조회 완료', 'success')
-      loadSourcingAccounts()
+      await loadSourcingAccounts()
+      showAlert('잔액 갱신 완료 (확장앱에서 수집된 데이터)', 'success')
     } catch (err) { showAlert(err instanceof Error ? err.message : '전체 잔액 조회 실패', 'error') }
-    setBalanceLoading({})
   }
 
   return (
@@ -1578,6 +1552,26 @@ export default function SettingsPage() {
                           onChange={(v) => updateStoreField(market.key, field.name, v)}
                           placeholder={field.placeholder || '0'}
                         />
+                      ) : field.type === 'password' ? (
+                        <div style={{ display: 'flex', flex: 1, gap: '4px', alignItems: 'center' }}>
+                          <input
+                            type={visiblePasswords.has(`${market.key}_${field.name}`) ? 'text' : 'password'}
+                            style={{ ...inputStyle, flex: 1 }}
+                            value={storeData[market.key]?.[field.name] || ''}
+                            onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                            placeholder={field.placeholder || ''}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setVisiblePasswords(prev => {
+                              const next = new Set(prev)
+                              const k = `${market.key}_${field.name}`
+                              next.has(k) ? next.delete(k) : next.add(k)
+                              return next
+                            })}
+                            style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          >{visiblePasswords.has(`${market.key}_${field.name}`) ? '숨김' : '보기'}</button>
+                        </div>
                       ) : (
                         <input
                           type={field.type}
@@ -1753,7 +1747,7 @@ export default function SettingsPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>별칭</label>
-                <input style={{ ...inputStyle, flex: 1 }} placeholder="예: 무신사-기현" value={sourcingForm.account_label} onChange={e => setSourcingForm(prev => ({ ...prev, account_label: e.target.value }))} />
+                <input style={{ ...inputStyle, flex: 1 }} placeholder="별칭" value={sourcingForm.account_label} onChange={e => setSourcingForm(prev => ({ ...prev, account_label: e.target.value }))} />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>아이디</label>
@@ -1771,8 +1765,8 @@ export default function SettingsPage() {
                 </select>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>메모</label>
-                <input style={{ ...inputStyle, flex: 1 }} placeholder="쿠폰, 용도 등" value={sourcingForm.memo} onChange={e => setSourcingForm(prev => ({ ...prev, memo: e.target.value }))} />
+                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>지메일</label>
+                <input style={{ ...inputStyle, flex: 1 }} placeholder="지메일 주소" value={sourcingForm.memo} onChange={e => setSourcingForm(prev => ({ ...prev, memo: e.target.value }))} />
               </div>
             </div>
 
@@ -1793,7 +1787,7 @@ export default function SettingsPage() {
           <div style={{ width: '320px', flexShrink: 0 }}>
             <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#888', marginBottom: '0.5rem' }}>등록 계정</div>
             {(() => {
-              const siteAccounts = sourcingAccounts.filter(a => a.site_name === sourcingTab)
+              const siteAccounts = sourcingAccounts.filter(a => a.site_name === sourcingTab).sort((a, b) => (a.chrome_profile || '').localeCompare(b.chrome_profile || '', undefined, { numeric: true }))
               if (siteAccounts.length === 0) return (
                 <div style={{ fontSize: '0.78rem', color: '#555', padding: '0.5rem 0' }}>등록된 계정 없음</div>
               )
@@ -1808,15 +1802,24 @@ export default function SettingsPage() {
                       opacity: a.is_active ? 1 : 0.5,
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                        <span style={{ flex: 1, fontSize: '0.8rem', fontWeight: 600, color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.account_label}</span>
-                        {a.chrome_profile && <span style={{ fontSize: '0.65rem', color: '#666', background: '#1A1A1A', padding: '0.05rem 0.3rem', borderRadius: '3px' }}>{chromeProfiles.find(p => p.directory === a.chrome_profile)?.name || a.chrome_profile}</span>}
+                        <span style={{ flex: 1, fontSize: '0.8rem', fontWeight: 600, color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.account_label}({a.username})</span>
+                        {a.chrome_profile && <span style={{ fontSize: '0.68rem', color: '#888', fontFamily: 'monospace' }}>{a.chrome_profile}</span>}
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem', fontSize: '0.7rem' }}>
-                        <span style={{ color: '#888', fontFamily: 'monospace' }}>{a.username}</span>
-                        {a.balance != null && <span style={{ color: '#51CF66', fontWeight: 600 }}>{a.balance.toLocaleString()}원</span>}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', fontSize: '0.7rem' }}>
+                        {a.chrome_profile && <span style={{ color: '#666', background: '#1A1A1A', padding: '0.05rem 0.3rem', borderRadius: '3px' }}>{chromeProfiles.find(p => p.directory === a.chrome_profile)?.name || a.chrome_profile}</span>}
+                        {a.memo && <span style={{ color: '#888' }}>{a.memo}</span>}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', fontSize: '0.7rem' }}>
+                        {(a.additional_fields as Record<string, unknown>)?.cookie_expired ? (
+                          <span style={{ color: '#FF6B6B', fontWeight: 600 }}>쿠키 만료 — 재로그인 필요</span>
+                        ) : (
+                          <>
+                            <span style={{ color: '#51CF66', fontWeight: 600 }}>머니 {(a.balance ?? 0).toLocaleString()}</span>
+                            <span style={{ color: '#4C9AFF', fontWeight: 600 }}>적립금 {Number((a.additional_fields as Record<string, unknown>)?.mileage ?? 0).toLocaleString()}</span>
+                          </>
+                        )}
                         {a.balance_updated_at && <span style={{ color: '#666' }}>{new Date(a.balance_updated_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
                       </div>
-                      {a.memo && <div style={{ fontSize: '0.68rem', color: '#888', marginBottom: '0.25rem' }}>{a.memo}</div>}
                       <div style={{ display: 'flex', gap: '0.25rem' }}>
                         <button onClick={() => handleFetchBalance(a.id)} disabled={balanceLoading[a.id]} style={{ padding: '0.15rem 0.4rem', fontSize: '0.68rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', color: '#51CF66', borderRadius: '4px', cursor: 'pointer', opacity: balanceLoading[a.id] ? 0.5 : 1 }}>{balanceLoading[a.id] ? '조회중' : '잔액'}</button>
                         <button onClick={() => sourcingAccountApi.toggle(a.id).then(() => loadSourcingAccounts())} style={{ padding: '0.15rem 0.4rem', fontSize: '0.68rem', background: a.is_active ? 'rgba(76,154,255,0.1)' : 'rgba(100,100,100,0.2)', border: `1px solid ${a.is_active ? 'rgba(76,154,255,0.3)' : '#555'}`, color: a.is_active ? '#4C9AFF' : '#888', borderRadius: '4px', cursor: 'pointer' }}>{a.is_active ? 'ON' : 'OFF'}</button>
@@ -1909,40 +1912,22 @@ export default function SettingsPage() {
         <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
-            <input type='password' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)} placeholder='AIzaSy...' />
+            <div style={{ display: 'flex', flex: 1, gap: '4px', alignItems: 'center' }}>
+              <input type={visiblePasswords.has('gemini_apiKey') ? 'text' : 'password'} style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)} placeholder='AIzaSy...' />
+              <button type="button" onClick={() => setVisiblePasswords(prev => { const n = new Set(prev); n.has('gemini_apiKey') ? n.delete('gemini_apiKey') : n.add('gemini_apiKey'); return n })} style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer', whiteSpace: 'nowrap' }}>{visiblePasswords.has('gemini_apiKey') ? '숨김' : '보기'}</button>
+            </div>
+            <button onClick={testGeminiApi} style={{ background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.35)', color: '#4285F4', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>연결 테스트</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델</label>
             <select style={{ ...inputStyle, width: '300px' }} value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}>
-              <option value="gemini-2.5-flash-preview-05-20">Gemini 2.5 Flash (권장)</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash (권장)</option>
               <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
             </select>
           </div>
           {geminiStatus && (
             <div style={{ fontSize: '0.8125rem', color: geminiStatus.includes('저장') ? '#7BAF7E' : '#C4736E', padding: '0.4rem 0' }}>
               {geminiStatus}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* FLUX (fal.ai) 이미지 생성 연동 */}
-      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#A855F7' }}>FLUX 이미지 생성 (fal.ai)</span>
-          <span style={{ fontSize: '0.8125rem', color: '#666' }}>모델착용컷 / 씬연출컷 (₩7/장) · 배경제거는 rembg 무료</span>
-          <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#A855F7', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
-          <button onClick={saveFalSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
-        </div>
-        <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
-            <input type='password' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={falApiKey} onChange={(e) => setFalApiKey(e.target.value)} placeholder='fal-xxxxxxxx...' />
-            <button onClick={testFalApi} style={{ background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.35)', color: '#A855F7', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>저장 테스트</button>
-          </div>
-          {falStatus && (
-            <div style={{ fontSize: '0.8125rem', color: falStatus.includes('저장') || falStatus.includes('✓') ? '#7BAF7E' : falStatus.includes('확인') ? '#FFB84D' : '#C4736E', padding: '0.4rem 0' }}>
-              {falStatus}
             </div>
           )}
         </div>
@@ -1967,7 +1952,10 @@ export default function SettingsPage() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '120px', fontSize: '0.875rem' }}>Secret Access Key</label>
-            <input type='password' style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={r2SecretKey} onChange={(e) => setR2SecretKey(e.target.value)} placeholder='R2 Secret Access Key' />
+            <div style={{ display: 'flex', flex: 1, gap: '4px', alignItems: 'center' }}>
+              <input type={visiblePasswords.has('r2_secretKey') ? 'text' : 'password'} style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={r2SecretKey} onChange={(e) => setR2SecretKey(e.target.value)} placeholder='R2 Secret Access Key' />
+              <button type="button" onClick={() => setVisiblePasswords(prev => { const n = new Set(prev); n.has('r2_secretKey') ? n.delete('r2_secretKey') : n.add('r2_secretKey'); return n })} style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer', whiteSpace: 'nowrap' }}>{visiblePasswords.has('r2_secretKey') ? '숨김' : '보기'}</button>
+            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '120px', fontSize: '0.875rem' }}>Bucket Name</label>
@@ -1997,13 +1985,16 @@ export default function SettingsPage() {
         <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
-            <input
-              type='password'
-              style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
-              value={claudeApiKey}
-              onChange={(e) => setClaudeApiKey(e.target.value)}
-              placeholder='sk-ant-api03-...'
-            />
+            <div style={{ display: 'flex', flex: 1, gap: '4px', alignItems: 'center' }}>
+              <input
+                type={visiblePasswords.has('claude_apiKey') ? 'text' : 'password'}
+                style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
+                value={claudeApiKey}
+                onChange={(e) => setClaudeApiKey(e.target.value)}
+                placeholder='sk-ant-api03-...'
+              />
+              <button type="button" onClick={() => setVisiblePasswords(prev => { const n = new Set(prev); n.has('claude_apiKey') ? n.delete('claude_apiKey') : n.add('claude_apiKey'); return n })} style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer', whiteSpace: 'nowrap' }}>{visiblePasswords.has('claude_apiKey') ? '숨김' : '보기'}</button>
+            </div>
             <button onClick={testClaudeApi} style={{ background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.35)', color: '#A78BFA', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>연결 테스트</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>

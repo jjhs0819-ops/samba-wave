@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -247,7 +248,7 @@ class ImageTransformService:
     if not creds:
       raise ValueError("Gemini AI 설정이 없습니다. 설정 페이지에서 API Key를 입력하세요.")
     api_key = str(creds.get("apiKey", "")).strip()
-    model = str(creds.get("model", "gemini-2.5-flash-preview-05-20"))
+    model = str(creds.get("model", "gemini-2.5-flash"))
     if not api_key:
       raise ValueError("Gemini API Key가 비어있습니다.")
     return api_key, model
@@ -285,6 +286,8 @@ class ImageTransformService:
     referer = f"{parsed.scheme}://{parsed.netloc}/"
     if "msscdn.net" in (parsed.netloc or ""):
       referer = "https://www.musinsa.com/"
+    elif "fashionplus" in (parsed.netloc or ""):
+      referer = "https://www.fashionplus.co.kr/"
 
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
       resp = await client.get(url, headers={
@@ -569,7 +572,10 @@ class ImageTransformService:
     # 로컬 저장
     local_path = LOCAL_IMAGE_DIR / filename
     local_path.write_bytes(image_bytes)
-    return f"/static/images/{filename}"
+    # 절대 URL 반환 (프론트에서 직접 접근 가능하도록)
+    from backend.core.config import settings
+    base_url = getattr(settings, "backend_url", "") or os.environ.get("BACKEND_URL", "http://localhost:28080")
+    return f"{base_url}/static/images/{filename}"
 
   async def transform_single_image(
     self, product_id: str, image_url: str, mode: str = "video",

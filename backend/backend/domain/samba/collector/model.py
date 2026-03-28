@@ -76,6 +76,10 @@ class SambaSearchFilter(SQLModel, table=True):
     ss_manufacturer_id: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
     ss_manufacturer_name: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
+    # 그룹별 카테고리 매핑 (카테고리매핑 페이지보다 우선 적용)
+    # 예: {"smartstore": "패션의류>남성의류>티셔츠", "coupang": "남성패션/상의/티셔츠"}
+    target_mappings: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+
     # 마지막 수집 시각
     last_collected_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)

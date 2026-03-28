@@ -444,7 +444,7 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 
 | 사이트 | 코드 | 수집 방식 | 상태 | 참조 |
 |--------|------|----------|------|------|
-| 패션플러스 | `FashionPlus` | 서버 HTTP (검색API) | 활성 — 검색수집 완료, 상세/옵션 미지원 | 아래 패턴 참조 |
+| 패션플러스 | `FashionPlus` | 서버 HTTP (검색API+상세HTML+옵션API) | 활성 — 검색수집+이미지+고시정보+가격갱신+옵션/재고 완료 | 아래 패턴 참조 |
 | Nike | `Nike` | 서버 HTTP | refresher 스텁 |  |
 | Adidas | `Adidas` | 서버 HTTP | refresher 스텁 |  |
 
@@ -561,8 +561,11 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 - **URL 패턴**: `fashionplus.co.kr/goods/detail/{id}`
 - **이미지 CDN**: `img.fashionplus.co.kr` — 썸네일 URL에 `?RS=400x536&AR=0` 리사이즈 파라미터 → 제거하면 원본 이미지
 - **가격**: consumerPrice(정가), salePrice(판매가), displayPrice(쿠폰적용 최저가)
-- **상세 API 없음**: 상세 페이지는 SSR HTML + JSON-LD. 옵션/상세이미지/고시정보는 HTML 파싱 필요 (미구현)
-- **제한사항**: 검색 API만으로 수집 시 옵션/상세이미지/고시정보 누락. 마켓 등록 시 "상세 이미지 참조" 폴백 다수 발생
+- **상세 페이지 파싱**: SSR HTML + JSON-LD에서 이미지(plg/plgk/plgr/plgl), 고시정보(소재/색상/제조사/원산지), 배송비 추출 가능
+- **옵션 API**: `GET /goods/detail/{id}/fetch-option-data` — 옵션명, 가격, 재고, 옵션ID 반환. `X-Requested-With: XMLHttpRequest` 헤더 필요
+- **옵션 응답**: `[{_name, _price, options: [{_name, _price, _stock, _id}]}]` — _stock=실재고 수량(0=품절)
+- **가격재고갱신**: `_parse_fashionplus` — 가격/원가(배송비 포함)만 갱신. 이미지/고시정보는 갱신하지 않음 (초기 수집 시에만)
+- **상세이미지**: 상품 이미지 4장을 상세이미지로 활용. 실제 판매자 등록 상세 컨텐츠는 JS lazy loading으로 서버 수집 불가
 - **Job 워커**: `worker.py`의 `_collect_direct_api()`에서 처리 (MUSINSA와 별도 분기)
 
 ---
@@ -658,3 +661,4 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 | 2026-03-28 | 검색 수집 시 URL 필터(brand, minPrice, maxPrice, gf) 무시 버그 수정 — search_products()에 필터 파라미터 추가, collector에서 URL 파싱 후 전달 | - |
 | 2026-03-28 | **최대혜택가 대규모 검증 (83개 상품 × 크롬캡쳐 비교)** — 4가지 수정: (1) 등급할인 조건 `isLimitedDc=False` 발견, (2) 선할인 `memberSavePointRate+savePoint`, (3) isSale 무관 확인, (4) 쿠폰 API에 `specialtyCodes` 파라미터 추가 (beauty/sneaker 등 카테고리 쿠폰 누락 해결) | - |
 | 2026-03-28 | **패션플러스 소싱처 활성화** — proxy/fashionplus.py에 max_count 페이지네이션 추가, _map_item을 CollectedProduct flat 스키마로 보강(sourceUrl/cost/saleStatus/manufacturer), job/worker.py에 _collect_direct_api() 분기 추가, SKILL.md에 패션플러스 수집 패턴 섹션 추가. 검색 API만 지원 (상세/옵션/고시정보 미지원) | - |
+| 2026-03-29 | **브랜드 소싱 모드** — 무신사 필터 API로 브랜드별 최하위 카테고리 자동 스캔 + 카테고리별 그룹 일괄 생성. `scan_brand_categories()` 메서드, `/brand-scan` + `/brand-create-groups` API, 프론트 탭 UI (브랜드 소싱 / 브랜드+키워드 소싱) | - |

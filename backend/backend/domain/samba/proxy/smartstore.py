@@ -1137,14 +1137,14 @@ class SmartStoreClient:
     category_id: str = "",
   ) -> dict[str, Any]:
     """SambaCollectedProduct → 스마트스토어 상품 등록 데이터 변환."""
-    # 스마트스토어 상품명: market_names 우선, 없으면 name에서 50자 슬라이스
+    # 스마트스토어 상품명: market_names 우선, 없으면 name에서 49자 슬라이스
     market_names = product.get("market_names") or {}
     ss_name = market_names.get("스마트스토어", "")
     if ss_name:
-      product_name = ss_name[:50]
+      product_name = ss_name[:49]
     else:
       raw_name = product.get("name", "")
-      product_name = raw_name[:50]
+      product_name = raw_name[:49]
 
     images_raw = product.get("images") or []
 
@@ -1364,7 +1364,7 @@ class SmartStoreClient:
           "productInfoProvidedNotice": _build_ss_notice(
             product, color_text=color_text,
             size_text=f"발길이(mm): {size_text}" if sizes else "FREE (상세 이미지 참조)",
-            mfr=mfr, brand=brand,
+            mfr=mfr, brand=brand, ss_category_id=category_id,
           ),
           **({"optionInfo": _build_combination_options(
             options, sale_price,

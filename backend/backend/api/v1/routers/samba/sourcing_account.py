@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
@@ -118,92 +119,82 @@ async def delete_sourcing_account(
     return {"ok": True}
 
 
-@router.post("/{account_id}/fetch-balance")
-async def fetch_balance(
-    account_id: str,
+class SyncBalanceRequest(BaseModel):
+    money: float = 0
+    mileage: float = 0
+    profileEmail: Optional[str] = None
+    username: Optional[str] = None
+    cookie: Optional[str] = None
+    expired: bool = False
+
+
+@router.post("/sync-balance")
+async def sync_balance_from_extension(
+    body: SyncBalanceRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """단건 잔액 조회."""
+    """확장앱에서 잔액 수신 → 크롬 프로필 Gmail로 계정 매칭 → 저장."""
     svc = _write_service(session)
+    accounts = await svc.list_accounts(site_name="MUSINSA")
+    matched = None
+
+    # 1순위: 크롬 프로필 Gmail(memo 필드)로 매칭
+    if body.profileEmail:
+        matched = next((a for a in accounts if a.memo and a.memo.lower() == body.profileEmail.lower()), None)
+
+    # 2순위: 쿠키 문자열에 아이디가 포함되어 있는지 확인
+    if not matched and body.cookie:
+        for a in accounts:
+            if a.username and a.username in body.cookie:
+                matched = a
+                break
+
+    if not matched:
+        logger.warning(f"[잔액동기화] 매칭 실패: email={body.profileEmail}, username={body.username}")
+        return {"ok": False, "message": f"계정을 찾을 수 없습니다: {body.profileEmail or body.username}"}
+
+    from datetime import datetime, timezone
+    extra = dict(matched.additional_fields or {})
+
+    if body.expired:
+        # 쿠키 만료 처리
+        extra["cookie_expired"] = True
+        extra["cookie_expired_at"] = datetime.now(timezone.utc).isoformat()
+        await svc.repo.update_async(matched.id, additional_fields=extra)
+        logger.warning(f"[잔액동기화] {matched.account_label}: 쿠키 만료 — 재로그인 필요")
+        return {"ok": True, "account_label": matched.account_label, "expired": True}
+
+    # 잔액 + 쿠키 저장
+    extra["mileage"] = body.mileage
+    extra["cookie_expired"] = False
+    if body.cookie:
+        extra["musinsa_cookie"] = body.cookie
+        extra["cookie_updated_at"] = datetime.now(timezone.utc).isoformat()
+    await svc.repo.update_async(
+        matched.id,
+        balance=body.money,
+        balance_updated_at=datetime.now(timezone.utc),
+        additional_fields=extra,
+    )
+    logger.info(f"[잔액동기화] {matched.account_label}: 머니 {body.money:,.0f} / 적립금 {body.mileage:,.0f}")
+    return {"ok": True, "account_label": matched.account_label, "money": body.money, "mileage": body.mileage}
+
+
+@router.get("/{account_id}/balance")
+async def get_balance(
+    account_id: str,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """계정의 저장된 잔액 조회 (확장앱이 수집한 데이터)."""
+    svc = _read_service(session)
     account = await svc.get_account(account_id)
     if not account:
         raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
-    if not account.chrome_profile:
-        raise HTTPException(400, "크롬 프로필이 설정되지 않았습니다")
-    try:
-        balance = await _fetch_musinsa_balance(account)
-        updated = await svc.update_balance(account_id, balance)
-        return {"balance": balance, "account": updated}
-    except Exception as e:
-        logger.error(f"잔액 조회 실패 [{account.account_label}]: {e}")
-        raise HTTPException(500, f"잔액 조회 실패: {str(e)}")
-
-
-@router.post("/fetch-all-balances")
-async def fetch_all_balances(
-    site_name: str = Query("MUSINSA"),
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """특정 소싱처의 전체 활성 계정 잔액 일괄 조회."""
-    svc = _write_service(session)
-    accounts = await svc.list_accounts(site_name=site_name)
-    active = [a for a in accounts if a.is_active and a.chrome_profile]
-    results = []
-    for account in active:
-        try:
-            balance = await _fetch_musinsa_balance(account)
-            await svc.update_balance(account.id, balance)
-            results.append({"id": account.id, "label": account.account_label, "balance": balance, "status": "success"})
-        except Exception as e:
-            logger.error(f"잔액 조회 실패 [{account.account_label}]: {e}")
-            results.append({"id": account.id, "label": account.account_label, "balance": None, "status": "error", "message": str(e)})
-    return {"results": results}
-
-
-async def _fetch_musinsa_balance(account) -> float:
-    """무신사 로그인 → 마이페이지에서 무신사머니 잔액을 파싱한다."""
-    import re
-    from playwright.async_api import async_playwright
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, channel="chrome")
-        page = await browser.new_page()
-        try:
-            # 마이페이지 접속 → 로그인 페이지로 리다이렉트
-            await page.goto("https://www.musinsa.com/app/mypage", wait_until="domcontentloaded", timeout=15000)
-            await page.wait_for_timeout(2000)
-
-            # 로그인
-            if "login" in page.url:
-                await page.fill('input[type="text"]', account.username)
-                await page.fill('input[type="password"]', account.password)
-                await page.click('button[type="submit"]')
-                await page.wait_for_timeout(3000)
-                if "login" in page.url:
-                    raise Exception("로그인 실패 — 캡챠 또는 인증 필요")
-
-            # 잔액이 표시되는 마이페이지
-            await page.goto("https://www.musinsa.com/mypage", wait_until="domcontentloaded", timeout=15000)
-            await page.wait_for_timeout(3000)
-
-            content = await page.content()
-
-            # 무신사머니 파싱: "무신사머니" 텍스트 근처의 금액
-            match = re.search(r'무신사머니.*?([\d,]+)\s*원', content, re.DOTALL)
-            if match:
-                balance = int(match.group(1).replace(',', ''))
-                logger.info(f"[잔액조회] {account.account_label}: 무신사머니 {balance:,}원")
-                return float(balance)
-
-            # 대체: 페이지에서 "원" 붙은 금액 모두 추출
-            amounts = re.findall(r'([\d,]+)\s*원', content)
-            if amounts:
-                # 가장 큰 금액을 무신사머니로 추정
-                nums = [int(a.replace(',', '')) for a in amounts]
-                balance = max(nums)
-                logger.info(f"[잔액조회] {account.account_label}: 추정 잔액 {balance:,}원")
-                return float(balance)
-
-            raise Exception("무신사머니 잔액을 찾을 수 없습니다")
-        finally:
-            await browser.close()
+    extra = account.additional_fields or {}
+    return {
+        "balance": account.balance,
+        "mileage": extra.get("mileage"),
+        "balance_updated_at": account.balance_updated_at,
+        "cookie_updated_at": extra.get("cookie_updated_at"),
+        "has_cookie": bool(extra.get("musinsa_cookie")),
+    }

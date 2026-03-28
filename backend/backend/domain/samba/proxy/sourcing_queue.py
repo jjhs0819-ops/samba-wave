@@ -32,6 +32,7 @@ SITE_DETAIL_URLS: dict[str, str] = {
   "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={product_id}",
   "ElandMall": "https://www.elandmall.com/goods/goods.action?goodsNo={product_id}",
   "SSF": "https://www.ssfshop.com/goods/{product_id}",
+  "FashionPlus": "https://www.fashionplus.co.kr/goods/detail/{product_id}",
 }
 
 

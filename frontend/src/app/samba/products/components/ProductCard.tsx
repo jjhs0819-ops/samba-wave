@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useMemo, useCallback } from 'react'
+import { API_BASE_URL as API_BASE } from '@/config/api'
 import {
   collectorApi,
   shipmentApi,
@@ -48,7 +49,7 @@ export const MARKETS = [
 
 // 마켓별 상품명 글자수 제한
 const MARKET_NAME_LIMITS: Record<string, number> = {
-  '스마트스토어': 50,
+  '스마트스토어': 49,
   '쿠팡': 100,
   '11번가': 100,
   '지마켓': 100,
@@ -113,18 +114,30 @@ export function calcPrice(
   return { price, marginAmt, usedMin, feeAmt, calcStr: `₩${fmt(price)} = ${parts.join(' + ')}` }
 }
 
+// 소싱처별 원문링크 URL 템플릿 (통합 관리)
+const SOURCE_URL_MAP: Record<string, string> = {
+  MUSINSA: 'https://www.musinsa.com/products/{id}',
+  KREAM: 'https://kream.co.kr/products/{id}',
+  FASHIONPLUS: 'https://www.fashionplus.co.kr/goods/detail/{id}',
+  ABCMART: 'https://www.a-rt.com/product?prdtNo={id}',
+  GRANDSTAGE: 'https://www.a-rt.com/product?prdtNo={id}&tChnnlNo=10002',
+  OKMALL: 'https://www.okmall.com/products/detail/{id}',
+  LOTTEON: 'https://www.lotteon.com/product/productDetail.lotte?spdNo={id}',
+  GSSHOP: 'https://www.gsshop.com/prd/prd.gs?prdid={id}',
+  ELANDMALL: 'https://www.elandmall.com/goods/goods.action?goodsNo={id}',
+  SSF: 'https://www.ssfshop.com/goods/{id}',
+  SSG: 'https://www.ssg.com/item/itemView.ssg?itemId={id}',
+  NIKE: 'https://www.nike.com/kr/t/{id}',
+  ADIDAS: 'https://www.adidas.co.kr/{id}.html',
+}
+
 function getSourceUrl(p: { source_url?: string; source_site: string; site_product_id?: string; video_url?: string | null }): string {
-  // DB에 저장된 source_url 우선 사용
   if (p.source_url) return p.source_url
-  // fallback: 기존 데이터용 (source_url이 아직 없는 경우)
   if (!p.site_product_id) return ''
   const site = (p.source_site || '').toUpperCase()
-  if (site === 'MUSINSA') return `https://www.musinsa.com/products/${p.site_product_id}`
-  if (site === 'KREAM') return `https://kream.co.kr/products/${p.site_product_id}`
-  if (site === 'NIKE') return p.video_url || `https://www.nike.com/kr/w?q=${p.site_product_id}`
-  if (site === 'FASHIONPLUS') return `https://www.fashionplus.co.kr/goods/detail/${p.site_product_id}`
-  if (site === 'LOTTEON') return `https://www.lotteon.com/p/product/${p.site_product_id}`
-  return ''
+  if (site === 'NIKE' && p.video_url) return p.video_url
+  const tpl = SOURCE_URL_MAP[site]
+  return tpl ? tpl.replace('{id}', p.site_product_id) : ''
 }
 
 // 모듈 레벨 캐시: 삭제어 정규식
@@ -602,9 +615,24 @@ const ProductCard = React.memo(function ProductCard({
             background: label ? 'rgba(255,140,0,0.06)' : 'rgba(30,30,30,0.5)',
             border: label ? '1px solid rgba(255,140,0,0.2)' : '1px solid #2D2D2D',
           }}>
-            <img src={img} alt="" loading="lazy" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+            <div
               onClick={() => openZoom(img)}
-              style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer' }} />
+              style={{ width: 64, height: 64, borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer', overflow: 'hidden', background: '#1A1A1A', position: 'relative' }}
+            >
+              <img src={img} alt="" loading="lazy" referrerPolicy="no-referrer"
+                onError={e => {
+                  const el = e.target as HTMLImageElement
+                  // 프록시 재시도 (1회)
+                  if (!el.dataset.retried) {
+                    el.dataset.retried = '1'
+                    el.src = `${API_BASE}/api/v1/samba/proxy/image-proxy?url=${encodeURIComponent(img)}`
+                  } else {
+                    el.style.display = 'none'
+                  }
+                }}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
+              <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: '0.6rem', zIndex: 0 }}>IMG</span>
+            </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               {label && <span style={{ fontSize: '0.7rem', color: '#FF8C00', fontWeight: 600 }}>{label}</span>}
               <p style={{ margin: 0, fontSize: '0.68rem', color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img}</p>
@@ -931,20 +959,6 @@ const ProductCard = React.memo(function ProductCard({
               border: '1px solid rgba(255,107,107,0.25)',
             }}>품절</span>
           )}
-          {p.group_key && !p.group_product_no && (
-            <span style={{
-              padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 500,
-              background: 'rgba(81,207,102,0.15)', color: '#51CF66',
-              border: '1px solid rgba(81,207,102,0.25)',
-            }}>스스그룹</span>
-          )}
-          {p.group_product_no && (
-            <span style={{
-              padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 500,
-              background: 'rgba(76,154,255,0.15)', color: '#4C9AFF',
-              border: '1px solid rgba(76,154,255,0.25)',
-            }}>스스그룹등록</span>
-          )}
         </div>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
@@ -1216,8 +1230,9 @@ const ProductCard = React.memo(function ProductCard({
                 const nameLimit = MARKET_NAME_LIMITS[m.marketName] || 100
                 const composedName = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))
                 const currentMarketName = marketNames[m.marketName] || ''
-                const displayName = currentMarketName || composedName
-                const isOverLimit = displayName.length > nameLimit
+                // 마켓별 개별 상품명이 없으면 조합명을 글자수 제한에 맞게 자름
+                const displayName = currentMarketName || (composedName.length > nameLimit ? composedName.slice(0, nameLimit) : composedName)
+                const isOverLimit = (currentMarketName || composedName).length > nameLimit
                 return (
                 <tr key={m.marketName} style={{ borderBottom: '1px solid #1E1E1E' }}>
                   <td style={tdLabel}>{m.marketName}</td>
@@ -1285,6 +1300,65 @@ const ProductCard = React.memo(function ProductCard({
                   </td>
                 </tr>
               )}
+              {/* 스토어별 상품명 — 마켓가격 행에 없는 등록 스토어도 상품명 편집 가능 */}
+              {(() => {
+                const _mktNames = (p.market_names || {}) as Record<string, string>
+                const _composed = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))
+                // 마켓가격 행에 이미 표시된 마켓명 목록
+                const priceMarketNames = new Set(marketPriceList.map(m => m.marketName))
+                // 등록된 스토어 중 마켓가격 행이 없는 것만 추출
+                const extraStores = registeredMarkets.filter(rm => {
+                  const mkt = MARKETS.find(m => m.id === rm.marketId)
+                  return mkt && !priceMarketNames.has(mkt.name)
+                })
+                if (extraStores.length === 0) return null
+                return extraStores.map(rm => {
+                  const mkt = MARKETS.find(m => m.id === rm.marketId)
+                  const mktName = mkt?.name || rm.marketId
+                  const nameLimit = MARKET_NAME_LIMITS[mktName] || 100
+                  const curName = _mktNames[mktName] || ''
+                  const dispName = curName || (_composed.length > nameLimit ? _composed.slice(0, nameLimit) : _composed)
+                  const isOver = (curName || _composed).length > nameLimit
+                  return (
+                    <tr key={`store-name-${rm.accId}`} style={{ borderBottom: '1px solid #1E1E1E' }}>
+                      <td style={tdLabel}>{mktName}</td>
+                      <td style={tdVal}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <input
+                            type="text"
+                            defaultValue={curName}
+                            placeholder={_composed.slice(0, nameLimit)}
+                            style={{
+                              width: '100%', padding: '2px 6px', fontSize: '0.72rem',
+                              background: '#1A1A1A', border: `1px solid ${isOver ? '#FF6B6B' : '#2D2D2D'}`,
+                              color: isOver ? '#FF6B6B' : '#C5C5C5', borderRadius: '3px', outline: 'none',
+                            }}
+                            onBlur={(e) => {
+                              const val = e.target.value.trim()
+                              if (val === curName) return
+                              const updated = { ..._mktNames, [mktName]: val || undefined }
+                              if (!val) delete updated[mktName]
+                              const clean = Object.fromEntries(Object.entries(updated).filter(([, v]) => v))
+                              collectorApi.updateProduct(p.id, { market_names: Object.keys(clean).length > 0 ? clean : undefined } as Partial<SambaCollectedProduct>).then(() => {
+                                onProductUpdate(p.id, { market_names: Object.keys(clean).length > 0 ? clean : undefined } as Partial<SambaCollectedProduct>)
+                                e.target.style.borderColor = '#51CF66'
+                                setTimeout(() => { e.target.style.borderColor = '#2D2D2D' }, 1500)
+                              }).catch(() => {
+                                e.target.style.borderColor = '#FF6B6B'
+                                setTimeout(() => { e.target.style.borderColor = '#2D2D2D' }, 1500)
+                              })
+                            }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                          />
+                          <span style={{ fontSize: '0.65rem', color: isOver ? '#FF6B6B' : '#555', whiteSpace: 'nowrap' }}>
+                            {dispName.length}/{nameLimit}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })
+              })()}
               {/* 카테고리 */}
               <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
                 <td style={tdLabel}>카테고리</td>

@@ -58,20 +58,36 @@ async def list_returns(
         skip=skip, limit=limit, order_id=order_id, status=status, type=type
     )
 
-    # 주문의 ext_order_number(원주문링크)를 return_link로 매칭
+    # 주문의 ext_order_number(타마켓주문링크) 또는 소싱처 주문상세 URL을 return_link로 매칭
     from backend.domain.samba.order.repository import SambaOrderRepository
     order_repo = SambaOrderRepository(session)
     order_ids = list({r.order_id for r in returns if r.order_id})
+    link_map: dict[str, str] = {}
     if order_ids:
         from backend.domain.samba.order.model import SambaOrder
         from sqlmodel import select, col
-        stmt = select(SambaOrder.id, SambaOrder.ext_order_number).where(
-            col(SambaOrder.id).in_(order_ids)
-        )
+        stmt = select(
+            SambaOrder.id, SambaOrder.ext_order_number,
+            SambaOrder.source_site, SambaOrder.order_number,
+        ).where(col(SambaOrder.id).in_(order_ids))
         rows = (await session.execute(stmt)).all()
-        link_map = {row.id: row.ext_order_number for row in rows if row.ext_order_number}
-    else:
-        link_map = {}
+        # 소싱처별 주문상세 URL 템플릿
+        _order_detail_urls: dict[str, str] = {
+            "MUSINSA": "https://www.musinsa.com/order/order-detail/{}",
+            "KREAM": "https://kream.co.kr/my/purchasing/{}",
+            "FashionPlus": "https://www.fashionplus.co.kr/mypage/order/detail/{}",
+            "ABCmart": "https://www.a-rt.com/mypage/order-detail/{}",
+            "Nike": "https://www.nike.com/kr/orders/{}",
+        }
+        for row in rows:
+            # 타마켓주문링크 우선
+            if row.ext_order_number:
+                link_map[row.id] = row.ext_order_number
+            # 소싱처 주문상세 URL 자동 생성
+            elif row.source_site and row.order_number:
+                tpl = _order_detail_urls.get(row.source_site, "")
+                if tpl:
+                    link_map[row.id] = tpl.format(row.order_number)
 
     results = []
     for r in returns:
@@ -530,6 +546,10 @@ async def sync_returns_from_markets(
                         "business_name": account.business_name or account.market_name or label,
                         "market": market_label_map.get(market_type, market_type),
                         "market_order_status": claim["display_status"],
+                        "return_link": existing_order.source_url or "",
+                        "return_source": existing_order.source_site or "",
+                        "region": _extract_city_district(existing_order.customer_address),
+                        "return_request_date": datetime.now(UTC),
                         "order_date": existing_order.created_at,
                         "status": claim["status"],
                         "timeline": timeline_entries,

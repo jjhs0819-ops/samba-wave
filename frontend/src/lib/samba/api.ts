@@ -2,10 +2,9 @@
  * SambaWave API client - 인증 없이 접근
  */
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL ||
-  (process.env.NODE_ENV === 'production'
-    ? 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
-    : 'http://localhost:28080')
+import { API_BASE_URL } from '@/config/api'
+
+export const API_BASE = API_BASE_URL
 
 const SAMBA_PREFIX = `${API_BASE}/api/v1/samba`;
 
@@ -68,6 +67,7 @@ export interface SambaOrder {
   tracking_number?: string;
   notes?: string;
   ext_order_number?: string;
+  sourcing_order_number?: string;
   source?: string;
   shipment_id?: string;
   created_at: string;
@@ -213,6 +213,7 @@ export interface SambaSearchFilter {
   ss_brand_name?: string;
   ss_manufacturer_id?: number;
   ss_manufacturer_name?: string;
+  target_mappings?: Record<string, string>;
   created_at: string;
   // 트리 구조
   parent_id?: string | null;
@@ -323,6 +324,14 @@ export const collectorApi = {
     request<SambaSearchFilter>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteFilter: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "DELETE" }),
+
+  // Brand Sourcing
+  brandScan: (brand: string, gf?: string, keyword?: string) =>
+    request<{ categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]; total: number; groupCount: number }>(
+      `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '' }) }),
+  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; applied_policy_id?: string; options?: Record<string, boolean> }) =>
+    request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
+      `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),
 
   // Collected Products
   listProducts: (skip = 0, limit = 50, status?: string) => {
@@ -648,6 +657,9 @@ export const proxyApi = {
   claudeTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/claude/test`, { method: 'POST' }),
+  geminiTest: () =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/gemini/test`, { method: 'POST' }),
   r2Test: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/r2/test`, { method: 'POST' }),
@@ -655,6 +667,12 @@ export const proxyApi = {
   musinsaSearchCount: (keyword: string, params?: Record<string, string>) => {
     const qs = new URLSearchParams({ keyword, size: '1', ...params })
     return request<{ success: boolean; totalCount: number }>(`${SAMBA_PREFIX}/proxy/musinsa/search-api?${qs}`)
+  },
+  // 범용 소싱처 검색 카운트
+  searchCount: (sourceSite: string, keyword: string, url?: string) => {
+    const qs = new URLSearchParams({ source_site: sourceSite, keyword })
+    if (url) qs.set('url', url)
+    return request<{ totalCount: number }>(`${SAMBA_PREFIX}/proxy/search-count?${qs}`)
   },
   falStatus: () =>
     request<{ status: string; message: string }>(
@@ -694,14 +712,14 @@ export const proxyApi = {
         body: JSON.stringify({ group_ids: groupIds }),
       }),
   // AI 태그 미리보기 (20개 생성 → 적용 안 함)
-  previewAiTags: (productIds: string[]) =>
+  previewAiTags: (productIds: string[], groupIds?: string[]) =>
     request<{
       success: boolean; message: string;
       previews: { group_id: string; group_name: string; product_count: number; rep_name: string; tags: string[]; seo_keywords: string[] }[];
       api_calls: number; input_tokens: number; output_tokens: number; cost_krw: number;
     }>(`${SAMBA_PREFIX}/proxy/ai-tags/preview`, {
       method: 'POST',
-      body: JSON.stringify({ product_ids: productIds }),
+      body: JSON.stringify({ product_ids: productIds, group_ids: groupIds || [] }),
     }),
   // AI 태그 확정 적용 (삭제된 태그는 금지태그에 추가)
   applyAiTags: (groups: { group_id: string; tags: string[]; seo_keywords?: string[] }[], removedTags?: string[]) =>
@@ -1467,8 +1485,6 @@ export const sourcingAccountApi = {
     request<SambaSourcingAccount>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/toggle`, { method: 'PUT' }),
   delete: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}`, { method: 'DELETE' }),
-  fetchBalance: (id: string) =>
-    request<{ balance: number; account: SambaSourcingAccount }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/fetch-balance`, { method: 'POST' }),
-  fetchAllBalances: (siteName = 'MUSINSA') =>
-    request<{ results: BalanceResult[] }>(`${SAMBA_PREFIX}/sourcing-accounts/fetch-all-balances?site_name=${siteName}`, { method: 'POST' }),
+  getBalance: (id: string) =>
+    request<{ balance: number; mileage: number; balance_updated_at: string; has_cookie: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/balance`),
 }

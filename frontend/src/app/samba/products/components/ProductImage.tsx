@@ -3,11 +3,21 @@
 import React, { useState } from 'react'
 
 /** 상품 이미지 컴포넌트 — 로드 실패 시 이름 첫 글자 표시. */
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:28080'
+
+// /static/ 상대 경로를 백엔드 절대 URL로 변환
+function resolveImageUrl(url?: string): string | undefined {
+  if (!url) return undefined
+  if (url.startsWith('/static/')) return `${API_BASE}${url}`
+  return url
+}
+
 const ProductImage = React.memo(function ProductImage({ src, name, size = 110 }: { src?: string; name: string; size?: number }) {
   const [error, setError] = useState(false)
   const firstChar = (name || '?')[0]
+  const resolvedSrc = resolveImageUrl(src)
 
-  if (!src || error) {
+  if (!resolvedSrc || error) {
     return (
       <div style={{
         width: size, height: size, minWidth: size, borderRadius: '8px',
@@ -21,7 +31,7 @@ const ProductImage = React.memo(function ProductImage({ src, name, size = 110 }:
 
   return (
     <img
-      src={src}
+      src={resolvedSrc}
       alt={name}
       loading="lazy"
       onError={() => setError(true)}

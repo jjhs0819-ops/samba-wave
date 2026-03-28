@@ -130,8 +130,16 @@ class JobWorker:
 
         site = sf.source_site
 
-        # FashionPlus 등 직접 API 소싱처 처리
-        if site in ("FashionPlus", "Nike", "Adidas"):
+        # 직접 API 소싱처 (서버 HTTP)
+        DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas"}
+        # 확장앱 기반 소싱처 (소싱큐)
+        EXTENSION_SITES = {"ABCmart", "GrandStage", "OKmall", "LOTTEON", "GSShop", "ElandMall", "SSF", "SSG"}
+
+        if site in DIRECT_API_SITES:
+            await self._collect_direct_api(job, sf, session, repo)
+            return
+
+        if site in EXTENSION_SITES:
             await self._collect_direct_api(job, sf, session, repo)
             return
 
@@ -393,6 +401,9 @@ class JobWorker:
                     _search_kwargs["brand_id"] = brand_ids[0]
                 if brand_names:
                     _search_kwargs["brand_name"] = brand_names[0]
+                # skipDetail 옵션
+                if qs.get("skipDetail", [""])[0] == "1":
+                    _search_kwargs["_skip_detail"] = True
         except Exception:
             pass
 
@@ -404,7 +415,8 @@ class JobWorker:
             await repo.complete_job(job.id, {"saved": 0, "message": f"이미 {existing_count}개 수집됨"})
             return
 
-        # 클라이언트 생성
+        # 클라이언트 생성 — 직접 API 소싱처
+        client = None
         if site == "FashionPlus":
             from backend.domain.samba.proxy.fashionplus import FashionPlusClient
             client = FashionPlusClient()
@@ -414,9 +426,37 @@ class JobWorker:
         elif site == "Adidas":
             from backend.domain.samba.proxy.adidas import AdidasClient
             client = AdidasClient()
+
+        # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
+        if not client:
+            from backend.domain.samba.proxy.sourcing_queue import SourcingQueue, SITE_SEARCH_URLS
+            if site not in SITE_SEARCH_URLS:
+                await repo.fail_job(job.id, f"미지원 소싱처: {site}")
+                return
+            try:
+                _req_id, _future = SourcingQueue.add_search_job(site, keyword)
+                ext_result = await asyncio.wait_for(_future, timeout=60)
+                items_list = ext_result.get("products", [])
+                logger.info(f"[잡워커] {site} 확장앱 검색 '{keyword}' → {len(items_list)}건")
+            except asyncio.TimeoutError:
+                SourcingQueue.resolvers.pop(_req_id, None)
+                await repo.fail_job(job.id, f"확장앱 응답 타임아웃. 확장앱이 실행 중인지 확인하세요.")
+                return
+            except Exception as e:
+                await repo.fail_job(job.id, f"확장앱 검색 실패: {e}")
+                return
+            # 확장앱 결과는 검색 API와 동일 포맷으로 처리 (아래 중복필터+저장 로직 공유)
+            result = {"products": items_list, "total": len(items_list)}
+
         else:
-            await repo.fail_job(job.id, f"미지원 직접 API: {site}")
-            return
+            # 직접 API 검색
+            try:
+                result = await client.search(keyword, max_count=max(remaining * 2, 100), **_search_kwargs)
+                items_list = result.get("products", [])
+                logger.info(f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건")
+            except Exception as e:
+                await repo.fail_job(job.id, f"검색 실패: {e}")
+                return
 
         await repo.update_progress(job.id, 0, remaining)
 
@@ -425,14 +465,6 @@ class JobWorker:
         if site == "FashionPlus" and _search_kwargs.get("category1Id"):
             from backend.domain.samba.proxy.fashionplus import _CATEGORY_MAP
             _category1_name = _CATEGORY_MAP.get(_search_kwargs["category1Id"], "")
-
-        try:
-            result = await client.search(keyword, max_count=remaining, **_search_kwargs)
-            items_list = result.get("products", [])
-            logger.info(f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건")
-        except Exception as e:
-            await repo.fail_job(job.id, f"검색 실패: {e}")
-            return
 
         # 중복 필터링
         candidate_ids = [str(item.get("site_product_id", "")) for item in items_list if item.get("site_product_id")]
@@ -452,6 +484,13 @@ class JobWorker:
         for item in items_list:
             if total_saved >= remaining:
                 break
+
+            # 취소 확인 (DB에서 상태 재조회)
+            await session.refresh(job)
+            if job.status == "failed":
+                logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
+                return
+
             p_id = str(item.get("site_product_id", ""))
             if p_id in existing_ids:
                 continue
@@ -462,22 +501,29 @@ class JobWorker:
             if not p_name and not sale_price:
                 continue
 
-            # 상세 페이지에서 추가 이미지/고시정보 보충
+            # 상세 페이지에서 추가 이미지/고시정보 보충 (서버 HTTP 우선)
             detail = {}
-            if hasattr(client, 'get_detail'):
-                try:
-                    detail = await client.get_detail(p_id)
-                    await asyncio.sleep(0.3)
-                except Exception as e:
-                    logger.warning(f"[잡워커] {site} 상세 조회 실패 {p_id}: {e}")
+            _skip_detail = _search_kwargs.get("_skip_detail", False)
+            if not _skip_detail:
+                # 서버 HTTP 상세 조회 (빠르고 안정적)
+                if hasattr(client, 'get_detail'):
+                    try:
+                        detail = await client.get_detail(p_id)
+                        await asyncio.sleep(0.3)
+                    except Exception as e:
+                        logger.warning(f"[잡워커] {site} 서버 상세 실패 {p_id}: {e}")
 
-            images = detail.get("images") or item.get("images", [])
+            # 이미지: 확장앱 결과와 검색 API 중 더 많은 쪽 사용
+            _detail_imgs = detail.get("images") or []
+            _search_imgs = item.get("images", [])
+            images = _detail_imgs if len(_detail_imgs) > len(_search_imgs) else _search_imgs
             cost = int(item.get("cost", 0)) or sale_price
             # 배송비 원가 가산 (무료배송 아닌 경우)
             _sourcing_ship_fee = 0
             if not item.get("free_shipping", False):
                 _sourcing_ship_fee = int(detail.get("shipping_fee", 3000))
                 cost += _sourcing_ship_fee
+            _style_code = detail.get("style_code") or item.get("style_code", "")
             product_data = {
                 "source_site": site,
                 "search_filter_id": filter_id,
@@ -495,7 +541,7 @@ class JobWorker:
                 "category2": detail.get("category2") or item.get("category2", ""),
                 "category3": detail.get("category3") or item.get("category3", ""),
                 "detail_html": detail.get("detail_html") or item.get("detail_html", ""),
-                "detail_images": detail.get("detail_images") or images,
+                "detail_images": detail.get("detail_images") if len(detail.get("detail_images") or []) > len(images) else images,
                 "material": detail.get("material", ""),
                 "color": detail.get("color", ""),
                 "manufacturer": detail.get("manufacturer") or item.get("brand", ""),
@@ -503,11 +549,12 @@ class JobWorker:
                 "care_instructions": detail.get("care_instructions", ""),
                 "quality_guarantee": detail.get("quality_guarantee", ""),
                 "sourcing_shipping_fee": _sourcing_ship_fee,
+                "style_code": _style_code,
                 "status": "collected",
                 "group_key": generate_group_key(
                     brand=item.get("brand", ""),
                     similar_no=None,
-                    style_code=item.get("style_code", ""),
+                    style_code=_style_code,
                     name=p_name,
                 ) or f"fp_{site.lower()}_{p_id}",
                 "price_history": [{
@@ -528,8 +575,30 @@ class JobWorker:
         sf.last_collected_at = datetime.now(UTC)
         session.add(sf)
 
+        # 정책 자동 적용
+        policy_msg = ""
+        if sf.applied_policy_id and total_saved > 0:
+            try:
+                from backend.domain.samba.policy.repository import SambaPolicyRepository
+                policy_repo = SambaPolicyRepository(session)
+                policy = await policy_repo.get_async(sf.applied_policy_id)
+                policy_data = None
+                if policy and policy.pricing:
+                    pr = policy.pricing if isinstance(policy.pricing, dict) else {}
+                    policy_data = {
+                        "margin_rate": pr.get("marginRate", 15),
+                        "shipping_cost": pr.get("shippingCost", 0),
+                        "extra_charge": pr.get("extraCharge", 0),
+                    }
+                count = await svc.apply_policy_to_filter_products(
+                    filter_id, sf.applied_policy_id, policy_data
+                )
+                policy_msg = f", 정책 적용: {count}개"
+            except Exception as e:
+                logger.error(f"[잡워커] {site} 정책 전파 실패: {e}")
+
         await repo.complete_job(job.id, {"saved": total_saved})
-        logger.info(f"[잡워커] {site} 수집 완료: {job.id} ({total_saved}건)")
+        logger.info(f"[잡워커] {site} 수집 완료: {job.id} ({total_saved}건{policy_msg})")
 
     async def _run_stub(self, job, repo, name: str):
         """미구현 잡 타입 스텁."""

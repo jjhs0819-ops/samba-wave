@@ -732,6 +732,40 @@ async def claude_api_test(
         return {"success": False, "message": f"API 호출 실패: {exc}"}
 
 
+@router.post("/gemini/test")
+async def gemini_api_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """Gemini API 키 유효성 검증."""
+    creds = await _get_setting(session, "gemini")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "Gemini API 설정이 저장되지 않았습니다."}
+
+    api_key = creds.get("apiKey", "")
+    model = creds.get("model", "gemini-2.5-flash")
+    if not api_key:
+        return {"success": False, "message": "API Key가 비어있습니다."}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
+                json={
+                    "contents": [{"parts": [{"text": "hi"}]}],
+                    "generationConfig": {"maxOutputTokens": 5},
+                },
+            )
+            if resp.status_code == 200:
+                return {"success": True, "message": f"인증 성공 (모델: {model})"}
+            else:
+                err = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                err_msg = err.get("error", {}).get("message", "") if isinstance(err.get("error"), dict) else str(err.get("error", ""))
+                return {"success": False, "message": err_msg or f"HTTP {resp.status_code}"}
+    except Exception as exc:
+        logger.error(f"[Gemini] API 테스트 실패: {exc}")
+        return {"success": False, "message": f"API 호출 실패: {exc}"}
+
+
 
 
 @router.post("/r2/test")
@@ -1106,15 +1140,18 @@ def _extract_seo_keywords(
     candidates: list[str], cats: list, banned: set[str], name_words: set[str],
     final_tags: list[str] | None = None, max_count: int = 3,
 ) -> list[str]:
-    """최종 검증 태그에서 최고 SEO 키워드 3개 추출.
+    """최종 검증 태그와 겹치지 않는 SEO 키워드 3개 추출.
 
-    최종 태그 앞쪽(1~10번째)이 가장 검색량 높은 핵심 키워드이므로
-    여기서 우선 추출하고, 부족하면 나머지 후보에서 보충한다.
+    최종 태그에 포함된 키워드는 SEO에서 제외하여 중복을 방지한다.
+    태그에 선정되지 않은 후보 중에서 SEO에 적합한 키워드를 추출한다.
     """
     seo: list[str] = []
-    # 최종 태그(검증 통과, 검색량 높은 순) → 나머지 후보 순으로 탐색
-    best_first = list(final_tags or []) + [c for c in candidates if c not in (final_tags or [])]
-    for kw in best_first:
+    # 최종 태그 집합 (소문자, 공백 제거)
+    tag_set = {t.lower().replace(" ", "") for t in (final_tags or [])}
+    # 태그에 포함되지 않은 후보 우선, 그 다음 전체 후보
+    non_tag_candidates = [c for c in candidates if c.lower().replace(" ", "") not in tag_set]
+    pool = non_tag_candidates + [c for c in candidates if c not in non_tag_candidates]
+    for kw in pool:
         cleaned = kw
         for cat_part in cats:
             if cat_part:
@@ -1124,6 +1161,9 @@ def _extract_seo_keywords(
             w = word.strip()
             wl = w.lower().replace(" ", "")
             if len(w) < 2 or wl in banned or wl in name_words or w in seo:
+                continue
+            # 태그와 겹치면 SEO에서 제외
+            if wl in tag_set:
                 continue
             if _has_overlap_suffix(w, seo):
                 continue
@@ -1315,14 +1355,23 @@ async def generate_ai_tags(
                 if not candidate_tags:
                     continue
 
-                # 태그사전 검증: 등록된 태그 + 비제한 태그만 10개까지 추출
+                # 태그사전 검증: 등록된 태그 + 비제한 태그만 추출, 10개 필수
                 if ss_client and candidate_tags:
                     try:
-                        validated = await ss_client.validate_tags(candidate_tags, max_count=10)
-                        tags = [v["text"] for v in validated]
+                        validated = await ss_client.validate_tags(candidate_tags, max_count=15)
+                        tags = [v["text"] for v in validated][:10]
+                        # 10개 미만이면 후보에서 보충
+                        if len(tags) < 10:
+                            tag_set = set(tags)
+                            for ct in candidate_tags:
+                                if ct not in tag_set:
+                                    tags.append(ct)
+                                    tag_set.add(ct)
+                                    if len(tags) >= 10:
+                                        break
                         total_tag_dict_validated += len(tags)
                         total_tag_dict_rejected += len(candidate_tags) - len(tags)
-                        logger.info(f"[AI태그] 그룹 {gid}: 후보 {len(candidate_tags)}개 → 태그사전 통과 {len(tags)}개")
+                        logger.info(f"[AI태그] 그룹 {gid}: 후보 {len(candidate_tags)}개 → 최종 {len(tags)}개")
                     except Exception as ve:
                         logger.error(f"[AI태그] 태그사전 검증 예외 — 후보 태그 사용: {ve}")
                         tags = candidate_tags[:10]
@@ -1332,8 +1381,15 @@ async def generate_ai_tags(
                 if not tags:
                     continue
 
-                # SEO 키워드 추출 (검증 전 전체 후보에서 추출, 최종 태그 제외)
-                seo_kws = _extract_seo_keywords(candidate_tags, cats, banned, name_words, tags)
+                # SEO 키워드 추출 (전체 후보에서 추출, 최종 태그 제외) + 태그사전 검증
+                seo_kws = _extract_seo_keywords(candidate_tags, cats, banned, name_words, tags, max_count=10)
+                if ss_client and seo_kws:
+                    try:
+                        seo_validated = await ss_client.validate_tags(seo_kws, max_count=5)
+                        seo_kws = [v["text"] for v in seo_validated][:3]
+                    except Exception as se:
+                        logger.warning(f"[AI태그] SEO 태그사전 검증 실패, 원본 사용: {se}")
+                        seo_kws = seo_kws[:3]
 
                 # 태그 생성 후 그룹 전체 상품 조회 → 벌크 적용
                 all_in_group = await repo.filter_by_async(search_filter_id=gid, limit=10000)
@@ -1519,16 +1575,25 @@ async def preview_ai_tags(
                         seen.add(tl)
                         candidate_tags.append(t)
 
-                # 태그사전 검증
+                # 태그사전 검증 — 10개 필수
                 validated_tags: list[str] = []
                 rejected_tags: list[str] = []
                 tag_validation_error = ""
                 if ss_client_preview and candidate_tags:
                     try:
-                        validated = await ss_client_preview.validate_tags(candidate_tags, max_count=10)
+                        validated = await ss_client_preview.validate_tags(candidate_tags, max_count=15)
                         validated_set = {v["text"] for v in validated}
-                        validated_tags = [v["text"] for v in validated]
-                        rejected_tags = [t for t in candidate_tags if t not in validated_set]
+                        validated_tags = [v["text"] for v in validated][:10]
+                        # 10개 미만이면 후보에서 보충
+                        if len(validated_tags) < 10:
+                            vt_set = set(validated_tags)
+                            for ct in candidate_tags:
+                                if ct not in vt_set:
+                                    validated_tags.append(ct)
+                                    vt_set.add(ct)
+                                    if len(validated_tags) >= 10:
+                                        break
+                        rejected_tags = [t for t in candidate_tags if t not in set(validated_tags)]
                     except Exception as ve:
                         tag_validation_error = str(ve)
                         logger.error(f"[AI태그] 태그사전 검증 예외 — 후보 태그 사용: {ve}")
@@ -1536,8 +1601,14 @@ async def preview_ai_tags(
                 else:
                     validated_tags = candidate_tags[:10]
 
-                # SEO 키워드 미리보기 (전체 후보에서 추출, 최종 태그 제외)
-                seo_preview = _extract_seo_keywords(candidate_tags, cats, banned, name_words, validated_tags)
+                # SEO 키워드 미리보기 (전체 후보에서 추출, 최종 태그 제외) + 태그사전 검증
+                seo_preview = _extract_seo_keywords(candidate_tags, cats, banned, name_words, validated_tags, max_count=10)
+                if ss_client_preview and seo_preview:
+                    try:
+                        seo_val = await ss_client_preview.validate_tags(seo_preview, max_count=5)
+                        seo_preview = [v["text"] for v in seo_val][:3]
+                    except Exception:
+                        seo_preview = seo_preview[:3]
 
                 preview_results.append({
                     "group_id": gid,
@@ -1814,6 +1885,63 @@ async def musinsa_goods_detail(
     except Exception as exc:
         logger.error(f"[무신사] {goods_no} 수집 실패: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/search-count")
+async def search_count(
+    source_site: str = Query(...),
+    keyword: str = Query(""),
+    url: str = Query(""),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """소싱처별 검색 총 상품수 조회."""
+    try:
+        if source_site == "MUSINSA":
+            client = await _get_musinsa_client(session)
+            params: dict[str, Any] = {"keyword": keyword, "size": 1}
+            if url:
+                from urllib.parse import urlparse, parse_qs
+                parsed = parse_qs(urlparse(url).query)
+                if "brand" in parsed: params["brand"] = parsed["brand"][0]
+                if "category" in parsed: params["category"] = parsed["category"][0]
+                if "gf" in parsed: params["gf"] = parsed["gf"][0]
+                if "minPrice" in parsed: params["min_price"] = int(parsed["minPrice"][0])
+                if "maxPrice" in parsed: params["max_price"] = int(parsed["maxPrice"][0])
+                if not keyword and "keyword" in parsed: params["keyword"] = parsed["keyword"][0]
+            result = await client.search_products(**params)
+            return {"totalCount": result.get("totalCount", 0)}
+
+        elif source_site == "FashionPlus":
+            search_word = keyword
+            if not search_word and url:
+                from urllib.parse import urlparse, parse_qs
+                parsed = parse_qs(urlparse(url).query)
+                search_word = parsed.get("searchWord", [""])[0]
+            if not search_word:
+                return {"totalCount": 0}
+            async with httpx.AsyncClient(timeout=10) as http:
+                r = await http.get(
+                    "https://www.fashionplus.co.kr/search/goods/fetch",
+                    params={"searchWord": search_word, "page": 1, "pageSize": 1, "sort": "recommend"},
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                data = r.json()
+                return {"totalCount": data.get("goodsPaginator", {}).get("totalCount", 0)}
+
+        elif source_site == "KREAM":
+            # KREAM은 확장앱 기반 수집 — 카운트 조회 불가
+            return {"totalCount": 0}
+
+        elif source_site in ("ABCmart", "Nike", "Adidas", "OliveYoung"):
+            # 이 소싱처들은 서버사이드 렌더링/확장앱 기반 — 카운트 조회 불가
+            return {"totalCount": 0}
+
+        else:
+            return {"totalCount": 0}
+
+    except Exception as e:
+        logger.warning(f"[검색카운트] {source_site} 실패: {e}")
+        return {"totalCount": 0}
 
 
 @router.get("/musinsa/search-api")
@@ -2803,3 +2931,35 @@ async def get_extension_config(
     """확장앱에 전달할 최신 설정 (KREAM 셀렉터, 텍스트 패턴 등)."""
     kream_selectors = await _get_setting(session, "kream_selectors")
     return {"selectors": kream_selectors or {}}
+
+
+# ═══════════════════════════════════════════════
+# 범용 이미지 프록시
+# ═══════════════════════════════════════════════
+
+@router.get("/image-proxy")
+async def image_proxy(
+    url: str = Query("", description="이미지 URL"),
+) -> Response:
+    """외부 이미지 프록시 (핫링크 차단 우회)."""
+    if not url:
+        raise HTTPException(status_code=400, detail="URL 필요")
+    import httpx
+    from urllib.parse import unquote
+
+    target = unquote(url)
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            resp = await client.get(target, headers={"Referer": target, "User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+            content_type = resp.headers.get("content-type", "image/jpeg")
+            return Response(
+                content=resp.content,
+                media_type=content_type,
+                headers={
+                    "Cache-Control": "public, max-age=86400",
+                    "Access-Control-Allow-Origin": "*",
+                },
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))

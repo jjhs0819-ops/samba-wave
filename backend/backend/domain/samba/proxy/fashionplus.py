@@ -98,14 +98,54 @@ class FashionPlusClient:
     return {"products": all_products, "total": total, "last_error": last_error}
 
   async def get_detail(self, product_id: str) -> dict[str, Any]:
-    """상품 상세 조회 — 검색 API로 상세 데이터 포함."""
-    # 패션플러스는 상세 페이지가 SPA이므로 검색 API에서 가져온 데이터 활용
-    # 또는 상품 ID로 직접 페이지 접근 후 JSON-LD 파싱
+    """상품 상세 조회 — HTML 파싱 + 옵션 API 호출."""
     url = f"{self.DETAIL_URL}/{product_id}"
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
       resp = await client.get(url, headers={**HEADERS, "Accept": "text/html"})
       resp.raise_for_status()
-      return self._parse_detail_html(resp.text, product_id)
+      result = self._parse_detail_html(resp.text, product_id)
+
+      # 옵션/재고 API 호출
+      try:
+        opt_resp = await client.get(
+          f"{self.DETAIL_URL}/{product_id}/fetch-option-data",
+          headers={**HEADERS, "X-Requested-With": "XMLHttpRequest"},
+        )
+        if opt_resp.status_code == 200:
+          opt_data = opt_resp.json()
+          result["options"] = self._parse_options(opt_data)
+      except Exception as e:
+        logger.warning(f"[패션플러스] 옵션 조회 실패 {product_id}: {e}")
+
+      return result
+
+  async def fetch_options(self, product_id: str) -> list[dict[str, Any]]:
+    """옵션/재고 단독 조회."""
+    url = f"{self.DETAIL_URL}/{product_id}/fetch-option-data"
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+      resp = await client.get(url, headers={**HEADERS, "X-Requested-With": "XMLHttpRequest"})
+      resp.raise_for_status()
+      return self._parse_options(resp.json())
+
+  @staticmethod
+  def _parse_options(data: list | dict) -> list[dict[str, Any]]:
+    """옵션 API 응답 → CollectedProduct options 스키마 변환."""
+    options: list[dict[str, Any]] = []
+    items = data if isinstance(data, list) else [data]
+    for group in items:
+      for opt in group.get("options", []):
+        stock = opt.get("_stock", 0)
+        options.append({
+          "no": opt.get("_id", 0),
+          "name": opt.get("_name", ""),
+          "price": opt.get("_price", 0),
+          "stock": stock if stock is not None else 999,
+          "isSoldOut": stock == 0 if stock is not None else False,
+          "isBrandDelivery": False,
+          "deliveryType": "GENERAL",
+          "managedCode": "",
+        })
+    return options
 
   @staticmethod
   def _map_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -189,8 +229,9 @@ class FashionPlusClient:
           result["name"] = data.get("name", "")
           brand_info = data.get("brand", {})
           result["brand"] = brand_info.get("name", "") if isinstance(brand_info, dict) else str(brand_info)
-          # SKU에서 seller_id 추출 (이미지 필터링용)
+          # SKU → style_code (품번) + seller_id 추출
           sku = data.get("sku", "")
+          result["style_code"] = sku
           seller_id = sku.split("_")[0] if "_" in sku else ""
       except (json.JSONDecodeError, ValueError):
         seller_id = ""
@@ -201,6 +242,7 @@ class FashionPlusClient:
         result["name"] = name_m.group(1)
 
     # 2) 상품 이미지 — 동일 seller_id의 product_img만 추출
+    #    plgk/plgr/plgl 등 사이즈 접두사가 다른 동일 이미지 중복 제거
     all_product_imgs = re.findall(
       r'(https://img\.fashionplus\.co\.kr/mall/assets/product_img/[^\"\'>\s?]+)', html
     )
@@ -208,7 +250,17 @@ class FashionPlusClient:
       imgs = [img for img in all_product_imgs if f"/{seller_id}/" in img]
     else:
       imgs = all_product_imgs[:5]
-    result["images"] = list(dict.fromkeys(imgs))[:9]
+    # 사이즈 접두사(plgk/plgr/plgl/plgs 등) 제거 후 파일명 기준 중복 제거
+    seen_basenames: set[str] = set()
+    unique_imgs: list[str] = []
+    for img in imgs:
+      # .../plgk671652_5008758480.jpg → 671652_5008758480.jpg
+      fname = img.rsplit("/", 1)[-1]
+      base = re.sub(r'^plg[a-z]', '', fname)
+      if base not in seen_basenames:
+        seen_basenames.add(base)
+        unique_imgs.append(img)
+    result["images"] = unique_imgs[:9]
 
     # 3) 고시정보 추출 (상품 정보 제공고시 테이블)
     notice_match = re.search(r'상품\s*정보\s*제공고시(.*?)(?:상품\s*일반정보|반품|$)', html, re.S)

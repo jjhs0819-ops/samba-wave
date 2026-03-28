@@ -97,6 +97,26 @@ class SambaReturn(SQLModel, table=True):
         default=None, sa_column=Column(Text, nullable=True)
     )
 
+    # 원문링크 (소싱처 상품 URL)
+    return_link: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 반품신청한곳 (소싱처명)
+    return_source: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 지역
+    region: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 반품요청일
+    return_request_date: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+
     # 마켓 주문상태 (교환요청, 취소완료 등)
     market_order_status: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)

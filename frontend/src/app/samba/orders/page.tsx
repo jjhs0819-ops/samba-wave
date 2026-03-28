@@ -154,7 +154,7 @@ export default function OrdersPage() {
   const [dateLocked, setDateLocked] = useState(false)
   const [customStart, setCustomStart] = useState(`${new Date().getFullYear()}-01-01`)
   const [startLocked, setStartLocked] = useState(false)
-  const [customEnd, setCustomEnd] = useState(new Date().toISOString().slice(0, 10))
+  const [customEnd, setCustomEnd] = useState(new Date().toLocaleDateString('sv-SE'))
 
   const loadOrders = useCallback(async () => {
     setLoading(true)
@@ -396,6 +396,31 @@ export default function OrdersPage() {
           return
         }
       } catch { /* ignore */ }
+    }
+    // 4. 상품명에서 소싱처 상품번호 추출 → URL 구성
+    const sourcingUrls: Record<string, string> = {
+      MUSINSA: 'https://www.musinsa.com/products/',
+      KREAM: 'https://kream.co.kr/products/',
+      FashionPlus: 'https://www.fashionplus.co.kr/goods/detail/',
+      ABCmart: 'https://www.a-rt.com/product?prdtNo=',
+      Nike: 'https://www.nike.com/kr/t/',
+    }
+    const name = o.product_name || ''
+    // 상품명 끝에 숫자가 있으면 소싱처 상품번호로 추정
+    const idMatch = name.match(/\b(\d{6,})\s*$/)
+    if (idMatch && o.source_site && sourcingUrls[o.source_site]) {
+      window.open(sourcingUrls[o.source_site] + idMatch[1], '_blank')
+      return
+    }
+    // source_site 없어도 상품명 패턴으로 소싱처 추론
+    if (idMatch) {
+      const id = idMatch[1]
+      if (name.includes('운동화') || name.includes('나이키') || name.includes('아디다스')) {
+        window.open('https://www.fashionplus.co.kr/goods/detail/' + id, '_blank')
+        return
+      }
+      window.open('https://www.musinsa.com/products/' + id, '_blank')
+      return
     }
     showAlert('소싱처 원문링크 정보가 없습니다', 'info')
   }
@@ -679,9 +704,9 @@ export default function OrdersPage() {
               setPeriod(pb.key)
               if (!startLocked) {
                 const start = getPeriodStart(pb.key)
-                setCustomStart(start ? start.toISOString().slice(0, 10) : '')
+                setCustomStart(start ? start.toLocaleDateString('sv-SE') : '')
               }
-              setCustomEnd(new Date().toISOString().slice(0, 10))
+              setCustomEnd(new Date().toLocaleDateString('sv-SE'))
             }}
               style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
             >{pb.label}</button>
@@ -881,7 +906,7 @@ export default function OrdersPage() {
                           const val = e.target.value.trim()
                           if (val === (o.coupang_display_name ?? '')) return
                           try {
-                            await orderApi.update(o.id, { coupang_display_name: val || null })
+                            await orderApi.update(o.id, { coupang_display_name: val || undefined })
                             loadOrders()
                           } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
                         }}
@@ -915,14 +940,34 @@ export default function OrdersPage() {
                       <button onClick={() => handleMarketLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #444', borderRadius: '3px', color: o.channel_id ? '#51CF66' : '#555', cursor: 'pointer' }}>판매링크</button>
                       <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>미등록 입력</button>
                       <button onClick={() => handleTracking(o.shipping_company || '', o.tracking_number || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>배송조회</button>
-                      <button onClick={() => showAlert('업데이트 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>업데이트</button>
+                      <button onClick={async () => {
+                        if (!o.product_id) { showAlert('상품 ID가 없습니다', 'info'); return }
+                        try {
+                          const { API_BASE_URL: apiBase } = await import('@/config/api')
+                          const res = await fetch(`${apiBase}/api/v1/samba/collector/enrich/${o.product_id}`, { method: 'POST' })
+                          const data = await res.json()
+                          if (res.ok && data.success) {
+                            const p = data.product
+                            const costVal = p?.cost || p?.sale_price
+                            const priceStr = costVal != null ? `₩${Number(costVal).toLocaleString()}` : '-'
+                            const stockStr = p?.is_sold_out ? '품절' : '재고있음'
+                            showAlert(`${(o.product_name || '').slice(0, 20)} → ${priceStr} | ${stockStr}`, 'success')
+                          } else {
+                            showAlert(data.message || '업데이트 실패', 'error')
+                          }
+                        } catch (e) { showAlert(e instanceof Error ? e.message : '업데이트 실패', 'error') }
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>업데이트</button>
                       <button onClick={() => showAlert('마켓상품삭제 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>마켓상품삭제</button>
                       <button onClick={() => {
                         if (o.ext_order_number) { window.open(o.ext_order_number, '_blank'); return }
                         if (!o.order_number) { showAlert('주문번호가 없습니다', 'info'); return }
+                        // 소싱처별 주문상세 페이지 URL (= 원주문링크 = 반품링크)
                         const orderUrlMap: Record<string, string> = {
                           MUSINSA: `https://www.musinsa.com/order/order-detail/${o.order_number}`,
                           KREAM: `https://kream.co.kr/my/purchasing/${o.order_number}`,
+                          FashionPlus: `https://www.fashionplus.co.kr/mypage/order/detail/${o.order_number}`,
+                          ABCmart: `https://www.a-rt.com/mypage/order-detail/${o.order_number}`,
+                          Nike: `https://www.nike.com/kr/orders/${o.order_number}`,
                         }
                         const url = orderUrlMap[o.source_site || '']
                         if (!url) { showAlert(`${o.source_site || '알수없는'} 소싱처는 원주문링크를 지원하지 않습니다`, 'info'); return }
@@ -959,7 +1004,7 @@ export default function OrdersPage() {
                           const val = e.target.value.trim()
                           if (val === (o.ext_order_number ?? '')) return
                           try {
-                            await orderApi.update(o.id, { ext_order_number: val || null })
+                            await orderApi.update(o.id, { ext_order_number: val || undefined })
                             loadOrders()
                           } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
                         }}
@@ -996,17 +1041,17 @@ export default function OrdersPage() {
                         </select>
                         <input
                           type="text"
-                          placeholder="주문번호"
-                          value={editingOrderNumbers[o.id] ?? o.order_number ?? ''}
+                          placeholder="소싱주문번호"
+                          value={editingOrderNumbers[o.id] ?? o.sourcing_order_number ?? ''}
                           onChange={e => setEditingOrderNumbers(prev => ({ ...prev, [o.id]: e.target.value }))}
                           onBlur={async (e) => {
                             const val = e.target.value.trim()
                             setEditingOrderNumbers(prev => { const n = { ...prev }; delete n[o.id]; return n })
-                            if (val === (o.order_number ?? '')) return
+                            if (val === (o.sourcing_order_number ?? '')) return
                             try {
-                              await orderApi.update(o.id, { order_number: val })
+                              await orderApi.update(o.id, { sourcing_order_number: val })
                               loadOrders()
-                            } catch (err) { showAlert(err instanceof Error ? err.message : '주문번호 저장 실패', 'error') }
+                            } catch (err) { showAlert(err instanceof Error ? err.message : '소싱주문번호 저장 실패', 'error') }
                           }}
                           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                           style={{ flex: 1, fontSize: '0.68rem', padding: '0.25rem 0.375rem', background: '#1A1A1A', border: '1px solid #444', color: '#E5E5E5', borderRadius: '4px', minWidth: 0, fontFamily: 'monospace' }}
