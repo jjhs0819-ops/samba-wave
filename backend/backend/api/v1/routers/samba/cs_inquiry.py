@@ -321,6 +321,73 @@ async def sync_cs_from_markets(
     synced = 0
     errors = []
 
+    # ── 롯데ON CS 조회 ──
+    try:
+        lotteon_result = await session.execute(
+            select(SambaSettings).where(SambaSettings.key.like("store_lotteon%"))
+        )
+        lotteon_settings = lotteon_result.scalars().all()
+    except Exception as e:
+        logger.warning(f"[롯데ON] 설정 조회 실패: {e}")
+        lotteon_settings = []
+
+    for lo_setting in lotteon_settings:
+        try:
+            import json as _json
+            lo_config = _json.loads(lo_setting.value) if isinstance(lo_setting.value, str) else lo_setting.value
+            api_key = (lo_config or {}).get("apiKey", "")
+            if not api_key:
+                continue
+
+            from backend.domain.samba.proxy.lotteon import LotteonClient, LotteonApiError
+            lo_client = LotteonClient(api_key)
+            raw_inquiries = await lo_client.get_cs_inquiries(days=30)
+
+            for item in raw_inquiries:
+                # 중복 체크: CcnNo + MvotReqSn 조합
+                market_inquiry_no = f"{item.get('CcnNo', '')}_{item.get('MvotReqSn', '')}"
+
+                existing = await session.execute(
+                    select(SambaCSInquiry).where(
+                        SambaCSInquiry.market == "롯데ON",
+                        SambaCSInquiry.market_inquiry_no == market_inquiry_no,
+                    )
+                )
+                existing_row = existing.scalar_one_or_none()
+
+                ans_cont = item.get("AnsCont", "") or ""
+                is_answered = bool(ans_cont.strip())
+
+                if not existing_row:
+                    inquiry_data = {
+                        "market": "롯데ON",
+                        "market_inquiry_no": market_inquiry_no,
+                        "market_order_id": item.get("OrdNo", "") or None,
+                        "market_product_no": item.get("GoodsNo", "") or None,
+                        "inquiry_type": item.get("VocNm", "general") or "general",
+                        "questioner": item.get("MbrNm", "") or None,
+                        "product_name": item.get("GoodsNm", "") or None,
+                        "content": item.get("AnsSumrCont", "") or "",
+                        "reply": ans_cont if is_answered else None,
+                        "reply_status": "replied" if is_answered else "pending",
+                    }
+                    await svc.create_inquiry(inquiry_data)
+                    synced += 1
+                else:
+                    # 답변 상태만 업데이트
+                    await svc.repo.update_async(
+                        existing_row.id,
+                        reply=ans_cont if is_answered else existing_row.reply,
+                        reply_status="replied" if is_answered else existing_row.reply_status,
+                    )
+
+        except LotteonApiError as e:
+            logger.warning(f"[롯데ON] CS 조회 실패: {e}")
+            errors.append(str(e))
+        except Exception as e:
+            logger.warning(f"[롯데ON] CS 조회 예외: {e}")
+            errors.append(str(e))
+
     # 스마트스토어 계정 조회
     try:
         settings_result = await session.execute(
@@ -673,6 +740,49 @@ async def send_reply_to_market(
 
         msg = "상품문의 답변 전송 완료" if inquiry.inquiry_type == "product_question" else "고객문의 답변 전송 완료"
         return {"success": True, "message": f"스마트스토어 {msg}", "data": result.get("data") if isinstance(result, dict) else {}}
+
+    elif inquiry.market == "롯데ON":
+        # 롯데ON 계정 조회
+        settings_result = await session.execute(
+            select(SambaSettings).where(SambaSettings.key.like("store_lotteon%"))
+        )
+        lo_settings = settings_result.scalars().first()
+        if not lo_settings:
+            raise HTTPException(400, "롯데ON 계정 설정이 없습니다")
+
+        import json as _json
+        lo_config = _json.loads(lo_settings.value) if isinstance(lo_settings.value, str) else lo_settings.value
+        api_key = (lo_config or {}).get("apiKey", "").strip()
+        if not api_key:
+            raise HTTPException(400, "롯데ON apiKey가 설정되지 않았습니다")
+
+        from backend.domain.samba.proxy.lotteon import LotteonClient, LotteonApiError
+
+        lo_client = LotteonClient(api_key)
+
+        # market_inquiry_no = "{CcnNo}_{MvotReqSn}" 형식
+        parts = (inquiry.market_inquiry_no or "").split("_", 1)
+        ccn_no = parts[0] if len(parts) > 0 else ""
+        mvot_req_sn = parts[1] if len(parts) > 1 else ""
+
+        try:
+            success = await lo_client.reply_cs_inquiry(ccn_no, mvot_req_sn, body.reply)
+        except LotteonApiError as e:
+            raise HTTPException(status_code=502, detail=f"롯데ON CS 답변 전송 실패: {e}")
+
+        if not success:
+            raise HTTPException(status_code=502, detail="롯데ON CS 답변 전송 실패")
+
+        from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
+        repo = SambaCSInquiryRepository(session)
+        await repo.update_async(
+            inquiry_id,
+            reply=body.reply,
+            reply_status="replied",
+            replied_at=datetime.now(timezone.utc),
+        )
+
+        return {"success": True, "message": "롯데ON CS 답변 전송 완료", "data": {}}
 
     raise HTTPException(400, f"'{inquiry.market}' 마켓은 아직 답변 전송을 지원하지 않습니다")
 

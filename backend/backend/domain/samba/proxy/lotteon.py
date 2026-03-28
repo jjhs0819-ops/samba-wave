@@ -10,7 +10,8 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+import xml.etree.ElementTree as ET
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -247,6 +248,8 @@ class LotteonClient:
   BASE_URL = "https://openapi.lotteon.com"
   # 카테고리/브랜드는 별도 도메인
   ONPICK_URL = "https://onpick-api.lotteon.com"
+  # 롯데홈쇼핑 주문 API (별도 시스템 — subscriptionId 인증, XML 응답)
+  IMALL_URL = "https://openapi.lotteimall.com"
 
   def __init__(self, api_key: str) -> None:
     self.api_key = api_key
@@ -316,6 +319,65 @@ class LotteonClient:
       raise LotteonApiError(f"응답 에러 ({res_code}): {msg}")
 
     return data
+
+  async def _call_imall_api(self, path: str, params: dict[str, str]) -> str:
+    """롯데홈쇼핑 주문 API 호출 (XML 응답).
+
+    인증: subscriptionId URL 파라미터 (Bearer 토큰 아님).
+    반환: XML 원문 문자열
+
+    롯데홈쇼핑 Open API는 상태 변경 작업(반품승인, CS답변)도 GET 방식으로 파라미터를 전달하는 구조.
+    (API 명세: openapitst.lotteimall.com 문서 기준)
+    """
+    # subscriptionId 자동 주입
+    merged_params = {"subscriptionId": self.api_key, **params}
+    url = f"{self.IMALL_URL}{path}"
+
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+      resp = await client.get(url, params=merged_params)
+
+    logger.info(f"[롯데홈쇼핑] GET {path} → {resp.status_code}")
+
+    if not resp.is_success:
+      raise LotteonApiError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+
+    text = resp.text
+
+    # XML 바디 레벨 에러 확인 (HTTP 200이어도 에러 포함 가능)
+    try:
+      root = ET.fromstring(text)
+      err_code = root.findtext("ReturnCode") or root.findtext("ErrorCode") or ""
+      if err_code and err_code not in ("0000", "0001", ""):
+        logger.warning(f"[롯데홈쇼핑] XML 에러 코드: {err_code} | {path}")
+    except ET.ParseError:
+      pass  # XML 파싱 실패는 _parse_xml_list에서 처리
+
+    return text
+
+  def _parse_xml_list(self, xml_text: str, item_tag: str) -> list[dict[str, str]]:
+    """XML에서 item_tag 반복 요소를 dict 리스트로 변환.
+
+    각 <item_tag> 하위 요소를 {태그명: 텍스트} dict로 변환.
+    CDATA 및 None 값은 빈 문자열로 처리.
+    """
+    try:
+      root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+      raise LotteonApiError(f"XML 파싱 실패: {e}") from e
+
+    result: list[dict[str, str]] = []
+    for item in root.iter(item_tag):
+      row: dict[str, str] = {}
+      for child in item:
+        row[child.tag] = child.text or ""
+      result.append(row)
+    return result
+
+  def _date_range(self, days: int) -> tuple[str, str]:
+    """최근 N일 start_date, end_date 반환 (YYYYMMDD 형식)."""
+    today = date.today()
+    start = today - timedelta(days=days)
+    return start.strftime("%Y%m%d"), today.strftime("%Y%m%d")
 
   # ------------------------------------------------------------------
   # 인증
@@ -981,6 +1043,133 @@ class LotteonClient:
     # - soapi updateProduct → 403 (API key 권한 없음, 브라우저 세션 전용)
     # 롯데ON 어드민에서 수동 설정 필요
     return {"spdLst": [spd]}
+
+  # ------------------------------------------------------------------
+  # 주문 조회 (롯데홈쇼핑 주문 API)
+  # ------------------------------------------------------------------
+
+  async def get_orders(self, days: int = 7) -> list[dict[str, str]]:
+    """최근 N일 신규주문 조회.
+
+    SelOption=01: 미발주/신규 상태 필터.
+    반환: OrdNo, SubOrdNo, OrdProdCode, OrdStat, OrderName 등 주문 dict 리스트.
+    """
+    start_date, end_date = self._date_range(days)
+    xml_text = await self._call_imall_api(
+      "/openapi/searchNewOrdLstOpenApi.lotte",
+      {
+        "start_date": start_date,
+        "end_date": end_date,
+        "SelOption": "01",
+      },
+    )
+    return self._parse_xml_list(xml_text, "OrdInfo")
+
+  async def get_cancel_orders(self, days: int = 7) -> list[dict[str, str]]:
+    """최근 N일 주문취소 조회.
+
+    반환: OrdNo, MbrNm, ClmCausCd, ClmCausNm, CnclDtime 등 취소 dict 리스트.
+    """
+    start_date, end_date = self._date_range(days)
+    xml_text = await self._call_imall_api(
+      "/openapi/searchCnclList.lotte",
+      {
+        "start_date": start_date,
+        "end_date": end_date,
+      },
+    )
+    return self._parse_xml_list(xml_text, "CnclInfo")
+
+  async def get_returns(self, days: int = 7) -> list[dict[str, str]]:
+    """최근 N일 반품 조회.
+
+    ord_dtl_stat_cd=20: 반품요청 상태 필터.
+    반환: OrdNo, OrdDtlSn, MbrNm, ClmCausCd, GoodsNm 등 반품 dict 리스트.
+    """
+    start_date, end_date = self._date_range(days)
+    xml_text = await self._call_imall_api(
+      "/openapi/searchReturnList.lotte",
+      {
+        "start_date": start_date,
+        "end_date": end_date,
+        "ord_dtl_stat_cd": "20",
+      },
+    )
+    return self._parse_xml_list(xml_text, "ReturnInfo")
+
+  async def approve_return(self, ord_no: str, ord_dtl_sn: str) -> bool:
+    """반품 승인 처리.
+
+    proc_gubun=rfin: 반품완료 처리 코드.
+    hdc_cd, inv_no는 빈 문자열로 전달 (롯데홈쇼핑 자체 배송 처리).
+    반환: 성공 여부
+    """
+    xml_text = await self._call_imall_api(
+      "/openapi/registDeliver.lotte",
+      {
+        "ord_no": ord_no,
+        "ord_dtl_sn": ord_dtl_sn,
+        "proc_gubun": "rfin",
+        "hdc_cd": "",
+        "inv_no": "",
+      },
+    )
+    # 응답 XML에서 Result 태그 확인 (1: 성공)
+    try:
+      root = ET.fromstring(xml_text)
+      result_el = root.find(".//Result")
+      if result_el is not None and result_el.text:
+        return result_el.text.strip() == "1"
+    except ET.ParseError as e:
+      logger.warning(f"[롯데홈쇼핑] approve_return XML 파싱 실패: {e} | 원문: {xml_text[:200]}")
+    return False
+
+  # ------------------------------------------------------------------
+  # CS 문의 조회 및 답변 (VOC)
+  # ------------------------------------------------------------------
+
+  async def get_cs_inquiries(self, days: int = 30) -> list[dict[str, str]]:
+    """최근 N일 CS 문의(VOC) 조회 (미처리 건).
+
+    proc_stat_cd=01: 미처리 상태 필터.
+    반환: CcnNo, MvotReqSn, OrdNo, GoodsNm, MbrNm, VocNm, AnsCont 등 dict 리스트.
+    """
+    start_date, end_date = self._date_range(days)
+    xml_text = await self._call_imall_api(
+      "/openapi/searchCSCounselMemoListOpenApi.lotte",
+      {
+        "req_start_dtime": start_date,
+        "req_end_dtime": end_date,
+        "proc_stat_cd": "01",
+      },
+    )
+    return self._parse_xml_list(xml_text, "CsInfo")
+
+  async def reply_cs_inquiry(self, ccn_no: str, mvot_req_sn: str, reply: str) -> bool:
+    """CS 문의 답변 등록.
+
+    reply: 답변 내용 (최대 4000자).
+    반환: 성공 여부 (응답 XML <Result>1</Result> 확인).
+    """
+    # 답변 내용 4000자 제한
+    trimmed_reply = reply[:4000]
+    xml_text = await self._call_imall_api(
+      "/openapi/updateCounselMemoOpenApi.lotte",
+      {
+        "ccn_no": ccn_no,
+        "mvot_req_sn": mvot_req_sn,
+        "cnsl_proc_cont": trimmed_reply,
+      },
+    )
+    # 응답 XML에서 Result 태그 확인 (1: 성공, 2/3: 실패)
+    try:
+      root = ET.fromstring(xml_text)
+      result_el = root.find(".//Result")
+      if result_el is not None and result_el.text:
+        return result_el.text.strip() == "1"
+    except ET.ParseError as e:
+      logger.warning(f"[롯데홈쇼핑] reply_cs_inquiry XML 파싱 실패: {e} | 원문: {xml_text[:200]}")
+    return False
 
 
 class LotteonApiError(Exception):

@@ -261,6 +261,30 @@ _CLAIM_STATUS_LABEL: dict[str, str] = {
 }
 
 
+def _parse_lotteon_return(
+  item: dict[str, str],
+  return_type: str,  # "return" | "cancel"
+) -> dict[str, Any]:
+  """롯데홈쇼핑 반품/취소 데이터 → SambaReturn dict 변환.
+
+  item: _parse_xml_list()가 반환한 단일 반품/취소 dict
+  return_type: "return"(반품) 또는 "cancel"(취소)
+  """
+  return {
+    "source": "lotteon",
+    "order_number": item.get("OrdProdCode", "") or item.get("OrdNo", ""),
+    "shipment_id": item.get("OrdNo", ""),
+    "ord_dtl_sn": item.get("OrdDtlSn", ""),  # 반품 처리용 상세번호
+    "return_type": return_type,
+    "reason_code": item.get("ClmCausCd", ""),
+    "reason": item.get("ClmCausNm", ""),
+    "quantity": int(item.get("WhsgQty", "") or item.get("CnclQty", "") or "1"),
+    "product_name": item.get("GoodsNm", ""),
+    "product_id": item.get("GoodNo", ""),
+    "status": "requested",
+  }
+
+
 def _extract_city_district(address: Optional[str]) -> Optional[str]:
     """주소에서 시/군 단위를 추출한다.
     - '경기도 수원시 팔달구...' → '수원시'
@@ -492,6 +516,92 @@ async def sync_returns_from_markets(
                     "synced": synced,
                 })
                 logger.info(f"[반품동기화] {label}: 클레임 {len(claims_data)}건 조회, {synced}건 신규 저장")
+
+            elif market_type == "lotteon":
+                # 롯데ON 인증정보 추출
+                api_key = (extras.get("apiKey") or account.api_key or "").strip()
+                if not api_key:
+                    results.append({"account": label, "status": "skip", "message": "API 키 없음"})
+                    continue
+
+                from backend.domain.samba.proxy.lotteon import LotteonApiError, LotteonClient
+
+                client = LotteonClient(api_key)
+
+                # 반품 + 취소 동시 조회
+                raw_returns = await client.get_returns(days=body.days)
+                raw_cancels = await client.get_cancel_orders(days=body.days)
+
+                claims_data_lo: list[dict[str, Any]] = []
+                for item in raw_returns:
+                    claims_data_lo.append(_parse_lotteon_return(item, "return"))
+                for item in raw_cancels:
+                    claims_data_lo.append(_parse_lotteon_return(item, "cancel"))
+
+                # 스마트스토어와 동일한 upsert 로직 적용
+                synced_lo = 0
+                for claim in claims_data_lo:
+                    order_number = claim.get("order_number", "")
+                    if not order_number:
+                        continue
+                    # 기존 주문 매칭
+                    existing_order = await order_repo.find_by_async(order_number=order_number)
+                    if not existing_order:
+                        logger.warning(f"[롯데ON] 반품 주문 미매칭: {order_number}")
+                        continue
+                    order_id = existing_order.id
+                    # 이미 동일한 반품 기록이 있는지 확인 (order_id 기준)
+                    existing_returns_lo = await svc.repo.filter_by_async(order_id=order_id)
+                    if existing_returns_lo:
+                        # 같은 타입 우선, 없으면 첫 번째 레코드 사용
+                        existing_ret = next(
+                            (r for r in existing_returns_lo if r.type == claim["return_type"]),
+                            existing_returns_lo[0],
+                        )
+                        new_status = claim["status"]
+                        status_priority = {"requested": 0, "approved": 1, "completed": 2, "rejected": 2, "cancelled": 2}
+                        if status_priority.get(new_status, 0) > status_priority.get(existing_ret.status, 0):
+                            await svc.repo.update_async(existing_ret.id, status=new_status)
+                        continue
+                    # 신규 반품 생성
+                    market_label_map_lo: dict[str, str] = {
+                        "smartstore": "스마트스토어",
+                        "coupang": "쿠팡",
+                        "11st": "11번가",
+                        "lotteon": "롯데ON",
+                        "ssg": "SSG",
+                        "gsshop": "GS샵",
+                    }
+                    return_data_lo: dict[str, Any] = {
+                        "order_id": order_id,
+                        "order_number": order_number,
+                        "type": claim["return_type"],
+                        "reason": claim["reason"] or None,
+                        "quantity": claim["quantity"],
+                        "product_name": claim["product_name"] or existing_order.product_name,
+                        "product_image": existing_order.product_image,
+                        "customer_name": existing_order.customer_name,
+                        "customer_phone": existing_order.customer_phone,
+                        "product_location": _extract_city_district(existing_order.customer_address),
+                        "customer_address": existing_order.customer_address,
+                        "business_name": account.business_name or account.market_name or label,
+                        "market": market_label_map_lo.get(market_type, market_type),
+                        "order_date": existing_order.created_at,
+                        "status": claim["status"],
+                        "notes": [],
+                    }
+                    await svc.repo.create_async(**return_data_lo)
+                    synced_lo += 1
+
+                total_synced += synced_lo
+                results.append({
+                    "account": label,
+                    "status": "success",
+                    "returns": len(raw_returns),
+                    "cancels": len(raw_cancels),
+                    "synced": synced_lo,
+                })
+                logger.info(f"[반품동기화][롯데ON] {label}: 반품 {len(raw_returns)}건, 취소 {len(raw_cancels)}건 조회, {synced_lo}건 신규 저장")
 
             else:
                 results.append({"account": label, "status": "skip", "message": f"{market_type} 반품 조회 미지원"})

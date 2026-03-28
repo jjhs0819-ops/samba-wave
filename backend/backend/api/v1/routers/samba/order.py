@@ -661,6 +661,29 @@ async def sync_orders_from_markets(
                     except Exception as ce:
                         logger.warning(f"[주문동기화] {label}: 발주확인 실패 — {ce}")
 
+            elif market_type == "lotteon":
+                # 롯데ON 인증정보 추출 (스마트스토어 동일 패턴)
+                api_key = (extras.get("apiKey") or account.api_key or "").strip()
+                if not api_key:
+                    results.append({"account": label, "status": "skip", "message": "API 키 없음"})
+                    continue
+
+                try:
+                    from backend.domain.samba.proxy.lotteon import LotteonClient, LotteonApiError
+                    client = LotteonClient(api_key)
+                    raw_orders = await client.get_orders(days=body.days)
+                    for item in raw_orders:
+                        orders_data.append(_parse_lotteon_order(item, account.id, label))
+                    results.append({"account": label, "status": "ok", "count": len(raw_orders)})
+                except LotteonApiError as e:
+                    logger.warning(f"[롯데ON] 주문 조회 실패: {e}")
+                    results.append({"account": label, "status": "error", "message": str(e)})
+                    continue
+                except Exception as e:
+                    logger.warning(f"[롯데ON] 주문 조회 예외: {e}")
+                    results.append({"account": label, "status": "error", "message": str(e)})
+                    continue
+
             elif market_type == "coupang":
                 # 쿠팡 주문 조회 (구현 대기)
                 results.append({"account": label, "status": "skip", "message": "쿠팡 주문 조회 미구현"})
@@ -773,6 +796,52 @@ async def sync_orders_from_markets(
             results.append({"account": label, "status": "error", "message": str(e)})
 
     return {"total_synced": total_synced, "results": results}
+
+
+def _parse_lotteon_order(
+  item: dict[str, str],
+  account_id: str,
+  label: str,
+) -> dict[str, Any]:
+  """롯데홈쇼핑 주문 데이터 → SambaOrder dict 변환.
+
+  item: _parse_xml_list()가 반환한 단일 주문 dict
+  """
+  from datetime import datetime
+
+  # OrdStat 상태 매핑
+  stat_map = {
+    "업체지시": "pending",
+    "출하지시": "confirmed",
+    "발송약정": "confirmed",
+  }
+  status = stat_map.get(item.get("OrdStat", ""), "pending")
+
+  # 날짜 파싱 (YYYYMMDD → datetime)
+  trd_date_str = item.get("TrdDate", "")
+  try:
+    created_at = datetime.strptime(trd_date_str, "%Y%m%d") if trd_date_str else datetime.now()
+  except ValueError:
+    created_at = datetime.now()
+
+  return {
+    "account_id": account_id,
+    "account_label": label,
+    "source": "lotteon",
+    "order_number": item.get("OrdProdCode", "") or item.get("OrdNo", ""),
+    "shipment_id": item.get("OrdNo", ""),
+    "product_id": item.get("ProdCode", "") or item.get("EntrProdNo", ""),
+    "product_name": item.get("ProdName", ""),
+    "product_option": item.get("prodOption", ""),
+    "quantity": int(item.get("ordQty", "1") or "1"),
+    "sale_price": int(item.get("ordPrice", "0") or "0"),
+    "cost": int(item.get("buyRealPrice", "0") or "0"),
+    "status": status,
+    "customer_name": item.get("recvName", "") or item.get("OrderName", ""),
+    "customer_phone": item.get("recvHp", "") or item.get("recvTel", ""),
+    "customer_address": f"{item.get('recvAddr1', '')} {item.get('recvAddr2', '')}".strip(),
+    "created_at": created_at,
+  }
 
 
 def _parse_smartstore_order(
