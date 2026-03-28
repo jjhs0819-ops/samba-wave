@@ -440,13 +440,13 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 | 이랜드몰 | `ElandMall` | 스텁 | → `references/generic-sourcing.md` |
 | SSF샵 | `SSF` | 스텁 | → `references/generic-sourcing.md` |
 
-### 스텁 전용 (3개, 소싱큐 미지원)
+### 직접 API (3개, 서버 HTTP)
 
-| 사이트 | 코드 | 상태 |
-|--------|------|------|
-| Nike | `Nike` | refresher 스텁만 등록 |
-| Adidas | `Adidas` | refresher 스텁만 등록 |
-| 패션플러스 | `FashionPlus` | refresher 스텁만 등록 |
+| 사이트 | 코드 | 수집 방식 | 상태 | 참조 |
+|--------|------|----------|------|------|
+| 패션플러스 | `FashionPlus` | 서버 HTTP (검색API) | 활성 — 검색수집 완료, 상세/옵션 미지원 | 아래 패턴 참조 |
+| Nike | `Nike` | 서버 HTTP | refresher 스텁 |  |
+| Adidas | `Adidas` | 서버 HTTP | refresher 스텁 |  |
 
 ### 수집 방식 결정 기준
 
@@ -550,6 +550,21 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 - **이미지 CDN**: `contents.lotteon.com`
 - **JSON-LD**: schema.org Product 마크업 우선 파싱, __NEXT_DATA__ 폴백
 
+## 소싱처별 수집 패턴 — 패션플러스
+
+### 패션플러스 (FashionPlus)
+- **프록시**: `proxy/fashionplus.py` — FashionPlusClient
+- **플러그인**: `plugins/sourcing/fashionplus.py` — site_name="FASHIONPLUS", concurrency=3, interval=0.5초
+- **수집 방식**: 서버 직접 HTTP (공개 검색 API, 로그인 불필요)
+- **검색 API**: `GET https://www.fashionplus.co.kr/search/goods/fetch?searchWord={keyword}&page={n}&pageSize=40`
+- **응답 구조**: `goodsPaginator.items[]` — id, name, brand{id,name}, consumerPrice, salePrice, displayPrice, thumbnailUrl, isSoldout, isFreeDelivery, goodsCoupon{type,amount}
+- **URL 패턴**: `fashionplus.co.kr/goods/detail/{id}`
+- **이미지 CDN**: `img.fashionplus.co.kr` — 썸네일 URL에 `?RS=400x536&AR=0` 리사이즈 파라미터 → 제거하면 원본 이미지
+- **가격**: consumerPrice(정가), salePrice(판매가), displayPrice(쿠폰적용 최저가)
+- **상세 API 없음**: 상세 페이지는 SSR HTML + JSON-LD. 옵션/상세이미지/고시정보는 HTML 파싱 필요 (미구현)
+- **제한사항**: 검색 API만으로 수집 시 옵션/상세이미지/고시정보 누락. 마켓 등록 시 "상세 이미지 참조" 폴백 다수 발생
+- **Job 워커**: `worker.py`의 `_collect_direct_api()`에서 처리 (MUSINSA와 별도 분기)
+
 ---
 
 ## 알려진 이슈 & 해결 패턴
@@ -642,3 +657,4 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 | 2026-03-27 | 등급할인 폐지 대응 — goodsPrice.memberDiscountRate(레거시) 대신 memberGrade.discountRate(새 멤버십) 사용. 전 상품 0.0으로 등급할인 미적용. _get_member_grade_rate() 호출 제거 | - |
 | 2026-03-28 | 검색 수집 시 URL 필터(brand, minPrice, maxPrice, gf) 무시 버그 수정 — search_products()에 필터 파라미터 추가, collector에서 URL 파싱 후 전달 | - |
 | 2026-03-28 | **최대혜택가 대규모 검증 (83개 상품 × 크롬캡쳐 비교)** — 4가지 수정: (1) 등급할인 조건 `isLimitedDc=False` 발견, (2) 선할인 `memberSavePointRate+savePoint`, (3) isSale 무관 확인, (4) 쿠폰 API에 `specialtyCodes` 파라미터 추가 (beauty/sneaker 등 카테고리 쿠폰 누락 해결) | - |
+| 2026-03-28 | **패션플러스 소싱처 활성화** — proxy/fashionplus.py에 max_count 페이지네이션 추가, _map_item을 CollectedProduct flat 스키마로 보강(sourceUrl/cost/saleStatus/manufacturer), job/worker.py에 _collect_direct_api() 분기 추가, SKILL.md에 패션플러스 수집 패턴 섹션 추가. 검색 API만 지원 (상세/옵션/고시정보 미지원) | - |

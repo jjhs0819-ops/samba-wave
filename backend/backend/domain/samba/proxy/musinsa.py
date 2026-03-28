@@ -979,3 +979,139 @@ class MusinsaClient:
             if src and "icon" not in src and "btn_" not in src:
                 detail_images.append(src)
         return detail_images
+
+    # ------------------------------------------------------------------
+    # 주문 관련 (소비자 원주문 취소)
+    # ------------------------------------------------------------------
+
+    async def _get_order_option_nos(self, order_no: str) -> list[str]:
+        """주문의 orderOptionNo 목록 추출 (API → HTML 순서)."""
+        import json as _json
+        timeout = httpx.Timeout(15.0, connect=10.0)
+        headers = self._headers()
+
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            # 1) order 도메인 API로 주문 상세 조회
+            _DETAIL_APIS = [
+                f"https://order.musinsa.com/api2/order/v1/orders/{order_no}",
+                f"https://order.musinsa.com/api2/order/v1/order-detail/{order_no}",
+                f"https://order.musinsa.com/api2/order/v1/{order_no}",
+                f"https://api.musinsa.com/api2/order/store/mypage/{order_no}",
+                f"https://api.musinsa.com/api2/claim/store/mypage/order/{order_no}",
+            ]
+            for url in _DETAIL_APIS:
+                try:
+                    resp = await client.get(url, headers=headers)
+                    logger.info(f"[무신사 옵션조회] GET {url} → {resp.status_code}")
+                    if resp.status_code in (400, 500):
+                        logger.info(f"[무신사 옵션조회] 응답 body: {resp.text[:300]}")
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        logger.info(f"[무신사 옵션조회] 응답 키: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                        # JSON 전체에서 orderOptionNo 재귀 탐색
+                        nos: set[str] = set()
+                        def _find(obj: Any) -> None:
+                            if isinstance(obj, dict):
+                                for k, v in obj.items():
+                                    if k in ("orderOptionNo", "orderOptionId", "optionNo") and v:
+                                        nos.add(str(v))
+                                    else:
+                                        _find(v)
+                            elif isinstance(obj, list):
+                                for item in obj:
+                                    _find(item)
+                        _find(data)
+                        if nos:
+                            logger.info(f"[무신사 옵션조회] API에서 추출: {nos}")
+                            return list(nos)
+                except Exception as e:
+                    logger.warning(f"[무신사 옵션조회] {url} 실패: {e}")
+
+            # 2) 주문 상세 HTML 페이지에서 추출
+            try:
+                resp = await client.get(
+                    f"https://www.musinsa.com/order/order-detail/{order_no}",
+                    headers=self._headers({"Accept": "text/html"}),
+                )
+                if resp.status_code == 200:
+                    html = resp.text
+                    logger.info(f"[무신사 옵션조회] HTML 길이: {len(html)}, __NEXT_DATA__ 포함: {'__NEXT_DATA__' in html}")
+                    # __NEXT_DATA__ 파싱
+                    match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+                    if match:
+                        try:
+                            next_data = _json.loads(match.group(1))
+                            logger.info(f"[무신사 옵션조회] __NEXT_DATA__ props 키: {list(next_data.get('props', {}).get('pageProps', {}).keys())}")
+                            logger.info(f"[무신사 옵션조회] __NEXT_DATA__ query: {next_data.get('query', {})}")
+                            nos2: set[str] = set()
+                            def _find2(obj: Any) -> None:
+                                if isinstance(obj, dict):
+                                    for k, v in obj.items():
+                                        if k in ("orderOptionNo", "orderOptionId", "optionNo") and v:
+                                            nos2.add(str(v))
+                                        else:
+                                            _find2(v)
+                                elif isinstance(obj, list):
+                                    for item in obj:
+                                        _find2(item)
+                            _find2(next_data)
+                            if nos2:
+                                logger.info(f"[무신사 옵션조회] __NEXT_DATA__에서 추출: {nos2}")
+                                return list(nos2)
+                        except Exception as e:
+                            logger.warning(f"[무신사 옵션조회] __NEXT_DATA__ 파싱 실패: {e}")
+                    # fallback: HTML에서 숫자 패턴
+                    option_nos = re.findall(rf'/{order_no}/(\d{{6,12}})', html)
+                    if option_nos:
+                        logger.info(f"[무신사 옵션조회] HTML 패턴에서 추출: {set(option_nos)}")
+                        return list(set(option_nos))
+            except Exception as e:
+                logger.warning(f"[무신사 옵션조회] HTML 페이지 실패: {e}")
+
+        logger.warning(f"[무신사 옵션조회] orderOptionNo를 찾을 수 없음: {order_no}")
+        return []
+
+    async def cancel_order(self, order_no: str, reason: str = "단순변심") -> dict[str, Any]:
+        """무신사 원주문 취소 (소비자 주문취소).
+
+        확정 API: GET /api2/claim/store/mypage/order/cancel/voucher/refund/complete/{주문번호}?orderOptionNoList={옵션번호}
+        일반상품: GET /api2/claim/store/mypage/order/cancel/refund/complete/{주문번호}?orderOptionNoList={옵션번호}
+        """
+        if not self.cookie:
+            raise ValueError("무신사 로그인(쿠키)이 필요합니다.")
+
+        # 1) orderOptionNo 추출
+        option_nos = await self._get_order_option_nos(order_no)
+        if not option_nos:
+            raise ValueError(f"주문 {order_no}의 상품옵션번호를 찾을 수 없습니다. 주문 상세 페이지를 확인해주세요.")
+
+        option_list = ",".join(option_nos)
+        logger.info(f"[무신사 주문취소] 주문={order_no}, 옵션={option_list}")
+
+        # 2) 취소 API 호출 (바우처/일반 순서로 시도)
+        _CANCEL_URLS = [
+            f"https://api.musinsa.com/api2/claim/store/mypage/order/cancel/voucher/refund/complete/{order_no}?orderOptionNoList={option_list}",
+            f"https://api.musinsa.com/api2/claim/store/mypage/order/cancel/refund/complete/{order_no}?orderOptionNoList={option_list}",
+        ]
+
+        timeout = httpx.Timeout(15.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            for url in _CANCEL_URLS:
+                try:
+                    resp = await client.get(url, headers=self._headers())
+                    logger.info(f"[무신사 주문취소] GET {url} → {resp.status_code}")
+                    if resp.status_code == 200:
+                        data = resp.json() if resp.text else {}
+                        logger.info(f"[무신사 주문취소] 성공: {data}")
+                        return {"ok": True, "message": "무신사 주문취소 완료", "data": data}
+                    elif resp.status_code == 400:
+                        body = resp.text[:500]
+                        logger.warning(f"[무신사 주문취소] 400 응답: {body}")
+                        return {"ok": False, "message": f"취소 요청 거부: {body}"}
+                    else:
+                        logger.info(f"[무신사 주문취소] {resp.status_code} → 다음 시도")
+                except Exception as e:
+                    logger.warning(f"[무신사 주문취소] {url} 실패: {e}")
+                    continue
+
+        raise ValueError(f"무신사 주문취소 실패: {order_no} (모든 API 시도 실패)")

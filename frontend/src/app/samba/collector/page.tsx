@@ -225,8 +225,10 @@ export default function CollectorPage() {
 
       // URL에서 키워드 추출 (소싱처별 파라미터)
       let keyword = ""
+      let isUrl = false
       try {
         const parsed = new URL(collectUrl)
+        isUrl = true
         keyword = parsed.searchParams.get("keyword")
           || parsed.searchParams.get("searchWord")
           || parsed.searchParams.get("q")
@@ -246,13 +248,18 @@ export default function CollectorPage() {
       // 무신사 옵션 URL 파라미터로 저장
       let keywordUrl = collectUrl;
       if (site === "MUSINSA") {
-        try {
-          const u = new URL(collectUrl);
-          if (checkedOptions['excludePreorder']) u.searchParams.set("excludePreorder", "1");
-          if (checkedOptions['excludeBoutique']) u.searchParams.set("excludeBoutique", "1");
-          if (checkedOptions['maxDiscount']) u.searchParams.set("maxDiscount", "1");
-          keywordUrl = u.toString();
-        } catch { /* URL 파싱 실패 시 원본 유지 */ }
+        // 평문 키워드인 경우 무신사 검색 URL 자동 구성
+        let u: URL
+        if (!isUrl) {
+          u = new URL("https://www.musinsa.com/search/goods")
+          u.searchParams.set("keyword", keyword)
+        } else {
+          try { u = new URL(collectUrl) } catch { u = new URL("https://www.musinsa.com/search/goods"); u.searchParams.set("keyword", keyword) }
+        }
+        if (checkedOptions['excludePreorder']) u.searchParams.set("excludePreorder", "1");
+        if (checkedOptions['excludeBoutique']) u.searchParams.set("excludeBoutique", "1");
+        if (checkedOptions['maxDiscount']) u.searchParams.set("maxDiscount", "1");
+        keywordUrl = u.toString();
       }
 
       // 무신사: 검색 API로 해당 링크의 총 상품수 조회
@@ -682,12 +689,12 @@ export default function CollectorPage() {
         {/* URL 입력 */}
         <div style={{ display: "flex", gap: "0.75rem", marginBottom: "0.625rem" }}>
           <input
-            type="url"
+            type="text"
             value={collectUrl}
             onChange={(e) => setCollectUrl(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleCreateGroup()}
             placeholder={
-              selectedSite === "MUSINSA" ? "https://www.musinsa.com/search/goods?keyword=나이키" :
+              selectedSite === "MUSINSA" ? "브랜드명 또는 URL (예: 나이키, https://www.musinsa.com/search/goods?keyword=나이키)" :
               selectedSite === "KREAM" ? "https://kream.co.kr/search?keyword=나이키" :
               "URL을 입력하세요"
             }

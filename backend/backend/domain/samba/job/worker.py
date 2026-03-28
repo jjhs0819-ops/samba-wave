@@ -129,6 +129,12 @@ class JobWorker:
             return
 
         site = sf.source_site
+
+        # FashionPlus 등 직접 API 소싱처 처리
+        if site in ("FashionPlus", "Nike", "Adidas"):
+            await self._collect_direct_api(job, sf, session, repo)
+            return
+
         if site != "MUSINSA":
             await repo.fail_job(job.id, f"미지원 소싱처: {site}")
             return
@@ -355,6 +361,175 @@ class JobWorker:
             "policy": policy_msg,
         })
         logger.info(f"[잡워커] 수집 완료: {job.id} ({total_saved}건)")
+
+    async def _collect_direct_api(self, job, sf, session, repo):
+        """FashionPlus/Nike/Adidas 등 직접 API 소싱처 수집."""
+        from sqlalchemy import func as _func, select
+        from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+        from backend.api.v1.routers.samba.collector_common import _get_services, generate_group_key
+
+        site = sf.source_site
+        filter_id = sf.id
+        keyword = sf.keyword or ""
+        requested_count = sf.requested_count or 100
+
+        # URL에서 키워드/필터 추출
+        _search_kwargs: dict = {}
+        try:
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(keyword)
+            if parsed.scheme:
+                qs = parse_qs(parsed.query)
+                keyword = qs.get("searchWord", [keyword])[0]
+                # 패션플러스 필터 파라미터
+                for k in ("category1Id", "category2Id", "category3Id", "sort", "minPrice", "maxPrice"):
+                    v = qs.get(k, [""])[0]
+                    if v:
+                        _search_kwargs[k] = v
+                # brands 파라미터
+                brand_ids = qs.get("brands[][id]", [])
+                brand_names = qs.get("brands[][name]", [])
+                if brand_ids:
+                    _search_kwargs["brand_id"] = brand_ids[0]
+                if brand_names:
+                    _search_kwargs["brand_name"] = brand_names[0]
+        except Exception:
+            pass
+
+        # 기존 수집 수 확인
+        count_stmt = select(_func.count()).where(CPModel.search_filter_id == filter_id)
+        existing_count = (await session.execute(count_stmt)).scalar() or 0
+        remaining = max(0, requested_count - existing_count)
+        if remaining <= 0:
+            await repo.complete_job(job.id, {"saved": 0, "message": f"이미 {existing_count}개 수집됨"})
+            return
+
+        # 클라이언트 생성
+        if site == "FashionPlus":
+            from backend.domain.samba.proxy.fashionplus import FashionPlusClient
+            client = FashionPlusClient()
+        elif site == "Nike":
+            from backend.domain.samba.proxy.nike import NikeClient
+            client = NikeClient()
+        elif site == "Adidas":
+            from backend.domain.samba.proxy.adidas import AdidasClient
+            client = AdidasClient()
+        else:
+            await repo.fail_job(job.id, f"미지원 직접 API: {site}")
+            return
+
+        await repo.update_progress(job.id, 0, remaining)
+
+        # 카테고리 매핑 (패션플러스)
+        _category1_name = ""
+        if site == "FashionPlus" and _search_kwargs.get("category1Id"):
+            from backend.domain.samba.proxy.fashionplus import _CATEGORY_MAP
+            _category1_name = _CATEGORY_MAP.get(_search_kwargs["category1Id"], "")
+
+        try:
+            result = await client.search(keyword, max_count=remaining, **_search_kwargs)
+            items_list = result.get("products", [])
+            logger.info(f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건")
+        except Exception as e:
+            await repo.fail_job(job.id, f"검색 실패: {e}")
+            return
+
+        # 중복 필터링
+        candidate_ids = [str(item.get("site_product_id", "")) for item in items_list if item.get("site_product_id")]
+        existing_ids: set[str] = set()
+        if candidate_ids:
+            existing_result = await session.execute(
+                select(CPModel.site_product_id).where(
+                    CPModel.source_site == site,
+                    CPModel.site_product_id.in_(candidate_ids),
+                )
+            )
+            existing_ids = {row[0] for row in existing_result.all()}
+
+        svc = _get_services(session)
+        total_saved = 0
+
+        for item in items_list:
+            if total_saved >= remaining:
+                break
+            p_id = str(item.get("site_product_id", ""))
+            if p_id in existing_ids:
+                continue
+
+            p_name = item.get("name", "")
+            sale_price = int(item.get("sale_price", 0))
+            original_price = int(item.get("original_price", 0)) or sale_price
+            if not p_name and not sale_price:
+                continue
+
+            # 상세 페이지에서 추가 이미지/고시정보 보충
+            detail = {}
+            if hasattr(client, 'get_detail'):
+                try:
+                    detail = await client.get_detail(p_id)
+                    await asyncio.sleep(0.3)
+                except Exception as e:
+                    logger.warning(f"[잡워커] {site} 상세 조회 실패 {p_id}: {e}")
+
+            images = detail.get("images") or item.get("images", [])
+            cost = int(item.get("cost", 0)) or sale_price
+            # 배송비 원가 가산 (무료배송 아닌 경우)
+            _sourcing_ship_fee = 0
+            if not item.get("free_shipping", False):
+                _sourcing_ship_fee = int(detail.get("shipping_fee", 3000))
+                cost += _sourcing_ship_fee
+            product_data = {
+                "source_site": site,
+                "search_filter_id": filter_id,
+                "site_product_id": p_id,
+                "source_url": item.get("source_url", "") or detail.get("source_url", ""),
+                "name": p_name,
+                "brand": item.get("brand", ""),
+                "original_price": original_price,
+                "sale_price": sale_price,
+                "cost": cost,
+                "images": images,
+                "options": detail.get("options") or item.get("options", []),
+                "category": detail.get("category") or item.get("category", "") or _category1_name,
+                "category1": detail.get("category1") or item.get("category1", ""),
+                "category2": detail.get("category2") or item.get("category2", ""),
+                "category3": detail.get("category3") or item.get("category3", ""),
+                "detail_html": detail.get("detail_html") or item.get("detail_html", ""),
+                "detail_images": detail.get("detail_images") or images,
+                "material": detail.get("material", ""),
+                "color": detail.get("color", ""),
+                "manufacturer": detail.get("manufacturer") or item.get("brand", ""),
+                "origin": detail.get("origin", ""),
+                "care_instructions": detail.get("care_instructions", ""),
+                "quality_guarantee": detail.get("quality_guarantee", ""),
+                "sourcing_shipping_fee": _sourcing_ship_fee,
+                "status": "collected",
+                "group_key": generate_group_key(
+                    brand=item.get("brand", ""),
+                    similar_no=None,
+                    style_code=item.get("style_code", ""),
+                    name=p_name,
+                ) or f"fp_{site.lower()}_{p_id}",
+                "price_history": [{
+                    "date": datetime.now(UTC).isoformat(),
+                    "sale_price": sale_price,
+                    "original_price": original_price,
+                    "cost": sale_price,
+                }],
+            }
+            try:
+                await svc.create_collected_product(product_data)
+                total_saved += 1
+                await repo.update_progress(job.id, total_saved, remaining)
+            except Exception as e:
+                logger.warning(f"[잡워커] {site} 저장 실패 {p_id}: {e}")
+
+        # last_collected_at 갱신
+        sf.last_collected_at = datetime.now(UTC)
+        session.add(sf)
+
+        await repo.complete_job(job.id, {"saved": total_saved})
+        logger.info(f"[잡워커] {site} 수집 완료: {job.id} ({total_saved}건)")
 
     async def _run_stub(self, job, repo, name: str):
         """미구현 잡 타입 스텁."""

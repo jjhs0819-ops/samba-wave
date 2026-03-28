@@ -238,23 +238,32 @@ async def update_filter(
     if not result:
         raise HTTPException(404, "필터를 찾을 수 없습니다")
 
-    # 정책 적용 시 해당 그룹 상품에 자동 전파
+    # 정책 적용 시 해당 그룹 상품에 백그라운드 전파 (즉시 응답)
     if "applied_policy_id" in data and data["applied_policy_id"]:
-        from backend.domain.samba.policy.repository import SambaPolicyRepository
-        policy_repo = SambaPolicyRepository(session)
-        policy = await policy_repo.get_async(data["applied_policy_id"])
-        policy_data = None
-        if policy and policy.pricing:
-            pr = policy.pricing if isinstance(policy.pricing, dict) else {}
-            policy_data = {
-                "margin_rate": pr.get("marginRate", 15),
-                "shipping_cost": pr.get("shippingCost", 0),
-                "extra_charge": pr.get("extraCharge", 0),
-            }
-        count = await svc.apply_policy_to_filter_products(
-            filter_id, data["applied_policy_id"], policy_data
-        )
-        logger.info(f"정책 전파: 필터 {filter_id} → {count}개 상품")
+        policy_id = data["applied_policy_id"]
+
+        async def _propagate():
+            from backend.db.orm import get_write_session
+            async with get_write_session() as bg_session:
+                from backend.domain.samba.policy.repository import SambaPolicyRepository
+                policy_repo = SambaPolicyRepository(bg_session)
+                policy = await policy_repo.get_async(policy_id)
+                policy_data = None
+                if policy and policy.pricing:
+                    pr = policy.pricing if isinstance(policy.pricing, dict) else {}
+                    policy_data = {
+                        "margin_rate": pr.get("marginRate", 15),
+                        "shipping_cost": pr.get("shippingCost", 0),
+                        "extra_charge": pr.get("extraCharge", 0),
+                    }
+                bg_svc = _get_services(bg_session)
+                count = await bg_svc.apply_policy_to_filter_products(
+                    filter_id, policy_id, policy_data
+                )
+                await bg_session.commit()
+                logger.info(f"정책 전파 완료: 필터 {filter_id} → {count}개 상품")
+
+        asyncio.get_event_loop().create_task(_propagate())
 
     return result
 

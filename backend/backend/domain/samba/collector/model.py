@@ -232,12 +232,15 @@ class SambaCollectedProduct(SQLModel, table=True):
     care_instructions: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     quality_guarantee: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
-    # 배송 정보: 무료배송 / 당일발송
+    # 배송 정보: 무료배송 / 당일발송 / 소싱 배송비
     free_shipping: bool = Field(
         default=False, sa_column=Column(Boolean, nullable=False, server_default="false")
     )
     same_day_delivery: bool = Field(
         default=False, sa_column=Column(Boolean, nullable=False, server_default="false")
+    )
+    sourcing_shipping_fee: int = Field(
+        default=0, sa_column=Column(Integer, nullable=False, server_default="0")
     )
 
     # 마켓별 마지막 전송 스냅샷 (스킵 판단용)

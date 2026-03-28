@@ -122,6 +122,7 @@ function getSourceUrl(p: { source_url?: string; source_site: string; site_produc
   if (site === 'MUSINSA') return `https://www.musinsa.com/products/${p.site_product_id}`
   if (site === 'KREAM') return `https://kream.co.kr/products/${p.site_product_id}`
   if (site === 'NIKE') return p.video_url || `https://www.nike.com/kr/w?q=${p.site_product_id}`
+  if (site === 'FASHIONPLUS') return `https://www.fashionplus.co.kr/goods/detail/${p.site_product_id}`
   return ''
 }
 
@@ -1201,6 +1202,11 @@ const ProductCard = React.memo(function ProductCard({
                 <td style={tdLabel}>원가</td>
                 <td style={tdVal}>
                   <span style={{ color: '#FFB84D', fontWeight: 600 }}>₩{fmt(cost)}</span>
+                  {(p.sourcing_shipping_fee ?? 0) > 0 && (
+                    <span style={{ color: '#888', fontSize: '0.7rem', marginLeft: '0.25rem' }}>
+                      (상품가 {fmt(cost - (p.sourcing_shipping_fee ?? 0))}+배송비 {fmt(p.sourcing_shipping_fee ?? 0)})
+                    </span>
+                  )}
                 </td>
               </tr>
               {/* Market price — 마켓별 또는 공통 */}

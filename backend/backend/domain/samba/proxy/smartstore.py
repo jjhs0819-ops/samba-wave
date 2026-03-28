@@ -1267,7 +1267,12 @@ class SmartStoreClient:
       "ALL FW": ["가을", "겨울"],
       "ALL": ["봄", "여름", "가을", "겨울"],
     }
-    target_seasons = _SEASON_MAP.get(season.strip().upper(), ["봄", "여름", "가을", "겨울"])
+    # 연도 접두어 제거: "ALL ALL FW" → "ALL FW", "2025 FW" → "FW"
+    season_key = season.strip().upper()
+    parts = season_key.split(None, 1)
+    if len(parts) == 2 and (parts[0].isdigit() or parts[0] == "ALL"):
+      season_key = parts[1]
+    target_seasons = _SEASON_MAP.get(season_key, ["봄", "여름", "가을", "겨울"])
     season_seq = None
     season_values: dict[str, int] = {}
     for a in cat_attrs:
@@ -1336,6 +1341,7 @@ class SmartStoreClient:
           "deliveryCompany": "CJGLS",
           "deliveryFee": {
             "deliveryFeeType": product.get("_delivery_fee_type", "FREE"),
+            "deliveryFeePayType": "PREPAID",
             "baseFee": product.get("_delivery_base_fee", 0),
             "deliveryFeeByArea": {
               "deliveryAreaType": "AREA_2",
@@ -1658,6 +1664,7 @@ class SmartStoreClient:
         "deliveryCompany": "CJGLS",
         "deliveryFee": {
           "deliveryFeeType": p.get("_delivery_fee_type", "FREE"),
+          "deliveryFeePayType": "PREPAID",
           "baseFee": p.get("_delivery_base_fee", 0),
           "deliveryFeeByArea": {
             "deliveryAreaType": "AREA_2",
