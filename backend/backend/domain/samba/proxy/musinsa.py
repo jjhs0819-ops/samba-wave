@@ -25,49 +25,6 @@ class RateLimitError(Exception):
         super().__init__(f"HTTP {status} (retry_after={retry_after})")
 
 
-# 무신사 API 필드 매핑 — 구조 변경 시 여기만 수정
-MUSINSA_FIELDS = {
-    "normal_price": ["goodsPrice.normalPrice"],
-    "sale_price": ["goodsPrice.immediateDiscountedPrice", "goodsPrice.salePrice"],
-    "member_discount_rate": [
-        "goodsPrice.memberDiscountRate",
-        "goodsPrice.gradeDiscountRate",
-        "goodsPrice.memberGradeDiscountRate",
-        "goodsPrice.gradeRate",
-    ],
-    "coupon_price": ["goodsPrice.couponPrice"],
-    "max_benefit_price": [
-        "goodsPrice.maxBenefitPrice",
-        "goodsPrice.benefitSalePrice",
-        "goodsPrice.bestBenefitPrice",
-    ],
-    "is_sold_out": ["isSoldOut", "goodsPrice.isSoldOut", "isOutOfStock"],
-    "product_name": ["goodsNm"],
-    "product_name_en": ["goodsNmEng"],
-    "brand_name": ["brandInfo.brandName", "brand"],
-    "thumbnail": ["thumbnailImageUrl"],
-    "discount_rate": ["goodsPrice.discountRate"],
-    "is_sale": ["goodsPrice.isSale"],
-    "grade_discount_rate": ["goodsPrice.memberDiscountRate"],
-    "sale_reserve_ymdt": ["goodsPrice.saleReserveYmdt", "saleReserveYmdt"],
-}
-
-
-def _resolve_field(data: dict, paths: list[str], default=None):
-    """경로 목록에서 첫 번째 존재하는 값 반환 (fallback 체인)."""
-    for path in paths:
-        value = data
-        for key in path.split("."):
-            if not isinstance(value, dict):
-                value = None
-                break
-            value = value.get(key)
-            if value is None:
-                break
-        if value is not None:
-            return value
-    return default
-
 
 class MusinsaClient:
     """무신사 API 클라이언트 (상품 상세, 검색, 로그인 상태 확인)."""
@@ -114,39 +71,6 @@ class MusinsaClient:
             return f"https:{path}"
         return f"https://image.msscdn.net{path}"
 
-    # 무신사 회원 등급 → 할인율 매핑
-    GRADE_DISCOUNT_MAP: dict[str, float] = {
-        "일반": 1, "WELCOME": 1,
-        "브론즈": 2, "BRONZE": 2,
-        "실버": 3, "SILVER": 3,
-        "골드": 4, "GOLD": 4,
-        "플래티넘": 5, "PLATINUM": 5,
-        "다이아몬드": 5, "DIAMOND": 5,
-        "블랙다이아몬드": 4, "BLACK_DIAMOND": 4,
-        "러버": 5, "LOVER": 5,
-        "무신사": 5, "MUSINSA": 5,
-    }
-
-    async def _get_member_grade_rate(self) -> float:
-        """로그인된 회원의 등급 할인율을 조회."""
-        if not self.cookie:
-            return 0
-        try:
-            timeout = httpx.Timeout(settings.http_timeout_short, connect=5.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.get(
-                    self.BASE_MEMBER,
-                    headers={**self.HEADERS, "Cookie": self.cookie},
-                )
-                data = resp.json().get("data") or {}
-                grade_name = data.get("gradeName", "")
-                rate = self.GRADE_DISCOUNT_MAP.get(grade_name, 0)
-                logger.info(f"[무신사] 회원등급: {grade_name} → 할인율 {rate}%")
-                return rate
-        except Exception as exc:
-            logger.warning(f"[무신사] 회원등급 조회 실패: {exc}")
-            return 0
-
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -166,9 +90,6 @@ class MusinsaClient:
                 "무신사 수집은 로그인(쿠키)이 필요합니다. "
                 "확장앱에서 무신사 로그인 후 다시 시도하세요."
             )
-        # 회원 등급 할인율 조회 (등급별 최대혜택가 계산에 필요, 외부 캐시값 있으면 스킵)
-        if member_grade_rate is None:
-            member_grade_rate = await self._get_member_grade_rate()
         timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             # 1) 상품 상세 API
@@ -270,28 +191,9 @@ class MusinsaClient:
                 if (raw_sale > 0 and (normal_p == 0 or raw_sale <= normal_p))
                 else (normal_p or raw_sale)
             )
-            member_rate = (
-                gp.get("memberDiscountRate")
-                or gp.get("gradeDiscountRate")
-                or gp.get("memberGradeDiscountRate")
-                or gp.get("gradeRate")
-                or 0
-            )
             # 최대혜택가 = 할인가 - 쿠폰 - 등급 - 적립금 - 선할인
             # 1단계: 쿠폰 할인
             coupon_price_raw = gp.get("couponPrice", 0) or 0
-            api_best_benefit = (
-                gp.get("maxBenefitPrice")
-                or gp.get("benefitSalePrice")
-                or gp.get("bestBenefitPrice")
-                or 0
-            )
-            # 등급할인 관련 필드 디버그 로그
-            _grade_keys = {k: gp.get(k) for k in ("memberDiscountRate", "gradeDiscountRate", "memberGradeDiscountRate", "gradeRate", "partnerDiscountOn", "isMemberDiscount") if k in gp}
-            _d_grade_keys = {k: d.get(k) for k in ("partnerDiscountOn", "isMemberDiscount", "isPartnerDiscount", "memberBenefitOff") if k in d}
-            logger.info(f"[무신사 등급디버그] {goods_no}: gp등급필드={_grade_keys}, d등급필드={_d_grade_keys}, member_grade_rate={member_grade_rate}")
-            logger.info(f"[무신사 가격원본] {goods_no}: couponPrice={coupon_price_raw}, "
-                        f"api_best_benefit={api_best_benefit}, s_price={s_price}")
             # 쿠폰할인: goodsPrice.couponPrice 기본 + 쿠폰 API 보충 (수집/갱신 동일)
             benefit_coupon_discount = 0
             if 0 < coupon_price_raw < s_price:
@@ -300,22 +202,19 @@ class MusinsaClient:
             benefit_coupon_discount = await self._fetch_coupons(
                 client, goods_no, d, s_price, benefit_coupon_discount
             )
-            coupon_applied_price = s_price - benefit_coupon_discount if benefit_coupon_discount > 0 else s_price
             benefit_base = s_price - benefit_coupon_discount
 
-            # ── 등급 할인율 vs 등급 적립율 분리 ──
-            # 등급 할인: 상품별로 불가할 수 있음 (API가 0 반환 또는 필드 없음)
-            # 등급 적립: 유저 등급 기반, 항상 적용 (구매적립 + 적립금 선할인)
-            #
-            # 판별 기준: API goodsPrice에 memberDiscountRate > 0이면 등급할인 가능
-            #           0이거나 키 없으면 등급할인 불가 (fallback 금지)
-            _api_grade_discount = next(
-                (gp[k] for k in ("memberDiscountRate", "gradeDiscountRate", "memberGradeDiscountRate", "gradeRate")
-                 if k in gp and gp[k] is not None and gp[k] > 0),
-                0,
-            )
-            grade_discount_rate = _api_grade_discount  # 등급 할인용 (상품별)
-            grade_point_rate = member_grade_rate or 0   # 등급 적립/선할인용 (유저 등급)
+            # ── 등급 할인 & 선할인 ──
+            # 등급할인 조건: isLimitedDc=False (등급할인 제한 아닌 상품만)
+            #   → goodsPrice.memberDiscountRate 사용 (memberGrade.discountRate는 항상 0)
+            # 선할인 조건: isPrePoint=True
+            #   → 등급적립(memberSavePointRate) + 구매적립(savePoint)
+            is_limited_dc = d.get("isLimitedDc") is True
+            grade_discount_rate = (
+                gp.get("memberDiscountRate", 0) or 0
+            ) if not is_limited_dc else 0
+            grade_save_point_rate = gp.get("memberSavePointRate", 0) or 0
+            save_point_value = gp.get("savePoint", 0) or 0
 
             # 2단계: 등급할인 (benefit_base 기준, 10원 절사)
             grade_discount = int(benefit_base * grade_discount_rate / 100 / 10) * 10 if grade_discount_rate > 0 else 0
@@ -330,10 +229,13 @@ class MusinsaClient:
                 point_usage = int(point_base * point_rate_pct / 100 / 10) * 10  # 10원 절사
 
             # 4단계: 적립 선할인 (isPrePoint=True일 때)
-            # 구매적립 = (잔액) × 유저등급율 (10원 절사) → 선할인 = 구매적립 금액
+            # 선할인 = 등급적립(remaining × memberSavePointRate) + 구매적립(savePoint)
             is_pre_point = d.get("isPrePoint") is True
             remaining = benefit_base - grade_discount - point_usage
-            pre_discount = int(remaining * grade_point_rate / 100 / 10) * 10 if is_pre_point and grade_point_rate > 0 else 0
+            pre_discount = 0
+            if is_pre_point:
+                grade_point = int(remaining * grade_save_point_rate / 100 / 10) * 10 if grade_save_point_rate > 0 else 0
+                pre_discount = grade_point + save_point_value
 
             best_benefit_price = remaining - pre_discount
 
@@ -341,10 +243,9 @@ class MusinsaClient:
                 f"[무신사 혜택가] {goods_no}: "
                 f"할인가={s_price}, 쿠폰=-{benefit_coupon_discount}, "
                 f"benefit_base={benefit_base}, "
-                f"등급할인({grade_discount_rate}%)=-{grade_discount}, "
-                f"등급적립율={grade_point_rate}%, "
+                f"등급할인({grade_discount_rate}%,limitedDc={is_limited_dc})=-{grade_discount}, "
                 f"적립금({point_rate_pct}%)=-{point_usage}(base={point_base}), "
-                f"선할인({grade_point_rate}%,base={remaining + pre_discount})=-{pre_discount}, "
+                f"선할인(savePtRate={grade_save_point_rate}%+savePt={save_point_value})=-{pre_discount}, "
                 f"혜택가={best_benefit_price}"
             )
 
@@ -407,9 +308,9 @@ class MusinsaClient:
                 "options": options,
                 "originalPrice": gp.get("normalPrice") or raw_sale or 0,
                 "salePrice": s_price,
-                "couponPrice": coupon_applied_price,
+                "couponPrice": benefit_base,
                 "bestBenefitPrice": best_benefit_price,
-                "memberDiscountRate": member_rate,
+                "memberDiscountRate": grade_discount_rate,
                 "isLoggedIn": bool(self.cookie),
                 "discountRate": gp.get("discountRate", 0),
                 "origin": essential.get("origin", ""),
@@ -493,6 +394,10 @@ class MusinsaClient:
         size: int = 30,
         sort: str = "POPULAR",
         category: str = "",
+        brand: str = "",
+        min_price: int | None = None,
+        max_price: int | None = None,
+        gf: str = "A",
     ) -> dict[str, Any]:
         """상품 검색 (API 방식) - proxy-server.mjs /api/musinsa/search-api 포팅."""
         size = min(size, 200)
@@ -502,10 +407,16 @@ class MusinsaClient:
             "page": str(page),
             "size": str(size),
             "sort": sort,
-            "gf": "A",
+            "gf": gf,
         }
         if category:
             params["category"] = category
+        if brand:
+            params["brand"] = brand
+        if min_price is not None:
+            params["minPrice"] = str(min_price)
+        if max_price is not None:
+            params["maxPrice"] = str(max_price)
 
         timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -1014,14 +925,16 @@ class MusinsaClient:
     ) -> int:
         """쿠폰 API 호출."""
         try:
-            params = urlencode(
-                {
-                    "goodsNo": goods_no,
-                    "brand": d.get("brand", ""),
-                    "comId": d.get("comId", ""),
-                    "salePrice": s_price,
-                }
-            )
+            specialty = d.get("specialtyCodes") or []
+            params_dict: dict[str, Any] = {
+                "goodsNo": goods_no,
+                "brand": d.get("brand", ""),
+                "comId": d.get("comId", ""),
+                "salePrice": s_price,
+            }
+            if specialty:
+                params_dict["specialtyCodes"] = ",".join(specialty) if isinstance(specialty, list) else specialty
+            params = urlencode(params_dict)
             coupon_url = f"{self.BASE_COUPON}?{params}"
             resp = await client.get(coupon_url, headers=self._headers())
             if resp.status_code == 200:
@@ -1066,3 +979,139 @@ class MusinsaClient:
             if src and "icon" not in src and "btn_" not in src:
                 detail_images.append(src)
         return detail_images
+
+    # ------------------------------------------------------------------
+    # 주문 관련 (소비자 원주문 취소)
+    # ------------------------------------------------------------------
+
+    async def _get_order_option_nos(self, order_no: str) -> list[str]:
+        """주문의 orderOptionNo 목록 추출 (API → HTML 순서)."""
+        import json as _json
+        timeout = httpx.Timeout(15.0, connect=10.0)
+        headers = self._headers()
+
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            # 1) order 도메인 API로 주문 상세 조회
+            _DETAIL_APIS = [
+                f"https://order.musinsa.com/api2/order/v1/orders/{order_no}",
+                f"https://order.musinsa.com/api2/order/v1/order-detail/{order_no}",
+                f"https://order.musinsa.com/api2/order/v1/{order_no}",
+                f"https://api.musinsa.com/api2/order/store/mypage/{order_no}",
+                f"https://api.musinsa.com/api2/claim/store/mypage/order/{order_no}",
+            ]
+            for url in _DETAIL_APIS:
+                try:
+                    resp = await client.get(url, headers=headers)
+                    logger.info(f"[무신사 옵션조회] GET {url} → {resp.status_code}")
+                    if resp.status_code in (400, 500):
+                        logger.info(f"[무신사 옵션조회] 응답 body: {resp.text[:300]}")
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        logger.info(f"[무신사 옵션조회] 응답 키: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                        # JSON 전체에서 orderOptionNo 재귀 탐색
+                        nos: set[str] = set()
+                        def _find(obj: Any) -> None:
+                            if isinstance(obj, dict):
+                                for k, v in obj.items():
+                                    if k in ("orderOptionNo", "orderOptionId", "optionNo") and v:
+                                        nos.add(str(v))
+                                    else:
+                                        _find(v)
+                            elif isinstance(obj, list):
+                                for item in obj:
+                                    _find(item)
+                        _find(data)
+                        if nos:
+                            logger.info(f"[무신사 옵션조회] API에서 추출: {nos}")
+                            return list(nos)
+                except Exception as e:
+                    logger.warning(f"[무신사 옵션조회] {url} 실패: {e}")
+
+            # 2) 주문 상세 HTML 페이지에서 추출
+            try:
+                resp = await client.get(
+                    f"https://www.musinsa.com/order/order-detail/{order_no}",
+                    headers=self._headers({"Accept": "text/html"}),
+                )
+                if resp.status_code == 200:
+                    html = resp.text
+                    logger.info(f"[무신사 옵션조회] HTML 길이: {len(html)}, __NEXT_DATA__ 포함: {'__NEXT_DATA__' in html}")
+                    # __NEXT_DATA__ 파싱
+                    match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+                    if match:
+                        try:
+                            next_data = _json.loads(match.group(1))
+                            logger.info(f"[무신사 옵션조회] __NEXT_DATA__ props 키: {list(next_data.get('props', {}).get('pageProps', {}).keys())}")
+                            logger.info(f"[무신사 옵션조회] __NEXT_DATA__ query: {next_data.get('query', {})}")
+                            nos2: set[str] = set()
+                            def _find2(obj: Any) -> None:
+                                if isinstance(obj, dict):
+                                    for k, v in obj.items():
+                                        if k in ("orderOptionNo", "orderOptionId", "optionNo") and v:
+                                            nos2.add(str(v))
+                                        else:
+                                            _find2(v)
+                                elif isinstance(obj, list):
+                                    for item in obj:
+                                        _find2(item)
+                            _find2(next_data)
+                            if nos2:
+                                logger.info(f"[무신사 옵션조회] __NEXT_DATA__에서 추출: {nos2}")
+                                return list(nos2)
+                        except Exception as e:
+                            logger.warning(f"[무신사 옵션조회] __NEXT_DATA__ 파싱 실패: {e}")
+                    # fallback: HTML에서 숫자 패턴
+                    option_nos = re.findall(rf'/{order_no}/(\d{{6,12}})', html)
+                    if option_nos:
+                        logger.info(f"[무신사 옵션조회] HTML 패턴에서 추출: {set(option_nos)}")
+                        return list(set(option_nos))
+            except Exception as e:
+                logger.warning(f"[무신사 옵션조회] HTML 페이지 실패: {e}")
+
+        logger.warning(f"[무신사 옵션조회] orderOptionNo를 찾을 수 없음: {order_no}")
+        return []
+
+    async def cancel_order(self, order_no: str, reason: str = "단순변심") -> dict[str, Any]:
+        """무신사 원주문 취소 (소비자 주문취소).
+
+        확정 API: GET /api2/claim/store/mypage/order/cancel/voucher/refund/complete/{주문번호}?orderOptionNoList={옵션번호}
+        일반상품: GET /api2/claim/store/mypage/order/cancel/refund/complete/{주문번호}?orderOptionNoList={옵션번호}
+        """
+        if not self.cookie:
+            raise ValueError("무신사 로그인(쿠키)이 필요합니다.")
+
+        # 1) orderOptionNo 추출
+        option_nos = await self._get_order_option_nos(order_no)
+        if not option_nos:
+            raise ValueError(f"주문 {order_no}의 상품옵션번호를 찾을 수 없습니다. 주문 상세 페이지를 확인해주세요.")
+
+        option_list = ",".join(option_nos)
+        logger.info(f"[무신사 주문취소] 주문={order_no}, 옵션={option_list}")
+
+        # 2) 취소 API 호출 (바우처/일반 순서로 시도)
+        _CANCEL_URLS = [
+            f"https://api.musinsa.com/api2/claim/store/mypage/order/cancel/voucher/refund/complete/{order_no}?orderOptionNoList={option_list}",
+            f"https://api.musinsa.com/api2/claim/store/mypage/order/cancel/refund/complete/{order_no}?orderOptionNoList={option_list}",
+        ]
+
+        timeout = httpx.Timeout(15.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            for url in _CANCEL_URLS:
+                try:
+                    resp = await client.get(url, headers=self._headers())
+                    logger.info(f"[무신사 주문취소] GET {url} → {resp.status_code}")
+                    if resp.status_code == 200:
+                        data = resp.json() if resp.text else {}
+                        logger.info(f"[무신사 주문취소] 성공: {data}")
+                        return {"ok": True, "message": "무신사 주문취소 완료", "data": data}
+                    elif resp.status_code == 400:
+                        body = resp.text[:500]
+                        logger.warning(f"[무신사 주문취소] 400 응답: {body}")
+                        return {"ok": False, "message": f"취소 요청 거부: {body}"}
+                    else:
+                        logger.info(f"[무신사 주문취소] {resp.status_code} → 다음 시도")
+                except Exception as e:
+                    logger.warning(f"[무신사 주문취소] {url} 실패: {e}")
+                    continue
+
+        raise ValueError(f"무신사 주문취소 실패: {order_no} (모든 API 시도 실패)")

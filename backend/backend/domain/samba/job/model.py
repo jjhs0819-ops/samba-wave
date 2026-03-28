@@ -11,7 +11,7 @@ UTC = timezone.utc
 
 
 def generate_job_id() -> str:
-    return f"job_{ulid.new().str}"
+    return f"job_{ulid.ULID()}"
 
 
 class SambaJob(SQLModel, table=True):

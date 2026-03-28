@@ -257,6 +257,38 @@ async def approve_cancel(
         raise HTTPException(status_code=400, detail=f"{account.market_type} 취소승인 미지원")
 
 
+class CancelSourceOrderRequest(BaseModel):
+    order_number: str
+    reason: str = "단순변심"
+
+
+@router.post("/cancel-source-order")
+async def cancel_source_order(
+    req: CancelSourceOrderRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """소싱처 원주문 취소 (무신사 등 소비자 주문취소)."""
+    from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+
+    settings_repo = SambaSettingsRepository(session)
+
+    # 현재는 무신사만 지원
+    cookie_row = await settings_repo.find_by_async(key="musinsa_cookie")
+    musinsa_cookie = cookie_row.value if cookie_row else ""
+    if not musinsa_cookie:
+        raise HTTPException(status_code=400, detail="무신사 쿠키가 설정되지 않았습니다")
+
+    from backend.domain.samba.proxy.musinsa import MusinsaClient
+    client = MusinsaClient(cookie=musinsa_cookie)
+
+    try:
+        result = await client.cancel_order(req.order_number, req.reason)
+        return result
+    except Exception as e:
+        logger.error(f"[원주문취소] 실패: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ══════════════════════════════════════════════
 # 교환 처리 (재배송 / 거부 / 반품변경)
 # ══════════════════════════════════════════════
@@ -719,6 +751,18 @@ async def sync_orders_from_markets(
                         if _v:
                             _mpn_cache[str(_v)] = {"source_site": _site, "product_image": _thumb, "original_link": _olink}
 
+            # 미등록 입력 캐시: 동일 product_id+channel_name에 대해 수동 등록된 source_url/product_image 재활용
+            _unreg_cache: dict[str, dict[str, str]] = {}
+            _unreg_result = await session.execute(
+                sa_text(
+                    "SELECT product_id, channel_name, source_url, product_image "
+                    "FROM samba_order WHERE source_url IS NOT NULL AND product_id IS NOT NULL"
+                )
+            )
+            for _ur in _unreg_result.fetchall():
+                _ukey = f"{_ur[0]}|{_ur[1] or ''}"
+                _unreg_cache[_ukey] = {"source_url": _ur[2], "product_image": _ur[3] or ""}
+
             # 중복 확인 후 저장 (기존 주문은 금액/상태 업데이트)
             synced = 0
             for order_data in orders_data:
@@ -730,6 +774,14 @@ async def sync_orders_from_markets(
                         order_data["product_image"] = _matched["product_image"]
                     if not order_data.get("source_site"):
                         order_data["source_site"] = _matched["source_site"]
+                # 미등록 입력 자동 적용: 동일 상품의 기존 source_url/product_image 복사
+                _ukey = f"{_pid}|{order_data.get('channel_name', '')}"
+                _unreg_matched = _unreg_cache.get(_ukey)
+                if _unreg_matched:
+                    if not order_data.get("source_url"):
+                        order_data["source_url"] = _unreg_matched["source_url"]
+                    if not order_data.get("product_image") and _unreg_matched["product_image"]:
+                        order_data["product_image"] = _unreg_matched["product_image"]
                 # order_number 기준 중복 체크
                 existing = await svc.repo.find_by_async(order_number=order_data["order_number"])
                 if existing:

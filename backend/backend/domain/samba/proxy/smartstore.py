@@ -1137,6 +1137,15 @@ class SmartStoreClient:
     category_id: str = "",
   ) -> dict[str, Any]:
     """SambaCollectedProduct → 스마트스토어 상품 등록 데이터 변환."""
+    # 스마트스토어 상품명: market_names 우선, 없으면 name에서 50자 슬라이스
+    market_names = product.get("market_names") or {}
+    ss_name = market_names.get("스마트스토어", "")
+    if ss_name:
+      product_name = ss_name[:50]
+    else:
+      raw_name = product.get("name", "")
+      product_name = raw_name[:50]
+
     images_raw = product.get("images") or []
 
     representative = {"url": images_raw[0]} if images_raw else {}
@@ -1249,8 +1258,21 @@ class SmartStoreClient:
           "attributeValueSeq": gender_values[target],
         })
 
-    # 사용계절 속성 — 기본값 전체(봄/여름/가을/겨울)
+    # 사용계절 속성 — 수집된 season 값 기반 매핑
     _SEASON_KEYWORDS = {"봄", "여름", "가을", "겨울"}
+    _SEASON_MAP: dict[str, list[str]] = {
+      "SS": ["봄", "여름"],
+      "ALL SS": ["봄", "여름"],
+      "FW": ["가을", "겨울"],
+      "ALL FW": ["가을", "겨울"],
+      "ALL": ["봄", "여름", "가을", "겨울"],
+    }
+    # 연도 접두어 제거: "ALL ALL FW" → "ALL FW", "2025 FW" → "FW"
+    season_key = season.strip().upper()
+    parts = season_key.split(None, 1)
+    if len(parts) == 2 and (parts[0].isdigit() or parts[0] == "ALL"):
+      season_key = parts[1]
+    target_seasons = _SEASON_MAP.get(season_key, ["봄", "여름", "가을", "겨울"])
     season_seq = None
     season_values: dict[str, int] = {}
     for a in cat_attrs:
@@ -1259,7 +1281,7 @@ class SmartStoreClient:
         season_seq = a["attributeSeq"]
         season_values[val] = a.get("attributeValueSeq", 0)
     if season_seq:
-      for s in ["봄", "여름", "가을", "겨울"]:
+      for s in target_seasons:
         if s in season_values:
           product_attributes.append({
             "attributeSeq": season_seq,
@@ -1303,10 +1325,10 @@ class SmartStoreClient:
         "statusType": "SALE",
         "saleType": "NEW",
         "leafCategoryId": category_id or "50000803",
-        "name": product.get("name", ""),
+        "name": product_name,
         # 품번 → sellerCodeInfo.sellerManagementCode
         **({"sellerCodeInfo": {"sellerManagementCode": style_code}} if style_code else {}),
-        "detailContent": product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>",
+        "detailContent": product.get("detail_html", "") or f"<p>{product_name}</p>",
         "images": {
           "representativeImage": representative,
           "optionalImages": optional,
@@ -1319,6 +1341,7 @@ class SmartStoreClient:
           "deliveryCompany": "CJGLS",
           "deliveryFee": {
             "deliveryFeeType": product.get("_delivery_fee_type", "FREE"),
+            "deliveryFeePayType": "PREPAID",
             "baseFee": product.get("_delivery_base_fee", 0),
             "deliveryFeeByArea": {
               "deliveryAreaType": "AREA_2",
@@ -1352,7 +1375,7 @@ class SmartStoreClient:
         },
       },
       "smartstoreChannelProduct": {
-        "channelProductName": product.get("name", ""),
+        "channelProductName": product_name,
         "storeKeepExclusiveProduct": False,
         "naverShoppingRegistration": product.get("_naver_shopping", True),
         "channelProductDisplayStatusType": "ON",
@@ -1587,9 +1610,15 @@ class SmartStoreClient:
     first = products[0]
     brand = first.get("brand", "")
 
-    # 그룹 상품명: 모델명 (색상 제거)
-    name = first.get("name", "")
-    group_name = name.split(" - ", 1)[0].strip() if " - " in name else name
+    # 그룹 상품명: market_names 우선, 없으면 모델명(색상 제거) → 50자 슬라이스
+    first_market_names = first.get("market_names") or {}
+    ss_group_name = first_market_names.get("스마트스토어", "")
+    if ss_group_name:
+      group_name = ss_group_name[:50]
+    else:
+      name = first.get("name", "")
+      group_name = name.split(" - ", 1)[0].strip() if " - " in name else name
+      group_name = group_name[:50]
 
     # A/S 정보
     as_phone = account_settings.get("asPhone", "") or "상세페이지 참조"
@@ -1635,6 +1664,7 @@ class SmartStoreClient:
         "deliveryCompany": "CJGLS",
         "deliveryFee": {
           "deliveryFeeType": p.get("_delivery_fee_type", "FREE"),
+          "deliveryFeePayType": "PREPAID",
           "baseFee": p.get("_delivery_base_fee", 0),
           "deliveryFeeByArea": {
             "deliveryAreaType": "AREA_2",

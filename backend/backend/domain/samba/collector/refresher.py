@@ -54,16 +54,14 @@ _bulk_musinsa_cache: dict[str, Any] = {}
 
 
 async def _prepare_musinsa_cache() -> None:
-    """MUSINSA 벌크 갱신 전 쿠키/회원등급 1회 캐싱."""
+    """MUSINSA 벌크 갱신 전 쿠키 1회 캐싱.
+
+    등급할인율은 상품 API의 memberGrade.discountRate에서 직접 추출하므로
+    별도 회원 API 호출 불필요 (새 멤버십 시스템).
+    """
     cookie = await _get_musinsa_cookie()
     _bulk_musinsa_cache["cookie"] = cookie
-    if cookie:
-        from backend.domain.samba.proxy.musinsa import MusinsaClient
-        client = MusinsaClient(cookie)
-        grade_rate = await client._get_member_grade_rate()
-        _bulk_musinsa_cache["grade_rate"] = grade_rate
-    else:
-        _bulk_musinsa_cache["grade_rate"] = 0
+    _bulk_musinsa_cache["grade_rate"] = 0
 
 
 # ── 실시간 로그 링 버퍼 (최대 300건) ──

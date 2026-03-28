@@ -1,8 +1,6 @@
 """SambaWave Policy API router."""
 
 import logging
-from typing import Literal
-
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -12,7 +10,6 @@ from backend.domain.samba.policy.model import SambaDetailTemplate, SambaNameRule
 from backend.domain.samba.policy.repository import SambaPolicyRepository
 from backend.domain.samba.policy.service import SambaPolicyService
 from backend.dtos.samba.policy import PolicyCreate, PolicyUpdate, PriceCalculateRequest
-from backend.utils.s3 import build_s3_key, delete_s3_object, generate_presigned_put_url, get_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -96,81 +93,10 @@ async def delete_detail_template(
     """상세페이지 템플릿 삭제."""
     from backend.domain.shared.base_repository import BaseRepository
     repo = BaseRepository(session, SambaDetailTemplate)
-    # 삭제 전 S3 이미지 정리
-    tpl = await repo.get_async(template_id)
-    if tpl:
-        for key in [tpl.top_image_s3_key, tpl.bottom_image_s3_key]:
-            if key:
-                try:
-                    delete_s3_object(key)
-                except Exception:
-                    logger.warning("S3 삭제 실패: %s", key)
     deleted = await repo.delete_async(template_id)
     if not deleted:
         raise HTTPException(404, "템플릿을 찾을 수 없습니다")
     return {"ok": True}
-
-
-# ── Detail Template S3 이미지 업로드 ─────────────────────────────────────────
-
-
-class PresignedUrlRequest(BaseModel):
-    position: Literal["top", "bottom"]
-    content_type: str = "image/png"
-
-
-class ConfirmUploadRequest(BaseModel):
-    position: Literal["top", "bottom"]
-    s3_key: str
-
-
-@router.post("/detail-templates/{template_id}/presigned-url")
-async def get_presigned_url(
-    template_id: str,
-    body: PresignedUrlRequest,
-    session: AsyncSession = Depends(get_read_session_dependency),
-):
-    """Presigned PUT URL 발급."""
-    from backend.domain.shared.base_repository import BaseRepository
-    repo = BaseRepository(session, SambaDetailTemplate)
-    tpl = await repo.get_async(template_id)
-    if not tpl:
-        raise HTTPException(404, "템플릿을 찾을 수 없습니다")
-
-    # content_type에서 확장자 추출
-    ext = body.content_type.split("/")[-1]
-    if ext == "jpeg":
-        ext = "jpg"
-    s3_key = build_s3_key(template_id, body.position, ext)
-    upload_url = generate_presigned_put_url(s3_key, body.content_type)
-    return {"upload_url": upload_url, "s3_key": s3_key}
-
-
-@router.post("/detail-templates/{template_id}/confirm-upload")
-async def confirm_upload(
-    template_id: str,
-    body: ConfirmUploadRequest,
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """S3 업로드 완료 후 DB에 s3_key 저장."""
-    from backend.domain.shared.base_repository import BaseRepository
-    repo = BaseRepository(session, SambaDetailTemplate)
-    tpl = await repo.get_async(template_id)
-    if not tpl:
-        raise HTTPException(404, "템플릿을 찾을 수 없습니다")
-
-    # 기존 이미지 삭제
-    old_key = tpl.top_image_s3_key if body.position == "top" else tpl.bottom_image_s3_key
-    if old_key:
-        try:
-            delete_s3_object(old_key)
-        except Exception:
-            logger.warning("기존 S3 이미지 삭제 실패: %s", old_key)
-
-    # DB 업데이트
-    field = "top_image_s3_key" if body.position == "top" else "bottom_image_s3_key"
-    updated = await repo.update_async(template_id, **{field: body.s3_key})
-    return updated
 
 
 # ── Name Rules ────────────────────────────────────────────────────────────────

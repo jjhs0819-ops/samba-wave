@@ -1,7 +1,7 @@
 // 삼바웨이브 쿠키 연동 - 백그라운드 서비스 워커
 
-let PROXY_URL = 'https://samba-wave-production-b105.up.railway.app'
-const DEFAULT_PROXY_URL = 'https://samba-wave-production-b105.up.railway.app'
+let PROXY_URL = 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
+const DEFAULT_PROXY_URL = 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
 const API_PREFIX = '/api/v1/samba/proxy'
 
 // ==================== KREAM 셀렉터 설정 (서버에서 동적 변경 가능) ====================

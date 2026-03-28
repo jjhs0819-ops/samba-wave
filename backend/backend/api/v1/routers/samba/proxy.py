@@ -732,65 +732,6 @@ async def claude_api_test(
         return {"success": False, "message": f"API 호출 실패: {exc}"}
 
 
-@router.post("/fireworks/test")
-async def fireworks_api_test(
-    session: AsyncSession = Depends(get_read_session_dependency),
-) -> dict[str, Any]:
-    """Fireworks AI API 키 유효성 검증."""
-    creds = await _get_setting(session, "fireworks")
-    if not creds or not isinstance(creds, dict):
-        return {"success": False, "message": "Fireworks AI 설정이 저장되지 않았습니다."}
-
-    api_key = str(creds.get("apiKey", "")).strip().encode("ascii", "ignore").decode("ascii")
-    if not api_key:
-        return {"success": False, "message": "API Key is empty"}
-
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                "https://api.fireworks.ai/inference/v1/models",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Accept": "application/json",
-                },
-            )
-            if resp.status_code == 200:
-                return {"success": True, "message": "Fireworks AI connected"}
-            else:
-                body = resp.text[:200]
-                return {"success": False, "message": f"HTTP {resp.status_code}: {body}"}
-    except Exception as exc:
-        logger.error(f"[Fireworks] API test failed: {exc}")
-        return {"success": False, "message": f"Connection failed: {str(exc)[:200]}"}
-
-
-@router.post("/gemini/test")
-async def gemini_api_test(
-    session: AsyncSession = Depends(get_read_session_dependency),
-) -> dict[str, Any]:
-    """Gemini API 키 유효성 검증."""
-    creds = await _get_setting(session, "gemini")
-    if not creds or not isinstance(creds, dict):
-        return {"success": False, "message": "Gemini AI 설정이 저장되지 않았습니다."}
-
-    api_key = str(creds.get("apiKey", "")).strip()
-    if not api_key:
-        return {"success": False, "message": "API Key가 비어있습니다."}
-
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
-            )
-            if resp.status_code == 200:
-                models = resp.json().get("models", [])
-                image_models = [m["name"] for m in models if "image" in m.get("name", "").lower()]
-                return {"success": True, "message": f"Gemini 연결 성공 (이미지 모델 {len(image_models)}개)"}
-            else:
-                return {"success": False, "message": f"인증 실패 (HTTP {resp.status_code})"}
-    except Exception as exc:
-        logger.error(f"[Gemini] API test failed: {exc}")
-        return {"success": False, "message": f"연결 실패: {str(exc)[:200]}"}
 
 
 @router.post("/r2/test")
@@ -826,12 +767,45 @@ async def r2_test(
         return {"success": False, "message": f"R2 connection failed: {str(exc)[:200]}"}
 
 
-@router.post("/fireworks/transform")
-async def fireworks_transform_images(
+@router.get("/fal/status")
+async def fal_ai_status(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """fal.ai 계정 상태 확인 (잔액 부족 여부)."""
+    creds = await _get_setting(session, "fal_ai")
+    if not creds or not isinstance(creds, dict):
+        return {"status": "no_key", "message": "API 키 미등록"}
+
+    api_key = str(creds.get("apiKey", "")).strip()
+    if not api_key:
+        return {"status": "no_key", "message": "API 키 비어있음"}
+
+    import os
+    os.environ["FAL_KEY"] = api_key
+    try:
+        import fal_client
+        # 최소 비용 호출로 계정 상태 확인 (실제 이미지 생성 없이 큐 제출만)
+        handle = await fal_client.submit_async("fal-ai/flux/dev", arguments={
+            "prompt": "test", "num_inference_steps": 1, "image_size": "square_hd",
+        })
+        # 큐 제출 성공 → 잔액 있음. 즉시 취소
+        await fal_client.cancel_async("fal-ai/flux/dev", handle.request_id)
+        return {"status": "ok", "message": "사용 가능"}
+    except Exception as e:
+        err = str(e)
+        if "Exhausted balance" in err or "locked" in err.lower():
+            return {"status": "no_balance", "message": "잔액 부족"}
+        if "401" in err or "unauthorized" in err.lower():
+            return {"status": "invalid_key", "message": "API 키 무효"}
+        return {"status": "error", "message": err[:100]}
+
+
+@router.post("/images/transform")
+async def transform_images(
     request: dict[str, Any],
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
-    """Gemini AI로 이미지 변환 후 R2/로컬 저장."""
+    """AI 이미지 변환 (rembg/FLUX) 후 R2/로컬 저장."""
     from backend.domain.samba.image.service import ImageTransformService
 
     svc = ImageTransformService(session)
@@ -855,9 +829,11 @@ async def fireworks_transform_images(
 
     try:
         result = await svc.transform_products(product_ids, scope, mode, model_preset)
-        return {"success": True, **result}
+        # 전부 실패했으면 success=False
+        transformed = result.get("total_transformed", 0)
+        return {"success": transformed > 0, **result}
     except Exception as exc:
-        logger.error(f"[Fireworks] transform failed: {exc}")
+        logger.error(f"[이미지변환] transform failed: {exc}")
         return {"success": False, "message": str(exc)[:300]}
 
 
@@ -909,7 +885,7 @@ async def regenerate_preset_image(
     request: dict[str, Any],
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
-    """프리셋 이미지를 Gemini로 재생성."""
+    """프리셋 이미지를 FLUX로 재생성."""
     from backend.domain.samba.image.service import ImageTransformService, MODEL_PRESETS, PRESET_IMAGE_DIR
     import base64, httpx
 
@@ -932,50 +908,53 @@ async def regenerate_preset_image(
         return {"success": True, "message": f"{preset['label']} 설정 저장 완료"}
 
     svc = ImageTransformService(session)
-    api_key, model = await svc._get_gemini_config()
+    fal_key = await svc._get_flux_config()
 
     desc = custom_desc or preset["desc"]
     prompt = (
-        f"{desc}의 전신 사진을 생성해주세요. "
-        "블랙 오버사이즈 크루넥과 와이드 슬랙스를 입고 있는 전신 사진. "
-        "미니멀한 블랙 더비슈즈. 런웨이 워킹 자세, 쿨하고 무심한 표정. "
-        "라이트그레이 스튜디오 배경. 파리 하이패션 에디토리얼 스타일, AI 느낌이 나지 않는 실제 화보처럼."
+        f"Full body photo of {desc}. "
+        "Wearing a black oversized crewneck and wide slacks. "
+        "Minimal black derby shoes. Runway walking pose, cool expressionless face. "
+        "Light gray studio background. Paris haute couture editorial style, photorealistic."
     )
 
-    body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
-    }
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    import os, fal_client
+    os.environ["FAL_KEY"] = fal_key
 
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(url, json=body, headers={"Content-Type": "application/json"})
+    result = await fal_client.run_async(
+        "fal-ai/flux/dev",
+        arguments={
+            "prompt": prompt,
+            "num_inference_steps": 28,
+            "guidance_scale": 3.5,
+            "image_size": "portrait_3_4",
+            "output_format": "png",
+        },
+    )
+
+    images = result.get("images", [])
+    if not images:
+        return {"success": False, "message": "FLUX 응답에 이미지 없음"}
+
+    output_url = images[0].get("url", "")
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.get(output_url)
         resp.raise_for_status()
-        data = resp.json()
+        img_bytes = resp.content
 
-    candidates = data.get("candidates", [])
-    if not candidates:
-        return {"success": False, "message": "Gemini 응답에 candidates 없음"}
+    filename = preset.get("image", f"{preset_key}.png")
+    out_path = PRESET_IMAGE_DIR / filename
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(img_bytes)
 
-    for part in candidates[0].get("content", {}).get("parts", []):
-        if "inlineData" in part:
-            img_bytes = base64.b64decode(part["inlineData"]["data"])
-            filename = preset.get("image", f"{preset_key}.png")
-            out_path = PRESET_IMAGE_DIR / filename
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_bytes(img_bytes)
+    if custom_desc:
+        preset["desc"] = custom_desc
 
-            # desc가 커스텀이면 프리셋 desc도 업데이트
-            if custom_desc:
-                preset["desc"] = custom_desc
-
-            return {
-                "success": True,
-                "message": f"{preset['label']} 이미지 재생성 완료",
-                "image": f"/static/model_presets/{filename}",
-            }
-
-    return {"success": False, "message": "Gemini 응답에 이미지 없음"}
+    return {
+        "success": True,
+        "message": f"{preset['label']} 이미지 재생성 완료",
+        "image": f"/static/model_presets/{filename}",
+    }
 
 
 @router.post("/preset-images/sync-to-r2")
@@ -1844,6 +1823,10 @@ async def musinsa_search_api(
     size: int = Query(30, ge=1, le=200),
     sort: str = Query("POPULAR"),
     category: str = Query(""),
+    brand: str = Query(""),
+    min_price: Optional[int] = Query(None, alias="minPrice"),
+    max_price: Optional[int] = Query(None, alias="maxPrice"),
+    gf: str = Query("A"),
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict[str, Any]:
     """무신사 상품 검색 API."""
@@ -1853,7 +1836,9 @@ async def musinsa_search_api(
     client = await _get_musinsa_client(session)
     try:
         return await client.search_products(
-            keyword=keyword, page=page, size=size, sort=sort, category=category
+            keyword=keyword, page=page, size=size, sort=sort,
+            category=category, brand=brand,
+            min_price=min_price, max_price=max_price, gf=gf,
         )
     except Exception as exc:
         logger.error(f"[무신사] 검색 실패: {exc}")

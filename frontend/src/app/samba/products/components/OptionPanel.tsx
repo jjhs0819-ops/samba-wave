@@ -71,10 +71,10 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                   </th>
                 )}
                 <th style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
-                  상품가
+                  상품가<br />
                   <button
                     onClick={() => { setBulkModal('price'); setBulkValue('') }}
-                    style={{ marginLeft: '0.3rem', fontSize: '0.7rem', padding: '1px 6px', background: 'rgba(255,255,255,0.05)', color: '#C5C5C5', border: '1px solid #3D3D3D', borderRadius: '3px', cursor: 'pointer' }}
+                    style={{ fontSize: '0.7rem', padding: '1px 6px', background: 'rgba(255,255,255,0.05)', color: '#C5C5C5', border: '1px solid #3D3D3D', borderRadius: '3px', cursor: 'pointer', marginTop: '2px' }}
                   >일괄수정</button>
                 </th>
                 <th style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
@@ -106,7 +106,7 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                 } else if (stock < 0 || stock >= 999) {
                   stockDisplay = (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      <input type="number" data-option-stock="" placeholder="직접입력" style={{ width: '70px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }} />
+                      <input type="number" data-option-stock="" placeholder="" style={{ width: '70px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }} />
                       <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>{stock >= 999 ? '충분' : '재고있음'}</span>
                     </span>
                   )
@@ -151,7 +151,7 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                         {Number(o.kreamFastPrice || 0) > 0 ? `₩${Number(o.kreamFastPrice).toLocaleString()}` : '-'}
                       </td>
                     )}
-                    <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: '#E5E5E5' }}>
+                    <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: '#E5E5E5', whiteSpace: 'nowrap' }}>
                       <input
                         type="text"
                         inputMode="numeric"
@@ -162,9 +162,9 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                           const v = parseInt(e.target.value.replace(/,/g, ''), 10)
                           e.target.value = isNaN(v) ? '0' : v.toLocaleString()
                         }}
-                        style={{ width: '100px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
+                        style={{ width: '80px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
                       />
-                      <span>원</span>
+                      <span style={{ marginLeft: '2px' }}>원</span>
                     </td>
                     <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: '#E5E5E5' }}>
                       {stockDisplay}

@@ -101,6 +101,7 @@ export default function OrdersPage() {
   const [editingCosts, setEditingCosts] = useState<Record<string, string>>({})
   const [editingTrackings, setEditingTrackings] = useState<Record<string, string>>({})
   const [editingShipFees, setEditingShipFees] = useState<Record<string, string>>({})
+  const [editingOrderNumbers, setEditingOrderNumbers] = useState<Record<string, string>>({})
   // 직배/까대기/선물 토글 상태
   const [activeActions, setActiveActions] = useState<Record<string, string | null>>({})
   // 미등록 입력 모달
@@ -115,6 +116,7 @@ export default function OrdersPage() {
   const [showUrlModal, setShowUrlModal] = useState(false)
   const [urlModalOrderId, setUrlModalOrderId] = useState('')
   const [urlModalInput, setUrlModalInput] = useState('')
+  const [urlModalImageInput, setUrlModalImageInput] = useState('')
   const [urlModalSaving, setUrlModalSaving] = useState(false)
   // SMS/카카오 발송 모달
   const [msgModal, setMsgModal] = useState<{ type: 'sms' | 'kakao'; order: SambaOrder } | null>(null)
@@ -375,18 +377,10 @@ export default function OrdersPage() {
     window.open(`${baseUrl}${trackingNumber}`, '_blank')
   }
   const handleSourceLink = async (o: SambaOrder) => {
-    // 1. 소싱처 정보가 있으면 직접 이동
-    if (o.source_site && o.product_id) {
-      const siteUrls: Record<string, string> = {
-        MUSINSA: `https://www.musinsa.com/app/goods/${o.product_id}`,
-        KREAM: `https://kream.co.kr/products/${o.product_id}`,
-        LOTTEON: `https://www.lotteon.com/product/${o.product_id}`,
-        SSG: `https://www.ssg.com/item/itemView.ssg?itemId=${o.product_id}`,
-        Nike: `https://www.nike.com/kr/t/${o.product_id}`,
-        ABCmart: `https://abcmart.a-rt.com/product/detail?goodsId=${o.product_id}`,
-      }
-      const url = siteUrls[o.source_site]
-      if (url) { window.open(url, '_blank'); return }
+    // 1. 미등록 입력으로 등록한 source_url 우선
+    if (o.source_url) {
+      window.open(o.source_url, '_blank')
+      return
     }
     // 2. product_id가 URL이면 직접 열기
     if (o.product_id && o.product_id.startsWith('http')) {
@@ -448,42 +442,34 @@ export default function OrdersPage() {
 
   // 미등록 입력 모달 열기
   const openUrlModal = (orderId: string) => {
+    const target = orders.find(o => o.id === orderId)
     setUrlModalOrderId(orderId)
-    setUrlModalInput('')
+    setUrlModalInput(target?.source_url || '')
+    setUrlModalImageInput(target?.product_image || '')
     setShowUrlModal(true)
   }
 
-  // 미등록 입력 URL 저장 + 이미지 자동 수집
+  // 미등록 입력 URL 저장
   const handleUrlSubmit = async () => {
-    if (!urlModalInput.trim()) {
+    if (!urlModalInput.trim() && !urlModalImageInput.trim()) {
       showAlert('URL을 입력해주세요', 'error')
       return
     }
     setUrlModalSaving(true)
     try {
       const url = urlModalInput.trim()
-      // 이미지 추출 시도
-      let imageUrl: string | undefined
-      try {
-        const res = await orderApi.fetchProductImage(url)
-        imageUrl = res.image_url
-      } catch {
-        // 이미지 추출 실패 시 URL만 저장
-      }
+      const imgUrl = urlModalImageInput.trim()
       await orderApi.update(urlModalOrderId, {
-        product_id: url,
-        ...(imageUrl ? { product_image: imageUrl } : {}),
+        ...(url ? { source_url: url } : {}),
+        ...(imgUrl ? { product_image: imgUrl } : {}),
       })
       setShowUrlModal(false)
       setUrlModalInput('')
+      setUrlModalImageInput('')
       loadOrders()
-      if (imageUrl) {
-        showAlert('상품 URL과 이미지가 등록되었습니다', 'success')
-      } else {
-        showAlert('상품 URL이 등록되었습니다 (이미지 추출 실패)', 'info')
-      }
+      showAlert('미등록 상품 정보가 등록되었습니다', 'success')
     } catch (e) {
-      showAlert(e instanceof Error ? e.message : 'URL 저장 실패', 'error')
+      showAlert(e instanceof Error ? e.message : '저장 실패', 'error')
     }
     setUrlModalSaving(false)
   }
@@ -836,10 +822,13 @@ export default function OrdersPage() {
                   </td>
                   {/* 주문정보 */}
                   <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8125rem', position: 'relative' }}>
-                    {/* 우측 상단: 주문일 + 삭제 */}
-                    <div style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
-                      <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
+                    {/* 우측 상단: 주문일 + 수량 + 삭제 */}
+                    <div style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
+                      </div>
+                      <span style={{ fontSize: '2.25rem', fontWeight: 700, color: '#888' }}>수량: <span style={{ color: '#E5E5E5' }}>{o.quantity}</span></span>
                     </div>
 
                     {/* 상품 이미지 (100x100) + 마켓/주문번호 */}
@@ -871,17 +860,34 @@ export default function OrdersPage() {
                             <div><span style={{ color: '#666' }}>주문번호 </span><span style={{ fontFamily: 'monospace', color: '#B0B0B0' }}>{o.shipment_id}</span></div>
                           )}
                         </div>
-                        {/* 상품명 + 옵션 + 수량 */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{o.product_name || '-'}</span>
-                            {o.product_option && (
-                              <span style={{ color: '#FF8C00', fontSize: '0.75rem', display: 'block', marginTop: '0.125rem' }}>[옵션] {o.product_option}</span>
-                            )}
-                          </div>
-                          <span style={{ fontSize: '2.25rem', fontWeight: 700, color: '#888', flexShrink: 0 }}>수량: <span style={{ color: '#E5E5E5' }}>{o.quantity}</span></span>
+                        {/* 상품명 + 옵션 */}
+                        <div style={{ minWidth: 0 }}>
+                          <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{o.product_name || '-'}</span>
+                          {o.product_option && (
+                            <span style={{ color: '#FF8C00', fontSize: '0.75rem', display: 'block', marginTop: '0.125rem' }}>[옵션] {o.product_option}</span>
+                          )}
                         </div>
                       </div>
+                    </div>
+
+                    {/* 쿠팡노출 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.375rem' }}>
+                      <span style={{ color: '#666', fontSize: '0.7rem', whiteSpace: 'nowrap' }}>쿠팡노출</span>
+                      <input
+                        type="text"
+                        placeholder="쿠팡노출상품명"
+                        defaultValue={o.coupang_display_name || ''}
+                        onBlur={async (e) => {
+                          const val = e.target.value.trim()
+                          if (val === (o.coupang_display_name ?? '')) return
+                          try {
+                            await orderApi.update(o.id, { coupang_display_name: val || null })
+                            loadOrders()
+                          } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
+                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                        style={{ flex: 1, fontSize: '0.75rem', padding: '0.125rem 0.375rem', background: '#1A1A1A', border: '1px solid #444', color: '#E5E5E5', borderRadius: '4px', minWidth: 0 }}
+                      />
                     </div>
 
                     {/* 버튼 */}
@@ -911,7 +917,17 @@ export default function OrdersPage() {
                       <button onClick={() => handleTracking(o.shipping_company || '', o.tracking_number || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>배송조회</button>
                       <button onClick={() => showAlert('업데이트 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>업데이트</button>
                       <button onClick={() => showAlert('마켓상품삭제 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>마켓상품삭제</button>
-                      <button onClick={() => showAlert('원주문취소 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>원주문취소</button>
+                      <button onClick={() => {
+                        if (o.ext_order_number) { window.open(o.ext_order_number, '_blank'); return }
+                        if (!o.order_number) { showAlert('주문번호가 없습니다', 'info'); return }
+                        const orderUrlMap: Record<string, string> = {
+                          MUSINSA: `https://www.musinsa.com/order/order-detail/${o.order_number}`,
+                          KREAM: `https://kream.co.kr/my/purchasing/${o.order_number}`,
+                        }
+                        const url = orderUrlMap[o.source_site || '']
+                        if (!url) { showAlert(`${o.source_site || '알수없는'} 소싱처는 원주문링크를 지원하지 않습니다`, 'info'); return }
+                        window.open(url, '_blank')
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: (o.ext_order_number || o.order_number) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원주문링크</button>
                     </div>
 
                     {/* 주문자/수령인/연락처/주소 한 줄 */}
@@ -933,6 +949,24 @@ export default function OrdersPage() {
                         <span style={{ color: '#888' }}>{o.customer_address || '-'}</span>
                       </div>
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem' }}>
+                      <span style={{ color: '#666', whiteSpace: 'nowrap' }}>타마켓주문링크</span>
+                      <input
+                        type="text"
+                        placeholder="타마켓 주문링크 URL"
+                        defaultValue={o.ext_order_number || ''}
+                        onBlur={async (e) => {
+                          const val = e.target.value.trim()
+                          if (val === (o.ext_order_number ?? '')) return
+                          try {
+                            await orderApi.update(o.id, { ext_order_number: val || null })
+                            loadOrders()
+                          } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
+                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                        style={{ flex: 1, fontSize: '0.75rem', padding: '0.125rem 0.375rem', background: '#1A1A1A', border: '1px solid #444', color: '#E5E5E5', borderRadius: '4px', fontFamily: 'monospace', minWidth: 0 }}
+                      />
+                    </div>
                   </td>
                   {/* 금액 */}
                   <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8rem' }}>
@@ -946,7 +980,7 @@ export default function OrdersPage() {
                   {/* 주문상태 */}
                   <td style={{ padding: '0.625rem', fontSize: '0.8rem' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-                      {/* 1행: 상태 드롭박스 + 마켓상태 */}
+                      {/* 1행: 상태 드롭박스 + 주문번호 인풋 */}
                       <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'stretch' }}>
                         <select value={o.status} onChange={e => handleStatusChange(o.id, e.target.value)}
                           style={{
@@ -960,21 +994,26 @@ export default function OrdersPage() {
                         >
                           {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
                         </select>
-                        <div style={{
-                          flex: 1,
-                          padding: '0.25rem 0.375rem',
-                          background: 'rgba(30,30,30,0.6)',
-                          border: '1px solid #2D2D2D',
-                          borderRadius: '6px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}>
-                          <span style={{ fontSize: '0.75rem', color: '#4C9AFF', fontWeight: 600 }}>{o.shipping_status || '-'}</span>
-                        </div>
+                        <input
+                          type="text"
+                          placeholder="주문번호"
+                          value={editingOrderNumbers[o.id] ?? o.order_number ?? ''}
+                          onChange={e => setEditingOrderNumbers(prev => ({ ...prev, [o.id]: e.target.value }))}
+                          onBlur={async (e) => {
+                            const val = e.target.value.trim()
+                            setEditingOrderNumbers(prev => { const n = { ...prev }; delete n[o.id]; return n })
+                            if (val === (o.order_number ?? '')) return
+                            try {
+                              await orderApi.update(o.id, { order_number: val })
+                              loadOrders()
+                            } catch (err) { showAlert(err instanceof Error ? err.message : '주문번호 저장 실패', 'error') }
+                          }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                          style={{ flex: 1, fontSize: '0.68rem', padding: '0.25rem 0.375rem', background: '#1A1A1A', border: '1px solid #444', color: '#E5E5E5', borderRadius: '4px', minWidth: 0, fontFamily: 'monospace' }}
+                        />
                       </div>
 
-                      {/* 2행: 가격X/재고X/직배/까대기/선물 + 취소승인 */}
+                      {/* 2행: 가격X/재고X/직배/까대기/선물 + 마켓상태 */}
                       <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'stretch' }}>
                         <div style={{ flex: 1, display: 'flex', gap: '0.25rem', alignItems: 'center', minWidth: 0 }}>
                           <button onClick={() => showAlert('가격X 기능 준비중입니다', 'info')} style={{ flex: 1, fontSize: '0.68rem', padding: '0.125rem 0', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'center' }}>가격X</button>
@@ -1001,14 +1040,18 @@ export default function OrdersPage() {
                             )
                           })}
                         </div>
-                        <button onClick={async () => {
-                          if (!await showConfirm(`${o.order_number} 주문의 취소요청을 승인하시겠습니까?`)) return
-                          try {
-                            const res = await orderApi.approveCancel(o.id)
-                            showAlert(res.message || '취소승인 완료', 'success')
-                            loadOrders()
-                          } catch (e) { showAlert(e instanceof Error ? e.message : '취소승인 실패', 'error') }
-                        }} style={{ flex: 1, fontSize: '0.68rem', padding: '0.25rem 0', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'center' }}>취소승인</button>
+                        <div style={{
+                          flex: 1,
+                          padding: '0.25rem 0.375rem',
+                          background: 'rgba(30,30,30,0.6)',
+                          border: '1px solid #2D2D2D',
+                          borderRadius: '6px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                          <span style={{ fontSize: '0.75rem', color: '#4C9AFF', fontWeight: 600 }}>{o.shipping_status || '-'}</span>
+                        </div>
                       </div>
 
                       {/* 3행: 배송비 + 원가 */}
@@ -1082,7 +1125,7 @@ export default function OrdersPage() {
                         </select>
                         <input
                           id={`ship-tn-${o.id}`}
-                          style={{ ...inputStyle, flex: 1.5, fontSize: '0.72rem' }}
+                          style={{ ...inputStyle, flex: 1, fontSize: '0.72rem' }}
                           value={editingTrackings[o.id] ?? o.tracking_number ?? ''}
                           placeholder="송장번호"
                           onChange={e => setEditingTrackings(prev => ({ ...prev, [o.id]: e.target.value }))}
@@ -1125,7 +1168,7 @@ export default function OrdersPage() {
 
                       {/* 간단메모 */}
                       <textarea
-                        style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', height: '3rem', lineHeight: '1.4' }}
+                        style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', height: '4.68rem', lineHeight: '1.4' }}
                         placeholder="간단메모"
                         defaultValue={o.notes || ''}
                         onBlur={async e => {
@@ -1196,18 +1239,31 @@ export default function OrdersPage() {
               <button onClick={() => setShowUrlModal(false)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
             </div>
             <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '1rem' }}>
-              소싱처 상품 URL을 입력하면 대표이미지가 주문정보에 표시됩니다.
+              소싱처 상품 URL과 이미지 URL을 입력하면 주문정보에 표시됩니다.
               <br />향후 동일 상품 주문에도 자동 적용됩니다.
             </p>
-            <input
-              type="text"
-              placeholder="https://www.musinsa.com/app/goods/12345"
-              style={{ ...inputStyle, width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem', marginBottom: '1rem' }}
-              value={urlModalInput}
-              onChange={e => setUrlModalInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleUrlSubmit() }}
-              autoFocus
-            />
+            <div style={{ marginBottom: '0.5rem' }}>
+              <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.25rem', display: 'block' }}>상품 URL (원문링크)</label>
+              <input
+                type="text"
+                placeholder="https://www.musinsa.com/app/goods/12345"
+                style={{ ...inputStyle, width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem' }}
+                value={urlModalInput}
+                onChange={e => setUrlModalInput(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.25rem', display: 'block' }}>이미지 URL</label>
+              <input
+                type="text"
+                placeholder="https://image.musinsa.com/images/goods_img/..."
+                style={{ ...inputStyle, width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem' }}
+                value={urlModalImageInput}
+                onChange={e => setUrlModalImageInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleUrlSubmit() }}
+              />
+            </div>
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
               <button onClick={() => setShowUrlModal(false)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>
               <button onClick={handleUrlSubmit} disabled={urlModalSaving} style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: urlModalSaving ? 'not-allowed' : 'pointer' }}>

@@ -34,6 +34,7 @@ from backend.api.v1.routers.samba.job import router as samba_job_router
 from backend.api.v1.routers.samba.store_care import router as samba_store_care_router
 from backend.api.v1.routers.samba.wholesale import router as samba_wholesale_router
 from backend.api.v1.routers.samba.sns_posting import router as samba_sns_posting_router
+from backend.api.v1.routers.samba.sourcing_account import router as samba_sourcing_account_router
 
 from backend.middleware.error_handler import register_exception_handlers
 
@@ -133,6 +134,7 @@ def create_application() -> FastAPI:
     app.include_router(samba_store_care_router, prefix="/api/v1/samba")
     app.include_router(samba_wholesale_router, prefix="/api/v1/samba")
     app.include_router(samba_sns_posting_router, prefix="/api/v1/samba")
+    app.include_router(samba_sourcing_account_router, prefix="/api/v1/samba")
 
 
     # 로컬 이미지 저장 디렉토리 서빙 (R2 미설정 시 사용)

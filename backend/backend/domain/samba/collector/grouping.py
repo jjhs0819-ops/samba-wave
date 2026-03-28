@@ -57,10 +57,15 @@ def generate_group_key(
   if similar_no and similar_no != "0":
     return f"similar_{similar_no}"
 
-  # 2순위: style_code 모델코드
+  # 2순위: style_code 모델코드 (하이픈 구분)
   model_code = extract_model_code(style_code or "")
   if model_code and brand_key:
     return f"style_{brand_key}_{model_code}"
+
+  # 2-1순위: style_code 자체 (하이픈 없는 경우 — 블랙야크 등)
+  sc = (style_code or "").strip()
+  if sc and brand_key:
+    return f"style_{brand_key}_{sc}"
 
   # 3순위: 상품명 패턴
   model_name = extract_model_name(name or "")

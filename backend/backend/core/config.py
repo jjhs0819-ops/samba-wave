@@ -57,14 +57,6 @@ class BackendSettings(BaseSettings):
     """Enable mock authentication for development."""
 
     # ===========================================
-    # S3 Configuration
-    # ===========================================
-    aws_access_key_id: str = ""
-    aws_secret_access_key: str = ""
-    aws_region: str = "ap-northeast-2"
-    s3_bucket_name: str = ""
-
-    # ===========================================
     # CORS Configuration
     # ===========================================
 
@@ -73,12 +65,6 @@ class BackendSettings(BaseSettings):
     # ===========================================
     anthropic_api_key: str = ""
     """Claude API 키 (카테고리 AI 매핑 등)."""
-
-    # ===========================================
-    # Scheduler Configuration
-    # ===========================================
-    scheduler_secret: str = ""
-    """스케줄러 tick 엔드포인트 인증 키."""
 
     # ===========================================
     # Redis 설정
