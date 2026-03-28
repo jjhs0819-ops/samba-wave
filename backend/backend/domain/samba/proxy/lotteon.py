@@ -893,10 +893,10 @@ class LotteonClient:
       # 판매 기간
       "slStrtDttm": sl_strt,
       "slEndDttm": sl_end,
-      # 출고지/배송비정책/회수지/도서산간배송정책
+      # 출고지/배송비정책/회수지/도서산간추가배송정책 (응답 확인: adtnDvCstPolNo)
       "owhpNo": product.get("owhp_no", ""),
       "dvCstPolNo": product.get("dv_cst_pol_no", ""),
-      "islandDvCstPolNo": product.get("island_dv_cst_pol_no", ""),
+      "adtnDvCstPolNo": product.get("island_dv_cst_pol_no", "") or None,
       "rtrpNo": product.get("rtrp_no", ""),
       # 선물포장/메시지
       "prstPckPsbYn": "N",
@@ -918,8 +918,9 @@ class LotteonClient:
       ],
       "cnclPsbYn": "Y",
       "dmstOvsDvDvsCd": "DMST",
-      # 수입구분: 무신사 소싱 상품은 공식수입
-      "impTypCd": "01",
+      # 수입구분: 유효 코드 미확인 — 기본값 "NONE"(해당없음) 사용
+      # TODO: 공식수입 코드 확인 후 반영 (OFCL? 01?)
+      "impDvsCd": "NONE",
       "dvProcTypCd": "LO_ENTP",
       "dvPdTypCd": "GNRL",
       "sndBgtNday": 2,
@@ -954,20 +955,19 @@ class LotteonClient:
     # 모델번호: 품번(style_code) 활용
     if style_code:
       spd["mdlNo"] = style_code[:50]
-    # 출시년월: 현재 년월 (yyyyMM)
-    spd["rlsYm"] = now.strftime("%Y%m")
-    # 온누리상품권 결제가능여부: 기본 사용안함
-    spd["onnuriPymtPsbYn"] = "N"
+    # 온누리상품권 결제가능여부: 기본 사용안함 (응답 확인: onnuriPyPsbYn)
+    spd["onnuriPyPsbYn"] = "N"
     # 임직원상품 여부: 기본 해당없음
     spd["empPrdYn"] = "N"
-    # 제품사이즈: 의류 기준 고정값 (가로29 x 세로20 x 높이16 cm)
-    spd["pdSzWdth"] = 29
-    spd["pdSzLen"] = 20
-    spd["pdSzHght"] = 16
-    # 포장사이즈: 표준 택배박스 고정값 (가로34 x 세로25 x 높이21 cm)
-    spd["pkgSzWdth"] = 34
-    spd["pkgSzLen"] = 25
-    spd["pkgSzHght"] = 21
+    # 제품/포장 사이즈: pdSzInfo 하나의 객체에 모두 포함 (API 응답 확인)
+    spd["pdSzInfo"] = {
+      "pdWdthSz": 29,   # 제품 가로 (cm)
+      "pdLnthSz": 20,   # 제품 세로 (cm)
+      "pdHghtSz": 16,   # 제품 높이 (cm)
+      "pckWdthSz": 34,  # 포장 가로 (cm)
+      "pckLnthSz": 25,  # 포장 세로 (cm)
+      "pckHghtSz": 21,  # 포장 높이 (cm)
+    }
 
     # ── 카테고리 속성정보 (scatAttrLst) ─────────────────────────
     # _scat_attr_lst: [{"optCd": attr_id, "optValCd": attr_val_id}, ...]
