@@ -23,6 +23,7 @@ SITE_CONCURRENCY: dict[str, int] = {
     "MUSINSA": 1,
     "SSG": 1,
     "LOTTEON": 2,
+    "FashionPlus": 3,
 }
 # 소싱처별 기본 인터벌 (초)
 SITE_BASE_INTERVAL: dict[str, float] = {
@@ -524,6 +525,43 @@ async def _parse_kream(product: Any) -> RefreshResult:
 
 # ── 범용 HTTP 파서 (ABCmart, Nike 등 — 현재 stub) ──
 
+async def _parse_fashionplus(product: Any) -> RefreshResult:
+    """패션플러스 가격/재고 갱신 — 검색 API + 상세 페이지."""
+    from backend.domain.samba.proxy.fashionplus import FashionPlusClient
+
+    pid = getattr(product, "site_product_id", "")
+    if not pid:
+        return RefreshResult(product_id=product.id, error="site_product_id 없음")
+
+    client = FashionPlusClient()
+    try:
+        detail = await client.get_detail(pid)
+    except Exception as e:
+        return RefreshResult(product_id=product.id, error=f"상세 조회 실패: {e}")
+
+    new_sale = detail.get("sale_price", 0) or 0
+    new_orig = detail.get("original_price", 0) or new_sale
+    new_images = detail.get("images") or None
+    shipping_fee = detail.get("shipping_fee", 0) or 0
+    new_cost = new_sale + shipping_fee
+
+    old_sale = getattr(product, "sale_price", 0) or 0
+    old_cost = getattr(product, "cost", 0) or 0
+    changed = (new_sale != old_sale) or (new_cost != old_cost)
+
+    logger.info(
+        f"[패션플러스 갱신] {pid}: "
+        f"원가 {old_cost}→{new_cost}, 판매가 {old_sale}→{new_sale}, 배송비 {shipping_fee}"
+    )
+    return RefreshResult(
+        product_id=product.id,
+        new_sale_price=new_sale,
+        new_original_price=new_orig,
+        new_cost=new_cost,
+        changed=changed,
+    )
+
+
 async def _parse_generic_stub(product: Any) -> RefreshResult:
     """범용 스텁 파서 — 실제 파싱은 소싱처별 HTML 구조에 맞게 확장 예정."""
     return RefreshResult(
@@ -549,7 +587,7 @@ SITE_PARSERS: dict[str, Any] = {
     "GSShop": _parse_generic_stub,
     "ElandMall": _parse_generic_stub,
     "SSF": _parse_generic_stub,
-    "FashionPlus": _parse_generic_stub,
+    "FashionPlus": _parse_fashionplus,
 }
 
 

@@ -189,8 +189,9 @@ class FashionPlusClient:
           result["name"] = data.get("name", "")
           brand_info = data.get("brand", {})
           result["brand"] = brand_info.get("name", "") if isinstance(brand_info, dict) else str(brand_info)
-          # SKU에서 seller_id 추출 (이미지 필터링용)
+          # SKU → style_code (품번) + seller_id 추출
           sku = data.get("sku", "")
+          result["style_code"] = sku
           seller_id = sku.split("_")[0] if "_" in sku else ""
       except (json.JSONDecodeError, ValueError):
         seller_id = ""
@@ -201,6 +202,7 @@ class FashionPlusClient:
         result["name"] = name_m.group(1)
 
     # 2) 상품 이미지 — 동일 seller_id의 product_img만 추출
+    #    plgk/plgr/plgl 등 사이즈 접두사가 다른 동일 이미지 중복 제거
     all_product_imgs = re.findall(
       r'(https://img\.fashionplus\.co\.kr/mall/assets/product_img/[^\"\'>\s?]+)', html
     )
@@ -208,7 +210,17 @@ class FashionPlusClient:
       imgs = [img for img in all_product_imgs if f"/{seller_id}/" in img]
     else:
       imgs = all_product_imgs[:5]
-    result["images"] = list(dict.fromkeys(imgs))[:9]
+    # 사이즈 접두사(plgk/plgr/plgl/plgs 등) 제거 후 파일명 기준 중복 제거
+    seen_basenames: set[str] = set()
+    unique_imgs: list[str] = []
+    for img in imgs:
+      # .../plgk671652_5008758480.jpg → 671652_5008758480.jpg
+      fname = img.rsplit("/", 1)[-1]
+      base = re.sub(r'^plg[a-z]', '', fname)
+      if base not in seen_basenames:
+        seen_basenames.add(base)
+        unique_imgs.append(img)
+    result["images"] = unique_imgs[:9]
 
     # 3) 고시정보 추출 (상품 정보 제공고시 테이블)
     notice_match = re.search(r'상품\s*정보\s*제공고시(.*?)(?:상품\s*일반정보|반품|$)', html, re.S)

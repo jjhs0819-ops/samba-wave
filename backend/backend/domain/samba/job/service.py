@@ -21,9 +21,9 @@ class SambaJobService:
         return await self.repo.list_by_status(status, tenant_id, skip, limit)
 
     async def cancel_job(self, job_id: str) -> bool:
-        """pending 상태의 잡 취소."""
+        """pending 또는 running 상태의 잡 취소."""
         job = await self.repo.get_async(job_id)
-        if job and job.status == "pending":
+        if job and job.status in ("pending", "running"):
             await self.repo.update_async(job_id, status="failed", error="사용자 취소")
             return True
         return False

@@ -243,25 +243,28 @@ async def update_filter(
         policy_id = data["applied_policy_id"]
 
         async def _propagate():
-            from backend.db.orm import get_write_session
-            async with get_write_session() as bg_session:
-                from backend.domain.samba.policy.repository import SambaPolicyRepository
-                policy_repo = SambaPolicyRepository(bg_session)
-                policy = await policy_repo.get_async(policy_id)
-                policy_data = None
-                if policy and policy.pricing:
-                    pr = policy.pricing if isinstance(policy.pricing, dict) else {}
-                    policy_data = {
-                        "margin_rate": pr.get("marginRate", 15),
-                        "shipping_cost": pr.get("shippingCost", 0),
-                        "extra_charge": pr.get("extraCharge", 0),
-                    }
-                bg_svc = _get_services(bg_session)
-                count = await bg_svc.apply_policy_to_filter_products(
-                    filter_id, policy_id, policy_data
-                )
-                await bg_session.commit()
-                logger.info(f"정책 전파 완료: 필터 {filter_id} → {count}개 상품")
+            try:
+                from backend.db.orm import get_write_session
+                async with get_write_session() as bg_session:
+                    from backend.domain.samba.policy.repository import SambaPolicyRepository
+                    policy_repo = SambaPolicyRepository(bg_session)
+                    policy = await policy_repo.get_async(policy_id)
+                    policy_data = None
+                    if policy and policy.pricing:
+                        pr = policy.pricing if isinstance(policy.pricing, dict) else {}
+                        policy_data = {
+                            "margin_rate": pr.get("marginRate", 15),
+                            "shipping_cost": pr.get("shippingCost", 0),
+                            "extra_charge": pr.get("extraCharge", 0),
+                        }
+                    bg_svc = _get_services(bg_session)
+                    count = await bg_svc.apply_policy_to_filter_products(
+                        filter_id, policy_id, policy_data
+                    )
+                    await bg_session.commit()
+                    logger.info(f"정책 전파 완료: 필터 {filter_id} → {count}개 상품")
+            except Exception as e:
+                logger.error(f"정책 전파 실패: 필터 {filter_id} → {e}")
 
         asyncio.get_event_loop().create_task(_propagate())
 
@@ -436,6 +439,9 @@ async def scroll_products(
         conditions.append(_CP.search_filter_id == search_filter_id)
 
     # 상태 필터
+    # ※ "market_registered/market_unregistered"는 registered_accounts(실제 마켓 등록 계정) 기준
+    #    "registered/collected/saved"는 상품 처리 상태(status 컬럼) 기준 — 혼동 주의
+    _KNOWN_STATUS_VALUES = {"collected", "saved", "registered"}
     if status == "has_orders":
         from backend.domain.samba.order.model import SambaOrder
         order_pids = select(SambaOrder.product_id).where(SambaOrder.product_id.isnot(None)).distinct()
@@ -447,7 +453,17 @@ async def scroll_products(
     elif status == "free_same":
         conditions.append(_CP.free_shipping == True)
         conditions.append(_CP.same_day_delivery == True)
-    elif status:
+    elif status == "market_registered":
+        # 마켓에 실제 등록된 상품: registered_accounts JSON 배열이 비어있지 않은 경우
+        conditions.append(_CP.registered_accounts.isnot(None))
+        conditions.append(func.json_array_length(_CP.registered_accounts) > 0)
+    elif status == "market_unregistered":
+        # 마켓 미등록 상품: registered_accounts가 null이거나 빈 JSON 배열
+        conditions.append(or_(
+            _CP.registered_accounts.is_(None),
+            func.json_array_length(_CP.registered_accounts) == 0,
+        ))
+    elif status and status in _KNOWN_STATUS_VALUES:
         conditions.append(_CP.status == status)
 
     # AI 필터 (JSON 태그/이미지 패턴)

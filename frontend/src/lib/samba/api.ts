@@ -1467,8 +1467,6 @@ export const sourcingAccountApi = {
     request<SambaSourcingAccount>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/toggle`, { method: 'PUT' }),
   delete: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}`, { method: 'DELETE' }),
-  fetchBalance: (id: string) =>
-    request<{ balance: number; account: SambaSourcingAccount }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/fetch-balance`, { method: 'POST' }),
-  fetchAllBalances: (siteName = 'MUSINSA') =>
-    request<{ results: BalanceResult[] }>(`${SAMBA_PREFIX}/sourcing-accounts/fetch-all-balances?site_name=${siteName}`, { method: 'POST' }),
+  getBalance: (id: string) =>
+    request<{ balance: number; mileage: number; balance_updated_at: string; has_cookie: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/balance`),
 }

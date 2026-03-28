@@ -57,6 +57,7 @@ const SITE_OPTIONS: Record<string, { id: string; label: string }[]> = {
     { id: 'maxDiscount', label: '최대혜택가' },
   ],
   KREAM: [],
+  FashionPlus: [],
   SSG: [
     { id: 'maxDiscount', label: '최대혜택가' },
   ],
@@ -100,6 +101,13 @@ export default function CollectorPage() {
   const [showRefreshModal, setShowRefreshModal] = useState(false)
   // AI 비용 추적
   const [lastAiUsage, setLastAiUsage] = useState<{ calls: number; tokens: number; cost: number; date: string } | null>(null)
+
+  // AI 태그 미리보기 모달
+  const [showTagPreview, setShowTagPreview] = useState(false)
+  const [tagPreviews, setTagPreviews] = useState<{ group_id: string; group_name: string; product_count: number; rep_name: string; tags: string[]; seo_keywords: string[] }[]>([])
+  const [tagPreviewCost, setTagPreviewCost] = useState<{ api_calls: number; input_tokens: number; output_tokens: number; cost_krw: number } | null>(null)
+  const [tagPreviewLoading, setTagPreviewLoading] = useState(false)
+  const [removedTags, setRemovedTags] = useState<string[]>([])
 
   // AI 이미지 변환
   const [aiImgScope, setAiImgScope] = useState({ thumbnail: true, additional: false, detail: false })
@@ -221,7 +229,24 @@ export default function CollectorPage() {
     setCollecting(true);
     addLog(`그룹 생성 중: ${collectUrl}`);
     try {
-      const site = selectedSite;
+      // URL 도메인과 선택된 소싱처 불일치 검증
+      const site = selectedSite
+      try {
+        const host = new URL(collectUrl).hostname
+        const siteHostMap: Record<string, string[]> = {
+          MUSINSA: ['musinsa.com'], KREAM: ['kream.co.kr'], FashionPlus: ['fashionplus.co.kr'],
+          Nike: ['nike.com'], Adidas: ['adidas.co.kr', 'adidas.com'],
+          ABCmart: ['a-rt.com'], GrandStage: ['a-rt.com'], OKmall: ['okmall.com'],
+          LOTTEON: ['lotteon.com'], GSShop: ['gsshop.com'], ElandMall: ['elandmall.com'],
+          SSF: ['ssfshop.com'], SSG: ['ssg.com'],
+        }
+        const allowedHosts = siteHostMap[site] || []
+        if (allowedHosts.length > 0 && !allowedHosts.some(h => host.includes(h))) {
+          showAlert(`선택한 소싱처(${site})와 URL 도메인(${host})이 일치하지 않습니다`, 'error')
+          setCollecting(false)
+          return
+        }
+      } catch { /* URL이 아닌 경우 검증 스킵 */ }
 
       // URL에서 키워드 추출 (소싱처별 파라미터)
       let keyword = ""
@@ -260,6 +285,17 @@ export default function CollectorPage() {
         if (checkedOptions['excludeBoutique']) u.searchParams.set("excludeBoutique", "1");
         if (checkedOptions['maxDiscount']) u.searchParams.set("maxDiscount", "1");
         keywordUrl = u.toString();
+      }
+      // 패션플러스: 평문 키워드 → 검색 URL 자동 구성
+      if (site === 'FashionPlus' && !isUrl) {
+        const u = new URL('https://www.fashionplus.co.kr/search/goods/result')
+        u.searchParams.set('searchWord', keyword)
+        if (checkedOptions['skipDetail']) u.searchParams.set('skipDetail', '1')
+        keywordUrl = u.toString()
+      } else if (checkedOptions['skipDetail'] && keywordUrl.startsWith('http')) {
+        const u = new URL(keywordUrl)
+        u.searchParams.set('skipDetail', '1')
+        keywordUrl = u.toString()
       }
 
       // 무신사: 검색 API로 해당 링크의 총 상품수 조회
@@ -361,7 +397,7 @@ export default function CollectorPage() {
         // 폴링으로 진행률 추적
         let lastCurrent = 0
         while (!abort.signal.aborted) {
-          await new Promise(r => setTimeout(r, 3000))
+          await new Promise(r => setTimeout(r, 1000))
           if (abort.signal.aborted) break
 
           try {
@@ -980,29 +1016,38 @@ export default function CollectorPage() {
               {refreshing ? '갱신중...' : '일괄 갱신'}
             </button>
             <button
+              disabled={tagPreviewLoading}
               onClick={async () => {
                 const targetIds = selectedIds.size > 0 ? [...selectedIds] : displayedFilters.map(f => f.id)
                 if (targetIds.length === 0) { showAlert('검색그룹이 없습니다'); return }
-                const ok = await showConfirm(`${selectedIds.size > 0 ? '선택된' : '전체'} ${targetIds.length}개 그룹의 상품에 AI 태그를 생성하시겠습니까?`)
+                const ok = await showConfirm(`${selectedIds.size > 0 ? '선택된' : '전체'} ${targetIds.length}개 그룹의 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
                 if (!ok) return
+                setTagPreviewLoading(true)
                 try {
-                  const res = await proxyApi.generateAiTagsByGroups(targetIds)
+                  const productIds = displayedFilters
+                    .filter(f => targetIds.includes(f.id))
+                    .flatMap(f => f.products?.map(p => p.id) || [])
+                  if (productIds.length === 0) { showAlert('상품이 없습니다'); return }
+                  const res = await proxyApi.previewAiTags(productIds)
                   if (res.success) {
-                    showAlert(res.message, 'success')
-                    setLastAiUsage({ calls: res.api_calls || 0, tokens: (res.input_tokens || 0) + (res.output_tokens || 0), cost: res.cost_krw || 0, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
-                    load(); loadTree()
-                    setSelectedIds(new Set()); setSelectAll(false)
+                    setTagPreviews(res.previews)
+                    setTagPreviewCost({ api_calls: res.api_calls, input_tokens: res.input_tokens, output_tokens: res.output_tokens, cost_krw: res.cost_krw })
+                    setRemovedTags([])
+                    setShowTagPreview(true)
                   } else showAlert(res.message, 'error')
                 } catch (e) {
                   showAlert(`태그 생성 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+                } finally {
+                  setTagPreviewLoading(false)
                 }
               }}
               style={{
                 background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.35)',
-                color: '#FF8C00', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
+                color: '#FF8C00', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem',
+                cursor: tagPreviewLoading ? 'not-allowed' : 'pointer', opacity: tagPreviewLoading ? 0.6 : 1,
               }}
             >
-              AI태그
+              {tagPreviewLoading ? '태그 생성중...' : 'AI태그'}
             </button>
           </div>
         </div>
@@ -1332,6 +1377,131 @@ export default function CollectorPage() {
             >
               확인
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ AI 태그 미리보기 모달 ═══ */}
+      {showTagPreview && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => { setShowTagPreview(false); setRemovedTags([]) }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', padding: '28px 32px', minWidth: '500px', maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto' }}
+            onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 4px', fontSize: '1rem', fontWeight: 600, color: '#E5E5E5' }}>AI 태그 미리보기</h3>
+            <p style={{ margin: '0 0 20px', fontSize: '0.75rem', color: '#888' }}>
+              태그사전에 미등록된 태그를 X로 제거한 후 적용하세요
+            </p>
+            {tagPreviews.map((preview) => (
+              <div key={preview.group_id} style={{ marginBottom: '20px', padding: '16px', background: '#0F0F0F', borderRadius: '8px', border: '1px solid #2D2D2D' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '0.82rem', color: '#FFB84D', fontWeight: 600 }}>{preview.rep_name}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#666' }}>{preview.product_count}개 상품 | {preview.tags.length}개 태그</span>
+                </div>
+                <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#4C9AFF', fontWeight: 600, whiteSpace: 'nowrap' }}>SEO:</span>
+                  <input
+                    type="text"
+                    defaultValue={preview.seo_keywords.join(', ')}
+                    placeholder="SEO 키워드 (콤마 구분)"
+                    onBlur={(e) => {
+                      const newKws = e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                      setTagPreviews(prev => prev.map(p =>
+                        p.group_id === preview.group_id ? { ...p, seo_keywords: newKws } : p
+                      ))
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                    style={{ flex: 1, fontSize: '0.72rem', padding: '3px 8px', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#4C9AFF', outline: 'none' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>
+                  {preview.tags.map((tag, ti) => (
+                    <span key={ti} style={{
+                      fontSize: '0.78rem', padding: '4px 10px', borderRadius: '14px',
+                      background: 'rgba(100,100,255,0.1)', border: '1px solid rgba(100,100,255,0.25)', color: '#8B8FD4',
+                      display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    }}>
+                      {tag}
+                      <span
+                        style={{ cursor: 'pointer', color: '#666', fontSize: '0.85rem', lineHeight: 1 }}
+                        onClick={async () => {
+                          setTagPreviews(prev => prev.map(p => ({
+                            ...p, tags: p.tags.filter(t => t !== tag)
+                          })))
+                          const ban = await showConfirm(`"${tag}"을(를) 금지태그에 등록할까요?\n(등록하면 다음 AI태그 생성 시 자동 제외됩니다)`)
+                          if (ban) {
+                            setRemovedTags(prev => prev.includes(tag) ? prev : [...prev, tag])
+                          }
+                        }}
+                      >&times;</span>
+                    </span>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  placeholder="추가 태그 입력 후 Enter (콤마 구분 가능)"
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      const input = (e.target as HTMLInputElement)
+                      const newTags = input.value.split(',').map(t => t.trim()).filter(Boolean)
+                      if (newTags.length === 0) return
+                      setTagPreviews(prev => prev.map(p =>
+                        p.group_id === preview.group_id
+                          ? { ...p, tags: [...p.tags, ...newTags.filter(t => !p.tags.includes(t))] }
+                          : p
+                      ))
+                      input.value = ''
+                    }
+                  }}
+                  style={{
+                    width: '100%', padding: '5px 10px', fontSize: '0.75rem',
+                    background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px',
+                    color: '#E5E5E5', outline: 'none',
+                  }}
+                />
+              </div>
+            ))}
+            {removedTags.length > 0 && (
+              <div style={{ marginBottom: '12px', padding: '10px 14px', background: 'rgba(255,107,107,0.06)', borderRadius: '6px', border: '1px solid rgba(255,107,107,0.15)' }}>
+                <span style={{ fontSize: '0.72rem', color: '#FF6B6B', fontWeight: 600 }}>금지태그 등록 예정 ({removedTags.length}개): </span>
+                <span style={{ fontSize: '0.72rem', color: '#888' }}>{removedTags.join(', ')}</span>
+              </div>
+            )}
+            {tagPreviewCost && (
+              <p style={{ margin: '0 0 16px', fontSize: '0.72rem', color: '#666', textAlign: 'right' }}>
+                API {tagPreviewCost.api_calls}회 | {tagPreviewCost.input_tokens + tagPreviewCost.output_tokens} 토큰 | ~{tagPreviewCost.cost_krw}원
+              </p>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+              <button onClick={() => { setShowTagPreview(false); setRemovedTags([]) }}
+                style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid #3D3D3D', background: 'transparent', color: '#888' }}>취소</button>
+              <button onClick={async () => {
+                const groups = tagPreviews.filter(p => p.tags.length > 0).map(p => ({ group_id: p.group_id, tags: p.tags, seo_keywords: p.seo_keywords }))
+                if (groups.length === 0) { showAlert('적용할 태그가 없습니다'); return }
+                try {
+                  const res = await proxyApi.applyAiTags(groups, removedTags)
+                  if (res.success) {
+                    showAlert(res.message, 'success')
+                    if (tagPreviewCost) {
+                      const now = new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' })
+                      setLastAiUsage({
+                        calls: tagPreviewCost.api_calls,
+                        tokens: tagPreviewCost.input_tokens + tagPreviewCost.output_tokens,
+                        cost: tagPreviewCost.cost_krw,
+                        date: now,
+                      })
+                    }
+                    setShowTagPreview(false)
+                    setSelectedIds(new Set()); setSelectAll(false)
+                    load(); loadTree()
+                  } else showAlert(res.message, 'error')
+                } catch (e) {
+                  showAlert(`태그 적용 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+                }
+              }}
+                style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(255,140,0,0.5)', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600 }}>
+                전체 그룹에 적용 ({tagPreviews.reduce((s, p) => s + p.tags.length, 0)}개 태그)
+              </button>
+            </div>
           </div>
         </div>
       )}

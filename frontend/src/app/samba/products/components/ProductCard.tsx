@@ -48,7 +48,7 @@ export const MARKETS = [
 
 // 마켓별 상품명 글자수 제한
 const MARKET_NAME_LIMITS: Record<string, number> = {
-  '스마트스토어': 50,
+  '스마트스토어': 49,
   '쿠팡': 100,
   '11번가': 100,
   '지마켓': 100,
@@ -601,9 +601,24 @@ const ProductCard = React.memo(function ProductCard({
             background: label ? 'rgba(255,140,0,0.06)' : 'rgba(30,30,30,0.5)',
             border: label ? '1px solid rgba(255,140,0,0.2)' : '1px solid #2D2D2D',
           }}>
-            <img src={img} alt="" loading="lazy" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+            <div
               onClick={() => openZoom(img)}
-              style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer' }} />
+              style={{ width: 64, height: 64, borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer', overflow: 'hidden', background: '#1A1A1A', position: 'relative' }}
+            >
+              <img src={img} alt="" loading="lazy" referrerPolicy="no-referrer"
+                onError={e => {
+                  const el = e.target as HTMLImageElement
+                  // 프록시 재시도 (1회)
+                  if (!el.dataset.retried) {
+                    el.dataset.retried = '1'
+                    el.src = `${process.env.NEXT_PUBLIC_API_ENDPOINT || 'http://localhost:28080'}/api/v1/samba/proxy/image-proxy?url=${encodeURIComponent(img)}`
+                  } else {
+                    el.style.display = 'none'
+                  }
+                }}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
+              <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: '0.6rem', zIndex: 0 }}>IMG</span>
+            </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               {label && <span style={{ fontSize: '0.7rem', color: '#FF8C00', fontWeight: 600 }}>{label}</span>}
               <p style={{ margin: 0, fontSize: '0.68rem', color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img}</p>
@@ -930,20 +945,6 @@ const ProductCard = React.memo(function ProductCard({
               border: '1px solid rgba(255,107,107,0.25)',
             }}>품절</span>
           )}
-          {p.group_key && !p.group_product_no && (
-            <span style={{
-              padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 500,
-              background: 'rgba(81,207,102,0.15)', color: '#51CF66',
-              border: '1px solid rgba(81,207,102,0.25)',
-            }}>스스그룹</span>
-          )}
-          {p.group_product_no && (
-            <span style={{
-              padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 500,
-              background: 'rgba(76,154,255,0.15)', color: '#4C9AFF',
-              border: '1px solid rgba(76,154,255,0.25)',
-            }}>스스그룹등록</span>
-          )}
         </div>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
@@ -1215,8 +1216,9 @@ const ProductCard = React.memo(function ProductCard({
                 const nameLimit = MARKET_NAME_LIMITS[m.marketName] || 100
                 const composedName = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))
                 const currentMarketName = marketNames[m.marketName] || ''
-                const displayName = currentMarketName || composedName
-                const isOverLimit = displayName.length > nameLimit
+                // 마켓별 개별 상품명이 없으면 조합명을 글자수 제한에 맞게 자름
+                const displayName = currentMarketName || (composedName.length > nameLimit ? composedName.slice(0, nameLimit) : composedName)
+                const isOverLimit = (currentMarketName || composedName).length > nameLimit
                 return (
                 <tr key={m.marketName} style={{ borderBottom: '1px solid #1E1E1E' }}>
                   <td style={tdLabel}>{m.marketName}</td>

@@ -160,6 +160,66 @@ async function sendKreamCookiesToProxy(cookieStr) {
 scheduleCookieSync = makeScheduleSync('무신사', () => capturedCookie, sendCookiesToProxy)
 scheduleKreamCookieSync = makeScheduleSync('KREAM', () => kreamCookie, sendKreamCookiesToProxy)
 
+// ==================== 무신사 잔액 수신 (content script → background → server) ====================
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.action === 'musinsaBalance') {
+    const { money, mileage, username } = msg
+    console.log(`[잔액] 무신사 잔액 수신: 머니 ${money?.toLocaleString()} / 적립금 ${mileage?.toLocaleString()} / 유저: ${username}`)
+    // 쿠키에서 무신사 아이디 추출 후 서버 전송
+    findMusinsaIdAndSend({ money, mileage, username })
+    sendResponse({ ok: true })
+  }
+  return false
+})
+
+async function findMusinsaIdAndSend({ money, mileage, username }) {
+  // chrome.cookies API로 무신사 쿠키에서 아이디 찾기
+  let musinsaId = ''
+  try {
+    const allCookies = await chrome.cookies.getAll({ domain: 'musinsa.com' })
+    for (const c of allCookies) {
+      // 무신사 로그인 아이디가 포함된 쿠키 찾기
+      if (['mu_id', 'userId', 'member_srl', 'UID', 'uid', 'login_id', 'musinsa_id'].includes(c.name)) {
+        musinsaId = decodeURIComponent(c.value)
+        break
+      }
+    }
+    // 쿠키명으로 못 찾으면 쿠키 값에서 아이디 패턴 검색
+    if (!musinsaId) {
+      for (const c of allCookies) {
+        // 값이 영문+숫자 조합이고 4~20자인 경우 (아이디 형태)
+        if (/^[a-zA-Z][a-zA-Z0-9]{3,19}$/.test(c.value) && !['JSESSIONID', 'SCOUTER'].includes(c.name)) {
+          console.log(`[잔액] 아이디 후보 쿠키: ${c.name}=${c.value}`)
+        }
+      }
+    }
+  } catch (e) {
+    console.log(`[잔액] 쿠키 조회 실패: ${e.message}`)
+  }
+
+  console.log(`[잔액] 무신사 아이디: ${musinsaId || '(쿠키에서 못 찾음)'}`)
+  sendMusinsaBalance({ money, mileage, musinsaId, username, cookie: capturedCookie })
+}
+
+async function sendMusinsaBalance(data) {
+  try {
+    const res = await fetch(`${PROXY_URL}/api/v1/samba/sourcing-accounts/sync-balance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (res.ok) {
+      const result = await res.json()
+      console.log(`[잔액] 서버 저장 완료:`, result)
+    } else {
+      console.warn(`[잔액] 서버 저장 실패: HTTP ${res.status}`)
+    }
+  } catch (e) {
+    console.log(`[잔액] 서버 전송 실패 (무시): ${e.message}`)
+  }
+}
+
 // ==================== 무신사 쿠키 조회 ====================
 
 async function getMusinsaCookies() {
@@ -1017,10 +1077,12 @@ function pollSourcingOnce() {
 async function handleSourcingJob(job) {
   let tabId = null
   try {
-    const tab = await chrome.tabs.create({ url: job.url, active: false })
+    // 패션플러스: 상세페이지 lazy 컨텐츠 로딩을 위해 active:true 필요
+    const needsActive = job.type === 'detail' && job.site === 'FashionPlus'
+    const tab = await chrome.tabs.create({ url: job.url, active: needsActive })
     tabId = tab.id
     await waitForTabLoad(tabId, 30000)
-    await wait(4000) // SPA 렌더링 대기
+    await wait(needsActive ? 5000 : 4000) // 패션플러스 상세는 렌더링 시간 추가
 
     let result = null
     if (job.type === 'search') {
@@ -1126,11 +1188,114 @@ async function extractSearchResults(tabId, site) {
 
 // 상품 상세 DOM 파싱 — 범용
 async function extractDetailData(tabId, site, productId) {
+  // 패션플러스: 상세정보 탭 클릭하여 lazy 렌더링 트리거
+  if (site === 'FashionPlus') {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN',
+        func: () => {
+          const tabs = document.querySelectorAll('.mm_tab-link, [class*="tab"] a, [class*="tab"] button')
+          for (const tab of tabs) {
+            if (tab.textContent.trim().includes('상세정보') || tab.textContent.trim().includes('상세 정보')) {
+              tab.click()
+              break
+            }
+          }
+        }
+      })
+      await wait(3000)
+    } catch {}
+  }
+
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
     func: (siteName, prdId) => {
-      // JSON-LD 우선 추출
+      try {
+      // ── 패션플러스 전용 파싱 ──
+      if (siteName === 'FashionPlus') {
+        let name = '', brand = '', origPrice = 0, salePrice = 0, sku = ''
+        const jsonLd = document.querySelector('script[type="application/ld+json"]')
+        if (jsonLd) {
+          try {
+            let d = JSON.parse(jsonLd.textContent)
+            if (Array.isArray(d)) d = d.find(x => x['@type'] === 'Product') || d[0]
+            if (d?.['@type'] === 'Product') {
+              name = d.name || ''
+              sku = d.sku || ''
+              const o = d.offers || {}
+              origPrice = parseInt(o.price || 0)
+              salePrice = parseInt(o.sale_price || o.price || 0)
+              const b = d.brand || {}
+              brand = typeof b === 'object' ? (b.name || '') : String(b)
+            }
+          } catch {}
+        }
+        const sellerId = sku.split('_')[0] || ''
+        const productImgs = []
+        document.querySelectorAll('img').forEach(img => {
+          const src = img.src || img.currentSrc || ''
+          if (src.includes('product_img') && (!sellerId || src.includes(`/${sellerId}/`)) && !productImgs.includes(src)) {
+            productImgs.push(src.replace(/\?.*$/, ''))
+          }
+        })
+        const detailImgs = []
+        document.querySelectorAll('.mm_tab-item img, [class*="detail"] img, [class*="desc"] img').forEach(img => {
+          const src = img.src || img.currentSrc || ''
+          if (src && !src.startsWith('data:') && src.includes('http') && !detailImgs.includes(src) && !src.includes('sidebar') && !src.includes('banner') && !src.includes('favicon')) {
+            detailImgs.push(src.startsWith('//') ? 'https:' + src : src)
+          }
+        })
+        const notice = {}
+        const noticeArea = document.body.innerHTML.match(/상품\s*정보\s*제공고시([\s\S]*?)(?:상품\s*일반정보|반품|$)/)
+        if (noticeArea) {
+          const div = document.createElement('div')
+          div.innerHTML = noticeArea[1]
+          const cells = div.querySelectorAll('th, td')
+          for (let i = 0; i < cells.length - 1; i += 2) {
+            const key = cells[i].textContent.trim()
+            const val = cells[i + 1]?.textContent.trim() || ''
+            if (key && val && !key.includes('반품')) notice[key] = val
+          }
+        }
+        let material = '', color = '', manufacturer = '', origin = ''
+        let careInstructions = '', qualityGuarantee = ''
+        for (const [k, v] of Object.entries(notice)) {
+          if (v === '상세설명참조' || v === '상세페이지참조' || !v) continue
+          if (k.includes('소재') || k.includes('재질')) material = v
+          else if (k === '색상') color = v
+          else if (k.includes('제조자') || k.includes('제조사')) manufacturer = v
+          else if (k.includes('제조국') || k.includes('원산지')) origin = v
+          else if (k.includes('세탁') || k.includes('취급') || k.includes('주의')) careInstructions = v
+          else if (k.includes('품질') || k.includes('보증')) qualityGuarantee = v
+        }
+        const feeMatch = document.body.innerHTML.match(/배송비\s*(\d[\d,]+)\s*원/)
+        const shippingFee = feeMatch ? parseInt(feeMatch[1].replace(/,/g, '')) : 3000
+        const options = []
+        document.querySelectorAll('select option, [class*="option"] li, [class*="size"] button').forEach(el => {
+          const t = el.textContent.trim()
+          if (t && t !== '선택' && t !== '옵션을 선택하세요' && t.length < 50) {
+            options.push({ name: t, stock: 999, isSoldOut: false })
+          }
+        })
+        const allDetailImgs = [...new Set([...productImgs, ...detailImgs])]
+        const detailHtml = allDetailImgs.map(src =>
+          `<div style="text-align:center;"><img src="${src}" style="max-width:860px;width:100%;" /></div>`
+        ).join('\n')
+        return {
+          success: true, site_product_id: prdId,
+          name, brand, original_price: origPrice, sale_price: salePrice,
+          images: productImgs.slice(0, 9),
+          detail_images: allDetailImgs, detail_html: detailHtml,
+          source_site: siteName,
+          category: '', category1: '', category2: '', category3: '',
+          options, material, color, manufacturer, origin,
+          care_instructions: careInstructions, quality_guarantee: qualityGuarantee,
+          shipping_fee: shippingFee,
+        }
+      }
+
+      // ── 범용 파싱 ──
       const jsonLdScripts = document.querySelectorAll('script[type="application/ld+json"]')
       for (const script of jsonLdScripts) {
         try {
@@ -1142,11 +1307,8 @@ async function extractDetailData(tabId, site, productId) {
             const brandObj = data.brand || {}
             const img = Array.isArray(data.image) ? data.image[0] : (data.image || '')
             return {
-              success: true,
-              site_product_id: prdId,
-              name: data.name || '',
-              original_price: price,
-              sale_price: price,
+              success: true, site_product_id: prdId,
+              name: data.name || '', original_price: price, sale_price: price,
               images: img ? [img] : [],
               brand: typeof brandObj === 'object' ? (brandObj.name || '') : String(brandObj),
               source_site: siteName,
@@ -1156,18 +1318,13 @@ async function extractDetailData(tabId, site, productId) {
           }
         } catch {}
       }
-
-      // og:태그 fallback
       const ogTitle = document.querySelector('meta[property="og:title"]')?.content || ''
       const ogImage = document.querySelector('meta[property="og:image"]')?.content || ''
       const ogPrice = document.querySelector('meta[property="product:price:amount"]')?.content || ''
-
-      // DOM 텍스트 기반 추출
       const allTexts = Array.from(document.querySelectorAll('*'))
         .filter(el => el.children.length === 0)
         .map(el => el.textContent.trim())
         .filter(t => t.length > 1)
-
       const priceTexts = allTexts.filter(t => /^\d[\d,]+원?$/.test(t))
       let salePrice = ogPrice ? parseInt(ogPrice) : 0
       let originalPrice = 0
@@ -1178,8 +1335,6 @@ async function extractDetailData(tabId, site, productId) {
           else if (num > salePrice) originalPrice = num
         }
       }
-
-      // 이미지 (상품 관련)
       const images = []
       document.querySelectorAll('img').forEach(img => {
         const src = img.src || img.currentSrc || img.getAttribute('data-src') || ''
@@ -1187,8 +1342,6 @@ async function extractDetailData(tabId, site, productId) {
           images.push(src.startsWith('//') ? 'https:' + src : src)
         }
       })
-
-      // 옵션 (사이즈/색상 select 또는 버튼)
       const options = []
       document.querySelectorAll('select option, [class*="option"] li, [class*="size"] button, [class*="size"] a').forEach(el => {
         const text = el.textContent.trim()
@@ -1196,8 +1349,6 @@ async function extractDetailData(tabId, site, productId) {
           options.push({ name: text, stock: 999 })
         }
       })
-
-      // 카테고리 (breadcrumb)
       const breadcrumb = document.querySelector('[class*="breadcrumb"], [class*="location"], nav[aria-label="breadcrumb"]')
       let cats = []
       if (breadcrumb) {
@@ -1205,22 +1356,18 @@ async function extractDetailData(tabId, site, productId) {
           .map(el => el.textContent.trim())
           .filter(t => t.length > 1 && t !== '>' && t !== 'Home' && t !== '홈')
       }
-
       return {
-        success: true,
-        site_product_id: prdId,
+        success: true, site_product_id: prdId,
         name: ogTitle || document.title || `${siteName} ${prdId}`,
-        original_price: originalPrice || salePrice,
-        sale_price: salePrice,
+        original_price: originalPrice || salePrice, sale_price: salePrice,
         images: images.length > 0 ? images.slice(0, 10) : (ogImage ? [ogImage] : []),
-        brand: '',
-        source_site: siteName,
-        category: cats.join(' > '),
-        category1: cats[0] || '',
-        category2: cats[1] || '',
-        category3: cats[2] || '',
-        options,
-        detail_html: '',
+        brand: '', source_site: siteName,
+        category: cats.join(' > '), category1: cats[0] || '',
+        category2: cats[1] || '', category3: cats[2] || '',
+        options, detail_html: '',
+      }
+      } catch (e) {
+        return { success: false, message: `스크립트 에러: ${e.message}`, url: location.href }
       }
     },
     args: [site, productId]

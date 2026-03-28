@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SAMBA-WAVE (WEB)",
-  "version": "2.7.7",
+  "version": "2.7.9",
   "description": "무재고 위탁판매 솔루션 - 무신사/KREAM/소싱처 수집 연동",
   "permissions": [
     "cookies",
@@ -23,6 +23,7 @@
     "https://*.gsshop.com/*",
     "https://*.elandmall.com/*",
     "https://*.ssfshop.com/*",
+    "https://*.fashionplus.co.kr/*",
     "https://*.abc-mart.co.kr/*",
     "https://*.grandstage.co.kr/*",
     "https://sell.smartstore.naver.com/*",
@@ -44,6 +45,11 @@
     {
       "matches": ["https://kream.co.kr/products/*", "https://www.kream.co.kr/products/*"],
       "js": ["kream-collect.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.musinsa.com/mypage", "https://www.musinsa.com/mypage/*"],
+      "js": ["content-musinsa-balance.js"],
       "run_at": "document_idle"
     }
   ],

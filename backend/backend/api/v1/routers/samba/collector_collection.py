@@ -2182,6 +2182,42 @@ async def enrich_product(
         updated = await svc.update_collected_product(product_id, updates)
         return {"success": True, "enriched_fields": list(updates.keys()), "product": updated}
 
+    if product.source_site == "FashionPlus" and product.site_product_id:
+        from backend.domain.samba.proxy.fashionplus import FashionPlusClient
+        from datetime import datetime, timezone
+
+        client = FashionPlusClient()
+        try:
+            detail = await client.get_detail(product.site_product_id)
+        except Exception as e:
+            raise HTTPException(502, f"패션플러스 상세 조회 실패: {str(e)}")
+
+        new_sale = detail.get("sale_price") or product.sale_price
+        new_orig = detail.get("original_price") or product.original_price
+        shipping_fee = detail.get("shipping_fee", 0) or 0
+        new_cost = new_sale + shipping_fee
+        new_images = detail.get("images") or []
+
+        updates: dict[str, Any] = {
+            "sale_price": new_sale,
+            "original_price": new_orig,
+            "cost": new_cost,
+            "sourcing_shipping_fee": shipping_fee,
+        }
+
+        snapshot = {
+            "date": datetime.now(timezone.utc).isoformat(),
+            "sale_price": new_sale,
+            "original_price": new_orig,
+            "cost": new_cost,
+        }
+        history = list(product.price_history or [])
+        history.insert(0, snapshot)
+        updates["price_history"] = _trim_history(history)
+
+        updated = await svc.update_collected_product(product_id, updates)
+        return {"success": True, "enriched_fields": list(updates.keys()), "product": updated}
+
     raise HTTPException(400, f"'{product.source_site}' 상세 보강은 아직 지원하지 않습니다")
 
 

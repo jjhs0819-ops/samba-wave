@@ -569,7 +569,10 @@ class ImageTransformService:
     # 로컬 저장
     local_path = LOCAL_IMAGE_DIR / filename
     local_path.write_bytes(image_bytes)
-    return f"/static/images/{filename}"
+    # 절대 URL 반환 (프론트에서 직접 접근 가능하도록)
+    from backend.core.config import settings
+    base_url = getattr(settings, "backend_url", "") or "http://localhost:28080"
+    return f"{base_url}/static/images/{filename}"
 
   async def transform_single_image(
     self, product_id: str, image_url: str, mode: str = "video",
