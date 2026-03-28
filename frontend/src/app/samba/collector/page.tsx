@@ -1024,11 +1024,11 @@ export default function CollectorPage() {
                 if (!ok) return
                 setTagPreviewLoading(true)
                 try {
-                  const productIds = displayedFilters
+                  const groupIds = displayedFilters
                     .filter(f => targetIds.includes(f.id))
-                    .flatMap(f => f.products?.map(p => p.id) || [])
-                  if (productIds.length === 0) { showAlert('상품이 없습니다'); return }
-                  const res = await proxyApi.previewAiTags(productIds)
+                    .map(f => f.id)
+                  if (groupIds.length === 0) { showAlert('그룹이 없습니다'); return }
+                  const res = await proxyApi.previewAiTags([], groupIds)
                   if (res.success) {
                     setTagPreviews(res.previews)
                     setTagPreviewCost({ api_calls: res.api_calls, input_tokens: res.input_tokens, output_tokens: res.output_tokens, cost_krw: res.cost_krw })

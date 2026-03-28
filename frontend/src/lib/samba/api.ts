@@ -694,14 +694,14 @@ export const proxyApi = {
         body: JSON.stringify({ group_ids: groupIds }),
       }),
   // AI 태그 미리보기 (20개 생성 → 적용 안 함)
-  previewAiTags: (productIds: string[]) =>
+  previewAiTags: (productIds: string[], groupIds?: string[]) =>
     request<{
       success: boolean; message: string;
       previews: { group_id: string; group_name: string; product_count: number; rep_name: string; tags: string[]; seo_keywords: string[] }[];
       api_calls: number; input_tokens: number; output_tokens: number; cost_krw: number;
     }>(`${SAMBA_PREFIX}/proxy/ai-tags/preview`, {
       method: 'POST',
-      body: JSON.stringify({ product_ids: productIds }),
+      body: JSON.stringify({ product_ids: productIds, group_ids: groupIds || [] }),
     }),
   // AI 태그 확정 적용 (삭제된 태그는 금지태그에 추가)
   applyAiTags: (groups: { group_id: string; tags: string[]; seo_keywords?: string[] }[], removedTags?: string[]) =>
