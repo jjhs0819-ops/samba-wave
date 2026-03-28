@@ -122,9 +122,10 @@ async def delete_sourcing_account(
 class SyncBalanceRequest(BaseModel):
     money: float = 0
     mileage: float = 0
-    musinsaId: Optional[str] = None
+    profileEmail: Optional[str] = None
     username: Optional[str] = None
     cookie: Optional[str] = None
+    expired: bool = False
 
 
 @router.post("/sync-balance")
@@ -132,16 +133,14 @@ async def sync_balance_from_extension(
     body: SyncBalanceRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """확장앱에서 잔액 + 쿠키 수신 → 무신사 아이디로 계정 매칭 → 저장."""
+    """확장앱에서 잔액 수신 → 크롬 프로필 Gmail로 계정 매칭 → 저장."""
     svc = _write_service(session)
-
-    # 무신사 아이디로 계정 매칭
     accounts = await svc.list_accounts(site_name="MUSINSA")
     matched = None
 
-    # 1순위: musinsaId(쿠키에서 추출한 로그인 아이디)로 매칭
-    if body.musinsaId:
-        matched = next((a for a in accounts if a.username == body.musinsaId), None)
+    # 1순위: 크롬 프로필 Gmail(memo 필드)로 매칭
+    if body.profileEmail:
+        matched = next((a for a in accounts if a.memo and a.memo.lower() == body.profileEmail.lower()), None)
 
     # 2순위: 쿠키 문자열에 아이디가 포함되어 있는지 확인
     if not matched and body.cookie:
@@ -151,13 +150,23 @@ async def sync_balance_from_extension(
                 break
 
     if not matched:
-        logger.warning(f"[잔액동기화] 매칭 실패: musinsaId={body.musinsaId}, username={body.username}")
-        return {"ok": False, "message": f"계정을 찾을 수 없습니다: {body.musinsaId or body.username}"}
+        logger.warning(f"[잔액동기화] 매칭 실패: email={body.profileEmail}, username={body.username}")
+        return {"ok": False, "message": f"계정을 찾을 수 없습니다: {body.profileEmail or body.username}"}
 
-    # 잔액 + 쿠키 저장
     from datetime import datetime, timezone
     extra = dict(matched.additional_fields or {})
+
+    if body.expired:
+        # 쿠키 만료 처리
+        extra["cookie_expired"] = True
+        extra["cookie_expired_at"] = datetime.now(timezone.utc).isoformat()
+        await svc.repo.update_async(matched.id, additional_fields=extra)
+        logger.warning(f"[잔액동기화] {matched.account_label}: 쿠키 만료 — 재로그인 필요")
+        return {"ok": True, "account_label": matched.account_label, "expired": True}
+
+    # 잔액 + 쿠키 저장
     extra["mileage"] = body.mileage
+    extra["cookie_expired"] = False
     if body.cookie:
         extra["musinsa_cookie"] = body.cookie
         extra["cookie_updated_at"] = datetime.now(timezone.utc).isoformat()

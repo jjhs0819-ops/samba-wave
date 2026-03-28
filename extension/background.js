@@ -763,26 +763,45 @@ async function runFocusPoll() {
   console.log('[KREAM] 집중 폴링 종료 → alarm 대기 모드 (30초 주기)')
 }
 
-// alarm 트리거 시 1회 폴링 — job 있으면 집중 모드 진입
+// alarm 트리거 시 1회 폴링 — job 있으면 집중 모드 진입, 없으면 카운트 증가
+let emptyPollCount = 0
+const MAX_EMPTY_POLLS = 10
+
 async function runPollCycle() {
   const hadCollect = await pollCollectOnce()
   const hadSearch = await pollSearchOnce()
   const hadSourcing = await pollSourcingOnce()
   const hadAi = await pollAiSourcingOnce()
   if (hadCollect || hadSearch || hadSourcing || hadAi) {
+    emptyPollCount = 0
     runFocusPoll()
+  } else {
+    emptyPollCount++
+    if (emptyPollCount >= MAX_EMPTY_POLLS) {
+      stopCollectPolling()
+    }
   }
 }
 
-// alarm 설정 (30초 주기) — 중복 방지
-function setupAlarm() {
-  chrome.alarms.get('kreamPoll', (alarm) => {
+// 수집 폴링 — job 없으면 5분 후 자동 중지
+function startCollectPolling() {
+  emptyPollCount = 0
+  chrome.alarms.get('collectPoll', (alarm) => {
     if (!alarm) {
-      chrome.alarms.create('kreamPoll', { periodInMinutes: 0.5 })
-      console.log('[KREAM] chrome.alarms 설정: 30초 주기')
+      chrome.alarms.create('collectPoll', { periodInMinutes: 0.5 })
+      console.log('[수집] 폴링 시작 (30초 주기)')
     }
   })
-  // 쿠키 동기화 alarm (5분 주기)
+  runPollCycle()
+}
+
+function stopCollectPolling() {
+  chrome.alarms.clear('collectPoll')
+  console.log('[수집] 폴링 중지 (빈 결과 5분 연속)')
+}
+
+// 쿠키 동기화 alarm (5분 주기)
+function setupCookieSyncAlarm() {
   chrome.alarms.get('cookieSync', (alarm) => {
     if (!alarm) {
       chrome.alarms.create('cookieSync', { periodInMinutes: 5 })
@@ -793,30 +812,43 @@ function setupAlarm() {
 
 // alarm 이벤트 핸들러
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'kreamPoll') {
+  if (alarm.name === 'collectPoll') {
     runPollCycle()
   }
-  // 쿠키 동기화 — 변경된 쿠키가 있으면 백엔드 재전송
   if (alarm.name === 'cookieSync') {
     if (capturedCookie) sendCookiesToProxy(capturedCookie).catch(() => {})
     if (kreamCookie) sendKreamCookiesToProxy(kreamCookie).catch(() => {})
   }
+  if (alarm.name === 'musinsaBalanceCheck') {
+    checkMusinsaBalance()
+  }
 })
 
-// 설치/업데이트 시 alarm 등록 + 즉시 1회 실행
-chrome.runtime.onInstalled.addListener(() => {
-  setupAlarm()
-  runPollCycle()
+// 무신사 잔액 자동 체크 (12시간 주기)
+async function checkMusinsaBalance() {
+  console.log('[잔액] 자동 잔액 체크 시작')
+  let tab = null
+  try {
+    tab = await chrome.tabs.create({ url: 'https://www.musinsa.com/mypage', active: false })
+    await new Promise(r => setTimeout(r, 15000))
+  } catch (e) {
+    console.log(`[잔액] 자동 체크 실패: ${e.message}`)
+  } finally {
+    if (tab?.id) try { await chrome.tabs.remove(tab.id) } catch {}
+  }
+}
+
+chrome.alarms.get('musinsaBalanceCheck', (alarm) => {
+  if (!alarm) {
+    chrome.alarms.create('musinsaBalanceCheck', { delayInMinutes: 1, periodInMinutes: 720 })
+    console.log('[잔액] 자동 체크 alarm 설정: 12시간 주기')
+  }
 })
 
-// 브라우저 시작 시 alarm 등록 + 즉시 1회 실행
-chrome.runtime.onStartup.addListener(() => {
-  setupAlarm()
-  runPollCycle()
-})
-
-// Service Worker 활성화 시 alarm만 설정 (중복 폴링 방지)
-setupAlarm()
+// 설치/업데이트 시
+chrome.runtime.onInstalled.addListener(() => { setupCookieSyncAlarm(); startCollectPolling() })
+chrome.runtime.onStartup.addListener(() => { setupCookieSyncAlarm(); startCollectPolling() })
+setupCookieSyncAlarm()
 
 // ==================== AI소싱 큐 폴링 ====================
 

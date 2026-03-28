@@ -164,59 +164,52 @@ scheduleKreamCookieSync = makeScheduleSync('KREAM', () => kreamCookie, sendKream
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'musinsaBalance') {
-    const { money, mileage, username } = msg
-    console.log(`[잔액] 무신사 잔액 수신: 머니 ${money?.toLocaleString()} / 적립금 ${mileage?.toLocaleString()} / 유저: ${username}`)
-    // 쿠키에서 무신사 아이디 추출 후 서버 전송
-    findMusinsaIdAndSend({ money, mileage, username })
+    const { money, mileage, username, expired } = msg
+    if (expired) {
+      console.log(`[잔액] 쿠키 만료 감지 — 재로그인 필요`)
+      getProfileEmailAndSend({ money: -1, mileage: -1, username, expired: true })
+    } else {
+      console.log(`[잔액] 무신사 잔액 수신: 머니 ${money?.toLocaleString()} / 적립금 ${mileage?.toLocaleString()} / 유저: ${username}`)
+      getProfileEmailAndSend({ money, mileage, username })
+    }
     sendResponse({ ok: true })
   }
   return false
 })
 
-async function findMusinsaIdAndSend({ money, mileage, username }) {
-  // chrome.cookies API로 무신사 쿠키에서 아이디 찾기
-  let musinsaId = ''
+async function getProfileEmailAndSend({ money, mileage, username }) {
+  let profileEmail = ''
   try {
-    const allCookies = await chrome.cookies.getAll({ domain: 'musinsa.com' })
-    for (const c of allCookies) {
-      // 무신사 로그인 아이디가 포함된 쿠키 찾기
-      if (['mu_id', 'userId', 'member_srl', 'UID', 'uid', 'login_id', 'musinsa_id'].includes(c.name)) {
-        musinsaId = decodeURIComponent(c.value)
-        break
-      }
-    }
-    // 쿠키명으로 못 찾으면 쿠키 값에서 아이디 패턴 검색
-    if (!musinsaId) {
-      for (const c of allCookies) {
-        // 값이 영문+숫자 조합이고 4~20자인 경우 (아이디 형태)
-        if (/^[a-zA-Z][a-zA-Z0-9]{3,19}$/.test(c.value) && !['JSESSIONID', 'SCOUTER'].includes(c.name)) {
-          console.log(`[잔액] 아이디 후보 쿠키: ${c.name}=${c.value}`)
-        }
-      }
-    }
+    const info = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' })
+    profileEmail = info.email || ''
+    console.log(`[잔액] 크롬 프로필 이메일: ${profileEmail}`)
   } catch (e) {
-    console.log(`[잔액] 쿠키 조회 실패: ${e.message}`)
+    console.log(`[잔액] 프로필 이메일 조회 실패: ${e.message}`)
   }
-
-  console.log(`[잔액] 무신사 아이디: ${musinsaId || '(쿠키에서 못 찾음)'}`)
-  sendMusinsaBalance({ money, mileage, musinsaId, username, cookie: capturedCookie })
+  sendMusinsaBalance({ money, mileage, profileEmail, username, cookie: capturedCookie, expired: arguments[0].expired || false })
 }
 
 async function sendMusinsaBalance(data) {
-  try {
-    const res = await fetch(`${PROXY_URL}/api/v1/samba/sourcing-accounts/sync-balance`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    })
-    if (res.ok) {
-      const result = await res.json()
-      console.log(`[잔액] 서버 저장 완료:`, result)
-    } else {
-      console.warn(`[잔액] 서버 저장 실패: HTTP ${res.status}`)
+  const endpoints = [
+    `${PROXY_URL}/api/v1/samba/sourcing-accounts/sync-balance`,
+    'http://localhost:28080/api/v1/samba/sourcing-accounts/sync-balance',
+  ]
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+      if (res.ok) {
+        const result = await res.json()
+        console.log(`[잔액] 서버 저장 완료 (${url.includes('localhost') ? '로컬' : '프로덕션'}):`, result)
+      } else {
+        console.warn(`[잔액] 서버 저장 실패 (${url.includes('localhost') ? '로컬' : '프로덕션'}): HTTP ${res.status}`)
+      }
+    } catch (e) {
+      console.log(`[잔액] ${url.includes('localhost') ? '로컬' : '프로덕션'} 전송 실패 (무시)`)
     }
-  } catch (e) {
-    console.log(`[잔액] 서버 전송 실패 (무시): ${e.message}`)
   }
 }
 
@@ -769,48 +762,78 @@ async function runFocusPoll() {
   console.log('[KREAM] 집중 폴링 종료 → alarm 대기 모드 (30초 주기)')
 }
 
-// alarm 트리거 시 1회 폴링 — job 있으면 집중 모드 진입
+// alarm 트리거 시 1회 폴링 — job 있으면 집중 모드 진입, 없으면 카운트 증가
 async function runPollCycle() {
   const hadCollect = await pollCollectOnce()
   const hadSearch = await pollSearchOnce()
   const hadSourcing = await pollSourcingOnce()
   const hadAi = await pollAiSourcingOnce()
   if (hadCollect || hadSearch || hadSourcing || hadAi) {
+    emptyPollCount = 0
     runFocusPoll()
-  }
-}
-
-// alarm 설정 (30초 주기) — 중복 방지
-function setupAlarm() {
-  chrome.alarms.get('kreamPoll', (alarm) => {
-    if (!alarm) {
-      chrome.alarms.create('kreamPoll', { periodInMinutes: 0.5 })
-      console.log('[KREAM] chrome.alarms 설정: 30초 주기')
+  } else {
+    emptyPollCount++
+    if (emptyPollCount >= MAX_EMPTY_POLLS) {
+      stopCollectPolling()
     }
-  })
+  }
 }
 
 // alarm 이벤트 핸들러
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'kreamPoll') {
+  if (alarm.name === 'collectPoll') {
     runPollCycle()
+  }
+  if (alarm.name === 'musinsaBalanceCheck') {
+    checkMusinsaBalance()
   }
 })
 
-// 설치/업데이트 시 alarm 등록 + 즉시 1회 실행
-chrome.runtime.onInstalled.addListener(() => {
-  setupAlarm()
+// 수집 폴링 — job 없으면 5분 후 자동 중지, job 있으면 자동 재시작
+let emptyPollCount = 0
+const MAX_EMPTY_POLLS = 10 // 30초 × 10 = 5분간 빈 결과 → 중지
+
+function startCollectPolling() {
+  emptyPollCount = 0
+  chrome.alarms.get('collectPoll', (alarm) => {
+    if (!alarm) {
+      chrome.alarms.create('collectPoll', { periodInMinutes: 0.5 })
+      console.log('[수집] 폴링 시작 (30초 주기)')
+    }
+  })
   runPollCycle()
+}
+
+function stopCollectPolling() {
+  chrome.alarms.clear('collectPoll')
+  console.log('[수집] 폴링 중지 (빈 결과 5분 연속)')
+}
+
+// 무신사 잔액 자동 체크 (12시간 주기)
+async function checkMusinsaBalance() {
+  console.log('[잔액] 자동 잔액 체크 시작')
+  let tab = null
+  try {
+    tab = await chrome.tabs.create({ url: 'https://www.musinsa.com/mypage', active: false })
+    await new Promise(r => setTimeout(r, 15000))
+  } catch (e) {
+    console.log(`[잔액] 자동 체크 실패: ${e.message}`)
+  } finally {
+    if (tab?.id) try { await chrome.tabs.remove(tab.id) } catch {}
+  }
+}
+
+// 잔액 체크 alarm 설정 (12시간 주기)
+chrome.alarms.get('musinsaBalanceCheck', (alarm) => {
+  if (!alarm) {
+    chrome.alarms.create('musinsaBalanceCheck', { delayInMinutes: 1, periodInMinutes: 720 })
+    console.log('[잔액] 자동 체크 alarm 설정: 12시간 주기')
+  }
 })
 
-// 브라우저 시작 시 alarm 등록 + 즉시 1회 실행
-chrome.runtime.onStartup.addListener(() => {
-  setupAlarm()
-  runPollCycle()
-})
-
-// Service Worker 활성화 시 alarm만 설정 (중복 폴링 방지)
-setupAlarm()
+// 설치/업데이트 시 — 수집 폴링 시작 (5분간 job 없으면 자동 중지)
+chrome.runtime.onInstalled.addListener(() => { startCollectPolling() })
+chrome.runtime.onStartup.addListener(() => { startCollectPolling() })
 
 // ==================== AI소싱 큐 폴링 ====================
 
@@ -1399,7 +1422,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // 전체 상태 조회
   if (msg.type === 'GET_STATUS') {
     getMusinsaCookies().then(async ({ cookies, isLoggedIn }) => {
-      const alarm = await chrome.alarms.get('kreamPoll')
+      const alarm = await chrome.alarms.get('collectPoll')
       sendResponse({
         musinsa: { isLoggedIn, cookieCount: cookies.length },
         kream: { isLoggedIn: !!kreamCookie, cookieCount: kreamCookie ? kreamCookie.split(';').length : 0 },
@@ -1408,6 +1431,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       })
     })
     return true
+  }
+
+  // 수집 폴링 시작/중지
+  if (msg.type === 'START_COLLECT_POLLING') {
+    startCollectPolling()
+    sendResponse({ success: true })
+    return false
+  }
+  if (msg.type === 'STOP_COLLECT_POLLING') {
+    stopCollectPolling()
+    sendResponse({ success: true })
+    return false
   }
 
   // 백엔드 URL 변경

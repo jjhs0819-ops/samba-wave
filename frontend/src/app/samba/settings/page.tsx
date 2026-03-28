@@ -1787,7 +1787,7 @@ export default function SettingsPage() {
           <div style={{ width: '320px', flexShrink: 0 }}>
             <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#888', marginBottom: '0.5rem' }}>등록 계정</div>
             {(() => {
-              const siteAccounts = sourcingAccounts.filter(a => a.site_name === sourcingTab)
+              const siteAccounts = sourcingAccounts.filter(a => a.site_name === sourcingTab).sort((a, b) => (a.chrome_profile || '').localeCompare(b.chrome_profile || '', undefined, { numeric: true }))
               if (siteAccounts.length === 0) return (
                 <div style={{ fontSize: '0.78rem', color: '#555', padding: '0.5rem 0' }}>등록된 계정 없음</div>
               )
@@ -1810,8 +1810,14 @@ export default function SettingsPage() {
                         {a.memo && <span style={{ color: '#888' }}>{a.memo}</span>}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem', fontSize: '0.7rem' }}>
-                        <span style={{ color: '#51CF66', fontWeight: 600 }}>머니 {(a.balance ?? 0).toLocaleString()}</span>
-                        <span style={{ color: '#4C9AFF', fontWeight: 600 }}>적립금 {Number((a.additional_fields as Record<string, unknown>)?.mileage ?? 0).toLocaleString()}</span>
+                        {(a.additional_fields as Record<string, unknown>)?.cookie_expired ? (
+                          <span style={{ color: '#FF6B6B', fontWeight: 600 }}>쿠키 만료 — 재로그인 필요</span>
+                        ) : (
+                          <>
+                            <span style={{ color: '#51CF66', fontWeight: 600 }}>머니 {(a.balance ?? 0).toLocaleString()}</span>
+                            <span style={{ color: '#4C9AFF', fontWeight: 600 }}>적립금 {Number((a.additional_fields as Record<string, unknown>)?.mileage ?? 0).toLocaleString()}</span>
+                          </>
+                        )}
                         {a.balance_updated_at && <span style={{ color: '#666' }}>{new Date(a.balance_updated_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
                       </div>
                       <div style={{ display: 'flex', gap: '0.25rem' }}>
