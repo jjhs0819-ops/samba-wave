@@ -959,7 +959,7 @@ export default function OrdersPage() {
                           const val = e.target.value.trim()
                           if (val === (o.ext_order_number ?? '')) return
                           try {
-                            await orderApi.update(o.id, { ext_order_number: val || null })
+                            await orderApi.update(o.id, { ext_order_number: val || undefined })
                             loadOrders()
                           } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
                         }}
