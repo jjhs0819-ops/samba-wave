@@ -742,7 +742,7 @@ async def gemini_api_test(
         return {"success": False, "message": "Gemini API 설정이 저장되지 않았습니다."}
 
     api_key = creds.get("apiKey", "")
-    model = creds.get("model", "gemini-2.5-flash-preview-05-20")
+    model = creds.get("model", "gemini-2.5-flash")
     if not api_key:
         return {"success": False, "message": "API Key가 비어있습니다."}
 

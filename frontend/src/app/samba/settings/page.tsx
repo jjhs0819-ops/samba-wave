@@ -883,7 +883,7 @@ export default function SettingsPage() {
 
   // Gemini AI 설정 (모델컷 생성 전용)
   const [geminiApiKey, setGeminiApiKey] = useState('')
-  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash-preview-05-20')
+  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash')
   const [geminiStatus, setGeminiStatus] = useState('')
 
 
@@ -1109,7 +1109,7 @@ export default function SettingsPage() {
       const gm = await forbiddenApi.getSetting('gemini').catch(() => null) as Record<string, unknown> | null
       if (gm) {
         setGeminiApiKey(String(gm.apiKey || ''))
-        setGeminiModel(String(gm.model || 'gemini-2.5-flash-preview-05-20'))
+        setGeminiModel(String(gm.model || 'gemini-2.5-flash'))
         if (gm.apiKey) setGeminiStatus('저장됨')
       }
       // fal_ai: 미사용 (추후 구현)
@@ -1915,7 +1915,7 @@ export default function SettingsPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델</label>
             <select style={{ ...inputStyle, width: '300px' }} value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}>
-              <option value="gemini-2.5-flash-preview-05-20">Gemini 2.5 Flash (권장)</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash (권장)</option>
               <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
             </select>
           </div>

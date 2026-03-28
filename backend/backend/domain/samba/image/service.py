@@ -247,7 +247,7 @@ class ImageTransformService:
     if not creds:
       raise ValueError("Gemini AI 설정이 없습니다. 설정 페이지에서 API Key를 입력하세요.")
     api_key = str(creds.get("apiKey", "")).strip()
-    model = str(creds.get("model", "gemini-2.5-flash-preview-05-20"))
+    model = str(creds.get("model", "gemini-2.5-flash"))
     if not api_key:
       raise ValueError("Gemini API Key가 비어있습니다.")
     return api_key, model
