@@ -917,9 +917,8 @@ class LotteonClient:
       ],
       "cnclPsbYn": "Y",
       "dmstOvsDvDvsCd": "DMST",
-      # 수입구분: 유효 코드 미확인 — 기본값 "NONE"(해당없음) 사용
-      # TODO: 공식수입 코드 확인 후 반영 (OFCL? 01?)
-      "impDvsCd": "NONE",
+      # 수입구분: 공식수입(직수입) — API 확인된 코드 DRC_IMP
+      "impDvsCd": "DRC_IMP",
       "dvProcTypCd": "LO_ENTP",
       "dvPdTypCd": "GNRL",
       "sndBgtNday": 2,
