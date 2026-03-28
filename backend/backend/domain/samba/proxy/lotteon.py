@@ -379,6 +379,15 @@ class LotteonClient:
     start = today - timedelta(days=days)
     return start.strftime("%Y%m%d"), today.strftime("%Y%m%d")
 
+  def _datetime_range(self, days: int) -> tuple[str, str]:
+    """최근 N일 검색 시작/종료 일시 반환 (yyyymmddhh24miss 형식).
+
+    롯데ON 주문 API 날짜 포맷: 20210730000000 ~ 20210730235959
+    """
+    today = date.today()
+    start = today - timedelta(days=days)
+    return start.strftime("%Y%m%d") + "000000", today.strftime("%Y%m%d") + "235959"
+
   # ------------------------------------------------------------------
   # 인증
   # ------------------------------------------------------------------
@@ -1064,46 +1073,45 @@ class LotteonClient:
   async def get_orders(self, days: int = 7) -> list[dict]:
     """최근 N일 롯데ON 주문 조회.
 
-    엔드포인트: GET /api/order/list (openapi.lotteon.com, JSON, Bearer 인증)
-    파라미터: startDt, endDt (YYYYMMDD)
-    반환: 주문 dict 리스트
+    엔드포인트: POST /v1/openapi/order/v1/getSROrderList
+    날짜 형식: yyyymmddhh24miss (20210730000000)
+    응답: data.orderItems 배열
     """
-    start_date, end_date = self._date_range(days)
+    start_dt, end_dt = self._datetime_range(days)
     data = await self._call_api(
-      "GET",
-      "/v1/openapi/order/v1/order/list",
-      params={"startDt": start_date, "endDt": end_date},
+      "POST",
+      "/v1/openapi/order/v1/getSROrderList",
+      body={
+        "srchStrtDttm": start_dt,
+        "srchEndDttm": end_dt,
+        "lrtrNo": "",
+      },
     )
-    # 응답: {"data": {"orderList": [...]}} 또는 {"data": [...]}
     inner = data.get("data") or {}
-    order_list = (
-      inner.get("orderList") or inner.get("orders") or inner
-      if isinstance(inner, dict) else inner
-    )
+    order_list = inner.get("orderItems") or [] if isinstance(inner, dict) else []
     if not isinstance(order_list, list):
       order_list = []
+    logger.info(f"[롯데ON] 주문 조회 결과: {len(order_list)}건")
     return order_list
 
   async def get_cancel_orders(self, days: int = 7) -> list[dict]:
     """최근 N일 취소 주문 조회.
 
-    orderStatus=60,70: 취소요청/취소완료 상태 필터.
+    odIfPrgsStepCd=90: 주문취소처리 요청 상태 필터.
     """
-    start_date, end_date = self._date_range(days)
+    start_dt, end_dt = self._datetime_range(days)
     data = await self._call_api(
-      "GET",
-      "/v1/openapi/order/v1/order/list",
-      params={
-        "startDt": start_date,
-        "endDt": end_date,
-        "orderStatus": "60,70",
+      "POST",
+      "/v1/openapi/order/v1/getSROrderList",
+      body={
+        "srchStrtDttm": start_dt,
+        "srchEndDttm": end_dt,
+        "odIfPrgsStepCd": "90",
+        "lrtrNo": "",
       },
     )
     inner = data.get("data") or {}
-    order_list = (
-      inner.get("orderList") or inner.get("orders") or inner
-      if isinstance(inner, dict) else inner
-    )
+    order_list = inner.get("orderItems") or [] if isinstance(inner, dict) else []
     if not isinstance(order_list, list):
       order_list = []
     return order_list
@@ -1111,23 +1119,20 @@ class LotteonClient:
   async def get_returns(self, days: int = 7) -> list[dict]:
     """최근 N일 반품 주문 조회.
 
-    orderStatus=80,90: 반품요청/반품완료 상태 필터.
+    odPrgsStepCd가 반품 관련인 항목 필터 (전체 조회 후 필터링).
     """
-    start_date, end_date = self._date_range(days)
+    start_dt, end_dt = self._datetime_range(days)
     data = await self._call_api(
-      "GET",
-      "/v1/openapi/order/v1/order/list",
-      params={
-        "startDt": start_date,
-        "endDt": end_date,
-        "orderStatus": "80,90",
+      "POST",
+      "/v1/openapi/order/v1/getSROrderList",
+      body={
+        "srchStrtDttm": start_dt,
+        "srchEndDttm": end_dt,
+        "lrtrNo": "",
       },
     )
     inner = data.get("data") or {}
-    order_list = (
-      inner.get("orderList") or inner.get("orders") or inner
-      if isinstance(inner, dict) else inner
-    )
+    order_list = inner.get("orderItems") or [] if isinstance(inner, dict) else []
     if not isinstance(order_list, list):
       order_list = []
     return order_list
