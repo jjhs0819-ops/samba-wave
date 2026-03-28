@@ -295,7 +295,7 @@ class JobWorker:
                             )
 
                     from backend.api.v1.routers.samba.collector_common import _get_services
-                    svc, _ = await _get_services(session)
+                    svc = _get_services(session)
 
                     product_data = _build_product_data(
                         detail, goods_no, filter_id, "MUSINSA",
@@ -337,7 +337,7 @@ class JobWorker:
             try:
                 from backend.domain.samba.policy.repository import SambaPolicyRepository
                 from backend.api.v1.routers.samba.collector_common import _get_services
-                svc, _ = await _get_services(session)
+                svc = _get_services(session)
                 policy_repo = SambaPolicyRepository(session)
                 policy = await policy_repo.get_async(sf.applied_policy_id)
                 policy_data = None

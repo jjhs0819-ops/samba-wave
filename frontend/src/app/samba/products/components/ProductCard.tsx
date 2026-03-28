@@ -123,6 +123,7 @@ function getSourceUrl(p: { source_url?: string; source_site: string; site_produc
   if (site === 'KREAM') return `https://kream.co.kr/products/${p.site_product_id}`
   if (site === 'NIKE') return p.video_url || `https://www.nike.com/kr/w?q=${p.site_product_id}`
   if (site === 'FASHIONPLUS') return `https://www.fashionplus.co.kr/goods/detail/${p.site_product_id}`
+  if (site === 'LOTTEON') return `https://www.lotteon.com/p/product/${p.site_product_id}`
   return ''
 }
 
