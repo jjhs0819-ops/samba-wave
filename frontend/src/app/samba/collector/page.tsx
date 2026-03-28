@@ -80,6 +80,54 @@ function fmtDate(iso: string | undefined | null): string {
   return `${y}.${m}.${day} ${h}:${min}`;
 }
 
+// 매핑 모달 — 마켓별 카테고리 입력 + 자동완성
+function MappingMarketRow({ account, value, onChange, onClear }: { account: SambaMarketAccount; value: string; onChange: (v: string) => void; onClear: () => void }) {
+  const [suggestions, setSuggestions] = useState<string[]>([])
+  const [showSugg, setShowSugg] = useState(false)
+  return (
+    <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }}>
+      <span style={{ fontSize: '0.8rem', color: '#888', minWidth: '100px' }}>{account.market_name}</span>
+      <div style={{ flex: 1, position: 'relative' }}>
+        <input
+          type="text"
+          value={value}
+          onChange={async e => {
+            const val = e.target.value
+            onChange(val)
+            if (val.length >= 2) {
+              try {
+                const res = await categoryApi.suggest(val, account.market_type)
+                setSuggestions(Array.isArray(res) ? res.slice(0, 8) : [])
+                setShowSugg(true)
+              } catch { setSuggestions([]) }
+            } else { setSuggestions([]); setShowSugg(false) }
+          }}
+          onFocus={() => { if (suggestions.length > 0) setShowSugg(true) }}
+          onBlur={() => setTimeout(() => setShowSugg(false), 200)}
+          placeholder="카테고리 검색 (2자 이상 입력)"
+          style={{ width: '100%', fontSize: '0.78rem', padding: '5px 10px', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', outline: 'none' }}
+        />
+        {showSugg && suggestions.length > 0 && (
+          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10, background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', maxHeight: '200px', overflowY: 'auto', marginTop: '2px' }}>
+            {suggestions.map((s, i) => (
+              <div key={i}
+                onMouseDown={() => { onChange(s); setShowSugg(false) }}
+                style={{ padding: '6px 10px', fontSize: '0.72rem', color: '#C5C5C5', cursor: 'pointer', borderBottom: i < suggestions.length - 1 ? '1px solid #2D2D2D' : 'none' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,140,0,0.1)' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+              >{s}</div>
+            ))}
+          </div>
+        )}
+      </div>
+      {value && (
+        <button onClick={onClear}
+          style={{ color: '#666', cursor: 'pointer', background: 'none', border: 'none', fontSize: '1rem' }}>&times;</button>
+      )}
+    </div>
+  )
+}
+
 export default function CollectorPage() {
   const router = useRouter();
   const [filters, setFilters] = useState<SambaSearchFilter[]>([]);
@@ -97,6 +145,57 @@ export default function CollectorPage() {
     excludeBoutique: true,
     maxDiscount: true,
   });
+
+  // 소싱 모드 탭
+  const [sourcingMode, setSourcingMode] = useState<'keyword' | 'brand'>('keyword')
+
+  // 브랜드 소싱
+  const [brandCode, setBrandCode] = useState('')
+  const [brandName, setBrandName] = useState('')
+  const [brandGf, setBrandGf] = useState('A')
+  const [brandScanning, setBrandScanning] = useState(false)
+  const [brandCategories, setBrandCategories] = useState<{ categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]>([])
+  const [brandSelectedCats, setBrandSelectedCats] = useState<Set<string>>(new Set())
+  const [brandTotal, setBrandTotal] = useState(0)
+  const [brandCountPerGroup, setBrandCountPerGroup] = useState(100)
+
+  const handleBrandScan = async () => {
+    if (!brandCode.trim()) { showAlert('브랜드 코드를 입력하세요'); return }
+    setBrandScanning(true)
+    setBrandCategories([])
+    setBrandSelectedCats(new Set())
+    try {
+      const res = await collectorApi.brandScan(brandCode.trim(), brandGf, brandName.trim())
+      setBrandCategories(res.categories)
+      setBrandTotal(res.total)
+      setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
+      addLog(`[브랜드스캔] ${brandName || brandCode}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '스캔 실패', 'error')
+    }
+    setBrandScanning(false)
+  }
+
+  const handleBrandCreateGroups = async () => {
+    const selected = brandCategories.filter(c => brandSelectedCats.has(c.categoryCode))
+    if (selected.length === 0) { showAlert('카테고리를 선택하세요'); return }
+    try {
+      const res = await collectorApi.brandCreateGroups({
+        brand: brandCode.trim(),
+        brand_name: brandName.trim(),
+        gf: brandGf,
+        categories: selected,
+        requested_count_per_group: brandCountPerGroup,
+        applied_policy_id: undefined,
+        options: checkedOptions,
+      })
+      addLog(`[브랜드소싱] ${res.created}개 그룹 생성 완료`)
+      showAlert(`${res.created}개 그룹이 생성되었습니다`, 'success')
+      load()
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '그룹 생성 실패', 'error')
+    }
+  }
 
   // 일괄 갱신
   const [refreshing, setRefreshing] = useState(false)
@@ -201,7 +300,7 @@ export default function CollectorPage() {
   useEffect(() => { load(); loadTree(); }, [load, loadTree]);
   useEffect(() => {
     proxyApi.listPresets().then(res => { if (res.success) setAiPresetList(res.presets) }).catch(() => {})
-    accountApi.listActive().then(setAccounts).catch(() => {})
+    accountApi.list().then(setAccounts).catch(() => {})
   }, [])
   useEffect(() => {
     if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
@@ -1456,21 +1555,8 @@ export default function CollectorPage() {
               >{mappingLoading ? 'AI 분석중...' : 'AI 매핑'}</button>
             </div>
 
-            {accounts.filter(a => a.is_active).map(a => (
-              <div key={a.id} style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '0.8rem', color: '#888', minWidth: '100px' }}>{a.market_name}</span>
-                <input
-                  type="text"
-                  value={mappingData[a.market_type] || ''}
-                  onChange={e => setMappingData(prev => ({ ...prev, [a.market_type]: e.target.value }))}
-                  placeholder="카테고리 경로 입력"
-                  style={{ flex: 1, fontSize: '0.78rem', padding: '5px 10px', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', outline: 'none' }}
-                />
-                {mappingData[a.market_type] && (
-                  <button onClick={() => setMappingData(prev => { const n = { ...prev }; delete n[a.market_type]; return n })}
-                    style={{ color: '#666', cursor: 'pointer', background: 'none', border: 'none', fontSize: '1rem' }}>&times;</button>
-                )}
-              </div>
+            {accounts.map(a => (
+              <MappingMarketRow key={a.id} account={a} value={mappingData[a.market_type] || ''} onChange={val => setMappingData(prev => ({ ...prev, [a.market_type]: val }))} onClear={() => setMappingData(prev => { const n = { ...prev }; delete n[a.market_type]; return n })} />
             ))}
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
