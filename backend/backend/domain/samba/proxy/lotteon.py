@@ -1019,12 +1019,16 @@ class LotteonClient:
           body={
             "srchStrtDt": srch_strt,
             "srchEndDt": srch_end,
-            "lrtrNo": self.tr_no or "",
-            "ifCplYN": "N",
           },
         )
-        items = (data.get("data") or {}).get("deliveryOrderList") or []
-        if isinstance(items, list):
+        inner = data.get("data") or {}
+        items = inner.get("deliveryOrderList") or []
+        logger.info(
+          f"[롯데ON][주문] {srch_strt}~{srch_end} "
+          f"deliveryOrderList={len(items) if isinstance(items, list) else repr(items)}"
+        )
+        if isinstance(items, list) and items:
+          logger.info(f"[롯데ON][주문] 샘플: {str(items[0])[:200]}")
           result.extend(items)
       except Exception as e:
         logger.warning(f"[롯데ON] 주문 조회 실패 ({srch_strt}~{srch_end}): {e}")
@@ -1041,6 +1045,43 @@ class LotteonClient:
       return True
     except Exception as e:
       logger.warning(f"[롯데ON] 발주 확인 실패: {e}")
+      return False
+
+  # 택배사 한글명 → 롯데ON dlvCpnCd 매핑
+  DELIVERY_COMPANY_MAP: dict[str, str] = {
+    "CJ대한통운": "04",
+    "한진택배": "05",
+    "롯데택배": "41",
+    "로젠택배": "06",
+    "우체국택배": "01",
+    "경동택배": "23",
+    "대신택배": "22",
+    "일양로지스": "11",
+    "편의점택배": "GS",
+    "DHL": "DHL",
+  }
+
+  async def ship_order(self, sitm_no: str, shipping_company: str, tracking_number: str) -> bool:
+    """송장번호 등록 (SellerDeliveryInvoiceUpdate)."""
+    dlv_cpn_cd = self.DELIVERY_COMPANY_MAP.get(shipping_company, shipping_company)
+    try:
+      await self._call_api(
+        "POST",
+        "/v1/openapi/delivery/v1/SellerDeliveryInvoiceUpdate",
+        body={
+          "deliveryList": [
+            {
+              "sitmNo": sitm_no,
+              "dlvCpnCd": dlv_cpn_cd,
+              "invoiceNo": tracking_number,
+            }
+          ]
+        },
+      )
+      logger.info(f"[롯데ON] 송장 등록 완료: sitmNo={sitm_no} dlvCpnCd={dlv_cpn_cd} invoiceNo={tracking_number}")
+      return True
+    except Exception as e:
+      logger.warning(f"[롯데ON] 송장 등록 실패: sitmNo={sitm_no} / {e}")
       return False
 
   # ------------------------------------------------------------------

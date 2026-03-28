@@ -504,7 +504,29 @@ async def ship_order(
             account_repo = SambaMarketAccountRepository(session)
             account = await account_repo.get_async(order.channel_id)
 
-            if account and account.market_type == "smartstore":
+            if account and account.market_type == "lotteon":
+                from backend.domain.samba.proxy.lotteon import LotteonClient
+                import json
+                from sqlmodel import select
+                from backend.domain.samba.forbidden.model import SambaSettings
+
+                config_result = await session.execute(
+                    select(SambaSettings).where(SambaSettings.key.like("store_lotteon%"))
+                )
+                lo_settings = config_result.scalars().first()
+                if lo_settings:
+                    config = json.loads(lo_settings.value) if isinstance(lo_settings.value, str) else lo_settings.value
+                    client = LotteonClient(config["apiKey"])
+                    sitm_no = order.shipment_id or order.order_number
+                    sent = await client.ship_order(sitm_no, body.shipping_company, body.tracking_number)
+                    if sent:
+                        market_sent = True
+                        market_msg = "롯데ON 송장 등록 완료"
+                        await svc.update_order(order_id, {"shipping_status": "송장전송완료"})
+                    else:
+                        market_msg = "롯데ON 송장 등록 실패 (로그 확인)"
+
+            elif account and account.market_type == "smartstore":
                 import json
                 from sqlmodel import select
                 from backend.domain.samba.forbidden.model import SambaSettings
