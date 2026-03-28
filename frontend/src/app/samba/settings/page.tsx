@@ -214,6 +214,15 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
+    { name: '_divider_point', label: '포인트', type: 'divider' },
+    { name: 'purchasePointEnabled', label: '상품 구매 시 지급', type: 'checkbox' },
+    { name: 'purchasePointRate', label: '구매 적립률 (%)', type: 'number', placeholder: '1' },
+    { name: '_divider_review', label: '상품리뷰 작성시 지급', type: 'divider' },
+    { name: 'reviewPointEnabled', label: '리뷰 포인트 지급', type: 'checkbox' },
+    { name: 'reviewTextPoint', label: '텍스트 리뷰 작성', type: 'number', placeholder: '원' },
+    { name: 'reviewPhotoPoint', label: '포토/동영상 리뷰 작성', type: 'number', placeholder: '원' },
+    { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
+    { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
   ]},
   { key: '11st', label: '11번가', authField: 'apiKey', guideUrl: 'https://openapi.11st.co.kr/openapi/OpenApiServiceRegister.tmall', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
@@ -1282,6 +1291,26 @@ export default function SettingsPage() {
     setAiFeatures(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
+  // Gemini API 테스트
+  const testGeminiApi = async () => {
+    if (!geminiApiKey) { showAlert('API Key를 먼저 입력해주세요', 'error'); return }
+    setGeminiStatus('API 연결 확인 중...')
+    try {
+      await forbiddenApi.saveSetting('gemini', { apiKey: geminiApiKey, model: geminiModel, updatedAt: new Date().toISOString() })
+      const result = await proxyApi.geminiTest()
+      if (result.success) {
+        setGeminiStatus(`✓ ${result.message}`)
+        showAlert(result.message, 'success')
+      } else {
+        setGeminiStatus(`✗ ${result.message}`)
+        showAlert(result.message, 'error')
+      }
+    } catch (e) {
+      setGeminiStatus('연결 실패')
+      showAlert(`Gemini API 연결 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+    }
+  }
+
   // Gemini AI 저장 (모델컷 생성 전용)
   const saveGeminiSettings = async () => {
     if (!geminiApiKey) { showAlert('API Key를 입력해주세요', 'error'); return }
@@ -1881,6 +1910,7 @@ export default function SettingsPage() {
               <input type={visiblePasswords.has('gemini_apiKey') ? 'text' : 'password'} style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)} placeholder='AIzaSy...' />
               <button type="button" onClick={() => setVisiblePasswords(prev => { const n = new Set(prev); n.has('gemini_apiKey') ? n.delete('gemini_apiKey') : n.add('gemini_apiKey'); return n })} style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer', whiteSpace: 'nowrap' }}>{visiblePasswords.has('gemini_apiKey') ? '숨김' : '보기'}</button>
             </div>
+            <button onClick={testGeminiApi} style={{ background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.35)', color: '#4285F4', padding: '0.35rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>연결 테스트</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: '#888', minWidth: '100px', fontSize: '0.875rem' }}>모델</label>

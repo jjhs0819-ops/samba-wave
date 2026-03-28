@@ -648,6 +648,9 @@ export const proxyApi = {
   claudeTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/claude/test`, { method: 'POST' }),
+  geminiTest: () =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/gemini/test`, { method: 'POST' }),
   r2Test: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/r2/test`, { method: 'POST' }),

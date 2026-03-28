@@ -732,6 +732,40 @@ async def claude_api_test(
         return {"success": False, "message": f"API 호출 실패: {exc}"}
 
 
+@router.post("/gemini/test")
+async def gemini_api_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """Gemini API 키 유효성 검증."""
+    creds = await _get_setting(session, "gemini")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "Gemini API 설정이 저장되지 않았습니다."}
+
+    api_key = creds.get("apiKey", "")
+    model = creds.get("model", "gemini-2.5-flash-preview-05-20")
+    if not api_key:
+        return {"success": False, "message": "API Key가 비어있습니다."}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
+                json={
+                    "contents": [{"parts": [{"text": "hi"}]}],
+                    "generationConfig": {"maxOutputTokens": 5},
+                },
+            )
+            if resp.status_code == 200:
+                return {"success": True, "message": f"인증 성공 (모델: {model})"}
+            else:
+                err = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                err_msg = err.get("error", {}).get("message", "") if isinstance(err.get("error"), dict) else str(err.get("error", ""))
+                return {"success": False, "message": err_msg or f"HTTP {resp.status_code}"}
+    except Exception as exc:
+        logger.error(f"[Gemini] API 테스트 실패: {exc}")
+        return {"success": False, "message": f"API 호출 실패: {exc}"}
+
+
 
 
 @router.post("/r2/test")
