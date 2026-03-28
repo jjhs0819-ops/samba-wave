@@ -881,7 +881,7 @@ export default function OrdersPage() {
                           const val = e.target.value.trim()
                           if (val === (o.coupang_display_name ?? '')) return
                           try {
-                            await orderApi.update(o.id, { coupang_display_name: val || null })
+                            await orderApi.update(o.id, { coupang_display_name: val || undefined })
                             loadOrders()
                           } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
                         }}
