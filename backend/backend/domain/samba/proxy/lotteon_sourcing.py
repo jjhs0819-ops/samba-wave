@@ -135,6 +135,12 @@ class LotteonSourcingClient:
     Raises:
       RateLimitError: 429/403 응답 시
     """
+    # URL이 keyword로 전달된 경우 q= 파라미터 추출 (collect_by_filter 호환)
+    if keyword.startswith("http") and "lotteon.com" in keyword:
+      from urllib.parse import urlparse as _up, parse_qs as _pq
+      _qs = _pq(_up(keyword).query)
+      keyword = _qs.get("q", [keyword])[0]
+
     search_url = (
       f"{self.SEARCH_URL}?render=search&platform=pc"
       f"&q={quote(keyword)}&page={page}&size={min(size, 60)}"
