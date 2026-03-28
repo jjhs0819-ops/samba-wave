@@ -917,8 +917,7 @@ class LotteonClient:
       ],
       "cnclPsbYn": "Y",
       "dmstOvsDvDvsCd": "DMST",
-      # 수입구분: 공식수입(직수입) — API 확인된 코드 DRC_IMP
-      "impDvsCd": "DRC_IMP",
+      # impDvsCd 생략 — 직수입(DRC_IMP)/병행수입(PRLL_IMP) 모두 API에서 거부됨
       "dvProcTypCd": "LO_ENTP",
       "dvPdTypCd": "GNRL",
       "sndBgtNday": 2,
@@ -981,6 +980,146 @@ class LotteonClient:
     # - soapi updateProduct → 403 (API key 권한 없음, 브라우저 세션 전용)
     # 롯데ON 어드민에서 수동 설정 필요
     return {"spdLst": [spd]}
+
+  # ------------------------------------------------------------------
+  # 날짜 범위 helper
+  # ------------------------------------------------------------------
+
+  def _datetime_range(self, days: int) -> tuple[str, str]:
+    """최근 N일 범위를 yyyymmddHHmmss 형식으로 반환 (최대 30일)."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=min(days, 30))
+    fmt = "%Y%m%d%H%M%S"
+    return start.strftime(fmt), now.strftime(fmt)
+
+  # ------------------------------------------------------------------
+  # 주문 조회
+  # ------------------------------------------------------------------
+
+  async def get_orders(self, days: int = 7) -> list[dict]:
+    """최근 N일 배송 주문 조회 (SellerDeliveryOrdersSearch).
+
+    API 제약: 조회 기간 1일 초과 불가 → 하루씩 반복 조회.
+    """
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    actual_days = min(days, 30)
+    result = []
+    for i in range(actual_days):
+      # 하루 단위로 역순 조회 (최신 → 과거)
+      day_end = now - timedelta(days=i)
+      day_start = day_end - timedelta(days=1)
+      srch_strt = day_start.strftime("%Y%m%d%H%M%S")
+      srch_end = day_end.strftime("%Y%m%d%H%M%S")
+      try:
+        data = await self._call_api(
+          "POST",
+          "/v1/openapi/delivery/v1/SellerDeliveryOrdersSearch",
+          body={
+            "srchStrtDt": srch_strt,
+            "srchEndDt": srch_end,
+            "lrtrNo": self.tr_no or "",
+            "ifCplYN": "N",
+          },
+        )
+        items = (data.get("data") or {}).get("deliveryOrderList") or []
+        if isinstance(items, list):
+          result.extend(items)
+      except Exception as e:
+        logger.warning(f"[롯데ON] 주문 조회 실패 ({srch_strt}~{srch_end}): {e}")
+    return result
+
+  async def confirm_orders(self, order_items: list[dict]) -> bool:
+    """발주 확인 처리 (SellerDeliveryProgressStateInform)."""
+    try:
+      await self._call_api(
+        "POST",
+        "/v1/openapi/delivery/v1/SellerDeliveryProgressStateInform",
+        body={"orderItems": order_items},
+      )
+      return True
+    except Exception as e:
+      logger.warning(f"[롯데ON] 발주 확인 실패: {e}")
+      return False
+
+  # ------------------------------------------------------------------
+  # 취소/반품 클레임 조회
+  # ------------------------------------------------------------------
+
+  async def get_cancel_orders(self, days: int = 7) -> list[dict]:
+    """최근 N일 취소 클레임 조회 (getCancellationRequestAndComplateList, clmTpCd=CCNL).
+
+    응답: data[].itemList[] 중첩 구조 → odNo/clmNo 포함 flat list로 변환.
+    """
+    start_dt, end_dt = self._datetime_range(days)
+    data = await self._call_api(
+      "POST",
+      "/v1/openapi/claim/v1/cancellationOpenApi/getCancellationRequestAndComplateList",
+      body={
+        "srchStrtDttm": start_dt,
+        "srchEndDttm": end_dt,
+        "clmTpCd": "CCNL",
+      },
+    )
+    raw_list = data.get("data") or []
+    if not isinstance(raw_list, list):
+      raw_list = []
+    result = []
+    for claim in raw_list:
+      od_no = claim.get("odNo", "")
+      clm_no = claim.get("clmNo", "")
+      step_cd = claim.get("odPrgsStepCd", "")
+      logger.debug(
+        f"[롯데ON][취소] odNo={od_no} clmNo={clm_no} stepCd={step_cd} "
+        f"clmRsnCd={claim.get('clmRsnCd','')} itemCount={len(claim.get('itemList') or [])}"
+      )
+      for item in (claim.get("itemList") or []):
+        item["odNo"] = od_no
+        item["clmNo"] = clm_no
+        logger.debug(
+          f"  └ sitmNo={item.get('sitmNo','')} spdNm={item.get('spdNm','')[:30]} "
+          f"cnclQty={item.get('cnclQty','')} stepCd={item.get('odPrgsStepCd','')}"
+        )
+        result.append(item)
+    return result
+
+  async def get_returns(self, days: int = 7) -> list[dict]:
+    """최근 N일 반품 클레임 조회 (getCancellationRequestAndComplateList, clmTpCd=RETN).
+
+    응답: data[].itemList[] 중첩 구조 → odNo/clmNo 포함 flat list로 변환.
+    """
+    start_dt, end_dt = self._datetime_range(days)
+    data = await self._call_api(
+      "POST",
+      "/v1/openapi/claim/v1/cancellationOpenApi/getCancellationRequestAndComplateList",
+      body={
+        "srchStrtDttm": start_dt,
+        "srchEndDttm": end_dt,
+        "clmTpCd": "RETN",
+      },
+    )
+    raw_list = data.get("data") or []
+    if not isinstance(raw_list, list):
+      raw_list = []
+    result = []
+    for claim in raw_list:
+      od_no = claim.get("odNo", "")
+      clm_no = claim.get("clmNo", "")
+      for item in (claim.get("itemList") or []):
+        item["odNo"] = od_no
+        item["clmNo"] = clm_no
+        result.append(item)
+    return result
+
+  async def approve_return(self, order_no: str) -> bool:
+    """반품 승인 처리."""
+    try:
+      await self._call_api("PUT", f"/api/order/{order_no}/return/approve")
+      return True
+    except Exception as e:
+      logger.warning(f"[롯데ON] 반품 승인 실패: {e}")
+      return False
 
 
 class LotteonApiError(Exception):

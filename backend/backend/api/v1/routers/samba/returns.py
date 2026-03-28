@@ -305,6 +305,44 @@ def _extract_city_district(address: Optional[str]) -> Optional[str]:
     return parts[0] if parts else None
 
 
+def _parse_lotteon_return(
+  item: dict[str, Any],
+  return_type: str,  # "return" | "cancel"
+) -> dict[str, Any]:
+  """롯데ON 반품/취소 데이터 → SambaReturn dict 변환.
+
+  item: getCancellationRequestAndComplateList API의 itemList 단일 항목
+        (odNo, clmNo가 상위 claim에서 주입된 상태)
+  """
+  step_cd = str(item.get("odPrgsStepCd", "") or "")
+  if step_cd == "21":
+    status = "done"
+  elif step_cd == "22":
+    status = "rejected"
+  else:
+    status = "requested"
+
+  qty_raw = item.get("cnclQty") or item.get("odQty") or 1
+  try:
+    qty = int(qty_raw)
+  except (ValueError, TypeError):
+    qty = 1
+
+  return {
+    "source": "lotteon",
+    "order_number": item.get("odNo", ""),
+    "shipment_id": item.get("clmNo", ""),
+    "ord_dtl_sn": str(item.get("odSeq", "") or item.get("procSeq", "")),
+    "return_type": return_type,
+    "reason_code": item.get("clmRsnCd", ""),
+    "reason": item.get("clmRsnNm", "") or item.get("clmRsnCd", ""),
+    "quantity": qty,
+    "product_name": item.get("spdNm", "") or item.get("sitmNm", ""),
+    "product_id": item.get("spdNo", "") or item.get("sitmNo", ""),
+    "status": status,
+  }
+
+
 class SyncReturnsRequest(BaseModel):
     days: int = 7
     account_id: Optional[str] = None
@@ -514,6 +552,81 @@ async def sync_returns_from_markets(
                     "synced": synced,
                 })
                 logger.info(f"[반품동기화] {label}: 클레임 {len(claims_data)}건 조회, {synced}건 신규 저장")
+
+            elif market_type == "lotteon":
+                from backend.domain.samba.proxy.lotteon import LotteonApiError, LotteonClient
+
+                api_key = account.api_key or extras.get("apiKey", "")
+                if not api_key:
+                    results.append({"account": label, "status": "skip", "message": "API 키 없음"})
+                    continue
+
+                client = LotteonClient(api_key=api_key)
+                await client.test_auth()
+
+                raw_cancels = await client.get_cancel_orders(days=body.days)
+                raw_returns = await client.get_returns(days=body.days)
+
+                # 반품 건만 반품교환 화면에 저장 (취소 건은 주문 내역에서 처리)
+                claims_data_lo: list[dict[str, Any]] = []
+                for item in raw_returns:
+                    parsed = _parse_lotteon_return(item, "return")
+                    parsed["sitmNo"] = item.get("sitmNo", "")
+                    claims_data_lo.append(parsed)
+
+                synced = 0
+                for claim in claims_data_lo:
+                    order_number = claim["order_number"]
+                    if not order_number:
+                        continue
+                    existing_order = await order_repo.find_by_async(order_number=order_number)
+                    if not existing_order:
+                        # sitmNo(상품주문번호)로 폴백 매칭
+                        sitmNo = claim.get("sitmNo", "")
+                        if sitmNo:
+                            existing_order = await order_repo.find_by_async(order_number=sitmNo)
+                    if not existing_order:
+                        logger.warning(f"[롯데ON] 반품 주문 미매칭: {order_number}")
+                        continue
+
+                    order_id = existing_order.id
+                    existing_returns = await svc.repo.filter_by_async(order_id=order_id)
+                    if existing_returns:
+                        continue
+
+                    from datetime import UTC, datetime
+                    return_data: dict[str, Any] = {
+                        "order_id": order_id,
+                        "order_number": order_number,
+                        "type": claim["return_type"],
+                        "reason": claim["reason"] or None,
+                        "quantity": claim["quantity"],
+                        "product_name": claim["product_name"] or (existing_order.product_name if existing_order else None),
+                        "customer_name": existing_order.customer_name if existing_order else None,
+                        "customer_phone": existing_order.customer_phone if existing_order else None,
+                        "product_location": _extract_city_district(existing_order.customer_address if existing_order else None),
+                        "customer_address": existing_order.customer_address if existing_order else None,
+                        "business_name": account.business_name or account.market_name or label,
+                        "market": "롯데ON",
+                        "status": claim["status"],
+                        "timeline": [{
+                            "date": datetime.now(UTC).isoformat(),
+                            "status": claim["status"],
+                            "message": f"{claim['return_type']} 요청 접수",
+                        }],
+                        "notes": [],
+                    }
+                    await svc.repo.create_async(**return_data)
+                    synced += 1
+
+                total_synced += synced
+                results.append({
+                    "account": label,
+                    "status": "success",
+                    "fetched": len(claims_data_lo),
+                    "synced": synced,
+                })
+                logger.info(f"[반품동기화][롯데ON] {label}: 반품 {len(raw_returns)}건, 취소 {len(raw_cancels)}건 조회, {synced}건 신규 저장")
 
             else:
                 results.append({"account": label, "status": "skip", "message": f"{market_type} 반품 조회 미지원"})

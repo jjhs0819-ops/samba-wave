@@ -701,6 +701,30 @@ async def sync_orders_from_markets(
                 # 11번가 주문 조회 (구현 대기)
                 results.append({"account": label, "status": "skip", "message": "11번가 주문 조회 미구현"})
                 continue
+            elif market_type == "lotteon":
+                from backend.domain.samba.proxy.lotteon import LotteonClient
+                api_key = account.api_key or extras.get("apiKey", "")
+                if not api_key:
+                    results.append({"account": label, "status": "skip", "message": "API 키 없음"})
+                    continue
+                client = LotteonClient(api_key=api_key)
+                await client.test_auth()
+                raw_orders = await client.get_orders(days=body.days)
+                for item in raw_orders:
+                    orders_data.append(_parse_lotteon_order(item, account.id, label))
+                # 발주확인 대기 건 자동 발주확인
+                unconfirmed = [
+                    {"odNo": item.get("odNo", ""), "sitmNo": item.get("sitmNo", "")}
+                    for item in raw_orders
+                    if str(item.get("odPrgsStepCd", "")) == "10"
+                ]
+                if unconfirmed:
+                    try:
+                        await client.confirm_orders(unconfirmed)
+                        logger.info(f"[주문동기화] {label}: {len(unconfirmed)}건 발주확인 완료")
+                    except Exception as ce:
+                        logger.warning(f"[주문동기화] {label}: 발주확인 실패 — {ce}")
+                logger.info(f"[롯데ON] 주문 조회 결과: {len(raw_orders)}건")
             else:
                 results.append({"account": label, "status": "skip", "message": f"{market_type} 주문 조회 미지원"})
                 continue
@@ -732,7 +756,7 @@ async def sync_orders_from_markets(
             # 미등록 입력 캐시: 동일 product_id+channel_name에 대해 수동 등록된 source_url/product_image 재활용
             _unreg_cache: dict[str, dict[str, str]] = {}
             _unreg_result = await session.execute(
-                sa_text(
+                _sa_text(
                     "SELECT product_id, channel_name, source_url, product_image "
                     "FROM samba_order WHERE source_url IS NOT NULL AND product_id IS NOT NULL"
                 )
@@ -939,4 +963,70 @@ def _parse_smartstore_order(
         "shipping_company": po.get("deliveryCompany", ""),
         "tracking_number": po.get("trackingNumber", ""),
         "source": "smartstore",
+    }
+
+
+def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
+    """롯데ON 주문 데이터 → SambaOrder dict 변환."""
+    from datetime import datetime, timezone
+
+    # 주문 진행 단계 코드 → 내부 status/shipping_status 매핑
+    step_cd = str(item.get("odPrgsStepCd", "") or "")
+    status_map = {
+        "10": "pending",    # 발주확인대기
+        "20": "pending",    # 발주확인
+        "30": "shipping",   # 배송중
+        "40": "delivered",  # 배송완료
+        "50": "confirmed",  # 구매확정
+        "90": "cancelled",  # 취소
+    }
+    shipping_map = {
+        "10": "발주확인대기",
+        "20": "출고지시",
+        "30": "배송중",
+        "40": "배송완료",
+        "50": "구매확정",
+        "90": "취소",
+    }
+    status = status_map.get(step_cd, "pending")
+    shipping_status = shipping_map.get(step_cd, "출고지시")
+
+    # 주문 생성일 파싱 (yyyymmddHHmmss)
+    created_str = item.get("odDttm", "") or ""
+    created_at = None
+    if created_str:
+        try:
+            created_at = datetime.strptime(created_str[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            try:
+                created_at = datetime.strptime(created_str[:8], "%Y%m%d").replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+    if not created_at:
+        created_at = datetime.now(timezone.utc)
+
+    # 배송지 주소 조합
+    addr1 = item.get("dvpAddr1", "") or ""
+    addr2 = item.get("dvpAddr2", "") or ""
+    full_addr = f"{addr1} {addr2}".strip()
+
+    return {
+        "channel_id": account_id,
+        "channel_name": label,
+        "source": "lotteon",
+        "order_number": str(item.get("odNo", "")),
+        "shipment_id": str(item.get("sitmNo", "") or ""),
+        "product_id": str(item.get("spdNo", "") or ""),
+        "product_name": item.get("spdNm", "") or "",
+        "product_option": item.get("sitmNm", "") or "",
+        "quantity": int(item.get("odQty", 1) or 1),
+        "sale_price": int(item.get("slAmt", 0) or item.get("slPrc", 0) or 0),
+        "cost": 0,
+        "status": status,
+        "shipping_status": shipping_status,
+        "customer_name": item.get("dvpCustNm", "") or item.get("odrNm", "") or "",
+        "customer_phone": item.get("dvpMphnNo", "") or item.get("dvpTelNo", "") or item.get("mphnNo", "") or "",
+        "customer_address": full_addr,
+        "notes": item.get("dvMsg", "") or "",
+        "created_at": created_at,
     }
