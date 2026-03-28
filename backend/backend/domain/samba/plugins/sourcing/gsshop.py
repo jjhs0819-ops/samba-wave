@@ -31,15 +31,13 @@ class GsShopSourcingPlugin(SourcingPlugin):
     request_interval = 1.0
 
     async def search(self, keyword: str, **filters) -> list[dict]:
-        """GS샵 키워드 검색."""
+        """GS샵 키워드 검색 — GsShopSourcingClient 경유 (올바른 URL 사용)."""
         from backend.domain.samba.proxy.gsshop_sourcing import GsShopSourcingClient
 
-        client = GsShopSourcingClient()
-        page = filters.get("page", 1)
         size = filters.get("size", 40)
-        return await self.safe_call(
-            client.search_products(keyword, page=page, size=size, **filters)
-        )
+        url = filters.get("url", "")  # 그룹 link URL
+        client = GsShopSourcingClient()
+        return await client.search_products(keyword, size=size, url=url)
 
     async def get_detail(self, site_product_id: str) -> dict:
         """GS샵 상품 상세 조회."""

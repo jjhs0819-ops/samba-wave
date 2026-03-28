@@ -8,7 +8,7 @@ GS샵 사이트 정보:
   - 모바일 상세: https://m.gsshop.com/prd/prd.gs?prdid={상품번호}
   - 이미지 CDN: asset.m-gs.kr, static.m-gs.kr
   - 데이터 소스: 모바일 상세 페이지의 `var renderJson = {...}` 인라인 JSON
-  - 검색: GS샵은 검색 URL을 서버단에서 차단(405) → PC 메인 페이지 entryData 활용
+  - 검색: GS샵은 검색 URL을 서버단에서 차단(405) → 확장앱 큐(SourcingQueue) 위임
 
 파싱 전략 우선순위:
   1. renderJson (모바일 상세) - 가격, 옵션, 이미지, 카테고리, 배송 전부 포함
@@ -18,8 +18,10 @@ GS샵 사이트 정보:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 import httpx
@@ -43,6 +45,8 @@ class GsShopSourcingClient:
   상품 정보를 추출한다. TV홈쇼핑 기반이므로 보수적 간격으로 요청한다.
   """
 
+  # sourcing_queue.py의 SITE_SEARCH_URLS["GSShop"]이 잘못된 URL이므로 여기서 올바른 URL 사용
+  SEARCH_URL = "https://www.gsshop.com/shop/search/main.gs?tq={keyword}"
   BASE_PC = "https://www.gsshop.com"
   BASE_MOBILE = "https://m.gsshop.com"
   PRODUCT_URL = "https://m.gsshop.com/prd/prd.gs"
@@ -100,13 +104,14 @@ class GsShopSourcingClient:
     keyword: str,
     page: int = 1,
     size: int = 40,
+    url: str = "",
     **filters: Any,
   ) -> list[dict[str, Any]]:
-    """GS샵 상품 검색.
+    """GS샵 상품 검색 — 확장앱 큐 위임 방식.
 
     GS샵은 검색 URL을 서버단에서 차단(405)하므로,
-    PC 메인 페이지의 entryData JSON에서 상품 목록을 추출한다.
-    키워드 매칭은 클라이언트 사이드에서 필터링한다.
+    확장앱 SourcingQueue를 통해 브라우저에서 검색 페이지를 열고
+    DOM 파싱 결과를 받아온다.
 
     Args:
       keyword: 검색 키워드
@@ -115,40 +120,38 @@ class GsShopSourcingClient:
 
     Returns:
       표준 상품 dict 리스트
-
-    Raises:
-      RateLimitError: 429/403 응답 시
     """
-    logger.info(f'[GSSHOP] 검색 시작: "{keyword}"')
+    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+    logger.info(f'[GSSHOP] 검색 시작 (확장앱 큐): "{keyword}"')
 
     try:
-      async with httpx.AsyncClient(
-        timeout=self._timeout, follow_redirects=True
-      ) as client:
-        resp = await client.get(
-          self.MAIN_URL,
-          headers=self._headers(mobile=False),
-        )
+      # SourcingQueue.add_search_job() 대신 직접 큐 등록 (올바른 검색 URL 사용)
+      request_id = str(uuid.uuid4())[:8]
+      # url이 전달되면 그대로 사용, 없으면 keyword로 생성
+      if not url:
+        url = self.SEARCH_URL.replace("{keyword}", keyword)
+      loop = asyncio.get_event_loop()
+      future: asyncio.Future = loop.create_future()
+      SourcingQueue.queue.append({
+        "requestId": request_id,
+        "site": "GSShop",
+        "type": "search",
+        "url": url,
+        "keyword": keyword,
+      })
+      SourcingQueue.resolvers[request_id] = future
+      logger.info(f"[GSSHOP] 큐 등록 완료: {request_id} → {url}")
 
-        if resp.status_code in (429, 403):
-          retry_after = int(resp.headers.get("Retry-After", "60"))
-          logger.warning(f"[GSSHOP] 차단 감지 HTTP {resp.status_code}")
-          raise RateLimitError(resp.status_code, retry_after)
+      # 확장앱 결과 대기 (최대 60초)
+      result = await asyncio.wait_for(future, timeout=60)
 
-        if resp.status_code != 200:
-          logger.warning(f"[GSSHOP] 메인 페이지 HTTP {resp.status_code}")
-          return []
-
-        html = resp.text
-
-      products = self._parse_main_products(html, keyword, size)
+      products = result.get("products", []) if isinstance(result, dict) else []
       logger.info(f'[GSSHOP] 검색 완료: "{keyword}" -> {len(products)}개')
-      return products
+      return products[:size]
 
-    except RateLimitError:
-      raise
-    except httpx.TimeoutException:
-      logger.error(f"[GSSHOP] 검색 타임아웃: {keyword}")
+    except asyncio.TimeoutError:
+      logger.warning(f'[GSSHOP] 검색 타임아웃 (60초): "{keyword}"')
       return []
     except Exception as e:
       logger.error(f"[GSSHOP] 검색 실패: {keyword} — {e}")

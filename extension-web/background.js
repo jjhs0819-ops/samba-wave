@@ -1132,7 +1132,7 @@ async function handleSourcingJob(job) {
 
     let result = null
     if (job.type === 'search') {
-      result = await extractSearchResults(tabId, job.site)
+      result = await extractSearchResults(tabId, job.site, job.maxCount || 999)
     } else if (job.type === 'detail') {
       result = await extractDetailData(tabId, job.site, job.productId)
     }
@@ -1151,11 +1151,11 @@ async function handleSourcingJob(job) {
 }
 
 // 검색 결과 DOM 파싱 — 범용 상품 카드 추출
-async function extractSearchResults(tabId, site) {
+async function extractSearchResults(tabId, site, maxCount = 999) {
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: (siteName) => {
+    func: (siteName, maxItems) => {
       const products = []
       const seen = new Set()
 
@@ -1165,7 +1165,7 @@ async function extractSearchResults(tabId, site) {
         'GrandStage': /\/product\?prdtNo=(\d+)/,
         'OKmall': /\/products\/detail\/(\d+)/,
         'LOTTEON': /\/product\/productDetail[^"]*spdNo=(\d+)/,
-        'GSShop': /\/prd\/prd\.gs\?prdid=(\d+)/,
+        'GSShop': /\/(?:prd\/prd\.gs\?prdid|deal\/deal\.gs\?dealNo)=(\d+)/,
         'ElandMall': /\/goods\/goods\.action\?goodsNo=(\d+)/,
         'SSF': /\/goods\/([A-Z0-9]+)/,
       }
@@ -1173,9 +1173,11 @@ async function extractSearchResults(tabId, site) {
       if (!pattern) return { success: false, products: [], total: 0 }
 
       // 모든 a 태그에서 상품 링크 찾기
-      document.querySelectorAll('a[href]').forEach(link => {
+      const allLinks = document.querySelectorAll('a[href]')
+      for (const link of allLinks) {
+        if (products.length >= maxItems) break  // 수량 제한
         const match = link.href.match(pattern)
-        if (!match || seen.has(match[1])) return
+        if (!match || seen.has(match[1])) continue
         seen.add(match[1])
 
         // 가장 가까운 상품 카드 컨테이너
@@ -1222,11 +1224,11 @@ async function extractSearchResults(tabId, site) {
             source_site: siteName,
           })
         }
-      })
+      }
 
       return { success: true, products, total: products.length }
     },
-    args: [site]
+    args: [site, maxCount]
   })
 
   return result?.result || { success: false, products: [], total: 0 }
