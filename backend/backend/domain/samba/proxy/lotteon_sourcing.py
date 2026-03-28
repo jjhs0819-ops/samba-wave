@@ -1318,22 +1318,28 @@ class LotteonSourcingClient:
     """HTML th-td 쌍에서 스펙 테이블 파싱 (제조사/원산지/소재 등)."""
     KEY_MAP: dict[str, str] = {
       "제조사": "manufacturer", "수입사": "manufacturer",
+      "제조자": "manufacturer", "제조자, 수입자": "manufacturer",
+      "수입자": "manufacturer",
       "제조국": "origin", "원산지": "origin",
       "소재": "material", "재질": "material",
       "성별": "sex", "시즌": "season",
       "색상": "color", "컬러": "color",
       "품번": "style_code", "모델번호": "style_code",
       "취급주의": "care_instructions", "세탁": "care_instructions",
+      "취급시 주의사항": "care_instructions",
     }
-    GARBAGE = {"상세설명참조", "상세페이지참조", "-", "없음", "해당없음", "n/a", "별도표기"}
+    GARBAGE = {
+      "상세설명참조", "상세페이지참조", "상품상세참조", "상품상세 참조",
+      "-", "없음", "해당없음", "n/a", "별도표기", "상세페이지 참조",
+    }
     result: dict[str, str] = {}
     for th, td in re.findall(
       r'<th[^>]*>(.*?)</th>\s*<td[^>]*>(.*?)</td>',
       html,
       re.DOTALL | re.IGNORECASE,
     ):
-      key = re.sub(r'<[^>]+>', '', th).strip()
-      val = re.sub(r'<[^>]+>', '', td).strip()
+      key = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', '', th)).strip()
+      val = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', '', td)).strip()
       if not key or not val:
         continue
       if val.lower() in GARBAGE:
