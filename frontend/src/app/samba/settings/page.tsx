@@ -1118,11 +1118,7 @@ export default function SettingsPage() {
         setGeminiModel(String(gm.model || 'gemini-2.5-flash-preview-05-20'))
         if (gm.apiKey) setGeminiStatus('저장됨')
       }
-      const fal = await forbiddenApi.getSetting('fal_ai').catch(() => null) as Record<string, unknown> | null
-      if (fal) {
-        setFalApiKey(String(fal.apiKey || ''))
-        if (fal.apiKey) setFalStatus('저장됨')
-      }
+      // fal_ai: 미사용 (추후 구현)
     } catch { /* ignore */ }
     try {
       const r2 = await forbiddenApi.getSetting('cloudflare_r2').catch(() => null) as Record<string, unknown> | null
