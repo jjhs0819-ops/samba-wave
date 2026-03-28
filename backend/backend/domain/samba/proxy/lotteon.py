@@ -957,8 +957,7 @@ class LotteonClient:
     spd["onnuriPyPsbYn"] = "N"
     # 임직원상품 여부: 기본 해당없음
     spd["empPrdYn"] = "N"
-    # 출시년월: 현재 연월(yyyyMM) 기본값
-    spd["rlsYm"] = now.strftime("%Y%m")
+    # 출시년월(rlsYm): 롯데ON Open API 미지원 필드 — 파트너센터에서 수동 입력 필요
     # 제품/포장 사이즈: pdSzInfo 하나의 객체에 모두 포함 (API 응답 확인)
     spd["pdSzInfo"] = {
       "pdWdthSz": 29,   # 제품 가로 (cm)
