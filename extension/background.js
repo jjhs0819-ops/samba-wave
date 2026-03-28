@@ -1196,6 +1196,44 @@ async function extractSearchResults(tabId, site) {
         // 가장 가까운 상품 카드 컨테이너
         const card = link.closest('[class*="product"]') || link.closest('[class*="item"]') || link.closest('li') || link
 
+        // GSShop 전용 파싱 (prd-name, price-info 등 고유 클래스 활용)
+        if (siteName === 'GSShop') {
+          const nameEl = card.querySelector('dt.prd-name') || card.querySelector('.prd-name')
+          const priceEl = card.querySelector('dd.price-info') || card.querySelector('.price-info')
+          const imgEl = card.querySelector('.prd-img img') || card.querySelector('img')
+
+          const name = nameEl?.textContent?.trim() || ''
+          let image = imgEl?.src || imgEl?.getAttribute('data-src') || imgEl?.getAttribute('data-original') || ''
+          if (image.startsWith('//')) image = 'https:' + image
+
+          let salePrice = 0
+          let originalPrice = 0
+          if (priceEl) {
+            const priceText = priceEl.textContent || ''
+            const nums = priceText.match(/[\d,]+/g)?.map(n => parseInt(n.replace(/,/g, ''))).filter(n => n > 100) || []
+            if (nums.length >= 2) {
+              salePrice = Math.min(...nums)
+              originalPrice = Math.max(...nums)
+            } else if (nums.length === 1) {
+              salePrice = nums[0]
+              originalPrice = nums[0]
+            }
+          }
+
+          if (name || salePrice > 0) {
+            products.push({
+              site_product_id: match[1],
+              name: name || `GSShop ${match[1]}`,
+              brand: '',
+              original_price: originalPrice,
+              sale_price: salePrice,
+              images: image ? [image] : [],
+              source_site: siteName,
+            })
+          }
+          continue
+        }
+
         // 이미지
         const imgEl = card.querySelector('img')
         let image = imgEl?.src || imgEl?.currentSrc || imgEl?.getAttribute('data-src') || imgEl?.getAttribute('data-lazy') || ''
