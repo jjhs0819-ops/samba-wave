@@ -674,7 +674,6 @@ async def sync_orders_from_markets(
                     raw_orders = await client.get_orders(days=body.days)
                     for item in raw_orders:
                         orders_data.append(_parse_lotteon_order(item, account.id, label))
-                    results.append({"account": label, "status": "ok", "count": len(raw_orders)})
                 except LotteonApiError as e:
                     logger.warning(f"[롯데ON] 주문 조회 실패: {e}")
                     results.append({"account": label, "status": "error", "message": str(e)})
