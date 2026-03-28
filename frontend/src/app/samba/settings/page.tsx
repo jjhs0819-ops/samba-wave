@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { accountApi, collectorApi, forbiddenApi, proxyApi, API_BASE, type SambaMarketAccount } from '@/lib/samba/api'
+import { accountApi, collectorApi, forbiddenApi, proxyApi, sourcingAccountApi, API_BASE, type SambaMarketAccount, type SambaSourcingAccount, type ChromeProfile } from '@/lib/samba/api'
 import { MARKET_SELECT_OPTIONS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum, parseNum } from '@/lib/samba/styles'
@@ -923,6 +923,16 @@ export default function SettingsPage() {
   const [r2PublicUrl, setR2PublicUrl] = useState('')
   const [r2Status, setR2Status] = useState('')
 
+  // 소싱처 계정 상태
+  const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
+  const [sourcingSites, setSourcingSites] = useState<{ id: string; name: string; group: string }[]>([])
+  const [chromeProfiles, setChromeProfiles] = useState<ChromeProfile[]>([])
+  const [sourcingTab, setSourcingTab] = useState('MUSINSA')
+  const [sourcingFormOpen, setSourcingFormOpen] = useState(false)
+  const [sourcingEditId, setSourcingEditId] = useState<string | null>(null)
+  const [sourcingForm, setSourcingForm] = useState({ site_name: 'MUSINSA', account_label: '', username: '', password: '', chrome_profile: '', memo: '' })
+  const [balanceLoading, setBalanceLoading] = useState<Record<string, boolean>>({})
+
   const loadAccounts = useCallback(async () => {
     setAccountLoading(true)
     try { setAccounts(await accountApi.list()) } catch { /* ignore */ }
@@ -1129,7 +1139,20 @@ export default function SettingsPage() {
     } catch { /* ignore */ }
   }, [])
 
-  useEffect(() => { loadAccounts() }, [loadAccounts])
+  const loadSourcingAccounts = useCallback(async () => {
+    try {
+      const [accounts, sites, profiles] = await Promise.all([
+        sourcingAccountApi.list(),
+        sourcingAccountApi.getSites(),
+        sourcingAccountApi.getChromeProfiles(),
+      ])
+      setSourcingAccounts(accounts)
+      setSourcingSites(sites)
+      setChromeProfiles(profiles)
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { loadAccounts(); loadSourcingAccounts() }, [loadAccounts, loadSourcingAccounts])
 
   const loadProbeStatus = useCallback(async () => {
     try {
@@ -1391,6 +1414,68 @@ export default function SettingsPage() {
     }
   }
 
+  // ── 소싱처 계정 핸들러 ──
+  const handleSourcingSave = async () => {
+    if (!sourcingForm.account_label || !sourcingForm.username || !sourcingForm.password) {
+      showAlert('별칭, 아이디, 비밀번호는 필수입니다', 'error')
+      return
+    }
+    try {
+      if (sourcingEditId) {
+        await sourcingAccountApi.update(sourcingEditId, sourcingForm)
+      } else {
+        await sourcingAccountApi.create({ ...sourcingForm, site_name: sourcingTab })
+      }
+      setSourcingEditId(null)
+      setSourcingForm({ site_name: sourcingTab, account_label: '', username: '', password: '', chrome_profile: '', memo: '' })
+      loadSourcingAccounts()
+    } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
+  }
+
+  const handleSourcingDelete = async (id: string) => {
+    if (!await showConfirm('삭제하시겠습니까?')) return
+    await sourcingAccountApi.delete(id)
+    loadSourcingAccounts()
+  }
+
+  const handleSourcingEdit = (a: SambaSourcingAccount) => {
+    setSourcingEditId(a.id)
+    setSourcingForm({
+      site_name: a.site_name,
+      account_label: a.account_label,
+      username: a.username,
+      password: a.password,
+      chrome_profile: a.chrome_profile || '',
+      memo: a.memo || '',
+    })
+  }
+
+  const handleFetchBalance = async (id: string) => {
+    setBalanceLoading(prev => ({ ...prev, [id]: true }))
+    try {
+      const res = await sourcingAccountApi.fetchBalance(id)
+      showAlert(`잔액: ${res.balance.toLocaleString()}원`, 'success')
+      loadSourcingAccounts()
+    } catch (err) { showAlert(err instanceof Error ? err.message : '잔액 조회 실패', 'error') }
+    setBalanceLoading(prev => ({ ...prev, [id]: false }))
+  }
+
+  const handleFetchAllBalances = async () => {
+    setBalanceLoading(prev => {
+      const next = { ...prev }
+      sourcingAccounts.filter(a => a.site_name === sourcingTab && a.is_active).forEach(a => { next[a.id] = true })
+      return next
+    })
+    try {
+      const res = await sourcingAccountApi.fetchAllBalances(sourcingTab)
+      const failed = res.results.filter(r => r.status === 'error')
+      if (failed.length) showAlert(`${failed.length}건 조회 실패`, 'error')
+      else showAlert('전체 잔액 조회 완료', 'success')
+      loadSourcingAccounts()
+    } catch (err) { showAlert(err instanceof Error ? err.message : '전체 잔액 조회 실패', 'error') }
+    setBalanceLoading({})
+  }
+
   return (
     <div style={{ color: '#E5E5E5' }}>
       {/* 마켓 계정 */}
@@ -1616,6 +1701,144 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
+
+      {/* ═══════ 소싱처 계정 관리 ═══════ */}
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.5rem' }}>
+        <div style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>소싱처 계정</div>
+        <p style={{ fontSize: '0.8125rem', color: '#666', marginBottom: '1.25rem' }}>소싱처별 로그인 계정을 관리합니다</p>
+
+        {/* 소싱처 탭바 */}
+        <div style={{ borderBottom: '1px solid #2D2D2D', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0 }}>
+            {sourcingSites.map(site => {
+              const count = sourcingAccounts.filter(a => a.site_name === site.id).length
+              return (
+                <button
+                  key={site.id}
+                  onClick={() => { setSourcingTab(site.id); setSourcingEditId(null); setSourcingForm({ site_name: site.id, account_label: '', username: '', password: '', chrome_profile: '', memo: '' }) }}
+                  style={{
+                    padding: '0.5rem 0.75rem', background: 'none', border: 'none',
+                    borderBottom: sourcingTab === site.id ? '2px solid #FF8C00' : '2px solid transparent',
+                    color: sourcingTab === site.id ? '#FF8C00' : '#666',
+                    fontSize: '0.8125rem', fontWeight: sourcingTab === site.id ? 600 : 400,
+                    cursor: 'pointer', marginBottom: '-1px', whiteSpace: 'nowrap',
+                  }}
+                >{site.name}{count > 0 ? ` (${count})` : ''}</button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* 좌측: 인라인 폼 + 우측: 계정 리스트 */}
+        <div style={{ display: 'flex', gap: '2rem', alignItems: 'flex-start' }}>
+          {/* 좌측: 입력 폼 */}
+          <div style={{ flex: 1, maxWidth: '560px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+              <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#E5E5E5' }}>
+                {sourcingSites.find(s => s.id === sourcingTab)?.name || sourcingTab} 계정
+              </span>
+              {sourcingEditId && (
+                <>
+                  <span style={{ fontSize: '0.75rem', color: '#FF8C00', fontWeight: 600 }}>
+                    ({sourcingAccounts.find(a => a.id === sourcingEditId)?.account_label} 수정중)
+                  </span>
+                  <button
+                    onClick={() => { setSourcingEditId(null); setSourcingForm({ site_name: sourcingTab, account_label: '', username: '', password: '', chrome_profile: '', memo: '' }) }}
+                    style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem', background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer' }}
+                  >취소</button>
+                </>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>별칭</label>
+                <input style={{ ...inputStyle, flex: 1 }} placeholder="예: 무신사-기현" value={sourcingForm.account_label} onChange={e => setSourcingForm(prev => ({ ...prev, account_label: e.target.value }))} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>아이디</label>
+                <input style={{ ...inputStyle, flex: 1 }} placeholder="로그인 아이디" value={sourcingForm.username} onChange={e => setSourcingForm(prev => ({ ...prev, username: e.target.value }))} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>비밀번호</label>
+                <input style={{ ...inputStyle, flex: 1 }} type="password" placeholder="로그인 비밀번호" value={sourcingForm.password} onChange={e => setSourcingForm(prev => ({ ...prev, password: e.target.value }))} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>크롬 프로필</label>
+                <select style={{ ...inputStyle, flex: 1 }} value={sourcingForm.chrome_profile} onChange={e => setSourcingForm(prev => ({ ...prev, chrome_profile: e.target.value }))}>
+                  <option value="">선택 안함</option>
+                  {chromeProfiles.map(p => <option key={p.directory} value={p.directory}>{p.name} ({p.directory})</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '120px', flexShrink: 0 }}>메모</label>
+                <input style={{ ...inputStyle, flex: 1 }} placeholder="쿠폰, 용도 등" value={sourcingForm.memo} onChange={e => setSourcingForm(prev => ({ ...prev, memo: e.target.value }))} />
+              </div>
+            </div>
+
+            {/* 저장 버튼 */}
+            <div style={{ marginTop: '1.5rem', display: 'flex', gap: '0.5rem' }}>
+              <button
+                onClick={handleSourcingSave}
+                style={{ padding: '0.625rem 1.75rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}
+              >{sourcingEditId ? '계정 수정' : '계정 추가'}</button>
+              <button
+                onClick={handleFetchAllBalances}
+                style={{ padding: '0.625rem 1.25rem', background: 'rgba(76,154,255,0.15)', border: '1px solid rgba(76,154,255,0.3)', color: '#4C9AFF', borderRadius: '6px', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer' }}
+              >전체 잔액 조회</button>
+            </div>
+          </div>
+
+          {/* 우측: 해당 소싱처 계정 리스트 */}
+          <div style={{ width: '320px', flexShrink: 0 }}>
+            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#888', marginBottom: '0.5rem' }}>등록 계정</div>
+            {(() => {
+              const siteAccounts = sourcingAccounts.filter(a => a.site_name === sourcingTab)
+              if (siteAccounts.length === 0) return (
+                <div style={{ fontSize: '0.78rem', color: '#555', padding: '0.5rem 0' }}>등록된 계정 없음</div>
+              )
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                  {siteAccounts.map(a => (
+                    <div key={a.id} style={{
+                      padding: '0.5rem 0.625rem',
+                      background: sourcingEditId === a.id ? 'rgba(255,140,0,0.08)' : 'rgba(255,255,255,0.02)',
+                      borderRadius: '6px',
+                      border: sourcingEditId === a.id ? '1px solid rgba(255,140,0,0.3)' : '1px solid rgba(45,45,45,0.5)',
+                      opacity: a.is_active ? 1 : 0.5,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                        <span style={{ flex: 1, fontSize: '0.8rem', fontWeight: 600, color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.account_label}</span>
+                        {a.chrome_profile && <span style={{ fontSize: '0.65rem', color: '#666', background: '#1A1A1A', padding: '0.05rem 0.3rem', borderRadius: '3px' }}>{chromeProfiles.find(p => p.directory === a.chrome_profile)?.name || a.chrome_profile}</span>}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem', fontSize: '0.7rem' }}>
+                        <span style={{ color: '#888', fontFamily: 'monospace' }}>{a.username}</span>
+                        {a.balance != null && <span style={{ color: '#51CF66', fontWeight: 600 }}>{a.balance.toLocaleString()}원</span>}
+                        {a.balance_updated_at && <span style={{ color: '#666' }}>{new Date(a.balance_updated_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
+                      </div>
+                      {a.memo && <div style={{ fontSize: '0.68rem', color: '#888', marginBottom: '0.25rem' }}>{a.memo}</div>}
+                      <div style={{ display: 'flex', gap: '0.25rem' }}>
+                        <button onClick={() => handleFetchBalance(a.id)} disabled={balanceLoading[a.id]} style={{ padding: '0.15rem 0.4rem', fontSize: '0.68rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', color: '#51CF66', borderRadius: '4px', cursor: 'pointer', opacity: balanceLoading[a.id] ? 0.5 : 1 }}>{balanceLoading[a.id] ? '조회중' : '잔액'}</button>
+                        <button onClick={() => sourcingAccountApi.toggle(a.id).then(() => loadSourcingAccounts())} style={{ padding: '0.15rem 0.4rem', fontSize: '0.68rem', background: a.is_active ? 'rgba(76,154,255,0.1)' : 'rgba(100,100,100,0.2)', border: `1px solid ${a.is_active ? 'rgba(76,154,255,0.3)' : '#555'}`, color: a.is_active ? '#4C9AFF' : '#888', borderRadius: '4px', cursor: 'pointer' }}>{a.is_active ? 'ON' : 'OFF'}</button>
+                        <button
+                          onClick={() => handleSourcingEdit(a)}
+                          style={{
+                            padding: '0.15rem 0.4rem', fontSize: '0.68rem', borderRadius: '4px', cursor: 'pointer',
+                            background: sourcingEditId === a.id ? 'rgba(255,140,0,0.15)' : 'rgba(60,60,60,0.8)',
+                            color: sourcingEditId === a.id ? '#FF8C00' : '#C5C5C5',
+                            border: sourcingEditId === a.id ? '1px solid #FF8C00' : '1px solid #3D3D3D',
+                          }}
+                        >{sourcingEditId === a.id ? '수정중' : '수정'}</button>
+                        <button onClick={() => handleSourcingDelete(a.id)} style={{ padding: '0.15rem 0.4rem', fontSize: '0.68rem', background: 'rgba(255,80,80,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
+          </div>
+        </div>
+      </div>
+
       {/* SMS / 카카오 알림톡 설정 */}
       <div style={{ ...card, padding: '1.5rem', marginTop: '1.5rem' }}>
 

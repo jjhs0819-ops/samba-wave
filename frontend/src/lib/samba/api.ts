@@ -47,6 +47,8 @@ export interface SambaOrder {
   product_name?: string;
   product_image?: string;
   product_option?: string;
+  coupang_display_name?: string;
+  source_url?: string;
   source_site?: string;
   customer_name?: string;
   customer_phone?: string;
@@ -65,6 +67,7 @@ export interface SambaOrder {
   shipping_company?: string;
   tracking_number?: string;
   notes?: string;
+  ext_order_number?: string;
   source?: string;
   shipment_id?: string;
   created_at: string;
@@ -110,6 +113,10 @@ export const orderApi = {
   fetchProductImage: (url: string) =>
     request<{ image_url: string }>(`${SAMBA_PREFIX}/orders/fetch-product-image`, {
       method: "POST", body: JSON.stringify({ url }),
+    }),
+  cancelSourceOrder: (orderNumber: string, reason?: string) =>
+    request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/cancel-source-order`, {
+      method: "POST", body: JSON.stringify({ order_number: orderNumber, reason: reason || '단순변심' }),
     }),
 };
 
@@ -280,6 +287,7 @@ export interface SambaCollectedProduct {
   seo_keywords?: string[];
   free_shipping?: boolean;
   same_day_delivery?: boolean;
+  sourcing_shipping_fee?: number;
   model_no?: string;
   collected_at?: string;
   created_at: string;
@@ -1408,4 +1416,59 @@ export const wholesaleApi = {
     q.set('page', String(params?.page || 1))
     return request(`${SAMBA_PREFIX}/wholesale/products?${q.toString()}`)
   },
+}
+
+// ── Sourcing Accounts ──
+
+export interface SambaSourcingAccount {
+  id: string
+  site_name: string
+  account_label: string
+  username: string
+  password: string
+  chrome_profile?: string
+  memo?: string
+  balance?: number
+  balance_updated_at?: string
+  is_active: boolean
+  additional_fields?: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface ChromeProfile {
+  directory: string
+  name: string
+  gaia_name: string
+}
+
+export interface BalanceResult {
+  id: string
+  label: string
+  balance: number | null
+  status: string
+  message?: string
+}
+
+export const sourcingAccountApi = {
+  list: (siteName?: string) => {
+    const p = new URLSearchParams()
+    if (siteName) p.set('site_name', siteName)
+    return request<SambaSourcingAccount[]>(`${SAMBA_PREFIX}/sourcing-accounts?${p}`)
+  },
+  getSites: () => request<{ id: string; name: string; group: string }[]>(`${SAMBA_PREFIX}/sourcing-accounts/sites`),
+  getChromeProfiles: () => request<ChromeProfile[]>(`${SAMBA_PREFIX}/sourcing-accounts/chrome-profiles`),
+  get: (id: string) => request<SambaSourcingAccount>(`${SAMBA_PREFIX}/sourcing-accounts/${id}`),
+  create: (data: Partial<SambaSourcingAccount>) =>
+    request<SambaSourcingAccount>(`${SAMBA_PREFIX}/sourcing-accounts`, { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<SambaSourcingAccount>) =>
+    request<SambaSourcingAccount>(`${SAMBA_PREFIX}/sourcing-accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  toggle: (id: string) =>
+    request<SambaSourcingAccount>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/toggle`, { method: 'PUT' }),
+  delete: (id: string) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}`, { method: 'DELETE' }),
+  fetchBalance: (id: string) =>
+    request<{ balance: number; account: SambaSourcingAccount }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/fetch-balance`, { method: 'POST' }),
+  fetchAllBalances: (siteName = 'MUSINSA') =>
+    request<{ results: BalanceResult[] }>(`${SAMBA_PREFIX}/sourcing-accounts/fetch-all-balances?site_name=${siteName}`, { method: 'POST' }),
 }
