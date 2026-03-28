@@ -152,6 +152,12 @@ class JobWorker:
         _exclude_boutique = False
         _use_max_discount = False
 
+        _brand_filter = ""
+        _min_price = None
+        _max_price = None
+        _gf_filter = "A"
+        _category_filter = ""
+
         try:
             parsed = urlparse(keyword_or_url)
             if parsed.scheme:
@@ -160,6 +166,13 @@ class JobWorker:
                 _exclude_preorder = qs.get("excludePreorder", [""])[0] == "1"
                 _exclude_boutique = qs.get("excludeBoutique", [""])[0] == "1"
                 _use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
+                _brand_filter = qs.get("brand", [""])[0]
+                _min_price_raw = qs.get("minPrice", [""])[0]
+                _max_price_raw = qs.get("maxPrice", [""])[0]
+                _gf_filter = qs.get("gf", ["A"])[0]
+                _category_filter = qs.get("category", [""])[0]
+                _min_price = int(_min_price_raw) if _min_price_raw.isdigit() else None
+                _max_price = int(_max_price_raw) if _max_price_raw.isdigit() else None
         except Exception:
             pass
 
@@ -194,12 +207,21 @@ class JobWorker:
 
             # 검색
             try:
-                data = await client.search_products(keyword=keyword, page=search_page, size=100)
+                data = await client.search_products(
+                    keyword=keyword, page=search_page, size=100,
+                    category=_category_filter,
+                    brand=_brand_filter,
+                    min_price=_min_price,
+                    max_price=_max_price,
+                    gf=_gf_filter,
+                )
                 search_items = data.get("data", [])
+                logger.info(f"[잡워커] 검색 p{search_page}: {len(search_items)}건 (kw={keyword}, brand={_brand_filter})")
                 if not search_items:
                     break
                 await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
-            except Exception:
+            except Exception as e:
+                logger.error(f"[잡워커] 검색 실패: {e}")
                 break
 
             # 중복 필터링
@@ -224,6 +246,7 @@ class JobWorker:
                     continue
                 targets.append(site_pid)
 
+            logger.info(f"[잡워커] 중복={len(existing_ids)}, 타겟={len(targets)}, 스킵={total_skipped}")
             if not targets:
                 search_page += 1
                 continue
