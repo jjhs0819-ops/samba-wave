@@ -80,13 +80,26 @@ function fmtDate(iso: string | undefined | null): string {
   return `${y}.${m}.${day} ${h}:${min}`;
 }
 
+// 매핑 대상 마켓 목록
+const MAPPING_MARKETS = [
+  { id: 'smartstore', name: '스마트스토어' },
+  { id: 'coupang', name: '쿠팡' },
+  { id: '11st', name: '11번가' },
+  { id: 'gmarket', name: 'G마켓' },
+  { id: 'auction', name: '옥션' },
+  { id: 'lotteon', name: '롯데ON' },
+  { id: 'ssg', name: 'SSG' },
+  { id: 'gsshop', name: 'GS샵' },
+  { id: 'toss', name: '토스' },
+]
+
 // 매핑 모달 — 마켓별 카테고리 입력 + 자동완성
-function MappingMarketRow({ account, value, onChange, onClear }: { account: SambaMarketAccount; value: string; onChange: (v: string) => void; onClear: () => void }) {
+function MappingMarketRow({ marketType, marketName, value, onChange, onClear }: { marketType: string; marketName: string; value: string; onChange: (v: string) => void; onClear: () => void }) {
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [showSugg, setShowSugg] = useState(false)
   return (
     <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }}>
-      <span style={{ fontSize: '0.8rem', color: '#888', minWidth: '100px' }}>{account.market_name}</span>
+      <span style={{ fontSize: '0.8rem', color: '#888', minWidth: '100px' }}>{marketName}</span>
       <div style={{ flex: 1, position: 'relative' }}>
         <input
           type="text"
@@ -96,7 +109,7 @@ function MappingMarketRow({ account, value, onChange, onClear }: { account: Samb
             onChange(val)
             if (val.length >= 2) {
               try {
-                const res = await categoryApi.suggest(val, account.market_type)
+                const res = await categoryApi.suggest(val, marketType)
                 setSuggestions(Array.isArray(res) ? res.slice(0, 8) : [])
                 setShowSugg(true)
               } catch { setSuggestions([]) }
@@ -146,56 +159,12 @@ export default function CollectorPage() {
     maxDiscount: true,
   });
 
-  // 소싱 모드 탭
-  const [sourcingMode, setSourcingMode] = useState<'keyword' | 'brand'>('keyword')
-
-  // 브랜드 소싱
-  const [brandCode, setBrandCode] = useState('')
-  const [brandName, setBrandName] = useState('')
-  const [brandGf, setBrandGf] = useState('A')
+  // 카테고리 자동분류 옵션
+  const [autoCategoryGroup, setAutoCategoryGroup] = useState(false)
   const [brandScanning, setBrandScanning] = useState(false)
   const [brandCategories, setBrandCategories] = useState<{ categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]>([])
   const [brandSelectedCats, setBrandSelectedCats] = useState<Set<string>>(new Set())
   const [brandTotal, setBrandTotal] = useState(0)
-  const [brandCountPerGroup, setBrandCountPerGroup] = useState(100)
-
-  const handleBrandScan = async () => {
-    if (!brandCode.trim()) { showAlert('브랜드 코드를 입력하세요'); return }
-    setBrandScanning(true)
-    setBrandCategories([])
-    setBrandSelectedCats(new Set())
-    try {
-      const res = await collectorApi.brandScan(brandCode.trim(), brandGf, brandName.trim())
-      setBrandCategories(res.categories)
-      setBrandTotal(res.total)
-      setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-      addLog(`[브랜드스캔] ${brandName || brandCode}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
-    } catch (e) {
-      showAlert(e instanceof Error ? e.message : '스캔 실패', 'error')
-    }
-    setBrandScanning(false)
-  }
-
-  const handleBrandCreateGroups = async () => {
-    const selected = brandCategories.filter(c => brandSelectedCats.has(c.categoryCode))
-    if (selected.length === 0) { showAlert('카테고리를 선택하세요'); return }
-    try {
-      const res = await collectorApi.brandCreateGroups({
-        brand: brandCode.trim(),
-        brand_name: brandName.trim(),
-        gf: brandGf,
-        categories: selected,
-        requested_count_per_group: brandCountPerGroup,
-        applied_policy_id: undefined,
-        options: checkedOptions,
-      })
-      addLog(`[브랜드소싱] ${res.created}개 그룹 생성 완료`)
-      showAlert(`${res.created}개 그룹이 생성되었습니다`, 'success')
-      load()
-    } catch (e) {
-      showAlert(e instanceof Error ? e.message : '그룹 생성 실패', 'error')
-    }
-  }
 
   // 일괄 갱신
   const [refreshing, setRefreshing] = useState(false)
@@ -862,7 +831,100 @@ export default function CollectorPage() {
           >
             {collecting ? "생성중..." : "그룹 생성"}
           </button>
+          {selectedSite === 'MUSINSA' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer', fontSize: '0.78rem', color: '#888', whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={autoCategoryGroup} onChange={e => { setAutoCategoryGroup(e.target.checked); setBrandCategories([]); setBrandSelectedCats(new Set()) }}
+                style={{ accentColor: '#FF8C00' }} />
+              카테고리 자동분류
+            </label>
+          )}
         </div>
+
+        {/* 카테고리 자동분류 — 스캔 결과 */}
+        {autoCategoryGroup && selectedSite === 'MUSINSA' && (
+          <div style={{ marginTop: '0.5rem' }}>
+            {brandCategories.length === 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.78rem', color: '#888' }}>위 URL/키워드 입력 후</span>
+                <button onClick={async () => {
+                  if (!collectUrl.trim()) { showAlert('URL 또는 키워드를 입력하세요'); return }
+                  setBrandScanning(true)
+                  try {
+                    const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
+                    const brand = parsed?.searchParams.get('brand') || ''
+                    const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || collectUrl.trim()
+                    const gf = parsed?.searchParams.get('gf') || 'A'
+                    if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
+                    const res = await collectorApi.brandScan(brand, gf, keyword)
+                    setBrandCategories(res.categories)
+                    setBrandTotal(res.total)
+                    setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
+                    addLog(`[카테고리스캔] ${keyword}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                  } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+                  setBrandScanning(false)
+                }} disabled={brandScanning}
+                  style={{ padding: '0.3rem 0.75rem', background: brandScanning ? '#333' : '#FF8C00', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '0.78rem', fontWeight: 600, cursor: brandScanning ? 'not-allowed' : 'pointer' }}>
+                  {brandScanning ? '스캔 중...' : '카테고리 스캔'}
+                </button>
+              </div>
+            ) : (
+              <div style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.75rem', maxHeight: '350px', overflowY: 'auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <span style={{ fontSize: '0.78rem', color: '#888' }}>
+                    {brandCategories.length}개 카테고리 / {brandTotal.toLocaleString()}건
+                    (선택 {brandSelectedCats.size}개)
+                  </span>
+                  <div style={{ display: 'flex', gap: '0.25rem' }}>
+                    <button onClick={() => setBrandSelectedCats(new Set(brandCategories.map(c => c.categoryCode)))}
+                      style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}>전체선택</button>
+                    <button onClick={() => setBrandSelectedCats(new Set())}
+                      style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}>전체해제</button>
+                    <button onClick={() => { setBrandCategories([]); setBrandSelectedCats(new Set()) }}
+                      style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}>초기화</button>
+                  </div>
+                </div>
+                {brandCategories.map(cat => (
+                  <label key={cat.categoryCode} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.2rem 0', cursor: 'pointer', fontSize: '0.78rem' }}>
+                    <input type="checkbox" checked={brandSelectedCats.has(cat.categoryCode)}
+                      onChange={e => {
+                        const next = new Set(brandSelectedCats)
+                        if (e.target.checked) next.add(cat.categoryCode); else next.delete(cat.categoryCode)
+                        setBrandSelectedCats(next)
+                      }} style={{ accentColor: '#FF8C00' }} />
+                    <span style={{ color: '#E5E5E5', flex: 1 }}>{cat.path}</span>
+                    <span style={{ color: '#FF8C00', fontWeight: 600, fontSize: '0.72rem' }}>{cat.count.toLocaleString()}건</span>
+                  </label>
+                ))}
+                <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+                  <button onClick={async () => {
+                    const selected = brandCategories.filter(c => brandSelectedCats.has(c.categoryCode))
+                    if (selected.length === 0) { showAlert('카테고리를 선택하세요'); return }
+                    const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
+                    const brand = parsed?.searchParams.get('brand') || ''
+                    const keyword = parsed?.searchParams.get('keyword') || collectUrl.trim()
+                    const gf = parsed?.searchParams.get('gf') || 'A'
+                    try {
+                      const res = await collectorApi.brandCreateGroups({
+                        brand, brand_name: keyword, gf,
+                        categories: selected,
+                        requested_count_per_group: 100,
+                        options: checkedOptions,
+                      })
+                      addLog(`[카테고리분류] ${res.created}개 그룹 생성 완료`)
+                      showAlert(`${res.created}개 그룹이 생성되었습니다`, 'success')
+                      setBrandCategories([]); setBrandSelectedCats(new Set())
+                      setAutoCategoryGroup(false)
+                      load()
+                    } catch (e) { showAlert(e instanceof Error ? e.message : '그룹 생성 실패', 'error') }
+                  }}
+                    style={{ padding: '0.4rem 1rem', background: '#FF8C00', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>
+                    선택 그룹 생성 ({brandSelectedCats.size}개)
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 수집 로그 */}
@@ -1538,7 +1600,7 @@ export default function CollectorPage() {
                       source_category: [rep.category1, rep.category2, rep.category3, rep.category4].filter(Boolean).join(' > ') || rep.category || '',
                       sample_products: products.items.slice(0, 5).map(p => p.name || ''),
                       sample_tags: rep.tags?.filter((t: string) => !t.startsWith('__')) || [],
-                      target_markets: accounts.filter(a => a.is_active).map(a => a.market_type),
+                      target_markets: MAPPING_MARKETS.map(m => m.id),
                     })
                     if (res) {
                       const newMapping: Record<string, string> = { ...mappingData }
@@ -1555,8 +1617,8 @@ export default function CollectorPage() {
               >{mappingLoading ? 'AI 분석중...' : 'AI 매핑'}</button>
             </div>
 
-            {accounts.map(a => (
-              <MappingMarketRow key={a.id} account={a} value={mappingData[a.market_type] || ''} onChange={val => setMappingData(prev => ({ ...prev, [a.market_type]: val }))} onClear={() => setMappingData(prev => { const n = { ...prev }; delete n[a.market_type]; return n })} />
+            {MAPPING_MARKETS.map(m => (
+              <MappingMarketRow key={m.id} marketType={m.id} marketName={m.name} value={mappingData[m.id] || ''} onChange={val => setMappingData(prev => ({ ...prev, [m.id]: val }))} onClear={() => setMappingData(prev => { const n = { ...prev }; delete n[m.id]; return n })} />
             ))}
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
