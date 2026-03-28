@@ -798,47 +798,62 @@ async def sync_orders_from_markets(
 
 
 def _parse_lotteon_order(
-  item: dict[str, str],
+  item: dict,
   account_id: str,
   label: str,
 ) -> dict[str, Any]:
-  """롯데홈쇼핑 주문 데이터 → SambaOrder dict 변환.
+  """롯데ON 주문 JSON → SambaOrder dict 변환.
 
-  item: _parse_xml_list()가 반환한 단일 주문 dict
+  item: GET /api/order/list 응답의 단일 주문 dict (JSON)
+  롯데ON 주문 상태코드: 10=결제완료, 20=상품준비중, 30=배송중, 40=배송완료, 50=구매확정
   """
   from datetime import datetime
 
-  # OrdStat 상태 매핑
+  # 롯데ON orderStatus 코드 → 내부 status 매핑
   stat_map = {
-    "업체지시": "pending",
-    "출하지시": "confirmed",
-    "발송약정": "confirmed",
+    "10": "pending",    # 결제완료
+    "20": "pending",    # 상품준비중
+    "30": "shipped",    # 배송중
+    "40": "delivered",  # 배송완료
+    "50": "delivered",  # 구매확정
   }
-  status = stat_map.get(item.get("OrdStat", ""), "pending")
+  order_status = str(item.get("orderStatus", "") or item.get("ordStatus", ""))
+  status = stat_map.get(order_status, "pending")
 
-  # 날짜 파싱 (YYYYMMDD → datetime)
-  trd_date_str = item.get("TrdDate", "")
+  # 주문일시 파싱 (ISO8601 또는 YYYYMMDD)
+  order_dt = item.get("orderDt", "") or item.get("ordDt", "") or item.get("payDt", "")
   try:
-    created_at = datetime.strptime(trd_date_str, "%Y%m%d") if trd_date_str else datetime.now()
-  except ValueError:
+    if "T" in str(order_dt):
+      created_at = datetime.fromisoformat(str(order_dt).replace("Z", "+00:00"))
+    elif len(str(order_dt)) == 8:
+      created_at = datetime.strptime(str(order_dt), "%Y%m%d")
+    else:
+      created_at = datetime.now()
+  except (ValueError, TypeError):
     created_at = datetime.now()
+
+  # 배송지 조합
+  addr = item.get("rcvrAddr", "") or item.get("recvAddr", "") or ""
+  addr_detail = item.get("rcvrAddrDetail", "") or item.get("recvAddrDetail", "") or ""
+  full_addr = f"{addr} {addr_detail}".strip()
 
   return {
     "account_id": account_id,
     "account_label": label,
     "source": "lotteon",
-    "order_number": item.get("OrdProdCode", "") or item.get("OrdNo", ""),
-    "shipment_id": item.get("OrdNo", ""),
-    "product_id": item.get("ProdCode", "") or item.get("EntrProdNo", ""),
-    "product_name": item.get("ProdName", ""),
-    "product_option": item.get("prodOption", ""),
-    "quantity": int(item.get("ordQty", "1") or "1"),
-    "sale_price": int(item.get("ordPrice", "0") or "0"),
-    "cost": int(item.get("buyRealPrice", "0") or "0"),
+    # 롯데ON: orderNo(주문번호), orderItemNo(주문상품번호) — 주문상품번호를 고유키로
+    "order_number": str(item.get("orderItemNo", "") or item.get("orderNo", "") or item.get("ordNo", "")),
+    "shipment_id": str(item.get("orderNo", "") or item.get("ordNo", "")),
+    "product_id": str(item.get("pdNo", "") or item.get("productNo", "") or item.get("goodsNo", "")),
+    "product_name": item.get("pdNm", "") or item.get("productName", "") or item.get("goodsNm", ""),
+    "product_option": item.get("optionName", "") or item.get("itemName", "") or "",
+    "quantity": int(item.get("ordQty", 1) or item.get("qty", 1) or 1),
+    "sale_price": int(item.get("saleAmt", 0) or item.get("ordAmt", 0) or 0),
+    "cost": 0,
     "status": status,
-    "customer_name": item.get("recvName", "") or item.get("OrderName", ""),
-    "customer_phone": item.get("recvHp", "") or item.get("recvTel", ""),
-    "customer_address": f"{item.get('recvAddr1', '')} {item.get('recvAddr2', '')}".strip(),
+    "customer_name": item.get("rcvrNm", "") or item.get("buyerNm", "") or item.get("recvNm", ""),
+    "customer_phone": item.get("rcvrTelNo", "") or item.get("rcvrMobileNo", "") or item.get("buyerTelNo", ""),
+    "customer_address": full_addr,
     "created_at": created_at,
   }
 

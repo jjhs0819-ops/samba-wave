@@ -1045,84 +1045,104 @@ class LotteonClient:
     return {"spdLst": [spd]}
 
   # ------------------------------------------------------------------
-  # 주문 조회 (롯데홈쇼핑 주문 API)
+  # 주문 조회 (롯데ON openapi.lotteon.com — JSON, Bearer 인증)
   # ------------------------------------------------------------------
 
-  async def get_orders(self, days: int = 7) -> list[dict[str, str]]:
-    """최근 N일 신규주문 조회.
+  # 롯데ON 주문 상태 → 내부 status 매핑
+  _ORDER_STAT_MAP: dict[str, str] = {
+    "10": "pending",    # 결제완료
+    "20": "pending",    # 상품준비중
+    "30": "shipped",    # 배송중
+    "40": "delivered",  # 배송완료
+    "50": "delivered",  # 구매확정
+    "60": "cancelled",  # 취소요청
+    "70": "cancelled",  # 취소완료
+    "80": "returned",   # 반품요청
+    "90": "returned",   # 반품완료
+  }
 
-    SelOption=01: 미발주/신규 상태 필터.
-    반환: OrdNo, SubOrdNo, OrdProdCode, OrdStat, OrderName 등 주문 dict 리스트.
+  async def get_orders(self, days: int = 7) -> list[dict]:
+    """최근 N일 롯데ON 주문 조회.
+
+    엔드포인트: GET /api/order/list (openapi.lotteon.com, JSON, Bearer 인증)
+    파라미터: startDt, endDt (YYYYMMDD)
+    반환: 주문 dict 리스트
     """
     start_date, end_date = self._date_range(days)
-    xml_text = await self._call_imall_api(
-      "/openapi/searchNewOrdLstOpenApi.lotte",
-      {
-        "start_date": start_date,
-        "end_date": end_date,
-        "SelOption": "01",
-      },
+    data = await self._call_api(
+      "GET",
+      "/api/order/list",
+      params={"startDt": start_date, "endDt": end_date},
     )
-    return self._parse_xml_list(xml_text, "OrdInfo")
+    # 응답: {"data": {"orderList": [...]}} 또는 {"data": [...]}
+    inner = data.get("data") or {}
+    order_list = (
+      inner.get("orderList") or inner.get("orders") or inner
+      if isinstance(inner, dict) else inner
+    )
+    if not isinstance(order_list, list):
+      order_list = []
+    return order_list
 
-  async def get_cancel_orders(self, days: int = 7) -> list[dict[str, str]]:
-    """최근 N일 주문취소 조회.
+  async def get_cancel_orders(self, days: int = 7) -> list[dict]:
+    """최근 N일 취소 주문 조회.
 
-    반환: OrdNo, MbrNm, ClmCausCd, ClmCausNm, CnclDtime 등 취소 dict 리스트.
+    orderStatus=60,70: 취소요청/취소완료 상태 필터.
     """
     start_date, end_date = self._date_range(days)
-    xml_text = await self._call_imall_api(
-      "/openapi/searchCnclList.lotte",
-      {
-        "start_date": start_date,
-        "end_date": end_date,
+    data = await self._call_api(
+      "GET",
+      "/api/order/list",
+      params={
+        "startDt": start_date,
+        "endDt": end_date,
+        "orderStatus": "60,70",
       },
     )
-    return self._parse_xml_list(xml_text, "CnclInfo")
+    inner = data.get("data") or {}
+    order_list = (
+      inner.get("orderList") or inner.get("orders") or inner
+      if isinstance(inner, dict) else inner
+    )
+    if not isinstance(order_list, list):
+      order_list = []
+    return order_list
 
-  async def get_returns(self, days: int = 7) -> list[dict[str, str]]:
-    """최근 N일 반품 조회.
+  async def get_returns(self, days: int = 7) -> list[dict]:
+    """최근 N일 반품 주문 조회.
 
-    ord_dtl_stat_cd=20: 반품요청 상태 필터.
-    반환: OrdNo, OrdDtlSn, MbrNm, ClmCausCd, GoodsNm 등 반품 dict 리스트.
+    orderStatus=80,90: 반품요청/반품완료 상태 필터.
     """
     start_date, end_date = self._date_range(days)
-    xml_text = await self._call_imall_api(
-      "/openapi/searchReturnList.lotte",
-      {
-        "start_date": start_date,
-        "end_date": end_date,
-        "ord_dtl_stat_cd": "20",
+    data = await self._call_api(
+      "GET",
+      "/api/order/list",
+      params={
+        "startDt": start_date,
+        "endDt": end_date,
+        "orderStatus": "80,90",
       },
     )
-    return self._parse_xml_list(xml_text, "ReturnInfo")
+    inner = data.get("data") or {}
+    order_list = (
+      inner.get("orderList") or inner.get("orders") or inner
+      if isinstance(inner, dict) else inner
+    )
+    if not isinstance(order_list, list):
+      order_list = []
+    return order_list
 
-  async def approve_return(self, ord_no: str, ord_dtl_sn: str) -> bool:
+  async def approve_return(self, order_no: str, ord_dtl_sn: str = "") -> bool:
     """반품 승인 처리.
 
-    proc_gubun=rfin: 반품완료 처리 코드.
-    hdc_cd, inv_no는 빈 문자열로 전달 (롯데홈쇼핑 자체 배송 처리).
-    반환: 성공 여부
+    엔드포인트: PUT /api/order/{orderNo}/return/approve
     """
-    xml_text = await self._call_imall_api(
-      "/openapi/registDeliver.lotte",
-      {
-        "ord_no": ord_no,
-        "ord_dtl_sn": ord_dtl_sn,
-        "proc_gubun": "rfin",
-        "hdc_cd": "",
-        "inv_no": "",
-      },
-    )
-    # 응답 XML에서 Result 태그 확인 (1: 성공)
     try:
-      root = ET.fromstring(xml_text)
-      result_el = root.find(".//Result")
-      if result_el is not None and result_el.text:
-        return result_el.text.strip() == "1"
-    except ET.ParseError as e:
-      logger.warning(f"[롯데홈쇼핑] approve_return XML 파싱 실패: {e} | 원문: {xml_text[:200]}")
-    return False
+      await self._call_api("PUT", f"/api/order/{order_no}/return/approve")
+      return True
+    except LotteonApiError as e:
+      logger.warning(f"[롯데ON] 반품 승인 실패: {e}")
+      return False
 
   # ------------------------------------------------------------------
   # CS 문의 조회 및 답변 (VOC)
