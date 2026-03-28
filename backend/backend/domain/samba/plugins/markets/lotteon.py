@@ -621,10 +621,20 @@ class LotteonPlugin(MarketPlugin):
           # 상품 헤더(이름/이미지/카테고리/가격)만 업데이트하고 itmLst는 제거
           data["spdLst"][0].pop("itmLst", None)
           data["spdLst"][0].pop("sitmYn", None)
+        logger.info(f"[롯데ON] 수정 모드 — 기존 spdNo={existing_no!r}")
         result = await client.update_product(data)
+        # 수정 API가 새 spdNo를 반환하는 경우 (수정본 별도 상품번호 발급)
+        new_spd_no = result.get("spdNo", "") or ""
+        effective_no = new_spd_no if new_spd_no and new_spd_no != existing_no else existing_no
+        if new_spd_no and new_spd_no != existing_no:
+          logger.info(f"[롯데ON] 수정 후 새 spdNo 발급: {existing_no} → {new_spd_no}")
         # ── 수정 후 프로모션 재설정 ──────────────────────────────
-        await self._apply_promotions(client, existing_no, extras, is_update=True, eitm_nos=existing_sitm_nos)
-        return {"success": True, "message": "롯데ON 수정 성공", "data": result}
+        await self._apply_promotions(client, effective_no, extras, is_update=True, eitm_nos=existing_sitm_nos)
+        ret: dict[str, Any] = {"success": True, "message": "롯데ON 수정 성공", "data": result}
+        if effective_no != existing_no:
+          # service.py가 market_product_nos를 새 번호로 갱신하도록 반환
+          ret["spdNo"] = effective_no
+        return ret
       else:
         result = await client.register_product(data)
         # proxy.register_product 가 spdNo를 최상위로 반환 (service.py가 result.get("spdNo")로 읽음)
