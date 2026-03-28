@@ -392,7 +392,7 @@ export default function CollectorPage() {
         keywordUrl = u.toString()
       }
 
-      // 무신사: 검색 API로 해당 링크의 총 상품수 조회
+      // 소싱처별 검색 총 상품수 조회
       let requestedCount = 100
       if (site === 'MUSINSA' && keyword) {
         try {
@@ -414,6 +414,19 @@ export default function CollectorPage() {
           if (countResult.totalCount > 0) {
             requestedCount = countResult.totalCount
             addLog(`검색 결과: ${requestedCount.toLocaleString()}개 상품`)
+          }
+        } catch { /* 조회 실패 시 기본값 100 유지 */ }
+      } else if (site === 'FashionPlus') {
+        try {
+          const searchWord = keyword || (() => { try { return new URL(collectUrl).searchParams.get('searchWord') || '' } catch { return '' } })()
+          if (searchWord) {
+            const r = await fetch(`https://www.fashionplus.co.kr/search/goods/fetch?searchWord=${encodeURIComponent(searchWord)}&page=1&pageSize=1&sort=recommend`)
+            const data = await r.json()
+            const total = data?.goodsPaginator?.totalCount
+            if (total && total > 0) {
+              requestedCount = total
+              addLog(`검색 결과: ${requestedCount.toLocaleString()}개 상품`)
+            }
           }
         } catch { /* 조회 실패 시 기본값 100 유지 */ }
       }
@@ -641,9 +654,47 @@ export default function CollectorPage() {
     setRefreshing(false)
   }
 
+  // 그룹명에서 브랜드/카테고리 파싱: "MUSINSA_나이키_운동화" → {brand:"나이키", category:"운동화"}
+  const parseGroupName = (name: string, site: string) => {
+    let rest = name
+    const prefixes = [site + '_', site.toLowerCase() + '_', '무신사_']
+    for (const p of prefixes) {
+      if (rest.toLowerCase().startsWith(p.toLowerCase())) {
+        rest = rest.slice(p.length)
+        break
+      }
+    }
+    const parts = rest.split('_')
+    if (parts.length >= 2) return { brand: parts[0], category: parts.slice(1).join('_') }
+    const spaceParts = rest.split(' ')
+    if (spaceParts.length >= 2) return { brand: spaceParts[0], category: spaceParts.slice(1).join(' ') }
+    return { brand: rest, category: '' }
+  }
+
   // Filter and sort
   let displayedFilters = [...filters];
   if (siteFilter) displayedFilters = displayedFilters.filter((f) => f.source_site === siteFilter);
+  // 드릴다운 사이트/브랜드 선택 시 해당 그룹만 표시
+  if (drillSite || drillBrand) {
+    // tree에서 사이트별 리프 정보 활용
+    const drillIds = new Set<string>()
+    for (const s of tree) {
+      if (drillSite && s.id !== drillSite) continue
+      const walk = (n: SambaSearchFilter) => {
+        if (!(n as unknown as Record<string, SambaSearchFilter[]>).children?.length) {
+          if (drillBrand) {
+            const parsed = parseGroupName(n.name, s.source_site || '')
+            if (parsed.brand === drillBrand) drillIds.add(n.id)
+          } else {
+            drillIds.add(n.id)
+          }
+        }
+        ;((n as unknown as Record<string, SambaSearchFilter[]>).children || []).forEach(walk)
+      }
+      walk(s)
+    }
+    displayedFilters = displayedFilters.filter(f => drillIds.has(f.id))
+  }
   if (aiFilter) {
     displayedFilters = displayedFilters.filter((f) => {
       const r = f as unknown as Record<string, number>
@@ -707,29 +758,6 @@ export default function CollectorPage() {
     return sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
   });
 
-  // 그룹명에서 브랜드/카테고리 파싱: "MUSINSA_나이키_운동화" → {brand:"나이키", category:"운동화"}
-  const parseGroupName = (name: string, site: string) => {
-    // 사이트 접두사 제거
-    let rest = name
-    const prefixes = [site + '_', site.toLowerCase() + '_', '무신사_']
-    for (const p of prefixes) {
-      if (rest.toLowerCase().startsWith(p.toLowerCase())) {
-        rest = rest.slice(p.length)
-        break
-      }
-    }
-    // _로 분리
-    const parts = rest.split('_')
-    if (parts.length >= 2) {
-      return { brand: parts[0], category: parts.slice(1).join('_') }
-    }
-    // 공백으로 분리 시도
-    const spaceParts = rest.split(' ')
-    if (spaceParts.length >= 2) {
-      return { brand: spaceParts[0], category: spaceParts.slice(1).join(' ') }
-    }
-    return { brand: rest, category: '' }
-  }
 
 
   return (
@@ -1199,19 +1227,6 @@ export default function CollectorPage() {
               }}
             >
               상품수집
-            </button>
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              style={{
-                background: refreshing ? 'rgba(76,154,255,0.05)' : 'rgba(76,154,255,0.1)',
-                border: '1px solid rgba(76,154,255,0.35)',
-                color: '#4C9AFF', padding: '0.3rem 0.75rem', borderRadius: '6px',
-                fontSize: '0.8rem', cursor: refreshing ? 'not-allowed' : 'pointer',
-                opacity: refreshing ? 0.6 : 1,
-              }}
-            >
-              {refreshing ? '갱신중...' : '일괄 갱신'}
             </button>
             <button
               disabled={tagPreviewLoading}
