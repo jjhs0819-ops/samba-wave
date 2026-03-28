@@ -83,14 +83,30 @@ function fmtDate(iso: string | undefined | null): string {
 // 매핑 대상 마켓 목록
 const MAPPING_MARKETS = [
   { id: 'smartstore', name: '스마트스토어' },
-  { id: 'coupang', name: '쿠팡' },
-  { id: '11st', name: '11번가' },
-  { id: 'gmarket', name: 'G마켓' },
+  { id: 'gmarket', name: '지마켓' },
   { id: 'auction', name: '옥션' },
+  { id: 'coupang', name: '쿠팡' },
   { id: 'lotteon', name: '롯데ON' },
-  { id: 'ssg', name: 'SSG' },
-  { id: 'gsshop', name: 'GS샵' },
+  { id: '11st', name: '11번가' },
   { id: 'toss', name: '토스' },
+  { id: 'ssg', name: 'SSG' },
+  { id: 'gsshop', name: 'GSSHOP' },
+  { id: 'lottehome', name: '롯데홈쇼핑' },
+  { id: 'homeand', name: '홈앤쇼핑' },
+  { id: 'hmall', name: 'HMALL' },
+  { id: 'kream', name: 'KREAM' },
+  { id: 'poison', name: '포이즌' },
+  { id: 'qoo10', name: 'Qoo10' },
+  { id: 'rakuten', name: '라쿠텐' },
+  { id: 'buyma', name: '바이마' },
+  { id: 'lazada', name: 'Lazada' },
+  { id: 'shopify', name: 'Shopify' },
+  { id: 'shopee', name: 'Shopee' },
+  { id: 'zoom', name: 'Zum(줌)' },
+  { id: 'ebay', name: 'eBay' },
+  { id: 'amazon', name: '아마존' },
+  { id: 'playauto', name: '플레이오토' },
+  { id: 'cafe24', name: '카페24' },
 ]
 
 // 매핑 모달 — 마켓별 카테고리 입력 + 자동완성
@@ -160,7 +176,6 @@ export default function CollectorPage() {
   });
 
   // 카테고리 자동분류 옵션
-  const [autoCategoryGroup, setAutoCategoryGroup] = useState(false)
   const [brandScanning, setBrandScanning] = useState(false)
   const [brandCategories, setBrandCategories] = useState<{ categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]>([])
   const [brandSelectedCats, setBrandSelectedCats] = useState<Set<string>>(new Set())
@@ -420,9 +435,31 @@ export default function CollectorPage() {
   };
 
   const handleDeleteSelectedGroups = async () => {
-    if (selectedIds.size === 0) return;
-    if (!await showConfirm(`선택된 ${selectedIds.size}개 그룹과 그룹 내 상품을 모두 삭제하시겠습니까?`)) return;
-    for (const id of selectedIds) {
+    // 체크된 그룹이 없으면 현재 보이는 그룹 전체를 대상으로
+    const baseIds = selectedIds.size > 0
+      ? selectedIds
+      : new Set(displayedFilters.map(f => f.id))
+    if (baseIds.size === 0) return;
+
+    // 선택된 그룹 + 하위 그룹 모두 수집
+    const allIds = new Set(baseIds)
+    const findChildren = (parentId: string) => {
+      for (const f of filters) {
+        if (f.parent_id === parentId && !allIds.has(f.id)) {
+          allIds.add(f.id)
+          findChildren(f.id)
+        }
+      }
+    }
+    for (const id of baseIds) findChildren(id)
+
+    const childCount = allIds.size - baseIds.size
+    const label = selectedIds.size > 0 ? '선택된' : '표시된'
+    const msg = childCount > 0
+      ? `${label} ${baseIds.size}개 + 하위 ${childCount}개 (총 ${allIds.size}개) 그룹과 상품을 모두 삭제하시겠습니까?`
+      : `${label} ${baseIds.size}개 그룹과 그룹 내 상품을 모두 삭제하시겠습니까?`
+    if (!await showConfirm(msg)) return;
+    for (const id of allIds) {
       try {
         const res = await collectorApi.scrollProducts({ skip: 0, limit: 10000, search_filter_id: id })
         // 마켓 등록 상품 체크
@@ -819,6 +856,29 @@ export default function CollectorPage() {
               color: "#E5E5E5", outline: "none",
             }}
           />
+          {selectedSite === 'MUSINSA' && (
+            <button onClick={async () => {
+              if (!collectUrl.trim()) { showAlert('URL 또는 키워드를 입력하세요'); return }
+              setBrandScanning(true)
+              setBrandCategories([]); setBrandSelectedCats(new Set())
+              try {
+                const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
+                const brand = parsed?.searchParams.get('brand') || ''
+                const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || collectUrl.trim()
+                const gf = parsed?.searchParams.get('gf') || 'A'
+                if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
+                const res = await collectorApi.brandScan(brand, gf, keyword)
+                setBrandCategories(res.categories)
+                setBrandTotal(res.total)
+                setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
+                addLog(`[카테고리스캔] ${keyword}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+              } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+              setBrandScanning(false)
+            }} disabled={brandScanning}
+              style={{ padding: '0.6rem 1rem', background: brandScanning ? '#333' : 'transparent', border: '1px solid #FF8C00', borderRadius: '6px', color: '#FF8C00', fontSize: '0.82rem', fontWeight: 600, cursor: brandScanning ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>
+              {brandScanning ? '스캔 중...' : '카테고리 스캔'}
+            </button>
+          )}
           <button
             onClick={handleCreateGroup}
             disabled={collecting}
@@ -831,43 +891,11 @@ export default function CollectorPage() {
           >
             {collecting ? "생성중..." : "그룹 생성"}
           </button>
-          {selectedSite === 'MUSINSA' && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer', fontSize: '0.78rem', color: '#888', whiteSpace: 'nowrap' }}>
-              <input type="checkbox" checked={autoCategoryGroup} onChange={e => { setAutoCategoryGroup(e.target.checked); setBrandCategories([]); setBrandSelectedCats(new Set()) }}
-                style={{ accentColor: '#FF8C00' }} />
-              카테고리 자동분류
-            </label>
-          )}
         </div>
 
-        {/* 카테고리 자동분류 — 스캔 결과 */}
-        {autoCategoryGroup && selectedSite === 'MUSINSA' && (
+        {/* 카테고리 스캔 결과 */}
+        {brandCategories.length > 0 && (
           <div style={{ marginTop: '0.5rem' }}>
-            {brandCategories.length === 0 ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: '0.78rem', color: '#888' }}>위 URL/키워드 입력 후</span>
-                <button onClick={async () => {
-                  if (!collectUrl.trim()) { showAlert('URL 또는 키워드를 입력하세요'); return }
-                  setBrandScanning(true)
-                  try {
-                    const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
-                    const brand = parsed?.searchParams.get('brand') || ''
-                    const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || collectUrl.trim()
-                    const gf = parsed?.searchParams.get('gf') || 'A'
-                    if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
-                    const res = await collectorApi.brandScan(brand, gf, keyword)
-                    setBrandCategories(res.categories)
-                    setBrandTotal(res.total)
-                    setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                    addLog(`[카테고리스캔] ${keyword}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
-                  } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
-                  setBrandScanning(false)
-                }} disabled={brandScanning}
-                  style={{ padding: '0.3rem 0.75rem', background: brandScanning ? '#333' : '#FF8C00', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '0.78rem', fontWeight: 600, cursor: brandScanning ? 'not-allowed' : 'pointer' }}>
-                  {brandScanning ? '스캔 중...' : '카테고리 스캔'}
-                </button>
-              </div>
-            ) : (
               <div style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.75rem', maxHeight: '350px', overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                   <span style={{ fontSize: '0.78rem', color: '#888' }}>
@@ -907,13 +935,12 @@ export default function CollectorPage() {
                       const res = await collectorApi.brandCreateGroups({
                         brand, brand_name: keyword, gf,
                         categories: selected,
-                        requested_count_per_group: 100,
+                        requested_count_per_group: 0,
                         options: checkedOptions,
                       })
                       addLog(`[카테고리분류] ${res.created}개 그룹 생성 완료`)
                       showAlert(`${res.created}개 그룹이 생성되었습니다`, 'success')
                       setBrandCategories([]); setBrandSelectedCats(new Set())
-                      setAutoCategoryGroup(false)
                       load()
                     } catch (e) { showAlert(e instanceof Error ? e.message : '그룹 생성 실패', 'error') }
                   }}
@@ -922,8 +949,7 @@ export default function CollectorPage() {
                   </button>
                 </div>
               </div>
-            )}
-          </div>
+            </div>
         )}
       </div>
 
@@ -1288,8 +1314,8 @@ export default function CollectorPage() {
           const selectedCount = selectedFilter ? ((selectedFilter as unknown as Record<string, number>).collected_count ?? 0) : 0
 
           // 헤더·본문 너비 통일 (합계 100%)
-          // 사이트8 브랜드8 카테고리12 링크30 정책10 수집7 요청6 생성일10 매핑9
-          const colW = ['8%', '8%', '12%', '30%', '10%', '7%', '6%', '10%', '9%']
+          // 사이트8 브랜드8 카테고리24 링크15 정책10 수집8 요청6 생성일11 매핑10
+          const colW = ['8%', '8%', '24%', '15%', '10%', '8%', '6%', '11%', '10%']
           const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const, textAlign: 'center' as const }
           const colStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0 })
           const detColStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0, padding: '0.5rem 0.5rem' })
@@ -1366,16 +1392,18 @@ export default function CollectorPage() {
                 </div>
                 {/* 3. 카테고리: 사이트 또는 브랜드 선택 후 연관 표시 */}
                 <div style={colStyle(2)}>
-                  {(drillSite || drillBrand) ? (catGroups.length > 0 ? catGroups.map(g => (
-                    <div key={g.id} style={itemSt(drillGroup === g.id)}
-                      onClick={() => { setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
-                      onMouseEnter={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
-                      onMouseLeave={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'transparent' }}
-                    >
-                      {g._category || g.name}
-                      <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#FF8C00' }}>{g.collected_count ?? 0}</span>
-                    </div>
-                  )) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>항목 없음</div>
+                  {(drillSite || drillBrand) ? (catGroups.length > 0 ? (<>
+                    {catGroups.map(g => (
+                      <div key={g.id} style={itemSt(drillGroup === g.id)}
+                        onClick={() => { setDrillGroup(g.id); setSelectedIds(new Set([g.id])) }}
+                        onMouseEnter={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                        onMouseLeave={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'transparent' }}
+                      >
+                        {g._category || g.name}
+                        <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#FF8C00' }}>{g.collected_count ?? 0}</span>
+                      </div>
+                    ))}
+                  </>) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>항목 없음</div>
                   ) : null}
                 </div>
                 {/* 4. 링크 + 삭제 체크 */}
@@ -1442,6 +1470,30 @@ export default function CollectorPage() {
                       }}
                     >
                       <option value="">정책 선택</option>
+                      {policies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  ) : (drillBrand && catGroups.length > 0) ? (
+                    <select onChange={async (e) => {
+                      const policyId = e.target.value
+                      if (!policyId) return
+                      const policyName = policies.find(p => p.id === policyId)?.name || ''
+                      if (!await showConfirm(`${drillBrand} 브랜드의 ${catGroups.length}개 그룹에 "${policyName}" 정책을 일괄 적용하시겠습니까?`)) { e.target.value = ''; return }
+                      let applied = 0
+                      for (const g of catGroups) {
+                        try {
+                          await collectorApi.updateFilter(g.id, { applied_policy_id: policyId } as Partial<SambaSearchFilter>)
+                          applied++
+                        } catch { /* 무시 */ }
+                      }
+                      showAlert(`${applied}/${catGroups.length}개 그룹에 정책 적용 완료`, 'success')
+                      e.target.value = ''
+                      load(); loadTree()
+                    }} style={{
+                      width: '100%', padding: '0.2rem 0.2rem', fontSize: '0.68rem',
+                      background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.3)',
+                      color: '#FF8C00', borderRadius: '4px', cursor: 'pointer', fontWeight: 600,
+                    }}>
+                      <option value="">일괄적용 ({catGroups.length})</option>
                       {policies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}
