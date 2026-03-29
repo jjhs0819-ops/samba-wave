@@ -154,6 +154,81 @@ class ElevenstClient:
     """상품 조회."""
     return await self._call_api("GET", f"/product/{prd_no}")
 
+  async def get_orders(self, start_time: str, end_time: str) -> list[dict[str, Any]]:
+    """기간별 결제완료 주문 목록 조회.
+
+    Args:
+        start_time: 검색시작일 YYYYMMDDhhmm (예: 202603010000)
+        end_time:   검색종료일 YYYYMMDDhhmm (예: 202603071200)
+        최대 조회 기간: 7일 제한 → 초과 시 자동 분할 조회
+    """
+    import re as _re
+    from datetime import datetime, timedelta
+
+    fmt = "%Y%m%d%H%M"
+    start_dt = datetime.strptime(start_time, fmt)
+    end_dt = datetime.strptime(end_time, fmt)
+
+    # 7일 단위로 청크 분할
+    all_orders: list[dict[str, Any]] = []
+    chunk_start = start_dt
+    while chunk_start < end_dt:
+      chunk_end = min(chunk_start + timedelta(days=7), end_dt)
+      chunk_orders = await self._fetch_orders_chunk(
+        chunk_start.strftime(fmt), chunk_end.strftime(fmt)
+      )
+      all_orders.extend(chunk_orders)
+      chunk_start = chunk_end
+
+    logger.info("[11번가] 전체 주문 조회 완료: %d건", len(all_orders))
+    return all_orders
+
+  async def _fetch_orders_chunk(self, start_time: str, end_time: str) -> list[dict[str, Any]]:
+    """7일 이내 단일 구간 주문 조회."""
+    import re as _re
+
+    url = f"https://api.11st.co.kr/rest/ordservices/complete/{start_time}/{end_time}"
+    headers = self._headers()
+
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+      resp = await client.get(url, headers=headers)
+      logger.info("[11번가] GET /ordservices/complete/%s/%s → %s", start_time, end_time, resp.status_code)
+
+    if not resp.is_success:
+      raise ElevenstApiError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+
+    # EUC-KR 인코딩 처리
+    try:
+      text = resp.content.decode("euc-kr")
+    except Exception:
+      text = resp.text
+
+    # 네임스페이스 + XML 선언 제거 (ET가 euc-kr 멀티바이트 인코딩 미지원)
+    xml_text = text.replace("ns2:", "")
+    xml_text = _re.sub(r"<\?xml[^?]*\?>", "", xml_text, count=1).strip()
+    try:
+      root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+      logger.error("[11번가] 주문 XML 파싱 실패: %s", e)
+      return []
+
+    # result_code 확인 (0=결과없음 정상, 음수=에러)
+    result_code = root.findtext("result_code", "")
+    if result_code:
+      if result_code == "0":
+        return []
+      result_text = root.findtext("result_text", "")
+      raise ElevenstApiError(f"주문 조회 에러 ({result_code}): {result_text}")
+
+    orders: list[dict[str, Any]] = []
+    for order_el in root.findall("order"):
+      order_dict: dict[str, Any] = {}
+      for child in order_el:
+        order_dict[child.tag] = (child.text or "").strip()
+      orders.append(order_dict)
+
+    return orders
+
   async def get_outbound_addresses(self) -> list[dict[str, str]]:
     """출고지 주소 목록 조회. GET /rest/areaservice/outboundarea"""
     return await self._get_area_addresses("outboundarea")

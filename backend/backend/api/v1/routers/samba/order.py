@@ -744,7 +744,7 @@ async def sync_orders_from_markets(
             # 미등록 입력 캐시: 동일 product_id+channel_name에 대해 수동 등록된 source_url/product_image 재활용
             _unreg_cache: dict[str, dict[str, str]] = {}
             _unreg_result = await session.execute(
-                sa_text(
+                _sa_text(
                     "SELECT product_id, channel_name, source_url, product_image "
                     "FROM samba_order WHERE source_url IS NOT NULL AND product_id IS NOT NULL"
                 )
