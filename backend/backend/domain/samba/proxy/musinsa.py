@@ -79,10 +79,12 @@ class MusinsaClient:
         self, goods_no: str, *,
         member_grade_rate: Optional[float] = None,
         refresh_only: bool = False,
+        _shared_client: Optional[httpx.AsyncClient] = None,
     ) -> dict[str, Any]:
         """상품 상세 조회 - 상세 + 옵션 + 재고 + 고시정보 + 쿠폰 + 혜택가.
 
         proxy-server.mjs ``fetchMusinsaProduct()`` 전체 로직 포팅.
+        _shared_client: 외부에서 공유 클라이언트를 넘기면 연결 재사용 (병렬 수집 성능 향상)
         """
         # 무신사는 로그인(쿠키) 필수
         if not self.cookie:
@@ -91,7 +93,14 @@ class MusinsaClient:
                 "확장앱에서 무신사 로그인 후 다시 시도하세요."
             )
         timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        # 공유 클라이언트 재사용 (TCP 연결 풀링) 또는 새로 생성
+        _own_client = None
+        if _shared_client:
+            client = _shared_client
+        else:
+            _own_client = httpx.AsyncClient(timeout=timeout)
+            client = _own_client
+        try:
             # 1) 상품 상세 API
             detail_resp = await client.get(
                 f"{self.BASE_DETAIL}/{goods_no}",
@@ -386,6 +395,9 @@ class MusinsaClient:
                 "collectedAt": now_iso,
                 "updatedAt": now_iso,
             }
+        finally:
+            if _own_client:
+                await _own_client.aclose()
 
     async def search_products(
         self,

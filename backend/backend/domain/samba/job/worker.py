@@ -370,11 +370,13 @@ class JobWorker:
                 search_page += 1
                 continue
 
-            # 상세 수집 (병렬 — SITE_CONCURRENCY 공유)
+            # 상세 수집 (병렬 — SITE_CONCURRENCY + 공유 HTTP 클라이언트)
             from backend.domain.samba.collector.refresher import SITE_CONCURRENCY
+            import httpx as _httpx
             _collect_sem = asyncio.Semaphore(SITE_CONCURRENCY.get("MUSINSA", 5))
             _collect_results: list[dict | None] = []
             _rate_limited = False
+            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(30, connect=10.0))
 
             async def _fetch_detail(goods_no: str) -> dict | None:
                 nonlocal total_skipped, _rate_limited
@@ -382,7 +384,7 @@ class JobWorker:
                     return None
                 async with _collect_sem:
                     try:
-                        detail = await client.get_goods_detail(goods_no)
+                        detail = await client.get_goods_detail(goods_no, _shared_client=_shared_http)
                         if not detail or not detail.get("name"):
                             return None
                         if _exclude_preorder and detail.get("saleStatus") == "preorder":
@@ -406,6 +408,7 @@ class JobWorker:
                         return None
 
             _collect_results = await asyncio.gather(*[_fetch_detail(gn) for gn in targets])
+            await _shared_http.aclose()
 
             if _rate_limited:
                 await repo.fail_job(job.id, "소싱처 차단 (연속 rate limit)")
