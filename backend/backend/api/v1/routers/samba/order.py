@@ -698,9 +698,21 @@ async def sync_orders_from_markets(
                 results.append({"account": label, "status": "skip", "message": "쿠팡 주문 조회 미구현"})
                 continue
             elif market_type == "11st":
-                # 11번가 주문 조회 (구현 대기)
-                results.append({"account": label, "status": "skip", "message": "11번가 주문 조회 미구현"})
-                continue
+                # 11번가 주문 조회
+                from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+                api_key = account.api_key or extras.get("apiKey", "")
+                if not api_key:
+                    results.append({"account": label, "status": "skip", "message": "11번가 API 키 없음"})
+                    continue
+                elevenst_client = ElevenstClient(api_key)
+                from datetime import datetime, timedelta
+                end_dt = datetime.now()
+                start_dt = end_dt - timedelta(days=body.days)
+                start_str = start_dt.strftime("%Y%m%d%H%M")
+                end_str = end_dt.strftime("%Y%m%d%H%M")
+                raw_orders = await elevenst_client.get_orders(start_str, end_str)
+                for ord_dict in raw_orders:
+                    orders_data.append(_parse_elevenst_order(ord_dict, account.id, label))
             else:
                 results.append({"account": label, "status": "skip", "message": f"{market_type} 주문 조회 미지원"})
                 continue
@@ -825,6 +837,83 @@ async def sync_orders_from_markets(
             results.append({"account": label, "status": "error", "message": str(e)})
 
     return {"total_synced": total_synced, "results": results}
+
+
+def _parse_elevenst_order(order: dict, account_id: str, account_label: str) -> dict:
+    """11번가 주문 XML dict → SambaOrder 데이터 변환."""
+    # 11번가 주문상태 코드 → 내부 status 매핑
+    status_map = {
+        "T1100": "pending",    # 결제완료
+        "T1200": "pending",    # 배송준비중
+        "T2100": "shipped",    # 배송중
+        "T2200": "shipped",    # 배송완료
+        "T3100": "completed",  # 구매확정
+        "T9100": "cancelled",  # 취소완료
+        "T9200": "returned",   # 반품완료
+    }
+    # 11번가 주문상태 코드 → 한글 표시
+    status_label_map = {
+        "T1100": "결제완료",
+        "T1200": "배송준비중",
+        "T2100": "배송중",
+        "T2200": "배송완료",
+        "T3100": "구매확정",
+        "T8100": "취소요청",
+        "T8200": "반품요청",
+        "T9100": "취소완료",
+        "T9200": "반품완료",
+    }
+
+    ord_status_cd = order.get("ordStsCd", "") or order.get("ordStatusCd", "")
+    status = status_map.get(ord_status_cd, "pending")
+    shipping_status = status_label_map.get(ord_status_cd, ord_status_cd or "결제완료")
+
+    # 배송비
+    try:
+        shipping_fee = int(order.get("dlvCst", 0) or 0)
+    except (ValueError, TypeError):
+        shipping_fee = 0
+
+    # 판매금액 (옵션별 단가 * 수량)
+    try:
+        sale_price = int(order.get("selPrc", 0) or order.get("selAmt", 0) or 0)
+    except (ValueError, TypeError):
+        sale_price = 0
+
+    try:
+        quantity = int(order.get("ordQty", 1) or 1)
+    except (ValueError, TypeError):
+        quantity = 1
+
+    # 배송지 주소 합치기
+    base_addr = order.get("rcvrBaseAddr", "") or order.get("rcvrAddr", "") or ""
+    detail_addr = order.get("rcvrDtlsAddr", "") or order.get("rcvrAddrDtl", "") or ""
+    full_addr = (base_addr + " " + detail_addr).strip()
+
+    return {
+        "order_number": str(order.get("ordNo", "") or order.get("ordrNo", "")),
+        "shipment_id": str(order.get("ordNo", "") or ""),
+        "channel_id": account_id,
+        "channel_name": account_label,
+        "product_id": str(order.get("prdNo", "") or order.get("sellerPrdCd", "")),
+        "product_name": order.get("prdNm", "") or order.get("goodsNm", "") or "",
+        "product_option": order.get("slctPrdOptNm", "") or order.get("optionNm", "") or "",
+        "product_image": "",
+        "customer_name": order.get("rcvrNm", "") or order.get("buyerNm", "") or "",
+        "customer_phone": order.get("rcvrPrtblNo", "") or order.get("rcvrMblNo", "") or order.get("rcvrTlNo", "") or "",
+        "customer_address": full_addr,
+        "quantity": quantity,
+        "sale_price": sale_price,
+        "cost": 0,
+        "fee_rate": 0,
+        "revenue": sale_price,
+        "shipping_fee": shipping_fee,
+        "status": status,
+        "shipping_status": shipping_status,
+        "shipping_company": order.get("dlvCrpNm", "") or "",
+        "tracking_number": order.get("invcNo", "") or "",
+        "source": "11st",
+    }
 
 
 def _parse_smartstore_order(

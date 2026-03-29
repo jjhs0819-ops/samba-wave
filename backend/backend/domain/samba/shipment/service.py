@@ -1053,6 +1053,12 @@ class SambaShipmentService:
     if not source_category:
       return {}
 
+    # '브랜드' 접두어 제거 (예: "브랜드 여성의류 > 재킷" → "여성의류 > 재킷")
+    import re as _re
+    source_category = _re.sub(r"^브랜드\s+", "", source_category).strip()
+    if not source_category:
+      return {}
+
     # DB에서 매핑 조회
     mapping_repo = SambaCategoryMappingRepository(self.session)
     mapping = await mapping_repo.find_mapping(source_site, source_category)
