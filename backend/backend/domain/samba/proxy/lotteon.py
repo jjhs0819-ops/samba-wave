@@ -862,11 +862,8 @@ class LotteonClient:
     as_phone = product.get("_as_phone", "")
     as_message = product.get("_as_message", "")
     if not as_message:
-      # asMessage 없으면 전화번호로 기본 문구 생성
-      if as_phone:
-        as_message = f"A/S 전화번호: {as_phone}"
-      else:
-        as_message = f"{brand} 고객센터 문의" if brand else "판매자 문의"
+      # asMessage 없으면 설정 전화번호로 기본 문구 생성 (브랜드 고객센터 X)
+      as_message = f"A/S 전화번호: {as_phone}" if as_phone else "판매자 문의"
 
     # ── SEO: 검색 키워드 / 상품 소개문 ─────────────────────────
     keywords = _build_lotteon_keywords(product)
