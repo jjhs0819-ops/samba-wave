@@ -140,11 +140,13 @@ class JobWorker:
         success_count = 0
         fail_count = 0
         for i, pid in enumerate(product_ids):
-            # Job 취소 체크 (건별)
-            if await repo.is_cancelled(job.id):
+            # 비상정지 + Job 취소 체크 (건별)
+            from backend.domain.samba.emergency import is_emergency_stopped
+            if is_emergency_stopped() or await repo.is_cancelled(job.id):
                 cancelled = len(product_ids) - i
-                _add_job_log(job.id, f"취소됨 — {i}건 완료, {cancelled}건 취소")
-                logger.info(f"[잡워커] 전송 취소: {job.id} — {i}건 완료, {cancelled}건 취소")
+                reason = "비상정지" if is_emergency_stopped() else "취소"
+                _add_job_log(job.id, f"{reason} — {i}건 완료, {cancelled}건 중단")
+                logger.info(f"[잡워커] 전송 {reason}: {job.id} — {i}건 완료, {cancelled}건 중단")
                 return
             prod = await cp_repo.get_async(pid)
             site_pid = prod.site_product_id if prod else ""
@@ -368,73 +370,87 @@ class JobWorker:
                 search_page += 1
                 continue
 
-            # 상세 수집
-            for goods_no in targets:
-                try:
-                    detail = await client.get_goods_detail(goods_no)
-                    if not detail or not detail.get("name"):
-                        await asyncio.sleep(_site_intervals.get(_ik, 0))
-                        continue
+            # 상세 수집 (병렬 — SITE_CONCURRENCY 공유)
+            from backend.domain.samba.collector.refresher import SITE_CONCURRENCY
+            _collect_sem = asyncio.Semaphore(SITE_CONCURRENCY.get("MUSINSA", 5))
+            _collect_results: list[dict | None] = []
+            _rate_limited = False
 
-                    if _exclude_preorder and detail.get("saleStatus") == "preorder":
-                        total_skipped += 1
-                        await asyncio.sleep(_site_intervals.get(_ik, 0))
-                        continue
-                    if _exclude_boutique and detail.get("isBoutique"):
-                        total_skipped += 1
-                        await asyncio.sleep(_site_intervals.get(_ik, 0))
-                        continue
+            async def _fetch_detail(goods_no: str) -> dict | None:
+                nonlocal total_skipped, _rate_limited
+                if _rate_limited:
+                    return None
+                async with _collect_sem:
+                    try:
+                        detail = await client.get_goods_detail(goods_no)
+                        if not detail or not detail.get("name"):
+                            return None
+                        if _exclude_preorder and detail.get("saleStatus") == "preorder":
+                            total_skipped += 1
+                            return None
+                        if _exclude_boutique and detail.get("isBoutique"):
+                            total_skipped += 1
+                            return None
+                        return {"goods_no": goods_no, "detail": detail}
+                    except RateLimitError as rle:
+                        current = _site_intervals.get(_ik, 1.0)
+                        _site_intervals[_ik] = min(30.0, current * 2)
+                        _site_consecutive_errors[_ik] = _site_consecutive_errors.get("MUSINSA", 0) + 1
+                        if _site_consecutive_errors[_ik] >= 5:
+                            _rate_limited = True
+                        if rle.retry_after > 0:
+                            await asyncio.sleep(rle.retry_after)
+                        return None
+                    except Exception as e:
+                        logger.warning(f"[잡워커] 수집 실패 {goods_no}: {e}")
+                        return None
 
-                    if _use_max_discount:
-                        _raw_cost = detail.get("bestBenefitPrice")
-                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
-                    else:
-                        new_cost = detail.get("salePrice") or 0
+            _collect_results = await asyncio.gather(*[_fetch_detail(gn) for gn in targets])
 
-                    raw_cat = detail.get("category", "") or ""
-                    cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
-                    _sale_price = detail.get("salePrice", 0)
-                    _original_price = detail.get("originalPrice", 0)
+            if _rate_limited:
+                await repo.fail_job(job.id, "소싱처 차단 (연속 rate limit)")
+                return
 
-                    raw_detail_html = detail.get("detailHtml", "")
-                    if not raw_detail_html:
-                        detail_imgs = detail.get("detailImages") or []
-                        if detail_imgs:
-                            raw_detail_html = "\n".join(
-                                f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
-                                for img in detail_imgs
-                            )
-
-                    from backend.api.v1.routers.samba.collector_common import _get_services
-                    svc = _get_services(session)
-
-                    product_data = _build_product_data(
-                        detail, goods_no, filter_id, "MUSINSA",
-                        new_cost, _sale_price, _original_price,
-                        raw_cat, cat_parts, raw_detail_html,
-                    )
-                    await svc.create_collected_product(product_data)
-                    total_saved += 1
-
-                    await repo.update_progress(job.id, total_saved, remaining)
-
-                    if total_saved >= remaining:
-                        break
-                except RateLimitError as rle:
-                    current = _site_intervals.get(_ik, 1.0)
-                    _site_intervals[_ik] = min(30.0, current * 2)
-                    _site_consecutive_errors[_ik] = _site_consecutive_errors.get("MUSINSA", 0) + 1
-                    if _site_consecutive_errors[_ik] >= 5:
-                        await repo.fail_job(job.id, f"소싱처 차단 (HTTP {rle.status})")
-                        return
-                    if rle.retry_after > 0:
-                        await asyncio.sleep(rle.retry_after)
-                    else:
-                        await asyncio.sleep(_site_intervals.get(_ik, 0))
+            # 수집된 상세 순차 저장 (DB 쓰기는 순차)
+            from backend.api.v1.routers.samba.collector_common import _get_services
+            svc = _get_services(session)
+            for item in _collect_results:
+                if item is None:
                     continue
-                except Exception as e:
-                    logger.warning(f"[잡워커] 수집 실패 {goods_no}: {e}")
-                await asyncio.sleep(_site_intervals.get(_ik, 0))
+                goods_no = item["goods_no"]
+                detail = item["detail"]
+
+                if _use_max_discount:
+                    _raw_cost = detail.get("bestBenefitPrice")
+                    new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                else:
+                    new_cost = detail.get("salePrice") or 0
+
+                raw_cat = detail.get("category", "") or ""
+                cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
+                _sale_price = detail.get("salePrice", 0)
+                _original_price = detail.get("originalPrice", 0)
+
+                raw_detail_html = detail.get("detailHtml", "")
+                if not raw_detail_html:
+                    detail_imgs = detail.get("detailImages") or []
+                    if detail_imgs:
+                        raw_detail_html = "\n".join(
+                            f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                            for img in detail_imgs
+                        )
+
+                product_data = _build_product_data(
+                    detail, goods_no, filter_id, "MUSINSA",
+                    new_cost, _sale_price, _original_price,
+                    raw_cat, cat_parts, raw_detail_html,
+                )
+                await svc.create_collected_product(product_data)
+                total_saved += 1
+                await repo.update_progress(job.id, total_saved, remaining)
+
+                if total_saved >= remaining:
+                    break
 
             search_page += 1
 

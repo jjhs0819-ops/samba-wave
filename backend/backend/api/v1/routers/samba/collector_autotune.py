@@ -7,8 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from sqlalchemy import or_, func, cast, case, update as sa_update, String as _StrType
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import or_, func, case, update as sa_update
 from sqlmodel import select
 
 from backend.api.v1.routers.samba.collector_common import (
@@ -28,28 +27,16 @@ _autotune_task: Optional[asyncio.Task] = None
 _autotune_running = False
 _autotune_last_tick: Optional[str] = None
 _autotune_cycle_count = 0
-_autotune_refreshed_count = 0  # 오토튠에서 갱신한 상품 수 (24시간 표시용)
 
 # 소싱처별 품절 서킷브레이커
 SOLDOUT_BREAK_THRESHOLD = 10  # 연속 품절 N개 → 해당 소싱처 중단
 _site_consecutive_soldout: dict[str, int] = {}  # {소싱처: 연속 품절 수}
 _site_breaker_tripped: dict[str, bool] = {}  # {소싱처: 중단 여부}
 
+
 # 등급 분류 기준 기간 (일)
 CLASSIFY_WINDOW_DAYS = 7
 
-
-def _is_market_registered(cp: object) -> bool:
-    """마켓등록상품 판별 — registered_accounts + market_product_nos 모두 있어야 함."""
-    ra = getattr(cp, "registered_accounts", None)
-    mn = getattr(cp, "market_product_nos", None)
-    if not ra or not mn:
-        return False
-    if isinstance(ra, list) and len(ra) == 0:
-        return False
-    if isinstance(mn, dict) and len(mn) == 0:
-        return False
-    return True
 
 
 async def _classify_products(session) -> dict[str, int]:
@@ -65,15 +52,9 @@ async def _classify_products(session) -> dict[str, int]:
     log = logging.getLogger("autotune")
     cutoff = datetime.now(timezone.utc) - timedelta(days=CLASSIFY_WINDOW_DAYS)
 
-    # 마켓등록상품 조건 (collector.py의 market_registered 필터와 동일)
-    registered_cond = [
-        _CP.registered_accounts.isnot(None),
-        cast(_CP.registered_accounts, _StrType) != 'null',
-        cast(_CP.registered_accounts, _StrType) != '[]',
-        _CP.market_product_nos.isnot(None),
-        cast(_CP.market_product_nos, _StrType) != 'null',
-        cast(_CP.market_product_nos, _StrType) != '{}',
-    ]
+    # 마켓등록상품 공통 조건 (collector_common에서 통합 관리)
+    from backend.api.v1.routers.samba.collector_common import build_market_registered_conditions
+    registered_cond = build_market_registered_conditions(_CP)
 
     # 최근 7일 주문이 있는 product_id 서브쿼리
     order_subq = (
@@ -126,7 +107,7 @@ async def _autotune_loop():
     순서: hot → warm → cold (소싱처별 병렬, 등급순 정렬)
     품절: 마켓 삭제(DELETE) → DB 삭제 (서킷브레이커: 소싱처별 연속 10건)
     """
-    global _autotune_running, _autotune_last_tick, _autotune_cycle_count, _autotune_refreshed_count
+    global _autotune_running, _autotune_last_tick, _autotune_cycle_count
     import logging
     log = logging.getLogger("autotune")
     log.info("[오토튠] 루프 시작")
@@ -155,19 +136,17 @@ async def _autotune_loop():
                     (_CP.monitor_priority == "warm", 1),
                     else_=2,
                 )
+                # 마켓등록상품 공통 조건 (collector_common에서 통합 관리)
+                from backend.api.v1.routers.samba.collector_common import build_market_registered_conditions
+                market_cond = build_market_registered_conditions(_CP)
                 stmt = (
                     select(_CP)
                     .where(
-                        # 마켓등록상품만 (collector.py market_registered 필터와 동일)
-                        _CP.registered_accounts.isnot(None),
-                        cast(_CP.registered_accounts, _StrType) != 'null',
-                        cast(_CP.registered_accounts, _StrType) != '[]',
-                        _CP.market_product_nos.isnot(None),
-                        cast(_CP.market_product_nos, _StrType) != 'null',
-                        cast(_CP.market_product_nos, _StrType) != '{}',
+                        *market_cond,
                         # 정책 적용 + 품절 아님
                         _CP.applied_policy_id != None,
-                        or_(_CP.is_sold_out == None, _CP.is_sold_out == False),
+                        # sale_status 기준 품절 제외
+                        _CP.sale_status != "sold_out",
                     )
                     .order_by(priority_order)
                 )
@@ -193,37 +172,63 @@ async def _autotune_loop():
                     filtered_count = len(products)
                     # ③ 소싱처별 병렬 갱신
                     results, summary = await refresh_products_bulk(products)
-                    _autotune_refreshed_count += len(results)
 
-                    # DB 업데이트 + 변동/품절 추적
-                    changed_ids: list[str] = []
-                    stock_changed_ids: list[str] = []
+                    # 상품 딕셔너리 사전 구축 (N+1 쿼리 방지)
+                    product_map: dict[str, object] = {p.id: p for p in products}
+
+                    # DB 업데이트 + 마켓별 최종 판매가 비교 → 재전송 판정
+                    from backend.domain.samba.shipment.service import calc_market_price
+                    from backend.domain.samba.policy.repository import SambaPolicyRepository
+                    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+                    # 정책/계정 캐시 (배치 1회 조회)
+                    _policy_cache: dict[str, object] = {}
+                    _account_cache: dict[str, object] = {}
+                    account_repo = SambaMarketAccountRepository(session)
+                    policy_repo = SambaPolicyRepository(session)
+
+                    # 계정 사전 로드: 모든 상품의 registered_accounts에서 account_id 수집
+                    _all_account_ids: set[str] = set()
+                    for _p in products:
+                        if _p.registered_accounts:
+                            _all_account_ids.update(_p.registered_accounts)
+                    if _all_account_ids:
+                        from backend.domain.samba.account.model import SambaMarketAccount
+                        _acc_stmt = select(SambaMarketAccount).where(SambaMarketAccount.id.in_(list(_all_account_ids)))
+                        _acc_result = await session.exec(_acc_stmt)
+                        for _acc in _acc_result.all():
+                            _account_cache[_acc.id] = _acc
+
+                    # 재전송 대상: {account_id: [product_id, ...]}
+                    retransmit_by_account: dict[str, list[str]] = {}
                     soldout_ids: list[str] = []
+                    price_changed_count = 0
 
                     for r in results:
-                        # 건별 중단 체크
-                        if not _autotune_running:
-                            log.info("[오토튠] 중단 요청 감지 — 결과 처리 중단")
+                        from backend.domain.samba.emergency import is_emergency_stopped
+                        if not _autotune_running or is_emergency_stopped():
+                            log.info("[오토튠] 중단 감지 — 결과 처리 즉시 중단")
                             break
-
-                        if r.error:
-                            product = await repo.get_async(r.product_id)
-                            if product:
-                                await repo.update_async(
-                                    r.product_id,
-                                    refresh_error_count=(product.refresh_error_count or 0) + 1,
-                                    last_refreshed_at=now,
-                                )
+                        if r.error or r.needs_extension:
+                            if r.error and r.error != "cancelled":
+                                # 사전 구축된 딕셔너리에서 조회 (N+1 제거)
+                                product = product_map.get(r.product_id)
+                                if product:
+                                    await repo.update_async(
+                                        r.product_id,
+                                        refresh_error_count=(product.refresh_error_count or 0) + 1,
+                                        last_refreshed_at=now,
+                                    )
                             continue
-                        if r.needs_extension:
-                            continue
 
-                        product = await repo.get_async(r.product_id)
+                        # 사전 구축된 딕셔너리에서 조회 (N+1 제거)
+                        product = product_map.get(r.product_id)
                         if not product:
                             continue
 
                         site = product.source_site or "UNKNOWN"
 
+                        # DB 업데이트 준비
                         updates: dict = {
                             "last_refreshed_at": now,
                             "refresh_error_count": 0,
@@ -244,6 +249,7 @@ async def _autotune_loop():
                         history.insert(0, snapshot)
                         updates["price_history"] = _trim_history(history)
 
+                        # 소싱처 원가 변동 → DB 반영
                         if r.changed:
                             if r.new_sale_price is not None:
                                 updates["sale_price"] = r.new_sale_price
@@ -254,74 +260,121 @@ async def _autotune_loop():
                             if r.new_options is not None:
                                 updates["options"] = r.new_options
                             updates["sale_status"] = r.new_sale_status
-                            updates["is_sold_out"] = r.new_sale_status == "sold_out"
-                            # 가격/재고 변동 시각 기록 (등급 분류 기준)
+                            # is_sold_out 제거 → sale_status로 통일
                             updates["price_changed_at"] = now
-                            old_price = product.sale_price or 0
-                            new_price = r.new_sale_price or 0
-                            if new_price != old_price:
-                                updates["price_before_change"] = old_price
-                            # 품절 → 서킷브레이커 + 삭제 대상
-                            if r.new_sale_status == "sold_out":
-                                _site_consecutive_soldout[site] = _site_consecutive_soldout.get(site, 0) + 1
-                                if _site_consecutive_soldout[site] >= SOLDOUT_BREAK_THRESHOLD:
-                                    _site_breaker_tripped[site] = True
-                                    log.error("[오토튠] 서킷브레이커 작동! %s 연속 %d개 품절 → %s 중단", site, _site_consecutive_soldout[site], site)
-                                    continue
-                                soldout_ids.append(r.product_id)
-                            else:
-                                _site_consecutive_soldout[site] = 0
-                                changed_ids.append(r.product_id)
                         elif r.stock_changed:
                             if r.new_options is not None:
                                 updates["options"] = r.new_options
-                            # 재고 변동도 변동 시각 기록 (등급 분류 기준)
                             updates["price_changed_at"] = now
+
+                        # 품절 → 서킷브레이커 + 삭제 대상
+                        if r.new_sale_status == "sold_out":
+                            _site_consecutive_soldout[site] = _site_consecutive_soldout.get(site, 0) + 1
+                            if _site_consecutive_soldout[site] >= SOLDOUT_BREAK_THRESHOLD:
+                                _site_breaker_tripped[site] = True
+                                log.error("[오토튠] 서킷브레이커 작동! %s 연속 %d개 품절 → %s 중단", site, _site_consecutive_soldout[site], site)
+                                await repo.update_async(r.product_id, **updates)
+                                continue
+                            soldout_ids.append(r.product_id)
+                            await repo.update_async(r.product_id, **updates)
                             _site_consecutive_soldout[site] = 0
-                            stock_changed_ids.append(r.product_id)
+                            continue
                         else:
                             _site_consecutive_soldout[site] = 0
 
+                        # ★ 마켓별 최종 판매가 비교 — 원가/정책/수수료 무엇이든 바뀌면 재전송
+                        new_cost = r.new_cost if r.new_cost is not None else (product.cost or product.sale_price or 0)
+                        reg_accounts = product.registered_accounts or []
+                        last_sent = product.last_sent_data or {}
+
+                        if product.applied_policy_id:
+                            if product.applied_policy_id not in _policy_cache:
+                                _policy_cache[product.applied_policy_id] = await policy_repo.get_async(product.applied_policy_id)
+                            policy = _policy_cache[product.applied_policy_id]
+                        else:
+                            policy = None
+
+                        for acc_id in reg_accounts:
+                            if acc_id not in _account_cache:
+                                _account_cache[acc_id] = await account_repo.get_async(acc_id)
+                            acc = _account_cache[acc_id]
+                            if not acc:
+                                continue
+                            market_type = acc.market_type or ""
+
+                            # 정책 적용 후 마켓 최종 판매가 계산
+                            if policy and policy.pricing:
+                                expected_price = calc_market_price(
+                                    new_cost,
+                                    policy.pricing,
+                                    market_type,
+                                    policy.market_policies,
+                                )
+                            else:
+                                expected_price = int(new_cost)
+
+                            # 마지막 전송 가격과 비교
+                            acc_last = last_sent.get(acc_id, {})
+                            last_price = int(acc_last.get("sale_price", 0)) if acc_last else 0
+
+                            # 재고 변동도 체크
+                            needs_retransmit = (expected_price != last_price) or r.stock_changed
+
+                            if needs_retransmit:
+                                retransmit_by_account.setdefault(acc_id, []).append(r.product_id)
+                                if expected_price != last_price:
+                                    price_changed_count += 1
+
                         await repo.update_async(r.product_id, **updates)
+
+                        # 연속 무변동 카운터 업데이트
+                        if r.changed or r.stock_changed:
+                            # 변동 감지 → 카운터 초기화, 스킵 해제
+                            _no_change_count.pop(r.product_id, None)
+                            _skip_remaining.pop(r.product_id, None)
+                        else:
+                            # 변동 없음 → 카운터 증가
+                            cnt = _no_change_count.get(r.product_id, 0) + 1
+                            _no_change_count[r.product_id] = cnt
+                            if cnt >= SKIP_AFTER_NO_CHANGE:
+                                _skip_remaining[r.product_id] = SKIP_CYCLES
+                                _no_change_count[r.product_id] = 0
 
                     await session.commit()
 
-                    # ④ 마켓 반영: 변동 → 재전송, 품절 → 마켓삭제 → DB삭제
+                    # ④ 마켓 반영: 판매가 변동 → 재전송, 품절 → 마켓삭제 → DB삭제
                     retransmitted = 0
                     deleted_count = 0
-                    if changed_ids or stock_changed_ids or soldout_ids:
+                    # 재전송 대상 집계
+                    _all_retransmit_pids = set()
+                    for pids in retransmit_by_account.values():
+                        _all_retransmit_pids.update(pids)
+                    has_work = bool(_all_retransmit_pids) or bool(soldout_ids)
+                    if has_work:
                         from backend.domain.samba.shipment.repository import SambaShipmentRepository
                         from backend.domain.samba.shipment.service import SambaShipmentService
 
                         ship_repo = SambaShipmentRepository(session)
                         ship_svc = SambaShipmentService(ship_repo, session)
 
-                        # 가격/재고 변동 → 계정별로 묶어서 배치 재전송
-                        _all_retransmit = list(set(changed_ids) | set(stock_changed_ids))
-                        _rt_groups: dict[str, list[str]] = {}
-                        for pid in _all_retransmit:
-                            product = await repo.get_async(pid)
-                            if product and product.registered_accounts:
-                                acc_key = ",".join(sorted(product.registered_accounts))
-                                _rt_groups.setdefault(acc_key, []).append(pid)
-                        for acc_key, pids in _rt_groups.items():
-                            acc_ids = acc_key.split(",")
+                        # 마켓별 최종 판매가 변동 → 계정별 재전송
+                        for acc_id, pids in retransmit_by_account.items():
                             try:
-                                await ship_svc.start_update(pids, [], acc_ids, skip_unchanged=False)
+                                # 가격/재고만 재전송 (이미지 업로드 불필요)
+                                await ship_svc.start_update(pids, ["price", "stock"], [acc_id], skip_unchanged=False)
                                 retransmitted += len(pids)
                             except Exception as e:
-                                log.error("[오토튠] 재전송 실패 (%d건): %s", len(pids), e)
+                                log.error("[오토튠] 재전송 실패 (%s, %d건): %s", acc_id, len(pids), e)
 
                         # 품절 → 마켓 삭제(DELETE) + DB 삭제
                         import asyncio as _aio
                         from backend.domain.samba.shipment.dispatcher import delete_from_market
-                        from backend.domain.samba.account.repository import SambaMarketAccountRepository
-                        account_repo = SambaMarketAccountRepository(session)
 
                         _del_targets: list[tuple] = []
                         _del_pids: set[str] = set()
                         for pid in soldout_ids:
-                            product = await repo.get_async(pid)
+                            # 사전 구축된 딕셔너리에서 조회 (N+1 제거)
+                            product = product_map.get(pid)
                             if not product:
                                 continue
                             if getattr(product, "lock_delete", False):
@@ -331,7 +384,8 @@ async def _autotune_loop():
                             product_dict = product.model_dump()
                             if product.registered_accounts:
                                 for account_id in product.registered_accounts:
-                                    account = await account_repo.get_async(account_id)
+                                    # 사전 로드된 계정 캐시에서 조회 (N+1 제거)
+                                    account = _account_cache.get(account_id)
                                     if not account:
                                         continue
                                     m_nos = product.market_product_nos or {}
@@ -372,18 +426,18 @@ async def _autotune_loop():
                     monitor = SambaMonitorService(session)
                     await monitor.emit(
                         "scheduler_tick", "info",
-                        summary=f"오토튠 — 대상 {filtered_count}건, 갱신 {summary.refreshed}건, 재전송 {retransmitted}건, 삭제 {deleted_count}건",
+                        summary=f"오토튠 — 대상 {filtered_count}건, 갱신 {summary.refreshed}건, 가격변동 {price_changed_count}건, 재전송 {retransmitted}건, 삭제 {deleted_count}건",
                         detail={
                             "total": filtered_count,
                             "refreshed": summary.refreshed,
-                            "changed": summary.changed,
+                            "changed": price_changed_count,
                             "sold_out": summary.sold_out,
                             "retransmitted": retransmitted,
                             "deleted": deleted_count,
                         },
                     )
                     await session.commit()
-                    log.info("[오토튠] tick 완료: 대상 %d, 갱신 %d, 재전송 %d, 삭제 %d", filtered_count, summary.refreshed, retransmitted, deleted_count)
+                    log.info("[오토튠] tick 완료: 대상 %d, 갱신 %d, 가격변동 %d, 재전송 %d, 삭제 %d", filtered_count, summary.refreshed, price_changed_count, retransmitted, deleted_count)
                 else:
                     await asyncio.sleep(5)
 
@@ -408,13 +462,12 @@ class AutotuneStartRequest(BaseModel):
 @router.post("/autotune/start")
 async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     """오토튠 무한 루프 시작 — 마켓등록상품만 대상."""
-    global _autotune_task, _autotune_running, _autotune_cycle_count, _autotune_refreshed_count
+    global _autotune_task, _autotune_running, _autotune_cycle_count
     from backend.domain.samba.collector.refresher import clear_bulk_cancel
     if _autotune_running:
         return {"ok": True, "status": "already_running"}
     _autotune_running = True
     _autotune_cycle_count = 0
-    _autotune_refreshed_count = 0
     clear_bulk_cancel()  # 이전 취소 플래그 초기화
     _autotune_task = asyncio.create_task(_autotune_loop())
     return {"ok": True, "status": "started", "target": "registered"}
@@ -437,13 +490,27 @@ async def autotune_stop():
 
 @router.get("/autotune/status")
 async def autotune_status():
-    """오토튠 상태 조회."""
+    """오토튠 상태 조회 — 24h 갱신 수는 DB 기반."""
+    from backend.db.orm import get_read_session
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP2
+
     tripped = {site: count for site, count in _site_consecutive_soldout.items() if _site_breaker_tripped.get(site)}
+
+    # DB 기반 24h 갱신 수 (서버 재시작해도 유지)
+    refreshed_24h = 0
+    try:
+        since_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+        async with get_read_session() as rs:
+            cnt_stmt = select(func.count(_CP2.id)).where(_CP2.last_refreshed_at >= since_24h)
+            refreshed_24h = (await rs.execute(cnt_stmt)).scalar() or 0
+    except Exception:
+        refreshed_24h = 0
+
     return {
         "running": _autotune_running,
         "last_tick": _autotune_last_tick,
         "cycle_count": _autotune_cycle_count,
-        "refreshed_count": _autotune_refreshed_count,
+        "refreshed_count": refreshed_24h,
         "target": "registered",
         "breaker_tripped": tripped,
     }

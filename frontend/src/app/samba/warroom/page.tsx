@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState, memo } from 'react'
 import { monitorApi, collectorApi, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api'
+import { SITE_COLORS } from '@/lib/samba/constants'
 
 const POLL_INTERVAL = 30_000
 const LOG_POLL_INTERVAL = 500
@@ -154,17 +155,6 @@ const LOG_LEVEL_COLORS: Record<string, string> = {
   error: '#FF6B6B',
 }
 
-const SITE_COLORS: Record<string, string> = {
-  MUSINSA: '#4C9AFF',
-  KREAM: '#51CF66',
-  Nike: '#FF6B6B',
-  ABCmart: '#FFD93D',
-  Adidas: '#A78BFA',
-  GrandStage: '#F472B6',
-  LOTTEON: '#FB923C',
-  GSShop: '#34D399',
-}
-
 const card: React.CSSProperties = {
   background: 'rgba(30,30,30,0.5)',
   backdropFilter: 'blur(20px)',
@@ -209,12 +199,17 @@ export default function WarroomPage() {
   const [autotuneCycles, setAutotuneCycles] = useState(0)
   const [autotuneRefreshed, setAutotuneRefreshed] = useState(0)
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
-  const [autotuneTarget, setAutotuneTarget] = useState('registered')
+  const prevCyclesRef = useRef(0)
   const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number) => {
     setAutotuneRunning(running)
     setAutotuneCycles(cycles)
     setAutotuneLastTick(lastTick)
     setAutotuneRefreshed(refreshed)
+    // 사이클 완료 시 이벤트 타임라인 갱신
+    if (cycles > prevCyclesRef.current) {
+      prevCyclesRef.current = cycles
+      monitorApi.recentEvents(20).then(ev => setEvents(ev)).catch(() => {})
+    }
   }, [])
 
   const runProbe = async () => {
@@ -241,7 +236,6 @@ export default function WarroomPage() {
       setAutotuneRunning(atStatus.running)
       setAutotuneCycles(atStatus.cycle_count)
       setAutotuneRefreshed(atStatus.refreshed_count || 0)
-      if (atStatus.target) setAutotuneTarget(atStatus.target)
       if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
       setAutotuneLastTick(atStatus.last_tick)
       setLastFetched(new Date())
@@ -257,6 +251,8 @@ export default function WarroomPage() {
 
   useEffect(() => {
     load()
+    const poll = setInterval(() => load(), POLL_INTERVAL)
+    return () => clearInterval(poll)
   }, [load])
 
   // 시간 차이 표시
@@ -273,18 +269,30 @@ export default function WarroomPage() {
     return timeAgo(new Date(iso))
   }
 
-  // 이벤트 필터링 (모든 이벤트 표시, 오토튠 텍스트만 정리)
-  const filteredEvents = events.map(e => ({
-    ...e,
-    summary: e.summary?.replace(/오토튠\(registered\)\s*—\s*/, '') ?? e.summary,
-  })).filter(e => {
-    if (eventFilter === 'all') return true
-    if (eventFilter === 'critical') return e.severity === 'critical' || e.severity === 'warning'
-    if (eventFilter === 'price_changed') return e.event_type === 'price_changed'
-    if (eventFilter === 'sold_out') return e.event_type === 'sold_out'
-    if (eventFilter === 'system') return SYSTEM_TYPES.includes(e.event_type)
-    return true
-  })
+  // 이벤트 필터링 — scheduler_tick은 최신 1건만 표시 (해당 사이클만)
+  const filteredEvents = (() => {
+    const mapped = events.map(e => ({
+      ...e,
+      summary: e.summary?.replace(/오토튠\(registered\)\s*—\s*/, '') ?? e.summary,
+    }))
+    // scheduler_tick 최신 1건만 유지
+    let tickSeen = false
+    const deduped = mapped.filter(e => {
+      if (e.event_type === 'scheduler_tick') {
+        if (tickSeen) return false
+        tickSeen = true
+      }
+      return true
+    })
+    return deduped.filter(e => {
+      if (eventFilter === 'all') return true
+      if (eventFilter === 'critical') return e.severity === 'critical' || e.severity === 'warning'
+      if (eventFilter === 'price_changed') return e.event_type === 'price_changed'
+      if (eventFilter === 'sold_out') return e.event_type === 'sold_out'
+      if (eventFilter === 'system') return SYSTEM_TYPES.includes(e.event_type)
+      return true
+    })
+  })()
 
   if (loading || !stats) {
     return (
@@ -325,9 +333,14 @@ export default function WarroomPage() {
             onClick={async () => {
               try {
                 if (autotuneRunning) {
-                  await collectorApi.autotuneStop()
+                  // 비상정지: 오토튠 + 전송 + pending Job 전부 중단
+                  const { API_BASE_URL: apiBase } = await import('@/config/api')
+                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-stop`, { method: 'POST' })
                   setAutotuneRunning(false)
                 } else {
+                  // 비상정지 해제 + 오토튠 시작
+                  const { API_BASE_URL: apiBase } = await import('@/config/api')
+                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                   await collectorApi.autotuneStart('registered')
                   setAutotuneRunning(true)
                   setAutotuneCycles(0)
@@ -495,11 +508,14 @@ export default function WarroomPage() {
           </div>
         </div>
 
-        {/* 24시간 오토튠 */}
+        {/* 등록상품 / 오토튠 */}
         <div style={card}>
-          <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>24시간 오토튠</div>
+          <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>등록상품 / 오토튠</div>
           <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#4C9AFF' }}>
-            {autotuneRefreshed}
+            {(product_stats.registered ?? 0).toLocaleString()}
+          </div>
+          <div style={{ fontSize: '0.7rem', color: '#888', marginTop: '0.25rem' }}>
+            24h 갱신 {autotuneRefreshed.toLocaleString()}건
           </div>
         </div>
 

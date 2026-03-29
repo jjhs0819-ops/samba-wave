@@ -5,6 +5,8 @@ import { useSearchParams } from 'next/navigation'
 import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, type SambaShipment, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
 import { MARKET_TYPE_TO_POLICY_KEY as SHARED_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { SITE_COLORS } from '@/lib/samba/constants'
+import { inputStyle } from '@/lib/samba/styles'
 
 const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
   pending:      { bg: 'rgba(100,100,100,0.15)', text: '#888', label: '대기중' },
@@ -16,25 +18,8 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }>
 
 const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
-const SITE_COLORS: Record<string, string> = {
-  MUSINSA: '#4C9AFF', KREAM: '#51CF66', FashionPlus: '#CC5DE8', Nike: '#FF6B6B',
-  Adidas: '#FFD93D', ABCmart: '#FF8C00', GrandStage: '#20C997', OKmall: '#F06595',
-  SSG: '#FF5A2E', LOTTEON: '#E10044', GSShop: '#6B5CE7', ElandMall: '#4ECDC4', SSF: '#845EF7',
-}
-
 // 영문 market_type → 한글 정책 키 (markets.ts에서 import)
 const MARKET_TYPE_TO_POLICY_KEY = SHARED_POLICY_KEY
-
-const inputStyle = {
-  padding: '4px 8px',
-  fontSize: '0.78rem',
-  background: '#111520',
-  border: '1px solid #2A3040',
-  color: '#C5C5C5',
-  borderRadius: '4px',
-  outline: 'none',
-  boxSizing: 'border-box' as const,
-}
 
 export default function ShipmentsPage() {
   const searchParams = useSearchParams()
@@ -82,6 +67,9 @@ export default function ShipmentsPage() {
     return () => { if (jobPollRef.current) clearInterval(jobPollRef.current) }
   }, [])
 
+  // handleStart 최신 참조를 유지하는 ref (stale closure 방지)
+  const handleStartRef = useRef<(targetIds?: string[]) => Promise<void>>(async () => {})
+
   // 무한반복: 3분 대기 후 미등록 필터 + 전체 선택 + 재시작
   useEffect(() => {
     if (!loopRestart) return
@@ -90,19 +78,31 @@ export default function ShipmentsPage() {
     const unregistered = products.filter(p => !(p.registered_accounts?.length)).map(p => p.id)
     if (unregistered.length > 0) {
       setSelectedProducts(unregistered)
-      setTimeout(() => handleStart(unregistered), 300)
+      setTimeout(() => handleStartRef.current(unregistered), 300)
     } else {
       setTransmitting(false)
     }
-  }, [loopRestart, products]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loopRestart, products])
 
-  // 전송 중 새로고침/탭닫기 방지
+  // 페이지 이탈 시 비상정지 (전송 중일 때만)
+  const transmittingRef = useRef(false)
+  useEffect(() => { transmittingRef.current = transmitting }, [transmitting])
   useEffect(() => {
-    if (!transmitting) return
-    const handler = (e: BeforeUnloadEvent) => { e.preventDefault() }
-    window.addEventListener('beforeunload', handler)
-    return () => window.removeEventListener('beforeunload', handler)
-  }, [transmitting])
+    const stopAll = () => {
+      if (!transmittingRef.current) return
+      import('@/config/api').then(({ API_BASE_URL }) => {
+        navigator.sendBeacon(`${API_BASE_URL}/api/v1/samba/shipments/emergency-stop`)
+      }).catch(() => {})
+    }
+    window.addEventListener('beforeunload', stopAll)
+    return () => {
+      window.removeEventListener('beforeunload', stopAll)
+      if (!transmittingRef.current) return
+      import('@/config/api').then(({ API_BASE_URL }) => {
+        fetch(`${API_BASE_URL}/api/v1/samba/shipments/emergency-stop`, { method: 'POST' }).catch(() => {})
+      }).catch(() => {})
+    }
+  }, [])
 
   // 카테고리 매핑 데이터
   const [categoryMappings, setCategoryMappings] = useState<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>([])
@@ -351,6 +351,12 @@ export default function ShipmentsPage() {
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
     if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
 
+    // 비상정지 해제 (이전 중단 상태 초기화)
+    try {
+      const { API_BASE_URL: apiBase } = await import('@/config/api')
+      await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+    } catch { /* ignore */ }
+
     // 소싱사이트 체크 + 현재 필터에 표시된 상품만 전송
     const siteSet = new Set(selectedSites)
     const filteredSet = new Set(filteredProducts.map(p => p.id))
@@ -507,6 +513,9 @@ export default function ShipmentsPage() {
       setTransmitting(false)
     }
   }
+
+  // handleStart가 항상 최신 클로저를 참조하도록 ref 갱신
+  handleStartRef.current = handleStart
 
   return (
     <div style={{ color: '#E5E5E5' }}>
@@ -679,15 +688,12 @@ export default function ShipmentsPage() {
                 abortRef.current = true
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  // 백엔드 전송 루프 중단
-                  await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
-                  if (activeJobIdRef.current) {
-                    await fetch(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
-                    activeJobIdRef.current = ''
-                  }
+                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-stop`, { method: 'POST' })
+                  activeJobIdRef.current = ''
                 } catch { /* ignore */ }
+                setTransmitting(false)
               }}
-                style={{ padding: '4px 16px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.2)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.5)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
+                style={{ padding: '4px 16px', fontSize: '0.78rem', background: 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: 'pointer', fontWeight: 700 }}
               >전송 중단</button>
             ) : (<>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: loopEnabled ? '#FF8C00' : '#666', cursor: 'pointer' }}>

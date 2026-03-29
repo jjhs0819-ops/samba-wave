@@ -38,6 +38,45 @@ async def cancel_transmit():
   return {"ok": True, "message": "전송 중단 요청 완료"}
 
 
+@router.post("/emergency-stop")
+async def emergency_stop(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+  """비상정지 — 전송/오토튠 모든 백그라운드 작업 즉시 중단 + pending/running Job 전부 취소."""
+  from backend.domain.samba.emergency import trigger_emergency_stop
+  from backend.domain.samba.shipment.service import request_cancel_transmit
+  from sqlalchemy import text
+
+  # 1. 비상정지 플래그
+  trigger_emergency_stop()
+  # 2. 전송 취소 플래그
+  request_cancel_transmit()
+  # 3. 오토튠 중단
+  try:
+    import backend.api.v1.routers.samba.collector_autotune as _at
+    _at._autotune_running = False
+    if _at._autotune_task and not _at._autotune_task.done():
+      _at._autotune_task.cancel()
+  except Exception:
+    pass
+  # 4. pending/running Job 전부 취소
+  r = await session.execute(text("UPDATE samba_jobs SET status = 'cancelled', completed_at = now() WHERE status IN ('pending', 'running')"))
+  cancelled_count = r.rowcount
+  await session.commit()
+
+  return {"ok": True, "cancelled_jobs": cancelled_count, "message": "비상정지 완료"}
+
+
+@router.post("/emergency-clear")
+async def emergency_clear():
+  """비상정지 해제 — 전송/오토튠 재개 가능."""
+  from backend.domain.samba.emergency import clear_emergency_stop
+  from backend.domain.samba.shipment.service import clear_cancel_transmit
+  clear_emergency_stop()
+  clear_cancel_transmit()
+  return {"ok": True, "message": "비상정지 해제"}
+
+
 @router.get("")
 async def list_shipments(
   skip: int = Query(0, ge=0),
