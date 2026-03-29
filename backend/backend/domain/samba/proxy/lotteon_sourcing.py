@@ -778,6 +778,110 @@ class LotteonSourcingClient:
     """worker.py get_detail 패턴 호환 래퍼 — get_product_detail() 결과 반환."""
     return await self.get_product_detail(product_id)
 
+  async def scan_categories(
+    self, keyword: str, max_scan: int = 20
+  ) -> dict[str, Any]:
+    """롯데ON 카테고리 스캔 — 검색 결과 상위 max_scan개 상품에서 카테고리 분포 집계.
+
+    전략:
+    1. search_products()로 상품 목록 취득
+    2. sitmNo 있는 상품은 fetch_pbf_standalone() 직접 호출 (HTTP 1회/건)
+    3. sitmNo 없는 상품은 get_product_detail() 폴백 (HTML + pbf)
+    4. asyncio.Semaphore(3)으로 동시성 제어
+    5. 실패 항목 건너뜀 (부분 결과 반환)
+
+    Returns:
+        {
+            "categories": [{"categoryCode", "path", "count", "category1", "category2", "category3"}],
+            "total": int,
+            "groupCount": int,
+        }
+    """
+    import asyncio
+    from collections import Counter
+
+    products = await self.search_products(keyword, size=60)
+    if not products:
+      return {"categories": [], "total": 0, "groupCount": 0}
+
+    targets = products[:max_scan]
+    sem = asyncio.Semaphore(3)
+
+    async def fetch_one(item: dict) -> Optional[tuple[str, str]]:
+      """(categoryCode, path) 반환, 실패 시 None."""
+      async with sem:
+        sitm_no = str(item.get("sitmNo", "") or "").strip()
+        try:
+          if sitm_no:
+            # pbf 직접 경로 (HTTP 1회 — 빠른경로)
+            pbf = await asyncio.wait_for(
+              self.fetch_pbf_standalone(sitm_no), timeout=20
+            )
+            if pbf:
+              scat_no = str(
+                (pbf.get("basicInfo") or {}).get("scatNo", "") or ""
+              ).strip()
+              if scat_no:
+                path = _LOTTEON_SCAT_NAMES.get(scat_no, f"미분류({scat_no})")
+                return scat_no, path
+
+          # pbf 실패 또는 sitmNo 없음 → HTML 전체 경로 폴백
+          site_product_id = str(
+            item.get("siteProductId") or item.get("site_product_id") or ""
+          ).strip()
+          if not site_product_id:
+            return None
+          detail = await asyncio.wait_for(
+            self.get_product_detail(site_product_id), timeout=20
+          )
+          scat_no = str(detail.get("_lotteonScatNo", "") or "").strip()
+          if scat_no:
+            path = _LOTTEON_SCAT_NAMES.get(scat_no, f"미분류({scat_no})")
+            return scat_no, path
+          category = str(detail.get("category", "") or "").strip()
+          if category:
+            return category, category
+          return None
+
+        except Exception as e:
+          logger.debug(f"[LOTTEON scan] 카테고리 조회 건너뜀: {e}")
+          return None
+
+    raw_results = await asyncio.gather(
+      *[fetch_one(p) for p in targets], return_exceptions=True
+    )
+
+    counter: Counter = Counter()
+    success_count = 0
+    for r in raw_results:
+      if isinstance(r, Exception) or r is None:
+        continue
+      counter[r] += 1
+      success_count += 1
+
+    categories = []
+    for (code, path), count in counter.most_common():
+      parts = path.split(" > ")
+      categories.append({
+        "categoryCode": code,
+        "path": path,
+        "count": count,
+        "category1": parts[0] if len(parts) > 0 else "",
+        "category2": parts[1] if len(parts) > 1 else "",
+        "category3": parts[2] if len(parts) > 2 else "",
+      })
+
+    logger.info(
+      f"[LOTTEON] 카테고리 스캔 완료: keyword={keyword!r}, "
+      f"스캔={len(targets)}건, 성공={success_count}건, 카테고리={len(categories)}개"
+    )
+
+    return {
+      "categories": categories,
+      "total": success_count,
+      "groupCount": len(categories),
+    }
+
   def _extract_sitmno_from_html(self, html: str) -> str:
     """HTML에서 sitmNo 추출 (HTML 엔티티 디코딩 후 파싱)."""
     import html as html_module

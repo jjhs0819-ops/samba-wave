@@ -52,6 +52,17 @@ class LotteonSourcingPlugin(SourcingPlugin):
     client = LotteonSourcingClient()
     return await self.safe_call(client.get_product_detail(site_product_id))
 
+  async def scan_categories(self, keyword: str, max_scan: int = 20) -> dict:
+    """롯데ON 카테고리 스캔 — 검색 결과에서 카테고리 분포 집계.
+
+    safe_call() 미사용: scan_categories() 내부에서 asyncio.Semaphore(3)으로
+    직접 동시성을 제어하므로 외부 세마포어 래핑이 불필요하다.
+    """
+    from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
+
+    client = LotteonSourcingClient()
+    return await client.scan_categories(keyword, max_scan=max_scan)
+
   async def _fetch_pbf_refresh(self, sitm_no: str) -> dict:
     """pbf API 직접 호출로 refresh용 데이터 취득 (HTML 파싱 스킵).
 
