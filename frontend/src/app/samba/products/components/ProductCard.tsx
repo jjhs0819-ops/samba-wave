@@ -1,8 +1,8 @@
 'use client'
 
 import React, { useState, useMemo, useCallback } from 'react'
-import { API_BASE_URL as API_BASE } from '@/config/api'
 import {
+  API_BASE,
   collectorApi,
   shipmentApi,
   proxyApi,
