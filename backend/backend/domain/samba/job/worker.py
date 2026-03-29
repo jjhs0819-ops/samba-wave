@@ -388,7 +388,8 @@ class JobWorker:
             parsed = urlparse(keyword)
             if parsed.scheme:
                 qs = parse_qs(parsed.query)
-                keyword = qs.get("searchWord", [keyword])[0]
+                # 소싱처별 키워드 파라미터: LOTTEON=q, FashionPlus=searchWord
+                keyword = qs.get("q", qs.get("keyword", qs.get("searchWord", [keyword])))[0]
                 # 패션플러스 필터 파라미터
                 for k in ("category1Id", "category2Id", "category3Id", "sort", "minPrice", "maxPrice"):
                     v = qs.get(k, [""])[0]
