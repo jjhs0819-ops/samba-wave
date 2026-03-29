@@ -16,7 +16,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const data = await res.json().catch(() => null);
-    throw new Error(data?.detail || `HTTP ${res.status}`);
+    const detail = data?.detail
+    const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: Record<string, unknown>) => d.msg || JSON.stringify(d)).join(', ') : `HTTP ${res.status}`
+    throw new Error(msg);
   }
   const text = await res.text();
   if (!text) return {} as T;
@@ -68,6 +70,7 @@ export interface SambaOrder {
   notes?: string;
   ext_order_number?: string;
   sourcing_order_number?: string;
+  sourcing_account_id?: string;
   source?: string;
   shipment_id?: string;
   created_at: string;
