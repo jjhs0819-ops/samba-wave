@@ -1646,14 +1646,26 @@ class SambaCategoryService:
                 continue
             score = overlap * 10
 
-            # 상위 세그먼트 키워드 보너스
+            # 상위 세그먼트 키워드 보너스 (가중치 상향: 3 → 5)
             path_all_keywords = set()
             for seg in path_segments[:-1]:
                 for part in seg.replace("/", " ").replace(",", " ").split():
                     if len(part) >= 2:
                         path_all_keywords.add(part)
             parent_overlap = len(parent_keywords & path_all_keywords)
-            score += parent_overlap * 3
+            score += parent_overlap * 5
+
+            # 대분류(첫 세그먼트) 일치 보너스 — 골프의류 vs 패션의류 구분
+            if input_segments and path_segments:
+                if input_segments[0] == path_segments[0]:
+                    score += 15
+
+            # 세그먼트 깊이 유사도 보너스
+            depth_diff = abs(len(input_segments) - len(path_segments))
+            if depth_diff == 0:
+                score += 5
+            elif depth_diff == 1:
+                score += 2
 
             if score > best_score:
                 best_score = score
@@ -2272,7 +2284,7 @@ JSON만 응답:
                         for market, suggested in result[key_str].items():
                             if market in target_set and suggested:
                                 # 동기화된 카테고리 목록에 있는지 검증
-                                market_cat_list = all_market_cats.get(market, [])
+                                market_cat_list = market_cat_lists.get(market, [])
                                 if not market_cat_list or suggested in market_cat_list:
                                     validated[market] = suggested
                                 else:
