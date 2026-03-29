@@ -2195,7 +2195,10 @@ class SambaCategoryService:
                 tag_str = ", ".join(item.get("tags", [])[:5])
                 seo_str = ", ".join(item.get("seo", [])[:5])
                 group_str = ", ".join(item.get("groups", [])[:3])
+                sample_names = [n for n in (item.get("samples") or []) if n][:2]
                 entry = f'{idx + 1}. [{item["site"]}] {item["leaf_path"]}'
+                if sample_names:
+                    entry += f' | 상품명: {" / ".join(sample_names)}'
                 if seo_str:
                     entry += f' | SEO: {seo_str}'
                 if tag_str:
@@ -2226,6 +2229,13 @@ class SambaCategoryService:
                     for g in (item.get("groups") or [])[:3]:
                         if g and len(g) >= 2:
                             leaf_kw.add(g)
+                    # 상품명 키워드 추가 — "기타 하의" 같은 모호한 카테고리 보완
+                    for name in (item.get("samples") or [])[:2]:
+                        if not name:
+                            continue
+                        for part in name.replace("/", " ").replace("-", " ").split():
+                            if len(part) >= 2:
+                                leaf_kw.add(part)
 
                 # 동의어 확장 — 소싱 키워드와 마켓 카테고리 용어 차이 보완
                 leaf_kw = _expand_synonyms(leaf_kw)
