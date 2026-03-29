@@ -2329,7 +2329,10 @@ class BrandScanRequest(BaseModel):
 
 
 @router.post("/brand-scan")
-async def brand_scan(body: BrandScanRequest):
+async def brand_scan(
+    body: BrandScanRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
     """키워드/브랜드로 소싱처 카테고리 분포를 스캔하여 검색그룹 생성에 활용.
 
     지원 소싱처: MUSINSA, LOTTEON
@@ -2344,16 +2347,28 @@ async def brand_scan(body: BrandScanRequest):
         return await plugin.scan_categories(keyword)
 
     if body.source_site == "MUSINSA":
-        return await _scan_musinsa_categories(keyword, body.brand, body.gf)
+        # 무신사 쿠키 로드
+        from backend.domain.samba.forbidden.model import SambaSettings
+        from sqlmodel import select as sql_select
+        try:
+            row = (await session.execute(
+                sql_select(SambaSettings).where(SambaSettings.key == "musinsa_cookie")
+            )).scalar_one_or_none()
+            cookie = (row.value if row and row.value else "") or ""
+        except Exception:
+            cookie = ""
+        if not cookie:
+            raise HTTPException(400, "무신사 쿠키가 없습니다. 확장앱에서 무신사 로그인 후 다시 시도하세요.")
+        return await _scan_musinsa_categories(keyword, body.brand, body.gf, cookie)
 
     raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
 
 
-async def _scan_musinsa_categories(keyword: str, brand: str = "", gf: str = "A") -> dict:
+async def _scan_musinsa_categories(keyword: str, brand: str = "", gf: str = "A", cookie: str = "") -> dict:
     """무신사 카테고리 스캔 — 검색 결과 상위 20개 상품 상세 조회 후 카테고리 분포 집계."""
     from backend.domain.samba.proxy.musinsa import MusinsaClient
 
-    client = MusinsaClient()
+    client = MusinsaClient(cookie=cookie)
     search_result = await client.search_products(
         keyword, size=20, brand=brand, gf=gf
     )
