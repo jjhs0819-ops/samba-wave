@@ -1616,6 +1616,15 @@ class SambaCategoryService:
         if category_path in code_map:
             return str(code_map[category_path])
 
+        # 1.5. Prefix 매칭 — 입력이 부모 경로인 경우 (3단계 → 4단계 leaf 검색)
+        # 예: "패션의류 > 남성의류 > 바지" → "패션의류 > 남성의류 > 바지 > 청바지" 코드 반환
+        prefix = category_path + " > "
+        prefix_matches = {path: code for path, code in code_map.items() if path.startswith(prefix)}
+        if prefix_matches:
+            best_prefix_path = min(prefix_matches.keys(), key=len)
+            logger.info("[카테고리 코드] prefix 매칭: '%s' → '%s' (%s)", category_path, best_prefix_path, prefix_matches[best_prefix_path])
+            return str(prefix_matches[best_prefix_path])
+
         # 2. 키워드 기반 퍼지 매칭
         # 입력 경로의 세그먼트 추출 (예: "패션의류 > 남성의류 > 아우터/코트")
         input_segments = [s.strip() for s in category_path.split(">") if s.strip()]
