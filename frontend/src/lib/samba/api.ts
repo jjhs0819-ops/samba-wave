@@ -99,9 +99,9 @@ export const orderApi = {
       `${SAMBA_PREFIX}/orders/sync-from-markets`, { method: "POST", body: JSON.stringify({ days, account_id: accountId || undefined }) }),
   approveCancel: (id: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/approve-cancel`, { method: "POST" }),
-  exchangeAction: (id: string, action: string, reason?: string) =>
+  exchangeAction: (id: string, action: string, reason?: string, extra?: { tracking_number?: string; shipping_company?: string; clm_no?: string }) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/exchange-action`, {
-      method: "POST", body: JSON.stringify({ action, reason }),
+      method: "POST", body: JSON.stringify({ action, reason, ...extra }),
     }),
   returnAction: (id: string, action: string, reason?: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/return-action`, {
@@ -332,7 +332,7 @@ export const collectorApi = {
   brandScan: (brand: string, gf?: string, keyword?: string, source_site?: string) =>
     request<{ categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]; total: number; groupCount: number }>(
       `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA' }) }),
-  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; applied_policy_id?: string; options?: Record<string, boolean> }) =>
+  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; applied_policy_id?: string; options?: Record<string, boolean>; source_site?: string }) =>
     request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
       `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),
 

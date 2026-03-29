@@ -936,6 +936,7 @@ export default function CollectorPage() {
                         categories: selected,
                         requested_count_per_group: 0,
                         options: checkedOptions,
+                        source_site: selectedSite,
                       })
                       addLog(`[카테고리분류] ${res.created}개 그룹 생성 완료`)
                       showAlert(`${res.created}개 그룹이 생성되었습니다`, 'success')

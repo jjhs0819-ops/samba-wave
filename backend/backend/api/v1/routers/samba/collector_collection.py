@@ -2420,3 +2420,91 @@ async def _scan_musinsa_categories(keyword: str, brand: str = "", gf: str = "A",
         "total": sum(c["count"] for c in categories),
         "groupCount": len(categories),
     }
+
+
+# ── 브랜드 그룹 생성 ──────────────────────────────────────────────────────────
+
+class BrandCreateGroupsRequest(BaseModel):
+    brand: str = ""
+    brand_name: str = ""
+    gf: str = "A"
+    categories: list[dict] = []
+    requested_count_per_group: int = 0
+    applied_policy_id: Optional[str] = None
+    options: dict = {}
+    source_site: str = "MUSINSA"
+
+
+@router.post("/brand-create-groups")
+async def brand_create_groups(
+    body: BrandCreateGroupsRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """카테고리 스캔 결과에서 선택한 카테고리별 검색그룹 생성.
+
+    지원 소싱처: MUSINSA, LOTTEON
+    """
+    if not body.categories:
+        raise HTTPException(400, "categories가 비어있습니다")
+
+    svc = _get_services(session)
+    created_groups = []
+
+    for cat in body.categories:
+        code = cat.get("categoryCode", "")
+        path = cat.get("path", "")
+        count = cat.get("count", 0)
+
+        # 그룹명: "브랜드명 - 카테고리경로"
+        label = body.brand_name or body.brand or "브랜드"
+        # 경로 마지막 세그먼트만 사용 (스니커즈, 운동화 등)
+        path_tail = path.split(" > ")[-1] if path else code
+        group_name = f"{label} - {path_tail}"
+
+        # 수집 요청 수: 0이면 자동 (스캔 카운트 × 3, 최소 50)
+        req_count = body.requested_count_per_group
+        if req_count <= 0:
+            req_count = max(count * 3, 50)
+
+        # 소싱처별 keyword 및 category_filter 결정
+        if body.source_site == "MUSINSA":
+            parts = [f"keyword={body.brand_name or body.brand}",
+                     "keywordType=keyword",
+                     f"gf={body.gf}"]
+            if body.brand:
+                parts.append(f"brand={body.brand}")
+            if code:
+                parts.append(f"category={code}")
+            keyword = "https://www.musinsa.com/search/goods?" + "&".join(parts)
+            category_filter = code or None
+        else:  # LOTTEON
+            keyword = body.brand_name or body.brand or ""
+            category_filter = code or None
+
+        filter_data: dict = {
+            "source_site": body.source_site,
+            "name": group_name,
+            "keyword": keyword,
+            "requested_count": req_count,
+            "category_filter": category_filter,
+        }
+        if body.applied_policy_id:
+            filter_data["applied_policy_id"] = body.applied_policy_id
+
+        try:
+            sf = await svc.create_filter(filter_data)
+            created_groups.append({
+                "id": str(sf.id),
+                "name": group_name,
+                "count": req_count,
+                "path": path,
+            })
+        except Exception as e:
+            # 중복 그룹은 건너뜀
+            import logging
+            logging.getLogger(__name__).warning(f"그룹 생성 스킵: {group_name} — {e}")
+
+    return {
+        "created": len(created_groups),
+        "groups": created_groups,
+    }
