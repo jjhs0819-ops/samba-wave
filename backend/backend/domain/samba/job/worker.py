@@ -309,7 +309,7 @@ class JobWorker:
             })
             return
 
-        await repo.update_progress(job.id, 0, remaining)
+        await repo.update_progress(job.id, existing_count, requested_count)
 
         # 수집 루프
         total_saved = 0
@@ -376,7 +376,7 @@ class JobWorker:
             _collect_sem = asyncio.Semaphore(SITE_CONCURRENCY.get("MUSINSA", 5))
             _collect_results: list[dict | None] = []
             _rate_limited = False
-            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(30, connect=10.0))
+            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(3, connect=2.0))
 
             async def _fetch_detail(goods_no: str) -> dict | None:
                 nonlocal total_skipped, _rate_limited
@@ -450,7 +450,7 @@ class JobWorker:
                 )
                 await svc.create_collected_product(product_data)
                 total_saved += 1
-                await repo.update_progress(job.id, total_saved, remaining)
+                await repo.update_progress(job.id, existing_count + total_saved, requested_count)
 
                 if total_saved >= remaining:
                     break
@@ -697,7 +697,7 @@ class JobWorker:
             try:
                 await svc.create_collected_product(product_data)
                 total_saved += 1
-                await repo.update_progress(job.id, total_saved, remaining)
+                await repo.update_progress(job.id, existing_count + total_saved, requested_count)
             except Exception as e:
                 logger.warning(f"[잡워커] {site} 저장 실패 {p_id}: {e}")
 
