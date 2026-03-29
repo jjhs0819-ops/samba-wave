@@ -917,7 +917,7 @@ class LotteonClient:
       ],
       "cnclPsbYn": "Y",
       "dmstOvsDvDvsCd": "DMST",
-      # impDvsCd 생략 — 직수입(DRC_IMP)/병행수입(PRLL_IMP) 모두 API에서 거부됨
+      "impDvsCd": "DRC_IMP",   # 공식수입 (직수입)
       "dvProcTypCd": "LO_ENTP",
       "dvPdTypCd": "GNRL",
       "sndBgtNday": 2,
