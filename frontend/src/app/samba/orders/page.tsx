@@ -4,6 +4,8 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { PERIOD_BUTTONS } from '@/lib/samba/constants'
+import { inputStyle } from '@/lib/samba/styles'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   pending:    { label: '주문접수', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
@@ -24,16 +26,6 @@ const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = 
 
 const SHIPPING_COMPANIES = ['CJ대한통운', '한진택배', '롯데택배', '로젠택배', '우체국택배', '경동택배', '대신택배', '일양로지스', '편의점택배', 'DHL', '직접배송', '기타']
 
-const PERIOD_BUTTONS = [
-  { key: 'lastmonth', label: '지난달' },
-  { key: 'thismonth', label: '이번달' },
-  { key: 'lastweek', label: '지난주' },
-  { key: 'thisweek', label: '이번주' },
-  { key: 'yesterday', label: '어제' },
-  { key: 'today', label: '오늘' },
-  { key: 'thisyear', label: '올해' },
-]
-
 const MARKET_STATUS_OPTIONS = ['일반', '발송대기', '교환요청', '취소요청', '반품요청', '배송완료']
 
 // 택배사별 배송조회 URL
@@ -44,17 +36,6 @@ const TRACKING_URLS: Record<string, string> = {
   '로젠택배': 'https://www.ilogen.com/web/personal/trace/',
   '우체국택배': 'https://service.epost.go.kr/trace.RetrieveDomRi498.postal?sid1=',
   '경동택배': 'https://kdexp.com/deliverySearch?barcode=',
-}
-
-const inputStyle = {
-  padding: '0.28rem 0.4rem',
-  fontSize: '0.8125rem',
-  background: '#1E1E1E',
-  border: '1px solid #3D3D3D',
-  borderRadius: '4px',
-  color: '#C5C5C5',
-  outline: 'none',
-  boxSizing: 'border-box' as const,
 }
 
 interface OrderForm {

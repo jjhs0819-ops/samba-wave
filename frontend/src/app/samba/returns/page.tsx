@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef, Fragment } from 'react'
 import { returnApi, accountApi, orderApi, type SambaReturn, type SambaMarketAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle } from '@/lib/samba/styles'
+import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   requested: { label: '요청됨', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
@@ -46,17 +47,6 @@ const fmtMD = (d?: string | null) => {
 }
 
 const tdCenter = { padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' as const, textAlign: 'center' as const, verticalAlign: 'middle' as const }
-
-// 기간 선택 버튼 상수
-const PERIOD_BUTTONS = [
-  { key: 'lastmonth', label: '지난달' },
-  { key: 'thismonth', label: '이번달' },
-  { key: 'lastweek', label: '지난주' },
-  { key: 'thisweek', label: '이번주' },
-  { key: 'yesterday', label: '어제' },
-  { key: 'today', label: '오늘' },
-  { key: 'thisyear', label: '올해' },
-]
 
 export default function ReturnsPage() {
   const [returns, setReturns] = useState<SambaReturn[]>([])

@@ -3,18 +3,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { userApi, type SambaUser } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-
-const inputStyle = {
-  padding: '6px 10px',
-  fontSize: '0.8rem',
-  background: '#111520',
-  border: '1px solid #2A3040',
-  color: '#C5C5C5',
-  borderRadius: '6px',
-  outline: 'none',
-  width: '100%',
-  boxSizing: 'border-box' as const,
-}
+import { inputStyle } from '@/lib/samba/styles'
+import { fmtDate } from '@/lib/samba/utils'
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
   active: { label: '활성', color: '#51CF66' },
@@ -99,11 +89,6 @@ export default function UsersPage() {
     } catch {
       showAlert('상태 변경 실패', 'error')
     }
-  }
-
-  const fmtDate = (iso: string) => {
-    const d = new Date(iso)
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
   }
 
   return (

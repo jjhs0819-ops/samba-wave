@@ -152,7 +152,7 @@ export default function ProductsPage() {
     try {
       const skip = (targetPage - 1) * pageSize
       // status 필터에서 특수값 분리
-      const statusParam = (statusFilter === 'has_orders' || statusFilter === 'free_ship' || statusFilter === 'same_day' || statusFilter === 'free_same' || statusFilter === 'market_registered' || statusFilter === 'market_unregistered')
+      const statusParam = (statusFilter === 'has_orders' || statusFilter === 'free_ship' || statusFilter === 'same_day' || statusFilter === 'free_same' || statusFilter === 'market_registered' || statusFilter === 'market_unregistered' || statusFilter === 'sold_out')
         ? statusFilter : statusFilter || undefined
       const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
       const res = await collectorApi.scrollProducts({
@@ -188,7 +188,7 @@ export default function ProductsPage() {
     setLoading(true)
     try {
       // 메타데이터 8개 + 상품 scroll 동시 호출
-      const statusParam = (statusFilter === 'has_orders' || statusFilter === 'free_ship' || statusFilter === 'same_day' || statusFilter === 'free_same' || statusFilter === 'market_registered' || statusFilter === 'market_unregistered')
+      const statusParam = (statusFilter === 'has_orders' || statusFilter === 'free_ship' || statusFilter === 'same_day' || statusFilter === 'free_same' || statusFilter === 'market_registered' || statusFilter === 'market_unregistered' || statusFilter === 'sold_out')
         ? statusFilter : statusFilter || undefined
       const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
       const [pol, filters, words, accs, orderPids, rules, mappings, tpls, productsRes] = await Promise.all([
@@ -851,6 +851,7 @@ export default function ProductsPage() {
             <option value="">판매현황</option>
             <option value="market_registered">마켓등록</option>
             <option value="market_unregistered">미등록</option>
+            <option value="sold_out">품절상품</option>
           </select>
           <select value={searchType} onChange={(e) => setSearchType(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px", color: "#C5C5C5", width: "90px" }}>

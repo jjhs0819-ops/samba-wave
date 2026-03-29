@@ -5,6 +5,7 @@ import { accountApi, collectorApi, forbiddenApi, proxyApi, sourcingAccountApi, A
 import { MARKET_SELECT_OPTIONS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum, parseNum } from '@/lib/samba/styles'
+import { NumInputStr as NumInput } from '@/components/samba/NumInput'
 
 // 마켓 셀렉트 옵션 (markets.ts 단일 소스)
 const MARKET_TYPES = MARKET_SELECT_OPTIONS
@@ -23,47 +24,6 @@ const AI_FEATURES = [
   { key: 'imageProcess', label: '이미지 가공' },
 ]
 
-
-// 숫자 입력 컴포넌트 (콤마 서식 + 스피너 제거)
-function NumInput({ value, onChange, style, placeholder }: {
-  value: string
-  onChange: (v: string) => void
-  style?: React.CSSProperties
-  placeholder?: string
-}) {
-  const [display, setDisplay] = useState(() => {
-    const n = parseNum(value)
-    return n > 0 ? fmtNum(n) : ''
-  })
-  const ref = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (document.activeElement !== ref.current) {
-      const n = parseNum(value)
-      setDisplay(n > 0 ? fmtNum(n) : '')
-    }
-  }, [value])
-
-  return (
-    <input
-      ref={ref}
-      type="text"
-      inputMode="numeric"
-      style={{ ...inputStyle, ...style }}
-      value={display}
-      placeholder={placeholder || '0'}
-      onChange={(e) => {
-        const raw = e.target.value.replace(/[^0-9]/g, '')
-        setDisplay(raw)
-      }}
-      onBlur={(e) => {
-        const n = parseNum(e.target.value)
-        setDisplay(n > 0 ? fmtNum(n) : '')
-        onChange(n > 0 ? String(n) : '')
-      }}
-    />
-  )
-}
 
 // 마켓별 스토어 연결 필드 정의
 interface MarketConfig {

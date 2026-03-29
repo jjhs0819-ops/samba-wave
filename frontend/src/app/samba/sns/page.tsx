@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { snsApi, wholesaleApi } from '@/lib/samba/api'
 import { card, inputStyle } from '@/lib/samba/styles'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { fmtDate as _fmtDate } from '@/lib/samba/utils'
 
 // ── 타입 ──
 
@@ -92,16 +93,7 @@ const cardPad = { ...card, padding: '20px' }
 
 // ── 유틸 ──
 
-function fmtDate(iso: string | undefined | null): string {
-  if (!iso) return '-'
-  const d = new Date(iso)
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  const h = String(d.getHours()).padStart(2, '0')
-  const min = String(d.getMinutes()).padStart(2, '0')
-  return `${y}.${m}.${day} ${h}:${min}`
-}
+const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
 
 function getStatusBadge(status: string) {
   const map: Record<string, { bg: string; color: string; label: string }> = {

@@ -6,6 +6,7 @@ import { policyApi, forbiddenApi, accountApi, detailTemplateApi, nameRuleApi, co
 import { MARKET_ID_BY_LABEL, POLICY_MARKETS_DOMESTIC, POLICY_MARKETS_OVERSEAS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle } from '@/lib/samba/styles'
+import NumInput from '@/components/samba/NumInput'
 
 
 interface RangeMargin {
@@ -70,62 +71,6 @@ const defaultPricing: PricingForm = {
 }
 
 
-// 숫자 콤마 포맷
-const fmtNum = (v: number | string | null | undefined): string => {
-  if (v == null) return ''
-  const n = typeof v === 'string' ? parseFloat(v.replace(/,/g, '')) : v
-  if (isNaN(n) || n === 0) return ''
-  return n.toLocaleString()
-}
-
-// 콤마 제거 후 숫자 변환
-const parseNum = (s: string): number => {
-  const n = parseFloat(s.replace(/,/g, ''))
-  return isNaN(n) ? 0 : n
-}
-
-// 숫자 입력 컴포넌트 (콤마 서식 + 스피너 제거)
-function NumInput({ value, onChange, style, placeholder, suffix }: {
-  value: number
-  onChange: (v: number) => void
-  style?: React.CSSProperties
-  placeholder?: string
-  suffix?: string
-}) {
-  const [display, setDisplay] = useState(fmtNum(value))
-  const ref = useRef<HTMLInputElement>(null)
-
-  // 외부 value 변경 시 동기화 (포커스 중이 아닐 때만)
-  useEffect(() => {
-    if (document.activeElement !== ref.current) {
-      setDisplay(fmtNum(value))
-    }
-  }, [value])
-
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}>
-      <input
-        ref={ref}
-        type="text"
-        inputMode="numeric"
-        style={{ ...inputStyle, ...style }}
-        value={display}
-        placeholder={placeholder || '0'}
-        onChange={(e) => {
-          const raw = e.target.value.replace(/[^0-9.-]/g, '')
-          setDisplay(raw)
-        }}
-        onBlur={(e) => {
-          const n = parseNum(e.target.value)
-          setDisplay(fmtNum(n))
-          if (n !== value) onChange(n)
-        }}
-      />
-      {suffix && <span style={{ color: '#888', fontSize: '0.8125rem' }}>{suffix}</span>}
-    </span>
-  )
-}
-
 export default function PoliciesPage() {
   const searchParams = useSearchParams()
   const [policies, setPolicies] = useState<SambaPolicy[]>([])
@@ -183,17 +128,21 @@ export default function PoliciesPage() {
     setMarketPolicies(prev => ({ ...prev, [marketPolicyTab]: mp }))
   }, [marketPolicyTab])
 
-  // 스토어 설정 로드 (설정탭에서 저장한 계정 정보)
+  // 스토어 설정 로드 (설정탭에서 저장한 계정 정보) — 병렬 호출
   const loadStoreAccounts = useCallback(async () => {
-    const loaded: Record<string, Record<string, string>> = {}
     const keys = Object.values(MARKET_KEY_MAP)
-    for (const key of keys) {
-      try {
-        const data = await forbiddenApi.getSetting(`store_${key}`).catch(() => null) as Record<string, string> | null
-        if (data && data.businessName) {
-          loaded[key] = data
-        }
-      } catch { /* ignore */ }
+    const results = await Promise.all(
+      keys.map(key =>
+        forbiddenApi.getSetting(`store_${key}`)
+          .catch(() => null)
+          .then(data => ({ key, data: data as Record<string, string> | null }))
+      )
+    )
+    const loaded: Record<string, Record<string, string>> = {}
+    for (const { key, data } of results) {
+      if (data && data.businessName) {
+        loaded[key] = data
+      }
     }
     setStoreAccounts(loaded)
   }, [])

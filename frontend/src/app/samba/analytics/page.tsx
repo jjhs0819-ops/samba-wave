@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { analyticsApi, accountApi, orderApi, type AnalyticsStats, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api'
+import { accountApi, orderApi, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api'
 
 const card = {
   background: 'rgba(30,30,30,0.5)',

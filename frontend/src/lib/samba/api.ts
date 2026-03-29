@@ -980,17 +980,6 @@ export interface AnalyticsStats {
   profit_rate: number;
 }
 
-export const analyticsApi = {
-  today: () => request<AnalyticsStats>(`${SAMBA_PREFIX}/analytics/today`),
-  range: (startDate: string, endDate: string) =>
-    request<AnalyticsStats>(`${SAMBA_PREFIX}/analytics/range?start_date=${startDate}&end_date=${endDate}`),
-  byChannel: () => request<unknown[]>(`${SAMBA_PREFIX}/analytics/channels`),
-  byProduct: () => request<unknown[]>(`${SAMBA_PREFIX}/analytics/products`),
-  daily: (days = 30) => request<unknown[]>(`${SAMBA_PREFIX}/analytics/daily?days=${days}`),
-  monthly: () => request<unknown[]>(`${SAMBA_PREFIX}/analytics/monthly`),
-  kpi: () => request<Record<string, unknown>>(`${SAMBA_PREFIX}/analytics/kpi`),
-  orderStatus: () => request<Record<string, number>>(`${SAMBA_PREFIX}/analytics/order-status`),
-};
 
 // ── Detail Templates ──
 

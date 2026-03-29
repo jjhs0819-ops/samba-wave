@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   collectorApi,
@@ -18,6 +18,10 @@ import {
   type AISourcingCombination,
 } from "@/lib/samba/api";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { SITE_COLORS } from '@/lib/samba/constants'
+import { fmtDate as _fmtDate } from '@/lib/samba/utils'
+
+const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
 
 const SITES = [
   { id: 'MUSINSA', label: '무신사' },
@@ -36,23 +40,6 @@ const SITES = [
   { id: 'SSF', label: 'SSF샵' },
 ]
 
-const SITE_COLORS: Record<string, string> = {
-  MUSINSA: '#4C9AFF',
-  KREAM: '#51CF66',
-  DANAWA: '#FF922B',
-  FashionPlus: '#CC5DE8',
-  Nike: '#FF6B6B',
-  Adidas: '#FFD93D',
-  ABCmart: '#FF8C00',
-  GrandStage: '#20C997',
-  OKmall: '#F06595',
-  SSG: '#FF5A2E',
-  LOTTEON: '#E10044',
-  GSShop: '#6B5CE7',
-  ElandMall: '#4ECDC4',
-  SSF: '#845EF7',
-}
-
 const SITE_OPTIONS: Record<string, { id: string; label: string }[]> = {
   MUSINSA: [
     { id: 'excludePreorder', label: '예약배송 수집제외' },
@@ -67,17 +54,6 @@ const SITE_OPTIONS: Record<string, { id: string; label: string }[]> = {
   LOTTEON: [
     { id: 'maxDiscount', label: '최대혜택가' },
   ],
-}
-
-function fmtDate(iso: string | undefined | null): string {
-  if (!iso) return "-";
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const h = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${y}.${m}.${day} ${h}:${min}`;
 }
 
 // 매핑 대상 마켓 목록
@@ -655,78 +631,81 @@ export default function CollectorPage() {
     return { brand: rest, category: '' }
   }
 
-  // Filter and sort
-  let displayedFilters = [...filters];
-  if (siteFilter) displayedFilters = displayedFilters.filter((f) => f.source_site === siteFilter);
-  // 드릴다운 브랜드 선택 시 해당 브랜드 그룹만 표시
-  if (drillBrand) {
-    displayedFilters = displayedFilters.filter(f => {
-      const parsed = parseGroupName(f.name, f.source_site || '')
-      return parsed.brand === drillBrand
+  // 필터링 + 정렬 (메모이제이션)
+  const displayedFilters = useMemo(() => {
+    let result = [...filters]
+    if (siteFilter) result = result.filter((f) => f.source_site === siteFilter)
+    // 드릴다운 브랜드 선택 시 해당 브랜드 그룹만 표시
+    if (drillBrand) {
+      result = result.filter(f => {
+        const parsed = parseGroupName(f.name, f.source_site || '')
+        return parsed.brand === drillBrand
+      })
+    }
+    if (aiFilter) {
+      result = result.filter((f) => {
+        const r = f as unknown as Record<string, number>
+        const aiTagCount = r.ai_tagged_count ?? 0
+        const aiImgCount = r.ai_image_count ?? 0
+        switch (aiFilter) {
+          case 'ai_tag_yes': return aiTagCount > 0
+          case 'ai_tag_no': return aiTagCount === 0
+          case 'ai_img_yes': return aiImgCount > 0
+          case 'ai_img_no': return aiImgCount === 0
+          default: return true
+        }
+      })
+    }
+    if (collectFilter) {
+      result = result.filter((f) => {
+        const r = f as unknown as Record<string, number>
+        const cnt = r.collected_count ?? 0
+        if (collectFilter === 'collected') return cnt > 0
+        if (collectFilter === 'uncollected') return cnt === 0
+        return true
+      })
+    }
+    if (marketRegFilter) {
+      result = result.filter((f) => {
+        const r = f as unknown as Record<string, number>
+        const cnt = r.market_registered_count ?? 0
+        const total = r.collected_count ?? 0
+        if (marketRegFilter === 'registered') return cnt > 0 && cnt >= total
+        if (marketRegFilter === 'partial') return cnt > 0 && cnt < total
+        if (marketRegFilter === 'unregistered') return cnt === 0
+        return true
+      })
+    }
+    if (tagRegFilter) {
+      result = result.filter((f) => {
+        const r = f as unknown as Record<string, number>
+        const cnt = r.tag_applied_count ?? 0
+        const total = r.collected_count ?? 0
+        if (tagRegFilter === 'registered') return cnt > 0 && cnt >= total
+        if (tagRegFilter === 'partial') return cnt > 0 && cnt < total
+        if (tagRegFilter === 'unregistered') return cnt === 0
+        return true
+      })
+    }
+    if (policyRegFilter) {
+      result = result.filter((f) => {
+        const r = f as unknown as Record<string, number>
+        const cnt = r.policy_applied_count ?? 0
+        const total = r.collected_count ?? 0
+        if (policyRegFilter === 'registered') return cnt > 0 && cnt >= total
+        if (policyRegFilter === 'partial') return cnt > 0 && cnt < total
+        if (policyRegFilter === 'unregistered') return cnt === 0
+        return true
+      })
+    }
+    const [sortField, sortDir] = sortBy.split('_')
+    result.sort((a, b) => {
+      const va = sortField === 'lastCollectedAt' ? (a.last_collected_at || '') : (a.created_at || '')
+      const vb = sortField === 'lastCollectedAt' ? (b.last_collected_at || '') : (b.created_at || '')
+      return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va)
     })
-  }
-  if (aiFilter) {
-    displayedFilters = displayedFilters.filter((f) => {
-      const r = f as unknown as Record<string, number>
-      const aiTagCount = r.ai_tagged_count ?? 0
-      const aiImgCount = r.ai_image_count ?? 0
-      switch (aiFilter) {
-        case 'ai_tag_yes': return aiTagCount > 0
-        case 'ai_tag_no': return aiTagCount === 0
-        case 'ai_img_yes': return aiImgCount > 0
-        case 'ai_img_no': return aiImgCount === 0
-        default: return true
-      }
-    })
-  }
-  if (collectFilter) {
-    displayedFilters = displayedFilters.filter((f) => {
-      const r = f as unknown as Record<string, number>
-      const cnt = r.collected_count ?? 0
-      if (collectFilter === 'collected') return cnt > 0
-      if (collectFilter === 'uncollected') return cnt === 0
-      return true
-    })
-  }
-  if (marketRegFilter) {
-    displayedFilters = displayedFilters.filter((f) => {
-      const r = f as unknown as Record<string, number>
-      const cnt = r.market_registered_count ?? 0
-      const total = r.collected_count ?? 0
-      if (marketRegFilter === 'registered') return cnt > 0 && cnt >= total
-      if (marketRegFilter === 'partial') return cnt > 0 && cnt < total
-      if (marketRegFilter === 'unregistered') return cnt === 0
-      return true
-    })
-  }
-  if (tagRegFilter) {
-    displayedFilters = displayedFilters.filter((f) => {
-      const r = f as unknown as Record<string, number>
-      const cnt = r.tag_applied_count ?? 0
-      const total = r.collected_count ?? 0
-      if (tagRegFilter === 'registered') return cnt > 0 && cnt >= total
-      if (tagRegFilter === 'partial') return cnt > 0 && cnt < total
-      if (tagRegFilter === 'unregistered') return cnt === 0
-      return true
-    })
-  }
-  if (policyRegFilter) {
-    displayedFilters = displayedFilters.filter((f) => {
-      const r = f as unknown as Record<string, number>
-      const cnt = r.policy_applied_count ?? 0
-      const total = r.collected_count ?? 0
-      if (policyRegFilter === 'registered') return cnt > 0 && cnt >= total
-      if (policyRegFilter === 'partial') return cnt > 0 && cnt < total
-      if (policyRegFilter === 'unregistered') return cnt === 0
-      return true
-    })
-  }
-  const [sortField, sortDir] = sortBy.split("_");
-  displayedFilters.sort((a, b) => {
-    const va = sortField === "lastCollectedAt" ? (a.last_collected_at || "") : (a.created_at || "");
-    const vb = sortField === "lastCollectedAt" ? (b.last_collected_at || "") : (b.created_at || "");
-    return sortDir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
-  });
+    return result
+  }, [filters, siteFilter, drillBrand, aiFilter, collectFilter, marketRegFilter, tagRegFilter, policyRegFilter, sortBy])
 
 
 

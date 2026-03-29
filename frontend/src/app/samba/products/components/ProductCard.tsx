@@ -14,6 +14,7 @@ import {
   type SambaSearchFilter,
 } from '@/lib/samba/api'
 import { showAlert } from '@/components/samba/Modal'
+import { fmtDate } from '@/lib/samba/utils'
 import ProductImage from './ProductImage'
 import OptionPanel from './OptionPanel'
 
@@ -145,7 +146,8 @@ function getSourceUrl(p: { source_url?: string; source_site: string; site_produc
 let _deletionRegexCache: { words: string[]; regex: RegExp } | null = null
 function getDeletionRegex(deletionWords: string[]): RegExp | null {
   if (!deletionWords.length) return null
-  if (_deletionRegexCache && _deletionRegexCache.words === deletionWords) return _deletionRegexCache.regex
+  // 값 기반 비교로 캐시 히트 판단 (배열 참조가 달라도 내용이 같으면 재사용)
+  if (_deletionRegexCache && _deletionRegexCache.words.join(',') === deletionWords.join(',')) return _deletionRegexCache.regex
   const escaped = deletionWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
   const regex = new RegExp(`(${escaped.join('|')})`, 'gi')
   _deletionRegexCache = { words: deletionWords, regex }
@@ -315,12 +317,6 @@ const ProductCard = React.memo(function ProductCard({
   const statusBg = isActive ? 'rgba(81,207,102,0.12)' : 'rgba(100,100,100,0.15)'
   const statusText = p.status === 'registered' ? '등록됨' : p.status === 'saved' ? '저장됨' : ''
 
-  const fmtDate = useCallback((dt: string | undefined) => {
-    if (!dt) return '-'
-    const d = new Date(dt)
-    if (isNaN(d.getTime())) return dt.slice(0, 10)
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  }, [])
   const regDate = fmtDate(p.created_at)
   const updatedDate = fmtDate(p.updated_at)
   const no = String(idx + 1).padStart(6, '0')
