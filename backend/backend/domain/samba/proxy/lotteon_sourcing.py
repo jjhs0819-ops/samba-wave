@@ -742,6 +742,15 @@ class LotteonSourcingClient:
       logger.error(f"[LOTTEON] 상세 조회 실패: {product_no} — {e}")
       return {}
 
+  async def search(self, keyword: str, max_count: int = 100, **kwargs: Any) -> dict[str, Any]:
+    """worker.py 직접 API 패턴 호환 래퍼 — search_products() 결과를 표준 포맷으로 반환."""
+    products = await self.search_products(keyword, size=min(max_count, 60))
+    return {"products": products, "total": len(products)}
+
+  async def get_detail(self, product_id: str) -> dict[str, Any]:
+    """worker.py get_detail 패턴 호환 래퍼 — get_product_detail() 결과 반환."""
+    return await self.get_product_detail(product_id)
+
   def _extract_sitmno_from_html(self, html: str) -> str:
     """HTML에서 sitmNo 추출 (HTML 엔티티 디코딩 후 파싱)."""
     import html as html_module
