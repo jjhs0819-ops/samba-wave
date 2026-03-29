@@ -256,21 +256,24 @@ const STORE_MARKETS: MarketConfig[] = [
     ]},
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
-    { name: '_divider_purchase', label: '구매/리뷰 혜택 조건', type: 'divider' },
-    { name: 'multiPurchaseDiscount', label: '복수구매할인', type: 'select', options: [
+    { name: '_divider_purchase', label: '복수구매 할인', type: 'divider' },
+    { name: 'multiPurchaseDiscount', label: '복수구매 할인 사용', type: 'select', options: [
       { value: '', label: '설정안함' }, { value: 'true', label: '설정함' },
     ]},
-    { name: 'multiPurchaseQty', label: '복수구매 수량 (N개 이상)', type: 'number', placeholder: '2' },
-    { name: 'multiPurchaseRate', label: '복수구매 할인율 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_point', label: '포인트', type: 'divider' },
-    { name: 'purchasePointEnabled', label: '상품 구매 시 지급', type: 'checkbox' },
-    { name: 'purchasePointRate', label: '구매 적립률 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_review', label: '상품리뷰 작성시 지급', type: 'divider' },
-    { name: 'reviewPointEnabled', label: '리뷰 포인트 지급', type: 'checkbox' },
-    { name: 'reviewTextPoint', label: '텍스트 리뷰 작성', type: 'number', placeholder: '원' },
-    { name: 'reviewPhotoPoint', label: '포토/동영상 리뷰 작성', type: 'number', placeholder: '원' },
-    { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
-    { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
+    { name: 'multiPurchaseBasisType', label: '기준 유형', type: 'select', options: [
+      { value: '01', label: '수량 기준' }, { value: '02', label: '금액 기준' },
+    ]},
+    { name: 'multiPurchaseDiscountMethod', label: '할인 방식', type: 'select', options: [
+      { value: '02', label: '정액 (원)' }, { value: '01', label: '정률 (%)' },
+    ]},
+    { name: 'multiPurchaseQty', label: '기준값 (N개 또는 N원)', type: 'number', placeholder: '2' },
+    { name: 'multiPurchaseAmt', label: '할인값 (N원 또는 N%)', type: 'number', placeholder: '1000' },
+    { name: '_divider_point', label: '11Pay 포인트', type: 'divider' },
+    { name: 'llpayPointEnabled', label: '11Pay 포인트 적립', type: 'checkbox' },
+    { name: 'llpayPointType', label: '적립 방식', type: 'select', options: [
+      { value: '02', label: '정액 (원)' }, { value: '01', label: '정률 (%)' },
+    ]},
+    { name: 'llpayPointValue', label: '적립 값 (원 또는 %)', type: 'number', placeholder: '100' },
   ]},
   { key: 'toss', label: '토스', authField: 'apiKey', guideUrl: 'https://shopping-docs.toss.im/dev', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
