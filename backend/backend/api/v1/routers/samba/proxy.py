@@ -1385,11 +1385,11 @@ async def generate_ai_tags(
                 seo_kws = _extract_seo_keywords(candidate_tags, cats, banned, name_words, tags, max_count=10)
                 if ss_client and seo_kws:
                     try:
-                        seo_validated = await ss_client.validate_tags(seo_kws, max_count=5)
-                        seo_kws = [v["text"] for v in seo_validated][:3]
+                        seo_validated = await ss_client.validate_tags(seo_kws, max_count=4)
+                        seo_kws = [v["text"] for v in seo_validated][:2]
                     except Exception as se:
                         logger.warning(f"[AI태그] SEO 태그사전 검증 실패, 원본 사용: {se}")
-                        seo_kws = seo_kws[:3]
+                        seo_kws = seo_kws[:2]
 
                 # 태그 생성 후 그룹 전체 상품 조회 → 벌크 적용
                 all_in_group = await repo.filter_by_async(search_filter_id=gid, limit=10000)
@@ -1605,10 +1605,10 @@ async def preview_ai_tags(
                 seo_preview = _extract_seo_keywords(candidate_tags, cats, banned, name_words, validated_tags, max_count=10)
                 if ss_client_preview and seo_preview:
                     try:
-                        seo_val = await ss_client_preview.validate_tags(seo_preview, max_count=5)
-                        seo_preview = [v["text"] for v in seo_val][:3]
+                        seo_val = await ss_client_preview.validate_tags(seo_preview, max_count=4)
+                        seo_preview = [v["text"] for v in seo_val][:2]
                     except Exception:
-                        seo_preview = seo_preview[:3]
+                        seo_preview = seo_preview[:2]
 
                 preview_results.append({
                     "group_id": gid,
@@ -1707,9 +1707,9 @@ async def apply_ai_tags(
                     wl = w.lower().replace(" ", "")
                     if len(w) >= 2 and wl not in tag_lower_set and w not in seo_kws:
                         seo_kws.append(w)
-                        if len(seo_kws) >= 3:
+                        if len(seo_kws) >= 2:
                             break
-                if len(seo_kws) >= 3:
+                if len(seo_kws) >= 2:
                     break
 
         # 그룹 내 모든 상품에 적용

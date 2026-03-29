@@ -423,7 +423,10 @@ export default function CollectorPage() {
     const baseIds = selectedIds.size > 0
       ? selectedIds
       : new Set(displayedFilters.map(f => f.id))
-    if (baseIds.size === 0) return;
+    if (baseIds.size === 0) {
+      showAlert(`삭제 대상이 없습니다. (selectedIds=${selectedIds.size}, displayed=${displayedFilters.length}, drillBrand=${drillBrand || '없음'})`)
+      return
+    }
 
     // 선택된 그룹 + 하위 그룹 모두 수집
     const allIds = new Set(baseIds)
@@ -465,16 +468,21 @@ export default function CollectorPage() {
   };
 
   const handleCollectGroups = async () => {
-    if (selectedIds.size === 0) {
-      addLog("수집할 그룹을 선택하세요.")
+    // 체크된 그룹이 없으면 현재 보이는 그룹 전체 수집
+    const targetIds = selectedIds.size > 0 ? [...selectedIds] : displayedFilters.map(f => f.id)
+    if (targetIds.length === 0) {
+      addLog("수집할 그룹이 없습니다.")
       return
     }
+    const totalReq = displayedFilters.filter(f => targetIds.includes(f.id)).reduce((s, f) => s + (f.requested_count || 0), 0)
+    const ok = await showConfirm(`${selectedIds.size > 0 ? '선택된' : '표시된'} ${targetIds.length}개 그룹 상품수집을 시작하시겠습니까?\n(요청 ${totalReq.toLocaleString()}건, 중복 상품은 자동 스킵)`)
+    if (!ok) return
     const abort = new AbortController()
     collectAbortRef.current = abort
     setCollecting(true)
-    addLog(`${selectedIds.size}개 그룹 상품수집 시작...`)
+    addLog(`${targetIds.length}개 그룹 상품수집 시작...`)
 
-    for (const id of selectedIds) {
+    for (const id of targetIds) {
       if (abort.signal.aborted) break
       const f = filters.find((x) => x.id === id)
       if (!f) continue
@@ -645,26 +653,12 @@ export default function CollectorPage() {
   // Filter and sort
   let displayedFilters = [...filters];
   if (siteFilter) displayedFilters = displayedFilters.filter((f) => f.source_site === siteFilter);
-  // 드릴다운 사이트/브랜드 선택 시 해당 그룹만 표시
-  if (drillSite || drillBrand) {
-    // tree에서 사이트별 리프 정보 활용
-    const drillIds = new Set<string>()
-    for (const s of tree) {
-      if (drillSite && s.id !== drillSite) continue
-      const walk = (n: SambaSearchFilter) => {
-        if (!(n as unknown as Record<string, SambaSearchFilter[]>).children?.length) {
-          if (drillBrand) {
-            const parsed = parseGroupName(n.name, s.source_site || '')
-            if (parsed.brand === drillBrand) drillIds.add(n.id)
-          } else {
-            drillIds.add(n.id)
-          }
-        }
-        ;((n as unknown as Record<string, SambaSearchFilter[]>).children || []).forEach(walk)
-      }
-      walk(s)
-    }
-    displayedFilters = displayedFilters.filter(f => drillIds.has(f.id))
+  // 드릴다운 브랜드 선택 시 해당 브랜드 그룹만 표시
+  if (drillBrand) {
+    displayedFilters = displayedFilters.filter(f => {
+      const parsed = parseGroupName(f.name, f.source_site || '')
+      return parsed.brand === drillBrand
+    })
   }
   if (aiFilter) {
     displayedFilters = displayedFilters.filter((f) => {
@@ -879,7 +873,33 @@ export default function CollectorPage() {
             </button>
           )}
           <button
-            onClick={handleCreateGroup}
+            onClick={async () => {
+              // 카테고리 스캔 결과가 있으면 선택된 카테고리별 그룹 생성
+              if (brandCategories.length > 0 && brandSelectedCats.size > 0) {
+                const selected = brandCategories.filter(c => brandSelectedCats.has(c.categoryCode))
+                if (selected.length === 0) { showAlert('카테고리를 선택하세요'); return }
+                const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
+                const brand = parsed?.searchParams.get('brand') || ''
+                const keyword = parsed?.searchParams.get('keyword') || collectUrl.trim()
+                const gf = parsed?.searchParams.get('gf') || 'A'
+                try {
+                  const res = await collectorApi.brandCreateGroups({
+                    brand, brand_name: keyword, gf,
+                    categories: selected,
+                    requested_count_per_group: -1,
+                    options: checkedOptions,
+                  })
+                  addLog(`[카테고리분류] ${res.created}개 그룹 생성 완료`)
+                  showAlert(`${res.created}개 그룹이 생성되었습니다`, 'success')
+                  addLog(`[카테고리분류] ${res.created}개 그룹 생성 (카테고리 간 중복은 수집 시 자동 스킵)`)
+                  setBrandCategories([]); setBrandSelectedCats(new Set())
+                  load(); loadTree()
+                } catch (e) { showAlert(e instanceof Error ? e.message : '그룹 생성 실패', 'error') }
+              } else {
+                // 카테고리 스캔 없으면 기존 단일 그룹 생성
+                handleCreateGroup()
+              }
+            }}
             disabled={collecting}
             style={{
               background: "linear-gradient(135deg, #FF8C00, #FFB84D)", color: "#fff",
@@ -888,7 +908,7 @@ export default function CollectorPage() {
               border: "none", opacity: collecting ? 0.6 : 1,
             }}
           >
-            {collecting ? "생성중..." : "그룹 생성"}
+            {collecting ? "생성중..." : brandCategories.length > 0 ? `그룹 생성 (${brandSelectedCats.size}개)` : "그룹 생성"}
           </button>
         </div>
 
@@ -1389,6 +1409,42 @@ export default function CollectorPage() {
                         <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#FF8C00' }}>{g.collected_count ?? 0}</span>
                       </div>
                     ))}
+                    {/* 브랜드 하위 AI태그 순차 실행 */}
+                    <div style={{ borderTop: '1px solid #2D2D2D', padding: '0.5rem 0.5rem' }}>
+                      <button
+                        disabled={tagPreviewLoading}
+                        onClick={async () => {
+                          if (!await showConfirm(`${drillBrand || ''} 브랜드의 ${catGroups.length}개 그룹에 AI태그를 순차 생성합니다.\n\n${catGroups.map((g, i) => `${i + 1}. ${g._category || g.name} (${g.collected_count ?? 0}건)`).join('\n')}\n\n진행하시겠습니까?`)) return
+                          for (let i = 0; i < catGroups.length; i++) {
+                            const g = catGroups[i]
+                            setDrillGroup(g.id)
+                            setSelectedIds(new Set([g.id]))
+                            setTagPreviewLoading(true)
+                            try {
+                              const res = await proxyApi.previewAiTags([], [g.id])
+                              if (res.success && res.previews.length > 0) {
+                                setTagPreviews(res.previews)
+                                setTagPreviewCost({ api_calls: res.api_calls, input_tokens: res.input_tokens, output_tokens: res.output_tokens, cost_krw: res.cost_krw })
+                                setRemovedTags([])
+                                setShowTagPreview(true)
+                                // 모달 닫힐 때까지 대기
+                                await new Promise<void>(resolve => {
+                                  const check = setInterval(() => {
+                                    const modal = document.querySelector('[data-tag-preview-modal]')
+                                    if (!modal) { clearInterval(check); resolve() }
+                                  }, 500)
+                                })
+                              }
+                            } catch (e) { showAlert(`${g._category || g.name}: 태그 생성 실패`, 'error') }
+                            finally { setTagPreviewLoading(false) }
+                          }
+                          showAlert(`${catGroups.length}개 그룹 AI태그 완료`, 'success')
+                        }}
+                        style={{ width: '100%', padding: '4px 0', fontSize: '0.68rem', background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '4px', color: '#FF8C00', cursor: tagPreviewLoading ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: tagPreviewLoading ? 0.6 : 1 }}
+                      >
+                        {tagPreviewLoading ? '태그 생성중...' : `AI태그 순차 (${catGroups.length}개)`}
+                      </button>
+                    </div>
                   </>) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>항목 없음</div>
                   ) : null}
                 </div>
@@ -1693,7 +1749,7 @@ export default function CollectorPage() {
 
       {/* ═══ AI 태그 미리보기 모달 ═══ */}
       {showTagPreview && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        <div data-tag-preview-modal style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => { setShowTagPreview(false); setRemovedTags([]) }}>
           <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', padding: '28px 32px', minWidth: '500px', maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto' }}
             onClick={(e) => e.stopPropagation()}>

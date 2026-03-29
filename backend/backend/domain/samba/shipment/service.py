@@ -929,7 +929,7 @@ class SambaShipmentService:
 
     # SEO 검색키워드: seo_keywords 배열을 공백 연결
     seo_kws = product.get("seo_keywords") or []
-    seo_text = " ".join(seo_kws[:3]) if seo_kws else ""
+    seo_text = " ".join(seo_kws[:2]) if seo_kws else ""
 
     tag_map = {
       "{상품명}": product.get("name", ""),
@@ -1074,12 +1074,12 @@ class SambaShipmentService:
     from backend.domain.samba.category.repository import SambaCategoryMappingRepository
     from backend.domain.samba.category.service import SambaCategoryService
 
-    if not source_category:
+    if not source_category and not group_mappings:
       return {}
 
     # DB에서 매핑 조회
     mapping_repo = SambaCategoryMappingRepository(self.session)
-    mapping = await mapping_repo.find_mapping(source_site, source_category)
+    mapping = await mapping_repo.find_mapping(source_site, source_category) if source_category else None
 
     result: dict[str, str] = {}
 
