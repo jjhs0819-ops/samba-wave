@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { orderApi, channelApi, accountApi, proxyApi, collectorApi, type SambaOrder, type SambaChannel, type SambaMarketAccount } from '@/lib/samba/api'
+import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
@@ -81,6 +81,7 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<SambaOrder[]>([])
   const [channels, setChannels] = useState<SambaChannel[]>([])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
+  const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState('thisyear')
   const [marketFilter, setMarketFilter] = useState('')
@@ -173,6 +174,7 @@ export default function OrdersPage() {
   useEffect(() => { loadOrders() }, [loadOrders])
   useEffect(() => { channelApi.list().then(setChannels).catch(() => {}) }, [])
   useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
+  useEffect(() => { sourcingAccountApi.list().then(accs => setSourcingAccounts(accs.filter(a => a.is_active))).catch(() => {}) }, [])
   useEffect(() => {
     proxyApi.aligoRemain().then(r => { if (r.success) setSmsRemain(r) }).catch(() => {})
   }, [])
@@ -1066,6 +1068,26 @@ export default function OrdersPage() {
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>실수익</span><span style={{ color: liveProfit >= 0 ? '#51CF66' : '#FF6B6B' }}>{liveProfit >= 0 ? '+' : ''}{Math.round(liveProfit).toLocaleString()}</span></div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>수익률</span><span style={{ color: '#888' }}>{liveProfitRate}%</span></div>
                     </div>
+                    {/* 가격X/재고X/직배/까대기/선물 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '0.375rem', borderTop: '1px solid #1C2333', paddingTop: '0.375rem' }}>
+                      <button onClick={() => showAlert('가격X 기능 준비중입니다', 'info')} style={{ fontSize: '0.68rem', padding: '0.125rem 0', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer', textAlign: 'center' }}>가격X</button>
+                      <button onClick={() => showAlert('재고X 기능 준비중입니다', 'info')} style={{ fontSize: '0.68rem', padding: '0.125rem 0', background: 'rgba(255,211,61,0.1)', border: '1px solid rgba(255,211,61,0.3)', color: '#FFD93D', borderRadius: '4px', cursor: 'pointer', textAlign: 'center' }}>재고X</button>
+                      {ACTION_BUTTONS.map(btn => {
+                        const isActive = activeAction === btn.key
+                        return (
+                          <button
+                            key={btn.key}
+                            onClick={() => toggleAction(o.id, btn.key)}
+                            style={{
+                              fontSize: '0.68rem', padding: '0.125rem 0',
+                              background: isActive ? btn.activeColor : 'rgba(80,80,80,0.5)',
+                              color: '#fff', border: isActive ? `1px solid ${btn.activeColor}` : '1px solid #555',
+                              borderRadius: '4px', cursor: 'pointer', textAlign: 'center',
+                            }}
+                          >{btn.label}</button>
+                        )
+                      })}
+                    </div>
                   </td>
                   {/* 주문상태 */}
                   <td style={{ padding: '0.625rem', fontSize: '0.8rem' }}>
@@ -1103,42 +1125,37 @@ export default function OrdersPage() {
                         />
                       </div>
 
-                      {/* 2행: 가격X/재고X/직배/까대기/선물 + 마켓상태 */}
+                      {/* 2행: 주문계정 + 마켓상태 */}
                       <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'stretch' }}>
-                        <div style={{ flex: 1, display: 'flex', gap: '0.25rem', alignItems: 'center', minWidth: 0 }}>
-                          <button onClick={() => showAlert('가격X 기능 준비중입니다', 'info')} style={{ flex: 1, fontSize: '0.68rem', padding: '0.125rem 0', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'center' }}>가격X</button>
-                          <button onClick={() => showAlert('재고X 기능 준비중입니다', 'info')} style={{ flex: 1, fontSize: '0.68rem', padding: '0.125rem 0', background: 'rgba(255,211,61,0.1)', border: '1px solid rgba(255,211,61,0.3)', color: '#FFD93D', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'center' }}>재고X</button>
-                          {ACTION_BUTTONS.map(btn => {
-                            const isActive = activeAction === btn.key
-                            return (
-                              <button
-                                key={btn.key}
-                                onClick={() => toggleAction(o.id, btn.key)}
-                                style={{
-                                  flex: 1,
-                                  padding: '0.125rem 0',
-                                  fontSize: '0.68rem',
-                                  background: isActive ? btn.activeColor : 'rgba(80,80,80,0.5)',
-                                  color: '#fff',
-                                  border: isActive ? `1px solid ${btn.activeColor}` : '1px solid #555',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  whiteSpace: 'nowrap',
-                                  textAlign: 'center',
-                                }}
-                              >{btn.label}</button>
-                            )
-                          })}
-                        </div>
+                        <select
+                          value={o.sourcing_account_id || ''}
+                          onChange={async (e) => {
+                            const val = e.target.value
+                            try {
+                              await orderApi.update(o.id, { sourcing_account_id: val || undefined } as Partial<SambaOrder>)
+                              loadOrders()
+                            } catch { /* ignore */ }
+                          }}
+                          style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
+                        >
+                          <option value="">주문계정</option>
+                          {(() => {
+                            const allSites = [...new Set(sourcingAccounts.map(sa => sa.site_name))]
+                            const siteOrder: Record<string, number> = { MUSINSA: 0, LOTTEON: 1, SSG: 2 }
+                            const sites = allSites.sort((a, b) => (siteOrder[a] ?? 99) - (siteOrder[b] ?? 99) || a.localeCompare(b))
+                            return sites.map(site => (
+                              <optgroup key={site} label={site}>
+                                {sourcingAccounts.filter(sa => sa.site_name === site).map(sa => (
+                                  <option key={sa.id} value={sa.id}>{sa.account_label ? `${sa.account_label}(${sa.username})` : sa.username}</option>
+                                ))}
+                              </optgroup>
+                            ))
+                          })()}
+                        </select>
                         <div style={{
-                          flex: 1,
-                          padding: '0.25rem 0.375rem',
-                          background: 'rgba(30,30,30,0.6)',
-                          border: '1px solid #2D2D2D',
-                          borderRadius: '6px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
+                          flex: 1, padding: '0.25rem 0.375rem',
+                          background: 'rgba(30,30,30,0.6)', border: '1px solid #2D2D2D', borderRadius: '6px',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
                           <span style={{ fontSize: '0.75rem', color: '#4C9AFF', fontWeight: 600 }}>{o.shipping_status || '-'}</span>
                         </div>
@@ -1150,7 +1167,7 @@ export default function OrdersPage() {
                           type="text"
                           style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
                           value={costDisplay}
-                          placeholder="원가"
+                          placeholder="실구매가"
                           onChange={e => {
                             const raw = e.target.value.replace(/[^\d]/g, '')
                             setEditingCosts(prev => ({ ...prev, [o.id]: raw }))
@@ -1258,7 +1275,7 @@ export default function OrdersPage() {
 
                       {/* 간단메모 */}
                       <textarea
-                        style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', height: '4.68rem', lineHeight: '1.4' }}
+                        style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', height: '5.38rem', lineHeight: '1.4' }}
                         placeholder="간단메모"
                         defaultValue={o.notes || ''}
                         onBlur={async e => {
