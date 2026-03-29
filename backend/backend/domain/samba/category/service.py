@@ -169,6 +169,7 @@ _MUSINSA_SS_RULES: dict[str, str] = {
     "바지 > 코튼 팬츠": "패션의류 > 남성의류 > 바지",
     "바지 > 슈트 팬츠/슬랙스": "패션의류 > 남성의류 > 바지",
     "바지 > 트레이닝/조거 팬츠": "패션의류 > 남성의류 > 트레이닝복",
+    "바지 > 기타 하의": "패션의류 > 남성의류 > 바지",
     "바지 > 숏팬츠": "패션의류 > 남성의류 > 바지",
     "바지 > 레깅스": "패션의류 > 여성의류 > 레깅스",
     "바지 > 점프 슈트/오버올": "패션의류 > 남성의류 > 점프슈트",
@@ -255,6 +256,7 @@ _MUSINSA_LOTTEON_RULES: dict[str, str] = {
     "바지 > 코튼 팬츠": "패션의류 > 남성의류 > 바지",
     "바지 > 슈트 팬츠/슬랙스": "패션의류 > 남성의류 > 바지",
     "바지 > 트레이닝/조거 팬츠": "패션의류 > 남성의류 > 트레이닝복",
+    "바지 > 기타 하의": "패션의류 > 남성의류 > 바지",
     "원피스/스커트 > 미니원피스": "패션의류 > 여성의류 > 원피스",
     "원피스/스커트 > 미디원피스": "패션의류 > 여성의류 > 원피스",
     "원피스/스커트 > 맥시원피스": "패션의류 > 여성의류 > 원피스",
@@ -284,13 +286,21 @@ def _rule_match(
     """1단계: 룰 기반 매핑. 정확히 매칭되면 반환, 없으면 None.
 
     gender가 'female'이면 남성 카테고리를 여성으로 변환.
+    무신사 카테고리의 '(브랜드명)' 같은 괄호 부분 제거 후 매칭.
     """
+    import re
     if source_site != "MUSINSA":
         return None
     rules = _MARKET_RULES.get(market)
     if not rules:
         return None
+    # 정확 매칭 먼저
     result = rules.get(source_category)
+    # 괄호(브랜드명) 제거 후 재시도 — 예: "바지 > 기타 하의 (아디다스)" → "바지 > 기타 하의"
+    if not result:
+        normalized = re.sub(r'\s*\([^)]+\)', '', source_category).strip()
+        if normalized != source_category:
+            result = rules.get(normalized)
     if result and gender == "female":
         result = _apply_gender(result, market, gender)
     return result
