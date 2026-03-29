@@ -743,8 +743,35 @@ class LotteonSourcingClient:
       return {}
 
   async def search(self, keyword: str, max_count: int = 100, **kwargs: Any) -> dict[str, Any]:
-    """worker.py 직접 API 패턴 호환 래퍼 — search_products() 결과를 표준 포맷으로 반환."""
-    products = await self.search_products(keyword, size=min(max_count, 60))
+    """worker.py 직접 API 패턴 호환 래퍼 — search_products() 결과를 snake_case 표준 포맷으로 반환.
+
+    _parse_search_econjs가 camelCase 키(siteProductId, salePrice 등)를 반환하므로
+    worker.py가 기대하는 snake_case 키(site_product_id, sale_price 등)로 변환한다.
+    """
+    raw = await self.search_products(keyword, size=min(max_count, 60))
+    products = []
+    for item in raw:
+      # camelCase → snake_case 정규화
+      site_product_id = (
+        item.get("site_product_id")
+        or item.get("siteProductId")
+        or item.get("spdNo")
+        or ""
+      )
+      if not site_product_id:
+        continue
+      thumbnail = item.get("thumbnailImageUrl") or item.get("thumbnail_image_url") or ""
+      products.append({
+        "site_product_id": site_product_id,
+        "name": item.get("name", ""),
+        "brand": item.get("brand", ""),
+        "sale_price": item.get("sale_price") or item.get("salePrice") or 0,
+        "original_price": item.get("original_price") or item.get("originalPrice") or 0,
+        "images": [thumbnail] if thumbnail else [],
+        "source_url": item.get("source_url") or item.get("sourceUrl") or f"{self.PRODUCT_URL}/{site_product_id}",
+        "free_shipping": item.get("free_shipping", False),
+        "options": item.get("options", []),
+      })
     return {"products": products, "total": len(products)}
 
   async def get_detail(self, product_id: str) -> dict[str, Any]:
