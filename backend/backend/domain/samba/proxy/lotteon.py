@@ -858,13 +858,6 @@ class LotteonClient:
     # ── 상세설명 ────────────────────────────────────────────────
     detail_html = product.get("detail_html", "") or f"<p>{name}</p>"
 
-    # ── A/S 안내 (설정의 asPhone / asMessage 자동 주입) ────────
-    as_phone = product.get("_as_phone", "")
-    as_message = product.get("_as_message", "")
-    if not as_message:
-      # asMessage 없으면 설정 전화번호로 기본 문구 생성 (브랜드 고객센터 X)
-      as_message = f"A/S 전화번호: {as_phone}" if as_phone else "판매자 문의"
-
     # ── SEO: 검색 키워드 / 상품 소개문 ─────────────────────────
     keywords = _build_lotteon_keywords(product)
     intro = _build_lotteon_intro(product)
@@ -918,10 +911,9 @@ class LotteonClient:
       "pdStatCd": "NEW",
       "dpYn": "Y",
       "pdFileLst": pd_file_lst if pd_file_lst else None,
-      # 상세설명 + A/S 안내
+      # 상세설명 (A/S 안내는 고시정보 pdArtlCd=0090으로 전달)
       "epnLst": [
         {"pdEpnTypCd": "DSCRP", "cnts": detail_html},
-        {"pdEpnTypCd": "AS", "cnts": as_message},
       ],
       "cnclPsbYn": "Y",
       "dmstOvsDvDvsCd": "DMST",
