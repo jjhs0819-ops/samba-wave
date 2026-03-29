@@ -876,8 +876,8 @@ chrome.alarms.get('musinsaBalanceCheck', (alarm) => {
 })
 
 // 설치/업데이트 시
-chrome.runtime.onInstalled.addListener(() => { setupCookieSyncAlarm(); startCollectPolling() })
-chrome.runtime.onStartup.addListener(() => { setupCookieSyncAlarm(); startCollectPolling() })
+chrome.runtime.onInstalled.addListener(() => { setupCookieSyncAlarm() })
+chrome.runtime.onStartup.addListener(() => { setupCookieSyncAlarm() })
 setupCookieSyncAlarm()
 
 // ==================== AI소싱 큐 폴링 ====================

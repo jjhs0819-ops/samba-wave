@@ -861,9 +861,9 @@ chrome.alarms.get('musinsaBalanceCheck', (alarm) => {
   }
 })
 
-// 설치/업데이트 시 — 수집 폴링 시작 (5분간 job 없으면 자동 중지)
-chrome.runtime.onInstalled.addListener(() => { startCollectPolling() })
-chrome.runtime.onStartup.addListener(() => { startCollectPolling() })
+// 설치/업데이트/시작 시 — 수집 폴링은 시작하지 않음 (서버에서 수집 요청 시에만 시작)
+chrome.runtime.onInstalled.addListener(() => {})
+chrome.runtime.onStartup.addListener(() => {})
 
 // ==================== AI소싱 큐 폴링 ====================
 
