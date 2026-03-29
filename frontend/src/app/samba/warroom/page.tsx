@@ -64,7 +64,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           {Object.keys(intervals).length > 0 && (
             <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.7rem' }}>
-              {Object.entries(intervals).map(([site, interval]) => (
+              {Object.entries(intervals).filter(([, v]) => (v as number) > 0).map(([site, interval]) => (
                 <span key={site} style={{ color: siteColors[site] || '#888' }}>
                   {site} {(interval as number).toFixed(1)}s
                 </span>
