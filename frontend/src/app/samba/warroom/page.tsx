@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState, memo } from 'react'
 import { monitorApi, collectorApi, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api'
 
 const POLL_INTERVAL = 30_000
-const LOG_POLL_INTERVAL = 5_000
+const LOG_POLL_INTERVAL = 500
 
 // 오토튠 실시간 로그 (독립 컴포넌트 — 대시보드 리렌더링 영향 없음)
 const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusChange }: {
@@ -20,10 +20,14 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
   useEffect(() => {
     const poll = async () => {
       try {
-        const [res, atStatus] = await Promise.all([
-          monitorApi.refreshLogs(sinceIdxRef.current),
-          collectorApi.autotuneStatus().catch(() => null),
-        ])
+        // 오토튠 상태 먼저 확인
+        const atStatus = await collectorApi.autotuneStatus().catch(() => null)
+        if (atStatus && onStatusChange) {
+          onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick)
+        }
+        // 실행 중일 때만 로그 폴링
+        if (!atStatus?.running) return
+        const res = await monitorApi.refreshLogs(sinceIdxRef.current)
         if (res.current_idx < sinceIdxRef.current) {
           sinceIdxRef.current = 0
           return
@@ -43,10 +47,6 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
         if (res.intervals?.intervals) {
           setIntervals(res.intervals.intervals)
         }
-        // 오토튠 상태 부모에 전달
-        if (atStatus && onStatusChange) {
-          onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick)
-        }
       } catch { /* 무시 */ }
     }
     poll()
@@ -59,7 +59,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>오토튠 실시간 로그</span>
-          <span style={{ fontSize: '0.65rem', color: '#666' }}>5초 폴링</span>
+          <span style={{ fontSize: '0.65rem', color: '#666' }}>실시간</span>
         </div>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           {Object.keys(intervals).length > 0 && (
@@ -180,6 +180,7 @@ export default function WarroomPage() {
   // 오토튠 상태
   const [autotuneRunning, setAutotuneRunning] = useState(false)
   const [autotuneCycles, setAutotuneCycles] = useState(0)
+  const [autotuneRefreshed, setAutotuneRefreshed] = useState(0)
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
   const [autotuneTarget, setAutotuneTarget] = useState('all')
   const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null) => {
@@ -211,6 +212,7 @@ export default function WarroomPage() {
       if (probeStatus && Object.keys(probeStatus).length > 0) setProbeData(probeStatus)
       setAutotuneRunning(atStatus.running)
       setAutotuneCycles(atStatus.cycle_count)
+      setAutotuneRefreshed(atStatus.refreshed_count || 0)
       if (atStatus.target) setAutotuneTarget(atStatus.target)
       if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
       setAutotuneLastTick(atStatus.last_tick)
@@ -469,7 +471,7 @@ export default function WarroomPage() {
         <div style={card}>
           <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>24시간 오토튠</div>
           <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#4C9AFF' }}>
-            {refresh_stats.refreshed_24h.toLocaleString()}
+            {autotuneRefreshed}
           </div>
         </div>
 
