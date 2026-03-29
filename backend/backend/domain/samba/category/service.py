@@ -256,7 +256,6 @@ _MUSINSA_LOTTEON_RULES: dict[str, str] = {
     "바지 > 코튼 팬츠": "패션의류 > 남성의류 > 바지",
     "바지 > 슈트 팬츠/슬랙스": "패션의류 > 남성의류 > 바지",
     "바지 > 트레이닝/조거 팬츠": "패션의류 > 남성의류 > 트레이닝복",
-    "바지 > 기타 하의": "패션의류 > 남성의류 > 바지",
     "원피스/스커트 > 미니원피스": "패션의류 > 여성의류 > 원피스",
     "원피스/스커트 > 미디원피스": "패션의류 > 여성의류 > 원피스",
     "원피스/스커트 > 맥시원피스": "패션의류 > 여성의류 > 원피스",
@@ -1625,16 +1624,6 @@ class SambaCategoryService:
             logger.info("[카테고리 코드] prefix 매칭: '%s' → '%s' (%s)", category_path, best_prefix_path, prefix_matches[best_prefix_path])
             return str(prefix_matches[best_prefix_path])
 
-        # 1.6. 후미 세그먼트 prefix 매칭 — 롯데ON처럼 앞 대분류가 다를 때
-        # 예: "패션의류 > 남성의류 > 바지" → "남성의류 > 바지 > " prefix로 재시도
-        input_segments_full = [s.strip() for s in category_path.split(">") if s.strip()]
-        for n in range(len(input_segments_full) - 1, 0, -1):
-            tail_prefix = " > ".join(input_segments_full[-n:]) + " > "
-            tail_matches = {path: code for path, code in code_map.items() if path.startswith(tail_prefix)}
-            if tail_matches:
-                best_tail_path = min(tail_matches.keys(), key=len)
-                logger.info("[카테고리 코드] tail prefix 매칭: '%s' → '%s' (%s)", category_path, best_tail_path, tail_matches[best_tail_path])
-                return str(tail_matches[best_tail_path])
 
         # 2. 키워드 기반 퍼지 매칭
         # 입력 경로의 세그먼트 추출 (예: "패션의류 > 남성의류 > 아우터/코트")
