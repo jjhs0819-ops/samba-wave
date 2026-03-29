@@ -65,6 +65,26 @@ async def get_chrome_profiles():
         return []
 
 
+# 잔액 체크 요청 플래그 (확장앱이 폴링으로 확인)
+_balance_check_requested = False
+
+@router.post("/request-balance-check")
+async def request_balance_check():
+    """프론트에서 잔액 체크 요청 → 확장앱이 폴링으로 확인 후 실행."""
+    global _balance_check_requested
+    _balance_check_requested = True
+    return {"ok": True}
+
+@router.get("/balance-check-requested")
+async def get_balance_check_requested():
+    """확장앱이 폴링으로 확인하는 잔액 체크 요청 플래그."""
+    global _balance_check_requested
+    if _balance_check_requested:
+        _balance_check_requested = False
+        return {"requested": True}
+    return {"requested": False}
+
+
 @router.get("/{account_id}")
 async def get_sourcing_account(
     account_id: str,
@@ -117,26 +137,6 @@ async def delete_sourcing_account(
     if not await _write_service(session).delete_account(account_id):
         raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
     return {"ok": True}
-
-
-# 잔액 체크 요청 플래그 (확장앱이 폴링으로 확인)
-_balance_check_requested = False
-
-@router.post("/request-balance-check")
-async def request_balance_check():
-    """프론트에서 잔액 체크 요청 → 확장앱이 폴링으로 확인 후 실행."""
-    global _balance_check_requested
-    _balance_check_requested = True
-    return {"ok": True}
-
-@router.get("/balance-check-requested")
-async def get_balance_check_requested():
-    """확장앱이 폴링으로 확인하는 잔액 체크 요청 플래그."""
-    global _balance_check_requested
-    if _balance_check_requested:
-        _balance_check_requested = False
-        return {"requested": True}
-    return {"requested": False}
 
 
 class SyncBalanceRequest(BaseModel):
