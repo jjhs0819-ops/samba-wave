@@ -281,7 +281,7 @@ async def delete_filter(
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
 
     svc = _get_services(session)
-    sf = await svc.get_filter(filter_id)
+    sf = await svc.filter_repo.get_async(filter_id)
     if not sf:
         raise HTTPException(404, "필터를 찾을 수 없습니다")
 
