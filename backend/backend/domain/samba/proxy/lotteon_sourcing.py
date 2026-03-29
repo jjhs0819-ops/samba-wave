@@ -1000,6 +1000,7 @@ class LotteonSourcingClient:
           continue
         disabled = bool(opt.get("disabled", False))
         options.append({
+          "no": len(options),
           "name": label,
           "price": sl_prc or detail.get("salePrice", 0),
           "stock": 0 if disabled else (stk_qty or 1),
@@ -1014,6 +1015,7 @@ class LotteonSourcingClient:
             combined_disabled = g1_opt.get("disabled", False) or g2_opt.get("disabled", False)
             combined_label = f"{g1_opt.get('label', '')} / {g2_opt.get('label', '')}".strip(" /")
             options.append({
+              "no": len(options),
               "name": combined_label,
               "price": sl_prc or detail.get("salePrice", 0),
               "stock": 0 if combined_disabled else (stk_qty or 1),
@@ -1164,6 +1166,8 @@ class LotteonSourcingClient:
           "material": "",
           "style_code": self._extract_style_code_from_name(name.strip()),
           "care_instructions": "",
+          "quality_guarantee": "",
+          "shipping_fee": 0,
         }
 
       except (json.JSONDecodeError, KeyError, TypeError) as e:
@@ -1371,6 +1375,8 @@ class LotteonSourcingClient:
         "material": material,
         "style_code": style_code,
         "care_instructions": care_instructions,
+        "quality_guarantee": "",
+        "shipping_fee": 0,
       }
 
     except (json.JSONDecodeError, KeyError, TypeError) as e:
@@ -1454,6 +1460,16 @@ class LotteonSourcingClient:
       "sameDayDelivery": same_day_delivery,
       "collectedAt": now_iso,
       "updatedAt": now_iso,
+      "manufacturer": "",
+      "origin": "",
+      "sex": "",
+      "season": "",
+      "color": "",
+      "material": "",
+      "style_code": self._extract_style_code_from_name(name.strip()),
+      "care_instructions": "",
+      "quality_guarantee": "",
+      "shipping_fee": 0,
     }
 
   # ------------------------------------------------------------------
@@ -1771,6 +1787,7 @@ class LotteonSourcingClient:
           )
 
           options.append({
+            "no": len(options),
             "name": opt_name,
             "price": opt_price,
             "stock": opt_stock,
@@ -1810,6 +1827,7 @@ class LotteonSourcingClient:
           )
 
         options.append({
+          "no": len(options),
           "name": text,
           "price": price_in_option,
           "stock": 0 if is_sold_out else 1,
