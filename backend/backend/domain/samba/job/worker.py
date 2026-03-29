@@ -15,10 +15,11 @@ class JobWorker:
 
     def __init__(self):
         self._running = True
+        self._active_types: set[str] = set()  # 현재 실행 중인 잡 타입
 
     async def start(self):
-        """무한 루프: pending 잡 조회 → 실행."""
-        logger.info("[잡워커] 시작")
+        """무한 루프: pending 잡 조회 → 타입별 병렬 실행."""
+        logger.info("[잡워커] 시작 (병렬 모드: collect/transmit 동시 실행)")
         while self._running:
             try:
                 executed = await self._poll_once()
@@ -35,40 +36,64 @@ class JobWorker:
         self._running = False
 
     async def _poll_once(self) -> bool:
-        """pending 잡 1개 처리. 처리했으면 True."""
+        """pending 잡을 타입별로 1개씩 병렬 실행. 같은 타입은 순차."""
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
 
         async with get_write_session() as session:
             repo = SambaJobRepository(session)
-            job = await repo.pick_next_pending()
-            if not job:
+            jobs = await repo.list_pending(limit=5)
+            if not jobs:
                 return False
 
-            logger.info(f"[잡워커] 실행: {job.id} ({job.job_type})")
+            # 실행 중이 아닌 타입의 잡만 선택 (타입별 1개)
+            to_run = []
+            for job in jobs:
+                if job.job_type not in self._active_types:
+                    to_run.append(job)
+                    self._active_types.add(job.job_type)
+            if not to_run:
+                return False
 
-            try:
-                if job.job_type == "transmit":
-                    await self._run_transmit(job, repo, session)
-                elif job.job_type == "collect":
-                    await self._run_collect(job, repo, session)
-                elif job.job_type == "refresh":
-                    await self._run_stub(job, repo, "갱신")
-                elif job.job_type == "ai_tag":
-                    await self._run_stub(job, repo, "AI태그")
-                else:
-                    await repo.fail_job(job.id, f"알 수 없는 잡 타입: {job.job_type}")
+        # 선택된 잡들 병렬 실행 (각각 독립 세션)
+        if len(to_run) == 1:
+            await self._execute_job(to_run[0])
+        else:
+            await asyncio.gather(*[self._execute_job(j) for j in to_run], return_exceptions=True)
+        return True
 
-                await session.commit()
-            except Exception as e:
-                logger.error(f"[잡워커] 잡 실행 실패: {job.id} — {e}")
+    async def _execute_job(self, job):
+        """개별 잡 실행 (독립 세션)."""
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.job.repository import SambaJobRepository
+
+        try:
+            async with get_write_session() as session:
+                repo = SambaJobRepository(session)
+                logger.info(f"[잡워커] 실행: {job.id} ({job.job_type})")
+
                 try:
-                    await repo.fail_job(job.id, str(e))
-                    await session.commit()
-                except Exception:
-                    pass
+                    if job.job_type == "transmit":
+                        await self._run_transmit(job, repo, session)
+                    elif job.job_type == "collect":
+                        await self._run_collect(job, repo, session)
+                    elif job.job_type == "refresh":
+                        await self._run_stub(job, repo, "갱신")
+                    elif job.job_type == "ai_tag":
+                        await self._run_stub(job, repo, "AI태그")
+                    else:
+                        await repo.fail_job(job.id, f"알 수 없는 잡 타입: {job.job_type}")
 
-            return True
+                    await session.commit()
+                except Exception as e:
+                    logger.error(f"[잡워커] 잡 실행 실패: {job.id} — {e}")
+                    try:
+                        await repo.fail_job(job.id, str(e))
+                        await session.commit()
+                    except Exception:
+                        pass
+        finally:
+            self._active_types.discard(job.job_type)
 
     async def _run_transmit(self, job, repo, session):
         """전송 잡 실행 — 기존 shipment_service 호출."""
@@ -114,7 +139,8 @@ class JobWorker:
         from backend.domain.samba.proxy.musinsa import MusinsaClient, RateLimitError
         from backend.domain.samba.forbidden.model import SambaSettings
         from backend.api.v1.routers.samba.collector_common import _build_product_data
-        from backend.domain.samba.collector.refresher import _site_intervals, _site_consecutive_errors
+        from backend.domain.samba.collector.refresher import _site_intervals, _site_consecutive_errors, get_interval_key
+        _ik = get_interval_key("MUSINSA", "collect")  # 수집 전용 인터벌 키
 
         payload = job.payload or {}
         filter_id = payload.get("filter_id")
@@ -233,7 +259,7 @@ class JobWorker:
                 logger.info(f"[잡워커] 검색 p{search_page}: {len(search_items)}건 (kw={keyword}, brand={_brand_filter})")
                 if not search_items:
                     break
-                await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                await asyncio.sleep(_site_intervals.get(_ik, 1.0))
             except Exception as e:
                 logger.error(f"[잡워커] 검색 실패: {e}")
                 break
@@ -270,16 +296,16 @@ class JobWorker:
                 try:
                     detail = await client.get_goods_detail(goods_no)
                     if not detail or not detail.get("name"):
-                        await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        await asyncio.sleep(_site_intervals.get(_ik, 1.0))
                         continue
 
                     if _exclude_preorder and detail.get("saleStatus") == "preorder":
                         total_skipped += 1
-                        await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        await asyncio.sleep(_site_intervals.get(_ik, 1.0))
                         continue
                     if _exclude_boutique and detail.get("isBoutique"):
                         total_skipped += 1
-                        await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        await asyncio.sleep(_site_intervals.get(_ik, 1.0))
                         continue
 
                     if _use_max_discount:
@@ -303,7 +329,7 @@ class JobWorker:
                             )
 
                     from backend.api.v1.routers.samba.collector_common import _get_services
-                    svc, _ = await _get_services(session)
+                    svc = _get_services(session)
 
                     product_data = _build_product_data(
                         detail, goods_no, filter_id, "MUSINSA",
@@ -318,20 +344,20 @@ class JobWorker:
                     if total_saved >= remaining:
                         break
                 except RateLimitError as rle:
-                    current = _site_intervals.get("MUSINSA", 1.0)
-                    _site_intervals["MUSINSA"] = min(30.0, current * 2)
-                    _site_consecutive_errors["MUSINSA"] = _site_consecutive_errors.get("MUSINSA", 0) + 1
-                    if _site_consecutive_errors["MUSINSA"] >= 5:
+                    current = _site_intervals.get(_ik, 1.0)
+                    _site_intervals[_ik] = min(30.0, current * 2)
+                    _site_consecutive_errors[_ik] = _site_consecutive_errors.get("MUSINSA", 0) + 1
+                    if _site_consecutive_errors[_ik] >= 5:
                         await repo.fail_job(job.id, f"소싱처 차단 (HTTP {rle.status})")
                         return
                     if rle.retry_after > 0:
                         await asyncio.sleep(rle.retry_after)
                     else:
-                        await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                        await asyncio.sleep(_site_intervals.get(_ik, 1.0))
                     continue
                 except Exception as e:
                     logger.warning(f"[잡워커] 수집 실패 {goods_no}: {e}")
-                await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
+                await asyncio.sleep(_site_intervals.get(_ik, 1.0))
 
             search_page += 1
 
@@ -345,7 +371,7 @@ class JobWorker:
             try:
                 from backend.domain.samba.policy.repository import SambaPolicyRepository
                 from backend.api.v1.routers.samba.collector_common import _get_services
-                svc, _ = await _get_services(session)
+                svc = _get_services(session)
                 policy_repo = SambaPolicyRepository(session)
                 policy = await policy_repo.get_async(sf.applied_policy_id)
                 policy_data = None
