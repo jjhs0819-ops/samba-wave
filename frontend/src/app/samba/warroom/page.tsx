@@ -7,9 +7,10 @@ const POLL_INTERVAL = 30_000
 const LOG_POLL_INTERVAL = 500
 
 // 오토튠 실시간 로그 (독립 컴포넌트 — 대시보드 리렌더링 영향 없음)
-const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusChange }: {
+const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusChange, externalRunning }: {
   siteColors: Record<string, string>
-  onStatusChange?: (running: boolean, cycles: number, lastTick: string | null) => void
+  onStatusChange?: (running: boolean, cycles: number, lastTick: string | null, refreshed: number) => void
+  externalRunning?: boolean
 }) {
   const [logs, setLogs] = useState<RefreshLogEntry[]>([])
   const [intervals, setIntervals] = useState<Record<string, number>>({})
@@ -17,27 +18,49 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
   const containerRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // 단일 useEffect로 폴링 관리 — 타이머 중복 방지
+  const pollingRef = useRef(false)
+
   useEffect(() => {
+    // 오토튠 꺼져있으면 폴링 안 함
+    if (!externalRunning) {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+      // 초기 상태 1회 확인
+      collectorApi.autotuneStatus().then(st => {
+        if (st && onStatusChange) onStatusChange(st.running, st.cycle_count, st.last_tick, st.refreshed_count || 0)
+      }).catch(() => {})
+      return
+    }
+
+    // 이미 타이머가 있으면 중복 생성 안 함
+    if (timerRef.current) return
+
     const poll = async () => {
+      if (pollingRef.current) return
+      pollingRef.current = true
       try {
-        // 오토튠 상태 먼저 확인
         const atStatus = await collectorApi.autotuneStatus().catch(() => null)
         if (atStatus && onStatusChange) {
-          onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick)
+          onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
         }
-        // 실행 중일 때만 로그 폴링
-        if (!atStatus?.running) return
-        const res = await monitorApi.refreshLogs(sinceIdxRef.current)
-        if (res.current_idx < sinceIdxRef.current) {
-          sinceIdxRef.current = 0
+        if (!atStatus?.running) {
+          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+          pollingRef.current = false
           return
         }
-        if (res.logs.length > 0) {
+        const idx = sinceIdxRef.current
+        const res = await monitorApi.refreshLogs(idx)
+        if (res.current_idx < idx) {
+          sinceIdxRef.current = 0
+          pollingRef.current = false
+          return
+        }
+        if (res.logs.length > 0 && res.current_idx > idx) {
+          sinceIdxRef.current = res.current_idx
           setLogs(prev => {
             const next = [...prev, ...res.logs]
             return next.length > 300 ? next.slice(next.length - 300) : next
           })
-          sinceIdxRef.current = res.current_idx
           requestAnimationFrame(() => {
             if (containerRef.current) {
               containerRef.current.scrollTop = containerRef.current.scrollHeight
@@ -48,11 +71,15 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
           setIntervals(res.intervals.intervals)
         }
       } catch { /* 무시 */ }
+      pollingRef.current = false
     }
     poll()
     timerRef.current = setInterval(poll, LOG_POLL_INTERVAL)
-    return () => { if (timerRef.current) clearInterval(timerRef.current) }
-  }, [onStatusChange])
+
+    return () => {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+    }
+  }, [externalRunning, onStatusChange])
 
   return (
     <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
@@ -182,11 +209,12 @@ export default function WarroomPage() {
   const [autotuneCycles, setAutotuneCycles] = useState(0)
   const [autotuneRefreshed, setAutotuneRefreshed] = useState(0)
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
-  const [autotuneTarget, setAutotuneTarget] = useState('all')
-  const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null) => {
+  const [autotuneTarget, setAutotuneTarget] = useState('registered')
+  const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number) => {
     setAutotuneRunning(running)
     setAutotuneCycles(cycles)
     setAutotuneLastTick(lastTick)
+    setAutotuneRefreshed(refreshed)
   }, [])
 
   const runProbe = async () => {
@@ -697,7 +725,7 @@ export default function WarroomPage() {
                       transition: 'width 0.3s',
                     }} />
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt.toLocaleString()}</span>
                 </div>
               ))}
           </div>
@@ -722,7 +750,7 @@ export default function WarroomPage() {
                       transition: 'width 0.3s',
                     }} />
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt.toLocaleString()}</span>
                 </div>
               )
             })}
@@ -747,7 +775,7 @@ export default function WarroomPage() {
                       transition: 'width 0.3s',
                     }} />
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt.toLocaleString()}</span>
                 </div>
               )
             })}
@@ -759,6 +787,7 @@ export default function WarroomPage() {
       <AutotuneLogPanel
         siteColors={SITE_COLORS}
         onStatusChange={handleAutotuneStatus}
+        externalRunning={autotuneRunning}
       />
 
       {/* G. 이벤트 타임라인 */}

@@ -99,7 +99,6 @@ class BackendSettings(BaseSettings):
             "http://localhost:3002",
             "http://localhost:3003",
             "http://127.0.0.1:3000",
-            "https://samba-wave-1zm6k4gb4-sbk0674-2598s-projects.vercel.app",
         ]
         if self.cors_extra_origins:
             extras = [o.strip() for o in self.cors_extra_origins.split(",") if o.strip()]

@@ -185,12 +185,23 @@ async def list_filters(session: AsyncSession = Depends(get_read_session_dependen
         return []
 
     # 한 번의 GROUP BY 쿼리로 모든 카운트 산출
+    from sqlalchemy import cast, String
     count_stmt = (
         select(
             _CP.search_filter_id,
             func.count().label("collected_count"),
-            func.count(case((and_(_CP.registered_accounts != None), literal(1)))).label("market_registered_count"),
+            func.count(case((and_(
+                _CP.registered_accounts != None,
+                func.length(cast(_CP.registered_accounts, String)) > 2,  # [] = 2글자, 실제 데이터 있으면 > 2
+            ), literal(1)))).label("market_registered_count"),
             func.count(case((and_(_CP.applied_policy_id != None), literal(1)))).label("policy_applied_count"),
+            func.count(case((and_(cast(_CP.tags, String).like('%__ai_tagged__%')), literal(1)))).label("ai_tagged_count"),
+            func.count(case((and_(cast(_CP.tags, String).like('%__ai_image__%')), literal(1)))).label("ai_image_count"),
+            func.count(case((and_(
+                _CP.tags != None,
+                func.length(cast(_CP.tags, String)) > 20,  # 시스템태그만 있으면 짧음, 실제 태그 있으면 > 20
+                ~cast(_CP.tags, String).like('%[]%'),
+            ), literal(1)))).label("tag_applied_count"),
         )
         .where(_CP.search_filter_id.in_(filter_ids))
         .group_by(_CP.search_filter_id)
@@ -202,6 +213,9 @@ async def list_filters(session: AsyncSession = Depends(get_read_session_dependen
             "collected_count": row[1],
             "market_registered_count": row[2],
             "policy_applied_count": row[3],
+            "ai_tagged_count": row[4],
+            "ai_image_count": row[5],
+            "tag_applied_count": row[6],
         }
 
     result = []
@@ -211,9 +225,9 @@ async def list_filters(session: AsyncSession = Depends(get_read_session_dependen
         data["collected_count"] = counts.get("collected_count", 0)
         data["market_registered_count"] = counts.get("market_registered_count", 0)
         data["policy_applied_count"] = counts.get("policy_applied_count", 0)
-        data["ai_tagged_count"] = 0
-        data["ai_image_count"] = 0
-        data["tag_applied_count"] = 0
+        data["ai_tagged_count"] = counts.get("ai_tagged_count", 0)
+        data["ai_image_count"] = counts.get("ai_image_count", 0)
+        data["tag_applied_count"] = counts.get("tag_applied_count", 0)
         result.append(data)
     return result
 
@@ -281,7 +295,7 @@ async def delete_filter(
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
 
     svc = _get_services(session)
-    sf = await svc.get_filter(filter_id)
+    sf = await svc.filter_repo.get_async(filter_id)
     if not sf:
         raise HTTPException(404, "필터를 찾을 수 없습니다")
 
@@ -349,20 +363,28 @@ async def get_filter_tree(session: AsyncSession = Depends(get_read_session_depen
 
     leaf_ids = [f.id for f in all_filters if not f.is_folder]
     count_map: dict[str, int] = {}
+    tag_count_map: dict[str, int] = {}
     if leaf_ids:
+        from sqlalchemy import case, and_, cast, String, literal
         count_stmt = (
-            select(_CP.search_filter_id, _func.count().label("cnt"))
+            select(
+                _CP.search_filter_id,
+                _func.count().label("cnt"),
+                _func.count(case((and_(cast(_CP.tags, String).like('%__ai_tagged__%')), literal(1)))).label("ai_tagged"),
+            )
             .where(_CP.search_filter_id.in_(leaf_ids))
             .group_by(_CP.search_filter_id)
         )
         count_result = await session.execute(count_stmt)
         for row in count_result.all():
             count_map[row[0]] = row[1]
+            tag_count_map[row[0]] = row[2]
 
     filter_data = []
     for f in all_filters:
         data = {c.key: getattr(f, c.key) for c in f.__table__.columns}
         data["collected_count"] = count_map.get(f.id, 0) if not f.is_folder else 0
+        data["ai_tagged_count"] = tag_count_map.get(f.id, 0) if not f.is_folder else 0
         filter_data.append(data)
 
     # 트리 빌드: parent_id 기반 + 고아 노드 source_site별 자동 그룹핑
@@ -440,7 +462,7 @@ async def move_filter(
 @router.get("/products/scroll")
 async def scroll_products(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=10000),
     search: str = Query("", max_length=200),
     search_type: str = Query("name"),
     source_site: Optional[str] = None,
@@ -478,6 +500,8 @@ async def scroll_products(
             from backend.domain.samba.collector.model import SambaSearchFilter as _SF
             sf_ids = select(_SF.id).where(_SF.name.ilike(f"%{q}%"))
             conditions.append(_CP.search_filter_id.in_(sf_ids))
+        elif search_type == "brand":
+            conditions.append(_CP.brand.ilike(f"%{q}%"))
         elif search_type == "id":
             conditions.append(_CP.id == q)
         elif search_type == "policy":
@@ -783,7 +807,7 @@ async def product_category_tree(
 @router.get("/products")
 async def list_collected_products(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=10000),
+    limit: int = Query(50, ge=1, le=100000),
     status: Optional[str] = None,
     source_site: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),

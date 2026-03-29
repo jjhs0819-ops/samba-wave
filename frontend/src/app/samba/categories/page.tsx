@@ -93,7 +93,7 @@ export default function CategoriesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const all = await collectorApi.listProducts(0, 500)
+      const all = await collectorApi.listProducts(0, 100000)
       if (Array.isArray(all) && all.length > 0) {
         setProducts(all)
         buildTree(all)

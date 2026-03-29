@@ -55,6 +55,7 @@ export default function ProductsPage() {
   const accountsMap = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts])
   const [detailTemplates, setDetailTemplates] = useState<SambaDetailTemplate[]>([]);
   const [filterNameMap, setFilterNameMap] = useState<Record<string, string>>({});
+  const [searchFilters, setSearchFilters] = useState<SambaSearchFilter[]>([]);
   const [loading, setLoading] = useState(true);
   // 서버사이드 페이지네이션 상태
   const [serverTotal, setServerTotal] = useState(0);
@@ -220,6 +221,7 @@ export default function ProductsPage() {
       const nameMap: Record<string, string> = {}
       filters.forEach((f: SambaSearchFilter) => { nameMap[f.id] = f.name })
       setFilterNameMap(nameMap)
+      setSearchFilters(filters)
       if (Array.isArray(mappings)) {
         const map = new Map<string, Record<string, string>>()
         mappings.forEach(m => {
@@ -465,10 +467,31 @@ export default function ProductsPage() {
     );
   };
 
-  const handleSelectAll = (checked: boolean) => {
+  const handleSelectAll = async (checked: boolean) => {
     setSelectAll(checked);
     if (checked) {
-      setSelectedIds(new Set(products.map((p) => p.id)));
+      // 전체 검색 결과 ID를 서버에서 조회
+      if (serverTotal > products.length) {
+        try {
+          const statusParam = statusFilter || undefined
+          const aiParam = aiFilter || undefined
+          const res = await collectorApi.scrollProducts({
+            skip: 0, limit: serverTotal,
+            search: searchQ.trim() || undefined,
+            search_type: searchQ.trim() ? searchType : undefined,
+            source_site: siteFilter || undefined,
+            status: statusParam,
+            ai_filter: aiParam,
+            search_filter_id: filterByGroupId || undefined,
+            sort_by: sortBy,
+          })
+          setSelectedIds(new Set(res.items.map((p: SambaCollectedProduct) => p.id)));
+        } catch {
+          setSelectedIds(new Set(products.map((p) => p.id)));
+        }
+      } else {
+        setSelectedIds(new Set(products.map((p) => p.id)));
+      }
     } else {
       setSelectedIds(new Set());
     }
@@ -831,7 +854,8 @@ export default function ProductsPage() {
           </select>
           <select value={searchType} onChange={(e) => setSearchType(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px", color: "#C5C5C5", width: "90px" }}>
-            <option value="name">상품명</option>
+            <option value="name">검색항목</option>
+            <option value="brand">브랜드</option>
             <option value="name_all">상품명+등록명</option>
             <option value="filter">그룹</option>
             <option value="no">상품번호</option>
@@ -1035,7 +1059,7 @@ export default function ProductsPage() {
             />
           </label>
           <span style={{ fontSize: "0.875rem", color: "#E5E5E5", fontWeight: 600, whiteSpace: "nowrap" }}>
-            상품관리 <span style={{ color: "#FF8C00" }}>( 총 <span>{totalCount}</span>개 검색 )</span>
+            상품관리 <span style={{ color: "#FF8C00" }}>( 총 <span>{totalCount.toLocaleString()}</span>개 검색 )</span>
           </span>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
@@ -1061,7 +1085,7 @@ export default function ProductsPage() {
             fontSize: "0.78rem", padding: "4px 12px",
             border: "1px solid #3D3D3D", borderRadius: "5px",
             color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
-          }}>AI상품명변경</button>
+          }}>AI상품명</button>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
             const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
@@ -1404,6 +1428,7 @@ export default function ProductsPage() {
               onTagUpdate={handleTagUpdate}
               logMessage={activeLog?.productId === p.id ? activeLog.message : undefined}
               catMappingMap={catMappingMap}
+              filters={searchFilters}
               detailTemplates={detailTemplates}
             />
           ))}

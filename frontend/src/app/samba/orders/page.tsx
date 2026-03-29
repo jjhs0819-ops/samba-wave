@@ -87,6 +87,7 @@ export default function OrdersPage() {
   const [marketFilter, setMarketFilter] = useState('')
   const [marketStatus, setMarketStatus] = useState('')
   const [siteFilter, setSiteFilter] = useState('')
+  const [accountFilter, setAccountFilter] = useState('')
   const [inputFilter, setInputFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('active')
   const [searchText, setSearchText] = useState('')
@@ -585,6 +586,9 @@ export default function OrdersPage() {
     if (siteFilter) {
       if (o.source_site !== siteFilter) return false
     }
+    if (accountFilter) {
+      if (o.channel_id !== accountFilter) return false
+    }
     if (marketStatus) {
       if (o.shipping_status !== marketStatus) return false
     }
@@ -796,6 +800,10 @@ export default function OrdersPage() {
             })()}
           </select>
           <select style={{ ...inputStyle, width: '110px' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체사이트보기</option>{['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','GrandStage','OKmall','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}</select>
+          <select style={{ ...inputStyle, width: '130px' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
+            <option value="">주문계정</option>
+            {accounts.map(a => <option key={a.id} value={a.id}>{a.market_name || a.market_type}</option>)}
+          </select>
           <select style={{ ...inputStyle, width: '112px' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
             <option value="">마켓상태 보기</option>
             {MARKET_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}

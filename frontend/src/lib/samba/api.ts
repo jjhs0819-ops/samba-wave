@@ -438,13 +438,6 @@ export const collectorApi = {
       body: JSON.stringify({ product_id: productId, max_images: maxImages, duration_per_image: durationPerImage }),
     }),
 
-  // 모니터링 우선순위 변경
-  updateMonitorPriority: (productIds: string[], priority: string) =>
-    request<{ updated: number }>(`${SAMBA_PREFIX}/collector/products/monitor-priority`, {
-      method: 'PUT',
-      body: JSON.stringify({ product_ids: productIds, priority }),
-    }),
-
   // Probe (소싱처/마켓 헬스체크)
   probeStatus: () =>
     request<Record<string, unknown>>(`${SAMBA_PREFIX}/collector/probe/status`),

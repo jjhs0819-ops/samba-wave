@@ -59,6 +59,7 @@ async def list_returns(
     )
 
     # 주문의 ext_order_number(타마켓주문링크) 또는 소싱처 주문상세 URL을 return_link로 매칭
+    # 주문탭 원주문링크와 100% 동일한 로직
     from backend.domain.samba.order.repository import SambaOrderRepository
     order_repo = SambaOrderRepository(session)
     order_ids = list({r.order_id for r in returns if r.order_id})
@@ -68,10 +69,10 @@ async def list_returns(
         from sqlmodel import select, col
         stmt = select(
             SambaOrder.id, SambaOrder.ext_order_number,
-            SambaOrder.source_site, SambaOrder.order_number,
+            SambaOrder.source_site, SambaOrder.sourcing_order_number,
         ).where(col(SambaOrder.id).in_(order_ids))
         rows = (await session.execute(stmt)).all()
-        # 소싱처별 주문상세 URL 템플릿
+        # 소싱처별 주문상세 URL 템플릿 (주문탭 orderUrlMap과 동일)
         _order_detail_urls: dict[str, str] = {
             "MUSINSA": "https://www.musinsa.com/order/order-detail/{}",
             "KREAM": "https://kream.co.kr/my/purchasing/{}",
@@ -80,19 +81,20 @@ async def list_returns(
             "Nike": "https://www.nike.com/kr/orders/{}",
         }
         for row in rows:
-            # 타마켓주문링크 우선
+            # 1순위: 타마켓주문링크
             if row.ext_order_number:
                 link_map[row.id] = row.ext_order_number
-            # 소싱처 주문상세 URL 자동 생성
-            elif row.source_site and row.order_number:
+            # 2순위: 소싱처 구매주문번호 + 소싱처별 URL
+            elif row.source_site and row.sourcing_order_number:
                 tpl = _order_detail_urls.get(row.source_site, "")
                 if tpl:
-                    link_map[row.id] = tpl.format(row.order_number)
+                    link_map[row.id] = tpl.format(row.sourcing_order_number)
 
     results = []
     for r in returns:
         data = r.model_dump() if hasattr(r, 'model_dump') else r.__dict__.copy()
-        data["return_link"] = link_map.get(r.order_id)
+        # 동적 생성 우선 → DB 값은 사용하지 않음 (하드코딩 방지)
+        data["return_link"] = link_map.get(r.order_id) or None
         results.append(data)
     return results
 

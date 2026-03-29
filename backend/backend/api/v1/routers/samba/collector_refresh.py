@@ -32,11 +32,6 @@ class RefreshRequest(BaseModel):
     auto_retransmit: bool = True
 
 
-class MonitorPriorityUpdate(BaseModel):
-    product_ids: List[str]
-    priority: str  # hot / warm / cold
-
-
 class RateLimitTestRequest(BaseModel):
     goods_no: str = "4746833"  # 테스트용 상품번호
     count: int = 100  # 요청 횟수
@@ -100,8 +95,8 @@ async def refresh_products(
             "needs_extension": [], "errors": 0,
         }
 
-    # 벌크 갱신 실행
-    results, summary = await refresh_products_bulk(products)
+    # 벌크 갱신 실행 (수동 갱신 — 오토튠 로그에 노출되지 않음)
+    results, summary = await refresh_products_bulk(products, source="manual")
 
     # 모니터링 서비스 초기화
     from backend.domain.samba.warroom.service import SambaMonitorService
@@ -190,6 +185,10 @@ async def refresh_products(
         if r.new_same_day_delivery is not None:
             updates["same_day_delivery"] = r.new_same_day_delivery
 
+        # 옵션은 가격 변동과 무관하게 항상 갱신
+        if r.new_options is not None:
+            updates["options"] = r.new_options
+
         if r.changed:
             if r.new_sale_price is not None:
                 updates["sale_price"] = r.new_sale_price
@@ -197,8 +196,6 @@ async def refresh_products(
                 updates["original_price"] = r.new_original_price
             if r.new_cost is not None:
                 updates["cost"] = r.new_cost
-            if r.new_options is not None:
-                updates["options"] = r.new_options
 
             updates["sale_status"] = r.new_sale_status
             updates["is_sold_out"] = r.new_sale_status == "sold_out"
@@ -375,28 +372,6 @@ async def refresh_products(
         "needs_extension": summary.needs_extension,
         "errors": summary.errors,
     }
-
-
-@router.put("/products/monitor-priority")
-async def update_monitor_priority(
-    body: MonitorPriorityUpdate,
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """상품 모니터링 우선순위 일괄 변경."""
-    if body.priority not in ("hot", "warm", "cold"):
-        raise HTTPException(status_code=400, detail="priority는 hot/warm/cold만 가능합니다.")
-
-    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
-    repo = SambaCollectedProductRepository(session)
-
-    updated = 0
-    for pid in body.product_ids:
-        result = await repo.update_async(pid, monitor_priority=body.priority)
-        if result:
-            updated += 1
-
-    await session.commit()
-    return {"updated": updated}
 
 
 # ══════════════════════════════════════════════════════════════

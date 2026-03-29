@@ -11,6 +11,7 @@ import {
   type SambaMarketAccount,
   type SambaNameRule,
   type SambaDetailTemplate,
+  type SambaSearchFilter,
 } from '@/lib/samba/api'
 import { showAlert } from '@/components/samba/Modal'
 import ProductImage from './ProductImage'
@@ -174,7 +175,7 @@ export function composeProductName(
   const tagMap: Record<string, string> = {
     '{상품명}': product.name || '',
     '{브랜드명}': product.brand || '',
-    '{모델명}': product.model_no || '',
+    '{모델명}': product.style_code || '',
     '{사이트명}': product.source_site || '',
     '{상품번호}': product.site_product_id || '',
     '{검색키워드}': seoKws.slice(0, 3).join(' '),
@@ -248,6 +249,7 @@ interface ProductCardProps {
   onProductUpdate: (productId: string, data: Partial<SambaCollectedProduct>) => void
   logMessage?: string
   catMappingMap: Map<string, Record<string, string>>
+  filters?: SambaSearchFilter[]
   detailTemplates: SambaDetailTemplate[]
   compact?: boolean
   expanded?: boolean
@@ -257,7 +259,7 @@ interface ProductCardProps {
 const ProductCard = React.memo(function ProductCard({
   product: p, idx, policies, accounts, nameRules, selectedIds, filterNameMap, deletionWords,
   onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onTagUpdate, onMarketDelete, onAddTaskLog, onProductUpdate, logMessage,
-  catMappingMap, detailTemplates, compact, expanded, onToggleExpand,
+  catMappingMap, filters, detailTemplates, compact, expanded, onToggleExpand,
 }: ProductCardProps) {
   const accMap = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts])
   const [showPriceHistoryModal, setShowPriceHistoryModal] = useState(false)
@@ -334,8 +336,16 @@ const ProductCard = React.memo(function ProductCard({
 
   const marketEnabled = (p.market_enabled || {}) as Record<string, boolean>
 
-  // 상품의 카테고리 매핑 조회
+  // 상품의 카테고리 매핑 조회 (그룹 매핑 우선 → 카테고리 매핑 fallback)
   const productCatMapping = useMemo(() => {
+    // 1순위: 그룹(search_filter_id)의 target_mappings
+    if (p.search_filter_id && filters) {
+      const sf = filters.find(f => f.id === p.search_filter_id)
+      if (sf?.target_mappings && Object.keys(sf.target_mappings).length > 0) {
+        return sf.target_mappings as Record<string, string>
+      }
+    }
+    // 2순위: 카테고리 경로 기반 매핑
     const site = p.source_site || ''
     const cats = [p.category1, p.category2, p.category3, p.category4].filter(Boolean) as string[]
     if (cats.length === 0 && p.category) {
@@ -344,7 +354,7 @@ const ProductCard = React.memo(function ProductCard({
     if (!site || cats.length === 0) return {}
     const leafPath = cats.join(' > ')
     return catMappingMap.get(`${site}::${leafPath}`) || {}
-  }, [p.source_site, p.category, p.category1, p.category2, p.category3, p.category4, catMappingMap])
+  }, [p.source_site, p.category, p.category1, p.category2, p.category3, p.category4, p.search_filter_id, catMappingMap, filters])
 
   // 등록된 계정 기반 마켓 정보 (등록한 마켓만 표시용)
   const regAccIds = p.registered_accounts ?? []
@@ -740,6 +750,24 @@ const ProductCard = React.memo(function ProductCard({
                             border: '1px solid rgba(255,107,107,0.4)', background: 'rgba(255,107,107,0.08)',
                             color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap',
                           }}>대표이미지 삭제</button>
+                          <button onClick={() => {
+                            setCardConfirm({
+                              msg: '이 대표이미지를 동일 이미지를 가진 모든 상품에서 삭제하시겠습니까?',
+                              onOk: async () => {
+                                setCardConfirm(null)
+                                try {
+                                  const res = await collectorApi.bulkRemoveImage(mainImg, 'images')
+                                  const remaining = productImages.slice(1)
+                                  setProductImages(remaining)
+                                  setCardAlert({ msg: `${res.removed}개 상품에서 대표이미지 추적삭제 완료`, type: 'success' })
+                                } catch (e) { setCardAlert({ msg: '추적삭제 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' }) }
+                              },
+                            })
+                          }} style={{
+                            marginTop: '4px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
+                            border: '1px solid rgba(168,85,247,0.4)', background: 'rgba(168,85,247,0.08)',
+                            color: '#A855F7', cursor: 'pointer', whiteSpace: 'nowrap',
+                          }}>추적삭제</button>
                         </div>
                       </div>
                     ) : (

@@ -483,7 +483,6 @@ export default function ReturnsPage() {
               <thead>
                 <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #1E1E1E' }}>
                   <th rowSpan={2} style={{ width: '36px', textAlign: 'center', padding: '0.3rem 0.5rem', verticalAlign: 'middle' }}>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#fff', marginBottom: '2px' }}>{selectedIds.size}</div>
                     <input
                       type="checkbox"
                       checked={returns.length > 0 && selectedIds.size === returns.length}
@@ -501,7 +500,7 @@ export default function ReturnsPage() {
                   <th colSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>고객주문</th>
                 </tr>
                 <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #2D2D2D' }}>
-                  {['체크날짜', '전화', '상품명', '메모', '반품링크', 'CS접수일', '지역', '반품신청한곳', '상태', '상품위치', '원주문'].map((h, i) => (
+                  {['체크날짜', '전화', '상품명', '메모', 'CS링크', 'CS접수일', '지역', '상품위치', '상태', '반품신청한곳', '원주문'].map((h, i) => (
                     <th key={i} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: '#888', fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -513,6 +512,7 @@ export default function ReturnsPage() {
                     <Fragment key={r.id}>
                       <tr>
                         <td rowSpan={2} style={{ width: '36px', textAlign: 'center', padding: '0.5rem', verticalAlign: 'middle' }}>
+                          <div style={{ fontSize: '0.675rem', color: '#666', marginBottom: '2px' }}>{idx + 1}</div>
                           <input
                             type="checkbox"
                             checked={selectedIds.has(r.id)}
@@ -524,7 +524,6 @@ export default function ReturnsPage() {
                             }}
                             style={{ width: '13px', height: '13px', cursor: 'pointer', accentColor: '#F59E0B' }}
                           />
-                          <div style={{ fontSize: '0.675rem', color: '#666', marginTop: '2px' }}>{idx + 1}</div>
                         </td>
                         <td rowSpan={2} style={{ padding: '0.625rem 0.5rem', textAlign: 'center', verticalAlign: 'middle' }}>
                         {r.product_image ? (
@@ -699,7 +698,24 @@ export default function ReturnsPage() {
                       </td>
                       <td style={{ ...tdCenter, color: '#888' }}>{fmtMD(r.return_request_date || r.created_at)}</td>
                       <td style={tdCenter}>{r.region || '-'}</td>
-                      <td style={tdCenter}>{r.return_source || '-'}</td>
+                      <td style={{ ...tdCenter, padding: '0.375rem' }}>
+                        <select
+                          value={r.product_location || '고객'}
+                          onChange={async (e) => {
+                            const val = e.target.value
+                            setReturns(prev => prev.map(x => x.id === r.id ? { ...x, product_location: val } : x))
+                            try {
+                              await returnApi.patch(r.id, { product_location: val })
+                            } catch (_e) { /* 무시 */ }
+                          }}
+                          style={{ padding: '0.2rem 0.3rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', fontSize: '0.75rem', cursor: 'pointer', outline: 'none' }}
+                        >
+                          <option value="고객">고객</option>
+                          <option value="사무실">사무실</option>
+                          <option value="원주문">원주문</option>
+                          <option value="배송미완료">배송미완료</option>
+                        </select>
+                      </td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <select
                           value={r.status}
@@ -718,16 +734,16 @@ export default function ReturnsPage() {
                         </select>
                       </td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
-                        <span
-                          onClick={() => r.customer_address && showAlert(r.customer_address, 'info')}
-                          style={{ fontSize: '0.8rem', color: '#E5E5E5', cursor: r.customer_address ? 'pointer' : 'default', textDecoration: r.customer_address ? 'underline' : 'none' }}
-                        >
-                          {r.product_location || '-'}
-                        </span>
-                        <button
-                          onClick={() => setLocationModal({ id: r.id, value: r.product_location || '', address: r.customer_address || '' })}
-                          style={{ marginLeft: '4px', background: 'none', border: '1px solid #2D2D2D', borderRadius: '3px', color: '#888', fontSize: '0.6rem', padding: '1px 4px', cursor: 'pointer', verticalAlign: 'middle' }}
-                        >수정</button>
+                        <select value={r.return_source || '원주문'} onChange={async (e) => {
+                          try {
+                            await returnApi.patch(r.id, { return_source: e.target.value })
+                            loadReturns()
+                          } catch {}
+                        }} style={{ fontSize: '0.72rem', padding: '2px 4px', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', cursor: 'pointer' }}>
+                          <option value="원주문">원주문</option>
+                          <option value="홈픽">홈픽</option>
+                          <option value="자동회수">자동회수</option>
+                        </select>
                       </td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <select

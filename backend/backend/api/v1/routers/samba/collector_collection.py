@@ -1064,6 +1064,7 @@ class BrandCreateGroupsRequest(BaseModel):
     gf: str = "A"
     categories: list[dict]  # [{categoryCode, path, count, category1, category2, category3}]
     requested_count_per_group: int = 100
+    real_total: int = 0  # 실제 총 상품수 (중복 제거 기준)
     applied_policy_id: str | None = None
     options: dict = {}  # excludePreorder, excludeBoutique, maxDiscount
 
@@ -2370,6 +2371,7 @@ async def enrich_product(
             "date": datetime.now(timezone.utc).isoformat(),
             "sale_price": sale_price or product.sale_price,
             "original_price": original_price or product.original_price,
+            "options": detail.get("options", []),
         }
         history = list(product.price_history or [])
         history.insert(0, snapshot)
@@ -2394,18 +2396,22 @@ async def enrich_product(
         new_cost = new_sale + shipping_fee
         new_images = detail.get("images") or []
 
+        new_options = detail.get("options") or []
         updates: dict[str, Any] = {
             "sale_price": new_sale,
             "original_price": new_orig,
             "cost": new_cost,
             "sourcing_shipping_fee": shipping_fee,
         }
+        if new_options:
+            updates["options"] = new_options
 
         snapshot = {
             "date": datetime.now(timezone.utc).isoformat(),
             "sale_price": new_sale,
             "original_price": new_orig,
             "cost": new_cost,
+            "options": detail.get("options", []),
         }
         history = list(product.price_history or [])
         history.insert(0, snapshot)

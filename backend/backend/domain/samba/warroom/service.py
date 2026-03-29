@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, cast, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -169,10 +170,14 @@ class SambaMonitorService:
     r1h_result = await self.session.execute(r1h_stmt)
     refreshed_1h = r1h_result.scalar() or 0
 
-    # 24시간 내 갱신
+    # 24시간 내 갱신 (실제 등록된 상품만 — 빈 배열 제외)
     r24h_stmt = (
       select(func.count(SambaCollectedProduct.id))
-      .where(SambaCollectedProduct.last_refreshed_at >= since_24h)
+      .where(
+        SambaCollectedProduct.last_refreshed_at >= since_24h,
+        SambaCollectedProduct.registered_accounts != None,
+        func.length(cast(SambaCollectedProduct.registered_accounts, String)) > 2,
+      )
     )
     r24h_result = await self.session.execute(r24h_stmt)
     refreshed_24h = r24h_result.scalar() or 0

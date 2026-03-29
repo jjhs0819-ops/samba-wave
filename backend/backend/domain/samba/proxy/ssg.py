@@ -43,8 +43,9 @@ class SSGClient(BaseProxyClient):
   base_url = "https://eapi.ssgadm.com"
   timeout = 60.0
   market_name = "SSG"
+  DEFAULT_SITE_NO = "6004"  # 신세계몰 기본 사이트번호
 
-  def __init__(self, api_key: str, site_no: str = "6004") -> None:
+  def __init__(self, api_key: str, site_no: str = DEFAULT_SITE_NO) -> None:
     """api_key: 업체 인증키, site_no: 사이트번호 (기본 신세계몰)."""
     super().__init__()
     self.api_key = api_key

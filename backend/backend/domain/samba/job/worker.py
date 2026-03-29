@@ -7,6 +7,24 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
 
+# Job별 실시간 로그 버퍼 (인메모리, 최근 500줄)
+from collections import deque
+_job_logs: dict[str, deque] = {}
+
+def get_job_logs(job_id: str, since: int = 0) -> list[str]:
+    """Job 로그 조회 (since 인덱스 이후)."""
+    buf = _job_logs.get(job_id)
+    if not buf:
+        return []
+    logs = list(buf)
+    return logs[since:]
+
+def _add_job_log(job_id: str, msg: str):
+    """Job 로그 추가."""
+    if job_id not in _job_logs:
+        _job_logs[job_id] = deque(maxlen=500)
+    _job_logs[job_id].append(msg)
+
 
 class JobWorker:
     """pending 잡을 폴링하여 순차 실행."""
@@ -97,7 +115,7 @@ class JobWorker:
 
     async def _run_transmit(self, job, repo, session):
         """전송 잡 실행 — 기존 shipment_service 호출."""
-        from backend.domain.samba.shipment.service import SambaShipmentService
+        from backend.domain.samba.shipment.service import SambaShipmentService, is_cancel_requested
         from backend.domain.samba.shipment.repository import SambaShipmentRepository
 
         payload = job.payload or {}
@@ -114,21 +132,79 @@ class JobWorker:
         total = len(product_ids)
         await repo.update_progress(job.id, 0, total)
 
+        # 상품명 조회 캐시
+        from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+        cp_repo = SambaCollectedProductRepository(session)
+
         results = []
+        success_count = 0
+        fail_count = 0
         for i, pid in enumerate(product_ids):
+            # Job 취소 체크 (건별)
+            if await repo.is_cancelled(job.id):
+                cancelled = len(product_ids) - i
+                _add_job_log(job.id, f"취소됨 — {i}건 완료, {cancelled}건 취소")
+                logger.info(f"[잡워커] 전송 취소: {job.id} — {i}건 완료, {cancelled}건 취소")
+                return
+            prod = await cp_repo.get_async(pid)
+            site_pid = prod.site_product_id if prod else ""
+            prod_name = (prod.name[:30] if prod and prod.name else pid[-8:])
+            if site_pid:
+                prod_name = f"{prod_name} ({site_pid})"
             try:
                 result = await svc.start_update(
                     [pid], update_items, target_account_ids,
                     skip_unchanged=skip_unchanged,
                 )
+                results_list = result.get("results", [])
+                r = results_list[0] if results_list else {}
+                status = r.get("status", "unknown")
+                tx_result = r.get("transmit_result", {})
+                tx_error = r.get("transmit_error", {})
+                # 계정명 조회
+                from backend.domain.samba.account.repository import SambaMarketAccountRepository
+                acc_repo = SambaMarketAccountRepository(session)
+                any_success = False
+                for acc_id, acc_status in tx_result.items():
+                    acc = await acc_repo.get_async(acc_id)
+                    acc_label = f"{acc.market_name}({acc.seller_id or acc.business_name or '-'})" if acc else acc_id
+                    pno = r.get("product_nos", {}).get(acc_id, "")
+                    # 갱신 정보 (원가 변동, 재고 변동)
+                    ur = r.get("update_result", {})
+                    rl = f" [{ur.get('refresh', '')}]" if isinstance(ur, dict) and ur.get("refresh") else ""
+                    if acc_status == "success":
+                        any_success = True
+                        success_count += 1
+                        _add_job_log(job.id, f"[{i+1}/{total}] {prod_name} → {acc_label}: 전송{rl}")
+                    elif acc_status == "skipped":
+                        _add_job_log(job.id, f"[{i+1}/{total}] {prod_name} → {acc_label}: 스킵{rl}")
+                    else:
+                        fail_count += 1
+                        err = tx_error.get(acc_id, "실패")[:60]
+                        _add_job_log(job.id, f"[{i+1}/{total}] {prod_name} → {acc_label}: {err}")
+                if not tx_result:
+                    if status == "skipped":
+                        refresh_info = r.get("update_result", {})
+                        rl = refresh_info.get("refresh", "") if isinstance(refresh_info, dict) else ""
+                        _add_job_log(job.id, f"[{i+1}/{total}] {prod_name}: 스킵 [{rl}]")
+                    elif r.get("error"):
+                        fail_count += 1
+                        _add_job_log(job.id, f"[{i+1}/{total}] {prod_name}: {r['error'][:60]}")
+                    else:
+                        fail_count += 1
+                        _add_job_log(job.id, f"[{i+1}/{total}] {prod_name}: 실패")
                 results.append(result)
             except Exception as e:
-                logger.warning(f"[잡워커] 전송 실패 {pid}: {e}")
+                fail_count += 1
+                _add_job_log(job.id, f"[{i+1}/{total}] {prod_name}: {e}")
                 results.append({"error": str(e)})
             await repo.update_progress(job.id, i + 1, total)
+            # 건별 커밋 — 세션 점유 최소화 + 중간 결과 보존
+            await session.commit()
 
-        await repo.complete_job(job.id, {"results": results})
-        logger.info(f"[잡워커] 전송 완료: {job.id} ({total}건)")
+        _add_job_log(job.id, f"전송 완료 — 성공 {success_count}건, 실패 {fail_count}건")
+        await repo.complete_job(job.id, {"success": success_count, "failed": fail_count})
+        logger.info(f"[잡워커] 전송 완료: {job.id} (성공 {success_count}/{total}건)")
 
     async def _run_collect(self, job, repo, session):
         """수집 잡 실행 — collector_collection의 _stream_musinsa 로직 이식."""
@@ -240,8 +316,9 @@ class JobWorker:
 
         while total_saved < remaining and search_page <= 20:
             # 취소 확인 (DB에서 상태 재조회)
-            await session.refresh(job)
-            if job.status == "failed":
+            from backend.domain.samba.job.model import SambaJob as _SJ
+            _job_check = await session.get(_SJ, job.id)
+            if _job_check and _job_check.status == "failed":
                 logger.info(f"[잡워커] 수집 취소됨: {job.id}")
                 return
 
@@ -259,7 +336,7 @@ class JobWorker:
                 logger.info(f"[잡워커] 검색 p{search_page}: {len(search_items)}건 (kw={keyword}, brand={_brand_filter})")
                 if not search_items:
                     break
-                await asyncio.sleep(_site_intervals.get(_ik, 1.0))
+                await asyncio.sleep(_site_intervals.get(_ik, 0))
             except Exception as e:
                 logger.error(f"[잡워커] 검색 실패: {e}")
                 break
@@ -296,16 +373,16 @@ class JobWorker:
                 try:
                     detail = await client.get_goods_detail(goods_no)
                     if not detail or not detail.get("name"):
-                        await asyncio.sleep(_site_intervals.get(_ik, 1.0))
+                        await asyncio.sleep(_site_intervals.get(_ik, 0))
                         continue
 
                     if _exclude_preorder and detail.get("saleStatus") == "preorder":
                         total_skipped += 1
-                        await asyncio.sleep(_site_intervals.get(_ik, 1.0))
+                        await asyncio.sleep(_site_intervals.get(_ik, 0))
                         continue
                     if _exclude_boutique and detail.get("isBoutique"):
                         total_skipped += 1
-                        await asyncio.sleep(_site_intervals.get(_ik, 1.0))
+                        await asyncio.sleep(_site_intervals.get(_ik, 0))
                         continue
 
                     if _use_max_discount:
@@ -353,17 +430,23 @@ class JobWorker:
                     if rle.retry_after > 0:
                         await asyncio.sleep(rle.retry_after)
                     else:
-                        await asyncio.sleep(_site_intervals.get(_ik, 1.0))
+                        await asyncio.sleep(_site_intervals.get(_ik, 0))
                     continue
                 except Exception as e:
                     logger.warning(f"[잡워커] 수집 실패 {goods_no}: {e}")
-                await asyncio.sleep(_site_intervals.get(_ik, 1.0))
+                await asyncio.sleep(_site_intervals.get(_ik, 0))
 
             search_page += 1
 
-        # 수집 완료 → last_collected_at 갱신
-        sf.last_collected_at = datetime.now(UTC)
-        session.add(sf)
+        # 수집 완료 → last_collected_at 갱신 + 요청수를 실제 수집수로 보정
+        from sqlalchemy import update as _sa_upd
+        _actual = (await session.execute(
+            select(_func.count()).where(CPModel.search_filter_id == filter_id)
+        )).scalar() or 0
+        _upd_vals: dict = {"last_collected_at": datetime.now(UTC)}
+        if _actual > 0:
+            _upd_vals["requested_count"] = _actual
+        await session.execute(_sa_upd(SambaSearchFilter).where(SambaSearchFilter.id == filter_id).values(**_upd_vals))
 
         # 정책 자동 적용
         policy_msg = ""
@@ -512,8 +595,9 @@ class JobWorker:
                 break
 
             # 취소 확인 (DB에서 상태 재조회)
-            await session.refresh(job)
-            if job.status == "failed":
+            from backend.domain.samba.job.model import SambaJob as _SJ2
+            _job_chk = await session.get(_SJ2, job.id)
+            if _job_chk and _job_chk.status == "failed":
                 logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
                 return
 
@@ -587,7 +671,8 @@ class JobWorker:
                     "date": datetime.now(UTC).isoformat(),
                     "sale_price": sale_price,
                     "original_price": original_price,
-                    "cost": sale_price,
+                    "cost": cost,
+                    "options": detail.get("options") or item.get("options", []),
                 }],
             }
             try:
@@ -597,9 +682,16 @@ class JobWorker:
             except Exception as e:
                 logger.warning(f"[잡워커] {site} 저장 실패 {p_id}: {e}")
 
-        # last_collected_at 갱신
-        sf.last_collected_at = datetime.now(UTC)
-        session.add(sf)
+        # last_collected_at 갱신 + 요청수를 실제 수집수로 보정 (카테고리 중복 제거)
+        from sqlalchemy import update as sa_update
+        actual_count = (await session.execute(
+            select(_func.count()).where(CPModel.search_filter_id == filter_id)
+        )).scalar() or 0
+        update_vals: dict = {"last_collected_at": datetime.now(UTC)}
+        if actual_count > 0:
+            update_vals["requested_count"] = actual_count
+        from backend.domain.samba.collector.model import SambaSearchFilter as _SF
+        await session.execute(sa_update(_SF).where(_SF.id == filter_id).values(**update_vals))
 
         # 정책 자동 적용
         policy_msg = ""

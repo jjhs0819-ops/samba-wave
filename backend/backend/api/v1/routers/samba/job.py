@@ -26,6 +26,26 @@ async def create_job(
 ):
     """잡 생성 — 즉시 응답, 백그라운드 워커가 처리."""
     svc = SambaJobService(SambaJobRepository(session))
+
+    # 같은 소싱처 수집 Job이 이미 실행 중이면 거부
+    if body.job_type == "collect":
+        source_site = body.payload.get("source_site", "")
+        if source_site:
+            from backend.domain.samba.job.model import SambaJob
+            from sqlmodel import select, col
+            running = (await session.execute(
+                select(SambaJob).where(
+                    SambaJob.job_type == "collect",
+                    col(SambaJob.status).in_(["pending", "running"]),
+                    SambaJob.payload["source_site"].as_string() == source_site,
+                )
+            )).scalars().first()
+            if running:
+                raise HTTPException(
+                    409,
+                    f"{source_site} 수집이 이미 진행 중입니다 (Job: {running.id}). 완료 후 다시 시도해주세요.",
+                )
+
     job = await svc.create_job({
         "job_type": body.job_type,
         "payload": body.payload,
@@ -60,15 +80,25 @@ async def get_job(
     return job
 
 
+@router.get("/{job_id}/logs")
+async def get_job_logs(
+    job_id: str,
+    since: int = Query(0, ge=0),
+):
+    """Job 실시간 로그 조회."""
+    from backend.domain.samba.job.worker import get_job_logs
+    return {"logs": get_job_logs(job_id, since)}
+
+
 @router.delete("/{job_id}")
 async def cancel_job(
     job_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """잡 취소 (pending 상태만)."""
-    svc = SambaJobService(SambaJobRepository(session))
-    ok = await svc.cancel_job(job_id)
+    """잡 취소 (pending/running 모두 가능)."""
+    repo = SambaJobRepository(session)
+    ok = await repo.cancel_job(job_id)
     if not ok:
-        raise HTTPException(400, "취소할 수 없는 상태입니다 (pending만 취소 가능)")
+        raise HTTPException(400, "취소할 수 없는 상태입니다 (pending/running만 취소 가능)")
     await session.commit()
     return {"ok": True}

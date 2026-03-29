@@ -108,7 +108,6 @@ class SambaShipmentService:
     skipped = 0
     cancelled = 0
     results: list[dict[str, Any]] = []
-    clear_cancel_transmit()
     for product_id in product_ids:
       # 중단 체크
       if is_cancel_requested():
@@ -395,6 +394,10 @@ class SambaShipmentService:
     from backend.domain.samba.collector.repository import SambaCollectedProductRepository
     from backend.domain.samba.shipment.dispatcher import dispatch_to_market
 
+    # 강제 중단 체크
+    if is_cancel_requested():
+        raise Exception("전송 강제 중단됨")
+
     # 1. shipment 레코드 생성
     shipment = await self.repo.create_async(
       product_id=product_id,
@@ -492,7 +495,7 @@ class SambaShipmentService:
           cur_cost_val = int(new_cost) if new_cost is not None else (int(old_cost) if old_cost else 0)
           old_cost_int = int(old_cost) if old_cost else 0
           new_cost_int = int(new_cost) if new_cost is not None else old_cost_int
-          refresh_status = f"원가 {old_cost_int}>{new_cost_int}, 재고변동 {stock_change_count}건"
+          refresh_status = f"원가 {old_cost_int:,}>{new_cost_int:,}, 재고변동 {stock_change_count}건"
           logger.info(f"[전송] 소싱처 최신화 완료 — {refresh_status}")
       except Exception as ref_e:
         refresh_status = f"최신화예외:{str(ref_e)[:30]}"
@@ -1249,7 +1252,7 @@ class SambaShipmentService:
     product_ids: list[str],
     target_account_ids: list[str],
   ) -> dict[str, Any]:
-    """선택된 상품을 대상 마켓에서 판매중지/삭제."""
+    """선택된 상품을 대상 마켓에서 삭제."""
     from backend.domain.samba.account.repository import SambaMarketAccountRepository
     from backend.domain.samba.collector.repository import SambaCollectedProductRepository
     from backend.domain.samba.shipment.dispatcher import delete_from_market
@@ -1266,6 +1269,10 @@ class SambaShipmentService:
     results: list[dict[str, Any]] = []
 
     for product_id in product_ids:
+      # 강제 중단 체크
+      if is_cancel_requested():
+        logger.info(f"[마켓삭제] 강제 중단 — {len(results)}건 완료, {len(product_ids) - len(results)}건 취소")
+        break
       product_row = await product_repo.get_async(product_id)
       if not product_row:
         results.append({"product_id": product_id, "status": "failed", "error": "상품 없음"})

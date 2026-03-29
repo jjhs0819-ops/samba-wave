@@ -1355,41 +1355,48 @@ async def generate_ai_tags(
                 if not candidate_tags:
                     continue
 
-                # 태그사전 검증: 등록된 태그 + 비제한 태그만 추출, 10개 필수
+                # 태그사전 검증: 12개 선정 → 상위 2개 SEO + 나머지 10개 태그
+                top12: list[str] = []
                 if ss_client and candidate_tags:
                     try:
                         validated = await ss_client.validate_tags(candidate_tags, max_count=15)
-                        tags = [v["text"] for v in validated][:10]
-                        # 10개 미만이면 후보에서 보충
-                        if len(tags) < 10:
-                            tag_set = set(tags)
+                        top12 = [v["text"] for v in validated][:12]
+                        if len(top12) < 12:
+                            tag_set = set(top12)
                             for ct in candidate_tags:
                                 if ct not in tag_set:
-                                    tags.append(ct)
+                                    top12.append(ct)
                                     tag_set.add(ct)
-                                    if len(tags) >= 10:
+                                    if len(top12) >= 12:
                                         break
-                        total_tag_dict_validated += len(tags)
-                        total_tag_dict_rejected += len(candidate_tags) - len(tags)
-                        logger.info(f"[AI태그] 그룹 {gid}: 후보 {len(candidate_tags)}개 → 최종 {len(tags)}개")
+                        total_tag_dict_validated += len(top12)
+                        total_tag_dict_rejected += len(candidate_tags) - len(top12)
+                        logger.info(f"[AI태그] 그룹 {gid}: 후보 {len(candidate_tags)}개 → 검증 {len(top12)}개")
                     except Exception as ve:
                         logger.error(f"[AI태그] 태그사전 검증 예외 — 후보 태그 사용: {ve}")
-                        tags = candidate_tags[:10]
+                        top12 = candidate_tags[:12]
                 else:
-                    tags = candidate_tags[:10]
+                    top12 = candidate_tags[:12]
 
-                if not tags:
+                if not top12:
                     continue
 
-                # SEO 키워드 추출 (전체 후보에서 추출, 최종 태그 제외) + 태그사전 검증
-                seo_kws = _extract_seo_keywords(candidate_tags, cats, banned, name_words, tags, max_count=10)
-                if ss_client and seo_kws:
-                    try:
-                        seo_validated = await ss_client.validate_tags(seo_kws, max_count=4)
-                        seo_kws = [v["text"] for v in seo_validated][:2]
-                    except Exception as se:
-                        logger.warning(f"[AI태그] SEO 태그사전 검증 실패, 원본 사용: {se}")
-                        seo_kws = seo_kws[:2]
+                # 상위 2개 = SEO, 접미어 중복 시 앞 단어에서 공통 접미어 제거
+                seo_kws = top12[:2]
+                if len(seo_kws) == 2:
+                    a, b = seo_kws[0], seo_kws[1]
+                    # 공통 접미어 찾기 (뒤에서부터)
+                    common = 0
+                    for i in range(1, min(len(a), len(b)) + 1):
+                        if a[-i] == b[-i]:
+                            common = i
+                        else:
+                            break
+                    if common >= 2:
+                        prefix = a[:-common].strip()
+                        if len(prefix) >= 1:
+                            seo_kws[0] = prefix
+                tags = top12[2:12]
 
                 # 태그 생성 후 그룹 전체 상품 조회 → 벌크 적용
                 all_in_group = await repo.filter_by_async(search_filter_id=gid, limit=10000)
@@ -1472,6 +1479,14 @@ async def preview_ai_tags(
 
     if not groups:
         return {"success": False, "message": "상품을 찾을 수 없습니다"}
+
+    # 그룹명 조회
+    from backend.domain.samba.collector.model import SambaSearchFilter as _SF_tag
+    _filter_names: dict[str, str] = {}
+    for gid in group_ids:
+        sf = await session.get(_SF_tag, gid)
+        if sf:
+            _filter_names[gid] = sf.name or gid
 
     # 그룹별 태그 미리보기 결과
     preview_results: list[dict[str, Any]] = []
@@ -1576,43 +1591,49 @@ async def preview_ai_tags(
                         candidate_tags.append(t)
 
                 # 태그사전 검증 — 10개 필수
-                validated_tags: list[str] = []
+                # 태그사전 검증: 12개 선정 → 상위 2개 SEO + 나머지 10개 태그
+                top12_preview: list[str] = []
                 rejected_tags: list[str] = []
                 tag_validation_error = ""
                 if ss_client_preview and candidate_tags:
                     try:
                         validated = await ss_client_preview.validate_tags(candidate_tags, max_count=15)
-                        validated_set = {v["text"] for v in validated}
-                        validated_tags = [v["text"] for v in validated][:10]
-                        # 10개 미만이면 후보에서 보충
-                        if len(validated_tags) < 10:
-                            vt_set = set(validated_tags)
+                        top12_preview = [v["text"] for v in validated][:12]
+                        if len(top12_preview) < 12:
+                            vt_set = set(top12_preview)
                             for ct in candidate_tags:
                                 if ct not in vt_set:
-                                    validated_tags.append(ct)
+                                    top12_preview.append(ct)
                                     vt_set.add(ct)
-                                    if len(validated_tags) >= 10:
+                                    if len(top12_preview) >= 12:
                                         break
-                        rejected_tags = [t for t in candidate_tags if t not in set(validated_tags)]
+                        rejected_tags = [t for t in candidate_tags if t not in set(top12_preview)]
                     except Exception as ve:
                         tag_validation_error = str(ve)
                         logger.error(f"[AI태그] 태그사전 검증 예외 — 후보 태그 사용: {ve}")
-                        validated_tags = candidate_tags[:10]
+                        top12_preview = candidate_tags[:12]
                 else:
-                    validated_tags = candidate_tags[:10]
+                    top12_preview = candidate_tags[:12]
 
-                # SEO 키워드 미리보기 (전체 후보에서 추출, 최종 태그 제외) + 태그사전 검증
-                seo_preview = _extract_seo_keywords(candidate_tags, cats, banned, name_words, validated_tags, max_count=10)
-                if ss_client_preview and seo_preview:
-                    try:
-                        seo_val = await ss_client_preview.validate_tags(seo_preview, max_count=4)
-                        seo_preview = [v["text"] for v in seo_val][:2]
-                    except Exception:
-                        seo_preview = seo_preview[:2]
+                # 상위 2개 = SEO, 접미어 중복 시 앞 단어에서 공통 접미어 제거
+                seo_preview = top12_preview[:2]
+                if len(seo_preview) == 2:
+                    _a, _b = seo_preview[0], seo_preview[1]
+                    _common = 0
+                    for _i in range(1, min(len(_a), len(_b)) + 1):
+                        if _a[-_i] == _b[-_i]:
+                            _common = _i
+                        else:
+                            break
+                    if _common >= 2:
+                        _prefix = _a[:-_common].strip()
+                        if len(_prefix) >= 1:
+                            seo_preview[0] = _prefix
+                validated_tags = top12_preview[2:12]
 
                 preview_results.append({
                     "group_id": gid,
-                    "group_name": products[0].search_filter_id or rep_name,
+                    "group_name": _filter_names.get(gid, rep_name),
                     "product_count": len(products),
                     "rep_name": rep_name,
                     "tags": validated_tags,

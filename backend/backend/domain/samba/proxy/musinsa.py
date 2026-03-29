@@ -1115,3 +1115,96 @@ class MusinsaClient:
                     continue
 
         raise ValueError(f"무신사 주문취소 실패: {order_no} (모든 API 시도 실패)")
+
+    # ------------------------------------------------------------------
+    # 브랜드 카테고리 스캔
+    # ------------------------------------------------------------------
+
+    async def scan_brand_categories(
+        self, brand: str, gf: str = "A", keyword: str = "",
+    ) -> list[dict[str, Any]]:
+        """브랜드의 최하위 카테고리 목록 + 상품 수 반환.
+
+        무신사 필터 API로 대>중분류를 가져온 뒤,
+        각 중분류에 대해 소분류를 재귀 탐색하여 최하위 카테고리별 상품 수를 집계한다.
+        """
+        timeout = httpx.Timeout(30.0, connect=10.0)
+        base_params = {"caller": "SEARCH", "keyword": keyword or brand, "brand": brand, "gf": gf}
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            # 1) 필터 API로 대>중분류 가져오기
+            resp = await client.get(
+                "https://api.musinsa.com/api2/dp/v1/plp/filter",
+                params=base_params, headers=self._headers(),
+            )
+            resp.raise_for_status()
+            cats = resp.json().get("data", {}).get("detail", {}).get("category", {}).get("list", [])
+
+            results: list[dict[str, Any]] = []
+
+            for cat in cats:
+                big_name = cat.get("displayText", "")
+                big_code = cat.get("value", "")
+                subs = cat.get("categoryList", [])
+
+                for sub in subs:
+                    mid_name = sub.get("displayText", "")
+                    mid_code = sub.get("value", "")
+
+                    # 2) 중분류 선택 후 소분류 필터 확인
+                    resp2 = await client.get(
+                        "https://api.musinsa.com/api2/dp/v1/plp/filter",
+                        params={**base_params, "category": mid_code},
+                        headers=self._headers(),
+                    )
+                    sub_cats = []
+                    if resp2.status_code == 200:
+                        for d1 in resp2.json().get("data", {}).get("detail", {}).get("category", {}).get("list", []):
+                            sub_cats.extend(d1.get("categoryList", []))
+
+                    if sub_cats:
+                        # 소분류별 상품 수 조회
+                        for small in sub_cats:
+                            small_name = small.get("displayText", "")
+                            small_code = small.get("value", "")
+                            resp3 = await client.get(
+                                "https://api.musinsa.com/api2/dp/v1/plp/goods",
+                                params={**base_params, "category": small_code, "page": "1", "size": "1"},
+                                headers=self._headers(),
+                            )
+                            cnt = 0
+                            if resp3.status_code == 200:
+                                cnt = resp3.json().get("data", {}).get("pagination", {}).get("totalCount", 0)
+                            if cnt > 0:
+                                # 소분류가 중분류와 동일하면 생략
+                                actual_cat3 = "" if small_name == mid_name else small_name
+                                path = f"{big_name} > {mid_name} > {small_name}" if actual_cat3 else f"{big_name} > {mid_name}"
+                                results.append({
+                                    "category1": big_name, "category2": mid_name, "category3": actual_cat3,
+                                    "categoryCode": small_code,
+                                    "path": path,
+                                    "count": cnt,
+                                })
+                    else:
+                        # 소분류 없으면 중분류가 최하단
+                        resp3 = await client.get(
+                            "https://api.musinsa.com/api2/dp/v1/plp/goods",
+                            params={**base_params, "category": mid_code, "page": "1", "size": "1"},
+                            headers=self._headers(),
+                        )
+                        cnt = 0
+                        if resp3.status_code == 200:
+                            cnt = resp3.json().get("data", {}).get("pagination", {}).get("totalCount", 0)
+                        if cnt > 0:
+                            results.append({
+                                "category1": big_name, "category2": mid_name, "category3": "",
+                                "categoryCode": mid_code,
+                                "path": f"{big_name} > {mid_name}",
+                                "count": cnt,
+                            })
+
+            # 상품 수 내림차순 정렬
+            results.sort(key=lambda x: -x["count"])
+            total = sum(r["count"] for r in results)
+            logger.info(f"[무신사 브랜드스캔] {brand}: {len(results)}개 카테고리, 총 {total}건")
+            return results

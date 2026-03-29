@@ -332,7 +332,7 @@ async def _delete_ssg(
   if not api_key:
     return {"success": False, "message": "SSG 인증키 없음"}
 
-  store_id = creds.get("storeId", "6004")
+  store_id = creds.get("storeId", SSGClient.DEFAULT_SITE_NO)
   client = SSGClient(api_key, site_no=store_id)
   return await _safe_delete("SSG", "ssg", product, client.delete_product)
 

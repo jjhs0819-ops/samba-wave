@@ -44,6 +44,7 @@ class OrderUpdate(BaseModel):
     tracking_number: Optional[str] = None
     notes: Optional[str] = None
     sourcing_order_number: Optional[str] = None
+    sourcing_account_id: Optional[str] = None
     source_url: Optional[str] = None
     source_site: Optional[str] = None
     coupang_display_name: Optional[str] = None

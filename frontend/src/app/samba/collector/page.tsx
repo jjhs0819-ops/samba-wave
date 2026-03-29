@@ -81,32 +81,33 @@ function fmtDate(iso: string | undefined | null): string {
 }
 
 // 매핑 대상 마켓 목록
+// 카테고리 수 기준 정렬 (DB동기화 > 하드코딩 순)
 const MAPPING_MARKETS = [
-  { id: 'smartstore', name: '스마트스토어' },
-  { id: 'gmarket', name: '지마켓' },
-  { id: 'auction', name: '옥션' },
-  { id: 'coupang', name: '쿠팡' },
-  { id: 'lotteon', name: '롯데ON' },
-  { id: '11st', name: '11번가' },
-  { id: 'toss', name: '토스' },
-  { id: 'ssg', name: 'SSG' },
-  { id: 'gsshop', name: 'GSSHOP' },
-  { id: 'lottehome', name: '롯데홈쇼핑' },
-  { id: 'homeand', name: '홈앤쇼핑' },
-  { id: 'hmall', name: 'HMALL' },
-  { id: 'kream', name: 'KREAM' },
-  { id: 'poison', name: '포이즌' },
-  { id: 'qoo10', name: 'Qoo10' },
-  { id: 'rakuten', name: '라쿠텐' },
-  { id: 'buyma', name: '바이마' },
-  { id: 'lazada', name: 'Lazada' },
-  { id: 'shopify', name: 'Shopify' },
-  { id: 'shopee', name: 'Shopee' },
-  { id: 'zoom', name: 'Zum(줌)' },
-  { id: 'ebay', name: 'eBay' },
-  { id: 'amazon', name: '아마존' },
-  { id: 'playauto', name: '플레이오토' },
-  { id: 'cafe24', name: '카페24' },
+  { id: 'smartstore', name: '스마트스토어' },  // 4964
+  { id: 'coupang', name: '쿠팡' },            // 73
+  { id: 'gmarket', name: '지마켓' },          // 45
+  { id: 'kream', name: 'KREAM' },             // 39
+  { id: 'auction', name: '옥션' },            // 36
+  { id: '11st', name: '11번가' },             // 36
+  { id: 'ssg', name: 'SSG' },                 // 35
+  { id: 'lotteon', name: '롯데ON' },          // 30
+  { id: 'gsshop', name: 'GSSHOP' },           // 29
+  { id: 'hmall', name: 'HMALL' },             // 28
+  { id: 'lottehome', name: '롯데홈쇼핑' },     // 24
+  { id: 'homeand', name: '홈앤쇼핑' },         // 23
+  { id: 'ebay', name: 'eBay' },               // 10
+  { id: 'shopee', name: 'Shopee' },           // 8
+  { id: 'lazada', name: 'Lazada' },           // 8
+  { id: 'shopify', name: 'Shopify' },         // 8
+  { id: 'playauto', name: '플레이오토' },       // 7
+  { id: 'cafe24', name: '카페24' },            // 7
+  { id: 'toss', name: '토스' },               // 6
+  { id: 'amazon', name: '아마존' },            // 6
+  { id: 'qoo10', name: 'Qoo10' },             // 6
+  { id: 'rakuten', name: '라쿠텐' },           // 6
+  { id: 'buyma', name: '바이마' },             // 6
+  { id: 'zoom', name: 'Zum(줌)' },            // 6
+  { id: 'poison', name: '포이즌' },            // 6
 ]
 
 // 매핑 모달 — 마켓별 카테고리 입력 + 자동완성
@@ -486,6 +487,8 @@ export default function CollectorPage() {
       if (abort.signal.aborted) break
       const f = filters.find((x) => x.id === id)
       if (!f) continue
+      // 그룹 전환 시 렌더링 보장
+      await new Promise(r => setTimeout(r, 100))
       addLog(`[${f.name}] 수집 요청 중...`)
 
       try {
@@ -527,10 +530,12 @@ export default function CollectorPage() {
               const saved = job.result?.saved ?? 0
               const policy = job.result?.policy || ''
               addLog(`[${f.name}] 수집 완료: ${saved}건 저장${policy ? ` | ${policy}` : ''}`)
+              await new Promise(r => setTimeout(r, 100))
               break
             }
             if (job.status === 'failed') {
               addLog(`[${f.name}] 수집 실패: ${job.error || '알 수 없는 오류'}`)
+              await new Promise(r => setTimeout(r, 100))
               break
             }
           } catch {
@@ -887,6 +892,7 @@ export default function CollectorPage() {
                     brand, brand_name: keyword, gf,
                     categories: selected,
                     requested_count_per_group: -1,
+                    real_total: brandTotal,
                     options: checkedOptions,
                   })
                   addLog(`[카테고리분류] ${res.created}개 그룹 생성 완료`)
@@ -954,7 +960,8 @@ export default function CollectorPage() {
                       const res = await collectorApi.brandCreateGroups({
                         brand, brand_name: keyword, gf,
                         categories: selected,
-                        requested_count_per_group: 0,
+                        requested_count_per_group: -1,
+                        real_total: brandTotal,
                         options: checkedOptions,
                       })
                       addLog(`[카테고리분류] ${res.created}개 그룹 생성 완료`)
@@ -972,7 +979,7 @@ export default function CollectorPage() {
         )}
       </div>
 
-      {/* 수집 로그 */}
+      {/* 로그현황 */}
       <div style={{
         background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "8px",
         overflow: "hidden", marginBottom: "1rem",
@@ -981,7 +988,7 @@ export default function CollectorPage() {
           padding: "8px 16px", borderBottom: "1px solid #2D2D2D",
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
-          <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#C5C5C5" }}>수집 로그</span>
+          <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#C5C5C5" }}>로그현황</span>
           <div style={{ display: "flex", gap: "4px" }}>
             {collecting && (
               <button onClick={handleStopCollect} style={{
@@ -1219,6 +1226,71 @@ export default function CollectorPage() {
             >
               상품수집
             </button>
+            {drillBrand && (
+              <button
+                onClick={async () => {
+                  // 드릴다운에서 브랜드+사이트 정보 추출
+                  const sampleFilter = displayedFilters[0]
+                  if (!sampleFilter) { showAlert('표시된 그룹이 없습니다'); return }
+                  const parsed = (() => { try { return new URL(sampleFilter.keyword || '') } catch { return null } })()
+                  const brand = parsed?.searchParams.get('brand') || ''
+                  const gf = parsed?.searchParams.get('gf') || 'A'
+                  if (!brand) { showAlert('브랜드 정보를 찾을 수 없습니다'); return }
+                  const ok = await showConfirm(`${drillBrand} 추가수집을 실행하시겠습니까?\n\n• 신규 카테고리 → 그룹 자동 생성\n• 기존 카테고리 → 요청수 갱신 후 수집`)
+                  if (!ok) return
+                  addLog(`[추가수집] ${drillBrand} 카테고리 스캔 중...`)
+                  try {
+                    const res = await collectorApi.brandRefresh({ brand, brand_name: drillBrand, gf, options: checkedOptions })
+                    addLog(`[추가수집] ${res.message}`)
+                    showAlert(res.message, 'success')
+                    await load(); await loadTree()
+                    // 갱신 후 자동 수집 시작
+                    const updatedFilters = (await collectorApi.listFilters()).filter(f => {
+                      const p = (() => { try { return new URL(f.keyword || '') } catch { return null } })()
+                      return p?.searchParams.get('brand') === brand
+                    })
+                    if (updatedFilters.length > 0) {
+                      const collectOk = await showConfirm(`${updatedFilters.length}개 그룹 상품수집을 시작하시겠습니까?`)
+                      if (collectOk) {
+                        const abort = new AbortController()
+                        collectAbortRef.current = abort
+                        setCollecting(true)
+                        addLog(`${updatedFilters.length}개 그룹 상품수집 시작...`)
+                        for (const f of updatedFilters) {
+                          if (abort.signal.aborted) break
+                          addLog(`[${f.name}] 수집 요청 중...`)
+                          try {
+                            const r = await fetch(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}`, { method: 'POST' })
+                            if (!r.ok) { addLog(`[${f.name}] 수집 실패: HTTP ${r.status}`); continue }
+                            const { job_id } = await r.json()
+                            addLog(`[${f.name}] 수집 작업 시작`)
+                            let lastCurrent = 0
+                            while (!abort.signal.aborted) {
+                              await new Promise(r => setTimeout(r, 1000))
+                              if (abort.signal.aborted) break
+                              const jr = await fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+                              if (!jr.ok) break
+                              const job = await jr.json()
+                              if (job.current > lastCurrent) { addLog(`[${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
+                              if (job.status === 'completed') { addLog(`[${f.name}] 수집 완료: ${job.result?.saved ?? 0}건 저장`); break }
+                              if (job.status === 'failed') { addLog(`[${f.name}] 수집 실패: ${job.error || '오류'}`); break }
+                            }
+                          } catch (e) { addLog(`[${f.name}] 수집 오류: ${(e as Error).message}`) }
+                        }
+                        setCollecting(false)
+                        load(); loadTree()
+                      }
+                    }
+                  } catch (e) { showAlert(e instanceof Error ? e.message : '추가수집 실패', 'error') }
+                }}
+                style={{
+                  background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.35)',
+                  color: '#51CF66', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
+                }}
+              >
+                추가수집
+              </button>
+            )}
             <button
               disabled={tagPreviewLoading}
               onClick={async () => {
@@ -1228,17 +1300,42 @@ export default function CollectorPage() {
                 if (!ok) return
                 setTagPreviewLoading(true)
                 try {
-                  const groupIds = displayedFilters
-                    .filter(f => targetIds.includes(f.id))
-                    .map(f => f.id)
-                  if (groupIds.length === 0) { showAlert('그룹이 없습니다'); return }
-                  const res = await proxyApi.previewAiTags([], groupIds)
-                  if (res.success) {
-                    setTagPreviews(res.previews)
-                    setTagPreviewCost({ api_calls: res.api_calls, input_tokens: res.input_tokens, output_tokens: res.output_tokens, cost_krw: res.cost_krw })
+                  const targetFilters = displayedFilters.filter(f => targetIds.includes(f.id))
+                  if (targetFilters.length === 0) { showAlert('그룹이 없습니다'); return }
+                  addLog(`[AI태그] ${targetFilters.length}개 그룹 태그 생성 시작...`)
+                  const allPreviews: typeof tagPreviews = []
+                  let totalCalls = 0, totalInput = 0, totalOutput = 0, totalCost = 0
+                  for (let i = 0; i < targetFilters.length; i++) {
+                    const f = targetFilters[i]
+                    addLog(`[AI태그] [${i + 1}/${targetFilters.length}] ${f.name} 생성 중...`)
+                    await new Promise(r => setTimeout(r, 50))
+                    try {
+                      const res = await proxyApi.previewAiTags([], [f.id])
+                      if (res.success && res.previews?.length > 0) {
+                        allPreviews.push(...res.previews)
+                        totalCalls += res.api_calls || 0
+                        totalInput += res.input_tokens || 0
+                        totalOutput += res.output_tokens || 0
+                        totalCost += res.cost_krw || 0
+                        const tags = res.previews[0]?.tags || []
+                        const seo = res.previews[0]?.seo_keywords || []
+                        addLog(`[AI태그] [${i + 1}/${targetFilters.length}] ${f.name} → SEO: ${seo.join(', ')} | 태그: ${tags.length}개`)
+                      } else {
+                        addLog(`[AI태그] [${i + 1}/${targetFilters.length}] ${f.name} → 태그 없음`)
+                      }
+                    } catch (e) {
+                      addLog(`[AI태그] [${i + 1}/${targetFilters.length}] ${f.name} → 실패: ${e instanceof Error ? e.message : '오류'}`)
+                    }
+                  }
+                  addLog(`[AI태그] 완료: ${allPreviews.length}/${targetFilters.length}개 그룹 | API ${totalCalls}회 | ${totalCost.toFixed(0)}원`)
+                  if (allPreviews.length > 0) {
+                    setTagPreviews(allPreviews)
+                    setTagPreviewCost({ api_calls: totalCalls, input_tokens: totalInput, output_tokens: totalOutput, cost_krw: totalCost })
                     setRemovedTags([])
                     setShowTagPreview(true)
-                  } else showAlert(res.message, 'error')
+                  } else {
+                    showAlert('생성된 태그가 없습니다', 'info')
+                  }
                 } catch (e) {
                   showAlert(`태그 생성 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
                 } finally {
@@ -1289,13 +1386,33 @@ export default function CollectorPage() {
               return { ...l, _siteId: s.id, _siteSite: s.source_site || '', _brand: parsed.brand, _category: parsed.category }
             })
           )
-          // 상품수집 드롭박스 필터 적용
-          const allLeafInfos = collectFilter
-            ? allLeafInfosRaw.filter(l => {
-                const cnt = (l as unknown as Record<string, number>).collected_count ?? 0
-                return collectFilter === 'collected' ? cnt > 0 : cnt === 0
-              })
-            : allLeafInfosRaw
+          // 상품수집 + 태그등록 + 정책등록 드롭박스 필터 적용
+          let allLeafInfos = [...allLeafInfosRaw]
+          if (collectFilter) {
+            allLeafInfos = allLeafInfos.filter(l => {
+              const cnt = (l as unknown as Record<string, number>).collected_count ?? 0
+              return collectFilter === 'collected' ? cnt > 0 : cnt === 0
+            })
+          }
+          if (tagRegFilter) {
+            allLeafInfos = allLeafInfos.filter(l => {
+              const r = l as unknown as Record<string, number>
+              const cnt = r.ai_tagged_count ?? 0
+              const total = r.collected_count ?? 0
+              if (tagRegFilter === 'registered') return cnt > 0 && cnt >= total
+              if (tagRegFilter === 'partial') return cnt > 0 && cnt < total
+              if (tagRegFilter === 'unregistered') return cnt === 0
+              return true
+            })
+          }
+          if (policyRegFilter) {
+            allLeafInfos = allLeafInfos.filter(l => {
+              const hasPolicy = !!(l as unknown as Record<string, string>).applied_policy_id
+              if (policyRegFilter === 'registered') return hasPolicy
+              if (policyRegFilter === 'unregistered') return !hasPolicy
+              return true
+            })
+          }
           // 크로스 필터: 사이트 목록 (선택된 브랜드 기준 필터)
           const baseSites = collectFilter
             ? tree.filter(s => allLeafInfos.some(l => l._siteId === s.id))
@@ -1406,45 +1523,12 @@ export default function CollectorPage() {
                         onMouseLeave={e => { if (drillGroup !== g.id) e.currentTarget.style.background = 'transparent' }}
                       >
                         {g._category || g.name}
+                        {(g as unknown as Record<string, number>).ai_tagged_count > 0 && (
+                          <span style={{ fontSize: '0.55rem', padding: '0 3px', borderRadius: '3px', background: 'rgba(81,207,102,0.15)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.3)' }}>T</span>
+                        )}
                         <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#FF8C00' }}>{g.collected_count ?? 0}</span>
                       </div>
                     ))}
-                    {/* 브랜드 하위 AI태그 순차 실행 */}
-                    <div style={{ borderTop: '1px solid #2D2D2D', padding: '0.5rem 0.5rem' }}>
-                      <button
-                        disabled={tagPreviewLoading}
-                        onClick={async () => {
-                          if (!await showConfirm(`${drillBrand || ''} 브랜드의 ${catGroups.length}개 그룹에 AI태그를 순차 생성합니다.\n\n${catGroups.map((g, i) => `${i + 1}. ${g._category || g.name} (${g.collected_count ?? 0}건)`).join('\n')}\n\n진행하시겠습니까?`)) return
-                          for (let i = 0; i < catGroups.length; i++) {
-                            const g = catGroups[i]
-                            setDrillGroup(g.id)
-                            setSelectedIds(new Set([g.id]))
-                            setTagPreviewLoading(true)
-                            try {
-                              const res = await proxyApi.previewAiTags([], [g.id])
-                              if (res.success && res.previews.length > 0) {
-                                setTagPreviews(res.previews)
-                                setTagPreviewCost({ api_calls: res.api_calls, input_tokens: res.input_tokens, output_tokens: res.output_tokens, cost_krw: res.cost_krw })
-                                setRemovedTags([])
-                                setShowTagPreview(true)
-                                // 모달 닫힐 때까지 대기
-                                await new Promise<void>(resolve => {
-                                  const check = setInterval(() => {
-                                    const modal = document.querySelector('[data-tag-preview-modal]')
-                                    if (!modal) { clearInterval(check); resolve() }
-                                  }, 500)
-                                })
-                              }
-                            } catch (e) { showAlert(`${g._category || g.name}: 태그 생성 실패`, 'error') }
-                            finally { setTagPreviewLoading(false) }
-                          }
-                          showAlert(`${catGroups.length}개 그룹 AI태그 완료`, 'success')
-                        }}
-                        style={{ width: '100%', padding: '4px 0', fontSize: '0.68rem', background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '4px', color: '#FF8C00', cursor: tagPreviewLoading ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: tagPreviewLoading ? 0.6 : 1 }}
-                      >
-                        {tagPreviewLoading ? '태그 생성중...' : `AI태그 순차 (${catGroups.length}개)`}
-                      </button>
-                    </div>
                   </>) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>항목 없음</div>
                   ) : null}
                 </div>
@@ -1760,7 +1844,12 @@ export default function CollectorPage() {
             {tagPreviews.map((preview) => (
               <div key={preview.group_id} style={{ marginBottom: '20px', padding: '16px', background: '#0F0F0F', borderRadius: '8px', border: '1px solid #2D2D2D' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                  <span style={{ fontSize: '0.82rem', color: '#FFB84D', fontWeight: 600 }}>{preview.rep_name}</span>
+                  <div>
+                    <span style={{ fontSize: '0.82rem', color: '#FFB84D', fontWeight: 600 }}>{preview.group_name}</span>
+                    {preview.rep_name && preview.rep_name !== preview.group_name && (
+                      <span style={{ fontSize: '0.7rem', color: '#888', marginLeft: '6px' }}>({preview.rep_name})</span>
+                    )}
+                  </div>
                   <span style={{ fontSize: '0.7rem', color: '#666' }}>{preview.product_count}개 상품 | {preview.tags.length}개 태그</span>
                 </div>
                 <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>

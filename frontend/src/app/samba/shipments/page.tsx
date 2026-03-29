@@ -74,7 +74,13 @@ export default function ShipmentsPage() {
   const progressRef = useRef<NodeJS.Timeout | null>(null)
   const abortRef = useRef(false)
   const activeJobIdRef = useRef('')
+  const jobPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [loopRestart, setLoopRestart] = useState(false)
+
+  // 컴포넌트 언마운트 시 잡 폴링 정리
+  useEffect(() => {
+    return () => { if (jobPollRef.current) clearInterval(jobPollRef.current) }
+  }, [])
 
   // 무한반복: 3분 대기 후 미등록 필터 + 전체 선택 + 재시작
   useEffect(() => {
@@ -194,7 +200,7 @@ export default function ShipmentsPage() {
   const toggleAllProducts = () => {
     const pageIds = pageProducts.map(p => p.id)
     const allChecked = pageIds.every(id => selectedProducts.includes(id))
-    setSelectedProducts(prev => allChecked ? prev.filter(id => !pageIds.includes(id)) : [...new Set([...prev, ...pageIds])])
+    setSelectedProducts(allChecked ? [] : pageIds)
   }
   const toggleAccount = (id: string) => setSelectedAccounts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   const allSites = SOURCE_SITES.filter(s => s !== '전체')
@@ -410,31 +416,10 @@ export default function ShipmentsPage() {
     if (updateItems.thumb) items.push('image')
     if (updateItems.detail) items.push('description')
 
-    let successCount = 0
-    let failCount = 0
-    let skipCount = 0
-
-    // 에러 메시지 요약 (너무 긴 메시지 truncate)
-    const shortenError = (msg: string): string => {
-      if (msg.length <= 80) return msg
-      const apiMatch = msg.match(/API (?:에러|ERROR)[^:]*:\s*(.+)/)
-      if (apiMatch) {
-        const inner = apiMatch[1]
-        const first = inner.split(',')[0].trim().replace(/^\[/, '')
-        const count = (inner.match(/,/g) || []).length
-        return count > 0 ? `${first} 외 ${count}건` : first
-      }
-      return msg.slice(0, 77) + '...'
-    }
-
-    // 마켓별 결과 수집
-    type MarketLogEntry = { idx: number, prodLabel: string, status: string, error?: string }
-    const marketGrouped: Record<string, MarketLogEntry[]> = {}
-    const marketOrder: string[] = []
-
     // 전송 태스크 사전 준비
     type TransmitTask = { idx: number, pid: string, prodLabel: string, targetAccIds: string[] }
     const tasks: TransmitTask[] = []
+    let skipCount = 0
     for (let i = 0; i < policyProducts.length; i++) {
       const pid = policyProducts[i]
       const prod = products.find(p => p.id === pid)
@@ -458,183 +443,68 @@ export default function ShipmentsPage() {
 
     if (skipCount > 0) {
       addLog(`[${ts()}] 선택 마켓 미연결 ${skipCount}개 스킵 → 실제 전송 ${tasks.length}개`)
-      // 디버그: 스킵된 첫 3개 상품의 정책 연결 상태 출력
-      let debugCount = 0
-      for (let i = 0; i < policyProducts.length && debugCount < 3; i++) {
-        const pid = policyProducts[i]
-        const prod = products.find(p => p.id === pid)
-        const policy = policies.find(p => p.id === prod?.applied_policy_id)
-        const mp = policy?.market_policies as Record<string, { accountId?: string; accountIds?: string[] }> | undefined
-        const policyAccIds: string[] = []
-        if (mp) {
-          for (const v of Object.values(mp)) {
-            const ids = v.accountIds?.length ? v.accountIds : (v.accountId ? [v.accountId] : [])
-            policyAccIds.push(...ids)
-          }
-        }
-        const matched = policyAccIds.filter(id => selectedSet.has(id))
-        if (matched.length === 0) {
-          addLog(`  [디버그] ${prod?.name?.slice(0, 25)} — 정책: ${policy?.name || '없음'}, 정책계정: ${policyAccIds.length}개 [${policyAccIds.slice(0, 2).join(',')}], 선택계정: ${selectedAccounts.length}개 [${selectedAccounts.slice(0, 2).join(',')}]`)
-          debugCount++
-        }
-      }
     }
     setProgress({ current: 0, total: tasks.length })
 
-    // 대량 전송(50건 이상): Job 큐로 백그라운드 처리
-    if (tasks.length >= 50) {
-      try {
-        const allPids = tasks.map(t => t.pid)
-        const allAccIds = [...effectiveAccountSet]
-        const { API_BASE_URL: apiBase } = await import('@/config/api')
-        const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            job_type: 'transmit',
-            payload: {
-              product_ids: allPids,
-              update_items: items,
-              target_account_ids: allAccIds,
-              skip_unchanged: skipEnabled,
-            },
-          }),
-        })
-        const jobData = await res.json()
-        const jobId = jobData.id || ''
-        activeJobIdRef.current = jobId
-        setProgress({ current: 0, total: tasks.length })
-        // 전송 진행 폴링 + 실시간 로그
-        let logSince = 0
-        const poll = setInterval(async () => {
-          try {
-            const [jr, lr] = await Promise.all([
-              fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
-              fetch(`${apiBase}/api/v1/samba/jobs/${jobId}/logs?since=${logSince}`),
-            ])
-            const j = await jr.json()
-            const logData = await lr.json()
-            const cur = j.progress_current || 0
-            const tot = j.progress_total || tasks.length
-            setProgress({ current: cur, total: tot })
-            // 새 로그 1건씩 순차 표시
-            const newLogs = logData.logs || []
-            if (newLogs.length > 0) {
-              const delay = Math.min(200, 2500 / newLogs.length)
-              newLogs.forEach((log: string, i: number) => {
-                setTimeout(() => {
-                  setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`])
-                }, i * delay)
-              })
-              logSince += newLogs.length
-            }
-            if (j.status === 'completed' || j.status === 'failed') {
-              clearInterval(poll)
-              if (j.error) addLog(`[${new Date().toLocaleTimeString()}] ${j.error}`)
-              setTransmitting(false)
-              activeJobIdRef.current = ''
-              load()
-            }
-          } catch { /* ignore */ }
-        }, 3000)
-      } catch (e) {
-        addLog(`[${ts()}] 전송 실패: ${e instanceof Error ? e.message : '오류'}`)
-        setTransmitting(false)
-      }
-      return
-    }
-
-    // 소량 전송: 기존 방식 (상품 3건 동시)
-    const BATCH_SIZE = 3
-    let doneCount = 0
-    for (let b = 0; b < tasks.length; b += BATCH_SIZE) {
-      if (abortRef.current) {
-        addLog(`[${ts()}] ⛔ 전송 강제 중단 — ${doneCount}/${total} 완료 시점에서 중단됨`)
-        break
-      }
-      const batch = tasks.slice(b, b + BATCH_SIZE)
-      const promises = batch.map(async (task) => {
-        if (abortRef.current) return
-        try {
-          const res = await shipmentApi.start([task.pid], items, task.targetAccIds, skipEnabled)
-          const r = res.results?.[0]
-          if (!r) {
-            for (const aid of task.targetAccIds) {
-              const label = accountLabelMap[aid] || aid
-              if (!marketGrouped[label]) { marketGrouped[label] = []; marketOrder.push(label) }
-              marketGrouped[label].push({ idx: task.idx, prodLabel: task.prodLabel, status: 'failed', error: '응답 없음' })
-              failCount++
-            }
-            return
-          }
-          if (r.status === 'skipped') {
-            const refreshInfo = (r as Record<string, unknown>).update_result as Record<string, string> | undefined
-            const refreshLabel = refreshInfo?.refresh ? ` [${refreshInfo.refresh}]` : ''
-            addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel}: 스킵${refreshLabel}`)
-            skipCount++
-            return
-          }
-          const txResult = r.transmit_result || {}
-          const txError = r.transmit_error || {}
-          const ur = (r as Record<string, unknown>).update_result as Record<string, string> | undefined
-          const rl = ur?.refresh ? ` [${ur.refresh}]` : ''
-
-          for (const [accId, status] of Object.entries(txResult)) {
-            const label = accountLabelMap[accId] || accId
-            if (status === 'success') {
-              const hasChange = rl && (rl.includes('>') || rl.includes('변동'))
-              const statusLabel = '전송'
-              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: ${statusLabel}${rl}`)
-              successCount++
-            } else if (status === 'skipped') {
-              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 스킵 (변동 없음)`)
-              skipCount++
-            } else {
-              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 실패 — ${shortenError(txError[accId] || '알 수 없는 오류')}`)
-              failCount++
-            }
-          }
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : '전송 실패'
-          for (const aid of task.targetAccIds) {
-            const label = accountLabelMap[aid] || aid
-            addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 실패 — ${shortenError(msg)}`)
-            failCount++
-          }
-        }
+    // Job 큐로 백그라운드 전송 (건수 무관)
+    try {
+      const allPids = tasks.map(t => t.pid)
+      const allAccIds = [...effectiveAccountSet]
+      const { API_BASE_URL: apiBase } = await import('@/config/api')
+      const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job_type: 'transmit',
+          payload: {
+            product_ids: allPids,
+            update_items: items,
+            target_account_ids: allAccIds,
+            skip_unchanged: skipEnabled,
+          },
+        }),
       })
-      await Promise.all(promises)
-      doneCount += batch.length
-      setProgress({ current: doneCount, total })
-    }
-
-    // 최종 요약
-    const summaryParts: string[] = []
-    if (successCount > 0) summaryParts.push(`성공 ${successCount}건`)
-    if (failCount > 0) summaryParts.push(`실패 ${failCount}건`)
-    if (skipCount > 0) summaryParts.push(`스킵 ${skipCount}건`)
-    addLog(`[${ts()}] 전송 완료 — ${summaryParts.length > 0 ? summaryParts.join(', ') : '처리 없음'}`)
-
-    setProgress({ current: total, total })
-
-    if (loopEnabled && !abortRef.current) {
-      addLog(`[${ts()}] 무한반복 모드 — 3분 대기 후 새로고침 & 미등록 상품부터 재시작...`)
-      // 3분 카운트다운 (10초 단위 로그)
-      for (let remain = 180; remain > 0; remain -= 10) {
-        if (abortRef.current) break
-        await new Promise(r => setTimeout(r, Math.min(10000, remain * 1000)))
-        if (abortRef.current) break
-        const left = Math.max(0, remain - 10)
-        if (left > 0 && left % 60 === 0) addLog(`[${ts()}] 대기 중... ${Math.floor(left / 60)}분 남음`)
-      }
-      if (!abortRef.current) {
-        setRegistrationFilter('미등록')
-        await load()
-        addLog(`[${ts()}] 새로고침 완료 — 미등록 상품 전체 선택 후 재시작`)
-        setLoopRestart(true)
-      }
-    } else {
-      setTimeout(() => { setTransmitting(false); load() }, 2000)
+      const jobData = await res.json()
+      const jobId = jobData.id || ''
+      activeJobIdRef.current = jobId
+      setProgress({ current: 0, total: tasks.length })
+      // 전송 진행 폴링 + 실시간 로그 (동시 요청 방지)
+      let logSince = 0
+      let polling = false
+      if (jobPollRef.current) clearInterval(jobPollRef.current)
+      jobPollRef.current = setInterval(async () => {
+        if (polling) return
+        polling = true
+        try {
+          const [jr, lr] = await Promise.all([
+            fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+            fetch(`${apiBase}/api/v1/samba/jobs/${jobId}/logs?since=${logSince}`),
+          ])
+          const j = await jr.json()
+          const logData = await lr.json()
+          const cur = j.progress_current || 0
+          const tot = j.progress_total || tasks.length
+          setProgress({ current: cur, total: tot })
+          const newLogs = logData.logs || []
+          if (newLogs.length > 0) {
+            for (const log of newLogs) {
+              setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`])
+            }
+            logSince += newLogs.length
+          }
+          if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
+            if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+            if (j.error) addLog(`[${new Date().toLocaleTimeString()}] ${j.error}`)
+            setTransmitting(false)
+            activeJobIdRef.current = ''
+            load()
+          }
+        } catch { /* ignore */ }
+        polling = false
+      }, 500)
+    } catch (e) {
+      addLog(`[${ts()}] 전송 실패: ${e instanceof Error ? e.message : '오류'}`)
+      setTransmitting(false)
     }
   }
 
@@ -847,13 +717,13 @@ export default function ShipmentsPage() {
           })}
         </div>
         {/* 프로그레스바 */}
-        {transmitting && (
+        {transmitting && progress.total > 0 && progress.current > 0 && (
           <div style={{ padding: '6px 14px 8px', borderTop: '1px solid #1C1E2A' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
               <span style={{ fontSize: '0.75rem', color: '#7B8DB0' }}>{progress.current}/{progress.total} 처리 중...</span>
             </div>
             <div style={{ background: '#111520', borderRadius: '4px', height: '5px', overflow: 'hidden' }}>
-              <div style={{ background: 'linear-gradient(90deg,#FF8C00,#FFB84D)', height: '100%', width: `${progress.total > 0 ? (progress.current / progress.total) * 100 : 0}%`, transition: 'width 0.3s' }} />
+              <div style={{ background: 'linear-gradient(90deg,#FF8C00,#FFB84D)', height: '100%', width: `${(progress.current / progress.total) * 100}%`, transition: 'width 0.3s' }} />
             </div>
           </div>
         )}

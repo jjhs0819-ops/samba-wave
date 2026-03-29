@@ -770,11 +770,26 @@ class SmartStoreClient:
     from backend.domain.samba.image.exif import strip_exif
     img_bytes = strip_exif(img_bytes)
 
+    # content_type 불명확 시 바이트 시그니처로 감지
+    if not content_type.startswith("image/"):
+      if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+        content_type = "image/png"
+      elif img_bytes[:2] == b'\xff\xd8':
+        content_type = "image/jpeg"
+      elif img_bytes[:4] == b'RIFF' and img_bytes[8:12] == b'WEBP':
+        content_type = "image/webp"
+      elif img_bytes[:6] in (b'GIF87a', b'GIF89a'):
+        content_type = "image/gif"
+      else:
+        content_type = "image/jpeg"  # 기본 폴백
+
     # webp → PNG 변환
     ext = "jpg"
     upload_type = content_type
     if "png" in content_type:
       ext = "png"
+    elif "gif" in content_type:
+      ext = "gif"
     elif "webp" in content_type or image_url.endswith(".webp"):
       from PIL import Image as _PILImage
       import io as _io
@@ -811,6 +826,88 @@ class SmartStoreClient:
       if not _ul_client:
         await ul.aclose()
     raise SmartStoreApiError("이미지 업로드 실패: 429 Rate Limit 초과 (재시도 3회 실패)")
+
+  async def upload_images_batch(self, image_urls: list[str]) -> list[str]:
+    """외부 이미지 URL 최대 4장을 1회 API 호출로 업로드. 네이버 URL 리스트 반환."""
+    if not image_urls:
+      return []
+    token = await self._ensure_token()
+    from urllib.parse import urlparse
+    from backend.domain.samba.image.exif import strip_exif
+
+    # 이미지 다운로드 + 전처리
+    files_list: list[tuple[str, bytes, str]] = []
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default, follow_redirects=True) as dl:
+      for url in image_urls[:4]:
+        try:
+          parsed = urlparse(url)
+          referer = f"{parsed.scheme}://{parsed.netloc}/"
+          if "msscdn.net" in (parsed.netloc or ""):
+            referer = "https://www.musinsa.com/"
+          elif "fashionplus" in (parsed.netloc or ""):
+            referer = "https://www.fashionplus.co.kr/"
+          resp = await dl.get(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": referer,
+            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+          })
+          if not resp.is_success or len(resp.content) < 1000:
+            logger.warning(f"[스마트스토어] 이미지 다운로드 실패: {url[:60]}")
+            continue
+          img_bytes = strip_exif(resp.content)
+          content_type = resp.headers.get("content-type", "image/jpeg")
+          # content_type 불명확 시 바이트 시그니처로 감지
+          if not content_type.startswith("image/"):
+            if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+              content_type = "image/png"
+            elif img_bytes[:2] == b'\xff\xd8':
+              content_type = "image/jpeg"
+            elif img_bytes[:4] == b'RIFF' and img_bytes[8:12] == b'WEBP':
+              content_type = "image/webp"
+            elif img_bytes[:6] in (b'GIF87a', b'GIF89a'):
+              content_type = "image/gif"
+            else:
+              content_type = "image/jpeg"
+          ext = "jpg"
+          if "png" in content_type:
+            ext = "png"
+          elif "gif" in content_type:
+            ext = "gif"
+          elif "webp" in content_type or url.endswith(".webp"):
+            from PIL import Image as _PILImage
+            import io as _io
+            pil_img = _PILImage.open(_io.BytesIO(img_bytes)).convert("RGB")
+            buf = _io.BytesIO()
+            pil_img.save(buf, format="PNG")
+            img_bytes = buf.getvalue()
+            ext = "png"
+            content_type = "image/png"
+          files_list.append((f"image_{len(files_list)}.{ext}", img_bytes, content_type))
+        except Exception as e:
+          logger.warning(f"[스마트스토어] 이미지 다운로드 실패: {e}")
+
+    if not files_list:
+      return []
+
+    # 네이버 업로드 (4장 동시, 429 재시도)
+    import asyncio as _aio_batch
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as ul:
+      for attempt in range(4):
+        resp = await ul.post(
+          f"{self.BASE_URL}/v1/product-images/upload",
+          headers={"Authorization": f"Bearer {token}"},
+          files=[("imageFiles", (f[0], f[1], f[2])) for f in files_list],
+        )
+        if resp.status_code == 429:
+          wait = 2 ** attempt
+          logger.warning(f"[스마트스토어] 배치 이미지 업로드 429 → {wait}초 후 재시도 ({attempt + 1}/4)")
+          await _aio_batch.sleep(wait)
+          continue
+        if not resp.is_success:
+          raise SmartStoreApiError(f"이미지 업로드 실패: {resp.status_code} {resp.text[:200]}")
+        data = resp.json()
+        return [img.get("url", "") for img in data.get("images", [])]
+    raise SmartStoreApiError("이미지 업로드 실패: 429 Rate Limit 초과")
 
   async def register_product(self, product_data: dict[str, Any]) -> dict[str, Any]:
     """상품 등록.
@@ -1363,7 +1460,7 @@ class SmartStoreClient:
           "minorPurchasable": True,
           "productInfoProvidedNotice": _build_ss_notice(
             product, color_text=color_text,
-            size_text=f"발길이(mm): {size_text}" if sizes else "FREE (상세 이미지 참조)",
+            size_text=(f"발길이(mm): {size_text}")[:200] if sizes else "FREE (상세 이미지 참조)",
             mfr=mfr, brand=brand, ss_category_id=category_id,
           ),
           **({"optionInfo": _build_combination_options(

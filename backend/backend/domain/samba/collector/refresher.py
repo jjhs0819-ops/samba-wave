@@ -7,6 +7,7 @@ KREAM은 확장앱 큐(KreamClient.collect_queue)를 통해 자동 수집.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -73,6 +74,22 @@ async def _prepare_musinsa_cache() -> None:
     _bulk_musinsa_cache["grade_rate"] = 0
 
 
+# ── 벌크 갱신 취소 플래그 ──
+_bulk_cancel_requested = False
+
+def request_bulk_cancel():
+    """벌크 갱신 즉시 중단 요청."""
+    global _bulk_cancel_requested
+    _bulk_cancel_requested = True
+
+def clear_bulk_cancel():
+    """벌크 갱신 취소 플래그 초기화."""
+    global _bulk_cancel_requested
+    _bulk_cancel_requested = False
+
+def is_bulk_cancelled() -> bool:
+    return _bulk_cancel_requested
+
 # ── 실시간 로그 링 버퍼 (최대 300건) ──
 _refresh_log_buffer: deque[Dict[str, Any]] = deque(maxlen=300)
 _refresh_log_total: int = 0  # 누적 카운터 (밀려나도 증가만)
@@ -88,8 +105,11 @@ def _log_refresh(
     total: int = 0,
     source: str = "autotune",
 ) -> None:
-    """갱신 로그를 링 버퍼에 추가. source: autotune(오토튠) | transmit(전송) | manual(수동)"""
-    source = _current_refresh_source  # 전역 컨텍스트에서 결정
+    """갱신 로그를 링 버퍼에 추가. 오토튠 로그만 저장, 나머지(transmit/manual)는 버림."""
+    current_source = _current_refresh_source.get()
+    if current_source != "autotune":
+        return
+    source = current_source
     global _refresh_log_total
     now = datetime.now(timezone.utc)
     kst = now + timedelta(hours=9)
@@ -176,17 +196,16 @@ class BulkRefreshResult:
     errors: int = 0
 
 
-_current_refresh_source: str = "autotune"  # 현재 갱신 호출 출처
+# async 컨텍스트별 격리 (전역 변수 레이스 컨디션 방지)
+_current_refresh_source: contextvars.ContextVar[str] = contextvars.ContextVar("_current_refresh_source", default="autotune")
 
 async def refresh_product(product: Any, idx: int = 0, total: int = 0, source: str = "autotune") -> RefreshResult:
     """소싱처에서 최신 가격/재고 재수집. source: autotune | transmit | manual"""
-    global _current_refresh_source
-    prev_source = _current_refresh_source
-    _current_refresh_source = source
+    token = _current_refresh_source.set(source)
     try:
         return await _refresh_product_inner(product, idx, total)
     finally:
-        _current_refresh_source = prev_source
+        _current_refresh_source.reset(token)
 
 
 async def _refresh_product_inner(product: Any, idx: int = 0, total: int = 0) -> RefreshResult:
@@ -200,13 +219,34 @@ async def _refresh_product_inner(product: Any, idx: int = 0, total: int = 0) -> 
         product._refresh_idx = idx
         product._refresh_total = total
         try:
-            return await plugin.refresh(product)
+            result = await plugin.refresh(product)
         except Exception as e:
             logger.error(f"[refresher] {product.id} ({source_site}) 플러그인 갱신 실패: {e}")
             return RefreshResult(
                 product_id=product.id,
                 error=str(e),
             )
+        # 레거시 파서(무신사/KREAM)는 자체 로그 → 여기서 안 찍음
+        if source_site not in ("MUSINSA", "KREAM") and not result.error:
+            _name = getattr(product, "name", "") or ""
+            _sid = getattr(product, "site_product_id", "") or ""
+            _label = f"{_name} ({_sid})" if _sid else _name
+            _status = "전송" if (result.changed or result.stock_changed) else "스킵"
+            _ra = getattr(product, "registered_accounts", None) or []
+            _mn = getattr(product, "market_product_nos", None) or {}
+            _mi = ""
+            if _ra and _mn:
+                _ps = [str(_mn.get(a, "")) for a in _ra if _mn.get(a)]
+                if _ps:
+                    _mi = f" → {','.join(_ps)}"
+            _old_p = getattr(product, "sale_price", 0) or 0
+            _new_p = result.new_sale_price if result.new_sale_price is not None else _old_p
+            _log_refresh(
+                source_site, product.id, _label,
+                f"{_status}{_mi} [원가 {int(_old_p):,}>{int(_new_p):,}]",
+                idx=idx, total=total,
+            )
+        return result
 
     # 레거시 폴백 — 소싱처별 파서 선택
     parser = SITE_PARSERS.get(source_site)
@@ -323,12 +363,6 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
                     refresh_only=True,
                 )
                 _site_consecutive_errors["MUSINSA"] = 0
-                _log_refresh(
-                    "MUSINSA", product.id,
-                    getattr(product, "name", ""),
-                    f"재시도 성공 (대기 {e.retry_after}s 후)",
-                    idx=_idx, total=_total,
-                )
             except Exception:
                 _log_refresh(
                     "MUSINSA", product.id,
@@ -401,13 +435,25 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
             if o.get("stock", 0) != old_stock_map.get(key, 0):
                 _stock_changes += 1
 
-    # 상품명 (품번) 형태
+    # 상품명 (품번) 형태 + 마켓/계정 정보
     _name = getattr(product, "name", "") or ""
     _prod_label = f"{_name} ({site_product_id})" if site_product_id else _name
     _status = "전송" if (changed or _stock_changes > 0) else "스킵"
+    # 마켓상품번호 + 계정 정보 조합
+    _market_info = ""
+    _reg_accounts = getattr(product, "registered_accounts", None) or []
+    _market_nos = getattr(product, "market_product_nos", None) or {}
+    if _reg_accounts and _market_nos:
+        _parts = []
+        for _acc_id in _reg_accounts:
+            _mno = _market_nos.get(_acc_id, "")
+            if _mno:
+                _parts.append(str(_mno))
+        if _parts:
+            _market_info = f" → {','.join(_parts)}"
     _log_refresh(
         "MUSINSA", product.id, _prod_label,
-        f"{_status} [원가 {int(old_sale):,}>{int(new_sale_price):,}, 판매가 {int(old_cost or old_sale):,}>{int(new_cost or new_sale_price):,}, 재고변동 {_stock_changes}건]",
+        f"{_status}{_market_info} [원가 {int(old_sale):,}>{int(new_sale_price):,}, 판매가 {int(old_cost or old_sale):,}>{int(new_cost or new_sale_price):,}, 재고변동 {_stock_changes}건]",
         idx=_idx, total=_total,
     )
 
@@ -523,8 +569,16 @@ async def _parse_kream(product: Any) -> RefreshResult:
         or new_sale_status != old_status
     )
 
+    # 마켓 정보
+    _reg_accounts = getattr(product, "registered_accounts", None) or []
+    _market_nos = getattr(product, "market_product_nos", None) or {}
+    _minfo = ""
+    if _reg_accounts and _market_nos:
+        _mparts = [str(_market_nos.get(a, "")) for a in _reg_accounts if _market_nos.get(a)]
+        if _mparts:
+            _minfo = f" → {','.join(_mparts)}"
     msg = (
-        f"완료: 가격 {old_sale}→{new_sale_price}, 상태 {old_status}→{new_sale_status}"
+        f"완료{_minfo}: 가격 {old_sale}→{new_sale_price}, 상태 {old_status}→{new_sale_status}"
         + (", 변동 감지" if changed else "")
     )
     _log_refresh(
@@ -620,10 +674,12 @@ SITE_PARSERS: dict[str, Any] = {
 
 async def refresh_products_bulk(
     products: List[Any],
+    source: str = "autotune",
 ) -> tuple[List[RefreshResult], BulkRefreshResult]:
     """여러 상품을 소싱처별로 그룹핑 후 병렬 갱신.
 
     소싱처당 동시 요청 수를 CONCURRENCY_PER_SITE로 제한한다.
+    source: autotune | manual | transmit — 로그 출처 태그
     """
     if not products:
         return [], BulkRefreshResult()
@@ -637,11 +693,10 @@ async def refresh_products_bulk(
     all_results: List[RefreshResult] = []
     summary = BulkRefreshResult(total=len(products))
 
-    # 전체 순번 카운터 (소싱처 무관)
-    _counter = {"i": 0}
-    _total = len(products)
-
     async def _process_site(site: str, items: list) -> List[RefreshResult]:
+        # 소싱처별 카운터 (번호 건너뜀 방지)
+        _counter = {"i": 0}
+        _site_total = len(items)
         # 소싱처별 사전 캐싱 (배치 시작 시 1회)
         if site == "MUSINSA":
             await _prepare_musinsa_cache()
@@ -652,10 +707,13 @@ async def refresh_products_bulk(
 
         async def _limited(p: Any) -> RefreshResult:
             async with sem:
+                # 취소 요청 시 즉시 중단
+                if _bulk_cancel_requested:
+                    return RefreshResult(product_id=getattr(p, "id", "unknown"), error="cancelled")
                 _counter["i"] += 1
                 try:
                     r = await asyncio.wait_for(
-                        refresh_product(p, idx=_counter["i"], total=_total),
+                        refresh_product(p, idx=_counter["i"], total=_site_total, source=source),
                         timeout=60,
                     )
                 except asyncio.TimeoutError:

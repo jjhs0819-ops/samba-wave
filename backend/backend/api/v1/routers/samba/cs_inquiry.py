@@ -261,14 +261,19 @@ async def _find_collected_product_by_market_product_no(
 
     # 소싱처 URL 생성
     sourcing_urls = {
-        "MUSINSA": f"https://www.musinsa.com/app/goods/{site_product_id}",
+        "MUSINSA": f"https://www.musinsa.com/products/{site_product_id}",
         "KREAM": f"https://kream.co.kr/products/{site_product_id}",
-        "LOTTEON": f"https://www.lotteon.com/product/{site_product_id}",
+        "FashionPlus": f"https://www.fashionplus.co.kr/goods/detail/{site_product_id}",
+        "ABCmart": f"https://www.a-rt.com/product?prdtNo={site_product_id}",
+        "GrandStage": f"https://www.a-rt.com/product?prdtNo={site_product_id}",
+        "OKmall": f"https://www.okmall.com/products/detail/{site_product_id}",
+        "LOTTEON": f"https://www.lotteon.com/product/productDetail.lotte?spdNo={site_product_id}",
+        "GSShop": f"https://www.gsshop.com/prd/prd.gs?prdid={site_product_id}",
+        "ElandMall": f"https://www.elandmall.com/goods/goods.action?goodsNo={site_product_id}",
+        "SSF": f"https://www.ssfshop.com/goods/{site_product_id}",
         "SSG": f"https://www.ssg.com/item/itemView.ssg?itemId={site_product_id}",
-        "ABCmart": f"https://abcmart.a-rt.com/product/{site_product_id}",
-        "FashionPlus": f"https://www.fashionplus.co.kr/goods/{site_product_id}",
         "Nike": f"https://www.nike.com/kr/t/{site_product_id}",
-        "Adidas": f"https://www.adidas.co.kr/{site_product_id}",
+        "Adidas": f"https://www.adidas.co.kr/{site_product_id}.html",
     }
     original_link = sourcing_urls.get(source_site, "")
 
@@ -563,14 +568,19 @@ async def sync_cs_from_markets(
                             mpn_map[str(v)] = (pid, site, spid, imgs, mpnos)
 
             sourcing_urls = {
-                "MUSINSA": "https://www.musinsa.com/app/goods/{}",
+                "MUSINSA": "https://www.musinsa.com/products/{}",
                 "KREAM": "https://kream.co.kr/products/{}",
-                "LOTTEON": "https://www.lotteon.com/product/{}",
+                "FashionPlus": "https://www.fashionplus.co.kr/goods/detail/{}",
+                "ABCmart": "https://www.a-rt.com/product?prdtNo={}",
+                "GrandStage": "https://www.a-rt.com/product?prdtNo={}",
+                "OKmall": "https://www.okmall.com/products/detail/{}",
+                "LOTTEON": "https://www.lotteon.com/product/productDetail.lotte?spdNo={}",
+                "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={}",
+                "ElandMall": "https://www.elandmall.com/goods/goods.action?goodsNo={}",
+                "SSF": "https://www.ssfshop.com/goods/{}",
                 "SSG": "https://www.ssg.com/item/itemView.ssg?itemId={}",
-                "ABCmart": "https://abcmart.a-rt.com/product/{}",
-                "FashionPlus": "https://www.fashionplus.co.kr/goods/{}",
                 "Nike": "https://www.nike.com/kr/t/{}",
-                "Adidas": "https://www.adidas.co.kr/{}",
+                "Adidas": "https://www.adidas.co.kr/{}.html",
             }
 
             for inq in unlinked_items:
