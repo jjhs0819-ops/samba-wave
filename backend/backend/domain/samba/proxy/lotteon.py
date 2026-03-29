@@ -1225,36 +1225,122 @@ class LotteonClient:
     return result
 
   async def get_exchanges(self, days: int = 7) -> list[dict]:
-    """최근 N일 교환 클레임 조회 (exchangeSearch API).
+    """최근 N일 교환 클레임 조회.
 
-    응답: data[].itemList[] 중첩 구조 → odNo/clmNo 포함 flat list로 변환.
+    1차: exchangeSearch API
+    2차: getCancellationRequestAndComplateList(clmTpCd=EXCH)
+    두 결과를 clmNo 기준으로 중복 제거 후 합산 반환.
     """
     start_dt, end_dt = self._datetime_range(days)
-    data = await self._call_api(
-      "POST",
-      "/v1/openapi/claim/v1/exchangeOpenApi/exchangeSearch",
-      body={
-        "srchStrtDttm": start_dt,
-        "srchEndDttm": end_dt,
-      },
-    )
-    raw_list = data.get("data") or []
-    if not isinstance(raw_list, list):
-      raw_list = []
-    result = []
-    for claim in raw_list:
-      od_no = claim.get("odNo", "")
-      clm_no = claim.get("clmNo", "")
-      for item in (claim.get("itemList") or []):
-        item["odNo"] = od_no
-        item["clmNo"] = clm_no
-        step_cd = str(item.get("odPrgsStepCd", "") or "")
-        dv_rtrv = item.get("dvRtrvDvsCd", "")
-        logger.info(
-          f"[롯데ON][교환] odNo={od_no} clmNo={clm_no} stepCd={step_cd} "
-          f"dvRtrvDvsCd={dv_rtrv} clmRsnCd={item.get('clmRsnCd','')}"
-        )
-        result.append(item)
+    result: list[dict] = []
+    seen_clm_keys: set[str] = set()
+
+    # 1차: exchangeSearch API (교환접수(03) 단계 — 접수 후 30분 내 건만 조회됨)
+    try:
+      data = await self._call_api(
+        "POST",
+        "/v1/openapi/claim/v1/exchangeOpenApi/exchangeSearch",
+        body={
+          "srchStrtDttm": start_dt,
+          "srchEndDttm": end_dt,
+        },
+      )
+      raw_list = data.get("data") or []
+      if not isinstance(raw_list, list):
+        raw_list = []
+      for claim in raw_list:
+        od_no = claim.get("odNo", "")
+        clm_no = claim.get("clmNo", "")
+        for item in (claim.get("itemList") or []):
+          item["odNo"] = od_no
+          item["clmNo"] = clm_no
+          step_cd = str(item.get("odPrgsStepCd", "") or "")
+          dv_rtrv = item.get("dvRtrvDvsCd", "")
+          logger.info(
+            f"[롯데ON][교환-exchangeSearch] odNo={od_no} clmNo={clm_no} stepCd={step_cd} "
+            f"dvRtrvDvsCd={dv_rtrv} clmRsnCd={item.get('clmRsnCd','')}"
+          )
+          key = f"{od_no}_{clm_no}_{item.get('odSeq','')}"
+          if key not in seen_clm_keys:
+            seen_clm_keys.add(key)
+            result.append(item)
+    except Exception as e:
+      logger.warning(f"[롯데ON][교환-exchangeSearch] 조회 실패 (무시): {e}")
+
+    # 2차: getCancellationRequestAndComplateList(clmTpCd=EXCH)
+    try:
+      data2 = await self._call_api(
+        "POST",
+        "/v1/openapi/claim/v1/cancellationOpenApi/getCancellationRequestAndComplateList",
+        body={
+          "srchStrtDttm": start_dt,
+          "srchEndDttm": end_dt,
+          "clmTpCd": "EXCH",
+        },
+      )
+      raw_list2 = data2.get("data") or []
+      if not isinstance(raw_list2, list):
+        raw_list2 = []
+      for claim in raw_list2:
+        od_no = claim.get("odNo", "")
+        clm_no = claim.get("clmNo", "")
+        for item in (claim.get("itemList") or []):
+          item["odNo"] = od_no
+          item["clmNo"] = clm_no
+          step_cd = str(item.get("odPrgsStepCd", "") or "")
+          logger.info(
+            f"[롯데ON][교환-EXCH] odNo={od_no} clmNo={clm_no} stepCd={step_cd} "
+            f"clmRsnCd={item.get('clmRsnCd','')}"
+          )
+          key = f"{od_no}_{clm_no}_{item.get('odSeq','')}"
+          if key not in seen_clm_keys:
+            seen_clm_keys.add(key)
+            result.append(item)
+    except Exception as e:
+      logger.warning(f"[롯데ON][교환-EXCH] 조회 실패 (무시): {e}")
+
+    # 3차: SellerDeliveryOrdersSearch(odTypCd=30) — 배송 모듈로 이동한 교환 회수 주문
+    try:
+      from datetime import datetime, timedelta, timezone as _tz
+      now = datetime.now(_tz.utc)
+      actual_days = min(days, 30)
+      for i in range(actual_days):
+        day_end = now - timedelta(days=i)
+        day_start = day_end - timedelta(days=1)
+        srch_strt = day_start.strftime("%Y%m%d%H%M%S")
+        srch_end = day_end.strftime("%Y%m%d%H%M%S")
+        try:
+          ddata = await self._call_api(
+            "POST",
+            "/v1/openapi/delivery/v1/SellerDeliveryOrdersSearch",
+            body={
+              "srchStrtDt": srch_strt,
+              "srchEndDt": srch_end,
+            },
+          )
+          dl = (ddata.get("data") or {}).get("deliveryOrderList") or []
+          if not isinstance(dl, list):
+            dl = []
+          for item in dl:
+            # 교환 주문(odTypCd=30)만 처리
+            if str(item.get("odTypCd", "") or "") != "30":
+              continue
+            od_no = item.get("odNo", "")
+            clm_no = item.get("clmNo", "")
+            step_cd = str(item.get("odPrgsStepCd", "") or "")
+            logger.info(
+              f"[롯데ON][교환-배송모듈] odNo={od_no} clmNo={clm_no} "
+              f"stepCd={step_cd} dvRtrvDvsCd={item.get('dvRtrvDvsCd','')}"
+            )
+            key = f"{od_no}_{clm_no}_{item.get('odSeq','')}"
+            if key not in seen_clm_keys:
+              seen_clm_keys.add(key)
+              result.append(item)
+        except Exception as day_e:
+          logger.debug(f"[롯데ON][교환-배송모듈] {srch_strt} 조회 실패: {day_e}")
+    except Exception as e:
+      logger.warning(f"[롯데ON][교환-배송모듈] 조회 실패 (무시): {e}")
+
     return result
 
   async def approve_exchange(

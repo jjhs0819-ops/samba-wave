@@ -47,7 +47,7 @@ async def get_return_reasons():
 @router.get("")
 async def list_returns(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=1000),
     order_id: Optional[str] = None,
     status: Optional[str] = None,
     type: Optional[str] = None,
@@ -331,6 +331,9 @@ def _parse_lotteon_return(
         (odNo, clmNo가 상위 claim에서 주입된 상태)
   """
   step_cd = str(item.get("odPrgsStepCd", "") or "")
+  # return_type은 호출 API(get_returns=return, get_exchanges=exchange)에서 결정
+  # step_cd로 재분류하지 않음 — clmTpCd=RETN이면 반품, 교환 API면 교환
+
   if step_cd == "21":
     status = "done"
   elif step_cd == "22":
@@ -612,6 +615,28 @@ async def sync_returns_from_markets(
                     order_id = existing_order.id
                     existing_returns = await svc.repo.filter_by_async(order_id=order_id)
                     if existing_returns:
+                        # 기존 레코드에 누락/오류 필드 보충
+                        er = existing_returns[0]
+                        patch_lo: dict[str, Any] = {}
+                        correct_type = claim["return_type"]  # API에서 확정된 type (return/exchange)
+                        if not er.product_image and existing_order.product_image:
+                            patch_lo["product_image"] = existing_order.product_image
+                        # market_order_status가 type과 불일치하면 강제 수정
+                        if correct_type == "exchange" and er.market_order_status and "반품" in er.market_order_status:
+                            patch_lo["market_order_status"] = "교환요청"
+                        elif correct_type == "return" and er.market_order_status and "교환" in er.market_order_status:
+                            patch_lo["market_order_status"] = "반품요청"
+                        elif not er.market_order_status:
+                            patch_lo["market_order_status"] = "교환요청" if correct_type == "exchange" else "반품요청"
+                        # type이 없거나 잘못 저장된 경우 수정
+                        if er.type != correct_type:
+                            patch_lo["type"] = correct_type
+                        if patch_lo:
+                            await svc.repo.update_async(er.id, **patch_lo)
+                        # 원주문 shipping_status 동기화 (교환/반품 진행 중이면 주문 페이지에서 제외)
+                        new_order_ss = "교환요청" if correct_type == "exchange" else "반품요청"
+                        if existing_order.shipping_status != new_order_ss:
+                            await order_repo.update_async(existing_order.id, shipping_status=new_order_ss)
                         continue
 
                     from datetime import UTC, datetime
@@ -622,12 +647,14 @@ async def sync_returns_from_markets(
                         "reason": claim["reason"] or None,
                         "quantity": claim["quantity"],
                         "product_name": claim["product_name"] or (existing_order.product_name if existing_order else None),
+                        "product_image": existing_order.product_image if existing_order else None,
                         "customer_name": existing_order.customer_name if existing_order else None,
                         "customer_phone": existing_order.customer_phone if existing_order else None,
                         "product_location": _extract_city_district(existing_order.customer_address if existing_order else None),
                         "customer_address": existing_order.customer_address if existing_order else None,
                         "business_name": account.business_name or account.market_name or label,
                         "market": "롯데ON",
+                        "market_order_status": "교환요청" if claim["return_type"] == "exchange" else "반품요청",
                         "status": claim["status"],
                         "timeline": [{
                             "date": datetime.now(UTC).isoformat(),
@@ -637,7 +664,70 @@ async def sync_returns_from_markets(
                         "notes": [],
                     }
                     await svc.repo.create_async(**return_data)
+                    # 원주문 shipping_status 동기화
+                    new_order_ss = "교환요청" if claim["return_type"] == "exchange" else "반품요청"
+                    await order_repo.update_async(existing_order.id, shipping_status=new_order_ss)
                     synced += 1
+
+                # 교환 클레임 동기화
+                try:
+                    raw_exchanges = await client.get_exchanges(days=body.days)
+                    for item in raw_exchanges:
+                        ex_order_number = item.get("odNo", "")
+                        if not ex_order_number:
+                            continue
+                        existing_order = await order_repo.find_by_async(order_number=ex_order_number)
+                        if not existing_order:
+                            logger.warning(f"[롯데ON] 교환 주문 미매칭: {ex_order_number}")
+                            continue
+                        order_id = existing_order.id
+                        existing_returns = await svc.repo.filter_by_async(order_id=order_id)
+                        if existing_returns:
+                            # 기존 레코드 type/image 보충
+                            er = existing_returns[0]
+                            patch: dict[str, Any] = {}
+                            if not er.product_image and existing_order.product_image:
+                                patch["product_image"] = existing_order.product_image
+                            if er.type != "exchange":
+                                patch["type"] = "exchange"
+                            if not er.market_order_status:
+                                patch["market_order_status"] = "교환요청"
+                            if patch:
+                                await svc.repo.update_async(er.id, **patch)
+                            # 원주문 shipping_status 동기화
+                            if existing_order.shipping_status != "교환요청":
+                                await order_repo.update_async(existing_order.id, shipping_status="교환요청")
+                            continue
+                        from datetime import UTC, datetime
+                        await svc.repo.create_async(
+                            order_id=order_id,
+                            order_number=ex_order_number,
+                            type="exchange",
+                            reason=item.get("clmRsnCd", "") or None,
+                            quantity=int(item.get("xchgQty") or item.get("odQty") or 1),
+                            product_name=item.get("spdNm", "") or existing_order.product_name,
+                            product_image=existing_order.product_image,
+                            customer_name=existing_order.customer_name,
+                            customer_phone=existing_order.customer_phone,
+                            product_location=_extract_city_district(existing_order.customer_address),
+                            customer_address=existing_order.customer_address,
+                            business_name=account.business_name or account.market_name or label,
+                            market="롯데ON",
+                            market_order_status="교환요청",
+                            status="requested",
+                            timeline=[{
+                                "date": datetime.now(UTC).isoformat(),
+                                "status": "requested",
+                                "message": "교환 요청 접수",
+                            }],
+                            notes=[],
+                        )
+                        # 원주문 shipping_status 동기화
+                        await order_repo.update_async(existing_order.id, shipping_status="교환요청")
+                        synced += 1
+                        logger.info(f"[반품동기화][롯데ON] 교환 클레임 저장: {ex_order_number}")
+                except Exception as ex_err:
+                    logger.warning(f"[반품동기화][롯데ON] 교환 클레임 동기화 실패: {ex_err}")
 
                 total_synced += synced
                 results.append({
@@ -655,5 +745,28 @@ async def sync_returns_from_markets(
         except Exception as e:
             logger.error(f"[반품동기화] {label} 실패: {e}")
             results.append({"account": label, "status": "error", "message": str(e)})
+
+    # DB 기반 원주문 shipping_status 일괄 동기화
+    # samba_return 레코드가 있고 아직 진행 중인 주문의 shipping_status를 강제 업데이트
+    try:
+        from sqlalchemy import text as _sa_text
+        await session.execute(_sa_text("""
+            UPDATE samba_order o
+            SET shipping_status = CASE
+                WHEN r.type = 'exchange' THEN '교환요청'
+                WHEN r.type = 'return' THEN '반품요청'
+                ELSE o.shipping_status
+            END
+            FROM samba_return r
+            WHERE r.order_id = o.id
+              AND r.status NOT IN ('completed', 'cancelled', 'rejected')
+              AND o.shipping_status NOT IN (
+                  '교환요청', '교환회수완료', '교환재배송', '교환완료',
+                  '반품요청', '반품완료', '반품거부'
+              )
+        """))
+        logger.info("[반품동기화] 원주문 shipping_status 일괄 업데이트 완료")
+    except Exception as _upd_err:
+        logger.warning(f"[반품동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
 
     return {"total_synced": total_synced, "results": results}

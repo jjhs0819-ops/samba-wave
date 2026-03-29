@@ -297,6 +297,9 @@ async def cancel_source_order(
 class ExchangeActionBody(BaseModel):
     action: str  # "reship" | "reject" | "convert_return"
     reason: Optional[str] = None
+    clm_no: Optional[str] = None           # 롯데ON 교환 클레임번호
+    tracking_number: Optional[str] = None  # 롯데ON 교환 재배송 송장번호
+    shipping_company: Optional[str] = None # 롯데ON 교환 재배송 택배사
 
 
 @router.post("/{order_id}/exchange-action")
@@ -361,6 +364,123 @@ async def exchange_action(
         await svc.update_order(order_id, {"shipping_status": new_status})
         logger.info(f"[교환처리] {order.order_number} {label} 완료")
         return {"ok": True, "message": f"{label} 완료"}
+
+    elif account.market_type == "lotteon":
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+        extras = account.additional_fields or {}
+        api_key = extras.get("apiKey", "") or account.api_key or ""
+        if not api_key:
+            raise HTTPException(status_code=400, detail="롯데ON API 키 없음")
+
+        client = LotteonClient(api_key=api_key)
+        await client.test_auth()
+
+        # 교환 클레임 정보 자동 탐색 (clmNo, procSeq, orglProcSeq)
+        clm_no = body.clm_no or ""
+        found_claim: dict = {}
+        try:
+            exchange_claims = await client.get_exchanges(days=30)
+            for claim in exchange_claims:
+                if str(claim.get("odNo", "")) == str(order.order_number):
+                    if not clm_no:
+                        clm_no = claim.get("clmNo", "")
+                    found_claim = claim
+                    logger.info(f"[교환처리] clmNo 탐색 성공: {clm_no} stepCd={claim.get('odPrgsStepCd','')}")
+                    break
+        except Exception as ce:
+            logger.warning(f"[교환처리] 클레임 탐색 실패: {ce}")
+
+        if body.action == "reship":
+            # 교환 재배송: 승인 → 발송 처리
+            tracking_number = body.tracking_number or ""
+            shipping_company = body.shipping_company or ""
+            sitm_no = order.shipment_id or ""
+            spd_no = order.product_id or ""
+            quantity = order.quantity or 1
+
+            if not tracking_number:
+                raise HTTPException(status_code=400, detail="교환 재배송 송장번호가 필요합니다")
+
+            # 교환 승인 (회수 지시) — 접수(03) 상태인 경우 먼저 승인
+            step_cd = str(found_claim.get("odPrgsStepCd", "") or "")
+            if step_cd == "03" and clm_no:
+                proc_seq = str(found_claim.get("procSeq", 1))
+                orgl_proc_seq = str(found_claim.get("orglProcSeq", 1))
+                clm_rsn_cd = str(found_claim.get("clmRsnCd", "204"))
+                try:
+                    approved = await client.approve_exchange(
+                        od_no=order.order_number,
+                        clm_no=clm_no,
+                        items=[{
+                            "odSeq": 1,
+                            "procSeq": int(proc_seq),
+                            "orglProcSeq": int(orgl_proc_seq),
+                            "slrRsnCd": clm_rsn_cd,
+                        }],
+                    )
+                    if approved:
+                        logger.info(f"[교환처리] {order.order_number} 교환 승인 완료")
+                except Exception as ae:
+                    logger.warning(f"[교환처리] 교환 승인 실패 (계속 진행): {ae}")
+
+            try:
+                sent = await client.ship_order_exchange(
+                    od_no=order.order_number,
+                    sitm_no=sitm_no,
+                    spd_no=spd_no,
+                    clm_no=clm_no,
+                    quantity=quantity,
+                    shipping_company=shipping_company,
+                    tracking_number=tracking_number,
+                )
+                if not sent:
+                    raise HTTPException(status_code=500, detail="롯데ON 교환 재배송 전송 실패")
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"교환 재배송 실패: {e}")
+
+            await svc.update_order(order_id, {
+                "shipping_status": "교환재배송",
+                "tracking_number": tracking_number,
+                "shipping_company": shipping_company,
+            })
+            logger.info(f"[교환처리] {order.order_number} 롯데ON 교환재배송 완료")
+            return {"ok": True, "message": "교환 재배송 처리 완료"}
+
+        elif body.action == "convert_return":
+            # 교환→반품 변경: 롯데ON API 미지원 → 삼바 내부 처리만
+            # 반품교환 레코드 타입을 exchange→return으로 변경
+            from backend.domain.samba.returns.repository import SambaReturnRepository
+            return_repo = SambaReturnRepository(session)
+            ret = await return_repo.find_by_async(order_id=order_id)
+            if ret:
+                await return_repo.update_async(ret.id,
+                    type="return",
+                    market_order_status="반품요청",
+                    status="pending",
+                )
+            await svc.update_order(order_id, {"shipping_status": "반품요청", "status": "return_requested"})
+            logger.info(f"[교환처리] {order.order_number} 교환→반품 변경 완료 (삼바 내부)")
+            return {"ok": True, "message": "교환→반품 변경 완료 (롯데ON 판매자센터에서도 별도 처리 필요)"}
+
+        elif body.action == "reject":
+            # 교환 거부: 삼바 내부 상태 업데이트 (롯데ON 교환 거부 API 스펙 확인 후 연동 필요)
+            from backend.domain.samba.returns.repository import SambaReturnRepository
+            return_repo = SambaReturnRepository(session)
+            ret = await return_repo.find_by_async(order_id=order_id)
+            if ret:
+                await return_repo.update_async(ret.id,
+                    status="rejected",
+                    market_order_status="교환거부",
+                )
+            await svc.update_order(order_id, {"shipping_status": "교환거부"})
+            logger.info(f"[교환처리] {order.order_number} 교환거부 완료 (삼바 내부)")
+            return {"ok": True, "message": "교환거부 완료 (롯데ON 판매자센터에서도 별도 처리 필요)"}
+
+        else:
+            raise HTTPException(status_code=400, detail=f"롯데ON 교환처리 미지원 액션: {body.action}")
+
     else:
         raise HTTPException(status_code=400, detail=f"{account.market_type} 교환처리 미지원")
 
@@ -462,6 +582,74 @@ async def return_action(
 
         logger.info(f"[반품처리] {order.order_number} {label} 완료")
         return {"ok": True, "message": f"{label} 완료"}
+
+    elif account.market_type == "lotteon":
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+
+        api_key = (account.additional_fields or {}).get("apiKey", "") or account.api_key or ""
+        if not api_key:
+            raise HTTPException(status_code=400, detail="롯데ON API 키 없음")
+
+        client = LotteonClient(api_key=api_key)
+        label = "반품승인" if body.action == "approve" else "반품거부"
+
+        try:
+            if body.action == "approve":
+                # 반품 클레임 목록에서 해당 주문 item 조회
+                raw_returns = await client.get_returns(days=30)
+                claim_items = [i for i in raw_returns if i.get("odNo") == order.order_number]
+                if not claim_items:
+                    raise HTTPException(status_code=400, detail="롯데ON 반품 클레임 정보 없음 (최근 30일 내 조회되지 않음)")
+                ci = claim_items[0]
+                clm_no = ci.get("clmNo", "")
+                od_seq = int(ci.get("odSeq") or 1)
+                proc_seq = int(ci.get("procSeq") or od_seq)
+                orgl_proc_seq = int(ci.get("orglProcSeq") or proc_seq)
+                items_payload = [{
+                    "odSeq": od_seq,
+                    "procSeq": proc_seq,
+                    "orglProcSeq": orgl_proc_seq,
+                    "spdNo": ci.get("spdNo", ""),
+                    "spdNm": ci.get("spdNm", ""),
+                    "sitmNo": ci.get("sitmNo", ""),
+                    "sitmNm": ci.get("sitmNm", ""),
+                }]
+                await client.approve_return(order.order_number, clm_no, items_payload)
+                new_status = "반품승인"
+            elif body.action == "reject":
+                await client.reject_return(order.order_number, body.reason or "")
+                new_status = "반품거부"
+            else:
+                raise HTTPException(status_code=400, detail=f"알 수 없는 액션: {body.action}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"{label} 실패: {e}")
+
+        await svc.update_order(order_id, {"shipping_status": new_status})
+
+        # samba_return 상태 업데이트
+        from backend.domain.samba.returns.repository import SambaReturnRepository
+        from datetime import UTC, datetime
+        return_repo = SambaReturnRepository(session)
+        existing_returns = await return_repo.filter_by_async(order_id=order_id)
+        if existing_returns:
+            ret = existing_returns[0]
+            if body.action == "approve":
+                await return_repo.update_async(ret.id,
+                    status="completed",
+                    market_order_status="반품완료",
+                    completion_date=datetime.now(UTC),
+                )
+            elif body.action == "reject":
+                await return_repo.update_async(ret.id,
+                    status="rejected",
+                    market_order_status="반품거부",
+                )
+
+        logger.info(f"[반품처리][롯데ON] {order.order_number} {label} 완료")
+        return {"ok": True, "message": f"{label} 완료"}
+
     else:
         raise HTTPException(status_code=400, detail=f"{account.market_type} 반품처리 미지원")
 
@@ -517,12 +705,19 @@ async def ship_order(
                 if lo_settings:
                     config = json.loads(lo_settings.value) if isinstance(lo_settings.value, str) else lo_settings.value
                     client = LotteonClient(config["apiKey"])
-                    sitm_no = order.shipment_id or order.order_number
-                    sent = await client.ship_order(sitm_no, body.shipping_company, body.tracking_number)
+                    await client.test_auth()
+                    sent = await client.ship_order(
+                        od_no=order.order_number,
+                        sitm_no=order.shipment_id or order.order_number,
+                        spd_no=order.product_id or "",
+                        quantity=order.quantity or 1,
+                        shipping_company=body.shipping_company,
+                        tracking_number=body.tracking_number,
+                    )
                     if sent:
                         market_sent = True
                         market_msg = "롯데ON 송장 등록 완료"
-                        await svc.update_order(order_id, {"shipping_status": "송장전송완료"})
+                        await svc.update_order(order_id, {"shipping_status": "송장전송완료", "status": "shipping"})
                     else:
                         market_msg = "롯데ON 송장 등록 실패 (로그 확인)"
 
@@ -736,7 +931,12 @@ async def sync_orders_from_markets(
                     orders_data.append(_parse_lotteon_order(item, account.id, label))
                 # 발주확인 대기 건 자동 발주확인
                 unconfirmed = [
-                    {"odNo": item.get("odNo", ""), "sitmNo": item.get("sitmNo", "")}
+                    {
+                        "odNo": item.get("odNo", ""),
+                        "sitmNo": item.get("sitmNo", ""),
+                        "spdNo": item.get("spdNo", ""),
+                        "slQty": item.get("odQty", 1),
+                    }
                     for item in raw_orders
                     if str(item.get("odPrgsStepCd", "")) == "10"
                 ]
@@ -747,6 +947,41 @@ async def sync_orders_from_markets(
                     except Exception as ce:
                         logger.warning(f"[주문동기화] {label}: 발주확인 실패 — {ce}")
                 logger.info(f"[롯데ON] 주문 조회 결과: {len(raw_orders)}건")
+                # 교환 클레임 조회 → 기존 주문 shipping_status 업데이트
+                try:
+                    exchange_claims = await client.get_exchanges(days=body.days)
+                    logger.info(f"[롯데ON] 교환 클레임 조회: {len(exchange_claims)}건")
+                    if exchange_claims:
+                        exchange_step_map = {
+                            "21": "교환요청", "22": "교환회수완료",
+                            "23": "교환회수완료", "24": "교환재배송", "25": "교환완료",
+                        }
+                        for claim in exchange_claims:
+                            ex_od_no = claim.get("odNo", "")
+                            clm_no = claim.get("clmNo", "")
+                            step_cd = str(claim.get("odPrgsStepCd", "") or "")
+                            ex_status = exchange_step_map.get(step_cd, "교환요청")
+                            logger.info(f"[롯데ON][교환클레임] odNo={ex_od_no} clmNo={clm_no} stepCd={step_cd} → {ex_status}")
+                            # 1차: orders_data에서 찾아 상태 덮어쓰기
+                            found_in_data = False
+                            for od in orders_data:
+                                if od.get("order_number") == ex_od_no:
+                                    od["shipping_status"] = ex_status
+                                    if step_cd in ("21", "22", "23"):
+                                        od["status"] = "return_requested"
+                                    found_in_data = True
+                                    break
+                            # 2차: orders_data에 없으면 DB에서 직접 찾아 업데이트
+                            if not found_in_data and ex_od_no:
+                                existing = await svc.repo.find_by_async(order_number=ex_od_no)
+                                if existing:
+                                    update_ex: dict[str, Any] = {"shipping_status": ex_status}
+                                    if step_cd in ("21", "22", "23"):
+                                        update_ex["status"] = "return_requested"
+                                    await svc.update_order(existing.id, update_ex)
+                                    logger.info(f"[롯데ON][교환클레임] DB 직접 업데이트: {ex_od_no} → {ex_status}")
+                except Exception as ex_err:
+                    logger.warning(f"[롯데ON] 교환 클레임 조회 실패: {ex_err}")
             else:
                 results.append({"account": label, "status": "skip", "message": f"{market_type} 주문 조회 미지원"})
                 continue
@@ -877,8 +1112,19 @@ async def sync_orders_from_markets(
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
                     if order_data.get("product_id") and not existing.product_id:
                         update_fields["product_id"] = order_data["product_id"]
-                    if order_data.get("shipping_status"):
-                        update_fields["shipping_status"] = order_data["shipping_status"]
+                    # 송장전송완료/배송중 이상 상태는 덮어쓰지 않음
+                    # 단, 롯데ON은 발송완료/배송중/배송완료로 진행된 경우 갱신 허용
+                    new_ship_status = order_data.get("shipping_status")
+                    if new_ship_status:
+                        exchange_statuses = {"교환요청", "교환회수완료", "교환재배송", "교환완료"}
+                        advanced = {"발송완료", "배송중", "배송완료", "구매확정"}
+                        if new_ship_status in exchange_statuses:
+                            # 교환 상태는 항상 갱신 (배송완료 → 교환요청 등 역행 허용)
+                            update_fields["shipping_status"] = new_ship_status
+                        elif existing.shipping_status == "송장전송완료" and new_ship_status in advanced:
+                            update_fields["shipping_status"] = new_ship_status
+                        elif existing.shipping_status not in ("송장전송완료", "배송중", "배송완료", "교환재배송"):
+                            update_fields["shipping_status"] = new_ship_status
                     # 정산금액(revenue) / 수수료율 갱신
                     new_revenue = order_data.get("revenue")
                     new_fee_rate = order_data.get("fee_rate")
@@ -924,6 +1170,29 @@ async def sync_orders_from_markets(
         except Exception as e:
             logger.error(f"[주문동기화] {label} 실패: {e}")
             results.append({"account": label, "status": "error", "message": str(e)})
+
+    # DB 기반 원주문 shipping_status 일괄 동기화
+    # samba_return 레코드가 있고 진행 중인 주문의 shipping_status를 강제 업데이트
+    try:
+        from sqlalchemy import text as _sa_text_upd
+        await session.execute(_sa_text_upd("""
+            UPDATE samba_order o
+            SET shipping_status = CASE
+                WHEN r.type = 'exchange' THEN '교환요청'
+                WHEN r.type = 'return' THEN '반품요청'
+                ELSE o.shipping_status
+            END
+            FROM samba_return r
+            WHERE r.order_id = o.id
+              AND r.status NOT IN ('completed', 'cancelled', 'rejected')
+              AND o.shipping_status NOT IN (
+                  '교환요청', '교환회수완료', '교환재배송', '교환완료',
+                  '반품요청', '반품완료', '반품거부'
+              )
+        """))
+        logger.info("[주문동기화] 반품/교환 진행 중 원주문 shipping_status 일괄 업데이트 완료")
+    except Exception as _upd_err:
+        logger.warning(f"[주문동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
 
     return {"total_synced": total_synced, "results": results}
 
@@ -1050,16 +1319,34 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     # 주문 진행 단계 코드 → 내부 status/shipping_status 매핑
     step_cd = str(item.get("odPrgsStepCd", "") or "")
     status_map = {
-        "10": "pending",    # 발주확인대기
-        "20": "pending",    # 발주확인
-        "30": "shipping",   # 배송중
-        "40": "delivered",  # 배송완료
-        "50": "confirmed",  # 구매확정
-        "90": "cancelled",  # 취소
+        "10": "pending",          # 발주확인대기
+        "11": "pending",          # 발주확인완료(출고지시)
+        "12": "pending",          # 상품준비
+        "13": "shipping",         # 발송완료
+        "14": "delivered",        # 배송완료
+        "20": "pending",          # 발주확인
+        "21": "return_requested", # 교환회수중
+        "22": "return_requested", # 교환회수완료
+        "23": "return_requested", # 교환회수완료확인
+        "24": "shipping",         # 교환재배송
+        "25": "delivered",        # 교환배송완료
+        "30": "shipping",         # 배송중
+        "40": "delivered",        # 배송완료
+        "50": "confirmed",        # 구매확정
+        "90": "cancelled",        # 취소
     }
     shipping_map = {
         "10": "발주확인대기",
+        "11": "출고지시",
+        "12": "상품준비",
+        "13": "발송완료",
+        "14": "배송완료",
         "20": "출고지시",
+        "21": "교환요청",
+        "22": "교환회수완료",
+        "23": "교환회수완료",
+        "24": "교환재배송",
+        "25": "교환완료",
         "30": "배송중",
         "40": "배송완료",
         "50": "구매확정",

@@ -222,18 +222,22 @@ export default function ReturnsPage() {
 
   // 교환/취소 액션
   const [exchangeActionItem, setExchangeActionItem] = useState<SambaReturn | null>(null)
+  const [reshipStep, setReshipStep] = useState(false) // 교환재배송 송장 입력 단계
+  const [reshipForm, setReshipForm] = useState({ tracking_number: '', shipping_company: '롯데택배' })
 
-  const handleExchangeAction = async (r: SambaReturn, action: string) => {
+  const handleExchangeAction = async (r: SambaReturn, action: string, extra?: { tracking_number?: string; shipping_company?: string }) => {
     const orderNum = r.order_number || r.order_id
     if (!orderNum) { showAlert('주문번호가 없습니다', 'error'); return }
-    const labels: Record<string, string> = { reship: '교환재배송', reject: '교환거부' }
+    const labels: Record<string, string> = { reship: '교환재배송', reject: '교환거부', convert_return: '반품변경' }
     if (!await showConfirm(`${orderNum} 주문을 ${labels[action]} 처리하시겠습니까?`)) return
     try {
       const order = await orderApi.findByOrderNumber(orderNum)
       if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
-      const res = await orderApi.exchangeAction(order.id, action)
+      const res = await orderApi.exchangeAction(order.id, action, undefined, extra)
       showAlert(res.message || `${labels[action]} 완료`, 'success')
       setExchangeActionItem(null)
+      setReshipStep(false)
+      setReshipForm({ tracking_number: '', shipping_company: '롯데택배' })
       load()
     } catch (e) { showAlert(e instanceof Error ? e.message : `${labels[action]} 실패`, 'error') }
   }
@@ -548,11 +552,20 @@ export default function ReturnsPage() {
                       <td style={{ ...tdCenter, padding: '0.625rem' }}>
                         <button onClick={() => setDetailItem(r)} style={{ background: 'none', border: 'none', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 400 }}>{r.order_number || r.order_id || '-'}</button>
                       </td>
-                      <td style={tdCenter}>{r.market || '-'}</td>
+                      <td style={tdCenter}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.2rem' }}>
+                          <span>{r.market || '-'}</span>
+                          {r.type && TYPE_LABELS[r.type] && (
+                            <span style={{ fontSize: '0.65rem', fontWeight: 700, color: TYPE_LABELS[r.type].color, background: `${TYPE_LABELS[r.type].color}22`, padding: '0.1rem 0.4rem', borderRadius: '4px', border: `1px solid ${TYPE_LABELS[r.type].color}44` }}>
+                              {TYPE_LABELS[r.type].label}
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td style={{ ...tdCenter, fontSize: '0.75rem' }}>
                         {r.market_order_status?.includes('교환') && !r.market_order_status?.includes('완료') && !r.market_order_status?.includes('거부') ? (
                           <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
-                            <button onClick={() => handleExchangeAction(r, 'reship')} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(76,154,255,0.15)', color: '#4C9AFF', border: '1px solid rgba(76,154,255,0.3)', cursor: 'pointer' }}>교환승인</button>
+                            <button onClick={() => setExchangeActionItem(r)} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(76,154,255,0.15)', color: '#4C9AFF', border: '1px solid rgba(76,154,255,0.3)', cursor: 'pointer' }}>교환승인</button>
                             <button onClick={() => handleExchangeAction(r, 'reject')} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(255,107,107,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.3)', cursor: 'pointer' }}>교환거부</button>
                           </div>
                         ) : r.market_order_status?.includes('반품') && !r.market_order_status?.includes('완료') && !r.market_order_status?.includes('거부') ? (
@@ -783,15 +796,43 @@ export default function ReturnsPage() {
       {/* 교환 액션 선택 모달 */}
       {exchangeActionItem && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '360px', maxWidth: '90vw' }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '380px', maxWidth: '90vw' }}>
             <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.5rem' }}>교환요청 처리</h3>
             <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '1.5rem' }}>주문번호: {exchangeActionItem.order_number || exchangeActionItem.order_id || '-'}</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <button onClick={() => handleExchangeAction(exchangeActionItem, 'reship')} style={{ padding: '0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '8px', color: '#4C9AFF', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>교환재배송</button>
-              <button onClick={() => handleExchangeAction(exchangeActionItem, 'reject')} style={{ padding: '0.75rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '8px', color: '#FF6B6B', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>교환거부</button>
-            </div>
+            {!reshipStep ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <button onClick={() => setReshipStep(true)} style={{ padding: '0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '8px', color: '#4C9AFF', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>교환재배송</button>
+                <button onClick={() => handleExchangeAction(exchangeActionItem, 'convert_return')} style={{ padding: '0.75rem', background: 'rgba(255,165,0,0.1)', border: '1px solid rgba(255,165,0,0.3)', borderRadius: '8px', color: '#FFA500', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>반품변경</button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <p style={{ fontSize: '0.8125rem', color: '#aaa', margin: 0 }}>재배송 송장 정보를 입력하세요 (롯데ON 필수)</p>
+                <select
+                  value={reshipForm.shipping_company}
+                  onChange={e => setReshipForm(f => ({ ...f, shipping_company: e.target.value }))}
+                  style={{ padding: '0.5rem 0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', fontSize: '0.875rem' }}
+                >
+                  {['CJ대한통운','한진택배','롯데택배','로젠택배','우체국택배','경동택배','대신택배','일양로지스'].map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <input
+                  placeholder="송장번호 입력"
+                  value={reshipForm.tracking_number}
+                  onChange={e => setReshipForm(f => ({ ...f, tracking_number: e.target.value }))}
+                  style={{ padding: '0.5rem 0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', fontSize: '0.875rem' }}
+                />
+                <button
+                  onClick={() => handleExchangeAction(exchangeActionItem, 'reship', { tracking_number: reshipForm.tracking_number, shipping_company: reshipForm.shipping_company })}
+                  style={{ padding: '0.75rem', background: 'rgba(76,154,255,0.15)', border: '1px solid rgba(76,154,255,0.4)', borderRadius: '8px', color: '#4C9AFF', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
+                >재배송 처리</button>
+              </div>
+            )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
-              <button onClick={() => setExchangeActionItem(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>닫기</button>
+              <button
+                onClick={() => { setExchangeActionItem(null); setReshipStep(false); setReshipForm({ tracking_number: '', shipping_company: '롯데택배' }) }}
+                style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}
+              >닫기</button>
             </div>
           </div>
         </div>

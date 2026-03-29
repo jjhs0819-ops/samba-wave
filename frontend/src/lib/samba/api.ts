@@ -860,11 +860,12 @@ export interface SambaReturn {
 }
 
 export const returnApi = {
-  list: (orderId?: string, status?: string, type?: string) => {
+  list: (orderId?: string, status?: string, type?: string, limit = 500) => {
     const p = new URLSearchParams();
     if (orderId) p.set("order_id", orderId);
     if (status) p.set("status", status);
     if (type) p.set("type", type);
+    p.set("limit", String(limit));
     return request<SambaReturn[]>(`${SAMBA_PREFIX}/returns?${p}`);
   },
   create: (data: Partial<SambaReturn>) =>

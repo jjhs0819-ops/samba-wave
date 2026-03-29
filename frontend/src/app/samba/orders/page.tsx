@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { orderApi, channelApi, accountApi, proxyApi, collectorApi, type SambaOrder, type SambaChannel, type SambaMarketAccount } from '@/lib/samba/api'
+import { orderApi, channelApi, accountApi, proxyApi, collectorApi, API_BASE, type SambaOrder, type SambaChannel, type SambaMarketAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
@@ -583,7 +583,7 @@ export default function OrdersPage() {
     }
     if (statusFilter) {
       if (statusFilter === 'active') {
-        if (!['pending', 'wait_ship', 'arrived'].includes(o.status)) return false
+        if (!['pending', 'wait_ship', 'arrived', 'ship_failed', 'shipping', 'delivered'].includes(o.status)) return false
       } else if (o.status !== statusFilter) return false
     }
     if (inputFilter) {
@@ -839,8 +839,11 @@ export default function OrdersPage() {
               const liveProfitRate = calcProfitRate(o)
               const activeAction = activeActions[o.id] || null
 
+              const isExchanging = !!(o.shipping_status?.includes('교환'))
+              const isReturning = !!(o.shipping_status?.includes('반품') || o.status === 'return_requested')
+
               return (
-                <tr key={o.id} style={{ borderBottom: '1px solid #1C2333', verticalAlign: 'top' }}>
+                <tr key={o.id} style={{ borderBottom: '1px solid #1C2333', verticalAlign: 'top', background: isExchanging ? 'rgba(76,154,255,0.05)' : isReturning ? 'rgba(200,100,200,0.05)' : undefined }}>
                   {/* 체크박스 */}
                   <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center', borderRight: '1px solid #1C2333' }}>
                     <input type="checkbox" style={{ accentColor: '#F59E0B' }} />
@@ -874,6 +877,8 @@ export default function OrdersPage() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
                           <span style={{ fontSize: '0.75rem', color: '#888', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
+                          {isExchanging && <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#4C9AFF', background: 'rgba(76,154,255,0.15)', padding: '0.1rem 0.45rem', borderRadius: '4px', border: '1px solid rgba(76,154,255,0.4)' }}>교환중</span>}
+                          {isReturning && !isExchanging && <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#CC5DE8', background: 'rgba(200,100,200,0.15)', padding: '0.1rem 0.45rem', borderRadius: '4px', border: '1px solid rgba(200,100,200,0.4)' }}>반품중</span>}
                           <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '4px', color: '#4C9AFF', cursor: 'pointer' }}>주문번호복사</button>
                           <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>SMS</button>
                           <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(255,211,61,0.1)', border: '1px solid rgba(255,211,61,0.3)', borderRadius: '4px', color: '#FFD93D', cursor: 'pointer' }}>KAKAO</button>
@@ -943,7 +948,7 @@ export default function OrdersPage() {
                       <button onClick={async () => {
                         if (!o.product_id) { showAlert('상품 ID가 없습니다', 'info'); return }
                         try {
-                          const { API_BASE_URL: apiBase } = await import('@/config/api')
+                          const apiBase = API_BASE
                           const res = await fetch(`${apiBase}/api/v1/samba/collector/enrich/${o.product_id}`, { method: 'POST' })
                           const data = await res.json()
                           if (res.ok && data.success) {
@@ -1138,10 +1143,23 @@ export default function OrdersPage() {
                             const co = e.target.value
                             const tn = (document.getElementById(`ship-tn-${o.id}`) as HTMLInputElement)?.value.trim() || ''
                             const alreadyShipped = o.shipping_status === '송장전송완료'
+                            const orderAcc = accounts.find(a => a.id === o.channel_id)
+                            const isLotteon = orderAcc?.market_type === 'lotteon'
                             if (co && tn && alreadyShipped) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                              try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
-                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
+                              if (isLotteon) {
+                                // 롯데ON은 송장 수정 시 발송처리 API 재호출
+                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 롯데ON 송장 재전송 중... (${co} ${tn})`])
+                                try {
+                                  const res = await orderApi.shipOrder(o.id, co, tn)
+                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                } catch {
+                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 롯데ON 송장 재전송 실패`])
+                                }
+                              } else {
+                                try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
+                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
+                              }
                               loadOrders()
                             } else if (co && tn) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -1180,11 +1198,24 @@ export default function OrdersPage() {
                             const changed = tn !== (o.tracking_number || '')
                             const retry = o.status === 'ship_failed'
                             const alreadyShipped = o.shipping_status === '송장전송완료'
+                            const orderAcc2 = accounts.find(a => a.id === o.channel_id)
+                            const isLotteon2 = orderAcc2?.market_type === 'lotteon'
                             if (co && tn && changed && alreadyShipped) {
-                              // 이미 발송된 주문 — DB만 저장, 마켓 수정은 판매자센터에서
+                              // 이미 발송된 주문 수정
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                              try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
-                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
+                              if (isLotteon2) {
+                                // 롯데ON은 발송처리 API 재호출
+                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 롯데ON 송장 재전송 중... (${co} ${tn})`])
+                                try {
+                                  const res = await orderApi.shipOrder(o.id, co, tn)
+                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                } catch {
+                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 롯데ON 송장 재전송 실패`])
+                                }
+                              } else {
+                                try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
+                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
+                              }
                               loadOrders()
                             } else if (co && tn && (changed || retry)) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
