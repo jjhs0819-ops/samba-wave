@@ -864,7 +864,7 @@ async function pollBalanceCheckRequest() {
 
 chrome.alarms.get('balanceCheckPoll', (alarm) => {
   if (!alarm) {
-    chrome.alarms.create('balanceCheckPoll', { periodInMinutes: 0.5 })
+    chrome.alarms.create('balanceCheckPoll', { periodInMinutes: 5 })
     console.log('[잔액] 서버 요청 폴링 설정: 30초 주기')
   }
 })
