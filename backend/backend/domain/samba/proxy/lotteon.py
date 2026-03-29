@@ -858,6 +858,16 @@ class LotteonClient:
     # ── 상세설명 ────────────────────────────────────────────────
     detail_html = product.get("detail_html", "") or f"<p>{name}</p>"
 
+    # ── A/S 안내 (설정의 asPhone / asMessage 자동 주입) ────────
+    as_phone = product.get("_as_phone", "")
+    as_message = product.get("_as_message", "")
+    if not as_message:
+      # asMessage 없으면 전화번호로 기본 문구 생성
+      if as_phone:
+        as_message = f"A/S 전화번호: {as_phone}"
+      else:
+        as_message = f"{brand} 고객센터 문의" if brand else "판매자 문의"
+
     # ── SEO: 검색 키워드 / 상품 소개문 ─────────────────────────
     keywords = _build_lotteon_keywords(product)
     intro = _build_lotteon_intro(product)
@@ -911,9 +921,10 @@ class LotteonClient:
       "pdStatCd": "NEW",
       "dpYn": "Y",
       "pdFileLst": pd_file_lst if pd_file_lst else None,
-      # 상세설명
+      # 상세설명 + A/S 안내
       "epnLst": [
         {"pdEpnTypCd": "DSCRP", "cnts": detail_html},
+        {"pdEpnTypCd": "AS", "cnts": as_message},
       ],
       "cnclPsbYn": "Y",
       "dmstOvsDvDvsCd": "DMST",
@@ -1028,60 +1039,131 @@ class LotteonClient:
           f"deliveryOrderList={len(items) if isinstance(items, list) else repr(items)}"
         )
         if isinstance(items, list) and items:
-          logger.info(f"[롯데ON][주문] 샘플: {str(items[0])[:200]}")
+          s = items[0]
+          logger.info(
+            f"[롯데ON][주문] 샘플 키값: odNo={s.get('odNo')} spdNo={s.get('spdNo')} "
+            f"sitmNo={s.get('sitmNo')} odSeq={s.get('odSeq')} procSeq={s.get('procSeq')} "
+            f"odPrgsStepCd={s.get('odPrgsStepCd')}"
+          )
+          logger.info(f"[롯데ON][주문] 샘플 전체 필드: {list(s.keys())}")
+          logger.info(f"[롯데ON][주문] 샘플 전체 데이터: {s}")
           result.extend(items)
       except Exception as e:
         logger.warning(f"[롯데ON] 주문 조회 실패 ({srch_strt}~{srch_end}): {e}")
     return result
 
   async def confirm_orders(self, order_items: list[dict]) -> bool:
-    """발주 확인 처리 (SellerDeliveryProgressStateInform)."""
+    """발주 확인 처리 (SellerDeliveryProgressStateInform, odPrgsStepCd=11)."""
+    from datetime import datetime, timezone, timedelta
+    KST = timezone(timedelta(hours=9))
+    dttm = datetime.now(KST).strftime("%Y%m%d%H%M%S")
+    items = [
+      {
+        "dvRtrvDvsCd": "DV",
+        "odNo": item.get("odNo", ""),
+        "odSeq": "1",
+        "procSeq": "1",
+        "orglProcSeq": "",
+        "clmNo": "",
+        "odPrgsStepCd": "11",
+        "dvTrcStatDttm": dttm,
+        "invcNbr": "",
+        "dvCoCd": "",
+        "invcNo": "",
+        "spdNo": item.get("spdNo", ""),
+        "spdNm": "",
+        "sitmNo": item.get("sitmNo", ""),
+        "itmNm": "",
+        "itmSlPrc": "",
+        "slQty": str(item.get("slQty", "1")),
+        "dvTrcStatCd": "",
+      }
+      for item in order_items
+    ]
     try:
-      await self._call_api(
+      resp = await self._call_api(
         "POST",
         "/v1/openapi/delivery/v1/SellerDeliveryProgressStateInform",
-        body={"orderItems": order_items},
+        body={"deliveryProgressStateList": items},
       )
+      rs = (resp.get("data") or {}).get("rsltCd", "")
+      logger.info(f"[롯데ON] 발주확인 응답: rsltCd={rs}")
       return True
     except Exception as e:
       logger.warning(f"[롯데ON] 발주 확인 실패: {e}")
       return False
 
-  # 택배사 한글명 → 롯데ON dlvCpnCd 매핑
+  # 택배사 한글명 → 롯데ON dvCoCd 매핑 (SellerDeliveryProgressStateInform 기준)
   DELIVERY_COMPANY_MAP: dict[str, str] = {
-    "CJ대한통운": "04",
-    "한진택배": "05",
-    "롯데택배": "41",
-    "로젠택배": "06",
-    "우체국택배": "01",
-    "경동택배": "23",
-    "대신택배": "22",
-    "일양로지스": "11",
-    "편의점택배": "GS",
-    "DHL": "DHL",
+    "CJ대한통운": "0002",
+    "한진택배": "0006",
+    "롯데택배": "0001",
+    "로젠택배": "0005",
+    "우체국택배": "0004",
+    "경동택배": "0019",
+    "대신택배": "0011",
+    "일양로지스": "0007",
+    "편의점택배": "0016",
+    "DHL": "0009",
   }
 
-  async def ship_order(self, sitm_no: str, shipping_company: str, tracking_number: str) -> bool:
-    """송장번호 등록 (SellerDeliveryInvoiceUpdate)."""
-    dlv_cpn_cd = self.DELIVERY_COMPANY_MAP.get(shipping_company, shipping_company)
+  async def ship_order(
+    self,
+    od_no: str,
+    sitm_no: str,
+    spd_no: str,
+    quantity: int,
+    shipping_company: str,
+    tracking_number: str,
+  ) -> bool:
+    """발송처리 + 송장번호 등록 (SellerDeliveryProgressStateInform, odPrgsStepCd=13)."""
+    from datetime import datetime, timezone, timedelta
+    KST = timezone(timedelta(hours=9))
+    dv_co_cd = self.DELIVERY_COMPANY_MAP.get(shipping_company, shipping_company)
+    dv_trc_stat_dttm = datetime.now(KST).strftime("%Y%m%d%H%M%S")
+
+    # API 스펙: deliveryProgressStateList, odPrgsStepCd=13(발송완료), dvRtrvDvsCd=DV 필수
+    payload = {
+      "deliveryProgressStateList": [
+        {
+          "dvRtrvDvsCd": "DV",
+          "odNo": od_no,
+          "odSeq": "1",
+          "procSeq": "1",
+          "orglProcSeq": "",
+          "clmNo": "",
+          "odPrgsStepCd": "13",
+          "dvTrcStatDttm": dv_trc_stat_dttm,
+          "invcNbr": "1",
+          "dvCoCd": dv_co_cd,
+          "invcNo": tracking_number,
+          "spdNo": spd_no,
+          "spdNm": "",
+          "sitmNo": sitm_no,
+          "itmNm": "",
+          "itmSlPrc": "",
+          "slQty": str(quantity),
+          "dvTrcStatCd": "",
+          "dvArclNm": "",
+          "dvArclTelNo": "",
+          "dvLocCnts": "",
+          "eofcTelNo": "",
+        }
+      ]
+    }
+    logger.info(f"[롯데ON] 발송처리 요청: {payload}")
     try:
-      await self._call_api(
-        "POST",
-        "/v1/openapi/delivery/v1/SellerDeliveryInvoiceUpdate",
-        body={
-          "deliveryList": [
-            {
-              "sitmNo": sitm_no,
-              "dlvCpnCd": dlv_cpn_cd,
-              "invoiceNo": tracking_number,
-            }
-          ]
-        },
-      )
-      logger.info(f"[롯데ON] 송장 등록 완료: sitmNo={sitm_no} dlvCpnCd={dlv_cpn_cd} invoiceNo={tracking_number}")
-      return True
+      resp_data = await self._call_api("POST", "/v1/openapi/delivery/v1/SellerDeliveryProgressStateInform", body=payload)
+      rs = (resp_data.get("data") or {}).get("rsltCd", "")
+      rm = (resp_data.get("data") or {}).get("rsltMsg", "")
+      logger.info(f"[롯데ON] 발송처리 응답: rsltCd={rs} rsltMsg={rm}")
+      if rs in ("0000", "00", "SUCCESS", ""):
+        logger.info(f"[롯데ON] 발송처리 완료: odNo={od_no} invcNo={tracking_number}")
+        return True
+      logger.warning(f"[롯데ON] 발송처리 실패 rsltCd={rs}: {rm}")
+      return False
     except Exception as e:
-      logger.warning(f"[롯데ON] 송장 등록 실패: sitmNo={sitm_no} / {e}")
+      logger.warning(f"[롯데ON] 발송처리 실패: odNo={od_no} / {e}")
       return False
 
   # ------------------------------------------------------------------
@@ -1153,14 +1235,260 @@ class LotteonClient:
         result.append(item)
     return result
 
-  async def approve_return(self, order_no: str) -> bool:
-    """반품 승인 처리."""
+  async def get_exchanges(self, days: int = 7) -> list[dict]:
+    """최근 N일 교환 클레임 조회 (exchangeSearch API).
+
+    응답: data[].itemList[] 중첩 구조 → odNo/clmNo 포함 flat list로 변환.
+    """
+    start_dt, end_dt = self._datetime_range(days)
+    data = await self._call_api(
+      "POST",
+      "/v1/openapi/claim/v1/exchangeOpenApi/exchangeSearch",
+      body={
+        "srchStrtDttm": start_dt,
+        "srchEndDttm": end_dt,
+      },
+    )
+    raw_list = data.get("data") or []
+    if not isinstance(raw_list, list):
+      raw_list = []
+    result = []
+    for claim in raw_list:
+      od_no = claim.get("odNo", "")
+      clm_no = claim.get("clmNo", "")
+      for item in (claim.get("itemList") or []):
+        item["odNo"] = od_no
+        item["clmNo"] = clm_no
+        step_cd = str(item.get("odPrgsStepCd", "") or "")
+        dv_rtrv = item.get("dvRtrvDvsCd", "")
+        logger.info(
+          f"[롯데ON][교환] odNo={od_no} clmNo={clm_no} stepCd={step_cd} "
+          f"dvRtrvDvsCd={dv_rtrv} clmRsnCd={item.get('clmRsnCd','')}"
+        )
+        result.append(item)
+    return result
+
+  async def approve_exchange(
+    self,
+    od_no: str,
+    clm_no: str,
+    items: list[dict],
+  ) -> bool:
+    """교환 승인 처리 (exchangeRequestApproval) — 회수 지시.
+
+    items: [{"odSeq": 1, "procSeq": 2, "orglProcSeq": 1, "slrRsnCd": "204"}]
+    """
+    payload = {
+      "odNo": od_no,
+      "clmNo": clm_no,
+      "itemList": items,
+    }
+    logger.info(f"[롯데ON][교환승인] odNo={od_no} clmNo={clm_no} items={len(items)}건")
     try:
-      await self._call_api("PUT", f"/api/order/{order_no}/return/approve")
+      resp = await self._call_api(
+        "POST",
+        "/v1/openapi/claim/v1/exchangeOpenApi/exchangeRequestApproval",
+        body=payload,
+      )
+      rc = str(resp.get("returnCode") or resp.get("rspnCd") or "")
+      if rc == "0000":
+        logger.info(f"[롯데ON][교환승인] 성공: odNo={od_no} clmNo={clm_no}")
+        return True
+      logger.warning(f"[롯데ON][교환승인] 실패: returnCode={rc} msg={resp.get('message','')}")
+      return False
+    except Exception as e:
+      logger.warning(f"[롯데ON] 교환승인 실패: {e}")
+      return False
+
+  async def ship_order_exchange(
+    self,
+    od_no: str,
+    sitm_no: str,
+    spd_no: str,
+    clm_no: str,
+    quantity: int,
+    shipping_company: str,
+    tracking_number: str,
+  ) -> bool:
+    """교환 재배송 처리 (SellerDeliveryProgressStateInform, odPrgsStepCd=13, clmNo 포함)."""
+    from datetime import datetime, timezone, timedelta
+    KST = timezone(timedelta(hours=9))
+    dv_co_cd = self.DELIVERY_COMPANY_MAP.get(shipping_company, shipping_company)
+    dv_trc_stat_dttm = datetime.now(KST).strftime("%Y%m%d%H%M%S")
+
+    payload = {
+      "deliveryProgressStateList": [
+        {
+          "dvRtrvDvsCd": "DV",
+          "odNo": od_no,
+          "odSeq": "1",
+          "procSeq": "1",
+          "orglProcSeq": "",
+          "clmNo": clm_no,
+          "odPrgsStepCd": "13",
+          "dvTrcStatDttm": dv_trc_stat_dttm,
+          "invcNbr": "1",
+          "dvCoCd": dv_co_cd,
+          "invcNo": tracking_number,
+          "spdNo": spd_no,
+          "spdNm": "",
+          "sitmNo": sitm_no,
+          "itmNm": "",
+          "itmSlPrc": "",
+          "slQty": str(quantity),
+          "dvTrcStatCd": "",
+          "dvArclNm": "",
+          "dvArclTelNo": "",
+          "dvLocCnts": "",
+          "eofcTelNo": "",
+        }
+      ]
+    }
+    logger.info(f"[롯데ON][교환재배송] odNo={od_no} clmNo={clm_no} invcNo={tracking_number} dvCoCd={dv_co_cd}")
+    try:
+      resp = await self._call_api(
+        "POST",
+        "/v1/openapi/order/v1/SellerDeliveryProgressStateInform",
+        body=payload,
+      )
+      result_list = resp.get("deliveryProgressStateList") or resp.get("data") or []
+      if isinstance(result_list, list) and result_list:
+        item = result_list[0]
+        rslt_cd = str(item.get("rsltCd", ""))
+        rslt_msg = item.get("rsltMsg", "")
+        if rslt_cd == "0000":
+          logger.info(f"[롯데ON][교환재배송] 성공: odNo={od_no} clmNo={clm_no}")
+          return True
+        else:
+          logger.warning(f"[롯데ON][교환재배송] 실패: rsltCd={rslt_cd} rsltMsg={rslt_msg}")
+          return False
+      logger.info(f"[롯데ON][교환재배송] 응답: {resp}")
       return True
     except Exception as e:
-      logger.warning(f"[롯데ON] 반품 승인 실패: {e}")
+      logger.warning(f"[롯데ON] 교환재배송 실패: odNo={od_no} clmNo={clm_no} / {e}")
       return False
+
+  async def approve_return(self, od_no: str, clm_no: str, items: list[dict]) -> bool:
+    """반품 승인 처리 (returnRequestApproval).
+
+    Args:
+      od_no: 주문번호
+      clm_no: 클레임번호
+      items: itemList — 각 항목에 odSeq, procSeq, orglProcSeq 필수
+    """
+    payload = {
+      "odNo": od_no,
+      "clmNo": clm_no,
+      "itemList": items,
+    }
+    resp = await self._call_api(
+      "POST",
+      "/v1/openapi/claim/v1/returningOpenApi/returnRequestApproval",
+      body=payload,
+    )
+    rc = str(resp.get("returnCode", ""))
+    if rc != "0000":
+      msg = resp.get("message", f"returnCode={rc}")
+      raise Exception(f"롯데ON 반품 승인 오류: {msg}")
+    return True
+
+  async def reject_return(self, order_no: str, reason: str = "") -> bool:
+    """반품 거부 처리."""
+    try:
+      await self._call_api("PUT", f"/api/order/{order_no}/return/reject",
+                           body={"reason": reason})
+      return True
+    except Exception as e:
+      logger.warning(f"[롯데ON] 반품 거부 실패: {e}")
+      return False
+
+  # ------------------------------------------------------------------
+  # CS 문의 (Q&A)
+  # ------------------------------------------------------------------
+
+  async def get_qna_list(self, days: int = 30) -> list[dict[str, Any]]:
+    """판매자 문의 목록 조회.
+
+    POST /v1/openapi/customer/v1/getSellerInquiryList
+
+    Args:
+      days: 조회 기간 (일 수, 기본 30일)
+
+    Returns:
+      rsltList 항목 리스트. 주요 필드:
+        slrInqNo        — 판매자문의번호 (market_inquiry_no)
+        vocLcsfCd       — 문의유형코드 (IC00000263~IC00000621)
+        vocTypNm        — 문의유형명
+        slrInqProcStatCd — 처리상태 (ANS=답변, UNANS=미답변)
+        inqCnts         — 문의내용
+        ansCnts         — 답변내용
+        odNo            — 주문번호
+        pdNo            — 상품번호 (market_product_no)
+        pdNm            — 상품명
+        spdNo           — 판매자상품번호
+        accpDttm        — 접수일시 (yyyyMMddHHmmss)
+        procDttm        — 처리일시
+    """
+    from datetime import datetime, timedelta
+
+    now = datetime.now()
+    end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
+    start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
+
+    body = {
+      "scStrtDt": start_dt,
+      "scEndDt": end_dt,
+      "pageNo": "1",
+      "rowsPerPage": "100",
+    }
+
+    try:
+      result = await self._call_api(
+        "POST", "/v1/openapi/customer/v1/getSellerInquiryList", body=body
+      )
+      items = result.get("rsltList") or []
+      if not isinstance(items, list):
+        items = []
+      logger.info(f"[롯데ON][CS] 판매자문의 조회 완료: {len(items)}건 (기간: {start_dt}~{end_dt})")
+      return items
+    except LotteonApiError as e:
+      logger.warning(f"[롯데ON][CS] 판매자문의 목록 조회 실패: {e}")
+      return []
+
+  async def answer_qna(self, qna_no: str, content: str) -> dict[str, Any]:
+    """판매자 문의 답변 등록/수정.
+
+    POST /v1/openapi/customer/v1/updateSellerInquiry
+    (등록과 수정 모두 동일 엔드포인트 사용)
+
+    Args:
+      qna_no: 판매자문의번호 (slrInqNo)
+      content: 답변 내용 (ansCnts)
+
+    Returns:
+      응답 dict (rsltCd, rsltMsg)
+    """
+    body = {
+      "slrInqNo": qna_no,
+      "ansCnts": content,
+    }
+    result = await self._call_api(
+      "POST", "/v1/openapi/customer/v1/updateSellerInquiry", body=body
+    )
+    logger.info(f"[롯데ON][CS] 판매자문의 답변 완료: slrInqNo={qna_no}")
+    return result
+
+  async def update_qna_answer(self, qna_no: str, answer_no: str, content: str) -> dict[str, Any]:
+    """판매자 문의 답변 수정 (등록과 동일 엔드포인트).
+
+    POST /v1/openapi/customer/v1/updateSellerInquiry
+
+    Args:
+      qna_no: 판매자문의번호
+      answer_no: 미사용 (롯데ON은 문의번호로만 식별)
+      content: 수정할 답변 내용
+    """
+    return await self.answer_qna(qna_no, content)
 
 
 class LotteonApiError(Exception):
