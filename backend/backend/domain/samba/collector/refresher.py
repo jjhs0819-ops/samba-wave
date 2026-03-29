@@ -86,8 +86,10 @@ def _log_refresh(
     level: str = "info",
     idx: int = 0,
     total: int = 0,
+    source: str = "autotune",
 ) -> None:
-    """갱신 로그를 링 버퍼에 추가."""
+    """갱신 로그를 링 버퍼에 추가. source: autotune(오토튠) | transmit(전송) | manual(수동)"""
+    source = _current_refresh_source  # 전역 컨텍스트에서 결정
     global _refresh_log_total
     now = datetime.now(timezone.utc)
     kst = now + timedelta(hours=9)
@@ -102,27 +104,30 @@ def _log_refresh(
         "name": "",
         "msg": full_msg,
         "level": level,
+        "source": source,
     })
     _refresh_log_total += 1
 
 
-def get_refresh_logs(since_idx: int = 0) -> tuple[List[Dict[str, Any]], int]:
-    """로그 조회. since_idx 이후 로그만 반환 + 누적 인덱스."""
+def get_refresh_logs(since_idx: int = 0, source_filter: str = "") -> tuple[List[Dict[str, Any]], int]:
+    """로그 조회. since_idx 이후 로그만 반환 + 누적 인덱스.
+    source_filter: "autotune"이면 오토튠 로그만, ""이면 전체.
+    """
     global _refresh_log_total
     buf_len = len(_refresh_log_buffer)
-    # 버퍼 시작 인덱스 = 누적 총 - 현재 버퍼 크기
     buf_start = _refresh_log_total - buf_len
 
     if since_idx >= _refresh_log_total:
-        # 새 로그 없음
         return [], _refresh_log_total
     if since_idx <= buf_start:
-        # 요청 인덱스가 밀려나간 범위 → 버퍼 전체 반환
-        return list(_refresh_log_buffer), _refresh_log_total
+        logs = list(_refresh_log_buffer)
+    else:
+        offset = since_idx - buf_start
+        logs = list(_refresh_log_buffer)[offset:]
 
-    # 버퍼 내 오프셋 계산
-    offset = since_idx - buf_start
-    return list(_refresh_log_buffer)[offset:], _refresh_log_total
+    if source_filter:
+        logs = [l for l in logs if l.get("source") == source_filter]
+    return logs, _refresh_log_total
 
 
 def get_site_intervals_info() -> Dict[str, Any]:
@@ -171,8 +176,20 @@ class BulkRefreshResult:
     errors: int = 0
 
 
-async def refresh_product(product: Any, idx: int = 0, total: int = 0) -> RefreshResult:
-    """소싱처에서 최신 가격/재고 재수집."""
+_current_refresh_source: str = "autotune"  # 현재 갱신 호출 출처
+
+async def refresh_product(product: Any, idx: int = 0, total: int = 0, source: str = "autotune") -> RefreshResult:
+    """소싱처에서 최신 가격/재고 재수집. source: autotune | transmit | manual"""
+    global _current_refresh_source
+    prev_source = _current_refresh_source
+    _current_refresh_source = source
+    try:
+        return await _refresh_product_inner(product, idx, total)
+    finally:
+        _current_refresh_source = prev_source
+
+
+async def _refresh_product_inner(product: Any, idx: int = 0, total: int = 0) -> RefreshResult:
     source_site = getattr(product, "source_site", "")
 
     # 소싱처 플러그인 우선 호출
@@ -561,12 +578,14 @@ async def _parse_fashionplus(product: Any) -> RefreshResult:
         f"[패션플러스 갱신] {pid}: "
         f"원가 {old_cost}→{new_cost}, 판매가 {old_sale}→{new_sale}, 배송비 {shipping_fee}"
     )
+    new_options = detail.get("options") or None
     return RefreshResult(
         product_id=product.id,
         new_sale_price=new_sale,
         new_original_price=new_orig,
         new_cost=new_cost,
-        changed=changed,
+        new_options=new_options,
+        changed=changed or bool(new_options),
     )
 
 
