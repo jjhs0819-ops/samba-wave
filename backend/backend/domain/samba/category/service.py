@@ -2197,7 +2197,10 @@ class SambaCategoryService:
                 seo_str = ", ".join(item.get("seo", [])[:5])
                 group_str = ", ".join(item.get("groups", [])[:3])
                 sample_names = [n for n in (item.get("samples") or []) if n][:2]
+                gender_hint = {"male": "남성", "female": "여성", "unisex": "남녀공용"}.get(item.get("gender", ""), "")
                 entry = f'{idx + 1}. [{item["site"]}] {item["leaf_path"]}'
+                if gender_hint:
+                    entry += f' | 성별: {gender_hint}'
                 if sample_names:
                     entry += f' | 상품명: {" / ".join(sample_names)}'
                 if seo_str:
@@ -2597,11 +2600,12 @@ JSON만:
         result = await session.execute(stmt)
         products = list(result.scalars().all())
 
-        # (site, leaf_path) → 태그 + SEO키워드 + 그룹명
+        # (site, leaf_path) → 태그 + SEO키워드 + 그룹명 + 성별
         cat_samples: Dict[tuple, List[str]] = {}
         cat_tags: Dict[tuple, List[str]] = {}
         cat_seo: Dict[tuple, List[str]] = {}
         cat_groups: Dict[tuple, set[str]] = {}
+        cat_sex: Dict[tuple, set[str]] = {}  # p.sex 값 수집
         for p in products:
             site = p.source_site or ""
             if not site:
@@ -2628,9 +2632,14 @@ JSON만:
                 cat_seo[key] = []
                 # 그룹명
                 cat_groups[key] = set()
+                # 성별
+                cat_sex[key] = set()
             # 상품명 수집 (성별 감지용, 최대 5개)
             if len(cat_samples[key]) < 5:
                 cat_samples[key].append(p.name)
+            # p.sex 수집 (남성/여성/남녀공용)
+            if getattr(p, 'sex', None):
+                cat_sex[key].add(p.sex)
             # SEO 키워드 수집 (중복 제거)
             for kw in (getattr(p, 'seo_keywords', None) or []):
                 if kw and kw not in cat_seo[key] and len(cat_seo[key]) < 10:
@@ -2673,9 +2682,17 @@ JSON만:
                 skipped += 1
                 continue
 
-            # 성별 감지 (상품명 + 태그 + 카테고리)
-            tags_for_gender = cat_tags.get((site, leaf_path), [])
-            gender = _detect_gender(samples, tags_for_gender, leaf_path)
+            # 성별 감지: p.sex 값 우선, 없으면 상품명+태그+카테고리 기반 감지
+            sex_values = cat_sex.get((site, leaf_path), set())
+            if "여성" in sex_values and "남성" not in sex_values:
+                gender = "female"
+            elif "남성" in sex_values and "여성" not in sex_values:
+                gender = "male"
+            elif sex_values:
+                gender = "unisex"
+            else:
+                tags_for_gender = cat_tags.get((site, leaf_path), [])
+                gender = _detect_gender(samples, tags_for_gender, leaf_path)
 
             # ── 1단계: 룰 기반 매핑 (모든 마켓) ──
             resolved: Dict[str, str] = {}
@@ -2738,6 +2755,7 @@ JSON만:
                     "tags": cat_tags.get((site, leaf_path), []),
                     "seo": cat_seo.get((site, leaf_path), []),
                     "groups": list(cat_groups.get((site, leaf_path), set())),
+                    "gender": gender,
                     "target_markets": list(missing_markets),
                     "existing": existing,
                     "mode": "update" if existing else "create",
