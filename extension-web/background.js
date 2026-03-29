@@ -787,6 +787,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'musinsaBalanceCheck') {
     checkMusinsaBalance()
   }
+  if (alarm.name === 'balanceCheckPoll') {
+    pollBalanceCheckRequest()
+  }
 })
 
 // 수집 폴링 — job 없으면 5분 후 자동 중지, job 있으면 자동 재시작
@@ -823,7 +826,27 @@ async function checkMusinsaBalance() {
   }
 }
 
-// 잔액 체크 alarm 설정 (12시간 주기)
+// 서버에서 잔액 체크 요청 확인 (30초 주기)
+async function pollBalanceCheckRequest() {
+  try {
+    const r = await fetch(`${PROXY_URL}/api/v1/samba/sourcing-accounts/balance-check-requested`)
+    if (r.ok) {
+      const data = await r.json()
+      if (data.requested) {
+        console.log('[잔액] 서버 요청 감지 → 즉시 잔액 체크')
+        checkMusinsaBalance()
+      }
+    }
+  } catch { /* 서버 미실행 시 무시 */ }
+}
+
+// 잔액 체크 alarm 설정 (12시간 주기 + 30초 폴링)
+chrome.alarms.get('balanceCheckPoll', (alarm) => {
+  if (!alarm) {
+    chrome.alarms.create('balanceCheckPoll', { periodInMinutes: 0.5 })
+    console.log('[잔액] 서버 요청 폴링 설정: 30초 주기')
+  }
+})
 chrome.alarms.get('musinsaBalanceCheck', (alarm) => {
   if (!alarm) {
     chrome.alarms.create('musinsaBalanceCheck', { delayInMinutes: 1, periodInMinutes: 720 })
