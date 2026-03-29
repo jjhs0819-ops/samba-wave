@@ -275,6 +275,16 @@ class ElevenstClient:
     mnp_buy_qty = int(cfg.get("multiPurchaseQty", 2) or 2)
     mnp_buy_amt = int(cfg.get("multiPurchaseAmt", 1000) or 1000)
 
+    # 즉시할인 설정 (계정별 on/off)
+    # 셀러오피스 form 필드명: cuponcheck(Y/N), dscAmtPercnt(값), cupnDscMthdCd(01=원, 02=%)
+    # 쿠폰 지급기간: cupnUseLmtDyYn(Y/N), cupnIssStartDy(YYYYMMDD), cupnIssEndDy(YYYYMMDD)
+    instant_dsc_yn = "Y" if cfg.get("instantDiscountEnabled") and str(cfg.get("instantDiscountEnabled")) not in ("", "false", "0") else "N"
+    instant_dsc_method = str(cfg.get("instantDiscountMethod", "01") or "01")  # 01=정액(원), 02=정률(%)
+    instant_dsc_value = int(cfg.get("instantDiscountValue", 0) or 0)
+    instant_dsc_period_yn = "Y" if cfg.get("instantDiscountPeriodEnabled") and str(cfg.get("instantDiscountPeriodEnabled")) not in ("", "false", "0") else "N"
+    instant_dsc_start = str(cfg.get("instantDiscountStartDate", "") or "")
+    instant_dsc_end = str(cfg.get("instantDiscountEndDate", "") or "")
+
     # 이미지 XML — 공식 필드명: prdImage01~04 (imageUrl 아님)
     image_xml = ""
     if images:
@@ -359,6 +369,12 @@ class ElevenstClient:
   {f'<pay11Value>{llpay_pnt_value}</pay11Value><pay11WyCd>{llpay_pnt_type}</pay11WyCd>' if llpay_pnt_yn == 'Y' else ''}
   <pluYN>{mnp_buy_yn}</pluYN>
   {f'<pluDscCd>{mnp_buy_basis_type}</pluDscCd><pluDscMthdCd>{mnp_buy_dsc_method}</pluDscMthdCd><pluDscBasis>{mnp_buy_qty}</pluDscBasis><pluDscAmtPercnt>{mnp_buy_amt}</pluDscAmtPercnt>' if mnp_buy_yn == 'Y' else ''}
+  {f'<cuponcheck>Y</cuponcheck><dscAmtPercnt>{instant_dsc_value}</dscAmtPercnt><cupnDscMthdCd>{instant_dsc_method}</cupnDscMthdCd>' if instant_dsc_yn == 'Y' else ''}
+  {f'<cupnUseLmtDyYn>Y</cupnUseLmtDyYn><cupnIssStartDy>{instant_dsc_start}</cupnIssStartDy><cupnIssEndDy>{instant_dsc_end}</cupnIssEndDy>' if instant_dsc_yn == 'Y' and instant_dsc_period_yn == 'Y' and instant_dsc_start and instant_dsc_end else ''}
+  <crtfGrpObjClfCd01>03</crtfGrpObjClfCd01>
+  <crtfGrpObjClfCd02>03</crtfGrpObjClfCd02>
+  <crtfGrpObjClfCd03>03</crtfGrpObjClfCd03>
+  <crtfGrpObjClfCd04>05</crtfGrpObjClfCd04>
   {image_xml}
   <htmlDetail><![CDATA[{detail_html.replace("]]>", "]]]]><![CDATA[>")}]]></htmlDetail>
   {option_xml}

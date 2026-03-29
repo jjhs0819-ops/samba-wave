@@ -247,7 +247,7 @@ const STORE_MARKETS: MarketConfig[] = [
     ]},
     { name: 'deliveryFee', label: '배송비', type: 'number', placeholder: '0' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '010-1234-5678' },
-    { name: 'asMessage', label: 'A/S안내', type: 'text', placeholder: '상세페이지 참조' },
+    { name: 'asMessage', label: 'A/S안내', type: 'text', placeholder: '010-1234-5678' },
     { name: 'discountRate', label: '즉시할인율(%)', type: 'number', placeholder: '0 (미설정)' },
     { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '4000' },
     { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '8000' },
@@ -274,6 +274,19 @@ const STORE_MARKETS: MarketConfig[] = [
     ]},
     { name: 'multiPurchaseQty', label: '기준값 (N개 또는 N원)', type: 'number', placeholder: '2' },
     { name: 'multiPurchaseAmt', label: '할인값 (N원 또는 N%)', type: 'number', placeholder: '1000' },
+    { name: '_divider_discount', label: '즉시할인 (쿠폰 자동적용)', type: 'divider' },
+    { name: 'instantDiscountEnabled', label: '즉시할인 쿠폰 사용', type: 'select', options: [
+      { value: '', label: '설정안함' }, { value: 'true', label: '설정함' },
+    ]},
+    { name: 'instantDiscountMethod', label: '할인 방식', type: 'select', options: [
+      { value: '01', label: '정액 (원)' }, { value: '02', label: '정률 (%)' },
+    ]},
+    { name: 'instantDiscountValue', label: '할인 값 (원 또는 %)', type: 'number', placeholder: '1000' },
+    { name: 'instantDiscountPeriodEnabled', label: '쿠폰 지급기간 설정', type: 'select', options: [
+      { value: '', label: '설정안함' }, { value: 'true', label: '설정함' },
+    ]},
+    { name: 'instantDiscountStartDate', label: '지급기간 시작일 (YYYYMMDD)', type: 'text', placeholder: '20260401' },
+    { name: 'instantDiscountEndDate', label: '지급기간 마감일 (YYYYMMDD)', type: 'text', placeholder: '20261231' },
     { name: '_divider_point', label: '11Pay 포인트', type: 'divider' },
     { name: 'llpayPointEnabled', label: '11Pay 포인트 적립', type: 'checkbox' },
     { name: 'llpayPointType', label: '적립 방식', type: 'select', options: [
