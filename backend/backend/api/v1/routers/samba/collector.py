@@ -56,6 +56,7 @@ class SearchFilterUpdate(BaseModel):
     is_active: Optional[bool] = None
     requested_count: Optional[int] = None
     applied_policy_id: Optional[str] = None
+    target_mappings: Optional[dict] = None
 
 
 class CollectedProductCreate(BaseModel):
@@ -276,10 +277,64 @@ async def delete_filter(
     filter_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
+    from sqlalchemy import delete as sa_delete
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+
     svc = _get_services(session)
-    if not await svc.delete_filter(filter_id):
+    sf = await svc.get_filter(filter_id)
+    if not sf:
         raise HTTPException(404, "필터를 찾을 수 없습니다")
-    return {"ok": True}
+
+    # 마켓등록 상품 체크
+    products = await svc.product_repo.list_by_filter(filter_id, limit=100000)
+    registered = [p for p in products if p.registered_accounts and len(p.registered_accounts) > 0]
+    if registered:
+        raise HTTPException(400, f"마켓등록 상품이 {len(registered)}건 있어서 삭제할 수 없습니다")
+
+    # 상품 벌크 삭제 → 그룹 삭제
+    deleted_count = len(products)
+    if products:
+        await session.execute(sa_delete(_CP).where(_CP.search_filter_id == filter_id))
+        logger.info(f"그룹 삭제: {filter_id} → 상품 {deleted_count}건 연동 삭제")
+
+    await svc.delete_filter(filter_id)
+    return {"ok": True, "deleted_products": deleted_count}
+
+
+@router.delete("/products/orphans")
+async def delete_orphan_products(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """그룹이 삭제되었지만 상품이 남은 고아 상품을 정리."""
+    from sqlalchemy import select, delete as sa_delete, and_
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP, SambaSearchFilter as _SF
+
+    # search_filter_id가 있지만 해당 필터가 존재하지 않는 상품 조회
+    existing_filter_ids = select(_SF.id)
+    orphan_stmt = select(_CP.id, _CP.search_filter_id, _CP.registered_accounts).where(
+        and_(
+            _CP.search_filter_id != None,
+            _CP.search_filter_id.notin_(existing_filter_ids),
+        )
+    )
+    orphans = (await session.execute(orphan_stmt)).all()
+
+    # 마켓등록 상품은 제외
+    registered = [o for o in orphans if o.registered_accounts and len(o.registered_accounts) > 0]
+    deletable = [o for o in orphans if not o.registered_accounts or len(o.registered_accounts) == 0]
+
+    if deletable:
+        del_ids = [o.id for o in deletable]
+        await session.execute(sa_delete(_CP).where(_CP.id.in_(del_ids)))
+        await session.commit()
+        logger.info(f"고아 상품 정리: {len(deletable)}건 삭제 (마켓등록 {len(registered)}건 보존)")
+
+    return {
+        "ok": True,
+        "deleted": len(deletable),
+        "preserved_registered": len(registered),
+        "total_orphans_found": len(orphans),
+    }
 
 
 @router.get("/filters/tree")
@@ -454,14 +509,16 @@ async def scroll_products(
         conditions.append(_CP.free_shipping == True)
         conditions.append(_CP.same_day_delivery == True)
     elif status == "market_registered":
-        # 마켓에 실제 등록된 상품: registered_accounts JSON 배열이 비어있지 않은 경우
+        # 마켓에 실제 등록된 상품: registered_accounts가 null/빈배열/빈문자열이 아닌 경우
         conditions.append(_CP.registered_accounts.isnot(None))
-        conditions.append(func.json_array_length(_CP.registered_accounts) > 0)
+        conditions.append(cast(_CP.registered_accounts, String) != 'null')
+        conditions.append(cast(_CP.registered_accounts, String) != '[]')
     elif status == "market_unregistered":
-        # 마켓 미등록 상품: registered_accounts가 null이거나 빈 JSON 배열
+        # 마켓 미등록 상품: registered_accounts가 null이거나 빈 배열
         conditions.append(or_(
             _CP.registered_accounts.is_(None),
-            func.json_array_length(_CP.registered_accounts) == 0,
+            cast(_CP.registered_accounts, String) == 'null',
+            cast(_CP.registered_accounts, String) == '[]',
         ))
     elif status and status in _KNOWN_STATUS_VALUES:
         conditions.append(_CP.status == status)

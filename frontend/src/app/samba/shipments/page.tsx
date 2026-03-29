@@ -67,6 +67,7 @@ export default function ShipmentsPage() {
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const progressRef = useRef<NodeJS.Timeout | null>(null)
   const abortRef = useRef(false)
+  const activeJobIdRef = useRef('')
   const [loopRestart, setLoopRestart] = useState(false)
 
   // 무한반복: 3분 대기 후 미등록 필터 + 전체 선택 + 재시작
@@ -99,10 +100,19 @@ export default function ShipmentsPage() {
     // URL에서 선택된 상품 ID 먼저 확인
     const preIds = new URLSearchParams(window.location.search).get('selected')?.split(',').filter(Boolean) || []
 
-    // 선택된 상품이 있으면 해당 상품만 조회, 없으면 scroll API (light 필드)
+    // 검색 조건에 따라 서버 API 파라미터 구성
+    const scrollParams: Record<string, string | number> = { skip: 0, limit: 10000 }
+    if (searchText.trim()) {
+      scrollParams.search = searchText.trim()
+      const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
+      scrollParams.search_type = typeMap[searchField] || 'name'
+    }
+    if (siteFilter !== '전체') scrollParams.source_site = siteFilter
+
+    // 선택된 상품이 있으면 해당 상품만 조회, 없으면 scroll API
     const productPromise = preIds.length > 0
       ? collectorApi.getProductsByIds(preIds).catch(() => [] as SambaCollectedProduct[])
-      : collectorApi.scrollProducts({ skip: 0, limit: 200 }).then(r => r.items).catch(() => [] as SambaCollectedProduct[])
+      : collectorApi.scrollProducts(scrollParams).then(r => r.items).catch(() => [] as SambaCollectedProduct[])
 
     const [p, a, s, f, pol, cm] = await Promise.all([
       productPromise,
@@ -119,7 +129,7 @@ export default function ShipmentsPage() {
     setPolicies(pol)
     setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
     setLoading(false)
-  }, [])
+  }, [searchText, searchField, siteFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
   useEffect(() => { return () => { if (progressRef.current) clearInterval(progressRef.current) } }, [])
@@ -175,9 +185,15 @@ export default function ShipmentsPage() {
   }, [products, accounts, policies, categoryMappings]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleProduct = (id: string) => setSelectedProducts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
-  const toggleAllProducts = () => setSelectedProducts(prev => prev.length === filteredProducts.length ? [] : filteredProducts.map(p => p.id))
+  const toggleAllProducts = () => {
+    const pageIds = pageProducts.map(p => p.id)
+    const allChecked = pageIds.every(id => selectedProducts.includes(id))
+    setSelectedProducts(prev => allChecked ? prev.filter(id => !pageIds.includes(id)) : [...new Set([...prev, ...pageIds])])
+  }
   const toggleAccount = (id: string) => setSelectedAccounts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  const allSites = SOURCE_SITES.filter(s => s !== '전체')
   const toggleSite = (site: string) => setSelectedSites(prev => prev.includes(site) ? prev.filter(x => x !== site) : [...prev, site])
+  const toggleAllSites = () => setSelectedSites(prev => prev.length === allSites.length ? [] : [...allSites])
 
   // 필터 이름 맵 (매 렌더마다 재생성 방지)
   const filterNameMap = useMemo(() => {
@@ -242,6 +258,8 @@ export default function ShipmentsPage() {
     })
   }, [products, siteFilter, registrationFilter, searchText, searchField, filterNameMap, sortBy, accounts, shipments, preSelectedIds])
 
+  const pageProducts = useMemo(() => (filteredProducts || []).slice((currentPage - 1) * pageSize, currentPage * pageSize), [filteredProducts, currentPage, pageSize])
+
   // 등록된 마켓 목록 (동적)
   const registeredMarkets = useMemo(() => {
     const marketSet = new Set<string>()
@@ -259,13 +277,15 @@ export default function ShipmentsPage() {
   }, [products, accounts])
 
   const handleMarketDelete = async () => {
-    // 등록된 마켓이 있는 상품만 필터
+    if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
+    if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
+    // 소싱사이트 체크 + 등록된 마켓이 있는 상품만 필터
+    const siteSet = new Set(selectedSites)
     const targetProducts = selectedProducts.filter(pid => {
       const p = products.find(x => x.id === pid)
-      return p && (p.registered_accounts || []).some(aid => selectedAccounts.includes(aid))
+      return p && siteSet.has(p.source_site) && (p.registered_accounts || []).some(aid => selectedAccounts.includes(aid))
     })
-    if (targetProducts.length === 0) { showAlert('선택된 상품 중 등록된 마켓이 없습니다'); return }
-    if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
+    if (targetProducts.length === 0) { showAlert('선택된 소싱사이트/마켓에 해당하는 등록 상품이 없습니다'); return }
 
     const targetLabels = selectedAccounts.map(aid => {
       const acc = accounts.find(a => a.id === aid)
@@ -276,37 +296,37 @@ export default function ShipmentsPage() {
     setTransmitting(true)
     const ts = () => new Date().toLocaleTimeString()
     // 로그를 ref 배열로 관리 — spread O(n²) 방지
-    const logsRef: string[] = [...logMessages]
-    const pushLog = (msg: string) => { logsRef.push(msg) }
-    const flushLogs = () => setLogMessages([...logsRef])
-    pushLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length}개`)
-    flushLogs()
+    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg])
+    addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length}개`)
 
-    try {
-      const res = await shipmentApi.marketDelete(targetProducts, selectedAccounts)
-      let totalSuccess = 0
-      let totalFail = 0
-      for (const r of res.results) {
-        const prod = products.find(p => p.id === r.product_id)
-        const prodName = prod?.name || r.product_id
-        if (r.success_count > 0) {
-          pushLog(`[${ts()}]   ${prodName}: ${r.success_count}개 마켓 삭제 성공`)
+    let totalSuccess = 0
+    let totalFail = 0
+    for (let i = 0; i < targetProducts.length; i++) {
+      const pid = targetProducts[i]
+      const prod = products.find(p => p.id === pid)
+      const prodName = prod?.name?.slice(0, 30) || pid
+      try {
+        const res = await shipmentApi.marketDelete([pid], selectedAccounts)
+        const r = res.results?.[0]
+        if (r && r.success_count > 0) {
+          addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName}: 삭제 성공`)
           totalSuccess += r.success_count
         }
-        const fails = Object.entries(r.delete_results).filter(([, st]) => st !== 'success')
-        for (const [aid, msg] of fails) {
-          const acc = accounts.find(a => a.id === aid)
-          pushLog(`[${ts()}]   ${prodName} → ${acc?.market_name || aid}: ${msg}`)
-          totalFail++
+        if (r) {
+          const fails = Object.entries(r.delete_results).filter(([, st]) => st !== 'success')
+          for (const [aid, msg] of fails) {
+            const acc = accounts.find(a => a.id === aid)
+            addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName} → ${acc?.market_name || aid}: ${msg}`)
+            totalFail++
+          }
         }
+      } catch (e) {
+        addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName}: 오류 — ${e instanceof Error ? e.message : ''}`)
+        totalFail++
       }
-      pushLog(`[${ts()}] 마켓삭제 완료 — 성공 ${totalSuccess}건, 실패 ${totalFail}건`)
-      flushLogs()
-      await load()
-    } catch (e) {
-      pushLog(`[${ts()}] 마켓삭제 오류: ${e}`)
-      flushLogs()
     }
+    addLog(`[${ts()}] 마켓삭제 완료 — 성공 ${totalSuccess}건, 실패 ${totalFail}건`)
+    await load()
     setTransmitting(false)
   }
 
@@ -314,11 +334,17 @@ export default function ShipmentsPage() {
     const inputIds = targetIds || selectedProducts
     if (inputIds.length === 0) { showAlert('상품을 선택해주세요'); return }
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
+    if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
 
-    // 현재 필터에 표시된 상품만 전송 (필터 외 잔존 선택 제거)
+    // 소싱사이트 체크 + 현재 필터에 표시된 상품만 전송
+    const siteSet = new Set(selectedSites)
     const filteredSet = new Set(filteredProducts.map(p => p.id))
-    const visibleSelected = targetIds ? inputIds : inputIds.filter(id => filteredSet.has(id))
-    if (visibleSelected.length === 0) { showAlert('현재 화면에 표시된 선택 상품이 없습니다'); return }
+    const visibleSelected = (targetIds || inputIds).filter(id => {
+      if (!targetIds && !filteredSet.has(id)) return false
+      const prod = products.find(p => p.id === id)
+      return prod ? siteSet.has(prod.source_site) : false
+    })
+    if (visibleSelected.length === 0) { showAlert('선택된 소싱사이트에 해당하는 상품이 없습니다'); return }
 
     setTransmitting(true)
 
@@ -446,7 +472,54 @@ export default function ShipmentsPage() {
     }
     setProgress({ current: 0, total: tasks.length })
 
-    // 병렬 전송 (상품 3건 동시, 마켓별 병렬은 백엔드에서 처리)
+    // 대량 전송(50건 이상): Job 큐로 백그라운드 처리
+    if (tasks.length >= 50) {
+      try {
+        const allPids = tasks.map(t => t.pid)
+        const allAccIds = [...effectiveAccountSet]
+        const { API_BASE_URL: apiBase } = await import('@/config/api')
+        const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            job_type: 'transmit',
+            payload: {
+              product_ids: allPids,
+              update_items: items,
+              target_account_ids: allAccIds,
+              skip_unchanged: skipEnabled,
+            },
+          }),
+        })
+        const jobData = await res.json()
+        const jobId = jobData.id || ''
+        activeJobIdRef.current = jobId
+        setProgress({ current: 0, total: tasks.length })
+        // 전송 진행 폴링
+        const poll = setInterval(async () => {
+          try {
+            const jr = await fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`)
+            const j = await jr.json()
+            const cur = j.progress_current || 0
+            const tot = j.progress_total || tasks.length
+            setProgress({ current: cur, total: tot })
+            if (j.status === 'completed' || j.status === 'failed') {
+              clearInterval(poll)
+              addLog(`[${new Date().toLocaleTimeString()}] 전송 완료 — ${cur}/${tot}건`)
+              if (j.error) addLog(`[${new Date().toLocaleTimeString()}] ${j.error}`)
+              setTransmitting(false)
+              load()
+            }
+          } catch { /* ignore */ }
+        }, 3000)
+      } catch (e) {
+        addLog(`[${ts()}] 전송 실패: ${e instanceof Error ? e.message : '오류'}`)
+        setTransmitting(false)
+      }
+      return
+    }
+
+    // 소량 전송: 기존 방식 (상품 3건 동시)
     const BATCH_SIZE = 3
     let doneCount = 0
     for (let b = 0; b < tasks.length; b += BATCH_SIZE) {
@@ -555,9 +628,12 @@ export default function ShipmentsPage() {
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>검색항목</span>
           <select value={searchField} onChange={e => setSearchField(e.target.value)} style={{ ...inputStyle, width: '100px' }}>
-            <option value="name">상품명</option>
+            <option value="name">검색항목</option>
+            <option value="brand">브랜드</option>
+            <option value="name_all">상품명+등록명</option>
+            <option value="group">그룹</option>
             <option value="no">상품번호</option>
-            <option value="group">그룹명</option>
+            <option value="policy">정책</option>
           </select>
           <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)} placeholder={searchField === 'name' ? '상품명 검색' : searchField === 'no' ? '상품번호 검색' : '그룹명 검색'} style={{ ...inputStyle, width: '200px' }} />
         </div>
@@ -596,7 +672,11 @@ export default function ShipmentsPage() {
         <div style={{ padding: '10px 16px 12px', borderBottom: '1px solid #181C28' }}>
           <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#C5C5C5', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid #1C1E2A' }}>소싱사이트</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px' }}>
-            {SOURCE_SITES.filter(s => s !== '전체').map(site => (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', color: '#C5C5C5', cursor: 'pointer', fontWeight: 600 }}>
+              <input type="checkbox" checked={selectedSites.length === allSites.length} onChange={toggleAllSites} style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }} />
+              전체
+            </label>
+            {allSites.map(site => (
               <label key={site} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', color: '#8A95B0', cursor: 'pointer' }}>
                 <input type="checkbox" checked={selectedSites.includes(site)} onChange={() => toggleSite(site)} style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }} />
                 {site}
@@ -700,9 +780,18 @@ export default function ShipmentsPage() {
             <button onClick={handleMarketDelete} disabled={transmitting}
               style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: transmitting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
             {transmitting ? (
-              <button onClick={() => { abortRef.current = true }}
+              <button onClick={async () => {
+                abortRef.current = true
+                if (activeJobIdRef.current) {
+                  try {
+                    const { API_BASE_URL: apiBase } = await import('@/config/api')
+                    await fetch(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
+                    activeJobIdRef.current = ''
+                  } catch { /* ignore */ }
+                }
+              }}
                 style={{ padding: '4px 16px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.2)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.5)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
-              >강제 중단</button>
+              >전송 중단</button>
             ) : (<>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: loopEnabled ? '#FF8C00' : '#666', cursor: 'pointer' }}>
                 <input type="checkbox" checked={loopEnabled} onChange={() => setLoopEnabled(!loopEnabled)} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
@@ -769,7 +858,7 @@ export default function ShipmentsPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
           <thead>
             <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #2D2D2D' }}>
-              <th style={{ width: '36px', padding: '0.625rem' }}><input type="checkbox" checked={filteredProducts.length > 0 && filteredProducts.every(p => selectedProducts.includes(p.id))} onChange={toggleAllProducts} style={{ accentColor: '#F59E0B' }} /></th>
+              <th style={{ width: '36px', padding: '0.625rem' }}><input type="checkbox" checked={pageProducts.length > 0 && pageProducts.every(p => selectedProducts.includes(p.id))} onChange={toggleAllProducts} style={{ accentColor: '#F59E0B' }} /></th>
               <th style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem', color: '#888', width: '40px' }}>No</th>
               <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: '#888' }}>상품번호</th>
               <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: '#888' }}>사이트</th>

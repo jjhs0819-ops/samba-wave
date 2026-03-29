@@ -1021,6 +1021,202 @@ async def collect_by_url(
     raise HTTPException(400, f"'{site}' 사이트 수집은 아직 지원하지 않습니다")
 
 
+# ═══════════════════════════════════════
+# 브랜드 소싱 — 카테고리 스캔 + 그룹 일괄 생성
+# ═══════════════════════════════════════
+
+class BrandScanRequest(BaseModel):
+    brand: str
+    gf: str = "A"
+    keyword: str = ""
+
+
+@router.post("/brand-scan")
+async def brand_scan(
+    req: BrandScanRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """무신사 브랜드의 최하위 카테고리별 상품 수 스캔."""
+    from backend.domain.samba.proxy.musinsa import MusinsaClient
+
+    client = MusinsaClient()
+    try:
+        categories = await client.scan_brand_categories(
+            brand=req.brand, gf=req.gf, keyword=req.keyword or req.brand,
+        )
+        # 실제 총 상품 수 조회 (카테고리 합산은 중복 포함)
+        import httpx
+        async with httpx.AsyncClient(timeout=15) as http:
+            r = await http.get("https://api.musinsa.com/api2/dp/v1/plp/goods", params={
+                "caller": "SEARCH", "keyword": req.keyword or req.brand,
+                "brand": req.brand, "gf": req.gf, "page": "1", "size": "1",
+            }, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://www.musinsa.com/"})
+            real_total = r.json().get("data", {}).get("pagination", {}).get("totalCount", 0) if r.status_code == 200 else 0
+    except Exception as e:
+        raise HTTPException(500, f"브랜드 스캔 실패: {e}")
+
+    return {"categories": categories, "total": real_total, "groupCount": len(categories)}
+
+
+class BrandCreateGroupsRequest(BaseModel):
+    brand: str
+    brand_name: str = ""
+    gf: str = "A"
+    categories: list[dict]  # [{categoryCode, path, count, category1, category2, category3}]
+    requested_count_per_group: int = 100
+    applied_policy_id: str | None = None
+    options: dict = {}  # excludePreorder, excludeBoutique, maxDiscount
+
+
+@router.post("/brand-create-groups")
+async def brand_create_groups(
+    req: BrandCreateGroupsRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """선택된 카테고리별로 검색그룹 일괄 생성."""
+    from backend.api.v1.routers.samba.collector_common import _get_services
+
+    svc = _get_services(session)
+    created = []
+
+    for cat in req.categories:
+        cat_code = cat.get("categoryCode", "")
+        path = cat.get("path", "")
+        count = cat.get("count", 0)
+        cat_name = path.replace(" > ", "_").replace("/", "_")
+        group_name = f"MUSINSA_{req.brand_name or req.brand}_{cat_name}"
+
+        # 검색 URL 구성
+        from urllib.parse import urlencode
+        params = {
+            "keyword": req.brand_name or req.brand,
+            "brand": req.brand,
+            "category": cat_code,
+            "gf": req.gf,
+        }
+        if req.options.get("excludePreorder"):
+            params["excludePreorder"] = "1"
+        if req.options.get("excludeBoutique"):
+            params["excludeBoutique"] = "1"
+        if req.options.get("maxDiscount"):
+            params["maxDiscount"] = "1"
+
+        keyword_url = f"https://www.musinsa.com/search/goods?{urlencode(params)}"
+        req_count = min(count, req.requested_count_per_group) if req.requested_count_per_group > 0 else count
+
+        filter_data = {
+            "source_site": "MUSINSA",
+            "keyword": keyword_url,
+            "name": group_name,
+            "requested_count": req_count,
+            "applied_policy_id": req.applied_policy_id,
+        }
+        try:
+            sf = await svc.create_filter(filter_data)
+            created.append({"id": sf.id, "name": group_name, "count": req_count, "path": path})
+        except Exception as e:
+            logger.warning(f"[브랜드소싱] 그룹 생성 실패 {group_name}: {e}")
+
+    logger.info(f"[브랜드소싱] {req.brand}: {len(created)}개 그룹 생성")
+    return {"created": len(created), "groups": created}
+
+
+class BrandRefreshRequest(BaseModel):
+    brand: str
+    brand_name: str = ""
+    gf: str = "A"
+    options: dict = {}
+
+
+@router.post("/brand-refresh")
+async def brand_refresh(
+    req: BrandRefreshRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """브랜드 추가수집 — 신규 카테고리 그룹 생성 + 기존 그룹 요청수 갱신."""
+    from backend.domain.samba.proxy.musinsa import MusinsaClient
+    from backend.api.v1.routers.samba.collector_common import _get_services
+    from urllib.parse import urlencode, urlparse, parse_qs
+
+    svc = _get_services(session)
+    client = MusinsaClient()
+
+    # 1) 카테고리 스캔
+    try:
+        categories = await client.scan_brand_categories(
+            brand=req.brand, gf=req.gf, keyword=req.brand_name or req.brand,
+        )
+    except Exception as e:
+        raise HTTPException(500, f"카테고리 스캔 실패: {e}")
+
+    # 2) 기존 그룹 조회 — brand + category 코드로 매칭
+    all_filters = await svc.list_filters()
+    existing_cat_codes: dict[str, Any] = {}  # categoryCode → filter
+    for f in all_filters:
+        if f.source_site != "MUSINSA":
+            continue
+        try:
+            parsed = urlparse(f.keyword or "")
+            qs = parse_qs(parsed.query)
+            f_brand = qs.get("brand", [""])[0]
+            f_cat = qs.get("category", [""])[0]
+            if f_brand == req.brand and f_cat:
+                existing_cat_codes[f_cat] = f
+        except Exception:
+            continue
+
+    new_groups = 0
+    updated_groups = 0
+
+    for cat in categories:
+        cat_code = cat.get("categoryCode", "")
+        count = cat.get("count", 0)
+        path = cat.get("path", "")
+
+        if cat_code in existing_cat_codes:
+            # 기존 그룹 — 요청수를 현재 카테고리 상품수로 갱신
+            f = existing_cat_codes[cat_code]
+            if count > (f.requested_count or 0):
+                await svc.update_filter(f.id, {"requested_count": count})
+                updated_groups += 1
+        else:
+            # 신규 카테고리 — 그룹 생성
+            cat_name = path.replace(" > ", "_").replace("/", "_")
+            group_name = f"MUSINSA_{req.brand_name or req.brand}_{cat_name}"
+            params = {
+                "keyword": req.brand_name or req.brand,
+                "brand": req.brand,
+                "category": cat_code,
+                "gf": req.gf,
+            }
+            if req.options.get("excludePreorder"):
+                params["excludePreorder"] = "1"
+            if req.options.get("excludeBoutique"):
+                params["excludeBoutique"] = "1"
+            if req.options.get("maxDiscount"):
+                params["maxDiscount"] = "1"
+            keyword_url = f"https://www.musinsa.com/search/goods?{urlencode(params)}"
+            try:
+                await svc.create_filter({
+                    "source_site": "MUSINSA",
+                    "keyword": keyword_url,
+                    "name": group_name,
+                    "requested_count": count,
+                })
+                new_groups += 1
+            except Exception as e:
+                logger.warning(f"[추가수집] 그룹 생성 실패 {group_name}: {e}")
+
+    total_cats = len(categories)
+    logger.info(f"[추가수집] {req.brand}: 스캔 {total_cats}개, 신규 {new_groups}개, 갱신 {updated_groups}개")
+    return {
+        "scanned": total_cats,
+        "new_groups": new_groups,
+        "updated_groups": updated_groups,
+        "message": f"스캔 {total_cats}개 카테고리 / 신규 그룹 {new_groups}개 생성 / 기존 {updated_groups}개 요청수 갱신",
+    }
+
+
 @router.post("/collect-filter/{filter_id}", status_code=200)
 async def collect_by_filter(
     filter_id: str,
@@ -2217,6 +2413,45 @@ async def enrich_product(
 
         updated = await svc.update_collected_product(product_id, updates)
         return {"success": True, "enriched_fields": list(updates.keys()), "product": updated}
+
+    # 플러그인 기반 소싱처 (FashionPlus, Nike, Adidas 등)
+    from backend.domain.samba.plugins import SOURCING_PLUGINS
+    _src = product.source_site or ""
+    plugin = SOURCING_PLUGINS.get(_src) or SOURCING_PLUGINS.get(_src.upper())
+    if plugin and product.site_product_id:
+        try:
+            from datetime import datetime, timezone
+            result = await plugin.refresh(product)
+            updates: dict[str, Any] = {}
+            if result.new_sale_price is not None:
+                updates["sale_price"] = result.new_sale_price
+            if result.new_original_price is not None:
+                updates["original_price"] = result.new_original_price
+            if result.new_cost is not None:
+                updates["cost"] = result.new_cost
+            if result.new_sale_status:
+                updates["is_sold_out"] = result.new_sale_status == "sold_out"
+                updates["sale_status"] = result.new_sale_status
+            if result.new_options is not None:
+                updates["options"] = result.new_options
+            if result.error:
+                return {"success": False, "message": result.error}
+            if not updates:
+                return {"success": True, "message": "변동 없음", "product": product}
+            # 가격이력 스냅샷
+            snapshot = {
+                "date": datetime.now(timezone.utc).isoformat(),
+                "sale_price": updates.get("sale_price", product.sale_price),
+                "original_price": updates.get("original_price", product.original_price),
+                "cost": updates.get("cost", product.cost),
+            }
+            history = list(product.price_history or [])
+            history.insert(0, snapshot)
+            updates["price_history"] = _trim_history(history)
+            updated = await svc.update_collected_product(product_id, updates)
+            return {"success": True, "enriched_fields": list(updates.keys()), "product": updated}
+        except Exception as e:
+            raise HTTPException(502, f"{product.source_site} 갱신 실패: {e}")
 
     raise HTTPException(400, f"'{product.source_site}' 상세 보강은 아직 지원하지 않습니다")
 

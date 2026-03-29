@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { orderApi, channelApi, accountApi, proxyApi, collectorApi, type SambaOrder, type SambaChannel, type SambaMarketAccount } from '@/lib/samba/api'
+import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
@@ -81,6 +81,7 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<SambaOrder[]>([])
   const [channels, setChannels] = useState<SambaChannel[]>([])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
+  const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState('thisyear')
   const [marketFilter, setMarketFilter] = useState('')
@@ -112,6 +113,11 @@ export default function OrdersPage() {
     const id = Date.now()
     setNotifications(prev => [...prev, { id, message, type }])
   }
+
+  // 가격이력 모달
+  const [priceHistoryModal, setPriceHistoryModal] = useState(false)
+  const [priceHistoryData, setPriceHistoryData] = useState<Record<string, unknown>[]>([])
+  const [priceHistoryProduct, setPriceHistoryProduct] = useState<{ name: string; source_site: string }>({ name: '', source_site: '' })
 
   const [showUrlModal, setShowUrlModal] = useState(false)
   const [urlModalOrderId, setUrlModalOrderId] = useState('')
@@ -154,7 +160,7 @@ export default function OrdersPage() {
   const [dateLocked, setDateLocked] = useState(false)
   const [customStart, setCustomStart] = useState(`${new Date().getFullYear()}-01-01`)
   const [startLocked, setStartLocked] = useState(false)
-  const [customEnd, setCustomEnd] = useState(new Date().toISOString().slice(0, 10))
+  const [customEnd, setCustomEnd] = useState(new Date().toLocaleDateString('sv-SE'))
 
   const loadOrders = useCallback(async () => {
     setLoading(true)
@@ -168,6 +174,7 @@ export default function OrdersPage() {
   useEffect(() => { loadOrders() }, [loadOrders])
   useEffect(() => { channelApi.list().then(setChannels).catch(() => {}) }, [])
   useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
+  useEffect(() => { sourcingAccountApi.list().then(accs => setSourcingAccounts(accs.filter(a => a.is_active))).catch(() => {}) }, [])
   useEffect(() => {
     proxyApi.aligoRemain().then(r => { if (r.success) setSmsRemain(r) }).catch(() => {})
   }, [])
@@ -396,6 +403,31 @@ export default function OrdersPage() {
           return
         }
       } catch { /* ignore */ }
+    }
+    // 4. 상품명에서 소싱처 상품번호 추출 → URL 구성
+    const sourcingUrls: Record<string, string> = {
+      MUSINSA: 'https://www.musinsa.com/products/',
+      KREAM: 'https://kream.co.kr/products/',
+      FashionPlus: 'https://www.fashionplus.co.kr/goods/detail/',
+      ABCmart: 'https://www.a-rt.com/product?prdtNo=',
+      Nike: 'https://www.nike.com/kr/t/',
+    }
+    const name = o.product_name || ''
+    // 상품명 끝에 숫자가 있으면 소싱처 상품번호로 추정
+    const idMatch = name.match(/\b(\d{6,})\s*$/)
+    if (idMatch && o.source_site && sourcingUrls[o.source_site]) {
+      window.open(sourcingUrls[o.source_site] + idMatch[1], '_blank')
+      return
+    }
+    // source_site 없어도 상품명 패턴으로 소싱처 추론
+    if (idMatch) {
+      const id = idMatch[1]
+      if (name.includes('운동화') || name.includes('나이키') || name.includes('아디다스')) {
+        window.open('https://www.fashionplus.co.kr/goods/detail/' + id, '_blank')
+        return
+      }
+      window.open('https://www.musinsa.com/products/' + id, '_blank')
+      return
     }
     showAlert('소싱처 원문링크 정보가 없습니다', 'info')
   }
@@ -679,9 +711,9 @@ export default function OrdersPage() {
               setPeriod(pb.key)
               if (!startLocked) {
                 const start = getPeriodStart(pb.key)
-                setCustomStart(start ? start.toISOString().slice(0, 10) : '')
+                setCustomStart(start ? start.toLocaleDateString('sv-SE') : '')
               }
-              setCustomEnd(new Date().toISOString().slice(0, 10))
+              setCustomEnd(new Date().toLocaleDateString('sv-SE'))
             }}
               style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
             >{pb.label}</button>
@@ -904,30 +936,90 @@ export default function OrdersPage() {
                             }
                           } catch { /* ignore */ }
                         }
+                        // 상품명 끝 숫자(소싱 상품번호)로 site_product_id 검색
+                        const _spidMatch = (o.product_name || '').match(/\b(\d{6,})\s*$/)
+                        if (_spidMatch) {
+                          try {
+                            const res = await collectorApi.lookupByMarketNo(_spidMatch[1])
+                            if (res.found && res.id) {
+                              window.open(`/samba/products?search=${encodeURIComponent(res.id)}&search_type=id&highlight=${res.id}`, '_blank')
+                              return
+                            }
+                          } catch { /* ignore */ }
+                        }
                         if (o.product_name) {
                           window.open(`/samba/products?search=${encodeURIComponent(o.product_name)}`, '_blank')
                         } else {
                           showAlert('상품 정보가 없습니다', 'info')
                         }
                       }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>상품정보</button>
-                      <button onClick={() => showAlert('가격변경이력 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>가격변경이력</button>
+                      <button onClick={async () => {
+                        if (!o.product_id) { showAlert('상품 정보가 없습니다', 'info'); return }
+                        try {
+                          const lookup = await collectorApi.lookupByMarketNo(o.product_id)
+                          if (!lookup.found || !lookup.id) { showAlert('수집상품을 찾을 수 없습니다', 'info'); return }
+                          setPriceHistoryProduct({ name: o.product_name || '', source_site: o.source_site || '' })
+                          setPriceHistoryData([])
+                          setPriceHistoryModal(true)
+                          const history = await collectorApi.getPriceHistory(lookup.id)
+                          setPriceHistoryData(history || [])
+                        } catch { showAlert('가격이력 조회 실패', 'error') }
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>가격변경이력</button>
                       <button onClick={() => handleSourceLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #444', borderRadius: '3px', color: (o.source_site && o.product_id) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원문링크</button>
                       <button onClick={() => handleMarketLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #444', borderRadius: '3px', color: o.channel_id ? '#51CF66' : '#555', cursor: 'pointer' }}>판매링크</button>
                       <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>미등록 입력</button>
                       <button onClick={() => handleTracking(o.shipping_company || '', o.tracking_number || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>배송조회</button>
-                      <button onClick={() => showAlert('업데이트 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>업데이트</button>
+                      <button onClick={async () => {
+                        // 마켓상품번호 → 수집상품 ID 역추적 → enrich 호출
+                        let cpId = ''
+                        if (o.product_id) {
+                          try {
+                            const lookup = await collectorApi.lookupByMarketNo(o.product_id)
+                            if (lookup.found && lookup.id) cpId = lookup.id
+                          } catch { /* ignore */ }
+                        }
+                        if (!cpId) {
+                          const idMatch = (o.product_name || '').match(/\b(\d{6,})\s*$/)
+                          if (idMatch) {
+                            try {
+                              const lookup = await collectorApi.lookupByMarketNo(idMatch[1])
+                              if (lookup.found && lookup.id) cpId = lookup.id
+                            } catch { /* ignore */ }
+                          }
+                        }
+                        if (!cpId) { showAlert('수집상품을 찾을 수 없습니다', 'info'); return }
+                        try {
+                          const { API_BASE_URL: apiBase } = await import('@/config/api')
+                          const res = await fetch(`${apiBase}/api/v1/samba/collector/enrich/${cpId}`, { method: 'POST' })
+                          const data = await res.json()
+                          if (res.ok && data.success) {
+                            const p = data.product
+                            const costVal = p?.cost || p?.sale_price
+                            const priceStr = costVal != null ? `₩${Number(costVal).toLocaleString()}` : '-'
+                            const stockStr = p?.is_sold_out ? '품절' : '재고있음'
+                            showAlert(`${(o.product_name || '').slice(0, 20)} → ${priceStr} | ${stockStr}`, 'success')
+                            if (costVal) { await orderApi.update(o.id, { cost: costVal }); loadOrders() }
+                          } else {
+                            showAlert(data.message || '업데이트 실패', 'error')
+                          }
+                        } catch (e) { showAlert(e instanceof Error ? e.message : '업데이트 실패', 'error') }
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>업데이트</button>
                       <button onClick={() => showAlert('마켓상품삭제 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>마켓상품삭제</button>
                       <button onClick={() => {
                         if (o.ext_order_number) { window.open(o.ext_order_number, '_blank'); return }
-                        if (!o.order_number) { showAlert('주문번호가 없습니다', 'info'); return }
+                        const srcNo = o.sourcing_order_number || ''
+                        if (!srcNo) { showAlert('소싱 주문번호가 없습니다', 'info'); return }
                         const orderUrlMap: Record<string, string> = {
-                          MUSINSA: `https://www.musinsa.com/order/order-detail/${o.order_number}`,
-                          KREAM: `https://kream.co.kr/my/purchasing/${o.order_number}`,
+                          MUSINSA: `https://www.musinsa.com/order/order-detail/${srcNo}`,
+                          KREAM: `https://kream.co.kr/my/purchasing/${srcNo}`,
+                          FashionPlus: `https://www.fashionplus.co.kr/mypage/order/detail/${srcNo}`,
+                          ABCmart: `https://www.a-rt.com/mypage/order-detail/${srcNo}`,
+                          Nike: `https://www.nike.com/kr/orders/${srcNo}`,
                         }
                         const url = orderUrlMap[o.source_site || '']
                         if (!url) { showAlert(`${o.source_site || '알수없는'} 소싱처는 원주문링크를 지원하지 않습니다`, 'info'); return }
                         window.open(url, '_blank')
-                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: (o.ext_order_number || o.order_number) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원주문링크</button>
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: (o.ext_order_number || o.sourcing_order_number) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원주문링크</button>
                     </div>
 
                     {/* 주문자/수령인/연락처/주소 한 줄 */}
@@ -976,6 +1068,26 @@ export default function OrdersPage() {
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>실수익</span><span style={{ color: liveProfit >= 0 ? '#51CF66' : '#FF6B6B' }}>{liveProfit >= 0 ? '+' : ''}{Math.round(liveProfit).toLocaleString()}</span></div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>수익률</span><span style={{ color: '#888' }}>{liveProfitRate}%</span></div>
                     </div>
+                    {/* 가격X/재고X/직배/까대기/선물 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '0.375rem', borderTop: '1px solid #1C2333', paddingTop: '0.375rem' }}>
+                      <button onClick={() => showAlert('가격X 기능 준비중입니다', 'info')} style={{ fontSize: '0.68rem', padding: '0.125rem 0', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer', textAlign: 'center' }}>가격X</button>
+                      <button onClick={() => showAlert('재고X 기능 준비중입니다', 'info')} style={{ fontSize: '0.68rem', padding: '0.125rem 0', background: 'rgba(255,211,61,0.1)', border: '1px solid rgba(255,211,61,0.3)', color: '#FFD93D', borderRadius: '4px', cursor: 'pointer', textAlign: 'center' }}>재고X</button>
+                      {ACTION_BUTTONS.map(btn => {
+                        const isActive = activeAction === btn.key
+                        return (
+                          <button
+                            key={btn.key}
+                            onClick={() => toggleAction(o.id, btn.key)}
+                            style={{
+                              fontSize: '0.68rem', padding: '0.125rem 0',
+                              background: isActive ? btn.activeColor : 'rgba(80,80,80,0.5)',
+                              color: '#fff', border: isActive ? `1px solid ${btn.activeColor}` : '1px solid #555',
+                              borderRadius: '4px', cursor: 'pointer', textAlign: 'center',
+                            }}
+                          >{btn.label}</button>
+                        )
+                      })}
+                    </div>
                   </td>
                   {/* 주문상태 */}
                   <td style={{ padding: '0.625rem', fontSize: '0.8rem' }}>
@@ -996,66 +1108,73 @@ export default function OrdersPage() {
                         </select>
                         <input
                           type="text"
-                          placeholder="주문번호"
-                          value={editingOrderNumbers[o.id] ?? o.order_number ?? ''}
+                          placeholder="소싱주문번호"
+                          value={editingOrderNumbers[o.id] ?? o.sourcing_order_number ?? ''}
                           onChange={e => setEditingOrderNumbers(prev => ({ ...prev, [o.id]: e.target.value }))}
                           onBlur={async (e) => {
                             const val = e.target.value.trim()
                             setEditingOrderNumbers(prev => { const n = { ...prev }; delete n[o.id]; return n })
-                            if (val === (o.order_number ?? '')) return
+                            if (val === (o.sourcing_order_number ?? '')) return
                             try {
-                              await orderApi.update(o.id, { order_number: val })
+                              await orderApi.update(o.id, { sourcing_order_number: val })
                               loadOrders()
-                            } catch (err) { showAlert(err instanceof Error ? err.message : '주문번호 저장 실패', 'error') }
+                            } catch (err) { showAlert(err instanceof Error ? err.message : '소싱주문번호 저장 실패', 'error') }
                           }}
                           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                           style={{ flex: 1, fontSize: '0.68rem', padding: '0.25rem 0.375rem', background: '#1A1A1A', border: '1px solid #444', color: '#E5E5E5', borderRadius: '4px', minWidth: 0, fontFamily: 'monospace' }}
                         />
                       </div>
 
-                      {/* 2행: 가격X/재고X/직배/까대기/선물 + 마켓상태 */}
+                      {/* 2행: 주문계정 + 마켓상태 */}
                       <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'stretch' }}>
-                        <div style={{ flex: 1, display: 'flex', gap: '0.25rem', alignItems: 'center', minWidth: 0 }}>
-                          <button onClick={() => showAlert('가격X 기능 준비중입니다', 'info')} style={{ flex: 1, fontSize: '0.68rem', padding: '0.125rem 0', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'center' }}>가격X</button>
-                          <button onClick={() => showAlert('재고X 기능 준비중입니다', 'info')} style={{ flex: 1, fontSize: '0.68rem', padding: '0.125rem 0', background: 'rgba(255,211,61,0.1)', border: '1px solid rgba(255,211,61,0.3)', color: '#FFD93D', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'center' }}>재고X</button>
-                          {ACTION_BUTTONS.map(btn => {
-                            const isActive = activeAction === btn.key
-                            return (
-                              <button
-                                key={btn.key}
-                                onClick={() => toggleAction(o.id, btn.key)}
-                                style={{
-                                  flex: 1,
-                                  padding: '0.125rem 0',
-                                  fontSize: '0.68rem',
-                                  background: isActive ? btn.activeColor : 'rgba(80,80,80,0.5)',
-                                  color: '#fff',
-                                  border: isActive ? `1px solid ${btn.activeColor}` : '1px solid #555',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  whiteSpace: 'nowrap',
-                                  textAlign: 'center',
-                                }}
-                              >{btn.label}</button>
-                            )
-                          })}
-                        </div>
+                        <select
+                          value={o.sourcing_account_id || ''}
+                          onChange={async (e) => {
+                            const val = e.target.value
+                            try {
+                              await orderApi.update(o.id, { sourcing_account_id: val || undefined } as Partial<SambaOrder>)
+                              loadOrders()
+                            } catch { /* ignore */ }
+                          }}
+                          style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
+                        >
+                          <option value="">주문계정</option>
+                          {(() => {
+                            const allSites = [...new Set(sourcingAccounts.map(sa => sa.site_name))]
+                            const siteOrder: Record<string, number> = { MUSINSA: 0, LOTTEON: 1, SSG: 2 }
+                            const sites = allSites.sort((a, b) => (siteOrder[a] ?? 99) - (siteOrder[b] ?? 99) || a.localeCompare(b))
+                            return sites.map(site => (
+                              <optgroup key={site} label={site}>
+                                {sourcingAccounts.filter(sa => sa.site_name === site).map(sa => (
+                                  <option key={sa.id} value={sa.id}>{sa.account_label ? `${sa.account_label}(${sa.username})` : sa.username}</option>
+                                ))}
+                              </optgroup>
+                            ))
+                          })()}
+                        </select>
                         <div style={{
-                          flex: 1,
-                          padding: '0.25rem 0.375rem',
-                          background: 'rgba(30,30,30,0.6)',
-                          border: '1px solid #2D2D2D',
-                          borderRadius: '6px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
+                          flex: 1, padding: '0.25rem 0.375rem',
+                          background: 'rgba(30,30,30,0.6)', border: '1px solid #2D2D2D', borderRadius: '6px',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
                           <span style={{ fontSize: '0.75rem', color: '#4C9AFF', fontWeight: 600 }}>{o.shipping_status || '-'}</span>
                         </div>
                       </div>
 
-                      {/* 3행: 배송비 + 원가 */}
+                      {/* 3행: 원가 + 배송비 */}
                       <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                        <input
+                          type="text"
+                          style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
+                          value={costDisplay}
+                          placeholder="실구매가"
+                          onChange={e => {
+                            const raw = e.target.value.replace(/[^\d]/g, '')
+                            setEditingCosts(prev => ({ ...prev, [o.id]: raw }))
+                          }}
+                          onBlur={() => handleCostSave(o.id)}
+                          onKeyDown={e => { if (e.key === 'Enter') handleCostSave(o.id) }}
+                        />
                         <input
                           type="text"
                           style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
@@ -1067,18 +1186,6 @@ export default function OrdersPage() {
                           }}
                           onBlur={() => handleShipFeeSave(o.id)}
                           onKeyDown={e => { if (e.key === 'Enter') handleShipFeeSave(o.id) }}
-                        />
-                        <input
-                          type="text"
-                          style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
-                          value={costDisplay}
-                          placeholder="원가"
-                          onChange={e => {
-                            const raw = e.target.value.replace(/[^\d]/g, '')
-                            setEditingCosts(prev => ({ ...prev, [o.id]: raw }))
-                          }}
-                          onBlur={() => handleCostSave(o.id)}
-                          onKeyDown={e => { if (e.key === 'Enter') handleCostSave(o.id) }}
                         />
                       </div>
 
@@ -1168,7 +1275,7 @@ export default function OrdersPage() {
 
                       {/* 간단메모 */}
                       <textarea
-                        style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', height: '4.68rem', lineHeight: '1.4' }}
+                        style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', height: '5.38rem', lineHeight: '1.4' }}
                         placeholder="간단메모"
                         defaultValue={o.notes || ''}
                         onBlur={async e => {
@@ -1273,6 +1380,152 @@ export default function OrdersPage() {
           </div>
         </div>
       )}
+
+      {/* 가격/재고 이력 모달 — 상품관리 ProductCard와 100% 동일 */}
+      {priceHistoryModal && (() => {
+        const history = priceHistoryData
+        const isKream = priceHistoryProduct.source_site === 'KREAM'
+        const costPrices = history.map(h => Number(h.cost || h.sale_price || 0)).filter(Boolean)
+        const currentPrice = costPrices[0] || 0
+        const minPrice = costPrices.length ? Math.min(...costPrices) : 0
+        const maxPrice = costPrices.length ? Math.max(...costPrices) : 0
+        const minEntry = history.find(h => Number(h.cost || h.sale_price || 0) === minPrice)
+        const maxEntry = history.find(h => Number(h.cost || h.sale_price || 0) === maxPrice)
+        const kreamFastMin = isKream && history[0] ? (history[0] as Record<string, unknown>).kream_fast_min as number || 0 : 0
+        const kreamGeneralMin = isKream && history[0] ? (history[0] as Record<string, unknown>).kream_general_min as number || 0 : 0
+        const fmtHistDate = (d: string) => new Date(d).toLocaleString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        const fmtShortDate = (d: string) => new Date(d).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+
+        if (history.length === 0 && priceHistoryModal) {
+          return (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 99998, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}
+              onClick={() => setPriceHistoryModal(false)}>
+              <div style={{ background: '#1A1A1A', borderRadius: '10px', padding: '2rem', color: '#888', fontSize: '0.85rem' }}>이력 로딩 중...</div>
+            </div>
+          )
+        }
+
+        return (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onClick={() => setPriceHistoryModal(false)}>
+            <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', width: 'min(700px, 95vw)', maxHeight: '85vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+              onClick={e => e.stopPropagation()}>
+              {/* 헤더 */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid #2D2D2D' }}>
+                <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#E5E5E5' }}>가격 / 재고 이력</h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#666' }}>{history.length}건 기록</span>
+                  <button onClick={() => setPriceHistoryModal(false)} style={{ background: 'transparent', border: 'none', color: '#888', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+                </div>
+              </div>
+              {/* 상품 정보 + 요약 */}
+              <div style={{ padding: '12px 20px', borderBottom: '1px solid #2D2D2D' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '3px', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600 }}>{priceHistoryProduct.source_site}</span>
+                  <span style={{ fontSize: '0.75rem', color: '#999' }}>{priceHistoryProduct.name}</span>
+                </div>
+                {costPrices.length > 0 && (
+                  <div style={{ display: 'flex', gap: '20px', fontSize: '0.78rem', flexWrap: 'wrap' }}>
+                    {isKream && kreamFastMin > 0 && (
+                      <div><span style={{ color: '#666' }}>빠른배송 </span><span style={{ color: '#FF8C00', fontWeight: 600 }}>₩ {kreamFastMin.toLocaleString()}</span></div>
+                    )}
+                    {isKream && kreamGeneralMin > 0 && (
+                      <div><span style={{ color: '#666' }}>일반배송 </span><span style={{ color: '#E5E5E5', fontWeight: 600 }}>₩ {kreamGeneralMin.toLocaleString()}</span></div>
+                    )}
+                    {!isKream && (
+                      <div><span style={{ color: '#666' }}>현재가 </span><span style={{ color: '#E5E5E5', fontWeight: 600 }}>₩ {currentPrice.toLocaleString()}</span></div>
+                    )}
+                    <div><span style={{ color: '#666' }}>최저가 </span><span style={{ color: '#51CF66', fontWeight: 600 }}>₩ {minPrice.toLocaleString()}</span>{minEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(String(minEntry.date))})</span>}</div>
+                    <div><span style={{ color: '#666' }}>최고가 </span><span style={{ color: '#FF6B6B', fontWeight: 600 }}>₩ {maxPrice.toLocaleString()}</span>{maxEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(String(maxEntry.date))})</span>}</div>
+                  </div>
+                )}
+              </div>
+              {/* 이력 테이블 */}
+              <div style={{ overflowY: 'auto', padding: '0' }}>
+                {history.length === 0 ? (
+                  <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.85rem' }}>
+                    가격 변동 이력 없음<br />
+                    <span style={{ fontSize: '0.75rem', color: '#444' }}>업데이트 시 이력이 기록됩니다</span>
+                  </div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
+                        <th style={{ padding: '8px 16px', textAlign: 'left', color: '#888', fontWeight: 500 }}>날짜</th>
+                        {isKream ? (
+                          <>
+                            <th style={{ padding: '8px 16px', textAlign: 'right', color: '#888', fontWeight: 500 }}>빠른배송(₩)</th>
+                            <th style={{ padding: '8px 16px', textAlign: 'right', color: '#888', fontWeight: 500 }}>일반배송(₩)</th>
+                          </>
+                        ) : (
+                          <th style={{ padding: '8px 16px', textAlign: 'right', color: '#888', fontWeight: 500 }}>원가(₩)</th>
+                        )}
+                        <th style={{ padding: '8px 16px', textAlign: 'right', color: '#888', fontWeight: 500 }}>재고(수량/O/X)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {history.map((h, i) => {
+                        const opts = (h.options || []) as Array<{ name?: string; price?: number; stock?: number; isSoldOut?: boolean }>
+                        return (
+                          <React.Fragment key={i}>
+                            <tr style={{ borderTop: i > 0 ? '1px solid #2D2D2D' : 'none', background: 'rgba(255,255,255,0.02)' }}>
+                              <td style={{ padding: '8px 16px', color: '#C5C5C5', fontWeight: 600, fontSize: '0.78rem' }}>{fmtHistDate(String(h.date))}</td>
+                              {isKream ? (
+                                <>
+                                  <td style={{ padding: '8px 16px', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>
+                                    {(h as Record<string, unknown>).kream_fast_min ? `₩ ${((h as Record<string, unknown>).kream_fast_min as number).toLocaleString()}` : '-'}
+                                  </td>
+                                  <td style={{ padding: '8px 16px', textAlign: 'right', color: '#FFB84D', fontWeight: 600 }}>
+                                    {(h as Record<string, unknown>).kream_general_min ? `₩ ${((h as Record<string, unknown>).kream_general_min as number).toLocaleString()}` : '-'}
+                                  </td>
+                                </>
+                              ) : (
+                                <td style={{ padding: '8px 16px', textAlign: 'right', color: '#FFB84D', fontWeight: 600 }}>
+                                  ₩ {((h.cost || h.sale_price) as number)?.toLocaleString() || '-'}
+                                </td>
+                              )}
+                              <td style={{ padding: '8px 16px', textAlign: 'right', color: '#888' }}>
+                                {opts.length > 0 ? `${opts.length}개 옵션` : '-'}
+                              </td>
+                            </tr>
+                            {opts.map((opt, oi) => {
+                              const kOpt = opt as Record<string, unknown>
+                              const soldOut = opt.isSoldOut || (opt.stock !== undefined && opt.stock <= 0)
+                              const stockLabel = soldOut ? '품절' : opt.stock !== undefined ? `${opt.stock}개` : 'O'
+                              return (
+                                <tr key={oi} style={{ borderTop: '1px solid #1A1A1A' }}>
+                                  <td style={{ padding: '4px 16px 4px 32px', color: '#666', fontSize: '0.73rem' }}>ㄴ {opt.name || `옵션${oi + 1}`}</td>
+                                  {isKream ? (
+                                    <>
+                                      <td style={{ padding: '4px 16px', textAlign: 'right', color: '#888', fontSize: '0.73rem' }}>
+                                        {(kOpt.kreamFastPrice as number) > 0 ? `₩ ${(kOpt.kreamFastPrice as number).toLocaleString()}` : '-'}
+                                      </td>
+                                      <td style={{ padding: '4px 16px', textAlign: 'right', color: '#888', fontSize: '0.73rem' }}>
+                                        {(kOpt.kreamGeneralPrice as number) > 0 ? `₩ ${(kOpt.kreamGeneralPrice as number).toLocaleString()}` : '-'}
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <td style={{ padding: '4px 16px', textAlign: 'right', color: '#888', fontSize: '0.73rem' }}>
+                                      ₩ {((h.cost || h.sale_price) as number)?.toLocaleString()}
+                                    </td>
+                                  )}
+                                  <td style={{ padding: '4px 16px', textAlign: 'right', fontSize: '0.73rem', fontWeight: 600, color: soldOut ? '#FF6B6B' : '#51CF66' }}>
+                                    {stockLabel}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </React.Fragment>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* SMS/카카오 발송 모달 */}
       {msgModal && (

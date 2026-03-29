@@ -819,35 +819,58 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (capturedCookie) sendCookiesToProxy(capturedCookie).catch(() => {})
     if (kreamCookie) sendKreamCookiesToProxy(kreamCookie).catch(() => {})
   }
-  if (alarm.name === 'musinsaBalanceCheck') {
-    checkMusinsaBalance()
+  if (alarm.name === 'balanceCheckPoll') {
+    pollBalanceCheckRequest()
   }
 })
 
-// 무신사 잔액 자동 체크 (12시간 주기)
+// 무신사 잔액 체크 — 버튼 요청 시에만 실행
 async function checkMusinsaBalance() {
-  console.log('[잔액] 자동 잔액 체크 시작')
+  console.log('[잔액] 잔액 체크 시작')
   let tab = null
   try {
     tab = await chrome.tabs.create({ url: 'https://www.musinsa.com/mypage', active: false })
     await new Promise(r => setTimeout(r, 15000))
   } catch (e) {
-    console.log(`[잔액] 자동 체크 실패: ${e.message}`)
+    console.log(`[잔액] 체크 실패: ${e.message}`)
   } finally {
     if (tab?.id) try { await chrome.tabs.remove(tab.id) } catch {}
+    chrome.alarms.clear('balanceCheckPoll')
+    console.log('[잔액] 체크 완료 → 폴링 중지')
   }
 }
 
-chrome.alarms.get('musinsaBalanceCheck', (alarm) => {
+// 서버에서 잔액 체크 요청 확인 (버튼 클릭 시에만 폴링 활성)
+async function pollBalanceCheckRequest() {
+  const urls = [
+    'http://localhost:28080/api/v1/samba/sourcing-accounts/balance-check-requested',
+    `${PROXY_URL}/api/v1/samba/sourcing-accounts/balance-check-requested`,
+  ]
+  for (const url of urls) {
+    try {
+      const r = await fetch(url)
+      if (r.ok) {
+        const data = await r.json()
+        if (data.requested) {
+          console.log(`[잔액] 서버 요청 감지 → 잔액 체크 실행`)
+          checkMusinsaBalance()
+          return
+        }
+      }
+    } catch { /* 무시 */ }
+  }
+}
+
+// 잔액 폴링 (5분 주기, 서버에 요청 없으면 아무 동작 안 함)
+chrome.alarms.get('balanceCheckPoll', (alarm) => {
   if (!alarm) {
-    chrome.alarms.create('musinsaBalanceCheck', { delayInMinutes: 1, periodInMinutes: 720 })
-    console.log('[잔액] 자동 체크 alarm 설정: 12시간 주기')
+    chrome.alarms.create('balanceCheckPoll', { periodInMinutes: 5 })
   }
 })
 
 // 설치/업데이트 시
-chrome.runtime.onInstalled.addListener(() => { setupCookieSyncAlarm(); startCollectPolling() })
-chrome.runtime.onStartup.addListener(() => { setupCookieSyncAlarm(); startCollectPolling() })
+chrome.runtime.onInstalled.addListener(() => { setupCookieSyncAlarm() })
+chrome.runtime.onStartup.addListener(() => { setupCookieSyncAlarm() })
 setupCookieSyncAlarm()
 
 // ==================== AI소싱 큐 폴링 ====================
