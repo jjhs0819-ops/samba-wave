@@ -841,18 +841,25 @@ async function checkMusinsaBalance() {
   }
 }
 
-// 서버에서 잔액 체크 요청 확인 (30초 주기)
+// 서버에서 잔액 체크 요청 확인 (30초 주기, 로컬+프로덕션 둘 다)
 async function pollBalanceCheckRequest() {
-  try {
-    const r = await fetch(`${PROXY_URL}/api/v1/samba/sourcing-accounts/balance-check-requested`)
-    if (r.ok) {
-      const data = await r.json()
-      if (data.requested) {
-        console.log('[잔액] 서버 요청 감지 → 즉시 잔액 체크')
-        checkMusinsaBalance()
+  const urls = [
+    'http://localhost:28080/api/v1/samba/sourcing-accounts/balance-check-requested',
+    `${PROXY_URL}/api/v1/samba/sourcing-accounts/balance-check-requested`,
+  ]
+  for (const url of urls) {
+    try {
+      const r = await fetch(url)
+      if (r.ok) {
+        const data = await r.json()
+        if (data.requested) {
+          console.log(`[잔액] 서버 요청 감지 (${url.includes('localhost') ? '로컬' : '프로덕션'}) → 즉시 잔액 체크`)
+          checkMusinsaBalance()
+          return
+        }
       }
-    }
-  } catch { /* 서버 미실행 시 무시 */ }
+    } catch { /* 무시 */ }
+  }
 }
 
 chrome.alarms.get('balanceCheckPoll', (alarm) => {
