@@ -1335,7 +1335,11 @@ class LotteonClient:
             key = f"{od_no}_{clm_no}_{item.get('odSeq','')}"
             if key not in seen_clm_keys:
               seen_clm_keys.add(key)
-              result.append(item)
+              # 배송 API의 stepCd는 교환 클레임 단계와 다른 체계이므로
+              # 교환요청(21)으로 고정 — 정확한 단계는 1차/2차 클레임 API에서 결정
+              delivery_item = dict(item)
+              delivery_item["odPrgsStepCd"] = "21"
+              result.append(delivery_item)
         except Exception as day_e:
           logger.debug(f"[롯데ON][교환-배송모듈] {srch_strt} 조회 실패: {day_e}")
     except Exception as e:
@@ -1564,6 +1568,131 @@ class LotteonClient:
       content: 수정할 답변 내용
     """
     return await self.answer_qna(qna_no, content)
+
+  # ──────────────────────────────────────────────────────────────────────
+  # CS — 판매자 연락 (Contact)
+  # ──────────────────────────────────────────────────────────────────────
+
+  async def get_contact_list(self, days: int = 30) -> list[dict[str, Any]]:
+    """판매자 연락 목록 조회.
+
+    POST /v1/openapi/customer/v1/getSellerContactList
+
+    Returns:
+      rsltList 항목 리스트. 주요 필드:
+        cntcNo          — 연락번호 (market_inquiry_no)
+        cntcCnts        — 연락 내용
+        ansCnts         — 답변 내용
+        procStatCd      — 처리상태 (ANS/UNANS)
+        odNo            — 주문번호
+        pdNo            — 상품번호
+        pdNm            — 상품명
+        accpDttm        — 접수일시 (yyyyMMddHHmmss)
+        vocLcsfCd       — 문의유형코드
+    """
+    from datetime import datetime, timedelta
+
+    now = datetime.now()
+    end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
+    start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
+
+    body = {
+      "scStrtDt": start_dt,
+      "scEndDt": end_dt,
+      "pageNo": "1",
+      "rowsPerPage": "100",
+    }
+    try:
+      result = await self._call_api(
+        "POST", "/v1/openapi/customer/v1/getSellerContactList", body=body
+      )
+      items = result.get("rsltList") or []
+      if not isinstance(items, list):
+        items = []
+      logger.info(f"[롯데ON][CS] 판매자연락 조회 완료: {len(items)}건 (기간: {start_dt}~{end_dt})")
+      return items
+    except LotteonApiError as e:
+      logger.warning(f"[롯데ON][CS] 판매자연락 목록 조회 실패: {e}")
+      return []
+
+  async def confirm_contact(self, contact_no: str) -> bool:
+    """판매자 연락 수신 확인.
+
+    POST /v1/openapi/customer/v1/updateSellerContactConfirm
+    """
+    try:
+      await self._call_api(
+        "POST",
+        "/v1/openapi/customer/v1/updateSellerContactConfirm",
+        body={"cntcNo": contact_no},
+      )
+      return True
+    except LotteonApiError:
+      return False
+
+  async def answer_contact(self, contact_no: str, content: str) -> dict[str, Any]:
+    """판매자 연락 답변 등록.
+
+    POST /v1/openapi/customer/v1/updateSellerContact
+
+    Args:
+      contact_no: 연락번호 (cntcNo)
+      content: 답변 내용 (ansCnts)
+    """
+    body = {
+      "cntcNo": contact_no,
+      "ansCnts": content,
+    }
+    result = await self._call_api(
+      "POST", "/v1/openapi/customer/v1/updateSellerContact", body=body
+    )
+    logger.info(f"[롯데ON][CS] 판매자연락 답변 완료: cntcNo={contact_no}")
+    return result
+
+  # ──────────────────────────────────────────────────────────────────────
+  # CS — 보상 요청 (Compensate)
+  # ──────────────────────────────────────────────────────────────────────
+
+  async def get_compensate_list(self, days: int = 30) -> list[dict[str, Any]]:
+    """보상 요청 목록 조회.
+
+    POST /v1/openapi/customer/v1/getSellerCompensateList
+
+    Returns:
+      rsltList 항목 리스트. 주요 필드:
+        compNo          — 보상요청번호 (market_inquiry_no)
+        compCnts        — 보상 요청 내용
+        ansCnts         — 답변/처리 내용
+        procStatCd      — 처리상태
+        odNo            — 주문번호
+        pdNo            — 상품번호
+        pdNm            — 상품명
+        accpDttm        — 접수일시
+    """
+    from datetime import datetime, timedelta
+
+    now = datetime.now()
+    end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
+    start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
+
+    body = {
+      "scStrtDt": start_dt,
+      "scEndDt": end_dt,
+      "pageNo": "1",
+      "rowsPerPage": "100",
+    }
+    try:
+      result = await self._call_api(
+        "POST", "/v1/openapi/customer/v1/getSellerCompensateList", body=body
+      )
+      items = result.get("rsltList") or []
+      if not isinstance(items, list):
+        items = []
+      logger.info(f"[롯데ON][CS] 보상요청 조회 완료: {len(items)}건 (기간: {start_dt}~{end_dt})")
+      return items
+    except LotteonApiError as e:
+      logger.warning(f"[롯데ON][CS] 보상요청 목록 조회 실패: {e}")
+      return []
 
 
 class LotteonApiError(Exception):

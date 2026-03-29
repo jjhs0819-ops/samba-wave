@@ -194,7 +194,7 @@ export default function CSPage() {
       : '전체마켓'
     setCsLogMessages(prev => [...prev, `[${ts()}] ${label} CS 문의 동기화 중...`])
     try {
-      const result = await csInquiryApi.syncFromMarkets()
+      const result = await csInquiryApi.syncFromMarkets(csSyncAccountId || undefined)
       setCsLogMessages(prev => [...prev, `[${ts()}] ${result.message}`])
       setPage(0)
       setSearch('')

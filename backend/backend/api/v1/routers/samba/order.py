@@ -956,30 +956,46 @@ async def sync_orders_from_markets(
                             "21": "교환요청", "22": "교환회수완료",
                             "23": "교환회수완료", "24": "교환재배송", "25": "교환완료",
                         }
+                        # 교환 상태 진행 우선순위 (역방향 업데이트 차단용)
+                        exchange_priority = {
+                            "교환요청": 1, "교환회수완료": 2,
+                            "교환재배송": 3, "교환완료": 4,
+                        }
                         for claim in exchange_claims:
                             ex_od_no = claim.get("odNo", "")
                             clm_no = claim.get("clmNo", "")
                             step_cd = str(claim.get("odPrgsStepCd", "") or "")
                             ex_status = exchange_step_map.get(step_cd, "교환요청")
                             logger.info(f"[롯데ON][교환클레임] odNo={ex_od_no} clmNo={clm_no} stepCd={step_cd} → {ex_status}")
-                            # 1차: orders_data에서 찾아 상태 덮어쓰기
+                            # 1차: orders_data에서 찾아 상태 덮어쓰기 (역방향 차단)
                             found_in_data = False
                             for od in orders_data:
                                 if od.get("order_number") == ex_od_no:
-                                    od["shipping_status"] = ex_status
-                                    if step_cd in ("21", "22", "23"):
-                                        od["status"] = "return_requested"
+                                    cur_status = od.get("shipping_status", "")
+                                    cur_p = exchange_priority.get(cur_status, 0)
+                                    new_p = exchange_priority.get(ex_status, 0)
+                                    if cur_p == 0 or new_p >= cur_p:
+                                        od["shipping_status"] = ex_status
+                                        if step_cd in ("21", "22", "23"):
+                                            od["status"] = "return_requested"
+                                    else:
+                                        logger.info(f"[롯데ON][교환클레임] 역방향 차단: {ex_od_no} {cur_status}→{ex_status}")
                                     found_in_data = True
                                     break
-                            # 2차: orders_data에 없으면 DB에서 직접 찾아 업데이트
+                            # 2차: orders_data에 없으면 DB에서 직접 찾아 업데이트 (역방향 차단)
                             if not found_in_data and ex_od_no:
                                 existing = await svc.repo.find_by_async(order_number=ex_od_no)
                                 if existing:
-                                    update_ex: dict[str, Any] = {"shipping_status": ex_status}
-                                    if step_cd in ("21", "22", "23"):
-                                        update_ex["status"] = "return_requested"
-                                    await svc.update_order(existing.id, update_ex)
-                                    logger.info(f"[롯데ON][교환클레임] DB 직접 업데이트: {ex_od_no} → {ex_status}")
+                                    cur_p = exchange_priority.get(existing.shipping_status, 0)
+                                    new_p = exchange_priority.get(ex_status, 0)
+                                    if cur_p == 0 or new_p >= cur_p:
+                                        update_ex: dict[str, Any] = {"shipping_status": ex_status}
+                                        if step_cd in ("21", "22", "23"):
+                                            update_ex["status"] = "return_requested"
+                                        await svc.update_order(existing.id, update_ex)
+                                        logger.info(f"[롯데ON][교환클레임] DB 직접 업데이트: {ex_od_no} → {ex_status}")
+                                    else:
+                                        logger.info(f"[롯데ON][교환클레임] 역방향 차단: {ex_od_no} {existing.shipping_status}→{ex_status}")
                 except Exception as ex_err:
                     logger.warning(f"[롯데ON] 교환 클레임 조회 실패: {ex_err}")
             else:
@@ -1123,7 +1139,11 @@ async def sync_orders_from_markets(
                             update_fields["shipping_status"] = new_ship_status
                         elif existing.shipping_status == "송장전송완료" and new_ship_status in advanced:
                             update_fields["shipping_status"] = new_ship_status
-                        elif existing.shipping_status not in ("송장전송완료", "배송중", "배송완료", "교환재배송"):
+                        elif existing.shipping_status not in (
+                            "송장전송완료", "배송중", "배송완료", "교환재배송",
+                            "교환요청", "교환회수완료", "교환완료", "교환거부",
+                            "반품요청", "반품완료", "반품거부",
+                        ):
                             update_fields["shipping_status"] = new_ship_status
                     # 정산금액(revenue) / 수수료율 갱신
                     new_revenue = order_data.get("revenue")
