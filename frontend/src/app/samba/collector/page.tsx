@@ -479,7 +479,7 @@ export default function CollectorPage() {
           continue
         }
         const { job_id } = await res.json() as { job_id: string }
-        addLog(`[${f.name}] 수집 작업 시작`)
+        // 수집 시작 로그 생략
 
         // 폴링으로 진행률 추적
         let lastCurrent = 0
@@ -840,8 +840,10 @@ export default function CollectorPage() {
               setBrandCategories([]); setBrandSelectedCats(new Set())
               try {
                 const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
-                const brand = parsed?.searchParams.get('brand') || ''
-                const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || collectUrl.trim()
+                // /brand/{name}/products 경로 패턴 지원
+                const pathBrandMatch = parsed?.pathname.match(/\/brand\/([^/]+)/)
+                const brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || ''
+                const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : '')
                 const gf = parsed?.searchParams.get('gf') || 'A'
                 if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
                 const res = await collectorApi.brandScan(brand, gf, keyword)
@@ -1242,7 +1244,7 @@ export default function CollectorPage() {
                             const r = await fetch(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}`, { method: 'POST' })
                             if (!r.ok) { addLog(`[${f.name}] 수집 실패: HTTP ${r.status}`); continue }
                             const { job_id } = await r.json()
-                            addLog(`[${f.name}] 수집 작업 시작`)
+                            // 수집 시작 로그 생략
                             let lastCurrent = 0
                             while (!abort.signal.aborted) {
                               await new Promise(r => setTimeout(r, 1000))
