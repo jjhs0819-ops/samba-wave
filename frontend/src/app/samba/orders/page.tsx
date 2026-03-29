@@ -113,6 +113,11 @@ export default function OrdersPage() {
     setNotifications(prev => [...prev, { id, message, type }])
   }
 
+  // 가격이력 모달
+  const [priceHistoryModal, setPriceHistoryModal] = useState(false)
+  const [priceHistoryData, setPriceHistoryData] = useState<Record<string, unknown>[]>([])
+  const [priceHistoryProduct, setPriceHistoryProduct] = useState<{ name: string; source_site: string }>({ name: '', source_site: '' })
+
   const [showUrlModal, setShowUrlModal] = useState(false)
   const [urlModalOrderId, setUrlModalOrderId] = useState('')
   const [urlModalInput, setUrlModalInput] = useState('')
@@ -935,7 +940,18 @@ export default function OrdersPage() {
                           showAlert('상품 정보가 없습니다', 'info')
                         }
                       }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>상품정보</button>
-                      <button onClick={() => showAlert('가격변경이력 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>가격변경이력</button>
+                      <button onClick={async () => {
+                        if (!o.product_id) { showAlert('상품 정보가 없습니다', 'info'); return }
+                        try {
+                          const lookup = await collectorApi.lookupByMarketNo(o.product_id)
+                          if (!lookup.found || !lookup.id) { showAlert('수집상품을 찾을 수 없습니다', 'info'); return }
+                          setPriceHistoryProduct({ name: o.product_name || '', source_site: o.source_site || '' })
+                          setPriceHistoryData([])
+                          setPriceHistoryModal(true)
+                          const history = await collectorApi.getPriceHistory(lookup.id)
+                          setPriceHistoryData(history || [])
+                        } catch { showAlert('가격이력 조회 실패', 'error') }
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>가격변경이력</button>
                       <button onClick={() => handleSourceLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #444', borderRadius: '3px', color: (o.source_site && o.product_id) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원문링크</button>
                       <button onClick={() => handleMarketLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #444', borderRadius: '3px', color: o.channel_id ? '#51CF66' : '#555', cursor: 'pointer' }}>판매링크</button>
                       <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>미등록 입력</button>
@@ -960,19 +976,19 @@ export default function OrdersPage() {
                       <button onClick={() => showAlert('마켓상품삭제 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>마켓상품삭제</button>
                       <button onClick={() => {
                         if (o.ext_order_number) { window.open(o.ext_order_number, '_blank'); return }
-                        if (!o.order_number) { showAlert('주문번호가 없습니다', 'info'); return }
-                        // 소싱처별 주문상세 페이지 URL (= 원주문링크 = 반품링크)
+                        const srcNo = (o as Record<string, unknown>).sourcing_order_number as string || ''
+                        if (!srcNo) { showAlert('소싱 주문번호가 없습니다', 'info'); return }
                         const orderUrlMap: Record<string, string> = {
-                          MUSINSA: `https://www.musinsa.com/order/order-detail/${o.order_number}`,
-                          KREAM: `https://kream.co.kr/my/purchasing/${o.order_number}`,
-                          FashionPlus: `https://www.fashionplus.co.kr/mypage/order/detail/${o.order_number}`,
-                          ABCmart: `https://www.a-rt.com/mypage/order-detail/${o.order_number}`,
-                          Nike: `https://www.nike.com/kr/orders/${o.order_number}`,
+                          MUSINSA: `https://www.musinsa.com/order/order-detail/${srcNo}`,
+                          KREAM: `https://kream.co.kr/my/purchasing/${srcNo}`,
+                          FashionPlus: `https://www.fashionplus.co.kr/mypage/order/detail/${srcNo}`,
+                          ABCmart: `https://www.a-rt.com/mypage/order-detail/${srcNo}`,
+                          Nike: `https://www.nike.com/kr/orders/${srcNo}`,
                         }
                         const url = orderUrlMap[o.source_site || '']
                         if (!url) { showAlert(`${o.source_site || '알수없는'} 소싱처는 원주문링크를 지원하지 않습니다`, 'info'); return }
                         window.open(url, '_blank')
-                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: (o.ext_order_number || o.order_number) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원주문링크</button>
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: (o.ext_order_number || (o as Record<string, unknown>).sourcing_order_number) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원주문링크</button>
                     </div>
 
                     {/* 주문자/수령인/연락처/주소 한 줄 */}
@@ -1099,20 +1115,8 @@ export default function OrdersPage() {
                         </div>
                       </div>
 
-                      {/* 3행: 배송비 + 원가 */}
+                      {/* 3행: 원가 + 배송비 */}
                       <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
-                        <input
-                          type="text"
-                          style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
-                          value={shipFeeDisplay}
-                          placeholder="배송비"
-                          onChange={e => {
-                            const raw = e.target.value.replace(/[^\d]/g, '')
-                            setEditingShipFees(prev => ({ ...prev, [o.id]: raw }))
-                          }}
-                          onBlur={() => handleShipFeeSave(o.id)}
-                          onKeyDown={e => { if (e.key === 'Enter') handleShipFeeSave(o.id) }}
-                        />
                         <input
                           type="text"
                           style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
@@ -1124,6 +1128,18 @@ export default function OrdersPage() {
                           }}
                           onBlur={() => handleCostSave(o.id)}
                           onKeyDown={e => { if (e.key === 'Enter') handleCostSave(o.id) }}
+                        />
+                        <input
+                          type="text"
+                          style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
+                          value={shipFeeDisplay}
+                          placeholder="배송비"
+                          onChange={e => {
+                            const raw = e.target.value.replace(/[^\d]/g, '')
+                            setEditingShipFees(prev => ({ ...prev, [o.id]: raw }))
+                          }}
+                          onBlur={() => handleShipFeeSave(o.id)}
+                          onKeyDown={e => { if (e.key === 'Enter') handleShipFeeSave(o.id) }}
                         />
                       </div>
 
@@ -1318,6 +1334,86 @@ export default function OrdersPage() {
           </div>
         </div>
       )}
+
+      {/* 가격/재고 이력 모달 */}
+      {priceHistoryModal && (() => {
+        const history = priceHistoryData
+        const costPrices = history.map(h => Number(h.cost || h.sale_price || 0)).filter(Boolean)
+        const currentPrice = costPrices[0] || 0
+        const minPrice = costPrices.length ? Math.min(...costPrices) : 0
+        const maxPrice = costPrices.length ? Math.max(...costPrices) : 0
+        const minEntry = history.find(h => Number(h.cost || h.sale_price || 0) === minPrice)
+        const maxEntry = history.find(h => Number(h.cost || h.sale_price || 0) === maxPrice)
+        const fmt = (n: number) => n.toLocaleString()
+        const fmtDate = (d: string) => new Date(d).toLocaleString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        const fmtShortDate = (d: string) => new Date(d).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+
+        return (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onClick={() => setPriceHistoryModal(false)}>
+            <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', width: 'min(700px, 95vw)', maxHeight: '85vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+              onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid #2D2D2D' }}>
+                <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#E5E5E5' }}>가격 / 재고 이력</h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#666' }}>{history.length}건 기록</span>
+                  <button onClick={() => setPriceHistoryModal(false)} style={{ background: 'transparent', border: 'none', color: '#888', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+                </div>
+              </div>
+              <div style={{ padding: '12px 20px', borderBottom: '1px solid #2D2D2D' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '0.65rem', padding: '2px 6px', borderRadius: '3px', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600 }}>{priceHistoryProduct.source_site}</span>
+                  <span style={{ fontSize: '0.75rem', color: '#999' }}>{priceHistoryProduct.name}</span>
+                </div>
+                {costPrices.length > 0 && (
+                  <div style={{ display: 'flex', gap: '20px', fontSize: '0.78rem', flexWrap: 'wrap' }}>
+                    <div><span style={{ color: '#666' }}>현재 </span><span style={{ color: '#FFB84D', fontWeight: 600 }}>₩ {fmt(currentPrice)}</span></div>
+                    <div><span style={{ color: '#666' }}>최저 </span><span style={{ color: '#51CF66', fontWeight: 600 }}>₩ {fmt(minPrice)}</span>{minEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(String(minEntry.date || ''))})</span>}</div>
+                    <div><span style={{ color: '#666' }}>최고 </span><span style={{ color: '#FF6B6B', fontWeight: 600 }}>₩ {fmt(maxPrice)}</span>{maxEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(String(maxEntry.date || ''))})</span>}</div>
+                  </div>
+                )}
+              </div>
+              {history.length === 0 ? (
+                <div style={{ padding: '2rem', textAlign: 'center', color: '#555' }}>이력 로딩 중...</div>
+              ) : (
+                <div style={{ overflowY: 'auto', flex: 1 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.02)' }}>
+                        <th style={{ padding: '8px 16px', textAlign: 'left', color: '#888', fontWeight: 500 }}>날짜</th>
+                        <th style={{ padding: '8px 16px', textAlign: 'right', color: '#888', fontWeight: 500 }}>판매가(₩)</th>
+                        <th style={{ padding: '8px 16px', textAlign: 'right', color: '#888', fontWeight: 500 }}>원가(₩)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {history.map((h, i) => {
+                        const prev = history[i + 1]
+                        const curCost = Number(h.cost || h.sale_price || 0)
+                        const prevCost = prev ? Number(prev.cost || prev.sale_price || 0) : curCost
+                        const diff = curCost - prevCost
+                        return (
+                          <tr key={i} style={{ borderBottom: '1px solid #1E1E1E' }}>
+                            <td style={{ padding: '8px 16px', color: '#999' }}>{fmtDate(String(h.date || ''))}</td>
+                            <td style={{ padding: '8px 16px', textAlign: 'right', color: '#E5E5E5' }}>₩ {Number(h.sale_price || 0).toLocaleString()}</td>
+                            <td style={{ padding: '8px 16px', textAlign: 'right' }}>
+                              <span style={{ color: '#E5E5E5' }}>₩ {curCost.toLocaleString()}</span>
+                              {i < history.length - 1 && diff !== 0 && (
+                                <span style={{ marginLeft: '6px', fontSize: '0.68rem', color: diff > 0 ? '#FF6B6B' : '#51CF66' }}>
+                                  {diff > 0 ? `▲${fmt(diff)}` : `▼${fmt(Math.abs(diff))}`}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* SMS/카카오 발송 모달 */}
       {msgModal && (
