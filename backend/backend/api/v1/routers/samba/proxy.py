@@ -179,7 +179,7 @@ async def aligo_send_sms(
     if is_lms and body.title:
         data["title"] = body.title
 
-    url = "https://apis.aligo.in/send/" if not is_lms else "https://apis.aligo.in/send/"
+    url = "https://apis.aligo.in/send/"
 
     try:
         async with httpx.AsyncClient(timeout=15, verify=True) as client:

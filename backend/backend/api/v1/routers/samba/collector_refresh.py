@@ -198,7 +198,7 @@ async def refresh_products(
                 updates["cost"] = r.new_cost
 
             updates["sale_status"] = r.new_sale_status
-            updates["is_sold_out"] = r.new_sale_status == "sold_out"
+            # is_sold_out 제거 → sale_status로 통일
 
             # 가격 변동 추적
             old_price = product.sale_price or 0
@@ -386,10 +386,10 @@ async def test_rate_limit(body: RateLimitTestRequest = RateLimitTestRequest()):
     import httpx
     import time
 
-    from backend.domain.samba.collector.refresher import _get_musinsa_cookie
+    from backend.api.v1.routers.samba.collector_common import get_musinsa_cookie
     from backend.domain.samba.proxy.musinsa import MusinsaClient
 
-    cookie = await _get_musinsa_cookie()
+    cookie = await get_musinsa_cookie()
     if not cookie:
         return {"error": "무신사 쿠키 없음"}
 

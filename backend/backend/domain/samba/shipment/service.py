@@ -12,6 +12,49 @@ from backend.domain.samba.shipment.model import SambaShipment
 from backend.domain.samba.shipment.repository import SambaShipmentRepository
 from backend.utils.logger import logger
 
+import math
+
+# 마켓타입 → 정책키 매핑
+MARKET_TYPE_TO_POLICY_KEY = {
+    'coupang': '쿠팡', 'ssg': '신세계몰', 'smartstore': '스마트스토어',
+    '11st': '11번가', 'gmarket': '지마켓', 'auction': '옥션',
+    'gsshop': 'GS샵', 'lotteon': '롯데ON', 'lottehome': '롯데홈쇼핑',
+    'homeand': '홈앤쇼핑', 'hmall': 'HMALL', 'kream': 'KREAM',
+}
+
+
+def calc_market_price(cost: float, policy_pricing: dict, market_type: str, market_policies: dict | None = None) -> int:
+    """정책 기반 마켓 최종 판매가 계산.
+
+    원가 + 마진 + 배송비 → 수수료 역산 → 추가요금.
+    마켓별 오버라이드 적용.
+    """
+    if not policy_pricing:
+        return int(cost)
+    pr = policy_pricing
+    common_margin_rate = pr.get("marginRate", 15)
+    common_shipping = pr.get("shippingCost", 0)
+    common_extra = pr.get("extraCharge", 0)
+    common_fee = pr.get("feeRate", 0)
+    min_margin = pr.get("minMarginAmount", 0)
+
+    policy_key = MARKET_TYPE_TO_POLICY_KEY.get(market_type, "")
+    mp = (market_policies or {}).get(policy_key, {}) if policy_key else {}
+    m_margin_rate = mp.get("marginRate") or common_margin_rate
+    m_shipping = mp.get("shippingCost") or common_shipping
+    m_fee = mp.get("feeRate") or common_fee
+
+    margin_amt = round(cost * m_margin_rate / 100)
+    if min_margin > 0 and margin_amt < min_margin:
+        margin_amt = min_margin
+    calc_price = cost + margin_amt + m_shipping
+    if m_fee > 0 and calc_price > 0:
+        calc_price = math.ceil(calc_price / (1 - m_fee / 100))
+    if common_extra > 0:
+        calc_price += common_extra
+    return int(calc_price)
+
+
 # 그룹상품 동시성 제어 락 (account_id별)
 _group_locks: dict[str, asyncio.Lock] = {}
 
@@ -142,7 +185,6 @@ class SambaShipmentService:
 
   async def transmit_group(self, product_ids: list[str], account_id: str) -> dict:
     """그룹상품을 스마트스토어에 등록."""
-    import math
 
     from backend.domain.samba.account.repository import SambaMarketAccountRepository
     from backend.domain.samba.collector.repository import SambaCollectedProductRepository
@@ -446,7 +488,7 @@ class SambaShipmentService:
             refresh_updates["options"] = refresh_result.new_options
           if refresh_result.new_sale_status:
             refresh_updates["sale_status"] = refresh_result.new_sale_status
-            refresh_updates["is_sold_out"] = refresh_result.new_sale_status == "sold_out"
+            # is_sold_out 제거 → sale_status로 통일
           # 이미지 갱신: update_items에 "image"가 명시적으로 체크된 경우만
           _update_image = update_items and "image" in update_items
           if refresh_result.new_images and _update_image:
@@ -502,10 +544,31 @@ class SambaShipmentService:
         logger.warning(f"[전송] 소싱처 최신화 예외: {ref_e}")
     # refresh_status는 최종 shipment 업데이트에서 기록
 
+    # 조기 스킵: 이미 등록된 상품 + 가격재고 업데이트 모드 + 변동 없음 → 나머지 로직 전부 건너뜀
+    _is_registered = product_row.status == "registered" and bool(product_row.registered_accounts)
+    if skip_unchanged and has_update and _is_registered:
+      # 소싱처 최신화에서 변동이 없었으면 즉시 스킵
+      if not pending_refresh_updates or refresh_status.startswith("최신화실패"):
+        pass  # 최신화 안 했거나 실패 → 스킵 판정 불가, 계속 진행
+      else:
+        _old_cost = product_row.cost or 0
+        _new_cost = pending_refresh_updates.get("cost", _old_cost)
+        _old_opts = product_row.options or []
+        _new_opts = pending_refresh_updates.get("options", _old_opts)
+        if _new_cost == _old_cost and _new_opts == _old_opts:
+          logger.info(f"[전송] 조기 스킵 — 소싱처 변동 없음 (원가 {int(_old_cost):,})")
+          shipment = SambaShipment(
+            product_id=product_id, status="completed",
+            result={"refresh": refresh_status} if refresh_status else None,
+          )
+          self.session.add(shipment)
+          await self.session.flush()
+          return shipment
+
     # 이미지/상세페이지 업데이트 필요 여부 판단
     # 최초 전송(미등록 상품)이면 update_items와 무관하게 항상 상세페이지 생성
     is_first_transmit = product_row.status != "registered" and not product_row.registered_accounts
-    needs_image = is_first_transmit or not update_items or "image" in update_items or "description" in update_items
+    needs_image = is_first_transmit or "image" in (update_items or []) or "description" in (update_items or [])
     if not needs_image:
       product_dict["_skip_image_upload"] = True
     # 가격/재고만 수정 시 404 → POST 신규등록 차단 (중복 등록 방지)
@@ -677,7 +740,6 @@ class SambaShipmentService:
     _dispatch_account_map = {a.id: a for a in _res2.scalars().all()}
 
     # 계정별 전송을 병렬 코루틴으로 실행
-    import math
 
     async def _dispatch_one(account_id: str) -> dict[str, Any]:
       """단일 계정 전송 — 결과 dict 반환."""

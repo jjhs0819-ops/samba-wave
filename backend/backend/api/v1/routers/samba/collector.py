@@ -162,8 +162,9 @@ async def musinsa_auth_status(
         row = result.scalar_one_or_none()
         if row and row.value:
             return {"status": "ok", "message": "무신사 인증 완료"}
-    except Exception:
-        pass
+    except Exception as e:
+        # DB 조회 실패 등 심각한 에러가 삼켜지지 않도록 로깅
+        logger.error(f"[musinsa-auth-status] 인증 상태 조회 실패: {e}", exc_info=True)
     return {"status": "error", "message": "무신사 인증 필요"}
 
 
@@ -281,7 +282,7 @@ async def update_filter(
             except Exception as e:
                 logger.error(f"정책 전파 실패: 필터 {filter_id} → {e}")
 
-        asyncio.get_event_loop().create_task(_propagate())
+        asyncio.create_task(_propagate())
 
     return result
 
@@ -533,10 +534,9 @@ async def scroll_products(
         conditions.append(_CP.free_shipping == True)
         conditions.append(_CP.same_day_delivery == True)
     elif status == "market_registered":
-        # 마켓에 실제 등록된 상품: registered_accounts가 null/빈배열/빈문자열이 아닌 경우
-        conditions.append(_CP.registered_accounts.isnot(None))
-        conditions.append(cast(_CP.registered_accounts, String) != 'null')
-        conditions.append(cast(_CP.registered_accounts, String) != '[]')
+        # 마켓등록상품 공통 조건 (registered_accounts + market_product_nos)
+        from backend.api.v1.routers.samba.collector_common import build_market_registered_conditions
+        conditions.extend(build_market_registered_conditions(_CP))
     elif status == "market_unregistered":
         # 마켓 미등록 상품: registered_accounts가 null이거나 빈 배열
         conditions.append(or_(
@@ -544,12 +544,14 @@ async def scroll_products(
             cast(_CP.registered_accounts, String) == 'null',
             cast(_CP.registered_accounts, String) == '[]',
         ))
+    elif status == "sold_out":
+        conditions.append(_CP.sale_status == "sold_out")
     elif status and status in _KNOWN_STATUS_VALUES:
         conditions.append(_CP.status == status)
 
     # AI 필터 (JSON 태그/이미지 패턴)
     if ai_filter == "sold_out":
-        conditions.append(or_(_CP.is_sold_out == True, _CP.sale_status == "sold_out"))
+        conditions.append(_CP.sale_status == "sold_out")
     elif ai_filter == "ai_tag_yes":
         conditions.append(cast(_CP.tags, String).like('%"__ai_tagged__"%'))
     elif ai_filter == "ai_tag_no":
@@ -617,7 +619,7 @@ async def scroll_products(
             func.count().label("total"),
             func.count(case((_CP.status == "registered", literal(1)))).label("registered"),
             func.count(case((_CP.applied_policy_id != None, literal(1)))).label("policy_applied"),
-            func.count(case((_CP.is_sold_out == True, literal(1)))).label("sold_out"),
+            func.count(case((_CP.sale_status == "sold_out", literal(1)))).label("sold_out"),
         ).select_from(_CP)
         counts_task = session.execute(counts_stmt)
 
@@ -762,7 +764,7 @@ async def product_counts(
         func.count().label("total"),
         func.count(case((_CP.registered_accounts != None, literal(1)))).label("registered"),
         func.count(case((_CP.applied_policy_id != None, literal(1)))).label("policy_applied"),
-        func.count(case((_CP.is_sold_out == True, literal(1)))).label("sold_out"),
+        func.count(case((_CP.sale_status == "sold_out", literal(1)))).label("sold_out"),
     ).select_from(_CP)
     row = (await session.execute(stmt)).one()
     result = {
@@ -962,19 +964,26 @@ async def bulk_remove_image(
 ):
     """특정 이미지 URL을 모든 상품에서 일괄 삭제 (추적삭제)."""
     from backend.domain.samba.collector.model import SambaCollectedProduct
+    from sqlalchemy import cast, String
     from sqlmodel import select
 
-    stmt = select(SambaCollectedProduct)
+    # DB 레벨에서 해당 이미지 URL을 포함하는 상품만 필터링 (전체 로드 방지)
+    image_url = body.image_url
+    stmt = select(SambaCollectedProduct).where(
+        or_(
+            cast(SambaCollectedProduct.images, String).like(f"%{image_url}%"),
+            cast(SambaCollectedProduct.detail_images, String).like(f"%{image_url}%"),
+        )
+    )
     result = await session.exec(stmt)
     removed_count = 0
     for p in result.all():
         found = False
-        # images와 detail_images 둘 다 검색
-        if p.images and body.image_url in p.images:
-            p.images = [u for u in p.images if u != body.image_url]
+        if p.images and image_url in p.images:
+            p.images = [u for u in p.images if u != image_url]
             found = True
-        if p.detail_images and body.image_url in p.detail_images:
-            p.detail_images = [u for u in p.detail_images if u != body.image_url]
+        if p.detail_images and image_url in p.detail_images:
+            p.detail_images = [u for u in p.detail_images if u != image_url]
             found = True
         if found:
             tags = list(p.tags or [])

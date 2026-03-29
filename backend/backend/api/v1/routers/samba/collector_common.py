@@ -2,7 +2,9 @@
 
 import re
 from datetime import datetime, timezone
+from typing import Any
 
+from sqlalchemy import cast, String as _StrType
 from sqlmodel.ext.asyncio.session import AsyncSession
 from backend.domain.samba.collector.grouping import generate_group_key, parse_color_from_name
 
@@ -146,7 +148,6 @@ def _build_product_data(
     ),
     "detail_html": raw_detail_html,
     "status": "collected",
-    "is_sold_out": detail.get("saleStatus") == "sold_out",
     "sale_status": detail.get("saleStatus", "in_stock"),
     "free_shipping": detail.get("freeShipping", False),
     "same_day_delivery": detail.get("sameDayDelivery", False),
@@ -204,3 +205,57 @@ def _get_services(session: AsyncSession):
     SambaSearchFilterRepository(session),
     SambaCollectedProductRepository(session),
   )
+
+
+# ── 무신사 쿠키 조회 ──
+
+async def get_musinsa_cookie(session: AsyncSession | None = None) -> str:
+  """DB에서 무신사 쿠키를 조회하여 반환.
+
+  session이 주어지면 해당 세션으로 조회하고,
+  없으면 새 읽기 세션을 열어 조회한다.
+  """
+  from backend.domain.samba.forbidden.model import SambaSettings
+  from sqlmodel import select as _sel
+
+  if session is not None:
+    try:
+      result = await session.execute(
+        _sel(SambaSettings).where(SambaSettings.key == "musinsa_cookie")
+      )
+      row = result.scalar_one_or_none()
+      return (row.value if row and row.value else "") or ""
+    except Exception:
+      logger.warning("[get_musinsa_cookie] 쿠키 조회 실패 (세션 전달)", exc_info=True)
+      return ""
+
+  # 세션이 없으면 새 읽기 세션 생성
+  try:
+    from backend.db.orm import get_read_session
+    async with get_read_session() as new_session:
+      result = await new_session.execute(
+        _sel(SambaSettings).where(SambaSettings.key == "musinsa_cookie")
+      )
+      row = result.scalar_one_or_none()
+      return (row.value if row and row.value else "") or ""
+  except Exception:
+    logger.warning("[get_musinsa_cookie] 쿠키 조회 실패 (신규 세션)", exc_info=True)
+    return ""
+
+
+# ── 마켓등록상품 필터 조건 ──
+
+def build_market_registered_conditions(model_class: Any) -> list:
+  """마켓등록상품 판별 SQLAlchemy 조건 리스트 반환.
+
+  registered_accounts IS NOT NULL / != 'null' / != '[]'
+  AND market_product_nos IS NOT NULL / != 'null' / != '{}'
+  """
+  return [
+    model_class.registered_accounts.isnot(None),
+    cast(model_class.registered_accounts, _StrType) != 'null',
+    cast(model_class.registered_accounts, _StrType) != '[]',
+    model_class.market_product_nos.isnot(None),
+    cast(model_class.market_product_nos, _StrType) != 'null',
+    cast(model_class.market_product_nos, _StrType) != '{}',
+  ]

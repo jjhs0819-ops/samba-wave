@@ -17,14 +17,18 @@ import httpx
 
 from backend.utils.logger import logger
 
+# 환경: Cloud Run이면 동시 요청 높게, 로컬이면 낮게
+import os
+_IS_CLOUD = os.getenv("K_SERVICE") is not None  # Cloud Run 자동 설정 환경변수
+
 # 소싱처당 동시 요청 제한 (기본값)
-CONCURRENCY_PER_SITE = 5
+CONCURRENCY_PER_SITE = 10 if _IS_CLOUD else 5
 # 소싱처별 동시 요청 수 (개별 설정)
 SITE_CONCURRENCY: dict[str, int] = {
-    "MUSINSA": 1,
-    "SSG": 1,
-    "LOTTEON": 2,
-    "FashionPlus": 3,
+    "MUSINSA": 50 if _IS_CLOUD else 20,
+    "SSG": 3 if _IS_CLOUD else 1,
+    "LOTTEON": 5 if _IS_CLOUD else 2,
+    "FashionPlus": 10 if _IS_CLOUD else 3,
 }
 # 소싱처별 기본 인터벌 (초)
 SITE_BASE_INTERVAL: dict[str, float] = {
@@ -274,19 +278,9 @@ async def _refresh_product_inner(product: Any, idx: int = 0, total: int = 0) -> 
 # ── 무신사 파서 ──
 
 async def _get_musinsa_cookie() -> str:
-    """DB에서 무신사 쿠키 조회."""
-    try:
-        from backend.db.orm import get_read_session
-        from backend.domain.samba.forbidden.model import SambaSettings
-        from sqlmodel import select
-        async with get_read_session() as session:
-            result = await session.execute(
-                select(SambaSettings).where(SambaSettings.key == "musinsa_cookie")
-            )
-            row = result.scalar_one_or_none()
-            return (row.value if row and row.value else "") or ""
-    except Exception:
-        return ""
+    """DB에서 무신사 쿠키 조회 — collector_common 공통 함수 위임."""
+    from backend.api.v1.routers.samba.collector_common import get_musinsa_cookie
+    return await get_musinsa_cookie()
 
 
 async def _parse_musinsa(product: Any) -> RefreshResult:
@@ -304,6 +298,8 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
     client = MusinsaClient(cookie)
     cached_grade_rate = _bulk_musinsa_cache.get("grade_rate")
     warnings: list[str] = []
+    # 방어적 초기화: RateLimitError 재시도 경로에서 UnboundLocalError 방지
+    detail = None
 
     try:
         detail = await asyncio.wait_for(
@@ -390,6 +386,10 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
             level="error", idx=_idx, total=_total,
         )
         return RefreshResult(product_id=product.id, error=f"무신사 API 오류: {e}")
+
+    # detail이 None이면 예기치 않은 경로 — 안전하게 에러 반환
+    if detail is None:
+        return RefreshResult(product_id=product.id, error="상품 상세 조회 결과 없음")
 
     new_sale_price = detail.get("salePrice", 0) or 0
     new_original_price = detail.get("originalPrice", 0) or 0
@@ -604,6 +604,18 @@ async def _parse_kream(product: Any) -> RefreshResult:
 
 # ── 범용 HTTP 파서 (ABCmart, Nike 등 — 현재 stub) ──
 
+def _has_stock_diff(old_options: list | None, new_options: list | None) -> bool:
+    """옵션 재고 변동 여부 판별."""
+    if not old_options or not new_options:
+        return False
+    old_map = {(o.get("name", "") or o.get("size", "")): o.get("stock", 0) for o in old_options}
+    for o in new_options:
+        key = o.get("name", "") or o.get("size", "")
+        if o.get("stock", 0) != old_map.get(key, 0):
+            return True
+    return False
+
+
 async def _parse_fashionplus(product: Any) -> RefreshResult:
     """패션플러스 가격/재고 갱신 — 검색 API + 상세 페이지."""
     from backend.domain.samba.proxy.fashionplus import FashionPlusClient
@@ -639,7 +651,8 @@ async def _parse_fashionplus(product: Any) -> RefreshResult:
         new_original_price=new_orig,
         new_cost=new_cost,
         new_options=new_options,
-        changed=changed or bool(new_options),
+        changed=changed,
+        stock_changed=bool(new_options and _has_stock_diff(getattr(product, "options", None), new_options)),
     )
 
 

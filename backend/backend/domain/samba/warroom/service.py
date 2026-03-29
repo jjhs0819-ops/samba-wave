@@ -139,8 +139,16 @@ class SambaMonitorService:
     by_status_result = await self.session.execute(by_status_stmt)
     by_sale_status = {row[0]: row[1] for row in by_status_result.all()}
 
+    # 마켓등록상품 수 (collector_common 공통 조건 사용)
+    from backend.api.v1.routers.samba.collector_common import build_market_registered_conditions
+    registered_stmt = select(func.count(SambaCollectedProduct.id)).where(
+      *build_market_registered_conditions(SambaCollectedProduct),
+    )
+    registered = (await self.session.execute(registered_stmt)).scalar() or 0
+
     return {
       "total": total,
+      "registered": registered,
       "by_source": by_source,
       "by_priority": by_priority,
       "by_sale_status": by_sale_status,
