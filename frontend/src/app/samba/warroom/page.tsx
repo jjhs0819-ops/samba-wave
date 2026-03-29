@@ -71,6 +71,11 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
               ))}
             </div>
           )}
+          <button onClick={() => {
+            const text = logs.map(l => l.msg).join('\n')
+            navigator.clipboard.writeText(text)
+          }} style={{ padding: '2px 8px', fontSize: '0.65rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', color: '#4C9AFF', borderRadius: '4px', cursor: 'pointer' }}>복사</button>
+          <button onClick={() => { setLogs([]); sinceIdxRef.current = 0 }} style={{ padding: '2px 8px', fontSize: '0.65rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
         </div>
       </div>
       <div
