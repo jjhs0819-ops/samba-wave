@@ -229,6 +229,61 @@ class ElevenstClient:
 
     return orders
 
+  async def confirm_order(
+    self,
+    ord_no: str,
+    ord_prd_seq: str,
+    dlv_no: str,
+    add_prd_yn: str = "N",
+    add_prd_no: str = "null",
+  ) -> bool:
+    """발주확인처리.
+
+    Args:
+        ord_no:      주문번호 (ordNo)
+        ord_prd_seq: 주문순번 (ordPrdSeq)
+        dlv_no:      배송번호 (dlvNo)
+        add_prd_yn:  추가구성상품 여부 (Y/N, 기본 N)
+        add_prd_no:  추가구성상품 번호 (없으면 null)
+
+    Returns:
+        True if 발주확인 성공
+    """
+    import re as _re
+
+    url = (
+      f"https://api.11st.co.kr/rest/ordservices/reqpackaging"
+      f"/{ord_no}/{ord_prd_seq}/{add_prd_yn}/{add_prd_no}/{dlv_no}"
+    )
+    headers = self._headers()
+
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+      resp = await client.get(url, headers=headers)
+      logger.info("[11번가] 발주확인 ordNo=%s ordPrdSeq=%s → %s", ord_no, ord_prd_seq, resp.status_code)
+
+    if not resp.is_success:
+      raise ElevenstApiError(f"발주확인 HTTP {resp.status_code}: {resp.text[:300]}")
+
+    try:
+      text = resp.content.decode("euc-kr")
+    except Exception:
+      text = resp.text
+
+    xml_text = _re.sub(r"<\?xml[^?]*\?>", "", text, count=1).strip()
+    try:
+      root = ET.fromstring(xml_text)
+    except ET.ParseError:
+      raise ElevenstApiError(f"발주확인 응답 XML 파싱 실패: {text[:200]}")
+
+    result_code = root.findtext("result_code", "")
+    result_text = root.findtext("result_text", "")
+    logger.info("[11번가] 발주확인 결과: code=%s, text=%s", result_code, result_text)
+
+    if result_code != "0":
+      raise ElevenstApiError(f"발주확인 에러 ({result_code}): {result_text}")
+
+    return True
+
   async def get_outbound_addresses(self) -> list[dict[str, str]]:
     """출고지 주소 목록 조회. GET /rest/areaservice/outboundarea"""
     return await self._get_area_addresses("outboundarea")

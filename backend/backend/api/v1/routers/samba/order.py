@@ -713,6 +713,18 @@ async def sync_orders_from_markets(
                 raw_orders = await elevenst_client.get_orders(start_str, end_str)
                 for ord_dict in raw_orders:
                     orders_data.append(_parse_elevenst_order(ord_dict, account.id, label))
+                # 결제완료 주문 자동 발주확인
+                elevenst_confirmed = 0
+                for ord_dict in raw_orders:
+                    try:
+                        ord_no = ord_dict.get("ordNo", "")
+                        ord_prd_seq = ord_dict.get("ordPrdSeq", "")
+                        dlv_no = ord_dict.get("dlvNo", "")
+                        if ord_no and ord_prd_seq and dlv_no:
+                            await elevenst_client.confirm_order(ord_no, ord_prd_seq, dlv_no)
+                            elevenst_confirmed += 1
+                    except Exception as ce:
+                        logger.warning("[주문동기화] 11번가 발주확인 실패 ordNo=%s: %s", ord_dict.get("ordNo", ""), ce)
             else:
                 results.append({"account": label, "status": "skip", "message": f"{market_type} 주문 조회 미지원"})
                 continue
@@ -817,7 +829,12 @@ async def sync_orders_from_markets(
                 synced += 1
 
             total_synced += synced
-            confirmed_count = len(unconfirmed_ids) if market_type == "smartstore" else 0
+            if market_type == "smartstore":
+                confirmed_count = len(unconfirmed_ids)
+            elif market_type == "11st":
+                confirmed_count = elevenst_confirmed
+            else:
+                confirmed_count = 0
             # 취소/반품/교환 요청 건수 (송장 미입력건만)
             cancel_requested = sum(
                 1 for od in orders_data
