@@ -934,6 +934,17 @@ export default function OrdersPage() {
                             }
                           } catch { /* ignore */ }
                         }
+                        // 상품명 끝 숫자(소싱 상품번호)로 site_product_id 검색
+                        const _spidMatch = (o.product_name || '').match(/\b(\d{6,})\s*$/)
+                        if (_spidMatch) {
+                          try {
+                            const res = await collectorApi.lookupByMarketNo(_spidMatch[1])
+                            if (res.found && res.id) {
+                              window.open(`/samba/products?search=${encodeURIComponent(res.id)}&search_type=id&highlight=${res.id}`, '_blank')
+                              return
+                            }
+                          } catch { /* ignore */ }
+                        }
                         if (o.product_name) {
                           window.open(`/samba/products?search=${encodeURIComponent(o.product_name)}`, '_blank')
                         } else {
@@ -957,10 +968,27 @@ export default function OrdersPage() {
                       <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>미등록 입력</button>
                       <button onClick={() => handleTracking(o.shipping_company || '', o.tracking_number || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>배송조회</button>
                       <button onClick={async () => {
-                        if (!o.product_id) { showAlert('상품 ID가 없습니다', 'info'); return }
+                        // 마켓상품번호 → 수집상품 ID 역추적 → enrich 호출
+                        let cpId = ''
+                        if (o.product_id) {
+                          try {
+                            const lookup = await collectorApi.lookupByMarketNo(o.product_id)
+                            if (lookup.found && lookup.id) cpId = lookup.id
+                          } catch { /* ignore */ }
+                        }
+                        if (!cpId) {
+                          const idMatch = (o.product_name || '').match(/\b(\d{6,})\s*$/)
+                          if (idMatch) {
+                            try {
+                              const lookup = await collectorApi.lookupByMarketNo(idMatch[1])
+                              if (lookup.found && lookup.id) cpId = lookup.id
+                            } catch { /* ignore */ }
+                          }
+                        }
+                        if (!cpId) { showAlert('수집상품을 찾을 수 없습니다', 'info'); return }
                         try {
                           const { API_BASE_URL: apiBase } = await import('@/config/api')
-                          const res = await fetch(`${apiBase}/api/v1/samba/collector/enrich/${o.product_id}`, { method: 'POST' })
+                          const res = await fetch(`${apiBase}/api/v1/samba/collector/enrich/${cpId}`, { method: 'POST' })
                           const data = await res.json()
                           if (res.ok && data.success) {
                             const p = data.product
@@ -968,6 +996,7 @@ export default function OrdersPage() {
                             const priceStr = costVal != null ? `₩${Number(costVal).toLocaleString()}` : '-'
                             const stockStr = p?.is_sold_out ? '품절' : '재고있음'
                             showAlert(`${(o.product_name || '').slice(0, 20)} → ${priceStr} | ${stockStr}`, 'success')
+                            if (costVal) { await orderApi.update(o.id, { cost: costVal }); loadOrders() }
                           } else {
                             showAlert(data.message || '업데이트 실패', 'error')
                           }
@@ -976,7 +1005,7 @@ export default function OrdersPage() {
                       <button onClick={() => showAlert('마켓상품삭제 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>마켓상품삭제</button>
                       <button onClick={() => {
                         if (o.ext_order_number) { window.open(o.ext_order_number, '_blank'); return }
-                        const srcNo = (o as Record<string, unknown>).sourcing_order_number as string || ''
+                        const srcNo = o.sourcing_order_number || ''
                         if (!srcNo) { showAlert('소싱 주문번호가 없습니다', 'info'); return }
                         const orderUrlMap: Record<string, string> = {
                           MUSINSA: `https://www.musinsa.com/order/order-detail/${srcNo}`,
@@ -988,7 +1017,7 @@ export default function OrdersPage() {
                         const url = orderUrlMap[o.source_site || '']
                         if (!url) { showAlert(`${o.source_site || '알수없는'} 소싱처는 원주문링크를 지원하지 않습니다`, 'info'); return }
                         window.open(url, '_blank')
-                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: (o.ext_order_number || (o as Record<string, unknown>).sourcing_order_number) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원주문링크</button>
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: (o.ext_order_number || o.sourcing_order_number) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원주문링크</button>
                     </div>
 
                     {/* 주문자/수령인/연락처/주소 한 줄 */}
