@@ -784,9 +784,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'collectPoll') {
     runPollCycle()
   }
-  if (alarm.name === 'musinsaBalanceCheck') {
-    checkMusinsaBalance()
-  }
   if (alarm.name === 'balanceCheckPoll') {
     pollBalanceCheckRequest()
   }
@@ -812,21 +809,24 @@ function stopCollectPolling() {
   console.log('[수집] 폴링 중지 (빈 결과 5분 연속)')
 }
 
-// 무신사 잔액 자동 체크 (12시간 주기)
+// 무신사 잔액 체크 — 버튼 요청 시에만 실행
 async function checkMusinsaBalance() {
-  console.log('[잔액] 자동 잔액 체크 시작')
+  console.log('[잔액] 잔액 체크 시작')
   let tab = null
   try {
     tab = await chrome.tabs.create({ url: 'https://www.musinsa.com/mypage', active: false })
     await new Promise(r => setTimeout(r, 15000))
   } catch (e) {
-    console.log(`[잔액] 자동 체크 실패: ${e.message}`)
+    console.log(`[잔액] 체크 실패: ${e.message}`)
   } finally {
     if (tab?.id) try { await chrome.tabs.remove(tab.id) } catch {}
+    // 체크 완료 → 폴링 중지
+    chrome.alarms.clear('balanceCheckPoll')
+    console.log('[잔액] 체크 완료 → 폴링 중지')
   }
 }
 
-// 서버에서 잔액 체크 요청 확인 (30초 주기, 로컬+프로덕션 둘 다)
+// 서버에서 잔액 체크 요청 확인 (버튼 클릭 시에만 폴링 활성)
 async function pollBalanceCheckRequest() {
   const urls = [
     'http://localhost:28080/api/v1/samba/sourcing-accounts/balance-check-requested',
@@ -838,7 +838,7 @@ async function pollBalanceCheckRequest() {
       if (r.ok) {
         const data = await r.json()
         if (data.requested) {
-          console.log(`[잔액] 서버 요청 감지 (${url.includes('localhost') ? '로컬' : '프로덕션'}) → 즉시 잔액 체크`)
+          console.log(`[잔액] 서버 요청 감지 → 잔액 체크 실행`)
           checkMusinsaBalance()
           return
         }
@@ -847,17 +847,10 @@ async function pollBalanceCheckRequest() {
   }
 }
 
-// 잔액 체크 alarm 설정 (12시간 주기 + 30초 폴링)
+// 잔액 폴링 (5분 주기, 서버에 요청 없으면 아무 동작 안 함)
 chrome.alarms.get('balanceCheckPoll', (alarm) => {
   if (!alarm) {
     chrome.alarms.create('balanceCheckPoll', { periodInMinutes: 5 })
-    console.log('[잔액] 서버 요청 폴링 설정: 30초 주기')
-  }
-})
-chrome.alarms.get('musinsaBalanceCheck', (alarm) => {
-  if (!alarm) {
-    chrome.alarms.create('musinsaBalanceCheck', { delayInMinutes: 1, periodInMinutes: 720 })
-    console.log('[잔액] 자동 체크 alarm 설정: 12시간 주기')
   }
 })
 
