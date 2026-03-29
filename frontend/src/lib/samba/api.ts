@@ -1070,6 +1070,7 @@ export interface MonitorEvent {
 export interface DashboardStats {
   product_stats: {
     total: number
+    registered?: number
     by_source: Record<string, number>
     by_priority: Record<string, number>
     by_sale_status: Record<string, number>
