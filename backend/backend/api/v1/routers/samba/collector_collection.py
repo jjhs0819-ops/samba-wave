@@ -2332,7 +2332,7 @@ class BrandScanRequest(BaseModel):
 async def brand_scan(body: BrandScanRequest):
     """키워드/브랜드로 소싱처 카테고리 분포를 스캔하여 검색그룹 생성에 활용.
 
-    현재 지원 소싱처: LOTTEON
+    지원 소싱처: MUSINSA, LOTTEON
     """
     keyword = body.keyword or body.brand
     if not keyword:
@@ -2343,4 +2343,65 @@ async def brand_scan(body: BrandScanRequest):
         plugin = LotteonSourcingPlugin()
         return await plugin.scan_categories(keyword)
 
+    if body.source_site == "MUSINSA":
+        return await _scan_musinsa_categories(keyword, body.brand, body.gf)
+
     raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
+
+
+async def _scan_musinsa_categories(keyword: str, brand: str = "", gf: str = "A") -> dict:
+    """무신사 카테고리 스캔 — 검색 결과 상위 20개 상품 상세 조회 후 카테고리 분포 집계."""
+    from backend.domain.samba.proxy.musinsa import MusinsaClient
+
+    client = MusinsaClient()
+    search_result = await client.search_products(
+        keyword, size=20, brand=brand, gf=gf
+    )
+    products = search_result.get("data", [])
+    if not products:
+        return {"categories": [], "total": 0, "groupCount": 0}
+
+    # 동시성 3개로 상세 조회
+    sem = asyncio.Semaphore(3)
+    cat_counter: dict[str, int] = {}
+
+    async def _fetch(p: dict) -> None:
+        async with sem:
+            spid = p.get("siteProductId") or p.get("site_product_id") or ""
+            if not spid:
+                return
+            try:
+                detail = await client.get_goods_detail(spid)
+                c1 = detail.get("category1", "")
+                c2 = detail.get("category2", "")
+                c3 = detail.get("category3", "")
+                if not c1:
+                    return
+                parts = [c for c in [c1, c2, c3] if c]
+                path = " > ".join(parts)
+                # category code는 무신사 categoryCode 필드
+                code = detail.get("categoryCode", c3 or c2 or c1)
+                key = f"{code}||{path}||{c1}||{c2}||{c3}"
+                cat_counter[key] = cat_counter.get(key, 0) + 1
+            except Exception:
+                pass
+
+    await asyncio.gather(*[_fetch(p) for p in products], return_exceptions=True)
+
+    categories = []
+    for key, count in sorted(cat_counter.items(), key=lambda x: -x[1]):
+        code, path, c1, c2, c3 = key.split("||")
+        categories.append({
+            "categoryCode": code,
+            "path": path,
+            "count": count,
+            "category1": c1,
+            "category2": c2,
+            "category3": c3,
+        })
+
+    return {
+        "categories": categories,
+        "total": sum(c["count"] for c in categories),
+        "groupCount": len(categories),
+    }
