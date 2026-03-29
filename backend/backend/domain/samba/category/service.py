@@ -1628,9 +1628,6 @@ class SambaCategoryService:
         best_code = ""
         best_score = 0
         for path, code in code_map.items():
-            # 해외 카테고리는 퍼지 매칭에서 제외 — 기존 DB에 해외 코드가 있어도 선택 안됨
-            if any(kw in path for kw in _OVERSEAS_KEYWORDS):
-                continue
             path_segments = [s.strip() for s in path.split(">") if s.strip()]
             if not path_segments:
                 continue
@@ -1818,9 +1815,6 @@ class SambaCategoryService:
         for disp_no in leaf_nodes:
             path = build_path(disp_no)
             if path:
-                # 해외쇼핑 트리 카테고리 제외 — 국내 전용 운영
-                if any(kw in path for kw in _OVERSEAS_KEYWORDS):
-                    continue
                 categories.append(path)
                 code_map[path] = disp_no
 
