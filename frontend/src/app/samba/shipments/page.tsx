@@ -290,6 +290,11 @@ export default function ShipmentsPage() {
 
   const handleMarketDelete = async () => {
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
+    // 비상정지 해제 (이전 중단 상태 초기화)
+    try {
+      const { API_BASE_URL: apiBase } = await import('@/config/api')
+      await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+    } catch { /* ignore */ }
     // 등록된 마켓이 있는 상품만 필터
     const targetProducts = selectedProducts.filter(pid => {
       const p = products.find(x => x.id === pid)
