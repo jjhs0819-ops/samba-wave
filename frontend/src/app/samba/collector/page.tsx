@@ -855,7 +855,7 @@ export default function CollectorPage() {
               color: "#E5E5E5", outline: "none",
             }}
           />
-          {selectedSite === 'MUSINSA' && (
+          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON') && (
             <button onClick={async () => {
               if (!collectUrl.trim()) { showAlert('URL 또는 키워드를 입력하세요'); return }
               setBrandScanning(true)
@@ -866,7 +866,7 @@ export default function CollectorPage() {
                 const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || collectUrl.trim()
                 const gf = parsed?.searchParams.get('gf') || 'A'
                 if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
-                const res = await collectorApi.brandScan(brand, gf, keyword)
+                const res = await collectorApi.brandScan(brand, gf, keyword, selectedSite)
                 setBrandCategories(res.categories)
                 setBrandTotal(res.total)
                 setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))

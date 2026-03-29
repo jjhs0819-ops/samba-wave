@@ -2,7 +2,10 @@
  * SambaWave API client - 인증 없이 접근
  */
 
-import { API_BASE_URL } from '@/config/api'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === 'production'
+    ? 'https://samba-wave-production.up.railway.app'
+    : 'http://localhost:28080')
 
 export const API_BASE = API_BASE_URL
 
@@ -326,9 +329,9 @@ export const collectorApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "DELETE" }),
 
   // Brand Sourcing
-  brandScan: (brand: string, gf?: string, keyword?: string) =>
+  brandScan: (brand: string, gf?: string, keyword?: string, source_site?: string) =>
     request<{ categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]; total: number; groupCount: number }>(
-      `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '' }) }),
+      `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA' }) }),
   brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; applied_policy_id?: string; options?: Record<string, boolean> }) =>
     request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
       `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),

@@ -2317,3 +2317,30 @@ async def enrich_all_products(
             continue
 
     return {"enriched": enriched, "total_targets": len(targets)}
+
+
+# ── 카테고리 스캔 ──────────────────────────────────────────────────────────────
+
+class BrandScanRequest(BaseModel):
+    brand: str = ""
+    gf: str = "A"
+    keyword: str = ""
+    source_site: str = "MUSINSA"
+
+
+@router.post("/brand-scan")
+async def brand_scan(body: BrandScanRequest):
+    """키워드/브랜드로 소싱처 카테고리 분포를 스캔하여 검색그룹 생성에 활용.
+
+    현재 지원 소싱처: LOTTEON
+    """
+    keyword = body.keyword or body.brand
+    if not keyword:
+        raise HTTPException(400, "keyword 또는 brand가 필요합니다")
+
+    if body.source_site == "LOTTEON":
+        from backend.domain.samba.plugins.sourcing.lotteon import LotteonSourcingPlugin
+        plugin = LotteonSourcingPlugin()
+        return await plugin.scan_categories(keyword)
+
+    raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
