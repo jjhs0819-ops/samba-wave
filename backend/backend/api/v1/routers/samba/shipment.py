@@ -30,6 +30,14 @@ def _get_service(session: AsyncSession):
   return SambaShipmentService(SambaShipmentRepository(session), session)
 
 
+@router.post("/cancel")
+async def cancel_transmit():
+  """진행 중인 전송 강제 중단."""
+  from backend.domain.samba.shipment.service import request_cancel_transmit
+  request_cancel_transmit()
+  return {"ok": True, "message": "전송 중단 요청 완료"}
+
+
 @router.get("")
 async def list_shipments(
   skip: int = Query(0, ge=0),

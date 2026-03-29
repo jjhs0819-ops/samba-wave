@@ -16,6 +16,12 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }>
 
 const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
+const SITE_COLORS: Record<string, string> = {
+  MUSINSA: '#4C9AFF', KREAM: '#51CF66', FashionPlus: '#CC5DE8', Nike: '#FF6B6B',
+  Adidas: '#FFD93D', ABCmart: '#FF8C00', GrandStage: '#20C997', OKmall: '#F06595',
+  SSG: '#FF5A2E', LOTTEON: '#E10044', GSShop: '#6B5CE7', ElandMall: '#4ECDC4', SSF: '#845EF7',
+}
+
 // 영문 market_type → 한글 정책 키 (markets.ts에서 import)
 const MARKET_TYPE_TO_POLICY_KEY = SHARED_POLICY_KEY
 
@@ -277,13 +283,11 @@ export default function ShipmentsPage() {
   }, [products, accounts])
 
   const handleMarketDelete = async () => {
-    if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
-    // 소싱사이트 체크 + 등록된 마켓이 있는 상품만 필터
-    const siteSet = new Set(selectedSites)
+    // 등록된 마켓이 있는 상품만 필터
     const targetProducts = selectedProducts.filter(pid => {
       const p = products.find(x => x.id === pid)
-      return p && siteSet.has(p.source_site) && (p.registered_accounts || []).some(aid => selectedAccounts.includes(aid))
+      return p && (p.registered_accounts || []).some(aid => selectedAccounts.includes(aid))
     })
     if (targetProducts.length === 0) { showAlert('선택된 소싱사이트/마켓에 해당하는 등록 상품이 없습니다'); return }
 
@@ -297,7 +301,12 @@ export default function ShipmentsPage() {
     const ts = () => new Date().toLocaleTimeString()
     // 로그를 ref 배열로 관리 — spread O(n²) 방지
     const addLog = (msg: string) => setLogMessages(prev => [...prev, msg])
-    addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length}개`)
+    const accLabelMap: Record<string, string> = {}
+    for (const acc of accounts) {
+      accLabelMap[acc.id] = `${acc.market_name}(${acc.seller_id || acc.business_name || '-'})`
+    }
+    const targetAccLabels = selectedAccounts.map(aid => accLabelMap[aid] || aid).join(', ')
+    addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length}개, ${targetAccLabels}`)
 
     let totalSuccess = 0
     let totalFail = 0
@@ -308,16 +317,16 @@ export default function ShipmentsPage() {
       try {
         const res = await shipmentApi.marketDelete([pid], selectedAccounts)
         const r = res.results?.[0]
-        if (r && r.success_count > 0) {
-          addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName}: 삭제 성공`)
-          totalSuccess += r.success_count
-        }
         if (r) {
-          const fails = Object.entries(r.delete_results).filter(([, st]) => st !== 'success')
-          for (const [aid, msg] of fails) {
-            const acc = accounts.find(a => a.id === aid)
-            addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName} → ${acc?.market_name || aid}: ${msg}`)
-            totalFail++
+          for (const [aid, st] of Object.entries(r.delete_results)) {
+            const accLabel = accLabelMap[aid] || aid
+            if (st === 'success') {
+              addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName} → ${accLabel}: 삭제 성공`)
+              totalSuccess++
+            } else {
+              addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName} → ${accLabel}: ${st}`)
+              totalFail++
+            }
           }
         }
       } catch (e) {
@@ -495,19 +504,35 @@ export default function ShipmentsPage() {
         const jobId = jobData.id || ''
         activeJobIdRef.current = jobId
         setProgress({ current: 0, total: tasks.length })
-        // 전송 진행 폴링
+        // 전송 진행 폴링 + 실시간 로그
+        let logSince = 0
         const poll = setInterval(async () => {
           try {
-            const jr = await fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`)
+            const [jr, lr] = await Promise.all([
+              fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+              fetch(`${apiBase}/api/v1/samba/jobs/${jobId}/logs?since=${logSince}`),
+            ])
             const j = await jr.json()
+            const logData = await lr.json()
             const cur = j.progress_current || 0
             const tot = j.progress_total || tasks.length
             setProgress({ current: cur, total: tot })
+            // 새 로그 1건씩 순차 표시
+            const newLogs = logData.logs || []
+            if (newLogs.length > 0) {
+              const delay = Math.min(200, 2500 / newLogs.length)
+              newLogs.forEach((log: string, i: number) => {
+                setTimeout(() => {
+                  setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`])
+                }, i * delay)
+              })
+              logSince += newLogs.length
+            }
             if (j.status === 'completed' || j.status === 'failed') {
               clearInterval(poll)
-              addLog(`[${new Date().toLocaleTimeString()}] 전송 완료 — ${cur}/${tot}건`)
               if (j.error) addLog(`[${new Date().toLocaleTimeString()}] ${j.error}`)
               setTransmitting(false)
+              activeJobIdRef.current = ''
               load()
             }
           } catch { /* ignore */ }
@@ -782,13 +807,15 @@ export default function ShipmentsPage() {
             {transmitting ? (
               <button onClick={async () => {
                 abortRef.current = true
-                if (activeJobIdRef.current) {
-                  try {
-                    const { API_BASE_URL: apiBase } = await import('@/config/api')
+                try {
+                  const { API_BASE_URL: apiBase } = await import('@/config/api')
+                  // 백엔드 전송 루프 중단
+                  await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
+                  if (activeJobIdRef.current) {
                     await fetch(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
                     activeJobIdRef.current = ''
-                  } catch { /* ignore */ }
-                }
+                  }
+                } catch { /* ignore */ }
               }}
                 style={{ padding: '4px 16px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.2)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.5)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >전송 중단</button>
@@ -886,7 +913,9 @@ export default function ShipmentsPage() {
                   </td>
                   <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: '#666', fontSize: '0.72rem' }}>{(currentPage - 1) * pageSize + idx + 1}</td>
                   <td style={{ padding: '0.625rem 0.5rem', color: '#666', fontSize: '0.72rem' }}>{p.site_product_id || '-'}</td>
-                  <td style={{ padding: '0.625rem 0.5rem', fontSize: '0.75rem', color: '#888' }}>{p.source_site}</td>
+                  <td style={{ padding: '0.625rem 0.5rem' }}>
+                    <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, color: SITE_COLORS[p.source_site] || '#888', background: `${SITE_COLORS[p.source_site] || '#888'}18`, border: `1px solid ${SITE_COLORS[p.source_site] || '#888'}40` }}>{p.source_site}</span>
+                  </td>
                   <td style={{ padding: '0.625rem 0.5rem' }}>
                     <div>
                       <a href={`/samba/products?highlight=${p.id}`} style={{ color: '#DCE0E8', textDecoration: 'none', fontSize: '0.8rem', cursor: 'pointer' }}

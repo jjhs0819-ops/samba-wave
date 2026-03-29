@@ -21,6 +21,20 @@ _transmitting_products: set[str] = set()
 # 계정별 세마포어 — API Rate Limit 방지 (계정당 동시 1건)
 _account_semaphores: dict[str, asyncio.Semaphore] = {}
 
+# 전송 중단 플래그
+_cancel_requested = False
+
+def request_cancel_transmit():
+  global _cancel_requested
+  _cancel_requested = True
+
+def clear_cancel_transmit():
+  global _cancel_requested
+  _cancel_requested = False
+
+def is_cancel_requested() -> bool:
+  return _cancel_requested
+
 
 def _get_group_lock(account_id: str) -> asyncio.Lock:
   if account_id not in _group_locks:
@@ -92,8 +106,16 @@ class SambaShipmentService:
 
     processed = 0
     skipped = 0
+    cancelled = 0
     results: list[dict[str, Any]] = []
+    clear_cancel_transmit()
     for product_id in product_ids:
+      # 중단 체크
+      if is_cancel_requested():
+        cancelled = len(product_ids) - processed
+        logger.info(f"[전송] 강제 중단 — {processed}건 완료, {cancelled}건 취소")
+        clear_cancel_transmit()
+        break
       try:
         shipment = await self._transmit_product(
           product_id, target_account_ids, update_items,
@@ -115,7 +137,7 @@ class SambaShipmentService:
           "error": str(exc),
         })
 
-    return {"processed": processed, "skipped": skipped, "results": results}
+    return {"processed": processed, "skipped": skipped, "cancelled": cancelled, "results": results}
 
   # ==================== 그룹상품 전송 ====================
 
@@ -402,7 +424,7 @@ class SambaShipmentService:
     if has_update and product_row.source_site and product_row.site_product_id:
       try:
         from backend.domain.samba.collector.refresher import refresh_product
-        refresh_result = await refresh_product(product_row)
+        refresh_result = await refresh_product(product_row, source="transmit")
         if refresh_result.error:
           refresh_status = f"최신화실패:{refresh_result.error[:30]}"
           logger.warning(f"[전송] 소싱처 최신화 실패: {refresh_result.error}")
@@ -934,7 +956,7 @@ class SambaShipmentService:
     tag_map = {
       "{상품명}": product.get("name", ""),
       "{브랜드명}": product.get("brand", ""),
-      "{모델명}": product.get("model_no", ""),
+      "{모델명}": product.get("style_code", ""),
       "{사이트명}": product.get("source_site", ""),
       "{상품번호}": product.get("site_product_id", ""),
       "{검색키워드}": seo_text,
