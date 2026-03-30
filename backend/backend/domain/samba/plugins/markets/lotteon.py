@@ -455,12 +455,15 @@ class LotteonPlugin(MarketPlugin):
         category_id = female_cat
 
     # ── 소싱된 롯데ON 상품: _lotteonScatNo 원본 BC코드 직접 사용 ──────────
-    # 롯데ON 소싱 상품은 수집 시점의 정확한 BC코드가 저장되어 있으므로
-    # fuzzy match 없이 직접 사용 (오매핑 방지)
+    # 이 계정에서 권한 있는 BC prefix만 허용 (골프/패션의류 등 권한 없는 카테고리 제외)
+    # BC41: 스포츠의류/운동화, BC47: 패션잡화, BC42: 스포츠/레저
+    _ALLOWED_BC_PREFIXES = ("BC41", "BC47", "BC42")
     _scat_no = str(product.get("_lotteonScatNo", "") or "").strip()
-    if _scat_no and _scat_no.startswith("BC") and category_id and ">" in category_id:
+    if _scat_no and _scat_no.startswith(_ALLOWED_BC_PREFIXES) and category_id and ">" in category_id:
       logger.info(f"[롯데ON] 소싱 원본 BC코드 사용 (fuzzy match 스킵): {_scat_no}")
       category_id = _scat_no
+    elif _scat_no and _scat_no.startswith("BC") and not _scat_no.startswith(_ALLOWED_BC_PREFIXES):
+      logger.info(f"[롯데ON] 소싱 원본 BC코드 권한 없음, 무시하고 매핑 사용: {_scat_no}")
 
     # category_id가 경로 문자열(">" 포함)이면 DB 코드맵에서 변환 시도
     if category_id and ">" in category_id:
