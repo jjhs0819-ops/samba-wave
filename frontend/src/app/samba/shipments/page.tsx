@@ -827,7 +827,7 @@ export default function ShipmentsPage() {
           <tbody>
             {loading ? (
               <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
-            ) : totalCount === 0 ? (
+            ) : products.length === 0 ? (
               <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>상품이 없습니다</td></tr>
             ) : filteredProducts.map((p, idx) => {
               const regAccounts = p.registered_accounts || []
