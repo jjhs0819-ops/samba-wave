@@ -704,7 +704,7 @@ export default function ShipmentsPage() {
             <button onClick={() => setLogMessages(['로그가 초기화되었습니다.'])} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
             <button onClick={handleMarketDelete} disabled={transmitting}
               style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: transmitting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
-            {transmitting ? (
+            {transmitting && (
               <button onClick={async () => {
                 abortRef.current = true
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
@@ -721,7 +721,8 @@ export default function ShipmentsPage() {
               }}
                 style={{ padding: '4px 16px', fontSize: '0.78rem', background: 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: 'pointer', fontWeight: 700 }}
               >전송 중단</button>
-            ) : (<>
+            )}
+            {<>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: loopEnabled ? '#FF8C00' : '#666', cursor: 'pointer' }}>
                 <input type="checkbox" checked={loopEnabled} onChange={() => setLoopEnabled(!loopEnabled)} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
                 무한반복
@@ -824,7 +825,7 @@ export default function ShipmentsPage() {
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >검색결과전송 ({totalCount})</button>
-            </>)}
+            </>}
           </div>
         </div>
         <div
