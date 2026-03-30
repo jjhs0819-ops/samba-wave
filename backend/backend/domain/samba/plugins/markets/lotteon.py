@@ -429,6 +429,15 @@ class LotteonPlugin(MarketPlugin):
         "message": "롯데ON API Key가 비어있습니다. 설정에서 해당 계정을 수정 후 저장해주세요.",
       }
 
+    # ── 성별 오버라이드: sex == "여성"이면 남성→여성 카테고리 경로 변환 ──
+    # 카테고리가 경로 문자열일 때만 적용 (BC코드 변환 전에 처리)
+    if (product.get("sex") or "").strip() == "여성" and category_id and ">" in category_id:
+      from backend.domain.samba.category.service import _LOTTEON_M_TO_F
+      female_cat = _LOTTEON_M_TO_F.get(category_id)
+      if female_cat:
+        logger.info(f"[롯데ON] 성별 오버라이드: {category_id!r} → {female_cat!r}")
+        category_id = female_cat
+
     # category_id가 경로 문자열(">" 포함)이면 DB 코드맵에서 변환 시도
     if category_id and ">" in category_id:
       from backend.domain.samba.category.repository import (
