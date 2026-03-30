@@ -376,6 +376,13 @@ export default function WarroomPage() {
         </div>
       </div>
 
+      {/* 오토튠 실시간 로그 (시작/강제중단 버튼 바로 아래) */}
+      <AutotuneLogPanel
+        siteColors={SITE_COLORS}
+        onStatusChange={handleAutotuneStatus}
+        externalRunning={autotuneRunning}
+      />
+
       {/* A-2. 마켓별 스토어 현황 분석 */}
       {(() => {
         const MARKET_TABS = [
@@ -813,13 +820,6 @@ export default function WarroomPage() {
           </div>
         </div>
       </div>
-
-      {/* F. 오토튠 실시간 로그 (독립 컴포넌트) */}
-      <AutotuneLogPanel
-        siteColors={SITE_COLORS}
-        onStatusChange={handleAutotuneStatus}
-        externalRunning={autotuneRunning}
-      />
 
       {/* G. 이벤트 타임라인 */}
       <div style={card}>

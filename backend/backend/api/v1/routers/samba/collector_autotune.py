@@ -485,7 +485,7 @@ async def autotune_stop():
     """오토튠 무한 루프 정지 — 진행 중인 갱신도 즉시 중단."""
     global _autotune_task
     from backend.domain.samba.collector.refresher import request_bulk_cancel
-    if not _autotune_running:
+    if not _autotune_running_event.is_set():
         return {"ok": True, "status": "already_stopped"}
     _autotune_running_event.clear()
     request_bulk_cancel()  # 벌크 갱신 즉시 중단
