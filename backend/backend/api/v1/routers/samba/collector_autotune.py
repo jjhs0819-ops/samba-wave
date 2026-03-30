@@ -37,6 +37,12 @@ _site_breaker_tripped: dict[str, bool] = {}  # {소싱처: 중단 여부}
 # 등급 분류 기준 기간 (일)
 CLASSIFY_WINDOW_DAYS = 7
 
+# 연속 무변동 스킵 설정
+SKIP_AFTER_NO_CHANGE = 5  # 연속 N회 변동 없으면 스킵
+SKIP_CYCLES = 3  # 스킵 사이클 수
+_no_change_count: dict[str, int] = {}  # {상품ID: 연속 무변동 횟수}
+_skip_remaining: dict[str, int] = {}  # {상품ID: 남은 스킵 사이클}
+
 
 
 async def _classify_products(session) -> dict[str, int]:
