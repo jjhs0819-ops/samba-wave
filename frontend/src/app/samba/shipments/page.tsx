@@ -31,7 +31,7 @@ export default function ShipmentsPage() {
   const [loading, setLoading] = useState(true)
 
   // 필터
-  const [searchField, setSearchField] = useState('group')
+  const [searchField, setSearchField] = useState('name')
   const [searchText, setSearchText] = useState('')
   const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
