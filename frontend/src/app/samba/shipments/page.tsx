@@ -363,7 +363,8 @@ export default function ShipmentsPage() {
       if (!policy?.market_policies || typeof policy.market_policies !== 'object') continue
       const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
       for (const marketPolicy of Object.values(mp)) {
-        const ids = marketPolicy.accountIds?.length
+        // accountIds 배열이 존재하면 그것만 사용 (빈 배열 = 연결 없음), 없으면 레거시 accountId 폴백
+        const ids = Array.isArray(marketPolicy.accountIds)
           ? marketPolicy.accountIds
           : (marketPolicy.accountId ? [marketPolicy.accountId] : [])
         ids.forEach((id: string) => { if (selectedSet.has(id)) effectiveAccountSet.add(id) })
@@ -391,7 +392,8 @@ export default function ShipmentsPage() {
       if (policy?.market_policies && typeof policy.market_policies === 'object') {
         const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
         for (const marketPolicy of Object.values(mp)) {
-          const ids = marketPolicy.accountIds?.length
+          // accountIds 배열이 존재하면 그것만 사용 (빈 배열 = 연결 없음), 없으면 레거시 accountId 폴백
+          const ids = Array.isArray(marketPolicy.accountIds)
             ? marketPolicy.accountIds
             : (marketPolicy.accountId ? [marketPolicy.accountId] : [])
           ids.forEach((id: string) => { if (selectedSet.has(id) && !targetAccIds.includes(id)) targetAccIds.push(id) })
