@@ -250,12 +250,10 @@ def _build_combination_options(
     if min_price > 0:
       for c in combinations:
         c["price"] = c["price"] - min_price
-    # 재조정 후에도 조건 미충족 시 (전 옵션 품절/재고0), 첫 번째 옵션 강제 활성화
+    # 재조정 후에도 조건 미충족 (전 옵션 품절/재고0) → 빈 combinations 반환하여 전송 스킵 유도
     has_base = any(c["price"] == 0 and c["stockQuantity"] > 0 and c["usable"] for c in combinations)
     if not has_base:
-      combinations[0]["price"] = 0
-      combinations[0]["stockQuantity"] = max(combinations[0]["stockQuantity"], 1)
-      combinations[0]["usable"] = True
+      return None  # 전 옵션 품절 → 등록 불가
 
   return {
     "optionCombinationSortType": "CREATE",
@@ -1479,11 +1477,11 @@ class SmartStoreClient:
             size_text=(f"발길이(mm): {size_text}")[:200] if sizes else "FREE (상세 이미지 참조)",
             mfr=mfr, brand=brand, ss_category_id=category_id,
           ),
-          **({"optionInfo": _build_combination_options(
+          **({"optionInfo": _opt_result} if options and (_opt_result := _build_combination_options(
             options, sale_price,
             max_stock_per_option=stock_qty,
             option_deletion_words=product.get("_option_deletion_words"),
-          )} if options else {}),
+          )) else {}),
           **_build_certification_infos(product.get("_certification_infos")),
         },
       },

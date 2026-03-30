@@ -772,6 +772,16 @@ class SambaShipmentService:
           logger.warning(f"[전송] 상품 {product_id} → {market_type} 최하단 카테고리 미매핑: '{category_id}' (스킵)")
           return res
 
+        # 전 옵션 품절 체크 — 재고 있는 옵션이 하나도 없으면 스킵
+        _opts = product_dict.get("options") or []
+        if _opts and all(
+          (o.get("isSoldOut", False) or (o.get("stock") or 0) <= 0)
+          for o in _opts if isinstance(o, dict)
+        ):
+          res["error"] = "전 옵션 품절 (등록 불가)"
+          logger.info(f"[전송] 상품 {product_id} → {market_type} 전 옵션 품절 스킵")
+          return res
+
         # 마켓별 판매가 계산 (product_dict 원본 보호를 위해 복사본 사용)
         acct_product = dict(product_dict)
 
