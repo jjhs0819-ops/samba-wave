@@ -241,6 +241,7 @@ class JobWorker:
                 reason = "비상정지" if is_emergency_stopped() else "취소"
                 _add_job_log(job.id, f"{reason} — {i}건 완료, {cancelled}건 중단")
                 logger.info(f"[잡워커] 전송 {reason}: {job.id} — {i}건 완료, {cancelled}건 중단")
+                await repo.fail_job(job.id, f"{reason}: {i}건 완료, {cancelled}건 중단")
                 return
             prod = await cp_repo.get_async(pid)
             site_pid = prod.site_product_id if prod else ""
