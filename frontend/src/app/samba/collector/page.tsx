@@ -1546,7 +1546,7 @@ export default function CollectorPage() {
                         {(g as unknown as Record<string, number>).ai_tagged_count > 0 && (
                           <span style={{ fontSize: '0.55rem', padding: '0 3px', borderRadius: '3px', background: 'rgba(81,207,102,0.15)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.3)' }}>T</span>
                         )}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#FF8C00' }}>{g.collected_count ?? 0}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.62rem', color: '#FF8C00' }}>{(g.collected_count ?? 0).toLocaleString()}</span>
                       </div>
                     ))}
                   </>) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>항목 없음</div>
@@ -1651,7 +1651,7 @@ export default function CollectorPage() {
                       color: selectedCount > 0 ? '#FF8C00' : '#555', fontWeight: 600, fontSize: '0.82rem',
                       cursor: selectedCount > 0 ? 'pointer' : 'default',
                       textDecoration: selectedCount > 0 ? 'underline' : 'none',
-                    }}>{selectedCount}</span>
+                    }}>{selectedCount.toLocaleString()}</span>
                   ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
                 {/* 8. 요청 */}

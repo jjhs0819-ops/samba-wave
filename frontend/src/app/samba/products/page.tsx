@@ -807,7 +807,7 @@ export default function ProductsPage() {
         }}>
           <p style={{ fontSize: "0.75rem", color: "#888", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", margin: 0 }}>수집상품 수</p>
           <p style={{ fontSize: "1.625rem", fontWeight: 800, color: "#E5E5E5", letterSpacing: "-0.02em", margin: 0 }}>
-            {kpiCounts.total}<span style={{ fontSize: "1rem", color: "#888", fontWeight: 500 }}>개</span>
+            {kpiCounts.total.toLocaleString()}<span style={{ fontSize: "1rem", color: "#888", fontWeight: 500 }}>개</span>
           </p>
           <p style={{ fontSize: "0.75rem", color: "#666", margin: 0 }}>등록된 상품</p>
         </div>
@@ -818,7 +818,7 @@ export default function ProductsPage() {
         }}>
           <p style={{ fontSize: "0.75rem", color: "#888", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", margin: 0 }}>판매상품 수</p>
           <p style={{ fontSize: "1.625rem", fontWeight: 800, color: "#51CF66", letterSpacing: "-0.02em", margin: 0 }}>
-            {registeredCount}<span style={{ fontSize: "1rem", color: "#888", fontWeight: 500 }}>개</span>
+            {registeredCount.toLocaleString()}<span style={{ fontSize: "1rem", color: "#888", fontWeight: 500 }}>개</span>
           </p>
           <p style={{ fontSize: "0.75rem", color: "#666", margin: 0 }}>판매중인 상품</p>
         </div>
