@@ -876,16 +876,21 @@ export default function ShipmentsPage() {
                       </div>
                     )}
                   </td>
-                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem', color: '#666' }}>
+                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem' }}>
                     {p.updated_at ? (() => {
                       const d = new Date(p.updated_at)
-                      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+                      return (
+                        <div>
+                          <div style={{ color: '#AAB0BC' }}>{d.getFullYear()}-{String(d.getMonth() + 1).padStart(2, '0')}-{String(d.getDate()).padStart(2, '0')}</div>
+                          <div style={{ color: '#888' }}>{String(d.getHours()).padStart(2, '0')}:{String(d.getMinutes()).padStart(2, '0')}:{String(d.getSeconds()).padStart(2, '0')}</div>
+                        </div>
+                      )
                     })() : '-'}
                   </td>
-                  <td style={{ padding: '0.625rem 0.5rem', fontSize: '0.72rem', color: '#666' }}>
+                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem' }}>
                     {(() => {
                       const regAccs = (p.registered_accounts || [])
-                      if (regAccs.length === 0) return <span style={{ color: '#555', textAlign: 'center', display: 'block' }}>-</span>
+                      if (regAccs.length === 0) return <span style={{ color: '#555' }}>-</span>
                       const sent = p.last_sent_data || {}
                       return regAccs.map(aid => {
                         const acc = accounts.find(a => a.id === aid)
@@ -893,12 +898,12 @@ export default function ShipmentsPage() {
                         const sentAt = sent[aid]?.sent_at
                         const timeLabel = sentAt ? (() => {
                           const d = new Date(sentAt)
-                          return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+                          return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
                         })() : ''
                         return (
-                          <div key={aid} style={{ fontSize: '0.68rem' }}>
-                            <span style={{ color: '#51CF66' }}>{acc.market_name}({acc.seller_id || acc.account_label || '-'})</span>
-                            {timeLabel && <span style={{ color: '#555' }}> {timeLabel}</span>}
+                          <div key={aid} style={{ marginBottom: '2px' }}>
+                            <div style={{ color: '#51CF66', fontSize: '0.68rem' }}>{acc.market_name}({acc.seller_id || acc.account_label || '-'})</div>
+                            {timeLabel && <div style={{ color: '#AAB0BC', fontSize: '0.68rem' }}>{timeLabel}</div>}
                           </div>
                         )
                       })
