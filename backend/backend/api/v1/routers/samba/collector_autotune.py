@@ -119,8 +119,13 @@ async def _autotune_loop():
     log = logging.getLogger("autotune")
     log.info("[오토튠] 루프 시작")
 
-    while _autotune_running_event.is_set():
+    try:
+      while _autotune_running_event.is_set():
         try:
+            # 이전 취소 플래그 잔존 방지
+            from backend.domain.samba.collector.refresher import clear_bulk_cancel
+            clear_bulk_cancel()
+
             from backend.db.orm import get_write_session
             async with get_write_session() as session:
                 from backend.domain.samba.collector.refresher import refresh_products_bulk
@@ -459,7 +464,10 @@ async def _autotune_loop():
             # 에러 후 즉시 다음 사이클 시작 (새 세션으로)
             await asyncio.sleep(2)
 
-    log.info("[오토튠] 루프 종료")
+    finally:
+      # 어떤 이유로든 루프 종료 시 running event 해제 (유령 상태 방지)
+      _autotune_running_event.clear()
+      log.info("[오토튠] 루프 종료 — running event 해제")
 
 
 class AutotuneStartRequest(BaseModel):
@@ -548,7 +556,7 @@ async def autotune_status():
         refreshed_24h = 0
 
     return {
-        "running": _autotune_running_event.is_set(),
+        "running": _autotune_running_event.is_set() and _autotune_task is not None and not _autotune_task.done(),
         "last_tick": _autotune_last_tick,
         "cycle_count": _autotune_cycle_count,
         "refreshed_count": refreshed_24h,

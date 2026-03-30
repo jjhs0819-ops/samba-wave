@@ -149,6 +149,8 @@ class SambaShipmentService:
   ) -> dict[str, Any]:
     """여러 상품을 대상 마켓 계정으로 실제 전송. 마켓별 결과 반환."""
     from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+    # 이전 취소 플래그 잔존 방지
+    clear_cancel_transmit()
 
     processed = 0
     skipped = 0
