@@ -772,12 +772,33 @@ class SambaShipmentService:
           logger.warning(f"[전송] 상품 {product_id} → {market_type} 최하단 카테고리 미매핑: '{category_id}' (스킵)")
           return res
 
-        # 전 옵션 품절 체크 — 재고 있는 옵션이 하나도 없으면 스킵
+        # 전 옵션 품절 체크 — 마켓 등록 상품이면 마켓 삭제, 미등록이면 스킵
         _opts = product_dict.get("options") or []
         if _opts and all(
           (o.get("isSoldOut", False) or (o.get("stock") or 0) <= 0)
           for o in _opts if isinstance(o, dict)
         ):
+          # 이미 마켓 등록된 상품이면 삭제 처리
+          _reg_accs = product_dict.get("registered_accounts") or []
+          if account_id in _reg_accs and existing_product_no:
+            try:
+              from backend.domain.samba.shipment.dispatcher import delete_from_market
+              del_result = await delete_from_market(
+                self.session, market_type, product_dict, account_id
+              )
+              if del_result.get("success"):
+                # registered_accounts에서 제거 + DB 반영
+                product_row = await self.repo.get_async(product_id)
+                if product_row:
+                  new_reg = [a for a in (product_row.registered_accounts or []) if a != account_id]
+                  product_row.registered_accounts = new_reg if new_reg else None
+                  await self.session.commit()
+                res["status"] = "completed"
+                res["results"] = {account_id: "deleted"}
+                logger.info(f"[전송] 상품 {product_id} → {market_type} 전 옵션 품절 → 마켓 삭제 완료")
+                return res
+            except Exception as e:
+              logger.warning(f"[전송] 전 옵션 품절 마켓 삭제 실패: {e}")
           res["error"] = "전 옵션 품절 (등록 불가)"
           logger.info(f"[전송] 상품 {product_id} → {market_type} 전 옵션 품절 스킵")
           return res
