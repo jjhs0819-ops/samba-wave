@@ -507,6 +507,31 @@ class LotteonPlugin(MarketPlugin):
     elif _scat_no and _scat_no.startswith("BC") and not _scat_no.startswith(_ALLOWED_BC_PREFIXES):
       logger.info(f"[롯데ON] 소싱 원본 BC코드 권한 없음, 무시하고 매핑 사용: {_scat_no}")
 
+    # 트레이닝복 BC코드: 상품명 키워드로 집업/긴바지/반바지/상의로 세분화
+    # BC41041400(남성 트레이닝복), BC41101500(여성 트레이닝복) → 키워드 기반 분류
+    if category_id in ("BC41041400", "BC41101500"):
+      _name_lower = (product.get("name") or "").lower()
+      _sex_val = (product.get("sex") or "").strip()
+      _is_female = _sex_val == "여성"
+      _orig_cat = category_id
+      if any(k in _name_lower for k in ["재킷", "jacket", "집업", "zip", "트랙탑", "track top", "tracktop", "track-top"]):
+        # 재킷/집업/트랙탑 → 집업 카테고리
+        category_id = "BC41101400" if _is_female else "BC41041300"
+      elif any(k in _name_lower for k in ["숏팬츠", "shorts", "반바지"]):
+        # 반바지 (긴바지보다 먼저 체크)
+        category_id = "BC41100900" if _is_female else "BC41040900"
+      elif any(k in _name_lower for k in ["팬츠", "pants", "레깅스", "leggings", "슬랙스"]):
+        # 팬츠/레깅스 → 긴바지
+        category_id = "BC41100100" if _is_female else "BC41040100"
+      elif any(k in _name_lower for k in ["맨투맨", "sweatshirt", "후드", "hood", "티셔츠", "t-shirt", "tshirt", "top"]):
+        # 상의 키워드 → 맨투맨 or 반팔티셔츠
+        if any(k in _name_lower for k in ["후드", "hood"]):
+          category_id = "BC41101200" if _is_female else "BC41041200"  # 후드
+        else:
+          category_id = "BC41101000" if _is_female else "BC41041000"  # 맨투맨
+      if category_id != _orig_cat:
+        logger.info(f"[롯데ON] 트레이닝복→세분화: {_orig_cat} → {category_id} (name={product.get('name')})")
+
     # category_id가 경로 문자열(">" 포함)이면 DB 코드맵에서 변환 시도
     if category_id and ">" in category_id:
       from backend.domain.samba.category.repository import (
