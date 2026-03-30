@@ -130,7 +130,7 @@ def _build_product_data(
     "category2": cat_parts[1] if len(cat_parts) > 1 else None,
     "category3": cat_parts[2] if len(cat_parts) > 2 else None,
     "category4": cat_parts[3] if len(cat_parts) > 3 else None,
-    "manufacturer": _clean_text(detail.get("manufacturer") or ""),
+    "manufacturer": _clean_text(detail.get("manufacturer") or "") or _clean_text(detail.get("brand") or ""),
     "origin": _clean_text(detail.get("origin") or ""),
     "material": _clean_text(detail.get("material") or ""),
     "color": _clean_text(detail.get("color") or "") or parse_color_from_name(detail.get("name", "")),

@@ -72,10 +72,10 @@ def _create_write_async_engine() -> AsyncEngine:
         future=True,
         echo=False,  # Disable SQL echo to reduce noise
         pool_pre_ping=True,  # Check connection validity before using
-        pool_size=15,  # Connection pool size (increased from 5)
-        max_overflow=25,  # Additional connections allowed (increased from 10)
-        pool_recycle=3600,  # Recycle connections after 1 hour
-        pool_timeout=30,  # Connection timeout in seconds
+        pool_size=8,  # 기본 연결 수
+        max_overflow=7,  # 추가 허용 (write 최대 15개)
+        pool_recycle=3600,
+        pool_timeout=30,
     )
 
 
@@ -89,12 +89,12 @@ def _create_read_async_engine() -> AsyncEngine:
             settings.read_db_name,
         ),
         future=True,
-        echo=False,  # Disable SQL echo to reduce noise
-        pool_pre_ping=True,  # Check connection validity before using
-        pool_size=15,  # Connection pool size (increased from 5)
-        max_overflow=25,  # Additional connections allowed (increased from 10)
-        pool_recycle=3600,  # Recycle connections after 1 hour
-        pool_timeout=30,  # Connection timeout in seconds
+        echo=False,
+        pool_pre_ping=True,
+        pool_size=8,  # 기본 연결 수
+        max_overflow=7,  # 추가 허용 (read 최대 15개)
+        pool_recycle=3600,
+        pool_timeout=30,
     )
 
 
