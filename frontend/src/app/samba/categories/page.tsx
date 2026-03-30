@@ -771,16 +771,26 @@ export default function CategoriesPage() {
       showAlert('리매핑할 매핑 데이터가 없습니다', 'info')
       return
     }
+    // 이미 해당 마켓 매핑이 있는 행은 제외
+    const needMapping = filteredMappings.filter(row => {
+      const existing = row.target_mappings?.[market]
+      return !existing || existing === ''
+    })
+    if (needMapping.length === 0) {
+      showAlert(`${MARKET_LABELS[market]} 매핑이 모두 완료되어 있습니다`, 'info')
+      return
+    }
+    const skippedCount = filteredMappings.length - needMapping.length
     setMarketAiLoading(market)
-    const total = filteredMappings.length
+    const total = needMapping.length
     setMarketAiProgress({ market, current: 0, total, success: 0, fail: 0 })
 
     let successCount = 0
     let errorCount = 0
     const updatedMappings = [...mappings]
 
-    for (let i = 0; i < filteredMappings.length; i++) {
-      const row = filteredMappings[i]
+    for (let i = 0; i < needMapping.length; i++) {
+      const row = needMapping[i]
       setMarketAiProgress({ market, current: i + 1, total, success: successCount, fail: errorCount })
 
       const rowProducts = products.filter(p =>
@@ -789,7 +799,6 @@ export default function CategoriesPage() {
           .filter(Boolean).join(' > ') === row.source_category
       )
       const sampleNames = rowProducts.slice(0, 5).map(p => p.name)
-      // 태그는 그룹 동일 → 첫 상품 것만
       const sampleTags = (rowProducts[0]?.tags || []).filter((t: string) => !t.startsWith('__')).slice(0, 10)
 
       try {
@@ -803,7 +812,6 @@ export default function CategoriesPage() {
         const newCat = result[market]
         if (newCat) {
           if (row.id.startsWith('unmapped_')) {
-            // 미매핑 → 신규 생성
             const created = await categoryApi.createMapping({
               source_site: row.source_site,
               source_category: row.source_category,
@@ -830,8 +838,8 @@ export default function CategoriesPage() {
     setMappings(updatedMappings)
     setMarketAiLoading(null)
     setLastAiUsage({ calls: successCount, tokens: successCount * 1800, cost: successCount * COST_PER_CALL_KRW, date: new Date().toLocaleTimeString() })
-    // 완료 상태로 모달 갱신 (자동 닫힘 아님)
     setMarketAiProgress({ market, current: total, total, success: successCount, fail: errorCount })
+    if (skippedCount > 0) showAlert(`${skippedCount}건은 이미 매핑되어 건너뜀`, 'info')
   }
 
   // 마켓 키 목록

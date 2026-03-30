@@ -2730,7 +2730,9 @@ JSON만:
 
                 if item["mode"] == "update":
                     existing = item["existing"]
-                    current_targets = existing.target_mappings or {}
+                    # DB에서 최신 target_mappings 다시 로드 (1~2단계 결과 반영)
+                    refreshed = await self.mapping_repo.get_async(existing.id)
+                    current_targets = (refreshed.target_mappings if refreshed else existing.target_mappings) or {}
                     new_targets = {**current_targets}
                     for market, cat in ai_result.items():
                         if cat:
