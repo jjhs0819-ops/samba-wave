@@ -695,18 +695,34 @@ export default function ShipmentsPage() {
                   if (updateItems.price) items.push('price', 'stock')
                   if (updateItems.thumb) items.push('image')
                   if (updateItems.detail) items.push('description')
-                  const accLabels = selectedAccounts.map(aid => {
+                  // 정책 연결 계정만 필터 (선택전송과 동일 로직)
+                  const selectedSet = new Set(selectedAccounts)
+                  const effectiveAccIds = new Set<string>()
+                  for (const prod of all.items.filter(p => siteSet.has(p.source_site))) {
+                    if (!prod.applied_policy_id) continue
+                    const policy = policies.find(p => p.id === prod.applied_policy_id)
+                    if (!policy?.market_policies || typeof policy.market_policies !== 'object') continue
+                    const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
+                    for (const marketPolicy of Object.values(mp)) {
+                      const ids = Array.isArray(marketPolicy.accountIds)
+                        ? marketPolicy.accountIds
+                        : (marketPolicy.accountId ? [marketPolicy.accountId] : [])
+                      ids.forEach((id: string) => { if (selectedSet.has(id)) effectiveAccIds.add(id) })
+                    }
+                  }
+                  const effectiveAccList = [...effectiveAccIds]
+                  const accLabels = effectiveAccList.map(aid => {
                     const acc = accounts.find(a => a.id === aid)
                     return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
                   }).join(', ')
-                  addLog(`[${ts()}] 전송 시작 — 상품 ${allIds.length}개, ${accLabels}`)
+                  addLog(`[${ts()}] 전송 시작 — 상품 ${allIds.length}개, ${accLabels || '연결 계정 없음'}`)
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                       job_type: 'transmit',
-                      payload: { product_ids: allIds, update_items: items, target_account_ids: selectedAccounts, skip_unchanged: skipEnabled },
+                      payload: { product_ids: allIds, update_items: items, target_account_ids: effectiveAccList, skip_unchanged: skipEnabled },
                     }),
                   })
                   const jobData = await res.json()
