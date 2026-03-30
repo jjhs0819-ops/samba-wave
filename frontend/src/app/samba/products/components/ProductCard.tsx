@@ -1145,20 +1145,6 @@ const ProductCard = React.memo(function ProductCard({
               fontSize: '0.72rem', padding: '3px 9px', background: '#1E1E1E',
               color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.2)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap',
             }}>마켓삭제</button>
-            {/* 등록된 마켓 바로가기 — 등록한 계정만 표시 */}
-            {p.status === 'registered' && registeredMarkets.map(rm => (
-              <button key={rm.accId}
-                onClick={() => window.open(rm.url, '_blank')}
-                style={{
-                  fontSize: '0.65rem', padding: '2px 6px', background: 'rgba(81,207,102,0.08)',
-                  color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px',
-                  cursor: 'pointer', whiteSpace: 'nowrap',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
-                title={`${rm.label} 상품 구매페이지 열기`}
-              >{rm.label}</button>
-            ))}
           </div>
 
           {/* Detail table */}
@@ -1269,12 +1255,24 @@ const ProductCard = React.memo(function ProductCard({
                         {(() => {
                           const marketKey = MARKETS.find(mk => m.marketName.includes(mk.name))?.id
                             || m.marketName.toLowerCase().replace(/\s/g, '')
+                          const rm = registeredMarkets.find(r => r.marketId === marketKey)
                           const mappedCat = productCatMapping[marketKey] || ''
-                          return mappedCat ? (
-                            <span style={{ fontSize: '0.68rem', color: '#888', background: 'rgba(255,255,255,0.04)', padding: '1px 6px', borderRadius: '3px', border: '1px solid #2D2D2D' }}>{mappedCat}</span>
-                          ) : (
-                            <span style={{ fontSize: '0.68rem', color: '#555' }}>미매핑</span>
-                          )
+                          return (<>
+                            {rm && (
+                              <button
+                                onClick={() => window.open(rm.url, '_blank')}
+                                style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
+                                title={`${rm.label} 구매페이지`}
+                              >구매페이지</button>
+                            )}
+                            {mappedCat ? (
+                              <span style={{ fontSize: '0.68rem', color: '#888', background: 'rgba(255,255,255,0.04)', padding: '1px 6px', borderRadius: '3px', border: '1px solid #2D2D2D' }}>{mappedCat}</span>
+                            ) : (
+                              <span style={{ fontSize: '0.68rem', color: '#555' }}>미매핑</span>
+                            )}
+                          </>)
                         })()}
                       </div>
                       <span style={{ fontSize: '0.72rem', color: '#666' }}>{m.calcStr}</span>
