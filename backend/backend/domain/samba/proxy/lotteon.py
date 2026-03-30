@@ -384,16 +384,19 @@ class LotteonClient:
         return {"success": True, "data": result, "spdNo": spd_no}
     return {"success": True, "data": result}
 
-  async def register_publicity_sentence(self, spd_no: str, phrase: str) -> None:
+  async def register_publicity_sentence(self, spd_no: str, phrase: str, *, sale_end_dttm: str = "") -> None:
     """상품 홍보문구 등록 — 등록 후 자동 호출.
 
     실패해도 상품 등록 자체는 롤백하지 않음 (best-effort).
-    종료일시: 9999-12-31 23:59:59 (무기한)
+    sale_end_dttm: 상품 판매종료일 (yyyyMMddHHmmss). 없으면 6개월 폴백.
     """
     now = datetime.now()
     start_dt = now.strftime("%Y%m%d%H%M%S")
-    # 판매기간(1년) 이내로 설정 — 29991231은 판매기간 초과 에러 발생
-    end_dt = (now.replace(year=now.year + 1)).strftime("%Y%m%d235959")
+    # 판매종료일이 있으면 사용, 없으면 6개월 폴백 (29991231은 판매기간 초과 에러)
+    if sale_end_dttm and len(sale_end_dttm) >= 8:
+      end_dt = sale_end_dttm[:14].ljust(14, "0") if len(sale_end_dttm) < 14 else sale_end_dttm
+    else:
+      end_dt = (now + timedelta(days=180)).strftime("%Y%m%d235959")
     body = {
       "pblcStncLst": [
         {

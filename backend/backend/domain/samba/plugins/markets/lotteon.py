@@ -656,6 +656,7 @@ class LotteonPlugin(MarketPlugin):
           import asyncio
           await asyncio.sleep(5)
           new_sitm_nos: list[str] = []
+          sale_end_dttm: str = ""
           try:
             prod_resp = await client.get_product(spd_no)
             inner = prod_resp.get("data", prod_resp)
@@ -667,6 +668,13 @@ class LotteonPlugin(MarketPlugin):
                 new_sitm_nos = [
                   str(itm.get("sitmNo")) for itm in (spd_info.get("itmLst") or []) if itm.get("sitmNo")
                 ]
+                # 실제 판매종료일 추출 — 홍보문구 기간 설정에 사용
+                sale_end_dttm = (
+                  spd_info.get("saleEndDttm") or spd_info.get("saleEndDt") or
+                  spd_info.get("salEndDttm") or spd_info.get("salEndDt") or ""
+                )
+                if sale_end_dttm:
+                  logger.debug(f"[롯데ON] 판매종료일 확인: {sale_end_dttm!r}")
           except Exception as e:
             logger.warning(f"[롯데ON] 신규 단품 sitmNo 조회 실패 (무시): {e}")
           await self._apply_promotions(client, spd_no, extras, is_update=False, eitm_nos=new_sitm_nos)
@@ -677,7 +685,7 @@ class LotteonPlugin(MarketPlugin):
           if publicity_phrase:
             logger.info(f"[롯데ON] 홍보문구 등록 시도 — spdNo={spd_no!r} phrase={publicity_phrase!r}")
             try:
-              await client.register_publicity_sentence(spd_no, publicity_phrase)
+              await client.register_publicity_sentence(spd_no, publicity_phrase, sale_end_dttm=sale_end_dttm)
             except Exception as e:
               logger.warning(f"[롯데ON] 홍보문구 등록 실패 (무시): {e}")
           else:
