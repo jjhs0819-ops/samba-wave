@@ -453,6 +453,11 @@ class LotteonPlugin(MarketPlugin):
       if female_cat:
         logger.info(f"[롯데ON] 성별 오버라이드: {category_id!r} → {female_cat!r}")
         category_id = female_cat
+      elif "남성스포츠의류" in category_id:
+        # _LOTTEON_M_TO_F에 없는 스포츠의류 경로: 문자열 교체로 여성화
+        female_cat = category_id.replace("남성스포츠의류", "여성스포츠의류")
+        logger.info(f"[롯데ON] 성별 보정(스포츠의류): {category_id!r} → {female_cat!r}")
+        category_id = female_cat
 
     # ── FC05 권한없음 방지: 패션의류 경로/BC23코드 → 스포츠의류 강제 변환 ──────────
     # category_id가 경로 문자열일 때: 패션의류 경로 → 스포츠의류 경로 변환
