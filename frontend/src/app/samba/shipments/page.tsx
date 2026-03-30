@@ -710,10 +710,11 @@ export default function ShipmentsPage() {
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  // 현재 잡만 취소 (비상정지 아님)
+                  // 잡 취소 + 전송 즉시 중단
                   if (activeJobIdRef.current) {
                     await fetch(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
                   }
+                  await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   activeJobIdRef.current = ''
                 } catch { /* ignore */ }
                 setTransmitting(false)
@@ -930,10 +931,7 @@ export default function ShipmentsPage() {
                     {p.updated_at ? (() => {
                       const d = new Date(p.updated_at)
                       return (
-                        <div>
-                          <div style={{ color: '#AAB0BC' }}>{d.getFullYear()}-{String(d.getMonth() + 1).padStart(2, '0')}-{String(d.getDate()).padStart(2, '0')}</div>
-                          <div style={{ color: '#888' }}>{String(d.getHours()).padStart(2, '0')}:{String(d.getMinutes()).padStart(2, '0')}:{String(d.getSeconds()).padStart(2, '0')}</div>
-                        </div>
+                        <span style={{ color: '#AAB0BC' }}>{d.getFullYear()}-{String(d.getMonth() + 1).padStart(2, '0')}-{String(d.getDate()).padStart(2, '0')} {String(d.getHours()).padStart(2, '0')}:{String(d.getMinutes()).padStart(2, '0')}:{String(d.getSeconds()).padStart(2, '0')}</span>
                       )
                     })() : '-'}
                   </td>
@@ -951,9 +949,9 @@ export default function ShipmentsPage() {
                           return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
                         })() : ''
                         return (
-                          <div key={aid} style={{ marginBottom: '2px' }}>
-                            <div style={{ color: '#51CF66', fontSize: '0.68rem' }}>{acc.market_name}({acc.seller_id || acc.account_label || '-'})</div>
-                            {timeLabel && <div style={{ color: '#AAB0BC', fontSize: '0.68rem' }}>{timeLabel}</div>}
+                          <div key={aid} style={{ marginBottom: '2px', fontSize: '0.68rem' }}>
+                            <span style={{ color: '#51CF66' }}>{acc.market_name}({acc.seller_id || acc.account_label || '-'})</span>
+                            {timeLabel && <span style={{ color: '#AAB0BC', marginLeft: '6px' }}>{timeLabel}</span>}
                           </div>
                         )
                       })
