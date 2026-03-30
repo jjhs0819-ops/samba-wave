@@ -22,14 +22,24 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
   // 단일 useEffect로 폴링 관리 — 타이머 중복 방지
   const pollingRef = useRef(false)
 
+  // 마운트 시 오토튠 상태 자동 감지 (탭 재진입 대응)
+  const [selfDetectedRunning, setSelfDetectedRunning] = useState(false)
+  const isRunning = externalRunning || selfDetectedRunning
+
+  useEffect(() => {
+    // 마운트 직후 서버 상태 확인 — running이면 자동 폴링 시작
+    collectorApi.autotuneStatus().then(st => {
+      if (st) {
+        if (onStatusChange) onStatusChange(st.running, st.cycle_count, st.last_tick, st.refreshed_count || 0)
+        if (st.running) setSelfDetectedRunning(true)
+      }
+    }).catch(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     // 오토튠 꺼져있으면 폴링 안 함
-    if (!externalRunning) {
+    if (!isRunning) {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-      // 초기 상태 1회 확인
-      collectorApi.autotuneStatus().then(st => {
-        if (st && onStatusChange) onStatusChange(st.running, st.cycle_count, st.last_tick, st.refreshed_count || 0)
-      }).catch(() => {})
       return
     }
 
@@ -41,8 +51,9 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
       pollingRef.current = true
       try {
         const atStatus = await collectorApi.autotuneStatus().catch(() => null)
-        if (atStatus && onStatusChange) {
-          onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
+        if (atStatus) {
+          if (onStatusChange) onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
+          if (!atStatus.running) setSelfDetectedRunning(false)
         }
         // running 상태와 무관하게 로그 폴링 유지 (별도 스레드 타이밍 차이 대응)
         const idx = sinceIdxRef.current
@@ -76,7 +87,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
     return () => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
     }
-  }, [externalRunning, onStatusChange])
+  }, [isRunning, onStatusChange])
 
   return (
     <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
