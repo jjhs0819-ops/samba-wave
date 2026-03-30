@@ -675,10 +675,13 @@ class LotteonPlugin(MarketPlugin):
         if spd_no:
           publicity_phrase = extras.get("publicityPhrase", "").strip()
           if publicity_phrase:
+            logger.info(f"[롯데ON] 홍보문구 등록 시도 — spdNo={spd_no!r} phrase={publicity_phrase!r}")
             try:
               await client.register_publicity_sentence(spd_no, publicity_phrase)
             except Exception as e:
               logger.warning(f"[롯데ON] 홍보문구 등록 실패 (무시): {e}")
+          else:
+            logger.debug(f"[롯데ON] 홍보문구 미설정 (설정 > 롯데ON > 상품 홍보문구 입력 필요)")
 
         return {"success": True, "message": "롯데ON 등록 성공", "data": result, "spdNo": spd_no}
     except Exception as e:

@@ -404,12 +404,15 @@ class LotteonClient:
         }
       ]
     }
+    logger.debug(f"[롯데ON] 홍보문구 API 요청 — trGrpCd={self.tr_grp_cd!r} trNo={self.tr_no!r} spdNo={spd_no!r}")
     result = await self._call_api(
       "POST",
       "/v1/openapi/product/v1/product/publicitysentence/registration/request",
       body=body,
     )
+    rc_outer = result.get("returnCode", "")
     data_list = result.get("data", [])
+    logger.debug(f"[롯데ON] 홍보문구 API 응답 — returnCode={rc_outer!r} data={data_list}")
     if isinstance(data_list, list) and data_list:
       item = data_list[0]
       if isinstance(item, dict):
