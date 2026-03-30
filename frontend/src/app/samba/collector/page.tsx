@@ -504,8 +504,12 @@ export default function CollectorPage() {
 
             if (job.status === 'completed') {
               const saved = job.result?.saved ?? 0
+              const skipped = job.result?.skipped ?? 0
               const policy = job.result?.policy || ''
-              addLog(`[${f.name}] 수집 완료: ${saved}건 저장${policy ? ` | ${policy}` : ''}`)
+              const parts = [`신규 ${saved}건`]
+              if (skipped > 0) parts.push(`중복 ${skipped}건`)
+              if (policy) parts.push(policy)
+              addLog(`[${f.name}] 수집 완료: ${parts.join(' | ')}`)
               await new Promise(r => setTimeout(r, 100))
               break
             }
@@ -1253,7 +1257,14 @@ export default function CollectorPage() {
                               if (!jr.ok) break
                               const job = await jr.json()
                               if (job.current > lastCurrent) { addLog(`[${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
-                              if (job.status === 'completed') { addLog(`[${f.name}] 수집 완료: ${job.result?.saved ?? 0}건 저장`); break }
+                              if (job.status === 'completed') {
+                                const _s = job.result?.saved ?? 0, _sk = job.result?.skipped ?? 0, _p = job.result?.policy || ''
+                                const _parts = [`신규 ${_s}건`]
+                                if (_sk > 0) _parts.push(`중복 ${_sk}건`)
+                                if (_p) _parts.push(_p)
+                                addLog(`[${f.name}] 수집 완료: ${_parts.join(' | ')}`)
+                                break
+                              }
                               if (job.status === 'failed') { addLog(`[${f.name}] 수집 실패: ${job.error || '오류'}`); break }
                             }
                           } catch (e) { addLog(`[${f.name}] 수집 오류: ${(e as Error).message}`) }
@@ -1288,7 +1299,6 @@ export default function CollectorPage() {
                   let totalCalls = 0, totalInput = 0, totalOutput = 0, totalCost = 0
                   for (let i = 0; i < targetFilters.length; i++) {
                     const f = targetFilters[i]
-                    addLog(`[AI태그] [${i + 1}/${targetFilters.length}] ${f.name} 생성 중...`)
                     await new Promise(r => setTimeout(r, 50))
                     try {
                       const res = await proxyApi.previewAiTags([], [f.id])
