@@ -248,11 +248,9 @@ export default function WarroomPage() {
       if (dashboard) setStats(dashboard)
       setEvents(recentEvents)
       if (probeStatus && Object.keys(probeStatus).length > 0) setProbeData(probeStatus)
-      setAutotuneRunning(atStatus.running)
-      setAutotuneCycles(atStatus.cycle_count)
-      setAutotuneRefreshed(atStatus.refreshed_count || 0)
+      // 오토튠 상태는 handleAutotuneStatus를 통해 처리 (falseCountRef 가드 적용, 경쟁 상태 방지)
+      handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
       if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
-      setAutotuneLastTick(atStatus.last_tick)
       setLastFetched(new Date())
       nextPollRef.current = POLL_INTERVAL / 1000
     } catch {
