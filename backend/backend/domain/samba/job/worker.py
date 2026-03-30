@@ -106,12 +106,12 @@ class JobWorker:
         return True
 
     async def _execute_job(self, job):
-        """개별 잡 실행 (독립 세션)."""
+        """개별 잡 실행 — 수집/전송은 별도 스레드, 나머지는 메인 루프."""
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
 
         try:
-            # 수집/전송 잡은 별도 스레드 + 독립 이벤트 루프 — API 요청과 I/O 완전 격리
+            # 수집/전송: 별도 스레드 + 독립 이벤트 루프 (I/O 격리)
             if job.job_type in ("collect", "transmit"):
                 label = "수집" if job.job_type == "collect" else "전송"
                 logger.info(f"[잡워커] {label} 실행 (격리 스레드): {job.id}")
@@ -122,14 +122,17 @@ class JobWorker:
                     daemon=True,
                 )
                 thread.start()
-                await asyncio.get_running_loop().run_in_executor(
-                    None, lambda: thread.join(timeout=600)  # 10분 타임아웃
-                )
+                # 비동기 폴링으로 대기 (이벤트 루프 차단 없음, heartbeat 유지)
+                elapsed = 0
+                while thread.is_alive() and elapsed < 600:
+                    await asyncio.sleep(2)
+                    elapsed += 2
                 if thread.is_alive():
-                    logger.error(f"[잡워커] {label} 스레드 10분 타임아웃 — 강제 해제: {job.id}")
-                    _add_job_log(job.id, f"{label} 스레드 타임아웃 (10분) — 강제 종료")
+                    logger.error(f"[잡워커] {label} 스레드 10분 타임아웃: {job.id}")
+                    _add_job_log(job.id, f"{label} 타임아웃 (10분)")
                 return
 
+            # 기타 잡: 메인 루프 직접 실행
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
                 logger.info(f"[잡워커] 실행: {job.id} ({job.job_type})")
