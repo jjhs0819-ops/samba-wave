@@ -367,8 +367,15 @@ class JobWorker:
 
             logger.info(f"[잡워커] 중복={len(existing_ids)}, 타겟={len(targets)}, 스킵={total_skipped}")
             if not targets:
+                # 연속 3페이지 신규 0건이면 조기 종료 (나머지도 중복일 가능성 높음)
+                _empty_pages = getattr(self, '_empty_pages', 0) + 1
+                self._empty_pages = _empty_pages
+                if _empty_pages >= 3:
+                    logger.info(f"[잡워커] 연속 {_empty_pages}페이지 신규 0건 → 조기 종료")
+                    break
                 search_page += 1
                 continue
+            self._empty_pages = 0  # 신규 상품 발견 시 카운터 리셋
 
             # 상세 수집 (병렬 — SITE_CONCURRENCY + 공유 HTTP 클라이언트)
             from backend.domain.samba.collector.refresher import SITE_CONCURRENCY
