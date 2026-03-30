@@ -21,11 +21,9 @@ fi
 echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
-  # Run the production server with Gunicorn
-  # WEB_CONCURRENCY 무시 — 인메모리 잡 로그 때문에 반드시 1 워커
-  export WEB_CONCURRENCY=1
-  echo "Starting production server with Gunicorn (workers=1)..."
-  exec uv run -m gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080
+  # Uvicorn 단일 프로세스 — 인메모리 잡 로그 + 워커 중복 실행 방지
+  echo "Starting production server with Uvicorn (single process)..."
+  exec uv run -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
 else
   # Run the development server with Uvicorn and --reload
   echo "Starting development server with Uvicorn..."
