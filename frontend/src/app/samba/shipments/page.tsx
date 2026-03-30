@@ -705,32 +705,40 @@ export default function ShipmentsPage() {
             <button onClick={handleMarketDelete} disabled={transmitting}
               style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: transmitting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
             <button onClick={async () => {
+                const ts = new Date().toLocaleTimeString()
+                setLogMessages(prev => [...prev, `[${ts}] 전송 중단 요청...`].slice(-30))
                 abortRef.current = true
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  // 현재 잡만 취소
                   if (activeJobIdRef.current) {
                     await fetch(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
                   }
                   await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   activeJobIdRef.current = ''
-                } catch { /* ignore */ }
+                  setLogMessages(prev => [...prev, `[${ts}] 전송 중단 완료`].slice(-30))
+                } catch {
+                  setLogMessages(prev => [...prev, `[${ts}] 전송 중단 실패`].slice(-30))
+                }
                 setTransmitting(false)
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,50,50,0.15)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.4)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >전송 중단</button>
             <button onClick={async () => {
+                const ts = new Date().toLocaleTimeString()
+                setLogMessages(prev => [...prev, `[${ts}] 전체 중단 요청...`].slice(-30))
                 abortRef.current = true
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  // 현재 잡 + 대기 중 잡 전부 취소
                   await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                   await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   await fetch(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
                   activeJobIdRef.current = ''
-                } catch { /* ignore */ }
+                  setLogMessages(prev => [...prev, `[${ts}] 전체 중단 완료 — 모든 전송/대기 잡 취소됨`].slice(-30))
+                } catch {
+                  setLogMessages(prev => [...prev, `[${ts}] 전체 중단 실패`].slice(-30))
+                }
                 setTransmitting(false)
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: 'pointer', fontWeight: 700 }}
