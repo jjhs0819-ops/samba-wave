@@ -384,21 +384,12 @@ class LotteonClient:
         return {"success": True, "data": result, "spdNo": spd_no}
     return {"success": True, "data": result}
 
-  async def register_publicity_sentence(self, spd_no: str, phrase: str, *, sale_end_dttm: str = "") -> None:
+  async def register_publicity_sentence(self, spd_no: str, phrase: str) -> None:
     """상품 홍보문구 등록 — 등록 후 자동 호출.
 
     실패해도 상품 등록 자체는 롤백하지 않음 (best-effort).
-    sale_end_dttm: 상품 판매종료일 (yyyyMMddHHmmss). 없으면 6개월 폴백.
+    기간미설정(None)으로 등록 — 무기한 노출.
     """
-    now = datetime.now()
-    # 시작일: 내일 00:00:00 — 즉시 등록 시 "과거일시" 에러 방지
-    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    start_dt = tomorrow.strftime("%Y%m%d%H%M%S")
-    # 판매종료일이 있으면 사용, 없으면 180일 폴백 (29991231은 판매기간 초과 에러)
-    if sale_end_dttm and len(sale_end_dttm) >= 8:
-      end_dt = sale_end_dttm[:14].ljust(14, "0") if len(sale_end_dttm) < 14 else sale_end_dttm
-    else:
-      end_dt = (now + timedelta(days=180)).strftime("%Y%m%d235959")
     body = {
       "pblcStncLst": [
         {
@@ -407,8 +398,8 @@ class LotteonClient:
           "lrtrNo": None,
           "spdNo": spd_no,
           "pblcStnc": phrase[:75],  # API 최대 75자
-          "pblcStncStrtDttm": start_dt,
-          "pblcStncEndDttm": end_dt,
+          "pblcStncStrtDttm": None,  # 기간미설정
+          "pblcStncEndDttm": None,   # 기간미설정
         }
       ]
     }
