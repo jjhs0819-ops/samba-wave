@@ -663,7 +663,10 @@ export default function ShipmentsPage() {
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-stop`, { method: 'POST' })
+                  // 현재 잡만 취소 (비상정지 아님)
+                  if (activeJobIdRef.current) {
+                    await fetch(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
+                  }
                   activeJobIdRef.current = ''
                 } catch { /* ignore */ }
                 setTransmitting(false)
