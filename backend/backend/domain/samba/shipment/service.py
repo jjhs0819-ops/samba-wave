@@ -1130,6 +1130,8 @@ class SambaShipmentService:
 
     images = product.get("images") or []
     detail_images = product.get("detail_images") or []
+    # detail_images에 있는 URL은 추가이미지(sub)에서 제외 (중복 방지)
+    detail_set = set(detail_images)
 
     # img_order 순서대로, img_checks가 True인 항목만 생성
     for item_id in img_order:
@@ -1141,7 +1143,8 @@ class SambaShipmentService:
         parts.append(img_tag.format(url=images[0]))
       elif item_id == "sub":
         for sub_img in images[1:]:
-          parts.append(img_tag.format(url=sub_img))
+          if sub_img not in detail_set:
+            parts.append(img_tag.format(url=sub_img))
       elif item_id == "title":
         name = product.get("name", "")
         if name:
