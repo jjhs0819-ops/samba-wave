@@ -128,17 +128,6 @@ class JobWorker:
             await repo.fail_job(job.id, "product_ids 없음")
             return
 
-        # 전송 중 오토튠 일시정지 (무신사 API rate limit 간섭 방지)
-        _autotune_was_running = False
-        try:
-            import backend.api.v1.routers.samba.collector_autotune as _at
-            _autotune_was_running = _at._autotune_running
-            if _autotune_was_running:
-                _at._autotune_running = False
-                logger.info("[잡워커] 전송 시작 → 오토튠 일시정지")
-        except Exception:
-            pass
-
         svc = SambaShipmentService(SambaShipmentRepository(session), session)
         total = len(product_ids)
         await repo.update_progress(job.id, 0, total)
@@ -219,16 +208,6 @@ class JobWorker:
         await repo.complete_job(job.id, {"success": success_count, "failed": fail_count})
         logger.info(f"[잡워커] 전송 완료: {job.id} (성공 {success_count}/{total}건)")
 
-        # 전송 완료 → 오토튠 자동 재개
-        if _autotune_was_running:
-            try:
-                import asyncio as _aio_resume
-                import backend.api.v1.routers.samba.collector_autotune as _at2
-                _at2._autotune_running = True
-                _at2._autotune_task = _aio_resume.create_task(_at2._autotune_loop())
-                logger.info("[잡워커] 전송 완료 → 오토튠 재개")
-            except Exception:
-                pass
 
     async def _run_collect(self, job, repo, session):
         """수집 잡 실행 — collector_collection의 _stream_musinsa 로직 이식."""
