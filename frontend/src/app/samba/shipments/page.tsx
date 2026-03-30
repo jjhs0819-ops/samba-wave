@@ -31,12 +31,12 @@ export default function ShipmentsPage() {
   const [loading, setLoading] = useState(true)
 
   // 필터
-  const [searchField, setSearchField] = useState('name')
+  const [searchField, setSearchField] = useState('group')
   const [searchText, setSearchText] = useState('')
   const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [siteFilter, setSiteFilter] = useState('전체')
-  const [registrationFilter, setRegistrationFilter] = useState('전체')
+  const [registrationFilter, setRegistrationFilter] = useState('미등록')
   const [sortBy, setSortBy] = useState('updated_at_desc')
   const [totalCount, setTotalCount] = useState(0)
 
