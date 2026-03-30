@@ -424,14 +424,10 @@ async def _autotune_loop():
                         if _del_targets:
                             await _aio.gather(*[_at_del(pid, pd, acc) for pid, pd, _, acc in _del_targets])
 
-                        # DB 일괄 삭제
+                        # DB 삭제 안 함 — 품절 상품은 마켓삭제만, DB는 사용자가 수동 삭제
+                        deleted_count = len(_del_pids)
                         if _del_pids:
-                            from sqlalchemy import delete as sa_delete
-                            from sqlmodel import col
-                            from backend.domain.samba.collector.model import SambaCollectedProduct
-                            await session.exec(sa_delete(SambaCollectedProduct).where(col(SambaCollectedProduct.id).in_(list(_del_pids))))  # type: ignore[arg-type]
-                            deleted_count = len(_del_pids)
-                            log.info("[오토튠] 품절 상품 %d건 마켓삭제+DB삭제 완료", deleted_count)
+                            log.info("[오토튠] 품절 상품 %d건 마켓삭제 완료 (DB 유지)", deleted_count)
 
                         await session.commit()
 
