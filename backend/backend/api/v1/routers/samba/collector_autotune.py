@@ -183,7 +183,7 @@ async def _autotune_loop():
                 if products:
                     filtered_count = len(products)
                     # ③ 소싱처별 병렬 갱신
-                    results, summary = await refresh_products_bulk(products, max_concurrency=10)
+                    results, summary = await refresh_products_bulk(products, max_concurrency=3)
 
                     # 상품 딕셔너리 사전 구축 (N+1 쿼리 방지)
                     product_map: dict[str, object] = {p.id: p for p in products}
