@@ -16,7 +16,7 @@ _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 # 스크롤/목록 조회 시 제외할 무거운 필드 (source_url은 가볍고 목록에서 필요하므로 제외 안 함)
-_HEAVY_FIELDS = {"price_history", "detail_html", "last_sent_data", "extra_data"}
+_HEAVY_FIELDS = {"price_history", "detail_html", "extra_data"}
 
 
 # ── 블랙리스트 캐시 ──

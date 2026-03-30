@@ -1112,15 +1112,15 @@ const ProductCard = React.memo(function ProductCard({
                 const imgTag = (url: string) => `<div style="text-align:center;"><img src="${url}" style="max-width:860px;width:100%;" /></div>`
                 const parts: string[] = []
 
-                // detail_images에 있는 URL은 추가이미지(sub)에서 제외 (중복 방지)
-                const detailSet = new Set(detailImgs)
+                // 추가이미지(sub)에서 출력된 URL → detail에서 중복 제외
+                const subSet = new Set(imgs.slice(1))
                 for (const item of order) {
                   if (!checks[item]) continue
                   if (item === 'topImg' && topImg) { parts.push(imgTag(topImg)) }
                   else if (item === 'main' && imgs[0]) { parts.push(imgTag(imgs[0])) }
-                  else if (item === 'sub' && imgs.length > 1) { imgs.slice(1).filter(u => !detailSet.has(u)).forEach(u => parts.push(imgTag(u))) }
+                  else if (item === 'sub' && imgs.length > 1) { imgs.slice(1).forEach(u => parts.push(imgTag(u))) }
                   else if (item === 'title' && p.name) { parts.push(`<div style="text-align:center;padding:1rem 0;"><h2 style="color:#333;font-size:1.25rem;">${p.name}</h2></div>`) }
-                  else if (item === 'detail' && detailImgs.length > 0) { detailImgs.forEach(u => parts.push(imgTag(u))) }
+                  else if (item === 'detail' && detailImgs.length > 0) { detailImgs.filter(u => !subSet.has(u)).forEach(u => parts.push(imgTag(u))) }
                   else if (item === 'bottomImg' && bottomImg) { parts.push(imgTag(bottomImg)) }
                 }
 
