@@ -38,6 +38,7 @@ export default function ShipmentsPage() {
   const [siteFilter, setSiteFilter] = useState('전체')
   const [registrationFilter, setRegistrationFilter] = useState('전체')
   const [sortBy, setSortBy] = useState('updated_at_desc')
+  const [totalCount, setTotalCount] = useState(0)
 
   // 선택
   const [selectedProducts, setSelectedProducts] = useState<string[]>([])
@@ -113,18 +114,20 @@ export default function ShipmentsPage() {
     const preIds = new URLSearchParams(window.location.search).get('selected')?.split(',').filter(Boolean) || []
 
     // 검색 조건에 따라 서버 API 파라미터 구성
-    const scrollParams: Record<string, string | number> = { skip: 0, limit: 10000 }
+    const scrollParams: Record<string, string | number> = { skip: (currentPage - 1) * pageSize, limit: pageSize }
     if (searchText.trim()) {
       scrollParams.search = searchText.trim()
       const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
       scrollParams.search_type = typeMap[searchField] || 'name'
     }
     if (siteFilter !== '전체') scrollParams.source_site = siteFilter
+    if (registrationFilter !== '전체') scrollParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : ''
+    if (sortBy) scrollParams.sort_by = sortBy
 
     // 선택된 상품이 있으면 해당 상품만 조회, 없으면 scroll API
     const productPromise = preIds.length > 0
       ? collectorApi.getProductsByIds(preIds).catch(() => [] as SambaCollectedProduct[])
-      : collectorApi.scrollProducts(scrollParams).then(r => r.items).catch(() => [] as SambaCollectedProduct[])
+      : collectorApi.scrollProducts(scrollParams).then(r => { setTotalCount(r.total || 0); return r.items }).catch(() => [] as SambaCollectedProduct[])
 
     const [p, a, s, f, pol, cm] = await Promise.all([
       productPromise,
@@ -141,7 +144,7 @@ export default function ShipmentsPage() {
     setPolicies(pol)
     setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
     setLoading(false)
-  }, [searchText, searchField, siteFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [searchText, searchField, siteFilter, registrationFilter, sortBy, currentPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
   useEffect(() => { return () => { if (progressRef.current) clearInterval(progressRef.current) } }, [])
@@ -214,63 +217,11 @@ export default function ShipmentsPage() {
     return map
   }, [filters])
 
-  const filteredProducts = useMemo(() => {
-    const q = searchText.trim().toLowerCase()
-    // URL에서 넘어온 선택 상품이 있으면 해당 상품만 표시
-    const preIds = preSelectedIds.filter(id => id)
-    return products.filter(p => {
-      if (preIds.length > 0 && !preIds.includes(p.id)) return false
-      if (siteFilter !== '전체' && p.source_site !== siteFilter) return false
-      // 마켓등록 필터
-      if (registrationFilter === '등록' && !(p.registered_accounts?.length)) return false
-      if (registrationFilter === '미등록' && (p.registered_accounts?.length ?? 0) > 0) return false
-      if (!q) return true
-      switch (searchField) {
-        case 'name':
-          return p.name.toLowerCase().includes(q)
-        case 'no':
-          return (p.site_product_id || '').toLowerCase().includes(q)
-        case 'group':
-          return (filterNameMap[p.search_filter_id || ''] || '').toLowerCase().includes(q)
-        default:
-          return true
-      }
-    }).sort((a, b) => {
-      // market_xxx_desc / market_xxx_asc 패턴 감지
-      const marketMatch = sortBy.match(/^market_(.+?)_(asc|desc)$/)
-      if (marketMatch) {
-        const marketType = marketMatch[1]
-        const mul = marketMatch[2] === 'desc' ? -1 : 1
-        const getMarketTime = (p: typeof a) => {
-          // last_sent_data에서 해당 마켓 계정의 sent_at 조회
-          const sent = (p as unknown as Record<string, unknown>).last_sent_data as Record<string, { sent_at?: string }> | undefined
-          if (!sent) return ''
-          const accIds = (p.registered_accounts || [])
-          const accId = accIds.find(aid => {
-            const acc = accounts.find(x => x.id === aid)
-            return acc?.market_type === marketType
-          })
-          if (!accId || !sent[accId]) return ''
-          return sent[accId].sent_at || ''
-        }
-        const va = getMarketTime(a), vb = getMarketTime(b)
-        return va > vb ? mul : va < vb ? -mul : 0
-      }
-      const isDesc = sortBy.endsWith('_desc')
-      const field = sortBy.replace(/_desc$|_asc$/, '')
-      const mul = isDesc ? -1 : 1
-      const getVal = (p: typeof a) => {
-        switch (field) {
-          case 'updated_at': return p.updated_at || ''
-          case 'collected_at': return p.collected_at || p.created_at || ''
-          default: return p.updated_at || ''
-        }
-      }
-      return getVal(a) > getVal(b) ? mul : getVal(a) < getVal(b) ? -mul : 0
-    })
-  }, [products, siteFilter, registrationFilter, searchText, searchField, filterNameMap, sortBy, accounts, shipments, preSelectedIds])
+  // 서버에서 필터/정렬/페이지네이션 완료된 상태 — 프론트 필터링 불필요
+  const filteredProducts = products
 
-  const pageProducts = useMemo(() => (filteredProducts || []).slice((currentPage - 1) * pageSize, currentPage * pageSize), [filteredProducts, currentPage, pageSize])
+  // 서버 페이지네이션 — products가 이미 현재 페이지분
+  const pageProducts = filteredProducts
 
   // 등록된 마켓 목록 (동적)
   const registeredMarkets = useMemo(() => {
@@ -710,7 +661,7 @@ export default function ShipmentsPage() {
               >선택전송</button>
               <button onClick={() => handleStart(filteredProducts.map(p => p.id))}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
-              >검색결과전송 ({filteredProducts.length})</button>
+              >검색결과전송 ({totalCount})</button>
             </>)}
           </div>
         </div>
@@ -744,7 +695,7 @@ export default function ShipmentsPage() {
       <div style={{ background: 'rgba(30,30,30,0.5)', border: '1px solid #2D2D2D', borderRadius: '12px', overflow: 'hidden' }}>
         {/* 상단 탭 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid #2D2D2D', gap: '8px' }}>
-          <span style={{ fontSize: '0.8rem', color: '#888' }}>총 <span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredProducts.length.toLocaleString()}</span> 개의 상품이 검색되었습니다.</span>
+          <span style={{ fontSize: '0.8rem', color: '#888' }}>총 <span style={{ color: '#FF8C00', fontWeight: 600 }}>{totalCount.toLocaleString()}</span> 개의 상품이 검색되었습니다.</span>
           <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '250px', marginLeft: 'auto' }}>
             <option value="updated_at_desc">상품업데이트 날짜순 ▼</option>
             <option value="updated_at_asc">상품업데이트 날짜순 ▲</option>
@@ -778,9 +729,9 @@ export default function ShipmentsPage() {
           <tbody>
             {loading ? (
               <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
-            ) : filteredProducts.length === 0 ? (
+            ) : totalCount === 0 ? (
               <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>상품이 없습니다</td></tr>
-            ) : filteredProducts.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((p, idx) => {
+            ) : filteredProducts.map((p, idx) => {
               const regAccounts = p.registered_accounts || []
               const regMarkets = regAccounts.map(aid => accounts.find(a => a.id === aid)?.market_name).filter(Boolean)
               const optCount = (p.options || []).length
@@ -849,15 +800,15 @@ export default function ShipmentsPage() {
         </table>
 
         {/* 페이지네이션 */}
-        {filteredProducts.length > pageSize && (
+        {totalCount > pageSize && (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', padding: '12px 0' }}>
             <button
               disabled={currentPage <= 1}
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
               style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage <= 1 ? '#444' : '#C5C5C5', cursor: currentPage <= 1 ? 'default' : 'pointer' }}
             >◀</button>
-            {Array.from({ length: Math.ceil(filteredProducts.length / pageSize) }, (_, i) => i + 1)
-              .filter(page => Math.abs(page - currentPage) <= 2 || page === 1 || page === Math.ceil(filteredProducts.length / pageSize))
+            {Array.from({ length: Math.ceil(totalCount / pageSize) }, (_, i) => i + 1)
+              .filter(page => Math.abs(page - currentPage) <= 2 || page === 1 || page === Math.ceil(totalCount / pageSize))
               .map((page, i, arr) => (
                 <span key={page}>
                   {i > 0 && arr[i - 1] !== page - 1 && <span style={{ color: '#555' }}>…</span>}
@@ -874,12 +825,12 @@ export default function ShipmentsPage() {
                 </span>
               ))}
             <button
-              disabled={currentPage >= Math.ceil(filteredProducts.length / pageSize)}
+              disabled={currentPage >= Math.ceil(totalCount / pageSize)}
               onClick={() => setCurrentPage(p => p + 1)}
-              style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage >= Math.ceil(filteredProducts.length / pageSize) ? '#444' : '#C5C5C5', cursor: currentPage >= Math.ceil(filteredProducts.length / pageSize) ? 'default' : 'pointer' }}
+              style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage >= Math.ceil(totalCount / pageSize) ? '#444' : '#C5C5C5', cursor: currentPage >= Math.ceil(totalCount / pageSize) ? 'default' : 'pointer' }}
             >▶</button>
             <span style={{ fontSize: '0.72rem', color: '#666', marginLeft: '8px' }}>
-              {filteredProducts.length}개 중 {(currentPage - 1) * pageSize + 1}~{Math.min(currentPage * pageSize, filteredProducts.length)}
+              {totalCount}개 중 {(currentPage - 1) * pageSize + 1}~{Math.min(currentPage * pageSize, totalCount)}
             </span>
           </div>
         )}
