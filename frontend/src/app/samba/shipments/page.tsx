@@ -659,7 +659,22 @@ export default function ShipmentsPage() {
               <button onClick={() => handleStart()}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.4)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >선택전송</button>
-              <button onClick={() => handleStart(filteredProducts.map(p => p.id))}
+              <button onClick={async () => {
+                // 전체 상품 ID를 서버에서 조회 (현재 필터 조건 유지)
+                const allParams: Record<string, string | number> = { skip: 0, limit: 100000 }
+                if (searchText.trim()) {
+                  allParams.search = searchText.trim()
+                  const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
+                  allParams.search_type = typeMap[searchField] || 'name'
+                }
+                if (siteFilter !== '전체') allParams.source_site = siteFilter
+                if (registrationFilter !== '전체') allParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : ''
+                if (sortBy) allParams.sort_by = sortBy
+                try {
+                  const all = await collectorApi.scrollProducts(allParams)
+                  handleStart(all.items.map(p => p.id))
+                } catch { handleStart(filteredProducts.map(p => p.id)) }
+              }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >검색결과전송 ({totalCount})</button>
             </>)}
