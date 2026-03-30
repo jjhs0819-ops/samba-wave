@@ -31,7 +31,7 @@ export default function ShipmentsPage() {
   const [loading, setLoading] = useState(true)
 
   // 필터
-  const [searchField, setSearchField] = useState('name')
+  const [searchField, setSearchField] = useState('group')
   const [searchText, setSearchText] = useState('')
   const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
@@ -111,18 +111,10 @@ export default function ShipmentsPage() {
   // 카테고리 매핑 데이터
   const [categoryMappings, setCategoryMappings] = useState<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>([])
 
-  const preIdsConsumedRef = useRef(false)
   const load = useCallback(async () => {
     setLoading(true)
-    // 최초 1회만 선택 상품 ID 사용 (sessionStorage > URL > searchParams 순)
-    let preIds: string[] = []
-    if (!preIdsConsumedRef.current) {
-      let raw = ''
-      try { raw = sessionStorage.getItem('shipment_selected') || '' } catch {}
-      if (!raw) raw = new URLSearchParams(window.location.search).get('selected') || ''
-      if (!raw) raw = searchParams.get('selected') || ''
-      preIds = raw.split(',').filter(Boolean)
-    }
+    // URL에서 선택된 상품 ID 먼저 확인
+    const preIds = new URLSearchParams(window.location.search).get('selected')?.split(',').filter(Boolean) || []
 
     // 검색 조건에 따라 서버 API 파라미터 구성
     const scrollParams: Record<string, string | number> = { skip: (currentPage - 1) * pageSize, limit: pageSize }
@@ -137,7 +129,7 @@ export default function ShipmentsPage() {
 
     // 선택된 상품이 있으면 해당 상품만 조회, 없으면 scroll API
     const productPromise = preIds.length > 0
-      ? collectorApi.getProductsByIds(preIds).then(r => { preIdsConsumedRef.current = true; try { sessionStorage.removeItem('shipment_selected'); sessionStorage.removeItem('shipment_sites') } catch {}; return r }).catch(() => [] as SambaCollectedProduct[])
+      ? collectorApi.getProductsByIds(preIds).catch(() => [] as SambaCollectedProduct[])
       : collectorApi.scrollProducts(scrollParams).then(r => { setTotalCount(r.total || 0); return r.items }).catch(() => [] as SambaCollectedProduct[])
 
     const [p, a, s, f, pol, cm] = await Promise.all([
@@ -160,10 +152,9 @@ export default function ShipmentsPage() {
   useEffect(() => { load() }, [load])
   useEffect(() => { return () => { if (progressRef.current) clearInterval(progressRef.current) } }, [])
 
-  // URL/sessionStorage에서 선택된 상품 ID 자동 적용 + 필터링
+  // URL에서 선택된 상품 ID 자동 적용 + 필터링
   const preSelectedIds = searchParams.get('selected')?.split(',') || []
-  const preSelectedSitesRaw = searchParams.get('sites')?.split(',') || []
-  const preSelectedSites = preSelectedSitesRaw.length > 0 ? preSelectedSitesRaw : (() => { try { return sessionStorage.getItem('shipment_sites')?.split(',').filter(Boolean) || [] } catch { return [] } })()
+  const preSelectedSites = searchParams.get('sites')?.split(',') || []
   const autoAll = searchParams.get('autoAll') === '1'
   const priceOnly = searchParams.get('priceOnly') === '1'
   const initializedRef = useRef(false)
