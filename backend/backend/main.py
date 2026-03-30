@@ -50,6 +50,24 @@ async def lifespan(app: FastAPI):
     from backend.domain.samba.cache import cache
     await cache.connect()
 
+    # 서버 시작 시 좀비 running Job → pending 복구 (배포 중 끊긴 Job 재처리)
+    try:
+        from backend.db.orm import get_write_session
+        from sqlalchemy import text
+        async with get_write_session() as session:
+            r = await session.execute(text(
+                "UPDATE samba_jobs SET status = 'pending', started_at = NULL, progress_current = 0 "
+                "WHERE status = 'running'"
+            ))
+            if r.rowcount > 0:
+                import logging
+                logging.getLogger("backend.startup").info(
+                    f"[startup] 좀비 running Job {r.rowcount}건 → pending 복구"
+                )
+            await session.commit()
+    except Exception:
+        pass
+
     # 백그라운드 잡 워커 시작
     from backend.domain.samba.job.worker import JobWorker
     worker = JobWorker()
