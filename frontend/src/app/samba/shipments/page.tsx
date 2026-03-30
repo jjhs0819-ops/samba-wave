@@ -33,7 +33,7 @@ export default function ShipmentsPage() {
   // 필터
   const [searchField, setSearchField] = useState('name')
   const [searchText, setSearchText] = useState('')
-  const [pageSize, setPageSize] = useState(50)
+  const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [siteFilter, setSiteFilter] = useState('전체')
   const [registrationFilter, setRegistrationFilter] = useState('전체')
