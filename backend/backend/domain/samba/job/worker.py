@@ -121,11 +121,14 @@ class JobWorker:
 
         try:
             # 수집: 별도 스레드 + 독립 이벤트 루프 (전송과 I/O 격리)
-            if job.job_type == "collect":
-                logger.info(f"[잡워커] 수집 실행 (격리 스레드): {job.id}")
+            _job_id = job.id
+            _job_type = job.job_type
+            _job_payload = job.payload or {}
+            if _job_type == "collect":
+                logger.info(f"[잡워커] 수집 실행 (격리 스레드): {_job_id}")
                 thread = threading.Thread(
                     target=_run_collect_in_thread,
-                    args=(self, job.id, job.payload or {}),
+                    args=(self, _job_id, _job_payload),
                     daemon=True,
                 )
                 thread.start()
@@ -134,35 +137,43 @@ class JobWorker:
                     await asyncio.sleep(2)
                     elapsed += 2
                 if thread.is_alive():
-                    logger.error(f"[잡워커] 수집 스레드 10분 타임아웃: {job.id}")
-                    _add_job_log(job.id, f"수집 타임아웃 (10분)")
+                    logger.error(f"[잡워커] 수집 스레드 10분 타임아웃: {_job_id}")
+                    _add_job_log(_job_id, f"수집 타임아웃 (10분)")
                 return
 
             # 전송 + 기타: 메인 루프 직접 실행 (인메모리 로그 공유)
+            _job_id = job.id
+            _job_type = job.job_type
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
-                logger.info(f"[잡워커] 실행: {job.id} ({job.job_type})")
+                # detached 객체 대신 현재 세션에서 job 재조회
+                from backend.domain.samba.job.model import SambaJob as _SJ
+                fresh_job = await session.get(_SJ, _job_id)
+                if not fresh_job:
+                    logger.error(f"[잡워커] 잡 재조회 실패: {_job_id}")
+                    return
+                logger.info(f"[잡워커] 실행: {_job_id} ({_job_type})")
 
                 try:
-                    if job.job_type == "transmit":
-                        await self._run_transmit(job, repo, session)
-                    elif job.job_type == "refresh":
-                        await self._run_stub(job, repo, "갱신")
-                    elif job.job_type == "ai_tag":
-                        await self._run_stub(job, repo, "AI태그")
+                    if _job_type == "transmit":
+                        await self._run_transmit(fresh_job, repo, session)
+                    elif _job_type == "refresh":
+                        await self._run_stub(fresh_job, repo, "갱신")
+                    elif _job_type == "ai_tag":
+                        await self._run_stub(fresh_job, repo, "AI태그")
                     else:
-                        await repo.fail_job(job.id, f"알 수 없는 잡 타입: {job.job_type}")
+                        await repo.fail_job(_job_id, f"알 수 없는 잡 타입: {_job_type}")
 
                     await session.commit()
                 except Exception as e:
-                    logger.error(f"[잡워커] 잡 실행 실패: {job.id} — {e}")
+                    logger.error(f"[잡워커] 잡 실행 실패: {_job_id} — {e}")
                     try:
-                        await repo.fail_job(job.id, str(e))
+                        await repo.fail_job(_job_id, str(e))
                         await session.commit()
                     except Exception:
                         pass
         finally:
-            self._active_types.discard(job.job_type)
+            self._active_types.discard(_job_type)
 
     async def _execute_collect_isolated(self, job_id: str, payload: dict):
         """격리된 이벤트 루프에서 수집 잡 실행 — 자체 DB 세션 관리."""
