@@ -454,8 +454,8 @@ class LotteonPlugin(MarketPlugin):
         logger.info(f"[롯데ON] 성별 오버라이드: {category_id!r} → {female_cat!r}")
         category_id = female_cat
 
-    # ── FC05 권한없음 방지: 패션의류 경로 → 스포츠의류 강제 변환 ──────────
-    # 기존 소싱 상품 DB에 패션의류 경로가 저장된 경우, 이 계정 권한(FC08)에 맞게 변환
+    # ── FC05 권한없음 방지: 패션의류 경로/BC23코드 → 스포츠의류 강제 변환 ──────────
+    # category_id가 경로 문자열일 때: 패션의류 경로 → 스포츠의류 경로 변환
     _FASHION_TO_SPORTS: dict[str, str] = {
       "패션의류 > 여성의류 > 스커트": "스포츠의류/운동화 > 여성스포츠의류 > 스커트",
       "패션의류 > 여성의류 > 원피스": "스포츠의류/운동화 > 여성스포츠의류 > 원피스",
@@ -475,8 +475,26 @@ class LotteonPlugin(MarketPlugin):
     }
     if category_id and category_id in _FASHION_TO_SPORTS:
       mapped = _FASHION_TO_SPORTS[category_id]
-      logger.info(f"[롯데ON] FC05→FC08 강제변환: {category_id!r} → {mapped!r}")
+      logger.info(f"[롯데ON] FC05→FC08 경로변환: {category_id!r} → {mapped!r}")
       category_id = mapped
+    # category_id가 이미 BC코드로 변환된 경우: BC23xxx → BC41xxx 강제 변환
+    _BC23_TO_BC41: dict[str, str] = {
+      "BC23110400": "BC41101800",  # 여성의류>스커트 → 여성스포츠의류>스커트
+      "BC23110100": "BC41100100",  # 여성의류>긴바지 → 여성스포츠의류>긴바지
+      "BC23110200": "BC41101000",  # 여성의류>티셔츠 → 여성스포츠의류>반팔티셔츠
+      "BC23110300": "BC41101100",  # 여성의류>원피스 → 여성스포츠의류>원피스
+      "BC23110500": "BC41101500",  # 여성의류>트레이닝복 → 여성스포츠의류>트레이닝복
+    }
+    if category_id and category_id in _BC23_TO_BC41:
+      mapped = _BC23_TO_BC41[category_id]
+      logger.info(f"[롯데ON] FC05→FC08 BC코드변환: {category_id} → {mapped}")
+      category_id = mapped
+    # 알 수 없는 BC23xxx: 성별 기반 기본값으로 폴백
+    elif category_id and category_id.startswith("BC23"):
+      sex_val = (product.get("sex") or "").strip()
+      fallback = "BC41101000" if sex_val == "여성" else "BC41041000"  # 반팔티셔츠
+      logger.info(f"[롯데ON] BC23 알 수 없는 코드→폴백: {category_id} → {fallback} (sex={sex_val})")
+      category_id = fallback
 
     # ── 소싱된 롯데ON 상품: _lotteonScatNo 원본 BC코드 직접 사용 ──────────
     # 이 계정에서 권한 있는 BC prefix만 허용 (골프/패션의류 등 권한 없는 카테고리 제외)

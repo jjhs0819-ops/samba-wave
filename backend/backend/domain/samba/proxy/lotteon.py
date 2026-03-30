@@ -960,7 +960,7 @@ class LotteonClient:
       ],
       "cnclPsbYn": "Y",
       "dmstOvsDvDvsCd": "DMST",
-      "impDvsCd": "IND_IMP",   # 병행수입 (직수입 계정 권한 없음)
+      "impDvsCd": "DOM_MFR",   # 국내제조 (직수입/병행수입 계정 권한 없음)
       "dvProcTypCd": "LO_ENTP",
       "dvPdTypCd": "GNRL",
       "sndBgtNday": 2,
