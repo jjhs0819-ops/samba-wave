@@ -394,6 +394,126 @@ export default function WarroomPage() {
         externalRunning={autotuneRunning}
       />
 
+      {/* 이벤트 타임라인 (로그 아래) */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00' }}>이벤트 타임라인</div>
+          <div style={{ display: 'flex', gap: '0.25rem' }}>
+            {([
+              ['all', '전체'],
+              ['critical', '중요'],
+              ['price_changed', '가격변동'],
+              ['sold_out', '품절'],
+              ['system', '시스템'],
+            ] as [EventFilter, string][]).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setEventFilter(key)}
+                style={{
+                  padding: '0.25rem 0.75rem',
+                  fontSize: '0.7rem',
+                  borderRadius: '4px',
+                  border: '1px solid',
+                  borderColor: eventFilter === key ? '#FF8C00' : '#3D3D3D',
+                  background: eventFilter === key ? 'rgba(255,140,0,0.15)' : 'transparent',
+                  color: eventFilter === key ? '#FF8C00' : '#888',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {filteredEvents.length === 0 ? (
+          <div style={{ fontSize: '0.8rem', color: '#666', padding: '1rem 0', textAlign: 'center' }}>이벤트 없음</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '360px', overflow: 'auto' }}>
+            {filteredEvents.map(e => {
+              const t = new Date(e.created_at)
+              const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+              const d = e.detail as Record<string, unknown> | undefined
+              const detailTags: { label: string; value: string; color: string }[] = []
+              if (d) {
+                if (d.old_price != null && d.new_price != null) {
+                  const diff = d.diff_pct as number | undefined
+                  const sign = diff && diff > 0 ? '+' : ''
+                  detailTags.push({
+                    label: '가격',
+                    value: `₩${Number(d.old_price).toLocaleString()} → ₩${Number(d.new_price).toLocaleString()}${diff != null ? ` (${sign}${diff}%)` : ''}`,
+                    color: (diff ?? 0) > 0 ? '#FF6B6B' : '#51CF66',
+                  })
+                }
+                if (typeof d.refreshed === 'number' && d.refreshed > 0)
+                  detailTags.push({ label: '갱신', value: `${d.refreshed}건`, color: '#4C9AFF' })
+                if (typeof d.changed === 'number' && d.changed > 0)
+                  detailTags.push({ label: '변동', value: `${d.changed}건`, color: '#FFD93D' })
+                if (typeof d.sold_out === 'number' && d.sold_out > 0)
+                  detailTags.push({ label: '품절', value: `${d.sold_out}건`, color: '#FF6B6B' })
+                if (typeof d.retransmitted === 'number' && d.retransmitted > 0)
+                  detailTags.push({ label: '재전송', value: `${d.retransmitted}건`, color: '#A78BFA' })
+                if (typeof d.deleted === 'number' && d.deleted > 0)
+                  detailTags.push({ label: '삭제', value: `${d.deleted}건`, color: '#FF6B6B' })
+                if (typeof d.count === 'number' && d.count > 0 && detailTags.length === 0)
+                  detailTags.push({ label: '건수', value: `${d.count}건`, color: '#4C9AFF' })
+                if (d.error && typeof d.error === 'string')
+                  detailTags.push({ label: '에러', value: String(d.error).slice(0, 60), color: '#FF6B6B' })
+                if (Array.isArray(d.missing_fields) && d.missing_fields.length > 0)
+                  detailTags.push({ label: '누락필드', value: (d.missing_fields as string[]).join(', '), color: '#FFD93D' })
+              }
+              return (
+                <div
+                  key={e.id}
+                  style={{
+                    padding: '0.4rem 0.5rem',
+                    borderRadius: '6px',
+                    background: e.severity === 'critical' ? 'rgba(255,107,107,0.08)' : 'transparent',
+                    borderBottom: '1px solid #1A1A1A',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                    <span style={{
+                      width: 8, height: 8, borderRadius: '50%',
+                      background: SEV_COLORS[e.severity] || '#666',
+                      marginTop: '4px', flexShrink: 0,
+                    }} />
+                    <span style={{ fontSize: '0.75rem', color: '#666', minWidth: '3rem', flexShrink: 0 }}>{timeStr}</span>
+                    <span style={{ fontSize: '0.8rem', color: '#E5E5E5', flex: 1 }}>{e.summary}</span>
+                    {e.source_site && (
+                      <span style={{
+                        fontSize: '0.65rem', color: SITE_COLORS[e.source_site] || '#888',
+                        padding: '0.1rem 0.3rem', borderRadius: '3px',
+                        background: 'rgba(255,255,255,0.05)', flexShrink: 0,
+                      }}>
+                        {e.source_site}
+                      </span>
+                    )}
+                  </div>
+                  {detailTags.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', marginTop: '0.25rem', paddingLeft: '2.5rem' }}>
+                      {detailTags.map((tag, i) => (
+                        <span key={i} style={{
+                          fontSize: '0.65rem',
+                          padding: '0.1rem 0.4rem',
+                          borderRadius: '3px',
+                          background: `${tag.color}15`,
+                          color: tag.color,
+                          border: `1px solid ${tag.color}30`,
+                        }}>
+                          {tag.label}: {tag.value}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
       {/* A-2. 마켓별 스토어 현황 분석 */}
       {(() => {
         const MARKET_TABS = [
@@ -830,129 +950,6 @@ export default function WarroomPage() {
             })}
           </div>
         </div>
-      </div>
-
-      {/* G. 이벤트 타임라인 */}
-      <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00' }}>이벤트 타임라인</div>
-          <div style={{ display: 'flex', gap: '0.25rem' }}>
-            {([
-              ['all', '전체'],
-              ['critical', '중요'],
-              ['price_changed', '가격변동'],
-              ['sold_out', '품절'],
-              ['system', '시스템'],
-            ] as [EventFilter, string][]).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setEventFilter(key)}
-                style={{
-                  padding: '0.25rem 0.75rem',
-                  fontSize: '0.7rem',
-                  borderRadius: '4px',
-                  border: '1px solid',
-                  borderColor: eventFilter === key ? '#FF8C00' : '#3D3D3D',
-                  background: eventFilter === key ? 'rgba(255,140,0,0.15)' : 'transparent',
-                  color: eventFilter === key ? '#FF8C00' : '#888',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {filteredEvents.length === 0 ? (
-          <div style={{ fontSize: '0.8rem', color: '#666', padding: '1rem 0', textAlign: 'center' }}>이벤트 없음</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '360px', overflow: 'auto' }}>
-            {filteredEvents.map(e => {
-              const t = new Date(e.created_at)
-              const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
-              const d = e.detail as Record<string, unknown> | undefined
-              // detail에서 표시할 태그 목록 생성
-              const detailTags: { label: string; value: string; color: string }[] = []
-              if (d) {
-                if (d.old_price != null && d.new_price != null) {
-                  const diff = d.diff_pct as number | undefined
-                  const sign = diff && diff > 0 ? '+' : ''
-                  detailTags.push({
-                    label: '가격',
-                    value: `₩${Number(d.old_price).toLocaleString()} → ₩${Number(d.new_price).toLocaleString()}${diff != null ? ` (${sign}${diff}%)` : ''}`,
-                    color: (diff ?? 0) > 0 ? '#FF6B6B' : '#51CF66',
-                  })
-                }
-                if (typeof d.refreshed === 'number' && d.refreshed > 0)
-                  detailTags.push({ label: '갱신', value: `${d.refreshed}건`, color: '#4C9AFF' })
-                if (typeof d.changed === 'number' && d.changed > 0)
-                  detailTags.push({ label: '변동', value: `${d.changed}건`, color: '#FFD93D' })
-                if (typeof d.sold_out === 'number' && d.sold_out > 0)
-                  detailTags.push({ label: '품절', value: `${d.sold_out}건`, color: '#FF6B6B' })
-                if (typeof d.retransmitted === 'number' && d.retransmitted > 0)
-                  detailTags.push({ label: '재전송', value: `${d.retransmitted}건`, color: '#A78BFA' })
-                if (typeof d.deleted === 'number' && d.deleted > 0)
-                  detailTags.push({ label: '삭제', value: `${d.deleted}건`, color: '#FF6B6B' })
-                if (typeof d.count === 'number' && d.count > 0 && detailTags.length === 0)
-                  detailTags.push({ label: '건수', value: `${d.count}건`, color: '#4C9AFF' })
-                if (d.error && typeof d.error === 'string')
-                  detailTags.push({ label: '에러', value: String(d.error).slice(0, 60), color: '#FF6B6B' })
-                if (Array.isArray(d.missing_fields) && d.missing_fields.length > 0)
-                  detailTags.push({ label: '누락필드', value: (d.missing_fields as string[]).join(', '), color: '#FFD93D' })
-              }
-              return (
-                <div
-                  key={e.id}
-                  style={{
-                    padding: '0.4rem 0.5rem',
-                    borderRadius: '6px',
-                    background: e.severity === 'critical' ? 'rgba(255,107,107,0.08)' : 'transparent',
-                    borderBottom: '1px solid #1A1A1A',
-                  }}
-                >
-                  {/* 메인 로그 */}
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-                    <span style={{
-                      width: 8, height: 8, borderRadius: '50%',
-                      background: SEV_COLORS[e.severity] || '#666',
-                      marginTop: '4px', flexShrink: 0,
-                    }} />
-                    <span style={{ fontSize: '0.75rem', color: '#666', minWidth: '3rem', flexShrink: 0 }}>{timeStr}</span>
-                    <span style={{ fontSize: '0.8rem', color: '#E5E5E5', flex: 1 }}>{e.summary}</span>
-                    {e.source_site && (
-                      <span style={{
-                        fontSize: '0.65rem', color: SITE_COLORS[e.source_site] || '#888',
-                        padding: '0.1rem 0.3rem', borderRadius: '3px',
-                        background: 'rgba(255,255,255,0.05)', flexShrink: 0,
-                      }}>
-                        {e.source_site}
-                      </span>
-                    )}
-                  </div>
-                  {/* 변동 정보 태그 (변동 있는 건만 표시) */}
-                  {detailTags.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', marginTop: '0.25rem', paddingLeft: '2.5rem' }}>
-                      {detailTags.map((tag, i) => (
-                        <span key={i} style={{
-                          fontSize: '0.65rem',
-                          padding: '0.1rem 0.4rem',
-                          borderRadius: '3px',
-                          background: `${tag.color}15`,
-                          color: tag.color,
-                          border: `1px solid ${tag.color}30`,
-                        }}>
-                          {tag.label}: {tag.value}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
       </div>
 
       {/* 소싱처/마켓 상태 대시보드 */}
