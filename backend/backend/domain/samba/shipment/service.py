@@ -788,10 +788,10 @@ class SambaShipmentService:
               )
               if del_result.get("success"):
                 # registered_accounts에서 제거 + DB 반영
-                product_row = await self.repo.get_async(product_id)
-                if product_row:
-                  new_reg = [a for a in (product_row.registered_accounts or []) if a != account_id]
-                  product_row.registered_accounts = new_reg if new_reg else None
+                _prod = await SambaCollectedProductRepository(self.session).get_async(product_id)
+                if _prod:
+                  new_reg = [a for a in (_prod.registered_accounts or []) if a != account_id]
+                  _prod.registered_accounts = new_reg if new_reg else None
                   await self.session.commit()
                 res["status"] = "completed"
                 res["results"] = {account_id: "deleted"}
