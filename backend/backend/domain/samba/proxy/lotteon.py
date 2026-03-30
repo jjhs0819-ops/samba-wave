@@ -960,7 +960,7 @@ class LotteonClient:
       ],
       "cnclPsbYn": "Y",
       "dmstOvsDvDvsCd": "DMST",
-      "impDvsCd": "DRC_IMP",   # 공식수입 (직수입)
+      "impDvsCd": "IND_IMP",   # 병행수입 (직수입 계정 권한 없음)
       "dvProcTypCd": "LO_ENTP",
       "dvPdTypCd": "GNRL",
       "sndBgtNday": 2,
