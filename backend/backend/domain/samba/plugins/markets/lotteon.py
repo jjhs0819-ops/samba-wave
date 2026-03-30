@@ -438,6 +438,14 @@ class LotteonPlugin(MarketPlugin):
         logger.info(f"[롯데ON] 성별 오버라이드: {category_id!r} → {female_cat!r}")
         category_id = female_cat
 
+    # ── 소싱된 롯데ON 상품: _lotteonScatNo 원본 BC코드 직접 사용 ──────────
+    # 롯데ON 소싱 상품은 수집 시점의 정확한 BC코드가 저장되어 있으므로
+    # fuzzy match 없이 직접 사용 (오매핑 방지)
+    _scat_no = str(product.get("_lotteonScatNo", "") or "").strip()
+    if _scat_no and _scat_no.startswith("BC") and category_id and ">" in category_id:
+      logger.info(f"[롯데ON] 소싱 원본 BC코드 사용 (fuzzy match 스킵): {_scat_no}")
+      category_id = _scat_no
+
     # category_id가 경로 문자열(">" 포함)이면 DB 코드맵에서 변환 시도
     if category_id and ">" in category_id:
       from backend.domain.samba.category.repository import (
