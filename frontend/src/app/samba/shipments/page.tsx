@@ -111,13 +111,16 @@ export default function ShipmentsPage() {
   // 카테고리 매핑 데이터
   const [categoryMappings, setCategoryMappings] = useState<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>([])
 
-  // URL 파라미터: 초기 1회만 읽고 ref에 저장 (이후 검색/필터 변경 시 무시)
-  const preIdsRef = useRef<string[]>(searchParams.get('selected')?.split(',').filter(Boolean) || [])
   const preIdsConsumedRef = useRef(false)
   const load = useCallback(async () => {
     setLoading(true)
-    // 최초 1회만 preIds 사용, 이후 검색/필터 변경 시엔 일반 조회
-    const preIds = !preIdsConsumedRef.current ? preIdsRef.current : []
+    // 최초 1회만 URL의 selected 파라미터 사용
+    let preIds: string[] = []
+    if (!preIdsConsumedRef.current) {
+      const raw = new URLSearchParams(window.location.search).get('selected') || searchParams.get('selected') || ''
+      preIds = raw.split(',').filter(Boolean)
+      console.log('[shipments] preIds:', preIds.length, 'url:', window.location.search.slice(0, 80))
+    }
 
     // 검색 조건에 따라 서버 API 파라미터 구성
     const scrollParams: Record<string, string | number> = { skip: (currentPage - 1) * pageSize, limit: pageSize }
