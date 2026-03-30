@@ -754,8 +754,10 @@ class LotteonPlugin(MarketPlugin):
           ret["spdNo"] = effective_no
         return ret
       else:
-        # impDvsCd fallback: DRC_IMP 실패 시 DOM_MFR → IND_IMP 순으로 재시도
-        _imp_dvs_fallbacks = ["DOM_MFR", "IND_IMP"]
+        # impDvsCd fallback: DRC_IMP 실패 시 순차 재시도
+        # NATN_MFR: 국내제조 (dmstOvsDvDvsCd=DMST 조합에서 유효)
+        # DOM_MFR, IND_IMP는 롯데ON에서 코드 자체를 모르는 경우가 있으므로 후순위
+        _imp_dvs_fallbacks = ["NATN_MFR", "DOM_MFR", "IND_IMP"]
         _reg_exception: Exception | None = None
         result = None
         try:
