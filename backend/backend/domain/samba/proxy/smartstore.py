@@ -250,6 +250,12 @@ def _build_combination_options(
     if min_price > 0:
       for c in combinations:
         c["price"] = c["price"] - min_price
+    # 재조정 후에도 조건 미충족 시 (전 옵션 품절/재고0), 첫 번째 옵션 강제 활성화
+    has_base = any(c["price"] == 0 and c["stockQuantity"] > 0 and c["usable"] for c in combinations)
+    if not has_base:
+      combinations[0]["price"] = 0
+      combinations[0]["stockQuantity"] = max(combinations[0]["stockQuantity"], 1)
+      combinations[0]["usable"] = True
 
   return {
     "optionCombinationSortType": "CREATE",
