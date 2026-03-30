@@ -667,7 +667,7 @@ export default function ShipmentsPage() {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 } catch { /* ignore */ }
-                const allParams: Record<string, string | number> = { skip: 0, limit: 100000 }
+                const allParams: Record<string, string | number> = { skip: 0, limit: 10000 }
                 if (searchText.trim()) {
                   allParams.search = searchText.trim()
                   const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
