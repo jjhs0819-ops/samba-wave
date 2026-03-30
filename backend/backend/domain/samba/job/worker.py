@@ -85,17 +85,7 @@ class JobWorker:
 
         async with get_write_session() as session:
             repo = SambaJobRepository(session)
-            # pending 잡 조회만 (상태 변경 없이)
-            from backend.domain.samba.job.model import SambaJob as _SJ
-            from sqlmodel import select
-            stmt = (
-                select(_SJ)
-                .where(_SJ.status == "pending")
-                .order_by(_SJ.created_at.asc())
-                .limit(5)
-            )
-            result = await session.execute(stmt)
-            jobs = list(result.scalars().all())
+            jobs = await repo.list_pending(limit=5)
             if not jobs:
                 return False
 
@@ -105,14 +95,16 @@ class JobWorker:
                 if job.job_type not in self._active_types:
                     to_run.append(job)
                     self._active_types.add(job.job_type)
+                else:
+                    # 실행 안 할 잡은 pending으로 되돌림
+                    job.status = "pending"
+                    job.started_at = None
             if not to_run:
+                # 전부 되돌림
+                await session.commit()
                 return False
 
-            # 선택된 잡만 running으로 변경 후 커밋 → 중복 실행 방지
-            for job in to_run:
-                job.status = "running"
-                job.started_at = datetime.now(UTC)
-                session.add(job)
+            # running 상태를 DB에 커밋 → 다음 폴링에서 중복 선택 방지
             await session.commit()
 
         # 선택된 잡들 병렬 실행 (각각 독립 세션)
