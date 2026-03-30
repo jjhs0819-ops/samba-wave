@@ -490,11 +490,13 @@ async def scroll_products(
     q = search.strip()
     if q:
         if search_type == "name":
-            # 공백 무시 부분 일치 검색
+            # 공백 무시 부분 일치 + style_code/site_product_id 통합 검색
             q_no_space = q.replace(" ", "")
             conditions.append(or_(
                 _CP.name.ilike(f"%{q}%"),
                 func.replace(_CP.name, " ", "").ilike(f"%{q_no_space}%"),
+                _CP.style_code.ilike(f"%{q}%"),
+                _CP.site_product_id.ilike(f"%{q}%"),
             ))
         elif search_type == "name_all":
             # 상품명 + 등록상품명(name_en) 동시 검색 (공백 무시)
