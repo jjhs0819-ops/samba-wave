@@ -1130,8 +1130,8 @@ class SambaShipmentService:
 
     images = product.get("images") or []
     detail_images = product.get("detail_images") or []
-    # detail_images에 있는 URL은 추가이미지(sub)에서 제외 (중복 방지)
-    detail_set = set(detail_images)
+    # 추가이미지(sub)에서 출력된 URL을 추적 → detail에서 중복 제외
+    sub_set = set(images[1:]) if len(images) > 1 else set()
 
     # img_order 순서대로, img_checks가 True인 항목만 생성
     for item_id in img_order:
@@ -1143,15 +1143,15 @@ class SambaShipmentService:
         parts.append(img_tag.format(url=images[0]))
       elif item_id == "sub":
         for sub_img in images[1:]:
-          if sub_img not in detail_set:
-            parts.append(img_tag.format(url=sub_img))
+          parts.append(img_tag.format(url=sub_img))
       elif item_id == "title":
         name = product.get("name", "")
         if name:
           parts.append(f'<div style="text-align:center;padding:1rem 0;"><h2 style="color:#333;font-size:1.25rem;">{name}</h2></div>')
       elif item_id == "detail":
         for d_img in detail_images:
-          parts.append(img_tag.format(url=d_img))
+          if d_img not in sub_set:
+            parts.append(img_tag.format(url=d_img))
       elif item_id == "bottomImg" and bottom_img:
         parts.append(img_tag.format(url=bottom_img))
 
@@ -1384,6 +1384,8 @@ class SambaShipmentService:
         result = await delete_from_market(
           self.session, account.market_type, product_dict, account=account
         )
+        # 429 방지 — 삭제 요청 간 0.5초 딜레이
+        await asyncio.sleep(0.5)
 
         if result.get("success"):
           delete_results[account_id] = "success"
@@ -1396,14 +1398,12 @@ class SambaShipmentService:
             f"[마켓삭제] {account.market_type} 실패 - {result.get('message')}"
           )
 
-      # 삭제 요청한 계정은 성공/실패 관계없이 registered_accounts에서 제거
-      # (마켓에서 이미 삭제됐거나, 상품번호 없는 경우에도 등록 기록 정리)
-      processed_ids = list(delete_results.keys())
-      if processed_ids:
-        new_reg = [a for a in reg_accounts if a not in processed_ids]
-        # account_id + {account_id}_origin 모두 제거
-        remove_keys = set(processed_ids)
-        for aid in processed_ids:
+      # 성공한 계정만 등록 해제 (429 등 실패 시 등록 상태 유지)
+      success_ids = [aid for aid, status in delete_results.items() if status == "success"]
+      if success_ids:
+        new_reg = [a for a in reg_accounts if a not in success_ids]
+        remove_keys = set(success_ids)
+        for aid in success_ids:
           remove_keys.add(f"{aid}_origin")
         new_nos = {k: v for k, v in market_product_nos.items() if k not in remove_keys}
         update_data: dict[str, Any] = {
