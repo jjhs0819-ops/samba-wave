@@ -424,8 +424,8 @@ def build_lotteon_notice(product: dict[str, Any], **kwargs: str) -> dict[str, An
   care = product.get("care_instructions", "") or fallback
   manufacture_ym = _dt.now().strftime("%Y%m")  # 제조년월 기본값
 
-  if code in ("01", "02", "03", "04"):
-    # 의류/신발/가방/패션잡화 공통 구조
+  if code == "01":
+    # 의류: 0010소재 0020색상 0030치수 0040제조년월 0050세탁취급 0060제조국 0070제조자 0080품질보증 0090A/S
     articles: list[dict[str, str]] = [
       {"pdArtlCd": "0010", "pdArtlCnts": material},
       {"pdArtlCd": "0020", "pdArtlCnts": color_text},
@@ -434,6 +434,43 @@ def build_lotteon_notice(product: dict[str, Any], **kwargs: str) -> dict[str, An
       {"pdArtlCd": "0050", "pdArtlCnts": care},
       {"pdArtlCd": "0060", "pdArtlCnts": origin},
       {"pdArtlCd": "0070", "pdArtlCnts": mfr},
+      {"pdArtlCd": "0080", "pdArtlCnts": quality},
+      {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
+    ]
+  elif code == "02":
+    # 신발: 0100소재 0020색상 0030치수 0060제조국 0070제조자 0110취급주의 0080품질보증 0090A/S
+    articles = [
+      {"pdArtlCd": "0100", "pdArtlCnts": material},
+      {"pdArtlCd": "0020", "pdArtlCnts": color_text},
+      {"pdArtlCd": "0030", "pdArtlCnts": size_text},
+      {"pdArtlCd": "0060", "pdArtlCnts": origin},
+      {"pdArtlCd": "0070", "pdArtlCnts": mfr},
+      {"pdArtlCd": "0110", "pdArtlCnts": care},
+      {"pdArtlCd": "0080", "pdArtlCnts": quality},
+      {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
+    ]
+  elif code == "03":
+    # 가방: 0130종류 0120소재 0020색상 0140크기 0060제조국 0070제조자 0110취급주의 0080품질보증 0090A/S
+    articles = [
+      {"pdArtlCd": "0130", "pdArtlCnts": fallback},
+      {"pdArtlCd": "0120", "pdArtlCnts": material},
+      {"pdArtlCd": "0020", "pdArtlCnts": color_text},
+      {"pdArtlCd": "0140", "pdArtlCnts": size_text},
+      {"pdArtlCd": "0060", "pdArtlCnts": origin},
+      {"pdArtlCd": "0070", "pdArtlCnts": mfr},
+      {"pdArtlCd": "0110", "pdArtlCnts": care},
+      {"pdArtlCd": "0080", "pdArtlCnts": quality},
+      {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
+    ]
+  elif code == "04":
+    # 패션잡화: 0130종류 0120소재 0030치수 0060제조국 0070제조자 0110취급주의 0080품질보증 0090A/S
+    articles = [
+      {"pdArtlCd": "0130", "pdArtlCnts": fallback},
+      {"pdArtlCd": "0120", "pdArtlCnts": material},
+      {"pdArtlCd": "0030", "pdArtlCnts": size_text},
+      {"pdArtlCd": "0060", "pdArtlCnts": origin},
+      {"pdArtlCd": "0070", "pdArtlCnts": mfr},
+      {"pdArtlCd": "0110", "pdArtlCnts": care},
       {"pdArtlCd": "0080", "pdArtlCnts": quality},
       {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
     ]
