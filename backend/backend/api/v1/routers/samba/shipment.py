@@ -54,7 +54,7 @@ async def emergency_stop(
   # 3. 오토튠 중단
   try:
     import backend.api.v1.routers.samba.collector_autotune as _at
-    _at._autotune_running = False
+    _at._autotune_running_event.clear()
     if _at._autotune_task and not _at._autotune_task.done():
       _at._autotune_task.cancel()
   except Exception:

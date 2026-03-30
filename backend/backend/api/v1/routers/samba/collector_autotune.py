@@ -24,7 +24,7 @@ router = APIRouter(prefix="/collector", tags=["samba-collector"])
 # ══════════════════════════════════════════════════════════════
 
 _autotune_task: Optional[asyncio.Task] = None
-_autotune_running = False
+_autotune_running_event = threading.Event()  # 스레드 간 동기화
 _autotune_last_tick: Optional[str] = None
 _autotune_cycle_count = 0
 
@@ -113,12 +113,12 @@ async def _autotune_loop():
     순서: hot → warm → cold (소싱처별 병렬, 등급순 정렬)
     품절: 마켓 삭제(DELETE) → DB 삭제 (서킷브레이커: 소싱처별 연속 10건)
     """
-    global _autotune_running, _autotune_last_tick, _autotune_cycle_count
+    global _autotune_last_tick, _autotune_cycle_count
     import logging
     log = logging.getLogger("autotune")
     log.info("[오토튠] 루프 시작")
 
-    while _autotune_running:
+    while _autotune_running_event.is_set():
         try:
             from backend.db.orm import get_write_session
             async with get_write_session() as session:
@@ -212,7 +212,7 @@ async def _autotune_loop():
 
                     for r in results:
                         from backend.domain.samba.emergency import is_emergency_stopped
-                        if not _autotune_running or is_emergency_stopped():
+                        if not _autotune_running_event.is_set() or is_emergency_stopped():
                             log.info("[오토튠] 중단 감지 — 결과 처리 즉시 중단")
                             break
                         if r.error or r.needs_extension:
@@ -468,11 +468,11 @@ class AutotuneStartRequest(BaseModel):
 @router.post("/autotune/start")
 async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     """오토튠 무한 루프 시작 — 메인 이벤트 루프에서 실행."""
-    global _autotune_task, _autotune_running, _autotune_cycle_count
+    global _autotune_task, _autotune_cycle_count
     from backend.domain.samba.collector.refresher import clear_bulk_cancel
-    if _autotune_running:
+    if _autotune_running_event.is_set():
         return {"ok": True, "status": "already_running"}
-    _autotune_running = True
+    _autotune_running_event.set()
     _autotune_cycle_count = 0
     clear_bulk_cancel()
     _autotune_task = asyncio.create_task(_autotune_loop())
@@ -482,11 +482,11 @@ async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
 @router.post("/autotune/stop")
 async def autotune_stop():
     """오토튠 무한 루프 정지 — 진행 중인 갱신도 즉시 중단."""
-    global _autotune_task, _autotune_running
+    global _autotune_task
     from backend.domain.samba.collector.refresher import request_bulk_cancel
     if not _autotune_running:
         return {"ok": True, "status": "already_stopped"}
-    _autotune_running = False
+    _autotune_running_event.clear()
     request_bulk_cancel()  # 벌크 갱신 즉시 중단
     if _autotune_task and not _autotune_task.done():
         _autotune_task.cancel()
@@ -513,7 +513,7 @@ async def autotune_status():
         refreshed_24h = 0
 
     return {
-        "running": _autotune_running,
+        "running": _autotune_running_event.is_set(),
         "last_tick": _autotune_last_tick,
         "cycle_count": _autotune_cycle_count,
         "refreshed_count": refreshed_24h,
