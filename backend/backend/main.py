@@ -55,6 +55,10 @@ async def lifespan(app: FastAPI):
     worker = JobWorker()
     worker_task = asyncio.create_task(worker.start())
 
+    # 오토튠 자동 시작 (DB에 ON 상태면 자동 실행)
+    from backend.api.v1.routers.samba.collector_autotune import auto_start_if_enabled
+    await auto_start_if_enabled()
+
     # Startup validation
     if settings.mock_auth_enabled and settings.environment == "production":
         raise RuntimeError(

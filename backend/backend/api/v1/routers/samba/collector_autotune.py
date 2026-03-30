@@ -466,6 +466,38 @@ class AutotuneStartRequest(BaseModel):
     target: str = "registered"  # 하위 호환용 (무시됨, 항상 마켓등록상품만)
 
 
+async def _save_autotune_state(enabled: bool):
+    """DB에 오토튠 ON/OFF 상태 저장."""
+    try:
+        from backend.db.orm import get_write_session
+        from backend.api.v1.routers.samba.proxy import _set_setting
+        async with get_write_session() as session:
+            await _set_setting(session, "autotune_enabled", enabled)
+            await session.commit()
+    except Exception as e:
+        logger.warning(f"[오토튠] 상태 저장 실패: {e}")
+
+
+async def auto_start_if_enabled():
+    """서버 시작 시 DB에서 오토튠 상태 확인 → ON이면 자동 시작."""
+    try:
+        from backend.db.orm import get_read_session
+        from backend.api.v1.routers.samba.proxy import _get_setting
+        async with get_read_session() as session:
+            enabled = await _get_setting(session, "autotune_enabled")
+        if enabled:
+            global _autotune_task, _autotune_cycle_count
+            from backend.domain.samba.collector.refresher import clear_bulk_cancel
+            if not _autotune_running_event.is_set():
+                _autotune_running_event.set()
+                _autotune_cycle_count = 0
+                clear_bulk_cancel()
+                _autotune_task = asyncio.create_task(_autotune_loop())
+                logger.info("[오토튠] 서버 시작 — DB 설정에 따라 자동 시작")
+    except Exception as e:
+        logger.warning(f"[오토튠] 자동 시작 실패: {e}")
+
+
 @router.post("/autotune/start")
 async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     """오토튠 무한 루프 시작 — 메인 이벤트 루프에서 실행."""
@@ -477,6 +509,7 @@ async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     _autotune_cycle_count = 0
     clear_bulk_cancel()
     _autotune_task = asyncio.create_task(_autotune_loop())
+    await _save_autotune_state(True)
     return {"ok": True, "status": "started", "target": "registered"}
 
 
@@ -492,6 +525,7 @@ async def autotune_stop():
     if _autotune_task and not _autotune_task.done():
         _autotune_task.cancel()
     _autotune_task = None
+    await _save_autotune_state(False)
     return {"ok": True, "status": "stopped"}
 
 
