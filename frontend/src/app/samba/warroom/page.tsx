@@ -196,7 +196,15 @@ export default function WarroomPage() {
   const [autotuneRefreshed, setAutotuneRefreshed] = useState(0)
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
   const prevCyclesRef = useRef(0)
+  const falseCountRef = useRef(0)
   const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number) => {
+    // 별도 스레드 타이밍 차이 대응 — 3회 연속 false일 때만 정지 표시
+    if (!running) {
+      falseCountRef.current++
+      if (falseCountRef.current < 3) return  // 일시적 false 무시
+    } else {
+      falseCountRef.current = 0
+    }
     setAutotuneRunning(running)
     setAutotuneCycles(cycles)
     setAutotuneLastTick(lastTick)
