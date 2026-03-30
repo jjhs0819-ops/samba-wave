@@ -965,10 +965,10 @@ export const csInquiryApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates`, { method: 'POST', body: JSON.stringify({ key, name, content }) }),
   deleteTemplate: (key: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates/${key}`, { method: 'DELETE' }),
-  syncFromMarkets: (accountId?: string) =>
+  syncFromMarkets: (marketName?: string) =>
     request<{ success: boolean; synced: number; errors: string[]; message: string }>(
       `${SAMBA_PREFIX}/cs-inquiries/sync-from-markets`,
-      { method: 'POST', body: JSON.stringify({ account_id: accountId || undefined }) }
+      { method: 'POST', body: JSON.stringify({ market_name: marketName || undefined }) }
     ),
   sendReply: (id: string, reply: string) =>
     request<{ success: boolean; message: string }>(

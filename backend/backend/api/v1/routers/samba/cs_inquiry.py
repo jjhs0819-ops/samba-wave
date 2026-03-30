@@ -2,7 +2,7 @@
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -145,16 +145,17 @@ async def create_cs_inquiry(
 
 
 class CSSyncBody(BaseModel):
-    account_id: Optional[str] = None
+    market_name: Optional[str] = None
 
 
 @router.post("/sync-from-markets")
 async def sync_cs_from_markets(
-    body: CSSyncBody = CSSyncBody(),
+    body: Optional[CSSyncBody] = Body(default=None),
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """마켓에서 CS 문의 동기화. account_id 전달 시 해당 계정만 동기화."""
-    return await _do_sync_cs_from_markets(session, account_id=body.account_id)
+    """마켓에서 CS 문의 동기화. market_name 전달 시 해당 마켓만 동기화."""
+    market_name = body.market_name if body else None
+    return await _do_sync_cs_from_markets(session, market_name=market_name)
 
 
 @router.get("/{inquiry_id}")
@@ -670,11 +671,11 @@ async def _sync_lotteon_compensate(
 
 async def _do_sync_cs_from_markets(
     session: AsyncSession,
-    account_id: Optional[str] = None,
+    market_name: Optional[str] = None,
 ):
     """마켓에서 CS 문의 동기화 실제 구현체.
 
-    account_id 전달 시 해당 계정만 동기화, 없으면 전체 동기화.
+    market_name 전달 시 해당 마켓만 동기화 (예: "롯데ON", "스마트스토어"), 없으면 전체 동기화.
     """
     import logging
     from datetime import datetime, timedelta, timezone
@@ -688,15 +689,16 @@ async def _do_sync_cs_from_markets(
     synced = 0
     errors = []
 
-    # 스마트스토어 계정 조회 (account_id 있으면 해당 계정만)
-    try:
-        ss_query = select(SambaSettings).where(SambaSettings.key.like("store_smartstore%"))
-        if account_id:
-            ss_query = ss_query.where(SambaSettings.id == account_id)
-        settings_result = await session.execute(ss_query)
-        ss_settings = settings_result.scalars().all()
-    except Exception as e:
-        raise HTTPException(500, f"설정 조회 실패: {e}")
+    # 스마트스토어 계정 조회 (market_name이 롯데ON이면 스킵)
+    ss_settings = []
+    if not market_name or market_name == "스마트스토어":
+        try:
+            settings_result = await session.execute(
+                select(SambaSettings).where(SambaSettings.key.like("store_smartstore%"))
+            )
+            ss_settings = settings_result.scalars().all()
+        except Exception as e:
+            raise HTTPException(500, f"설정 조회 실패: {e}")
 
     for setting in ss_settings:
         try:
@@ -902,17 +904,17 @@ async def _do_sync_cs_from_markets(
             logger.error(f"[CS동기화] 스마트스토어 동기화 실패: {e}")
             errors.append(str(e))
 
-    # 롯데ON Q&A 동기화 (account_id 있으면 해당 계정만)
-    try:
-        from backend.domain.samba.proxy.lotteon import LotteonClient
-        lo_query = select(SambaSettings).where(SambaSettings.key.like("store_lotteon%"))
-        if account_id:
-            lo_query = lo_query.where(SambaSettings.id == account_id)
-        lo_settings_result = await session.execute(lo_query)
-        lo_settings_list = lo_settings_result.scalars().all()
-    except Exception as e:
-        logger.warning(f"[CS동기화] 롯데ON 설정 조회 실패: {e}")
-        lo_settings_list = []
+    # 롯데ON Q&A 동기화 (market_name이 스마트스토어면 스킵)
+    lo_settings_list = []
+    if not market_name or market_name == "롯데ON":
+        try:
+            from backend.domain.samba.proxy.lotteon import LotteonClient
+            lo_settings_result = await session.execute(
+                select(SambaSettings).where(SambaSettings.key.like("store_lotteon%"))
+            )
+            lo_settings_list = lo_settings_result.scalars().all()
+        except Exception as e:
+            logger.warning(f"[CS동기화] 롯데ON 설정 조회 실패: {e}")
 
     for lo_setting in lo_settings_list:
         try:
