@@ -111,10 +111,12 @@ export default function ShipmentsPage() {
   // 카테고리 매핑 데이터
   const [categoryMappings, setCategoryMappings] = useState<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>([])
 
+  // URL 파라미터 (Next.js searchParams 우선, fallback으로 window.location)
+  const urlSelected = searchParams.get('selected')
   const load = useCallback(async () => {
     setLoading(true)
     // URL에서 선택된 상품 ID 먼저 확인
-    const preIds = new URLSearchParams(window.location.search).get('selected')?.split(',').filter(Boolean) || []
+    const preIds = urlSelected?.split(',').filter(Boolean) || []
 
     // 검색 조건에 따라 서버 API 파라미터 구성
     const scrollParams: Record<string, string | number> = { skip: (currentPage - 1) * pageSize, limit: pageSize }
@@ -147,7 +149,7 @@ export default function ShipmentsPage() {
     setPolicies(pol)
     setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
     setLoading(false)
-  }, [searchText, searchField, siteFilter, registrationFilter, sortBy, currentPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [urlSelected, searchText, searchField, siteFilter, registrationFilter, sortBy, currentPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
   useEffect(() => { return () => { if (progressRef.current) clearInterval(progressRef.current) } }, [])
