@@ -1672,7 +1672,7 @@ class SmartStoreClient:
     """그룹상품 등록 (비동기). 결과는 poll_group_status로 확인."""
     return await self._call_api("POST", "/v2/standard-group-products", body=payload)
 
-  async def poll_group_status(self, max_wait: int = 300) -> dict:
+  async def poll_group_status(self, max_wait: int = 120) -> dict:
     """그룹상품 등록/수정 결과 폴링. 최대 max_wait초 대기. 지수백오프."""
     import asyncio as _asyncio
     start = time.time()
@@ -1689,7 +1689,7 @@ class SmartStoreClient:
       wait = min(0.5 * (2 ** attempt), 3)
       await _asyncio.sleep(wait)
       attempt += 1
-    raise TimeoutError("그룹상품 등록 타임아웃 (5분 초과)")
+    raise TimeoutError("그룹상품 등록 타임아웃 (2분 초과)")
 
   async def update_group_product(self, group_no: int, payload: dict) -> dict:
     """그룹상품 수정."""

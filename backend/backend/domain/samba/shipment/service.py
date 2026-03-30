@@ -348,7 +348,7 @@ class SambaShipmentService:
 
       # 폴링
       try:
-        poll_result = await client.poll_group_status(max_wait=300)
+        poll_result = await client.poll_group_status(max_wait=120)
       except Exception as e:
         # 그룹 등록 실패 → 삭제된 상품 롤백 (단일상품 재등록)
         logger.error(f"그룹등록 실패, 단일상품으로 롤백: {e}")
@@ -468,7 +468,10 @@ class SambaShipmentService:
     if has_update and product_row.source_site and product_row.site_product_id:
       try:
         from backend.domain.samba.collector.refresher import refresh_product
-        refresh_result = await refresh_product(product_row, source="transmit")
+        refresh_result = await asyncio.wait_for(
+            refresh_product(product_row, source="transmit"),
+            timeout=60,  # 갱신이 전송 전체를 막지 않도록 60초 제한
+        )
         if refresh_result.error:
           refresh_status = f"최신화실패:{refresh_result.error[:30]}"
           logger.warning(f"[전송] 소싱처 최신화 실패: {refresh_result.error}")
@@ -538,6 +541,9 @@ class SambaShipmentService:
           new_cost_int = int(new_cost) if new_cost is not None else old_cost_int
           refresh_status = f"원가 {old_cost_int:,}>{new_cost_int:,}, 재고변동 {stock_change_count}건"
           logger.info(f"[전송] 소싱처 최신화 완료 — {refresh_status}")
+      except asyncio.TimeoutError:
+        refresh_status = "최신화실패:60초 타임아웃"
+        logger.warning("[전송] 소싱처 최신화 타임아웃 (60초) — 갱신 건너뜀")
       except Exception as ref_e:
         refresh_status = f"최신화예외:{str(ref_e)[:30]}"
         logger.warning(f"[전송] 소싱처 최신화 예외: {ref_e}")

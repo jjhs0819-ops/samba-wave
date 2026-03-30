@@ -348,10 +348,11 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
                       f"인터벌 {_site_intervals['MUSINSA']}초)",
             )
 
-        # Retry-After가 있으면 대기 후 1회 재시도
+        # Retry-After가 있으면 대기 후 1회 재시도 (상한 60초)
         if e.retry_after > 0:
-            logger.warning(f"[refresher] {site_product_id} 차단({e.status}), {e.retry_after}초 후 재시도")
-            await asyncio.sleep(e.retry_after)
+            capped_wait = min(e.retry_after, 60)
+            logger.warning(f"[refresher] {site_product_id} 차단({e.status}), {capped_wait}초 후 재시도 (원본 Retry-After={e.retry_after})")
+            await asyncio.sleep(capped_wait)
             try:
                 detail = await client.get_goods_detail(
                     site_product_id,
