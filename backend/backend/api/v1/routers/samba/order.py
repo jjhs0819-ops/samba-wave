@@ -1198,3 +1198,189 @@ async def sync_elevenst_order_status(
                 errors += 1
 
     return {"updated": updated, "errors": errors}
+
+
+# ══════════════════════════════════════════════
+# 11번가 취소 처리 (feature/elevenst-return)
+# ══════════════════════════════════════════════
+
+class ElevenstCancelListRequest(BaseModel):
+    account_id: Optional[str] = None
+    start_time: str  # YYYYMMDDhhmm
+    end_time: str    # YYYYMMDDhhmm
+
+
+class ElevenstCancelConfirmRequest(BaseModel):
+    account_id: str
+    ord_prd_cn_seq: str  # 클레임번호
+    ord_no: str          # 주문번호
+    ord_prd_seq: str     # 주문순번
+
+
+@router.post("/11st/cancel-list")
+async def list_elevenst_cancel_requests(
+    body: ElevenstCancelListRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """11번가 취소 요청 목록 조회."""
+    from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    account_repo = SambaMarketAccountRepository(session)
+    accounts = await account_repo.list_by_market_type("11st")
+
+    results = []
+    for account in accounts:
+        if body.account_id and str(account.id) != body.account_id:
+            continue
+
+        extras = account.additional_fields or {}
+        api_key = account.api_key or extras.get("apiKey", "")
+        if not api_key:
+            continue
+
+        client = ElevenstClient(api_key)
+        try:
+            items = await client.get_cancel_requests(body.start_time, body.end_time)
+            results.extend(items)
+            logger.info("[11번가] 취소 요청 목록 조회 accountId=%s: %d건", account.id, len(items))
+        except ElevenstApiError as e:
+            logger.warning("[11번가] 취소 요청 목록 조회 실패 accountId=%s: %s", account.id, e)
+
+    return {"count": len(results), "items": results}
+
+
+@router.post("/11st/cancel")
+async def confirm_elevenst_cancel(
+    body: ElevenstCancelConfirmRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """11번가 취소 승인 처리."""
+    from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    account_repo = SambaMarketAccountRepository(session)
+    accounts = await account_repo.list_by_market_type("11st")
+
+    account = next((a for a in accounts if str(a.id) == body.account_id), None)
+    if not account:
+        raise HTTPException(404, "계정을 찾을 수 없습니다.")
+
+    extras = account.additional_fields or {}
+    api_key = account.api_key or extras.get("apiKey", "")
+    if not api_key:
+        raise HTTPException(400, "API Key가 설정되지 않았습니다.")
+
+    client = ElevenstClient(api_key)
+    try:
+        await client.confirm_cancel(body.ord_prd_cn_seq, body.ord_no, body.ord_prd_seq)
+    except ElevenstApiError as e:
+        raise HTTPException(400, str(e))
+
+    # DB 주문 상태 업데이트
+    svc = _write_service(session)
+    from sqlalchemy import select
+    stmt = select(SambaOrder).where(
+        SambaOrder.order_number == body.ord_no,
+        SambaOrder.source == "11st",
+    )
+    result = await session.execute(stmt)
+    order = result.scalars().first()
+    if order:
+        await svc.update_order(str(order.id), {"status": "cancelled", "shipping_status": "주문취소"})
+
+    logger.info("[11번가] 취소승인 완료 ordNo=%s ordPrdCnSeq=%s", body.ord_no, body.ord_prd_cn_seq)
+    return {"success": True, "message": f"취소 승인 완료 (주문번호: {body.ord_no})"}
+
+
+# ══════════════════════════════════════════════
+# 11번가 반품 처리 (feature/elevenst-return)
+# ══════════════════════════════════════════════
+
+class ElevenstReturnListRequest(BaseModel):
+    account_id: Optional[str] = None
+    start_time: str  # YYYYMMDDhhmm
+    end_time: str    # YYYYMMDDhhmm
+
+
+class ElevenstReturnConfirmRequest(BaseModel):
+    account_id: str
+    clm_req_seq: str  # 클레임번호
+    ord_no: str       # 주문번호
+    ord_prd_seq: str  # 주문순번
+
+
+@router.post("/11st/return-list")
+async def list_elevenst_return_requests(
+    body: ElevenstReturnListRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """11번가 반품 요청 목록 조회."""
+    from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    account_repo = SambaMarketAccountRepository(session)
+    accounts = await account_repo.list_by_market_type("11st")
+
+    results = []
+    for account in accounts:
+        if body.account_id and str(account.id) != body.account_id:
+            continue
+
+        extras = account.additional_fields or {}
+        api_key = account.api_key or extras.get("apiKey", "")
+        if not api_key:
+            continue
+
+        client = ElevenstClient(api_key)
+        try:
+            items = await client.get_return_requests(body.start_time, body.end_time)
+            results.extend(items)
+            logger.info("[11번가] 반품 요청 목록 조회 accountId=%s: %d건", account.id, len(items))
+        except ElevenstApiError as e:
+            logger.warning("[11번가] 반품 요청 목록 조회 실패 accountId=%s: %s", account.id, e)
+
+    return {"count": len(results), "items": results}
+
+
+@router.post("/11st/return")
+async def confirm_elevenst_return(
+    body: ElevenstReturnConfirmRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """11번가 반품 승인 처리."""
+    from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    account_repo = SambaMarketAccountRepository(session)
+    accounts = await account_repo.list_by_market_type("11st")
+
+    account = next((a for a in accounts if str(a.id) == body.account_id), None)
+    if not account:
+        raise HTTPException(404, "계정을 찾을 수 없습니다.")
+
+    extras = account.additional_fields or {}
+    api_key = account.api_key or extras.get("apiKey", "")
+    if not api_key:
+        raise HTTPException(400, "API Key가 설정되지 않았습니다.")
+
+    client = ElevenstClient(api_key)
+    try:
+        await client.confirm_return(body.clm_req_seq, body.ord_no, body.ord_prd_seq)
+    except ElevenstApiError as e:
+        raise HTTPException(400, str(e))
+
+    # DB 주문 상태 업데이트
+    svc = _write_service(session)
+    from sqlalchemy import select
+    stmt = select(SambaOrder).where(
+        SambaOrder.order_number == body.ord_no,
+        SambaOrder.source == "11st",
+    )
+    result = await session.execute(stmt)
+    order = result.scalars().first()
+    if order:
+        await svc.update_order(str(order.id), {"status": "returned", "shipping_status": "반품완료"})
+
+    logger.info("[11번가] 반품승인 완료 ordNo=%s clmReqSeq=%s", body.ord_no, body.clm_req_seq)
+    return {"success": True, "message": f"반품 승인 완료 (주문번호: {body.ord_no})"}

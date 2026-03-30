@@ -437,6 +437,226 @@ class ElevenstClient:
     return addresses
 
   # ------------------------------------------------------------------
+  # 취소 처리
+  # ------------------------------------------------------------------
+
+  async def get_cancel_requests(self, start_time: str, end_time: str) -> list[dict[str, Any]]:
+    """기간별 취소 요청 목록 조회.
+
+    Args:
+        start_time: 검색시작일 YYYYMMDDhhmm
+        end_time:   검색종료일 YYYYMMDDhhmm
+        최대 조회 기간: 30일 제한 → 초과 시 자동 분할 조회
+    """
+    from datetime import timedelta
+
+    fmt = "%Y%m%d%H%M"
+    start_dt = datetime.strptime(start_time, fmt)
+    end_dt = datetime.strptime(end_time, fmt)
+
+    all_items: list[dict[str, Any]] = []
+    chunk_start = start_dt
+    while chunk_start < end_dt:
+      chunk_end = min(chunk_start + timedelta(days=30), end_dt)
+      chunk_items = await self._fetch_claim_list(
+        "cancelorders", chunk_start.strftime(fmt), chunk_end.strftime(fmt)
+      )
+      all_items.extend(chunk_items)
+      chunk_start = chunk_end
+
+    logger.info("[11번가] 취소 요청 목록 조회 완료: %d건", len(all_items))
+    return all_items
+
+  async def confirm_cancel(
+    self,
+    ord_prd_cn_seq: str,
+    ord_no: str,
+    ord_prd_seq: str,
+  ) -> bool:
+    """취소 승인 처리.
+
+    Args:
+        ord_prd_cn_seq: 클레임번호 (취소요청코드)
+        ord_no:         주문번호
+        ord_prd_seq:    주문순번
+
+    Returns:
+        True if 취소승인 성공
+    """
+    import re as _re
+
+    url = (
+      f"https://api.11st.co.kr/rest/claimservice/cancelreqconf"
+      f"/{ord_prd_cn_seq}/{ord_no}/{ord_prd_seq}"
+    )
+    headers = self._headers()
+
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+      resp = await client.get(url, headers=headers)
+      logger.info("[11번가] 취소승인 ordPrdCnSeq=%s ordNo=%s → %s", ord_prd_cn_seq, ord_no, resp.status_code)
+
+    if not resp.is_success:
+      raise ElevenstApiError(f"취소승인 HTTP {resp.status_code}: {resp.text[:300]}")
+
+    try:
+      text = resp.content.decode("euc-kr")
+    except Exception:
+      text = resp.text
+
+    xml_text = text.replace("ns2:", "").replace("s2:", "")
+    xml_text = __import__("re").sub(r"<\?xml[^?]*\?>", "", xml_text, count=1).strip()
+    try:
+      root = ET.fromstring(xml_text)
+    except ET.ParseError:
+      raise ElevenstApiError(f"취소승인 응답 XML 파싱 실패: {text[:200]}")
+
+    result_code = root.findtext("result_code", "")
+    result_text = root.findtext("result_text", "")
+    logger.info("[11번가] 취소승인 결과: code=%s, text=%s", result_code, result_text)
+
+    if result_code and result_code != "0":
+      raise ElevenstApiError(f"취소승인 에러 ({result_code}): {result_text}")
+
+    return True
+
+  # ------------------------------------------------------------------
+  # 반품 처리
+  # ------------------------------------------------------------------
+
+  async def get_return_requests(self, start_time: str, end_time: str) -> list[dict[str, Any]]:
+    """기간별 반품 요청 목록 조회.
+
+    Args:
+        start_time: 검색시작일 YYYYMMDDhhmm
+        end_time:   검색종료일 YYYYMMDDhhmm
+        최대 조회 기간: 30일 제한 → 초과 시 자동 분할 조회
+    """
+    from datetime import timedelta
+
+    fmt = "%Y%m%d%H%M"
+    start_dt = datetime.strptime(start_time, fmt)
+    end_dt = datetime.strptime(end_time, fmt)
+
+    all_items: list[dict[str, Any]] = []
+    chunk_start = start_dt
+    while chunk_start < end_dt:
+      chunk_end = min(chunk_start + timedelta(days=30), end_dt)
+      chunk_items = await self._fetch_claim_list(
+        "returnorders", chunk_start.strftime(fmt), chunk_end.strftime(fmt)
+      )
+      all_items.extend(chunk_items)
+      chunk_start = chunk_end
+
+    logger.info("[11번가] 반품 요청 목록 조회 완료: %d건", len(all_items))
+    return all_items
+
+  async def confirm_return(
+    self,
+    clm_req_seq: str,
+    ord_no: str,
+    ord_prd_seq: str,
+  ) -> bool:
+    """반품 승인 처리.
+
+    Args:
+        clm_req_seq:  클레임번호 (반품요청코드)
+        ord_no:       주문번호
+        ord_prd_seq:  주문순번
+
+    Returns:
+        True if 반품승인 성공
+    """
+    import re as _re
+
+    url = (
+      f"https://api.11st.co.kr/rest/claimservice/returnreqconf"
+      f"/{clm_req_seq}/{ord_no}/{ord_prd_seq}"
+    )
+    headers = self._headers()
+
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+      resp = await client.get(url, headers=headers)
+      logger.info("[11번가] 반품승인 clmReqSeq=%s ordNo=%s → %s", clm_req_seq, ord_no, resp.status_code)
+
+    if not resp.is_success:
+      raise ElevenstApiError(f"반품승인 HTTP {resp.status_code}: {resp.text[:300]}")
+
+    try:
+      text = resp.content.decode("euc-kr")
+    except Exception:
+      text = resp.text
+
+    xml_text = text.replace("ns2:", "").replace("s2:", "")
+    xml_text = __import__("re").sub(r"<\?xml[^?]*\?>", "", xml_text, count=1).strip()
+    try:
+      root = ET.fromstring(xml_text)
+    except ET.ParseError:
+      raise ElevenstApiError(f"반품승인 응답 XML 파싱 실패: {text[:200]}")
+
+    result_code = root.findtext("result_code", "")
+    result_text = root.findtext("result_text", "")
+    logger.info("[11번가] 반품승인 결과: code=%s, text=%s", result_code, result_text)
+
+    if result_code and result_code != "0":
+      raise ElevenstApiError(f"반품승인 에러 ({result_code}): {result_text}")
+
+    return True
+
+  async def _fetch_claim_list(
+    self, claim_type: str, start_time: str, end_time: str
+  ) -> list[dict[str, Any]]:
+    """취소/반품 목록 단일 구간 조회 공통 메서드.
+
+    Args:
+        claim_type: 'cancelorders' 또는 'returnorders'
+        start_time: YYYYMMDDhhmm
+        end_time:   YYYYMMDDhhmm
+    """
+    import re as _re
+
+    url = f"https://api.11st.co.kr/rest/claimservice/{claim_type}/{start_time}/{end_time}"
+    headers = self._headers()
+
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+      resp = await client.get(url, headers=headers)
+      logger.info("[11번가] GET /claimservice/%s/%s/%s → %s", claim_type, start_time, end_time, resp.status_code)
+
+    if not resp.is_success:
+      raise ElevenstApiError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+
+    try:
+      text = resp.content.decode("euc-kr")
+    except Exception:
+      text = resp.text
+
+    # 네임스페이스 + XML 선언 제거
+    xml_text = text.replace("ns2:", "").replace("s2:", "")
+    xml_text = _re.sub(r"<\?xml[^?]*\?>", "", xml_text, count=1).strip()
+
+    try:
+      root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+      logger.error("[11번가] %s XML 파싱 실패: %s", claim_type, e)
+      return []
+
+    # result_code 확인 (0=결과없음 정상, 음수=에러)
+    result_code = root.findtext("result_code", "")
+    if result_code:
+      if result_code == "0":
+        return []
+      result_text = root.findtext("result_text", "")
+      raise ElevenstApiError(f"{claim_type} 조회 에러 ({result_code}): {result_text}")
+
+    items: list[dict[str, Any]] = []
+    for order_el in root.findall("order"):
+      item: dict[str, Any] = {}
+      for child in order_el:
+        item[child.tag] = (child.text or "").strip()
+      items.append(item)
+
+    return items
+
+  # ------------------------------------------------------------------
   # 상품 데이터 변환 (수집 상품 → 11번가 XML 형식)
   # ------------------------------------------------------------------
 
