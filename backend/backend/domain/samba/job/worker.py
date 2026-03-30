@@ -122,7 +122,12 @@ class JobWorker:
                     daemon=True,
                 )
                 thread.start()
-                await asyncio.get_running_loop().run_in_executor(None, thread.join)
+                await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: thread.join(timeout=600)  # 10분 타임아웃
+                )
+                if thread.is_alive():
+                    logger.error(f"[잡워커] {label} 스레드 10분 타임아웃 — 강제 해제: {job.id}")
+                    _add_job_log(job.id, f"{label} 스레드 타임아웃 (10분) — 강제 종료")
                 return
 
             async with get_write_session() as session:
