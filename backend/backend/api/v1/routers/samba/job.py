@@ -102,3 +102,17 @@ async def cancel_job(
         raise HTTPException(400, "취소할 수 없는 상태입니다 (pending/running만 취소 가능)")
     await session.commit()
     return {"ok": True}
+
+
+@router.post("/cancel-all")
+async def cancel_all_jobs(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """대기 중(pending) + 실행 중(running) 잡 전부 취소."""
+    from sqlalchemy import text
+    r = await session.execute(text(
+        "UPDATE samba_jobs SET status = 'cancelled', completed_at = now() "
+        "WHERE status IN ('pending', 'running')"
+    ))
+    await session.commit()
+    return {"ok": True, "cancelled": r.rowcount}

@@ -704,13 +704,12 @@ export default function ShipmentsPage() {
             <button onClick={() => setLogMessages(['로그가 초기화되었습니다.'])} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
             <button onClick={handleMarketDelete} disabled={transmitting}
               style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: transmitting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
-            {transmitting && (
-              <button onClick={async () => {
+            <button onClick={async () => {
                 abortRef.current = true
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  // 잡 취소 + 전송 즉시 중단
+                  // 현재 잡만 취소
                   if (activeJobIdRef.current) {
                     await fetch(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
                   }
@@ -719,9 +718,23 @@ export default function ShipmentsPage() {
                 } catch { /* ignore */ }
                 setTransmitting(false)
               }}
-                style={{ padding: '4px 16px', fontSize: '0.78rem', background: 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: 'pointer', fontWeight: 700 }}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,50,50,0.15)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.4)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >전송 중단</button>
-            )}
+            <button onClick={async () => {
+                abortRef.current = true
+                if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+                try {
+                  const { API_BASE_URL: apiBase } = await import('@/config/api')
+                  // 현재 잡 + 대기 중 잡 전부 취소
+                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+                  await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
+                  await fetch(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
+                  activeJobIdRef.current = ''
+                } catch { /* ignore */ }
+                setTransmitting(false)
+              }}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: 'pointer', fontWeight: 700 }}
+              >전체 중단</button>
             {<>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: loopEnabled ? '#FF8C00' : '#666', cursor: 'pointer' }}>
                 <input type="checkbox" checked={loopEnabled} onChange={() => setLoopEnabled(!loopEnabled)} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
