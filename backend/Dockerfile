@@ -37,4 +37,6 @@ RUN uv sync --compile-bytecode --no-dev
 COPY backend ./backend
 COPY scripts ./scripts
 
+RUN sed -i 's/\r$//' ./scripts/entrypoint.sh && chmod +x ./scripts/entrypoint.sh
+
 ENTRYPOINT ["./scripts/entrypoint.sh"]
