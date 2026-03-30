@@ -68,6 +68,53 @@ export default function ShipmentsPage() {
     return () => { if (jobPollRef.current) clearInterval(jobPollRef.current) }
   }, [])
 
+  // 페이지 로드 시 실행 중인 Job 자동 연결
+  useEffect(() => {
+    (async () => {
+      try {
+        const { API_BASE_URL: apiBase } = await import('@/config/api')
+        const res = await fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`)
+        const jobs = await res.json()
+        const job = Array.isArray(jobs) ? jobs.find((j: Record<string, unknown>) => j.job_type === 'transmit') : null
+        if (!job) return
+        // 이미 폴링 중이면 스킵
+        if (jobPollRef.current || activeJobIdRef.current) return
+        const jobId = job.id as string
+        activeJobIdRef.current = jobId
+        setTransmitting(true)
+        setProgress({ current: (job.progress_current || 0) as number, total: (job.progress_total || 0) as number })
+        setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] 진행 중인 전송 Job 감지 — 로그 연결`])
+        let logSince = 0
+        let polling = false
+        jobPollRef.current = setInterval(async () => {
+          if (polling) return
+          polling = true
+          try {
+            const [jr, lr] = await Promise.all([
+              fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+              fetch(`${apiBase}/api/v1/samba/jobs/${jobId}/logs?since=${logSince}`),
+            ])
+            const j = await jr.json()
+            const logData = await lr.json()
+            setProgress({ current: j.progress_current || 0, total: j.progress_total || 0 })
+            const newLogs = (logData.logs || []) as string[]
+            if (newLogs.length > 0) {
+              for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`])
+              logSince += newLogs.length
+            }
+            if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
+              if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+              setTransmitting(false)
+              activeJobIdRef.current = ''
+              load()
+            }
+          } catch { /* ignore */ }
+          polling = false
+        }, 500)
+      } catch { /* ignore */ }
+    })()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // handleStart 최신 참조를 유지하는 ref (stale closure 방지)
   const handleStartRef = useRef<(targetIds?: string[]) => Promise<void>>(async () => {})
 
