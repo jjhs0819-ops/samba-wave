@@ -256,11 +256,21 @@ export default function ShipmentsPage() {
     })
     if (targetProducts.length === 0) { showAlert('선택된 소싱사이트/마켓에 해당하는 등록 상품이 없습니다'); return }
 
-    const targetLabels = selectedAccounts.map(aid => {
+    // 실제 등록된 계정만 추출 (선택 계정 ∩ 상품별 registered_accounts)
+    const selectedSet = new Set(selectedAccounts)
+    const effectiveDeleteAccIds = new Set<string>()
+    for (const pid of targetProducts) {
+      const p = products.find(x => x.id === pid)
+      for (const aid of (p?.registered_accounts || [])) {
+        if (selectedSet.has(aid)) effectiveDeleteAccIds.add(aid)
+      }
+    }
+    const effectiveDeleteList = [...effectiveDeleteAccIds]
+    const targetLabels = effectiveDeleteList.map(aid => {
       const acc = accounts.find(a => a.id === aid)
       return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
     }).join(', ')
-    if (!await showConfirm(`${targetProducts.length}개 상품을 ${targetLabels}에서 마켓삭제하시겠습니까?`)) return
+    if (!await showConfirm(`${targetProducts.length}개 상품을 ${targetLabels || '선택 계정'}에서 마켓삭제하시겠습니까?`)) return
 
     setTransmitting(true)
     const ts = () => new Date().toLocaleTimeString()
@@ -270,7 +280,7 @@ export default function ShipmentsPage() {
     for (const acc of accounts) {
       accLabelMap[acc.id] = `${acc.market_name}(${acc.seller_id || acc.business_name || '-'})`
     }
-    const targetAccLabels = selectedAccounts.map(aid => accLabelMap[aid] || aid).join(', ')
+    const targetAccLabels = effectiveDeleteList.map(aid => accLabelMap[aid] || aid).join(', ')
     addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length}개, ${targetAccLabels}`)
 
     let totalSuccess = 0
@@ -279,8 +289,11 @@ export default function ShipmentsPage() {
       const pid = targetProducts[i]
       const prod = products.find(p => p.id === pid)
       const prodName = prod?.name?.slice(0, 30) || pid
+      // 이 상품에 등록된 계정만 삭제 대상
+      const prodAccIds = (prod?.registered_accounts || []).filter(aid => selectedSet.has(aid))
+      if (prodAccIds.length === 0) continue
       try {
-        const res = await shipmentApi.marketDelete([pid], selectedAccounts)
+        const res = await shipmentApi.marketDelete([pid], prodAccIds)
         const r = res.results?.[0]
         if (r) {
           for (const [aid, st] of Object.entries(r.delete_results)) {
