@@ -391,8 +391,10 @@ class LotteonClient:
     sale_end_dttm: 상품 판매종료일 (yyyyMMddHHmmss). 없으면 6개월 폴백.
     """
     now = datetime.now()
-    start_dt = now.strftime("%Y%m%d%H%M%S")
-    # 판매종료일이 있으면 사용, 없으면 6개월 폴백 (29991231은 판매기간 초과 에러)
+    # 시작일: 내일 00:00:00 — 즉시 등록 시 "과거일시" 에러 방지
+    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start_dt = tomorrow.strftime("%Y%m%d%H%M%S")
+    # 판매종료일이 있으면 사용, 없으면 180일 폴백 (29991231은 판매기간 초과 에러)
     if sale_end_dttm and len(sale_end_dttm) >= 8:
       end_dt = sale_end_dttm[:14].ljust(14, "0") if len(sale_end_dttm) < 14 else sale_end_dttm
     else:
