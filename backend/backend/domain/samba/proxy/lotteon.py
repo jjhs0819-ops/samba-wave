@@ -390,7 +390,10 @@ class LotteonClient:
     실패해도 상품 등록 자체는 롤백하지 않음 (best-effort).
     종료일시: 9999-12-31 23:59:59 (무기한)
     """
-    start_dt = datetime.now().strftime("%Y%m%d%H%M%S")
+    now = datetime.now()
+    start_dt = now.strftime("%Y%m%d%H%M%S")
+    # 판매기간(1년) 이내로 설정 — 29991231은 판매기간 초과 에러 발생
+    end_dt = (now.replace(year=now.year + 1)).strftime("%Y%m%d235959")
     body = {
       "pblcStncLst": [
         {
@@ -400,7 +403,7 @@ class LotteonClient:
           "spdNo": spd_no,
           "pblcStnc": phrase[:75],  # API 최대 75자
           "pblcStncStrtDttm": start_dt,
-          "pblcStncEndDttm": "29991231235959",
+          "pblcStncEndDttm": end_dt,
         }
       ]
     }
