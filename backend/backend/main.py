@@ -75,13 +75,37 @@ async def lifespan(app: FastAPI):
         )
 
     yield
-    # Shutdown — 잡 워커 정리
+    # Graceful Shutdown — 진행 중인 작업 완료 대기 후 종료
+    import logging
+    _log = logging.getLogger("backend.shutdown")
+    _log.info("[shutdown] SIGTERM 수신 — graceful shutdown 시작")
+
+    # 1) 오토튠 정지 (새 사이클 진입 차단 + 현재 벌크 갱신 중단)
+    from backend.api.v1.routers.samba.collector_autotune import (
+        _autotune_running_event,
+        _autotune_task,
+    )
+    from backend.domain.samba.collector.refresher import request_bulk_cancel
+    _autotune_running_event.clear()
+    request_bulk_cancel()
+    if _autotune_task and not _autotune_task.done():
+        _log.info("[shutdown] 오토튠 작업 완료 대기 (최대 60초)")
+        try:
+            await asyncio.wait_for(asyncio.shield(_autotune_task), timeout=60)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            _autotune_task.cancel()
+            _log.info("[shutdown] 오토튠 타임아웃 — 강제 종료")
+
+    # 2) 잡 워커 정지 (새 잡 수락 중단 + 진행 중 잡 완료 대기)
     worker.stop()
-    worker_task.cancel()
+    _log.info("[shutdown] 잡 워커 종료 대기 (최대 540초)")
     try:
-        await worker_task
-    except asyncio.CancelledError:
-        pass
+        await asyncio.wait_for(worker_task, timeout=540)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        worker_task.cancel()
+        _log.info("[shutdown] 잡 워커 타임아웃 — 강제 종료")
+
+    _log.info("[shutdown] graceful shutdown 완료")
 
 
 def create_application() -> FastAPI:
