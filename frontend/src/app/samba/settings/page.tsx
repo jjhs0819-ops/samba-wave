@@ -208,6 +208,7 @@ const STORE_MARKETS: MarketConfig[] = [
     ]},
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '010-1234-5678' },
     { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '상세페이지 참조' },
+    { name: 'publicityPhrase', label: '상품 홍보문구', type: 'text', placeholder: '예: 국내 A/S가능한 제품만 판매합니다.' },
     { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '3000' },
     { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '6000' },
     { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
