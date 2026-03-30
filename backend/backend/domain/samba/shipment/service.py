@@ -84,6 +84,10 @@ def _get_group_lock(account_id: str) -> asyncio.Lock:
   return _group_locks[account_id]
 
 
+def clear_account_semaphores():
+  """별도 스레드 실행 시 이전 이벤트 루프 세마포어 정리."""
+  _account_semaphores.clear()
+
 def _get_account_semaphore(account_id: str) -> asyncio.Semaphore:
   if account_id not in _account_semaphores:
     _account_semaphores[account_id] = asyncio.Semaphore(1)

@@ -187,6 +187,9 @@ class JobWorker:
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
         from backend.domain.samba.job.model import SambaJob
+        # 별도 이벤트 루프이므로 이전 루프의 세마포어 정리
+        from backend.domain.samba.shipment.service import clear_account_semaphores
+        clear_account_semaphores()
 
         try:
             async with get_write_session() as session:
@@ -502,9 +505,7 @@ class JobWorker:
                 site_pid = str(item.get("siteProductId", item.get("goodsNo", "")))
                 if site_pid in existing_ids:
                     continue
-                if item.get("isSoldOut", False):
-                    total_skipped += 1
-                    continue
+                # 품절 판단은 상세 수집 단계에서 정확하게 수행 (검색 API의 isSoldOut은 부정확)
                 targets.append(site_pid)
 
             logger.info(f"[잡워커] 중복={len(existing_ids)}, 타겟={len(targets)}, 스킵={total_skipped}")
@@ -535,6 +536,9 @@ class JobWorker:
                     try:
                         detail = await client.get_goods_detail(goods_no, _shared_client=_shared_http)
                         if not detail or not detail.get("name"):
+                            return None
+                        if detail.get("saleStatus") == "sold_out" or detail.get("isOutOfStock"):
+                            total_skipped += 1
                             return None
                         if _exclude_preorder and detail.get("saleStatus") == "preorder":
                             total_skipped += 1
