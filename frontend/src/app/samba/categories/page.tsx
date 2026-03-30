@@ -510,12 +510,10 @@ export default function CategoriesPage() {
     products.forEach(p => {
       const site = p.source_site || ''
       if (!site) return
-      const cats = [p.category1, p.category2, p.category3, p.category4].filter(Boolean) as string[]
-      if (cats.length === 0 && p.category) {
-        cats.push(...p.category.split('>').map(c => c.trim()).filter(Boolean))
-      }
-      if (cats.length === 0) return
-      const leafPath = cats.join(' > ')
+      // DB의 category 컬럼을 직접 사용 (category1~4 조합과 불일치 방지)
+      const leafPath = p.category?.trim()
+        || [p.category1, p.category2, p.category3, p.category4].filter(Boolean).join(' > ')
+      if (!leafPath) return
       const key = `${site}::${leafPath}`
       if (!productCats.has(key)) {
         productCats.set(key, { site, category: leafPath })
