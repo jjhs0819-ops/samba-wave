@@ -64,19 +64,18 @@ _transmitting_products: set[str] = set()
 # 계정별 세마포어 — API Rate Limit 방지 (계정당 동시 1건)
 _account_semaphores: dict[str, asyncio.Semaphore] = {}
 
-# 전송 중단 플래그
-_cancel_requested = False
+# 전송 중단 플래그 (threading.Event — 스레드 간 동기화 보장)
+import threading as _threading
+_cancel_event = _threading.Event()
 
 def request_cancel_transmit():
-  global _cancel_requested
-  _cancel_requested = True
+  _cancel_event.set()
 
 def clear_cancel_transmit():
-  global _cancel_requested
-  _cancel_requested = False
+  _cancel_event.clear()
 
 def is_cancel_requested() -> bool:
-  return _cancel_requested
+  return _cancel_event.is_set()
 
 
 def _get_group_lock(account_id: str) -> asyncio.Lock:
