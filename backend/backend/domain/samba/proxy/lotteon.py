@@ -394,8 +394,8 @@ class LotteonClient:
     # 시작일: 내일 00:00 — 즉시 등록 시 "과거일시" 에러 방지
     tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     start_dt = tomorrow.strftime("%Y%m%d%H%M%S")
-    # 종료일: 180일 (기간미설정 불가 — API 필수값)
-    end_dt = (now + timedelta(days=180)).strftime("%Y%m%d235959")
+    # 종료일: 365일 (기간미설정 불가 — API 필수값)
+    end_dt = (now + timedelta(days=365)).strftime("%Y%m%d235959")
     body = {
       "pblcStncLst": [
         {
