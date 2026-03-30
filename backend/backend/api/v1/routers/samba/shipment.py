@@ -47,7 +47,7 @@ async def emergency_stop(
   from backend.domain.samba.shipment.service import request_cancel_transmit
   from sqlalchemy import text
 
-  # 1. 비상정지 플래그
+  # 1. 비상정지 플래그 ON
   trigger_emergency_stop()
   # 2. 전송 취소 플래그
   request_cancel_transmit()
@@ -64,7 +64,12 @@ async def emergency_stop(
   cancelled_count = r.rowcount
   await session.commit()
 
-  return {"ok": True, "cancelled_jobs": cancelled_count, "message": "비상정지 완료"}
+  # 5. 비상정지 즉시 해제 — 진행 중 작업만 멈추고 이후 전송은 정상 허용
+  from backend.domain.samba.emergency import clear_emergency_stop
+  clear_emergency_stop()
+  clear_cancel_transmit()
+
+  return {"ok": True, "cancelled_jobs": cancelled_count, "message": "비상정지 완료 (자동 해제)"}
 
 
 @router.post("/emergency-clear")
