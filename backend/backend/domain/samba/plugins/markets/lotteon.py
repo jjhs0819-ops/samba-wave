@@ -331,8 +331,10 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
   if val:
     _add(_ATTR_CLOTHES_TYPE_ID, val)
 
-  # ── 품목 → 고정값 의류 ────────────────────────────────────────────
-  _add(_ATTR_ITEM_TYPE_ID, "628662010")
+  # ── 품목 → 신발/잡화 카테고리는 스킵 (의류 val_id만 알고 있음) ──────
+  _is_shoes_cat = (product.get("category1") or "").strip() in {"신발", "스포츠신발", "운동화"}
+  if not _is_shoes_cat:
+    _add(_ATTR_ITEM_TYPE_ID, "628662010")
 
   # ── 성인 하의 사이즈 (하의 상품만, options 에서 추출) ──────────
   if is_bottom and _ATTR_SIZE_BOTTOM_ID in attr_id_set:
