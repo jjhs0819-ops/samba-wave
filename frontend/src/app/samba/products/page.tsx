@@ -258,7 +258,9 @@ export default function ProductsPage() {
       loadProducts(1)
     }, 300)
     return () => { if (filterTimerRef.current) clearTimeout(filterTimerRef.current) }
-  }, [searchQ, searchType, siteFilter, statusFilter, aiFilter, sortBy, filterByGroupId])
+  // searchType은 검색어가 있을 때만 재조회 트리거 (빈 검색어에서 드롭박스 변경 시 불필요한 로딩 방지)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQ, searchQ.trim() ? searchType : '', siteFilter, statusFilter, aiFilter, sortBy, filterByGroupId])
 
   // 페이지 변경 시 서버에서 해당 페이지 로드
   const totalPages = Math.max(1, Math.ceil(serverTotal / pageSize))
