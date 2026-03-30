@@ -83,7 +83,7 @@ export default function ShipmentsPage() {
         activeJobIdRef.current = jobId
         setTransmitting(true)
         setProgress({ current: (job.current || 0) as number, total: (job.total || 0) as number })
-        setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] 진행 중인 전송 Job 감지 — 로그 연결`])
+        setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] 진행 중인 전송 Job 감지 — 로그 연결`].slice(-30))
         let logSince = 0
         let polling = false
         jobPollRef.current = setInterval(async () => {
@@ -99,7 +99,7 @@ export default function ShipmentsPage() {
             setProgress({ current: j.current || 0, total: j.total || 0 })
             const newLogs = (logData.logs || []) as string[]
             if (newLogs.length > 0) {
-              for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`])
+              for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
               logSince += newLogs.length
             }
             if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
@@ -322,7 +322,7 @@ export default function ShipmentsPage() {
     setTransmitting(true)
     const ts = () => new Date().toLocaleTimeString()
     // 로그를 ref 배열로 관리 — spread O(n²) 방지
-    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg])
+    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
     const accLabelMap: Record<string, string> = {}
     for (const acc of accounts) {
       accLabelMap[acc.id] = `${acc.market_name}(${acc.seller_id || acc.business_name || '-'})`
@@ -389,7 +389,7 @@ export default function ShipmentsPage() {
     setTransmitting(true)
 
     const ts = () => new Date().toLocaleTimeString()
-    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg])
+    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
 
     // 계정 ID → 표시명 매핑
     const accountLabelMap: Record<string, string> = {}
@@ -768,7 +768,7 @@ export default function ShipmentsPage() {
                   // Job 직접 생성
                   setTransmitting(true)
                   const ts = () => new Date().toLocaleTimeString()
-                  const addLog = (msg: string) => setLogMessages(prev => [...prev, msg])
+                  const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
                   const items: string[] = []
                   if (updateItems.price) items.push('price', 'stock')
                   if (updateItems.thumb) items.push('image')
@@ -822,7 +822,7 @@ export default function ShipmentsPage() {
                       setProgress({ current: j.current || 0, total: j.total || allIds.length })
                       const newLogs = logData.logs || []
                       if (newLogs.length > 0) {
-                        for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`])
+                        for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
                         logSince += newLogs.length
                       }
                       if (j.status === 'completed' || j.status === 'failed') {

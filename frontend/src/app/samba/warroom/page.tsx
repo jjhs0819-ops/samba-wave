@@ -67,7 +67,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
           sinceIdxRef.current = res.current_idx
           setLogs(prev => {
             const next = [...prev, ...res.logs]
-            return next.length > 300 ? next.slice(next.length - 300) : next
+            return next.slice(-30)
           })
           requestAnimationFrame(() => {
             if (containerRef.current) {

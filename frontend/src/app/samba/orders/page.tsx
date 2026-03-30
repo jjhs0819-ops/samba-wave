@@ -73,7 +73,11 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState('active')
   const [searchText, setSearchText] = useState('')
   const [pageSize, setPageSize] = useState(50)
-  const [logMessages, setLogMessages] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
+  const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
+  const setLogMessages: typeof _setLogMessagesRaw = (v) => _setLogMessagesRaw(prev => {
+    const next = typeof v === 'function' ? v(prev) : v
+    return next.slice(-30)
+  })
   const [smsRemain, setSmsRemain] = useState<{ SMS_CNT?: number; LMS_CNT?: number; MMS_CNT?: number } | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)

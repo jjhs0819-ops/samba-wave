@@ -60,7 +60,11 @@ export default function ReturnsPage() {
 
   // 로그 + 검색/필터 상태
   const logRef = useRef<HTMLDivElement>(null)
-  const [logMessages, setLogMessages] = useState<string[]>(['[대기] 반품교환 가져오기 결과가 여기에 표시됩니다...'])
+  const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[대기] 반품교환 가져오기 결과가 여기에 표시됩니다...'])
+  const setLogMessages: typeof _setLogMessagesRaw = (v) => _setLogMessagesRaw(prev => {
+    const next = typeof v === 'function' ? v(prev) : v
+    return next.slice(-30)
+  })
   const [period, setPeriod] = useState('thisyear')
   const [syncAccountId, setSyncAccountId] = useState('')
   const [customStart, setCustomStart] = useState(`${new Date().getFullYear()}-01-01`)

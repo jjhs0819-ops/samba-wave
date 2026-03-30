@@ -288,7 +288,7 @@ export default function CollectorPage() {
 
   const addLog = useCallback((msg: string) => {
     const time = new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    setCollectLog((prev) => [...prev, `[${time}] ${msg}`]);
+    setCollectLog((prev) => [...prev, `[${time}] ${msg}`].slice(-30));
     setTimeout(() => {
       if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
     }, 50);
