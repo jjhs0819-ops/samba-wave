@@ -1239,21 +1239,21 @@ export default function CollectorPage() {
             >
               수집동기화
             </button>
-            {drillBrand && (
-              <button
+            <button
                 onClick={async () => {
-                  // 드릴다운에서 브랜드+사이트 정보 추출
+                  // 표시된 그룹에서 브랜드 정보 추출
                   const sampleFilter = displayedFilters[0]
                   if (!sampleFilter) { showAlert('표시된 그룹이 없습니다'); return }
                   const parsed = (() => { try { return new URL(sampleFilter.keyword || '') } catch { return null } })()
                   const brand = parsed?.searchParams.get('brand') || ''
                   const gf = parsed?.searchParams.get('gf') || 'A'
-                  if (!brand) { showAlert('브랜드 정보를 찾을 수 없습니다'); return }
-                  const ok = await showConfirm(`${drillBrand} 추가수집을 실행하시겠습니까?\n\n• 신규 카테고리 → 그룹 자동 생성\n• 기존 카테고리 → 요청수 갱신 후 수집`)
+                  if (!brand) { showAlert('브랜드 정보를 찾을 수 없습니다 (그룹 URL에 brand 파라미터 필요)'); return }
+                  const brandName = drillBrand || brand
+                  const ok = await showConfirm(`${brandName} 추가수집을 실행하시겠습니까?\n\n• 신규 카테고리 → 그룹 자동 생성\n• 기존 카테고리 → 요청수 갱신 후 수집`)
                   if (!ok) return
-                  addLog(`[추가수집] ${drillBrand} 카테고리 스캔 중...`)
+                  addLog(`[추가수집] ${brandName} 카테고리 스캔 중...`)
                   try {
-                    const res = await collectorApi.brandRefresh({ brand, brand_name: drillBrand, gf, options: checkedOptions })
+                    const res = await collectorApi.brandRefresh({ brand, brand_name: brandName, gf, options: checkedOptions })
                     addLog(`[추가수집] ${res.message}`)
                     showAlert(res.message, 'success')
                     await load(); await loadTree()
@@ -1310,7 +1310,6 @@ export default function CollectorPage() {
               >
                 추가수집
               </button>
-            )}
             <button
               disabled={tagPreviewLoading}
               onClick={async () => {
