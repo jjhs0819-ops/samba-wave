@@ -639,6 +639,13 @@ class LotteonPlugin(MarketPlugin):
           logger.info(f"[롯데ON] 수정 후 새 spdNo 발급: {existing_no} → {new_spd_no}")
         # ── 수정 후 프로모션 재설정 ──────────────────────────────
         await self._apply_promotions(client, effective_no, extras, is_update=True, eitm_nos=existing_sitm_nos)
+        # ── 홍보문구 갱신 (180일 자동 연장) ────────────────────
+        publicity_phrase = extras.get("publicityPhrase", "").strip()
+        if publicity_phrase:
+          try:
+            await client.register_publicity_sentence(effective_no, publicity_phrase)
+          except Exception as e:
+            logger.warning(f"[롯데ON] 홍보문구 갱신 실패 (무시): {e}")
         ret: dict[str, Any] = {"success": True, "message": "롯데ON 수정 성공", "data": result}
         if effective_no != existing_no:
           # service.py가 market_product_nos를 새 번호로 갱신하도록 반환
