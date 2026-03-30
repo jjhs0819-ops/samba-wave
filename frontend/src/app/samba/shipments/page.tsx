@@ -56,6 +56,7 @@ export default function ShipmentsPage() {
   // 전송 로그
   const [logMessages, setLogMessages] = useState<string[]>(['— 전송 시작 버튼을 누르면 로그가 여기에 실시간으로 표시됩니다 —'])
   const [transmitting, setTransmitting] = useState(false)
+  const [stopping, setStopping] = useState('')  // '' | 'cancel' | 'emergency'
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const progressRef = useRef<NodeJS.Timeout | null>(null)
   const abortRef = useRef(false)
@@ -704,7 +705,8 @@ export default function ShipmentsPage() {
             <button onClick={() => setLogMessages(['로그가 초기화되었습니다.'])} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
             <button onClick={handleMarketDelete} disabled={transmitting}
               style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: transmitting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
-            <button onClick={async () => {
+            <button disabled={!!stopping} onClick={async () => {
+                setStopping('cancel')
                 const ts = new Date().toLocaleTimeString()
                 setLogMessages(prev => [...prev, `[${ts}] 전송 중단 요청...`].slice(-30))
                 abortRef.current = true
@@ -721,10 +723,12 @@ export default function ShipmentsPage() {
                   setLogMessages(prev => [...prev, `[${ts}] 전송 중단 실패`].slice(-30))
                 }
                 setTransmitting(false)
+                setStopping('')
               }}
-                style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,50,50,0.15)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.4)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
-              >전송 중단</button>
-            <button onClick={async () => {
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'cancel' ? 'rgba(255,50,50,0.4)' : 'rgba(255,50,50,0.15)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.4)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: stopping ? 0.7 : 1 }}
+              >{stopping === 'cancel' ? '중단중...' : '전송 중단'}</button>
+            <button disabled={!!stopping} onClick={async () => {
+                setStopping('emergency')
                 const ts = new Date().toLocaleTimeString()
                 setLogMessages(prev => [...prev, `[${ts}] 전체 중단 요청...`].slice(-30))
                 abortRef.current = true
@@ -740,9 +744,10 @@ export default function ShipmentsPage() {
                   setLogMessages(prev => [...prev, `[${ts}] 전체 중단 실패`].slice(-30))
                 }
                 setTransmitting(false)
+                setStopping('')
               }}
-                style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: 'pointer', fontWeight: 700 }}
-              >전체 중단</button>
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'emergency' ? 'rgba(255,50,50,0.6)' : 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: stopping ? 0.7 : 1 }}
+              >{stopping === 'emergency' ? '중단중...' : '전체 중단'}</button>
             {<>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: loopEnabled ? '#FF8C00' : '#666', cursor: 'pointer' }}>
                 <input type="checkbox" checked={loopEnabled} onChange={() => setLoopEnabled(!loopEnabled)} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
