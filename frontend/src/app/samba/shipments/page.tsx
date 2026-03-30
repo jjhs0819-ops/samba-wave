@@ -660,7 +660,13 @@ export default function ShipmentsPage() {
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.4)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >선택전송</button>
               <button onClick={async () => {
-                // 전체 상품 ID를 서버에서 조회 (현재 필터 조건 유지)
+                // 전체 상품 ID를 서버에서 조회 → Job에 직접 전달 (프론트 필터링 스킵)
+                if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
+                if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
+                try {
+                  const { API_BASE_URL: apiBase } = await import('@/config/api')
+                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+                } catch { /* ignore */ }
                 const allParams: Record<string, string | number> = { skip: 0, limit: 100000 }
                 if (searchText.trim()) {
                   allParams.search = searchText.trim()
@@ -669,11 +675,66 @@ export default function ShipmentsPage() {
                 }
                 if (siteFilter !== '전체') allParams.source_site = siteFilter
                 if (registrationFilter !== '전체') allParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : ''
-                if (sortBy) allParams.sort_by = sortBy
                 try {
                   const all = await collectorApi.scrollProducts(allParams)
-                  handleStart(all.items.map(p => p.id))
-                } catch { handleStart(filteredProducts.map(p => p.id)) }
+                  // 소싱사이트 필터
+                  const siteSet = new Set(selectedSites)
+                  const allIds = all.items.filter(p => siteSet.has(p.source_site)).map(p => p.id)
+                  if (allIds.length === 0) { showAlert('선택된 소싱사이트에 해당하는 상품이 없습니다'); return }
+                  // Job 직접 생성
+                  setTransmitting(true)
+                  const ts = () => new Date().toLocaleTimeString()
+                  const addLog = (msg: string) => setLogMessages(prev => [...prev, msg])
+                  const items: string[] = []
+                  if (updateItems.price) items.push('price', 'stock')
+                  if (updateItems.thumb) items.push('image')
+                  if (updateItems.detail) items.push('description')
+                  const accLabels = selectedAccounts.map(aid => {
+                    const acc = accounts.find(a => a.id === aid)
+                    return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
+                  }).join(', ')
+                  addLog(`[${ts()}] 전송 시작 — 상품 ${allIds.length}개, ${accLabels}`)
+                  const { API_BASE_URL: apiBase } = await import('@/config/api')
+                  const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      job_type: 'transmit',
+                      payload: { product_ids: allIds, update_items: items, target_account_ids: selectedAccounts, skip_unchanged: skipEnabled },
+                    }),
+                  })
+                  const jobData = await res.json()
+                  const jobId = jobData.id || ''
+                  activeJobIdRef.current = jobId
+                  setProgress({ current: 0, total: allIds.length })
+                  let logSince = 0
+                  let polling = false
+                  const poll = setInterval(async () => {
+                    if (polling) return
+                    polling = true
+                    try {
+                      const [jr, lr] = await Promise.all([
+                        fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+                        fetch(`${apiBase}/api/v1/samba/jobs/${jobId}/logs?since=${logSince}`),
+                      ])
+                      const j = await jr.json()
+                      const logData = await lr.json()
+                      setProgress({ current: j.progress_current || 0, total: j.progress_total || allIds.length })
+                      const newLogs = logData.logs || []
+                      if (newLogs.length > 0) {
+                        for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`])
+                        logSince += newLogs.length
+                      }
+                      if (j.status === 'completed' || j.status === 'failed') {
+                        clearInterval(poll)
+                        setTransmitting(false)
+                        activeJobIdRef.current = ''
+                        load()
+                      }
+                    } catch { /* ignore */ }
+                    polling = false
+                  }, 500)
+                } catch (e) { showAlert(e instanceof Error ? e.message : '전송 실패', 'error') }
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >검색결과전송 ({totalCount})</button>
