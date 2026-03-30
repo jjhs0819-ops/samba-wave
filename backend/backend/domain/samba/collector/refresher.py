@@ -25,7 +25,7 @@ _IS_CLOUD = os.getenv("K_SERVICE") is not None  # Cloud Run 자동 설정 환경
 CONCURRENCY_PER_SITE = 10 if _IS_CLOUD else 5
 # 소싱처별 동시 요청 수 (개별 설정)
 SITE_CONCURRENCY: dict[str, int] = {
-    "MUSINSA": 20 if _IS_CLOUD else 10,  # 2GB 메모리 기준 안전 수준
+    "MUSINSA": 40 if _IS_CLOUD else 10,  # 워커 8→4 축소로 메모리 여유 확보
     "SSG": 3 if _IS_CLOUD else 1,
     "LOTTEON": 5 if _IS_CLOUD else 2,
     "FashionPlus": 10 if _IS_CLOUD else 3,
