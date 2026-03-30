@@ -284,6 +284,65 @@ class ElevenstClient:
 
     return True
 
+  async def ship_order(
+    self,
+    dlv_no: str,
+    invc_no: str,
+    dlv_etprs_cd: str,
+    dlv_mthd_cd: str = "01",
+    send_dt: Optional[str] = None,
+  ) -> bool:
+    """발송처리 (배송중 처리).
+
+    Args:
+        dlv_no:       배송번호 (주문 응답의 dlvNo)
+        invc_no:      송장번호
+        dlv_etprs_cd: 택배사 코드 (예: 00034=CJ대한통운, 00012=롯데, 00011=한진)
+        dlv_mthd_cd:  배송방식 (01=택배, 03=직접, 04=퀵, 05=배송없음, 기본 01)
+        send_dt:      발송일 YYYYMMDDhhmm (미입력 시 현재 시각)
+
+    Returns:
+        True if 발송처리 성공
+    """
+    import re as _re
+    from datetime import datetime
+
+    if not send_dt:
+      send_dt = datetime.now().strftime("%Y%m%d%H%M")
+
+    url = (
+      f"https://api.11st.co.kr/rest/ordservices/reqdelivery"
+      f"/{send_dt}/{dlv_mthd_cd}/{dlv_etprs_cd}/{invc_no}/{dlv_no}"
+    )
+    headers = self._headers()
+
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+      resp = await client.get(url, headers=headers)
+      logger.info("[11번가] 발송처리 dlvNo=%s invcNo=%s → %s", dlv_no, invc_no, resp.status_code)
+
+    if not resp.is_success:
+      raise ElevenstApiError(f"발송처리 HTTP {resp.status_code}: {resp.text[:300]}")
+
+    try:
+      text = resp.content.decode("euc-kr")
+    except Exception:
+      text = resp.text
+
+    xml_text = _re.sub(r"<\?xml[^?]*\?>", "", text, count=1).strip()
+    try:
+      root = ET.fromstring(xml_text)
+    except ET.ParseError:
+      raise ElevenstApiError(f"발송처리 응답 XML 파싱 실패: {text[:200]}")
+
+    result_code = root.findtext("result_code", "")
+    result_text = root.findtext("result_text", "")
+    logger.info("[11번가] 발송처리 결과: code=%s, text=%s", result_code, result_text)
+
+    if result_code != "0":
+      raise ElevenstApiError(f"발송처리 에러 ({result_code}): {result_text}")
+
+    return True
+
   async def get_outbound_addresses(self) -> list[dict[str, str]]:
     """출고지 주소 목록 조회. GET /rest/areaservice/outboundarea"""
     return await self._get_area_addresses("outboundarea")

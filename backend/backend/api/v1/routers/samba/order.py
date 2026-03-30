@@ -929,6 +929,7 @@ def _parse_elevenst_order(order: dict, account_id: str, account_label: str) -> d
         "shipping_status": shipping_status,
         "shipping_company": order.get("dlvCrpNm", "") or "",
         "tracking_number": order.get("invcNo", "") or "",
+        "ext_order_number": order.get("dlvNo", "") or "",  # 발송처리 시 사용할 배송번호
         "source": "11st",
     }
 
@@ -1046,3 +1047,70 @@ def _parse_smartstore_order(
         "tracking_number": po.get("trackingNumber", ""),
         "source": "smartstore",
     }
+
+
+# ══════════════════════════════════════════════
+# 11번가 발송처리
+# ══════════════════════════════════════════════
+
+
+class ElevenstShipRequest(BaseModel):
+    order_id: str           # DB SambaOrder.id
+    invc_no: str            # 송장번호
+    dlv_etprs_cd: str       # 택배사 코드 (예: 00034=CJ대한통운)
+    dlv_mthd_cd: str = "01" # 배송방식 (01=택배)
+    send_dt: Optional[str] = None  # 발송일 YYYYMMDDhhmm (미입력 시 현재)
+
+
+@router.post("/11st/ship")
+async def ship_elevenst_order(
+    body: ElevenstShipRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """11번가 발송처리 — 송장번호 등록 후 배송중 상태로 변경."""
+    from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    # 주문 조회
+    svc = _write_service(session)
+    order = await svc.get_order(body.order_id)
+    if not order:
+        raise HTTPException(404, "주문을 찾을 수 없습니다")
+
+    # 11번가 계정 조회
+    account_repo = SambaMarketAccountRepository(session)
+    account = await account_repo.get_async(order.channel_id)
+    if not account:
+        raise HTTPException(404, "마켓 계정을 찾을 수 없습니다")
+
+    extras = account.additional_fields or {}
+    api_key = account.api_key or extras.get("apiKey", "")
+    if not api_key:
+        raise HTTPException(400, "11번가 API 키가 없습니다")
+
+    # ext_order_number = dlvNo (주문 수집 시 저장된 배송번호)
+    dlv_no = order.ext_order_number or ""
+    if not dlv_no:
+        raise HTTPException(400, "배송번호(dlvNo)가 없습니다. 주문을 다시 동기화해주세요")
+
+    client = ElevenstClient(api_key)
+    try:
+        await client.ship_order(
+            dlv_no=dlv_no,
+            invc_no=body.invc_no,
+            dlv_etprs_cd=body.dlv_etprs_cd,
+            dlv_mthd_cd=body.dlv_mthd_cd,
+            send_dt=body.send_dt,
+        )
+    except ElevenstApiError as e:
+        raise HTTPException(400, str(e))
+
+    # DB 업데이트
+    await svc.update_order(body.order_id, {
+        "tracking_number": body.invc_no,
+        "shipping_status": "SHIPPING",
+        "status": "shipping",
+    })
+
+    logger.info("[11번가] 발송처리 완료 orderId=%s invcNo=%s", body.order_id, body.invc_no)
+    return {"success": True, "message": f"발송처리 완료 (송장: {body.invc_no})"}
