@@ -44,11 +44,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
         if (atStatus && onStatusChange) {
           onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
         }
-        if (!atStatus?.running) {
-          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-          pollingRef.current = false
-          return
-        }
+        // running 상태와 무관하게 로그 폴링 유지 (별도 스레드 타이밍 차이 대응)
         const idx = sinceIdxRef.current
         const res = await monitorApi.refreshLogs(idx)
         if (res.current_idx < idx) {
@@ -328,36 +324,47 @@ export default function WarroomPage() {
           {autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중 ({autotuneCycles}회)</span>}
           {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
         </div>
-        <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
           <button
             onClick={async () => {
               try {
-                if (autotuneRunning) {
-                  // 비상정지: 오토튠 + 전송 + pending Job 전부 중단
-                  const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-stop`, { method: 'POST' })
-                  setAutotuneRunning(false)
-                } else {
-                  // 비상정지 해제 + 오토튠 시작
-                  const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
-                  await collectorApi.autotuneStart('registered')
-                  setAutotuneRunning(true)
-                  setAutotuneCycles(0)
-                }
+                const { API_BASE_URL: apiBase } = await import('@/config/api')
+                await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+                await collectorApi.autotuneStart('registered')
+                setAutotuneRunning(true)
+                setAutotuneCycles(0)
               } catch { /* ignore */ }
             }}
             style={{
               padding: '0.25rem 0.75rem',
-              background: autotuneRunning ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)',
-              border: `1px solid ${autotuneRunning ? 'rgba(239,68,68,0.35)' : 'rgba(34,197,94,0.35)'}`,
+              background: 'rgba(34,197,94,0.12)',
+              border: '1px solid rgba(34,197,94,0.35)',
               borderRadius: '6px',
-              color: autotuneRunning ? '#EF4444' : '#22C55E',
+              color: '#22C55E',
               fontSize: '0.8125rem',
               fontWeight: 600,
               cursor: 'pointer',
             }}
-          >{autotuneRunning ? '정지' : '시작'}</button>
+          >시작</button>
+          <button
+            onClick={async () => {
+              try {
+                const { API_BASE_URL: apiBase } = await import('@/config/api')
+                await fetch(`${apiBase}/api/v1/samba/shipments/emergency-stop`, { method: 'POST' })
+                setAutotuneRunning(false)
+              } catch { /* ignore */ }
+            }}
+            style={{
+              padding: '0.25rem 0.75rem',
+              background: 'rgba(239,68,68,0.12)',
+              border: '1px solid rgba(239,68,68,0.35)',
+              borderRadius: '6px',
+              color: '#EF4444',
+              fontSize: '0.8125rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >강제중단</button>
         </div>
       </div>
 
