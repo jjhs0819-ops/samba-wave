@@ -106,39 +106,38 @@ class JobWorker:
         return True
 
     async def _execute_job(self, job):
-        """개별 잡 실행 — 수집/전송은 별도 스레드, 나머지는 메인 루프."""
+        """개별 잡 실행 — 수집만 별도 스레드, 전송+기타는 메인 루프."""
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
 
         try:
-            # 수집/전송: 별도 스레드 + 독립 이벤트 루프 (I/O 격리)
-            if job.job_type in ("collect", "transmit"):
-                label = "수집" if job.job_type == "collect" else "전송"
-                logger.info(f"[잡워커] {label} 실행 (격리 스레드): {job.id}")
-                run_fn = _run_collect_in_thread if job.job_type == "collect" else _run_transmit_in_thread
+            # 수집: 별도 스레드 + 독립 이벤트 루프 (전송과 I/O 격리)
+            if job.job_type == "collect":
+                logger.info(f"[잡워커] 수집 실행 (격리 스레드): {job.id}")
                 thread = threading.Thread(
-                    target=run_fn,
+                    target=_run_collect_in_thread,
                     args=(self, job.id, job.payload or {}),
                     daemon=True,
                 )
                 thread.start()
-                # 비동기 폴링으로 대기 (이벤트 루프 차단 없음, heartbeat 유지)
                 elapsed = 0
                 while thread.is_alive() and elapsed < 600:
                     await asyncio.sleep(2)
                     elapsed += 2
                 if thread.is_alive():
-                    logger.error(f"[잡워커] {label} 스레드 10분 타임아웃: {job.id}")
-                    _add_job_log(job.id, f"{label} 타임아웃 (10분)")
+                    logger.error(f"[잡워커] 수집 스레드 10분 타임아웃: {job.id}")
+                    _add_job_log(job.id, f"수집 타임아웃 (10분)")
                 return
 
-            # 기타 잡: 메인 루프 직접 실행
+            # 전송 + 기타: 메인 루프 직접 실행 (인메모리 로그 공유)
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
                 logger.info(f"[잡워커] 실행: {job.id} ({job.job_type})")
 
                 try:
-                    if job.job_type == "refresh":
+                    if job.job_type == "transmit":
+                        await self._run_transmit(job, repo, session)
+                    elif job.job_type == "refresh":
                         await self._run_stub(job, repo, "갱신")
                     elif job.job_type == "ai_tag":
                         await self._run_stub(job, repo, "AI태그")
