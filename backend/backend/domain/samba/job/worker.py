@@ -269,7 +269,10 @@ class JobWorker:
                         _add_job_log(job.id, f"[{i+1}/{total}] {prod_name} → {acc_label}: 스킵{rl}")
                     else:
                         fail_count += 1
-                        err = tx_error.get(acc_id, "실패")[:60]
+                        err = str(tx_error.get(acc_id, "실패"))[:60]
+                        # asyncio 내부 객체 누출 방지
+                        if "<asyncio" in err or "Semaphore" in err:
+                            err = "전송 동시성 오류"
                         _add_job_log(job.id, f"[{i+1}/{total}] {prod_name} → {acc_label}: {err}")
                 if not tx_result:
                     if status == "skipped":

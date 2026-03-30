@@ -895,12 +895,19 @@ class SambaShipmentService:
           action = "수정" if existing_product_no else "등록"
           logger.info(f"[전송] {market_type} {action} 성공 - 상품: {product_id}, 계정: {account_id}")
         else:
-          res["error"] = result.get("message", "알 수 없는 오류")
-          logger.warning(f"[전송] {market_type} 실패 - {result.get('message')}")
+          _msg = result.get("message", "알 수 없는 오류")
+          res["error"] = str(_msg) if not isinstance(_msg, str) else _msg
+          logger.warning(f"[전송] {market_type} 실패 - {_msg}")
 
       except Exception as exc:
-        res["error"] = str(exc)
-        logger.error(f"[전송] 계정 {account_id} 예외: {exc}")
+        _err = str(exc)
+        # asyncio 내부 객체 누출 방지
+        if "<asyncio" in _err or "Semaphore" in _err:
+          _err = f"전송 타임아웃 또는 동시성 오류 ({market_type})"
+          logger.error(f"[전송] 계정 {account_id} 세마포어 누출: {exc}")
+        else:
+          logger.error(f"[전송] 계정 {account_id} 예외: {exc}")
+        res["error"] = _err
       return res
 
     # 모든 계정 병렬 전송
