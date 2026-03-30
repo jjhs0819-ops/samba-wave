@@ -114,14 +114,28 @@ async def lifespan(app: FastAPI):
             _autotune_task.cancel()
             _log.info("[shutdown] 오토튠 타임아웃 — 강제 종료")
 
-    # 2) 잡 워커 정지 (새 잡 수락 중단 + 진행 중 잡 완료 대기)
+    # 2) 잡 워커 즉시 정지 — Cloud Run SIGTERM 후 10초 이내에 종료해야 함
     worker.stop()
-    _log.info("[shutdown] 잡 워커 종료 대기 (최대 540초)")
+    worker_task.cancel()
     try:
-        await asyncio.wait_for(worker_task, timeout=540)
-    except (asyncio.TimeoutError, asyncio.CancelledError):
-        worker_task.cancel()
-        _log.info("[shutdown] 잡 워커 타임아웃 — 강제 종료")
+        await worker_task
+    except (asyncio.CancelledError, Exception):
+        pass
+
+    # 3) running 잡 → pending 복구 (재시작 후 이어서 처리)
+    try:
+        from backend.db.orm import get_write_session
+        from sqlalchemy import text
+        async with get_write_session() as session:
+            r = await session.execute(text(
+                "UPDATE samba_jobs SET status = 'pending' "
+                "WHERE status = 'running'"
+            ))
+            if r.rowcount > 0:
+                _log.info(f"[shutdown] running Job {r.rowcount}건 → pending 복구 (재시작 후 재처리)")
+            await session.commit()
+    except Exception as e:
+        _log.warning(f"[shutdown] Job 복구 실패: {e}")
 
     _log.info("[shutdown] graceful shutdown 완료")
 
