@@ -445,19 +445,45 @@ class LotteonPlugin(MarketPlugin):
         "message": "롯데ON API Key가 비어있습니다. 설정에서 해당 계정을 수정 후 저장해주세요.",
       }
 
-    # ── 성별 오버라이드: sex == "여성"이면 남성→여성 카테고리 경로 변환 ──
-    # 카테고리가 경로 문자열일 때만 적용 (BC코드 변환 전에 처리)
-    if (product.get("sex") or "").strip() == "여성" and category_id and ">" in category_id:
+    # ── 성별 오버라이드: sex == "여성"이면 남성→여성 카테고리 변환 ──
+    # 경로 문자열(">" 포함)과 BC코드 모두 처리
+    # (shipment.service에서 미리 BC코드로 변환된 경우도 대응)
+    if (product.get("sex") or "").strip() == "여성" and category_id:
       from backend.domain.samba.category.service import _LOTTEON_M_TO_F
-      female_cat = _LOTTEON_M_TO_F.get(category_id)
-      if female_cat:
-        logger.info(f"[롯데ON] 성별 오버라이드: {category_id!r} → {female_cat!r}")
-        category_id = female_cat
-      elif "남성스포츠의류" in category_id:
-        # _LOTTEON_M_TO_F에 없는 스포츠의류 경로: 문자열 교체로 여성화
-        female_cat = category_id.replace("남성스포츠의류", "여성스포츠의류")
-        logger.info(f"[롯데ON] 성별 보정(스포츠의류): {category_id!r} → {female_cat!r}")
-        category_id = female_cat
+      if ">" in category_id:
+        # 경로 문자열 레벨 변환
+        female_cat = _LOTTEON_M_TO_F.get(category_id)
+        if female_cat:
+          logger.info(f"[롯데ON] 성별 오버라이드: {category_id!r} → {female_cat!r}")
+          category_id = female_cat
+        elif "남성스포츠의류" in category_id:
+          female_cat = category_id.replace("남성스포츠의류", "여성스포츠의류")
+          logger.info(f"[롯데ON] 성별 보정(스포츠의류): {category_id!r} → {female_cat!r}")
+          category_id = female_cat
+      elif category_id.startswith("BC4104"):
+        # BC코드 레벨 변환 — 명시적 매핑 우선, 알 수 없는 코드는 BC4104→BC4110 치환
+        _BC_M_TO_F: dict[str, str] = {
+          "BC41040100": "BC41100100",  # 긴바지
+          "BC41040200": "BC41100200",  # 긴팔티셔츠
+          "BC41040300": "BC41100300",  # 반팔티셔츠
+          "BC41040900": "BC41100900",  # 반바지
+          "BC41041000": "BC41101000",  # 맨투맨
+          "BC41041200": "BC41101200",  # 후드
+          "BC41041300": "BC41101400",  # 집업 (불규칙 오프셋)
+          "BC41041400": "BC41101500",  # 트레이닝복 (불규칙 오프셋)
+          "BC41041500": "BC41101600",  # 바람막이/재킷
+          "BC41041600": "BC41101700",  # 점퍼
+          "BC41041800": "BC41101900",  # 니트
+        }
+        female_bc = _BC_M_TO_F.get(category_id)
+        if female_bc:
+          logger.info(f"[롯데ON] 성별 보정(BC): {category_id} → {female_bc}")
+          category_id = female_bc
+        else:
+          # 알려지지 않은 남성 BC41040xxx: BC4110 치환 시도
+          candidate = "BC4110" + category_id[6:]
+          logger.info(f"[롯데ON] 성별 보정(BC fallback): {category_id} → {candidate}")
+          category_id = candidate
 
     # ── FC05 권한없음 방지: 패션의류 경로/BC23코드 → 스포츠의류 강제 변환 ──────────
     # category_id가 경로 문자열일 때: 패션의류 경로 → 스포츠의류 경로 변환
