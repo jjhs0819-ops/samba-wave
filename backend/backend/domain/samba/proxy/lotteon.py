@@ -390,6 +390,12 @@ class LotteonClient:
     실패해도 상품 등록 자체는 롤백하지 않음 (best-effort).
     기간미설정(None)으로 등록 — 무기한 노출.
     """
+    now = datetime.now()
+    # 시작일: 내일 00:00 — 즉시 등록 시 "과거일시" 에러 방지
+    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start_dt = tomorrow.strftime("%Y%m%d%H%M%S")
+    # 종료일: 180일 (기간미설정 불가 — API 필수값)
+    end_dt = (now + timedelta(days=180)).strftime("%Y%m%d235959")
     body = {
       "pblcStncLst": [
         {
@@ -398,8 +404,8 @@ class LotteonClient:
           "lrtrNo": None,
           "spdNo": spd_no,
           "pblcStnc": phrase[:75],  # API 최대 75자
-          "pblcStncStrtDttm": None,  # 기간미설정
-          "pblcStncEndDttm": None,   # 기간미설정
+          "pblcStncStrtDttm": start_dt,
+          "pblcStncEndDttm": end_dt,
         }
       ]
     }
