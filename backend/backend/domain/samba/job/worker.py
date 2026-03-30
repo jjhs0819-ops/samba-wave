@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import threading
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,18 @@ def _add_job_log(job_id: str, msg: str):
     if job_id not in _job_logs:
         _job_logs[job_id] = deque(maxlen=500)
     _job_logs[job_id].append(msg)
+
+
+def _run_collect_in_thread(worker: 'JobWorker', job_id: str, payload: dict):
+    """별도 스레드에서 독립 이벤트 루프로 수집 실행 — 전송과 I/O 완전 격리."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(worker._execute_collect_isolated(job_id, payload))
+    except Exception as e:
+        logger.error(f"[잡워커] 수집 스레드 에러: {job_id} — {e}")
+    finally:
+        loop.close()
 
 
 class JobWorker:
@@ -86,6 +99,18 @@ class JobWorker:
         from backend.domain.samba.job.repository import SambaJobRepository
 
         try:
+            # 수집 잡은 별도 스레드 + 독립 이벤트 루프 — 전송과 I/O 완전 격리
+            if job.job_type == "collect":
+                logger.info(f"[잡워커] 수집 실행 (격리 스레드): {job.id}")
+                thread = threading.Thread(
+                    target=_run_collect_in_thread,
+                    args=(self, job.id, job.payload or {}),
+                    daemon=True,
+                )
+                thread.start()
+                await asyncio.get_running_loop().run_in_executor(None, thread.join)
+                return
+
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
                 logger.info(f"[잡워커] 실행: {job.id} ({job.job_type})")
@@ -93,8 +118,6 @@ class JobWorker:
                 try:
                     if job.job_type == "transmit":
                         await self._run_transmit(job, repo, session)
-                    elif job.job_type == "collect":
-                        await self._run_collect(job, repo, session)
                     elif job.job_type == "refresh":
                         await self._run_stub(job, repo, "갱신")
                     elif job.job_type == "ai_tag":
@@ -112,6 +135,32 @@ class JobWorker:
                         pass
         finally:
             self._active_types.discard(job.job_type)
+
+    async def _execute_collect_isolated(self, job_id: str, payload: dict):
+        """격리된 이벤트 루프에서 수집 잡 실행 — 자체 DB 세션 관리."""
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.job.repository import SambaJobRepository
+        from backend.domain.samba.job.model import SambaJob
+
+        try:
+            async with get_write_session() as session:
+                repo = SambaJobRepository(session)
+                job = await session.get(SambaJob, job_id)
+                if not job:
+                    logger.error(f"[잡워커] 수집 잡 없음: {job_id}")
+                    return
+                try:
+                    await self._run_collect(job, repo, session)
+                    await session.commit()
+                except Exception as e:
+                    logger.error(f"[잡워커] 수집 실행 실패: {job_id} — {e}")
+                    try:
+                        await repo.fail_job(job_id, str(e))
+                        await session.commit()
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.error(f"[잡워커] 수집 세션 에러: {job_id} — {e}")
 
     async def _run_transmit(self, job, repo, session):
         """전송 잡 실행 — 기존 shipment_service 호출."""
