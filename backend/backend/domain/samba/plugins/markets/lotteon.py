@@ -754,10 +754,16 @@ class LotteonPlugin(MarketPlugin):
           ret["spdNo"] = effective_no
         return ret
       else:
-        # impDvsCd fallback: DRC_IMP 실패 시 순차 재시도
-        # NATN_MFR: 국내제조 (dmstOvsDvDvsCd=DMST 조합에서 유효)
-        # DOM_MFR, IND_IMP는 롯데ON에서 코드 자체를 모르는 경우가 있으므로 후순위
-        _imp_dvs_fallbacks = ["NATN_MFR", "DOM_MFR", "IND_IMP"]
+        # impDvsCd + dmstOvsDvDvsCd fallback 전략:
+        # (impDvsCd, dmstOvsDvDvsCd) 조합을 순차 시도
+        # - DRC_IMP+OVRS: 해외브랜드(아디다스 등) 직수입 → dmstOvsDvDvsCd를 OVRS로 변경
+        # - None: impDvsCd 필드 제거 (카테고리 기본값 사용)
+        # 이미 유효하지 않은 코드: NATN_MFR, DOM_MFR, IND_IMP (롯데ON이 인식 못함)
+        _imp_dvs_fallbacks = [
+          ("DRC_IMP", "OVRS"),  # dmstOvsDvDvsCd=OVRS로 변경하여 DRC_IMP 재시도
+          (None, "DMST"),       # impDvsCd 필드 제거 (카테고리 기본값 위임)
+          (None, "OVRS"),       # impDvsCd 제거 + OVRS 조합
+        ]
         _reg_exception: Exception | None = None
         result = None
         try:
@@ -765,16 +771,21 @@ class LotteonPlugin(MarketPlugin):
         except Exception as _e:
           if "수입구분코드" in str(_e):
             _reg_exception = _e
-            for _fallback in _imp_dvs_fallbacks:
+            for _imp_code, _dmst_code in _imp_dvs_fallbacks:
               if data.get("spdLst") and isinstance(data["spdLst"], list):
-                data["spdLst"][0]["impDvsCd"] = _fallback
-              logger.info(f"[롯데ON] impDvsCd fallback 시도: {_fallback} (원인: {_e})")
+                _spd = data["spdLst"][0]
+                if _imp_code is None:
+                  _spd.pop("impDvsCd", None)
+                else:
+                  _spd["impDvsCd"] = _imp_code
+                _spd["dmstOvsDvDvsCd"] = _dmst_code
+              logger.info(f"[롯데ON] impDvsCd fallback: impDvsCd={_imp_code!r} dmst={_dmst_code} (원인: {_e})")
               try:
                 result = await client.register_product(data)
                 _reg_exception = None
                 break
               except Exception as _e2:
-                logger.warning(f"[롯데ON] impDvsCd={_fallback} 실패: {_e2}")
+                logger.warning(f"[롯데ON] fallback impDvsCd={_imp_code!r} dmst={_dmst_code} 실패: {_e2}")
           else:
             raise
         if _reg_exception is not None:
