@@ -1132,6 +1132,8 @@ export default function ProductsPage() {
               const sites = [...new Set(
                 Array.from(selectedIds).map(id => products.find(p => p.id === id)?.source_site).filter(Boolean)
               )].join(',')
+              // sessionStorage로 전달 (URL 파라미터 + sessionStorage 이중 전달)
+              try { sessionStorage.setItem('shipment_selected', ids); sessionStorage.setItem('shipment_sites', sites) } catch {}
               router.push(`/samba/shipments?selected=${encodeURIComponent(ids)}&sites=${encodeURIComponent(sites)}&autoAll=1&priceOnly=1`)
             }}
             style={{

@@ -114,12 +114,14 @@ export default function ShipmentsPage() {
   const preIdsConsumedRef = useRef(false)
   const load = useCallback(async () => {
     setLoading(true)
-    // 최초 1회만 URL의 selected 파라미터 사용
+    // 최초 1회만 선택 상품 ID 사용 (sessionStorage > URL > searchParams 순)
     let preIds: string[] = []
     if (!preIdsConsumedRef.current) {
-      const raw = new URLSearchParams(window.location.search).get('selected') || searchParams.get('selected') || ''
+      let raw = ''
+      try { raw = sessionStorage.getItem('shipment_selected') || '' } catch {}
+      if (!raw) raw = new URLSearchParams(window.location.search).get('selected') || ''
+      if (!raw) raw = searchParams.get('selected') || ''
       preIds = raw.split(',').filter(Boolean)
-      console.log('[shipments] preIds:', preIds.length, 'url:', window.location.search.slice(0, 80))
     }
 
     // 검색 조건에 따라 서버 API 파라미터 구성
@@ -135,7 +137,7 @@ export default function ShipmentsPage() {
 
     // 선택된 상품이 있으면 해당 상품만 조회, 없으면 scroll API
     const productPromise = preIds.length > 0
-      ? collectorApi.getProductsByIds(preIds).then(r => { console.log('[shipments] by-ids 응답:', preIds, r?.length); preIdsConsumedRef.current = true; return r }).catch(e => { console.error('[shipments] by-ids 실패:', e); return [] as SambaCollectedProduct[] })
+      ? collectorApi.getProductsByIds(preIds).then(r => { preIdsConsumedRef.current = true; try { sessionStorage.removeItem('shipment_selected'); sessionStorage.removeItem('shipment_sites') } catch {}; return r }).catch(() => [] as SambaCollectedProduct[])
       : collectorApi.scrollProducts(scrollParams).then(r => { setTotalCount(r.total || 0); return r.items }).catch(() => [] as SambaCollectedProduct[])
 
     const [p, a, s, f, pol, cm] = await Promise.all([
@@ -158,9 +160,10 @@ export default function ShipmentsPage() {
   useEffect(() => { load() }, [load])
   useEffect(() => { return () => { if (progressRef.current) clearInterval(progressRef.current) } }, [])
 
-  // URL에서 선택된 상품 ID 자동 적용 + 필터링
+  // URL/sessionStorage에서 선택된 상품 ID 자동 적용 + 필터링
   const preSelectedIds = searchParams.get('selected')?.split(',') || []
-  const preSelectedSites = searchParams.get('sites')?.split(',') || []
+  const preSelectedSitesRaw = searchParams.get('sites')?.split(',') || []
+  const preSelectedSites = preSelectedSitesRaw.length > 0 ? preSelectedSitesRaw : (() => { try { return sessionStorage.getItem('shipment_sites')?.split(',').filter(Boolean) || [] } catch { return [] } })()
   const autoAll = searchParams.get('autoAll') === '1'
   const priceOnly = searchParams.get('priceOnly') === '1'
   const initializedRef = useRef(false)
