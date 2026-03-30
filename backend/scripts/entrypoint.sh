@@ -23,7 +23,7 @@ echo "Running in $ENVIRONMENT mode"
 if [ "$ENVIRONMENT" = "production" ]; then
   # Run the production server with Gunicorn
   echo "Starting production server with Gunicorn..."
-  exec uv run -m gunicorn -w 4 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080
+  exec uv run -m gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080
 else
   # Run the development server with Uvicorn and --reload
   echo "Starting development server with Uvicorn..."
