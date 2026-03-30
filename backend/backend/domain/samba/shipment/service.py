@@ -681,6 +681,9 @@ class SambaShipmentService:
         name_rule = result.first()
         if name_rule:
           product_dict["name"] = self._compose_product_name(product_dict, name_rule)
+          # 마켓별 상품명 조합이 있으면 _dispatch_one에서 덮어쓸 수 있도록 name_rule 보관
+          product_dict["_name_rule"] = name_rule
+          product_dict["_original_name"] = product_row.model_dump().get("name", "")
 
     # 글로벌 삭제어 적용 (상품명에서 금칙어 제거)
     # DB 실제 데이터: type='deletion', scope='all'
@@ -769,6 +772,16 @@ class SambaShipmentService:
 
         # 마켓별 판매가 계산 (product_dict 원본 보호를 위해 복사본 사용)
         acct_product = dict(product_dict)
+
+        # 마켓별 상품명 조합 덮어쓰기
+        _nr = product_dict.get("_name_rule")
+        if _nr and getattr(_nr, "market_name_compositions", None):
+          _market_comp = _nr.market_name_compositions.get(market_type)
+          if _market_comp:
+            # 원본 상품 데이터로 마켓별 조합 실행
+            _orig = dict(product_dict)
+            _orig["name"] = product_dict.get("_original_name", product_dict.get("name", ""))
+            acct_product["name"] = self._compose_product_name(_orig, _nr, market_type=market_type)
         cost = acct_product.get("cost") or acct_product.get("sale_price") or acct_product.get("original_price") or 0
         if policy and policy.pricing:
           pr = policy.pricing
@@ -1027,9 +1040,17 @@ class SambaShipmentService:
 
   # ==================== 상품명 조합 ====================
 
-  def _compose_product_name(self, product: dict[str, Any], name_rule: Any) -> str:
-    """정책의 상품명 규칙(name_composition)에 따라 상품명을 조합."""
-    composition = name_rule.name_composition
+  def _compose_product_name(self, product: dict[str, Any], name_rule: Any, *, market_type: str | None = None) -> str:
+    """정책의 상품명 규칙(name_composition)에 따라 상품명을 조합.
+
+    market_type이 지정되고 market_name_compositions에 해당 마켓 설정이 있으면 마켓별 조합 사용.
+    """
+    # 마켓별 조합이 있으면 우선 사용
+    composition = None
+    if market_type and getattr(name_rule, "market_name_compositions", None):
+      composition = name_rule.market_name_compositions.get(market_type)
+    if not composition:
+      composition = name_rule.name_composition
     if not composition:
       return product.get("name", "")
 

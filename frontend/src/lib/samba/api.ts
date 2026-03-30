@@ -1027,6 +1027,7 @@ export interface SambaNameRule {
   replace_mode?: string;
   option_rules?: Array<{ from: string; to: string }>;
   name_composition?: string[];
+  market_name_compositions?: Record<string, string[]>;
   brand_display?: string;
   dedup_enabled?: boolean;
   created_at: string;

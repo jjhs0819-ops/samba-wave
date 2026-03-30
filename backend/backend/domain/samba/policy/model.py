@@ -136,6 +136,8 @@ class SambaNameRule(SQLModel, table=True):
     name_composition: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
     # 브랜드명 위치 처리: show_at_position(조합위치에표시) / show_once(중복제거)
     brand_display: str = Field(default="show_at_position", sa_column=Column(Text, nullable=False, server_default="show_at_position"))
+    # 마켓별 상품명 조합 (JSON): { "smartstore": ["{상품명}", ...], "coupang": [...] }
+    market_name_compositions: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
     # 중복단어 필터링 활성화
     dedup_enabled: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
 

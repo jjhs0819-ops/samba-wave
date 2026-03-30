@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react"
 import { useSearchParams } from "next/navigation"
 import { policyApi, forbiddenApi, accountApi, detailTemplateApi, nameRuleApi, collectorApi, type SambaPolicy, type SambaMarketAccount, type SambaDetailTemplate, type SambaNameRule, type SambaCollectedProduct } from "@/lib/samba/api"
-import { MARKET_ID_BY_LABEL, POLICY_MARKETS_DOMESTIC, POLICY_MARKETS_OVERSEAS } from '@/lib/samba/markets'
+import { MARKETS, MARKET_ID_BY_LABEL, POLICY_MARKETS_DOMESTIC, POLICY_MARKETS_OVERSEAS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle } from '@/lib/samba/styles'
 import NumInput from '@/components/samba/NumInput'
@@ -266,6 +266,7 @@ export default function PoliciesPage() {
               name: rule.name, prefix: rule.prefix, suffix: rule.suffix,
               replacements: rule.replacements, replace_mode: rule.replace_mode,
               option_rules: rule.option_rules, name_composition: rule.name_composition,
+              market_name_compositions: rule.market_name_compositions,
               brand_display: rule.brand_display, dedup_enabled: rule.dedup_enabled,
             }).then(saved => { if (saved) setNameRules(prev => prev.map(x => x.id === saved.id ? saved : x)) }).catch(() => {})
           )
@@ -979,6 +980,7 @@ export default function PoliciesPage() {
                   name: latest.name, prefix: latest.prefix, suffix: latest.suffix,
                   replacements: latest.replacements, replace_mode: latest.replace_mode,
                   option_rules: latest.option_rules, name_composition: latest.name_composition,
+                  market_name_compositions: latest.market_name_compositions,
                   brand_display: latest.brand_display, dedup_enabled: latest.dedup_enabled,
                 })
                 if (saved) {
@@ -1121,6 +1123,68 @@ export default function PoliciesPage() {
                       style={{ fontSize: '0.68rem', color: '#FF6B6B', background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer' }}>초기화</button>
                   )}
                 </div>
+              </div>
+
+              {/* ── 마켓별 상품명 조합 ── */}
+              <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#51CF66' }}>마켓별 개별 설정</span>
+                  <span style={{ fontSize: '0.72rem', color: '#666' }}>특정 마켓에 다른 상품명 조합을 적용합니다</span>
+                </div>
+                {/* 설정된 마켓 목록 */}
+                {Object.entries(r.market_name_compositions || {}).map(([mkt, comp]) => {
+                  const mLabel = MARKETS.find(m => m.id === mkt)?.label || mkt
+                  return (
+                    <div key={mkt} style={{ marginBottom: '0.5rem', padding: '0.5rem', background: 'rgba(81,207,102,0.05)', border: '1px solid rgba(81,207,102,0.15)', borderRadius: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.375rem' }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#51CF66' }}>{mLabel}</span>
+                        <button onClick={() => {
+                          const next = { ...(r.market_name_compositions || {}) }
+                          delete next[mkt]
+                          updateRule({ market_name_compositions: Object.keys(next).length > 0 ? next : undefined })
+                        }} style={{ fontSize: '0.65rem', color: '#FF6B6B', background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '1px 6px', cursor: 'pointer' }}>삭제</button>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap', marginBottom: '0.375rem' }}>
+                        {COMP_TAGS.map(tag => (
+                          <button key={tag} onClick={() => {
+                            const next = { ...(r.market_name_compositions || {}) }
+                            next[mkt] = [...(next[mkt] || []), tag]
+                            updateRule({ market_name_compositions: next })
+                          }} style={{ fontSize: '0.68rem', padding: '2px 8px', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>{tag}</button>
+                        ))}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                        <div style={{ flex: 1, padding: '0.3rem 0.5rem', background: 'rgba(0,0,0,0.3)', border: '1px solid #2D2D2D', borderRadius: '4px', fontSize: '0.75rem', color: '#C5C5C5', minHeight: '26px' }}>
+                          {(comp as string[]).length > 0 ? (comp as string[]).map((t: string, i: number) => (
+                            <span key={i} style={{ color: COMP_TAGS.includes(t) ? '#51CF66' : '#E5E5E5' }}>{t} </span>
+                          )) : <span style={{ color: '#555' }}>태그를 클릭하세요</span>}
+                        </div>
+                        {(comp as string[]).length > 0 && (
+                          <button onClick={() => {
+                            const next = { ...(r.market_name_compositions || {}) }
+                            next[mkt] = []
+                            updateRule({ market_name_compositions: next })
+                          }} style={{ fontSize: '0.65rem', color: '#FF6B6B', background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '1px 6px', cursor: 'pointer' }}>초기화</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+                {/* 마켓 추가 드롭다운 */}
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (!e.target.value) return
+                    const next = { ...(r.market_name_compositions || {}), [e.target.value]: [] }
+                    updateRule({ market_name_compositions: next })
+                  }}
+                  style={{ ...inputStyle, width: 'auto', fontSize: '0.75rem' }}
+                >
+                  <option value="">+ 마켓 추가</option>
+                  {MARKETS.filter(m => !(r.market_name_compositions || {})[m.id]).map(m => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
               </div>
 
               {/* ── 중복단어 필터링 ── */}
