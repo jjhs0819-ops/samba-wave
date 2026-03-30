@@ -384,6 +384,41 @@ class LotteonClient:
         return {"success": True, "data": result, "spdNo": spd_no}
     return {"success": True, "data": result}
 
+  async def register_publicity_sentence(self, spd_no: str, phrase: str) -> None:
+    """상품 홍보문구 등록 — 등록 후 자동 호출.
+
+    실패해도 상품 등록 자체는 롤백하지 않음 (best-effort).
+    종료일시: 9999-12-31 23:59:59 (무기한)
+    """
+    start_dt = datetime.now().strftime("%Y%m%d%H%M%S")
+    body = {
+      "pblcStncLst": [
+        {
+          "trGrpCd": self.tr_grp_cd or "SR",
+          "trNo": self.tr_no,
+          "lrtrNo": None,
+          "spdNo": spd_no,
+          "pblcStnc": phrase[:75],  # API 최대 75자
+          "pblcStncStrtDttm": start_dt,
+          "pblcStncEndDttm": "29991231235959",
+        }
+      ]
+    }
+    result = await self._call_api(
+      "POST",
+      "/v1/openapi/product/v1/product/publicitysentence/registration/request",
+      body=body,
+    )
+    data_list = result.get("data", [])
+    if isinstance(data_list, list) and data_list:
+      item = data_list[0]
+      if isinstance(item, dict):
+        rc = item.get("resultCode", "")
+        if rc and rc not in ("0000", "00", "SUCCESS"):
+          logger.warning(f"[롯데ON] 홍보문구 등록 실패: {rc} — {item.get('resultMessage', '')}")
+          return
+    logger.info(f"[롯데ON] 홍보문구 등록 완료 — spdNo={spd_no!r}")
+
   async def get_product(self, spd_no: str) -> dict[str, Any]:
     """상품 단건 조회 (POST 방식)."""
     body = {

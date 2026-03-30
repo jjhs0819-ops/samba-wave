@@ -671,6 +671,15 @@ class LotteonPlugin(MarketPlugin):
             logger.warning(f"[롯데ON] 신규 단품 sitmNo 조회 실패 (무시): {e}")
           await self._apply_promotions(client, spd_no, extras, is_update=False, eitm_nos=new_sitm_nos)
 
+        # ── 홍보문구 등록 ────────────────────────────────────────────
+        if spd_no:
+          publicity_phrase = extras.get("publicityPhrase", "").strip()
+          if publicity_phrase:
+            try:
+              await client.register_publicity_sentence(spd_no, publicity_phrase)
+            except Exception as e:
+              logger.warning(f"[롯데ON] 홍보문구 등록 실패 (무시): {e}")
+
         return {"success": True, "message": "롯데ON 등록 성공", "data": result, "spdNo": spd_no}
     except Exception as e:
       action = "수정" if existing_no else "등록"
