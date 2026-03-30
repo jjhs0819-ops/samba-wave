@@ -1125,6 +1125,9 @@ async def sync_orders_from_markets(
                         update_fields["source_url"] = order_data["source_url"]
                     if order_data.get("shipment_id") and not existing.shipment_id:
                         update_fields["shipment_id"] = order_data["shipment_id"]
+                    # 주소 보충 (기존 주문에 없으면 채움)
+                    if order_data.get("customer_address") and not existing.customer_address:
+                        update_fields["customer_address"] = order_data["customer_address"]
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
                     if order_data.get("product_id") and not existing.product_id:
                         update_fields["product_id"] = order_data["product_id"]
@@ -1389,9 +1392,9 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     if not created_at:
         created_at = datetime.now(timezone.utc)
 
-    # 배송지 주소 조합
-    addr1 = item.get("dvpAddr1", "") or ""
-    addr2 = item.get("dvpAddr2", "") or ""
+    # 배송지 주소 조합 (dvpStnmZipAddr=도로명기본주소, dvpStnmDtlAddr=상세주소)
+    addr1 = item.get("dvpStnmZipAddr") or ""
+    addr2 = item.get("dvpStnmDtlAddr") or ""
     full_addr = f"{addr1} {addr2}".strip()
 
     return {

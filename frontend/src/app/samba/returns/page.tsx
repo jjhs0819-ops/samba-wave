@@ -556,7 +556,17 @@ export default function ReturnsPage() {
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.2rem' }}>
                           <span>{r.market || '-'}</span>
                           {r.type && TYPE_LABELS[r.type] && (
-                            <span style={{ fontSize: '0.65rem', fontWeight: 700, color: TYPE_LABELS[r.type].color, background: `${TYPE_LABELS[r.type].color}22`, padding: '0.1rem 0.4rem', borderRadius: '4px', border: `1px solid ${TYPE_LABELS[r.type].color}44` }}>
+                            <span
+                              title="클릭하여 교환/반품 전환"
+                              onClick={async () => {
+                                const newType = r.type === 'exchange' ? 'return' : 'exchange'
+                                const newStatus = newType === 'exchange' ? '교환요청' : '반품요청'
+                                try {
+                                  await returnApi.patch(r.id, { type: newType, market_order_status: newStatus })
+                                  setReturns(prev => prev.map(x => x.id === r.id ? { ...x, type: newType, market_order_status: newStatus } : x))
+                                } catch (_e) { /* 무시 */ }
+                              }}
+                              style={{ fontSize: '0.65rem', fontWeight: 700, color: TYPE_LABELS[r.type].color, background: `${TYPE_LABELS[r.type].color}22`, padding: '0.1rem 0.4rem', borderRadius: '4px', border: `1px solid ${TYPE_LABELS[r.type].color}44`, cursor: 'pointer' }}>
                               {TYPE_LABELS[r.type].label}
                             </span>
                           )}

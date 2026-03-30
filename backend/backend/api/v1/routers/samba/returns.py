@@ -196,6 +196,8 @@ class ReturnPatchBody(BaseModel):
     status: Optional[str] = None
     customer_order_no: Optional[str] = None
     original_order_no: Optional[str] = None
+    type: Optional[str] = None
+    market_order_status: Optional[str] = None
 
 
 @router.patch("/{return_id}")
@@ -231,6 +233,10 @@ async def patch_return(
         update_fields["customer_order_no"] = body.customer_order_no
     if body.original_order_no is not None:
         update_fields["original_order_no"] = body.original_order_no
+    if body.type is not None:
+        update_fields["type"] = body.type
+    if body.market_order_status is not None:
+        update_fields["market_order_status"] = body.market_order_status
     if not update_fields:
         return ret
     return await svc.repo.update_async(return_id, **update_fields)
@@ -596,6 +602,7 @@ async def sync_returns_from_markets(
                     parsed = _parse_lotteon_return(item, "return")
                     parsed["sitmNo"] = item.get("sitmNo", "")
                     claims_data_lo.append(parsed)
+                logger.info(f"[롯데ON] 반품 API 조회된 odNo 목록: {[c['order_number'] for c in claims_data_lo]}")
 
                 synced = 0
                 for claim in claims_data_lo:
@@ -604,15 +611,16 @@ async def sync_returns_from_markets(
                         continue
                     existing_order = await order_repo.find_by_async(order_number=order_number)
                     if not existing_order:
-                        # sitmNo(상품주문번호)로 폴백 매칭
+                        # sitmNo(상품주문번호)는 DB의 shipment_id 필드에 저장됨
                         sitmNo = claim.get("sitmNo", "")
                         if sitmNo:
-                            existing_order = await order_repo.find_by_async(order_number=sitmNo)
+                            existing_order = await order_repo.find_by_async(shipment_id=sitmNo)
                     if not existing_order:
-                        logger.warning(f"[롯데ON] 반품 주문 미매칭: {order_number}")
+                        logger.warning(f"[롯데ON] 반품 주문 미매칭: {order_number} sitmNo={claim.get('sitmNo','')}")
                         continue
 
                     order_id = existing_order.id
+                    logger.info(f"[롯데ON] 반품 주문 매칭 성공: {order_number} → DB order_id={order_id}")
                     existing_returns = await svc.repo.filter_by_async(order_id=order_id)
                     if existing_returns:
                         # 기존 레코드에 누락/오류 필드 보충
@@ -633,6 +641,7 @@ async def sync_returns_from_markets(
                             patch_lo["type"] = correct_type
                         if patch_lo:
                             await svc.repo.update_async(er.id, **patch_lo)
+                            logger.info(f"[롯데ON] 반품 레코드 업데이트: {order_number} type={correct_type} patch={list(patch_lo.keys())}")
                         # 원주문 shipping_status 동기화 (교환/반품 진행 중이면 주문 페이지에서 제외)
                         new_order_ss = "교환요청" if correct_type == "exchange" else "반품요청"
                         if existing_order.shipping_status != new_order_ss:
@@ -678,25 +687,29 @@ async def sync_returns_from_markets(
                             continue
                         existing_order = await order_repo.find_by_async(order_number=ex_order_number)
                         if not existing_order:
-                            logger.warning(f"[롯데ON] 교환 주문 미매칭: {ex_order_number}")
+                            # sitmNo(상품주문번호)는 DB의 shipment_id 필드에 저장됨
+                            ex_sitmNo = item.get("sitmNo", "")
+                            if ex_sitmNo:
+                                existing_order = await order_repo.find_by_async(shipment_id=ex_sitmNo)
+                        if not existing_order:
+                            logger.warning(f"[롯데ON] 교환 주문 미매칭: {ex_order_number} sitmNo={item.get('sitmNo','')}")
                             continue
                         order_id = existing_order.id
                         existing_returns = await svc.repo.filter_by_async(order_id=order_id)
                         if existing_returns:
-                            # 기존 레코드 type/image 보충
+                            # 기존 레코드 image 보충 (type은 변경 금지 — 교환취소 후 반품 재신청 케이스 보호)
                             er = existing_returns[0]
                             patch: dict[str, Any] = {}
                             if not er.product_image and existing_order.product_image:
                                 patch["product_image"] = existing_order.product_image
-                            if er.type != "exchange":
-                                patch["type"] = "exchange"
                             if not er.market_order_status:
-                                patch["market_order_status"] = "교환요청"
+                                patch["market_order_status"] = "교환요청" if er.type == "exchange" else "반품요청"
                             if patch:
                                 await svc.repo.update_async(er.id, **patch)
-                            # 원주문 shipping_status 동기화
-                            if existing_order.shipping_status != "교환요청":
-                                await order_repo.update_async(existing_order.id, shipping_status="교환요청")
+                            # shipping_status는 현재 저장된 type 기준으로 동기화 (덮어쓰기 금지)
+                            expected_ss = "교환요청" if er.type == "exchange" else "반품요청"
+                            if existing_order.shipping_status != expected_ss:
+                                await order_repo.update_async(existing_order.id, shipping_status=expected_ss)
                             continue
                         from datetime import UTC, datetime
                         await svc.repo.create_async(
