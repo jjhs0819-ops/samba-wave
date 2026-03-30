@@ -350,7 +350,7 @@ export default function WarroomPage() {
             onClick={async () => {
               try {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
-                await fetch(`${apiBase}/api/v1/samba/shipments/emergency-stop`, { method: 'POST' })
+                await fetch(`${apiBase}/api/v1/samba/collector/autotune/stop`, { method: 'POST' })
                 setAutotuneRunning(false)
               } catch { /* ignore */ }
             }}
