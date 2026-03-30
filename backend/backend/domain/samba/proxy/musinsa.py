@@ -138,6 +138,7 @@ class MusinsaClient:
             if refresh_only:
                 unique_images: list[str] = []
                 detail_images: list[str] = []
+                desc_html = ""
             else:
                 desc_html = d.get("goodsContents", "")
                 detail_images = self._extract_detail_images(desc_html)
