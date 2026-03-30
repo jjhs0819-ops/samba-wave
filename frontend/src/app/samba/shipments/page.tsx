@@ -89,18 +89,21 @@ export default function ShipmentsPage() {
   const transmittingRef = useRef(false)
   useEffect(() => { transmittingRef.current = transmitting }, [transmitting])
   useEffect(() => {
-    const stopAll = () => {
+    const stopTransmitOnly = () => {
       if (!transmittingRef.current) return
       import('@/config/api').then(({ API_BASE_URL }) => {
-        navigator.sendBeacon(`${API_BASE_URL}/api/v1/samba/shipments/emergency-stop`)
+        navigator.sendBeacon(`${API_BASE_URL}/api/v1/samba/shipments/cancel`)
       }).catch(() => {})
     }
-    window.addEventListener('beforeunload', stopAll)
+    window.addEventListener('beforeunload', stopTransmitOnly)
     return () => {
-      window.removeEventListener('beforeunload', stopAll)
+      window.removeEventListener('beforeunload', stopTransmitOnly)
       if (!transmittingRef.current) return
       import('@/config/api').then(({ API_BASE_URL }) => {
-        fetch(`${API_BASE_URL}/api/v1/samba/shipments/emergency-stop`, { method: 'POST' }).catch(() => {})
+        fetch(`${API_BASE_URL}/api/v1/samba/shipments/cancel`, { method: 'POST' }).catch(() => {})
+        if (activeJobIdRef.current) {
+          fetch(`${API_BASE_URL}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' }).catch(() => {})
+        }
       }).catch(() => {})
     }
   }, [])
