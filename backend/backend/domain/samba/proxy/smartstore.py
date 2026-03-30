@@ -121,13 +121,12 @@ def _build_origin_area(origin: str) -> dict:
 
 
 def _build_certification_infos(cert_infos: list[dict] | None) -> dict:
-  """카테고리 인증정보 → productCertificationInfos 변환.
+  """카테고리 인증정보 → productCertificationInfos + 인증대상 제외 변환.
 
   카테고리 API 조회 결과 중 필수(nonEssential=false)만 선택.
   네이버 API 제한: 최대 5개.
-  kindType별 기본값:
-    GREEN_PRODUCTS → 인증번호 숫자+하이픈만 허용
-    companyName=true → 인증상호 필수
+  KC/어린이제품 인증 → certificationTargetExcludeContent로 면제 선언.
+  GREEN_PRODUCTS → 인증번호 숫자+하이픈만 허용.
   """
   if not cert_infos:
     return {}
@@ -136,12 +135,20 @@ def _build_certification_infos(cert_infos: list[dict] | None) -> dict:
   if not required:
     return {}
   items = []
+  exclude_content: dict[str, object] = {}
+  # KC/어린이제품 인증 면제 대상 kindType
+  KC_CHILD_TYPES = {"KC_CERTIFICATION", "CHILD_CERTIFICATION"}
   for info in required[:5]:  # 최대 5개
     cert_id = info.get("id")
     if cert_id is None:
       continue
     kind_types = info.get("kindTypes") or []
     kind_type = kind_types[0] if kind_types else "ETC"
+    # KC/어린이제품 인증 → 인증대상 제외 선언 (실제 인증서 없음)
+    if kind_type in KC_CHILD_TYPES:
+      exclude_content["childCertifiedProductExclusionYn"] = True
+      exclude_content["kcCertifiedProductExclusionYn"] = "TRUE"
+      continue
     # 친환경인증: 인증번호 숫자+하이픈만 허용
     if info.get("green") or kind_type == "GREEN_PRODUCTS":
       cert_number = "0000-0000"
@@ -155,9 +162,12 @@ def _build_certification_infos(cert_infos: list[dict] | None) -> dict:
       "name": name,
       "certificationNumber": cert_number,
     })
-  if not items:
-    return {}
-  return {"productCertificationInfos": items}
+  result: dict[str, object] = {}
+  if items:
+    result["productCertificationInfos"] = items
+  if exclude_content:
+    result["certificationTargetExcludeContent"] = exclude_content
+  return result
 
 
 def _build_combination_options(

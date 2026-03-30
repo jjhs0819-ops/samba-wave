@@ -854,7 +854,7 @@ export default function CollectorPage() {
                 setBrandCategories(res.categories)
                 setBrandTotal(res.total)
                 setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                addLog(`[카테고리스캔] ${keyword}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                addLog(`[카테고리스캔] ${keyword || brand}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
               } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
               setBrandScanning(false)
             }} disabled={brandScanning}
@@ -869,12 +869,13 @@ export default function CollectorPage() {
                 const selected = brandCategories.filter(c => brandSelectedCats.has(c.categoryCode))
                 if (selected.length === 0) { showAlert('카테고리를 선택하세요'); return }
                 const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
-                const brand = parsed?.searchParams.get('brand') || ''
-                const keyword = parsed?.searchParams.get('keyword') || collectUrl.trim()
+                const pathBrandMatch = parsed?.pathname.match(/\/brand\/([^/]+)/)
+                const brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || ''
+                const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : '')
                 const gf = parsed?.searchParams.get('gf') || 'A'
                 try {
                   const res = await collectorApi.brandCreateGroups({
-                    brand, brand_name: keyword, gf,
+                    brand, brand_name: keyword || brand, gf,
                     categories: selected,
                     requested_count_per_group: -1,
                     real_total: brandTotal,
@@ -938,12 +939,13 @@ export default function CollectorPage() {
                     const selected = brandCategories.filter(c => brandSelectedCats.has(c.categoryCode))
                     if (selected.length === 0) { showAlert('카테고리를 선택하세요'); return }
                     const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
-                    const brand = parsed?.searchParams.get('brand') || ''
-                    const keyword = parsed?.searchParams.get('keyword') || collectUrl.trim()
+                    const pathBrandMatch = parsed?.pathname.match(/\/brand\/([^/]+)/)
+                    const brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || ''
+                    const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : '')
                     const gf = parsed?.searchParams.get('gf') || 'A'
                     try {
                       const res = await collectorApi.brandCreateGroups({
-                        brand, brand_name: keyword, gf,
+                        brand, brand_name: keyword || brand, gf,
                         categories: selected,
                         requested_count_per_group: -1,
                         real_total: brandTotal,
