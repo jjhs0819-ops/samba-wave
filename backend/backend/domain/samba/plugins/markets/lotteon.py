@@ -33,8 +33,10 @@ _ATTR_ITEM_TYPE_ID = "779690"   # 품목
 _ATTR_BOTTOM_LENGTH_ID = "11780"  # 하의기장
 _ATTR_LOOK_STYLE_ID = "11809"     # 룩/스타일
 _ATTR_SHOES_MATERIAL_ID = "10265"  # 신발 소재 (의류 11974와 별도)
-_ATTR_SHOES_PRINT_ID = "11330"     # 신발 프린트
+_ATTR_PRINT_ID = "11330"           # 프린트 (신발/의류 공통)
 _ATTR_SHOES_FUNCTION_ID = "725056" # 신발 부가기능
+_ATTR_SKIRT_STYLE_ID = "11810"     # 스커트 스타일
+_ATTR_CLOTH_LENGTH_ID = "11606"    # 의류 기장 (하의기장 11780과 별도)
 
 # 사용계절 매핑 (무신사 season → attr_val_id)
 _SEASON_MAP: dict[str, str] = {
@@ -204,6 +206,24 @@ _LOOK_STYLE_MAP: dict[str, str] = {
   "밀리터리": "629485501", "military": "629485501",
 }
 
+# 스커트 스타일 매핑 (category/상품명 키워드 → attr_val_id) — optCd "11810"
+_SKIRT_STYLE_MAP: dict[str, str] = {
+  "A라인": "111349", "에이라인": "111349", "a-line": "111349",
+  "플리츠": "111350", "pleated": "111350",
+  "H라인": "111351", "에이치라인": "111351", "h-line": "111351", "타이트": "111351",
+  "머메이드": "111352", "mermaid": "111352",
+  "언밸런스": "111353", "unbalance": "111353", "비대칭": "111353",
+  # 추후 네트워크 캡처로 랩스커트/벌룬/티어드/플레어 코드 확인 예정
+}
+
+# 의류 기장 매핑 (category/상품명 키워드 → attr_val_id) — optCd "11606"
+_CLOTH_LENGTH_MAP: dict[str, str] = {
+  "미니": "110631", "mini": "110631",   # 추정값 — 캡처로 확인 필요
+  "미디": "110632", "midi": "110632",
+  "맥시": "110633", "maxi": "110633",   # 추정값 — 캡처로 확인 필요
+  "롱": "110633", "long": "110633",
+}
+
 # optValCd → 롯데ON 표시명 (scatAttrLst의 optVal 필드 — 필수, null 불가)
 _OPT_VAL_LABELS: dict[str, str] = {
   # 사용계절
@@ -269,8 +289,13 @@ _OPT_VAL_LABELS: dict[str, str] = {
   "101557": "네오프렌", "547916352": "매쉬", "593337873": "크로슬라이트",
   "593692932": "나일론", "598879479": "폴리아미드", "718157948": "PVC",
   "722574414": "합성 섬유", "753156392": "스판덱스", "835832335": "코르크",
-  # 신발 프린트 (optCd 11330)
+  # 프린트 (optCd 11330 — 신발/의류 공통)
   "605647945": "로고",
+  # 스커트 스타일 (optCd 11810)
+  "111349": "A라인", "111350": "플리츠", "111351": "H라인",
+  "111352": "머메이드", "111353": "언밸런스",
+  # 의류 기장 (optCd 11606)
+  "110631": "미니", "110632": "미디", "110633": "맥시",
   # 신발 부가기능 (optCd 725056)
   "609276717": "키높이", "609276718": "통풍", "609276719": "충격흡수",
   "609276720": "경량", "609276721": "에어",
@@ -380,7 +405,7 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
   # ── 신발 전용 속성 ─────────────────────────────────────────────────
   if _is_shoes_cat:
     # 프린트: 브랜드 신발은 항상 로고 고정
-    _add(_ATTR_SHOES_PRINT_ID, "605647945")
+    _add(_ATTR_PRINT_ID, "605647945")
     # 부가기능: 키높이 제외 전부 (통풍/충격흡수/경량/에어)
     for _func_val in ("609276718", "609276719", "609276720", "609276721"):
       _add(_ATTR_SHOES_FUNCTION_ID, _func_val)
@@ -389,6 +414,27 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
     shoes_mat_val = _keyword_match(shoes_material, _SHOES_MATERIAL_MAP)
     if shoes_mat_val:
       _add(_ATTR_SHOES_MATERIAL_ID, shoes_mat_val)
+
+  # ── 의류 전용 속성 ─────────────────────────────────────────────────
+  if not _is_shoes_cat:
+    # 프린트: 스포츠 브랜드 의류는 로고 고정
+    brand_text = (product.get("brand") or "").lower()
+    name_text = (product.get("name") or "").lower()
+    _sports_brands = {
+      "아디다스", "나이키", "퓨마", "리복", "뉴발란스", "언더아머",
+      "아식스", "살로몬", "컬럼비아", "노스페이스", "파타고니아",
+    }
+    if any(b in brand_text or b in name_text for b in _sports_brands):
+      _add(_ATTR_PRINT_ID, "605647945")
+    # 스커트 스타일: category/상품명 키워드에서 추출
+    style_text = (product.get("name") or "") + " " + cat_text
+    skirt_style_val = _keyword_match(style_text, _SKIRT_STYLE_MAP)
+    if skirt_style_val:
+      _add(_ATTR_SKIRT_STYLE_ID, skirt_style_val)
+    # 의류 기장: category/상품명 키워드에서 추출
+    cloth_len_val = _keyword_match(style_text, _CLOTH_LENGTH_MAP)
+    if cloth_len_val:
+      _add(_ATTR_CLOTH_LENGTH_ID, cloth_len_val)
 
   # ── 성인 하의 사이즈 (하의 상품만, options 에서 추출) ──────────
   if is_bottom and _ATTR_SIZE_BOTTOM_ID in attr_id_set:
