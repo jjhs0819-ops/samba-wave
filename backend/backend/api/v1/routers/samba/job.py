@@ -62,9 +62,18 @@ async def list_jobs(
     limit: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """잡 목록 조회."""
+    """잡 목록 조회 (payload 제외 — 경량 응답)."""
     svc = SambaJobService(SambaJobRepository(session))
-    return await svc.list_jobs(status=status, skip=skip, limit=limit)
+    jobs = await svc.list_jobs(status=status, skip=skip, limit=limit)
+    return [
+        {
+            "id": j.id, "job_type": j.job_type, "status": j.status,
+            "progress": j.progress, "current": j.current, "total": j.total,
+            "error": j.error, "created_at": j.created_at,
+            "started_at": j.started_at, "completed_at": j.completed_at,
+        }
+        for j in jobs
+    ]
 
 
 @router.get("/{job_id}")

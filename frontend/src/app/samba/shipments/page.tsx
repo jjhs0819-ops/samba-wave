@@ -82,7 +82,7 @@ export default function ShipmentsPage() {
         const jobId = job.id as string
         activeJobIdRef.current = jobId
         setTransmitting(true)
-        setProgress({ current: (job.progress_current || 0) as number, total: (job.progress_total || 0) as number })
+        setProgress({ current: (job.current || 0) as number, total: (job.total || 0) as number })
         setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] 진행 중인 전송 Job 감지 — 로그 연결`])
         let logSince = 0
         let polling = false
@@ -96,7 +96,7 @@ export default function ShipmentsPage() {
             ])
             const j = await jr.json()
             const logData = await lr.json()
-            setProgress({ current: j.progress_current || 0, total: j.progress_total || 0 })
+            setProgress({ current: j.current || 0, total: j.total || 0 })
             const newLogs = (logData.logs || []) as string[]
             if (newLogs.length > 0) {
               for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`])
@@ -509,8 +509,8 @@ export default function ShipmentsPage() {
           ])
           const j = await jr.json()
           const logData = await lr.json()
-          const cur = j.progress_current || 0
-          const tot = j.progress_total || tasks.length
+          const cur = j.current || 0
+          const tot = j.total || tasks.length
           setProgress({ current: cur, total: tot })
           const newLogs = logData.logs || []
           if (newLogs.length > 0) {
@@ -819,7 +819,7 @@ export default function ShipmentsPage() {
                       ])
                       const j = await jr.json()
                       const logData = await lr.json()
-                      setProgress({ current: j.progress_current || 0, total: j.progress_total || allIds.length })
+                      setProgress({ current: j.current || 0, total: j.total || allIds.length })
                       const newLogs = logData.logs || []
                       if (newLogs.length > 0) {
                         for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`])
