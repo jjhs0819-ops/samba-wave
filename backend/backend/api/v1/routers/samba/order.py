@@ -1114,3 +1114,87 @@ async def ship_elevenst_order(
 
     logger.info("[11번가] 발송처리 완료 orderId=%s invcNo=%s", body.order_id, body.invc_no)
     return {"success": True, "message": f"발송처리 완료 (송장: {body.invc_no})"}
+
+
+# ══════════════════════════════════════════════
+# 11번가 주문 상태 동기화 (Phase 4)
+# ══════════════════════════════════════════════
+
+# 11번가 ordPrdStat 코드 → 내부 status/shipping_status 매핑
+_ELEVENST_STAT_MAP = {
+    "202": ("pending",   "결제완료"),
+    "301": ("pending",   "발주확인"),
+    "401": ("shipped",   "발송완료"),
+    "501": ("delivered", "배송완료"),
+    "901": ("completed", "구매확정"),
+    "A01": ("returned",  "반품완료"),
+    "B01": ("cancelled", "주문취소"),
+}
+
+
+@router.post("/11st/sync-status")
+async def sync_elevenst_order_status(
+    account_id: Optional[str] = None,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """DB에 저장된 11번가 주문 상태를 11번가 API에서 조회해 업데이트."""
+    from sqlalchemy import select
+    from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    account_repo = SambaMarketAccountRepository(session)
+    accounts = await account_repo.list_by_market_type("11st")
+
+    updated = 0
+    errors = 0
+
+    for account in accounts:
+        if account_id and str(account.id) != account_id:
+            continue
+
+        extras = account.additional_fields or {}
+        api_key = account.api_key or extras.get("apiKey", "")
+        if not api_key:
+            continue
+
+        client = ElevenstClient(api_key)
+
+        # 해당 계정의 미완료 주문 조회 (취소/완료 제외)
+        stmt = select(SambaOrder).where(
+            SambaOrder.channel_id == str(account.id),
+            SambaOrder.source == "11st",
+            SambaOrder.status.notin_(["completed", "cancelled", "returned"]),
+        )
+        result = await session.execute(stmt)
+        orders = result.scalars().all()
+
+        for order in orders:
+            if not order.order_number:
+                continue
+            try:
+                status_data = await client.get_order_status(order.order_number)
+                stat_cd = status_data.get("ordPrdStat", "")
+                if not stat_cd:
+                    continue
+
+                new_status, new_shipping_status = _ELEVENST_STAT_MAP.get(
+                    stat_cd, (order.status, order.shipping_status)
+                )
+
+                # 변경이 있을 때만 업데이트
+                if new_status != order.status or new_shipping_status != order.shipping_status:
+                    svc = _write_service(session)
+                    await svc.update_order(str(order.id), {
+                        "status": new_status,
+                        "shipping_status": new_shipping_status,
+                        "tracking_number": status_data.get("invcNo", "") or order.tracking_number or "",
+                        "shipping_company": status_data.get("dlvCrpNm", "") or order.shipping_company or "",
+                    })
+                    updated += 1
+                    logger.info("[11번가] 주문상태 업데이트 ordNo=%s %s→%s", order.order_number, order.status, new_status)
+
+            except ElevenstApiError as e:
+                logger.warning("[11번가] 주문상태 조회 실패 ordNo=%s: %s", order.order_number, e)
+                errors += 1
+
+    return {"updated": updated, "errors": errors}

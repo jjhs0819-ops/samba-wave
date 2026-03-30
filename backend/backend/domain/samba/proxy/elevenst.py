@@ -343,6 +343,47 @@ class ElevenstClient:
 
     return True
 
+  async def get_order_status(self, ord_no: str) -> dict[str, Any]:
+    """주문번호별 배송/상태 조회.
+
+    Args:
+        ord_no: 주문번호
+
+    Returns:
+        ordPrdStat 포함 주문 상태 dict
+        상태 코드: 202=결제완료, 301=발주확인, 401=발송완료,
+                   501=배송완료, 901=수취확인, A01=반품완료, B01=주문취소
+    """
+    import re as _re
+
+    url = f"https://api.11st.co.kr/rest/claimservice/orderlistalladdr/{ord_no}"
+    headers = self._headers()
+
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+      resp = await client.get(url, headers=headers)
+      logger.info("[11번가] 주문상태 조회 ordNo=%s → %s", ord_no, resp.status_code)
+
+    if not resp.is_success:
+      raise ElevenstApiError(f"주문상태 조회 HTTP {resp.status_code}: {resp.text[:300]}")
+
+    try:
+      text = resp.content.decode("euc-kr")
+    except Exception:
+      text = resp.text
+
+    xml_text = text.replace("ns2:", "")
+    xml_text = _re.sub(r"<\?xml[^?]*\?>", "", xml_text, count=1).strip()
+    try:
+      root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+      logger.error("[11번가] 주문상태 XML 파싱 실패: %s", e)
+      return {}
+
+    result: dict[str, Any] = {}
+    for child in root:
+      result[child.tag] = (child.text or "").strip()
+    return result
+
   async def get_outbound_addresses(self) -> list[dict[str, str]]:
     """출고지 주소 목록 조회. GET /rest/areaservice/outboundarea"""
     return await self._get_area_addresses("outboundarea")
