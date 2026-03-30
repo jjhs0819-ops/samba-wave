@@ -9,21 +9,20 @@ logger = logging.getLogger(__name__)
 UTC = timezone.utc
 
 # Job별 실시간 로그 버퍼 (인메모리, 최근 500줄)
-from collections import deque
-_job_logs: dict[str, deque] = {}
+_job_logs: dict[str, list[str]] = {}
+_MAX_JOB_LOGS = 5000  # 인덱스 기반 since 폴링이므로 리스트 사용 (deque는 인덱스 어긋남)
 
 def get_job_logs(job_id: str, since: int = 0) -> list[str]:
     """Job 로그 조회 (since 인덱스 이후)."""
     buf = _job_logs.get(job_id)
     if not buf:
         return []
-    logs = list(buf)
-    return logs[since:]
+    return buf[since:]
 
 def _add_job_log(job_id: str, msg: str):
     """Job 로그 추가."""
     if job_id not in _job_logs:
-        _job_logs[job_id] = deque(maxlen=500)
+        _job_logs[job_id] = []
     _job_logs[job_id].append(msg)
 
 
