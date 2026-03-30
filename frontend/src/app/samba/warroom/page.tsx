@@ -348,6 +348,7 @@ export default function WarroomPage() {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
                 await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 await collectorApi.autotuneStart('registered')
+                falseCountRef.current = 0
                 setAutotuneRunning(true)
                 setAutotuneCycles(0)
               } catch { /* ignore */ }
