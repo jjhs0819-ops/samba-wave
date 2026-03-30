@@ -236,6 +236,21 @@ _OPT_VAL_LABELS: dict[str, str] = {
 }
 
 
+def _is_bottom_product(product: dict[str, Any]) -> bool:
+  """상품이 하의(바지/스커트류)인지 판별."""
+  BOTTOM_KW = {
+    "바지", "팬츠", "청바지", "레깅스", "스커트", "치마", "반바지", "쇼츠",
+    "shorts", "pants", "skirt", "leggings", "trousers",
+  }
+  text = " ".join(filter(None, [
+    product.get("name", ""),
+    product.get("category2", ""),
+    product.get("category3", ""),
+    product.get("category4", ""),
+  ])).lower()
+  return any(kw in text for kw in BOTTOM_KW)
+
+
 def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[dict[str, str]]:
   """무신사 소싱 데이터 → 롯데ON scatAttrLst 변환.
 
@@ -248,6 +263,7 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
   """
   result: list[dict[str, str]] = []
   attr_id_set = set(attr_ids)
+  is_bottom = _is_bottom_product(product)
 
   def _add(attr_id: str, val_id: str) -> None:
     if not (attr_id in attr_id_set and val_id):
@@ -318,8 +334,8 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
   # ── 품목 → 고정값 의류 ────────────────────────────────────────────
   _add(_ATTR_ITEM_TYPE_ID, "628662010")
 
-  # ── 성인 하의 사이즈 (options 에서 추출) ────────────────────────
-  if _ATTR_SIZE_BOTTOM_ID in attr_id_set:
+  # ── 성인 하의 사이즈 (하의 상품만, options 에서 추출) ──────────
+  if is_bottom and _ATTR_SIZE_BOTTOM_ID in attr_id_set:
     options = product.get("options") or []
     added_sizes: set[str] = set()
     for opt in options:
@@ -331,15 +347,15 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
           result.append({"optCd": _ATTR_SIZE_BOTTOM_ID, "optValCd": val, "optVal": opt_val_nm})
           added_sizes.add(val)
 
-  # ── 팬츠 핏 (상품명 + 태그에서 키워드 추출) ─────────────────────
-  if _ATTR_PANTS_FIT_ID in attr_id_set:
+  # ── 팬츠 핏 (하의 상품만, 상품명 + 태그에서 키워드 추출) ────────
+  if is_bottom and _ATTR_PANTS_FIT_ID in attr_id_set:
     name_and_tags = (product.get("name") or "") + " " + " ".join(product.get("tags") or [])
     val = _keyword_match(name_and_tags, _PANTS_FIT_MAP)
     if val:
       _add(_ATTR_PANTS_FIT_ID, val)
 
-  # ── 하의기장 (상품명/카테고리 키워드, 기본: 긴바지) ─────────────
-  if _ATTR_BOTTOM_LENGTH_ID in attr_id_set:
+  # ── 하의기장 (하의 상품만, 기본: 긴바지) ──────────────────────
+  if is_bottom and _ATTR_BOTTOM_LENGTH_ID in attr_id_set:
     search_text = (product.get("name") or "") + " " + cat_text
     val = _keyword_match(search_text, _BOTTOM_LENGTH_MAP)
     _add(_ATTR_BOTTOM_LENGTH_ID, val or "111202")  # 키워드 없으면 긴바지
@@ -577,10 +593,13 @@ class LotteonPlugin(MarketPlugin):
         disp_list = d.get("disp_list", [])
         if disp_list:
           disp_cat_id = disp_list[0].get("disp_cat_id", "")
-        # 속성 attr_id 목록 추출 (scatAttrLst 생성용)
-        category_attr_ids = [
-          str(a.get("attr_id", "")) for a in (d.get("attr_list") or []) if a.get("attr_id")
-        ]
+        # 속성 attr_id + attr_nm 목록 추출 (scatAttrLst 생성용)
+        _attr_raw = d.get("attr_list") or []
+        category_attr_ids = [str(a.get("attr_id", "")) for a in _attr_raw if a.get("attr_id")]
+        logger.debug(
+          f"[롯데ON] attr_list 상세: "
+          f"{[(str(a.get('attr_id','')), a.get('attr_nm','')) for a in _attr_raw]}"
+        )
       logger.info(f"[롯데ON] 전시카테고리 조회: {category_id} → {disp_cat_id}, attr_ids={len(category_attr_ids)}개")
     except Exception as e:
       logger.warning(f"[롯데ON] 전시카테고리 조회 실패 (무시): {e}")
