@@ -32,6 +32,9 @@ _ATTR_CLOTHES_TYPE_ID = "776739"  # 의류 종류
 _ATTR_ITEM_TYPE_ID = "779690"   # 품목
 _ATTR_BOTTOM_LENGTH_ID = "11780"  # 하의기장
 _ATTR_LOOK_STYLE_ID = "11809"     # 룩/스타일
+_ATTR_SHOES_MATERIAL_ID = "10265"  # 신발 소재 (의류 11974와 별도)
+_ATTR_SHOES_PRINT_ID = "11330"     # 신발 프린트
+_ATTR_SHOES_FUNCTION_ID = "725056" # 신발 부가기능
 
 # 사용계절 매핑 (무신사 season → attr_val_id)
 _SEASON_MAP: dict[str, str] = {
@@ -158,6 +161,12 @@ _BOTTOM_LENGTH_MAP: dict[str, str] = {
   "9부": "111200",
 }
 
+# 신발 소재 매핑 (무신사 material 키워드 → attr_val_id) — optCd "10265"
+_SHOES_MATERIAL_MAP: dict[str, str] = {
+  "폴리에스테르": "101554", "폴리에스텔": "101554", "polyester": "101554", "폴리": "101554",
+  # 추후 네트워크 캡처로 코드 확인 후 추가 예정
+}
+
 # 룩/스타일 매핑 (브랜드/상품명 키워드 → attr_val_id, 기본: 캐주얼)
 _LOOK_STYLE_MAP: dict[str, str] = {
   # 스포츠/아웃도어 브랜드 → 아웃도어
@@ -233,6 +242,12 @@ _OPT_VAL_LABELS: dict[str, str] = {
   "112026": "배기", "112027": "부츠컷", "112028": "와이드",
   "112029": "스트레이트", "112030": "슬림", "547916208": "테이퍼드",
   "610443195": "조거", "773234579": "핀턱",
+  # 신발 소재 (optCd 10265)
+  "101554": "폴리에스테르",
+  # 신발 프린트 (optCd 11330)
+  "605647945": "로고",
+  # 신발 부가기능 (optCd 725056)
+  "609276720": "경량",
 }
 
 
@@ -335,6 +350,18 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
   _is_shoes_cat = (product.get("category1") or "").strip() in {"신발", "스포츠신발", "운동화"}
   if not _is_shoes_cat:
     _add(_ATTR_ITEM_TYPE_ID, "628662010")
+
+  # ── 신발 전용 속성 ─────────────────────────────────────────────────
+  if _is_shoes_cat:
+    # 프린트: 브랜드 신발은 항상 로고 고정
+    _add(_ATTR_SHOES_PRINT_ID, "605647945")
+    # 부가기능: 경량 (확인된 코드만 — 추후 통풍/충격흡수/에어 추가 예정)
+    _add(_ATTR_SHOES_FUNCTION_ID, "609276720")
+    # 신발 소재: 상품 정보에서 매핑, 없으면 빈값 유지
+    shoes_material = (product.get("material") or "").lower()
+    shoes_mat_val = _keyword_match(shoes_material, _SHOES_MATERIAL_MAP)
+    if shoes_mat_val:
+      _add(_ATTR_SHOES_MATERIAL_ID, shoes_mat_val)
 
   # ── 성인 하의 사이즈 (하의 상품만, options 에서 추출) ──────────
   if is_bottom and _ATTR_SIZE_BOTTOM_ID in attr_id_set:
