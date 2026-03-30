@@ -831,14 +831,22 @@ class SambaShipmentService:
           res["is_update"] = True
           logger.info(f"[전송] 기존 상품번호 발견 → 수정 모드: {market_type} #{existing_product_no}")
 
-        # 마켓 API 호출 (계정별 세마포어)
+        # 마켓 API 호출 (계정별 세마포어 — 30초 타임아웃)
         account_sem = _get_account_semaphore(account_id)
-        async with account_sem:
+        try:
+          await asyncio.wait_for(account_sem.acquire(), timeout=30)
+        except asyncio.TimeoutError:
+          res["error"] = f"계정 사용 중 (30초 타임아웃, {market_type})"
+          logger.warning(f"[전송] 계정 {account_id} 세마포어 30초 타임아웃")
+          return res
+        try:
           result = await dispatch_to_market(
             self.session, market_type, acct_product, category_id,
             account=account,
             existing_product_no=existing_product_no,
           )
+        finally:
+          account_sem.release()
 
         # 404 → 상품번호 초기화
         if result.get("_clear_product_no"):
