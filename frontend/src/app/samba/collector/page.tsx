@@ -1313,9 +1313,11 @@ export default function CollectorPage() {
             <button
               disabled={tagPreviewLoading}
               onClick={async () => {
-                const targetIds = selectedIds.size > 0 ? [...selectedIds] : displayedFilters.map(f => f.id)
+                // 체크박스로 선택된 그룹만 (드릴다운 단독 선택은 무시 — 전체 처리)
+                const checkedIds = selectAll ? displayedFilters.map(f => f.id) : [...selectedIds]
+                const targetIds = checkedIds.length > 0 ? checkedIds : displayedFilters.map(f => f.id)
                 if (targetIds.length === 0) { showAlert('검색그룹이 없습니다'); return }
-                const ok = await showConfirm(`${selectedIds.size > 0 ? '선택된' : '전체'} ${targetIds.length}개 그룹의 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
+                const ok = await showConfirm(`${checkedIds.length > 0 ? '선택된' : '전체'} ${targetIds.length}개 그룹의 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
                 if (!ok) return
                 setTagPreviewLoading(true)
                 try {
