@@ -1042,7 +1042,7 @@ class SambaCategoryService:
     # ==================== Category Mappings ====================
 
     async def list_mappings(
-        self, skip: int = 0, limit: int = 50
+        self, skip: int = 0, limit: int = 10000
     ) -> List[SambaCategoryMapping]:
         return await self.mapping_repo.list_async(
             skip=skip, limit=limit, order_by="-created_at"
