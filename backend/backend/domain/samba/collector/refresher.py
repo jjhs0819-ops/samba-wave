@@ -688,10 +688,12 @@ SITE_PARSERS: dict[str, Any] = {
 async def refresh_products_bulk(
     products: List[Any],
     source: str = "autotune",
+    max_concurrency: int | None = None,
 ) -> tuple[List[RefreshResult], BulkRefreshResult]:
     """여러 상품을 소싱처별로 그룹핑 후 병렬 갱신.
 
     소싱처당 동시 요청 수를 CONCURRENCY_PER_SITE로 제한한다.
+    max_concurrency: 지정 시 SITE_CONCURRENCY 대신 이 값 사용
     source: autotune | manual | transmit — 로그 출처 태그
     """
     if not products:
@@ -713,7 +715,7 @@ async def refresh_products_bulk(
         # 소싱처별 사전 캐싱 (배치 시작 시 1회)
         if site == "MUSINSA":
             await _prepare_musinsa_cache()
-        concurrency = SITE_CONCURRENCY.get(site, CONCURRENCY_PER_SITE)
+        concurrency = max_concurrency if max_concurrency else SITE_CONCURRENCY.get(site, CONCURRENCY_PER_SITE)
         base_interval = SITE_BASE_INTERVAL.get(site, 1.0)
         sem = asyncio.Semaphore(concurrency)
         results = []

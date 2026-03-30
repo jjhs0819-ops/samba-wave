@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -178,7 +177,7 @@ async def _autotune_loop():
                 if products:
                     filtered_count = len(products)
                     # ③ 소싱처별 병렬 갱신
-                    results, summary = await refresh_products_bulk(products)
+                    results, summary = await refresh_products_bulk(products, max_concurrency=15)
 
                     # 상품 딕셔너리 사전 구축 (N+1 쿼리 방지)
                     product_map: dict[str, object] = {p.id: p for p in products}
@@ -466,31 +465,17 @@ class AutotuneStartRequest(BaseModel):
     target: str = "registered"  # 하위 호환용 (무시됨, 항상 마켓등록상품만)
 
 
-_autotune_thread: Optional[threading.Thread] = None
-
-
-def _run_autotune_in_thread():
-    """별도 스레드에서 독립 이벤트 루프로 오토튠 실행 — 전송과 I/O 완전 격리."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(_autotune_loop())
-    finally:
-        loop.close()
-
-
 @router.post("/autotune/start")
 async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
-    """오토튠 무한 루프 시작 — 별도 스레드에서 실행, 전송과 완전 격리."""
-    global _autotune_task, _autotune_running, _autotune_cycle_count, _autotune_thread
+    """오토튠 무한 루프 시작 — 메인 이벤트 루프에서 실행."""
+    global _autotune_task, _autotune_running, _autotune_cycle_count
     from backend.domain.samba.collector.refresher import clear_bulk_cancel
     if _autotune_running:
         return {"ok": True, "status": "already_running"}
     _autotune_running = True
     _autotune_cycle_count = 0
     clear_bulk_cancel()
-    _autotune_thread = threading.Thread(target=_run_autotune_in_thread, daemon=True)
-    _autotune_thread.start()
+    _autotune_task = asyncio.create_task(_autotune_loop())
     return {"ok": True, "status": "started", "target": "registered"}
 
 
@@ -503,7 +488,8 @@ async def autotune_stop():
         return {"ok": True, "status": "already_stopped"}
     _autotune_running = False
     request_bulk_cancel()  # 벌크 갱신 즉시 중단
-    # 스레드는 _autotune_running=False로 자연 종료 (daemon이라 강제 종료 불필요)
+    if _autotune_task and not _autotune_task.done():
+        _autotune_task.cancel()
     _autotune_task = None
     return {"ok": True, "status": "stopped"}
 
