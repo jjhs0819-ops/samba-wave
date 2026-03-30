@@ -101,6 +101,11 @@ class MusinsaClient:
             _own_client = httpx.AsyncClient(timeout=timeout)
             client = _own_client
         try:
+            # 방어적 초기화 — 모든 코드 경로에서 UnboundLocalError 방지
+            desc_html = ""
+            unique_images: list[str] = []
+            detail_images: list[str] = []
+
             # 1) 상품 상세 API
             detail_resp = await client.get(
                 f"{self.BASE_DETAIL}/{goods_no}",
@@ -135,11 +140,7 @@ class MusinsaClient:
             category_levels = [c for c in category_levels if c]
 
             # 이미지 파싱 (갱신 모드에서는 스킵 — 가격/재고만 필요)
-            if refresh_only:
-                unique_images: list[str] = []
-                detail_images: list[str] = []
-                desc_html = ""
-            else:
+            if not refresh_only:
                 desc_html = d.get("goodsContents", "")
                 detail_images = self._extract_detail_images(desc_html)
 
