@@ -497,15 +497,20 @@ class LotteonPlugin(MarketPlugin):
       category_id = fallback
 
     # ── 소싱된 롯데ON 상품: _lotteonScatNo 원본 BC코드 직접 사용 ──────────
-    # 이 계정에서 권한 있는 BC prefix만 허용 (골프/패션의류 등 권한 없는 카테고리 제외)
-    # BC41: 스포츠의류/운동화, BC47: 패션잡화, BC42: 스포츠/레저
-    _ALLOWED_BC_PREFIXES = ("BC41", "BC47", "BC42")
+    # 허용 범위를 스포츠의류/신발/패션잡화로 세밀하게 제한:
+    #   BC4103x: 남성스포츠신발 (BC41030xxx~BC41039xxx)
+    #   BC4104x: 남성스포츠의류 (BC41040xxx~BC41049xxx)
+    #   BC4109x: 여성스포츠신발 (BC41090xxx~BC41099xxx)
+    #   BC4110x: 여성스포츠의류 (BC41100xxx~BC41109xxx)
+    #   BC47: 패션잡화
+    # 골프의류(BC41050xxx 추정), 구기/기타스포츠 등은 제외
+    _ALLOWED_BC_PREFIXES = ("BC4103", "BC4104", "BC4109", "BC4110", "BC47")
     _scat_no = str(product.get("_lotteonScatNo", "") or "").strip()
     if _scat_no and _scat_no.startswith(_ALLOWED_BC_PREFIXES) and category_id and ">" in category_id:
       logger.info(f"[롯데ON] 소싱 원본 BC코드 사용 (fuzzy match 스킵): {_scat_no}")
       category_id = _scat_no
     elif _scat_no and _scat_no.startswith("BC") and not _scat_no.startswith(_ALLOWED_BC_PREFIXES):
-      logger.info(f"[롯데ON] 소싱 원본 BC코드 권한 없음, 무시하고 매핑 사용: {_scat_no}")
+      logger.info(f"[롯데ON] 소싱 원본 BC코드 허용 범위 밖, 무시하고 매핑 사용: {_scat_no}")
 
     # 트레이닝복 BC코드: 상품명 키워드로 집업/긴바지/반바지/상의로 세분화
     # BC41041400(남성 트레이닝복), BC41101500(여성 트레이닝복) → 키워드 기반 분류
@@ -749,7 +754,29 @@ class LotteonPlugin(MarketPlugin):
           ret["spdNo"] = effective_no
         return ret
       else:
-        result = await client.register_product(data)
+        # impDvsCd fallback: DRC_IMP 실패 시 DOM_MFR → IND_IMP 순으로 재시도
+        _imp_dvs_fallbacks = ["DOM_MFR", "IND_IMP"]
+        _reg_exception: Exception | None = None
+        result = None
+        try:
+          result = await client.register_product(data)
+        except Exception as _e:
+          if "수입구분코드" in str(_e):
+            _reg_exception = _e
+            for _fallback in _imp_dvs_fallbacks:
+              if data.get("spdLst") and isinstance(data["spdLst"], list):
+                data["spdLst"][0]["impDvsCd"] = _fallback
+              logger.info(f"[롯데ON] impDvsCd fallback 시도: {_fallback} (원인: {_e})")
+              try:
+                result = await client.register_product(data)
+                _reg_exception = None
+                break
+              except Exception as _e2:
+                logger.warning(f"[롯데ON] impDvsCd={_fallback} 실패: {_e2}")
+          else:
+            raise
+        if _reg_exception is not None:
+          raise _reg_exception
         # proxy.register_product 가 spdNo를 최상위로 반환 (service.py가 result.get("spdNo")로 읽음)
         spd_no = result.get("spdNo", "") or result.get("epdNo", "")
         logger.info(f"[롯데ON] 등록 완료 — spdNo={spd_no!r}")
