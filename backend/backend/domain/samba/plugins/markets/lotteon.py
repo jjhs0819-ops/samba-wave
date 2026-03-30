@@ -519,7 +519,7 @@ class LotteonPlugin(MarketPlugin):
       _sex_val = (product.get("sex") or "").strip()
       _is_female = _sex_val == "여성"
       _orig_cat = category_id
-      if any(k in _name_lower for k in ["재킷", "jacket", "집업", "zip", "트랙탑", "track top", "tracktop", "track-top"]):
+      if any(k in _name_lower for k in ["재킷", "jacket", "집업", "zip", "트랙탑", "트랩", "track top", "tracktop", "track-top", "tracktop"]):
         # 재킷/집업/트랙탑 → 집업 카테고리
         category_id = "BC41101400" if _is_female else "BC41041300"
       elif any(k in _name_lower for k in ["숏팬츠", "shorts", "반바지"]):
