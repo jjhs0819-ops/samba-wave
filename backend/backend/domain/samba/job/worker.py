@@ -551,7 +551,7 @@ class JobWorker:
             _collect_sem = asyncio.Semaphore(SITE_CONCURRENCY.get("MUSINSA", 5))
             _collect_results: list[dict | None] = []
             _rate_limited = False
-            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(3, connect=2.0))
+            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(15, connect=5.0))
 
             async def _fetch_detail(goods_no: str) -> dict | None:
                 nonlocal total_skipped, _rate_limited

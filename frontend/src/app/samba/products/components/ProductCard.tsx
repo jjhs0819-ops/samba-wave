@@ -552,7 +552,7 @@ const ProductCard = React.memo(function ProductCard({
                             {/* 옵션 상세 행 */}
                             {opts.map((opt, oi) => {
                               const kOpt = opt as Record<string, unknown>
-                              const soldOut = opt.isSoldOut || (opt.stock !== undefined && opt.stock <= 0)
+                              const soldOut = opt.isSoldOut || (opt.stock !== undefined && opt.stock !== null && opt.stock <= 0)
                               const stockLabel = soldOut
                                 ? '품절'
                                 : opt.stock !== undefined
