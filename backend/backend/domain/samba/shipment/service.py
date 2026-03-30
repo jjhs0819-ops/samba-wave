@@ -570,16 +570,11 @@ class SambaShipmentService:
           await self.session.flush()
           return shipment
 
-    # 이미지/상세페이지 업데이트 필요 여부 판단
-    # 최초 전송(미등록 상품)이면 update_items와 무관하게 항상 상세페이지 생성
-    is_first_transmit = product_row.status != "registered" and not product_row.registered_accounts
-    needs_image = is_first_transmit or "image" in (update_items or []) or "description" in (update_items or [])
-    if not needs_image:
-      product_dict["_skip_image_upload"] = True
-    # 가격/재고만 수정 시 404 → POST 신규등록 차단 (중복 등록 방지)
-    is_price_only = update_items and set(update_items) <= {"price", "stock"}
-    if is_price_only:
-      product_dict["_price_stock_only"] = True
+    # 이미지/상세페이지 전송 판단
+    # 오토튠 재전송(price/stock만) → 이미지 불필요
+    # 그 외(수동 전송) → 항상 이미지 전송 (DB 현재 이미지 사용)
+    is_price_stock_only = update_items and set(update_items) <= {"price", "stock"}
+    needs_image = not is_price_stock_only
 
     # 2-1. 정책의 상세 템플릿으로 detail_html 재생성 (이미지/상세 업데이트 시에만)
     if needs_image:
