@@ -111,12 +111,13 @@ export default function ShipmentsPage() {
   // 카테고리 매핑 데이터
   const [categoryMappings, setCategoryMappings] = useState<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>([])
 
-  // URL 파라미터 (Next.js searchParams 우선, fallback으로 window.location)
-  const urlSelected = searchParams.get('selected')
+  // URL 파라미터: 초기 1회만 읽고 ref에 저장 (이후 검색/필터 변경 시 무시)
+  const preIdsRef = useRef<string[]>(searchParams.get('selected')?.split(',').filter(Boolean) || [])
+  const preIdsConsumedRef = useRef(false)
   const load = useCallback(async () => {
     setLoading(true)
-    // URL에서 선택된 상품 ID 먼저 확인
-    const preIds = urlSelected?.split(',').filter(Boolean) || []
+    // 최초 1회만 preIds 사용, 이후 검색/필터 변경 시엔 일반 조회
+    const preIds = !preIdsConsumedRef.current ? preIdsRef.current : []
 
     // 검색 조건에 따라 서버 API 파라미터 구성
     const scrollParams: Record<string, string | number> = { skip: (currentPage - 1) * pageSize, limit: pageSize }
@@ -131,7 +132,7 @@ export default function ShipmentsPage() {
 
     // 선택된 상품이 있으면 해당 상품만 조회, 없으면 scroll API
     const productPromise = preIds.length > 0
-      ? collectorApi.getProductsByIds(preIds).catch(() => [] as SambaCollectedProduct[])
+      ? collectorApi.getProductsByIds(preIds).then(r => { console.log('[shipments] by-ids 응답:', preIds, r?.length); preIdsConsumedRef.current = true; return r }).catch(e => { console.error('[shipments] by-ids 실패:', e); return [] as SambaCollectedProduct[] })
       : collectorApi.scrollProducts(scrollParams).then(r => { setTotalCount(r.total || 0); return r.items }).catch(() => [] as SambaCollectedProduct[])
 
     const [p, a, s, f, pol, cm] = await Promise.all([
@@ -149,7 +150,7 @@ export default function ShipmentsPage() {
     setPolicies(pol)
     setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
     setLoading(false)
-  }, [urlSelected, searchText, searchField, siteFilter, registrationFilter, sortBy, currentPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [searchText, searchField, siteFilter, registrationFilter, sortBy, currentPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
   useEffect(() => { return () => { if (progressRef.current) clearInterval(progressRef.current) } }, [])
