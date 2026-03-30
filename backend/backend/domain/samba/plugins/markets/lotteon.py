@@ -702,7 +702,7 @@ class LotteonPlugin(MarketPlugin):
         # 속성 attr_id + attr_nm 목록 추출 (scatAttrLst 생성용)
         _attr_raw = d.get("attr_list") or []
         category_attr_ids = [str(a.get("attr_id", "")) for a in _attr_raw if a.get("attr_id")]
-        logger.debug(
+        logger.info(
           f"[롯데ON] attr_list 상세: "
           f"{[(str(a.get('attr_id','')), a.get('attr_nm','')) for a in _attr_raw]}"
         )
