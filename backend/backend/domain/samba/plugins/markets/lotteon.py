@@ -708,6 +708,10 @@ class LotteonPlugin(MarketPlugin):
         )
         if _attr_raw:
           logger.info(f"[롯데ON] attr_list[0] 원시키: {list(_attr_raw[0].keys())}")
+          logger.info(
+            f"[롯데ON] attr_list pi_type: "
+            f"{[(str(a.get('attr_id','')), a.get('attr_pi_type','')) for a in _attr_raw]}"
+          )
       logger.info(f"[롯데ON] 전시카테고리 조회: {category_id} → {disp_cat_id}, attr_ids={len(category_attr_ids)}개")
     except Exception as e:
       logger.warning(f"[롯데ON] 전시카테고리 조회 실패 (무시): {e}")
