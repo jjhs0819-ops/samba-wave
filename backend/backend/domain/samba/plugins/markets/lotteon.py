@@ -715,6 +715,12 @@ class LotteonPlugin(MarketPlugin):
             f"{[(str(a.get('attr_id','')), a.get('attr_pi_type','')) for a in _attr_raw]}"
           )
       logger.info(f"[롯데ON] 전시카테고리 조회: {category_id} → {disp_cat_id}, attr_ids={len(category_attr_ids)}개")
+      # 속성값 목록 상세 조회 (attr_id별 이름 + val 목록 파악용)
+      try:
+        _attr_detail = await client.get_category_attributes(scat_no=category_id)
+        logger.info(f"[롯데ON] cheetahScatAttr 응답: {_attr_detail}")
+      except Exception as _e:
+        logger.debug(f"[롯데ON] cheetahScatAttr 조회 실패: {_e}")
     except Exception as e:
       logger.warning(f"[롯데ON] 전시카테고리 조회 실패 (무시): {e}")
 
