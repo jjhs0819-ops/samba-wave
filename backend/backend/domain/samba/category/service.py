@@ -299,19 +299,40 @@ def _rule_match(
 def _similarity_match_smartstore(
     source_category: str, market_cats: list[str]
 ) -> Optional[str]:
-    """2단계: 키워드 유사도 매칭. 소싱 카테고리의 leaf 키워드로 가장 적합한 마켓 카테고리를 찾는다."""
+    """2단계: 키워드 유사도 매칭.
+
+    대분류부터 순차적으로 후보를 좁혀가며 매칭.
+    1. 대분류 키워드로 후보 필터 (전체 → 해당 대분류 하위만)
+    2. 중분류 키워드로 추가 필터
+    3. 소분류/세분류 키워드로 최종 선택
+    각 단계에서 동의어 확장 적용.
+    """
     segs = [s.strip() for s in source_category.split(">") if s.strip()]
     if not segs:
         return None
 
-    leaf = segs[-1]
-    # 동의어 확장
-    keywords = _expand_synonyms({leaf})
-    if len(segs) > 1:
-        keywords |= _expand_synonyms({segs[-2]})
+    # 전체 세그먼트의 키워드 + 동의어 (최종 점수 계산용)
+    all_keywords = set()
+    for seg in segs:
+        all_keywords |= _expand_synonyms({seg})
 
-    # 1차: leaf 키워드가 포함된 카테고리 필터
-    candidates = [c for c in market_cats if any(kw in c for kw in keywords)]
+    # 대분류부터 순차 필터링 — 세그먼트 레벨 매칭
+    # 각 소싱 세그먼트를 마켓 카테고리의 해당 깊이(±1) 세그먼트에서만 매칭
+    # 예: 소싱 대분류 "뷰티" → 마켓의 1~2번째 세그먼트에서만 "뷰티"/"화장품" 검색
+    candidates = list(market_cats)
+    for i, seg in enumerate(segs):
+        seg_keywords = _expand_synonyms({seg})
+        narrowed = []
+        for c in candidates:
+            c_parts = [s.strip() for s in c.split(" > ")]
+            # 현재 레벨 ~ +1 범위에서만 매칭 (위치 인식)
+            search_range = c_parts[max(0, i):min(len(c_parts), i + 2)]
+            if any(any(kw in part for kw in seg_keywords) for part in search_range):
+                narrowed.append(c)
+        if narrowed:
+            candidates = narrowed
+        # 후보가 없으면 현재 범위 유지하고 다음 세그먼트로
+
     if not candidates:
         return None
 
@@ -320,12 +341,11 @@ def _similarity_match_smartstore(
     if fashion:
         candidates = fashion
 
-    # 가장 짧은 경로(= 가장 넓은 카테고리)를 선택하면 안전
-    # 대신 가장 많은 키워드가 매칭되는 카테고리 선택
+    # 전체 키워드 매칭 점수로 최적 카테고리 선택
     best = None
     best_score = 0
     for c in candidates:
-        score = sum(1 for kw in keywords if kw in c)
+        score = sum(1 for kw in all_keywords if kw in c)
         if score > best_score:
             best_score = score
             best = c
@@ -2688,19 +2708,15 @@ JSON만:
                     logger.info(f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})")
 
             # ── 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만) ──
-            # ESM(지마켓/옥션)은 스마트스토어 매핑 결과를 기준으로 매칭
-            ss_mapped = current_targets.get("smartstore") or resolved.get("smartstore", "")
             for mk in list(missing_markets):
                 if mk in resolved:
                     continue
                 mk_cats = ss_cats if mk == "smartstore" else await self._get_market_categories(mk)
                 if mk_cats:
-                    # ESM 마켓은 스마트스토어 매핑을 기준으로 유사도 매칭
-                    match_source = ss_mapped if (mk in ("gmarket", "auction") and ss_mapped) else leaf_path
-                    sim_result = _similarity_match_smartstore(match_source, mk_cats)
+                    sim_result = _similarity_match_smartstore(leaf_path, mk_cats)
                     if sim_result:
                         resolved[mk] = sim_result
-                        logger.info(f"[매핑-유사도] {site} > {leaf_path} → {mk}: {sim_result} (기준: {match_source[:30]})")
+                        logger.info(f"[매핑-유사도] {site} > {leaf_path} → {mk}: {sim_result}")
 
             # 1~2단계에서 해결된 마켓 저장
             if resolved:
