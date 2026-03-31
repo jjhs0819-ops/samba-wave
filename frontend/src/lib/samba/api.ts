@@ -1053,7 +1053,7 @@ export const nameRuleApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/policies/name-rules/${id}`, { method: 'DELETE' }),
 };
 
-// ── Monitor (워룸) ──
+// ── Monitor (오토튠) ──
 
 export interface MonitorEvent {
   id: string
