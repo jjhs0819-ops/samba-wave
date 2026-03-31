@@ -85,13 +85,13 @@ async def _prepare_musinsa_cache() -> None:
 
 
 # IP 로테이션: 프록시 목록 순환 (100건마다 다음 프록시)
-IP_ROTATE_EVERY = 40
+IP_ROTATE_EVERY = 50
 _ip_rotate_counter = 0
 _ip_rotate_idx = 0
 _ip_rotate_label: str = ""
 
 def _get_rotated_proxy() -> str | None:
-    """프록시 목록을 100건 단위로 순환. PROXY_URLS 미설정 시 None."""
+    """메인 IP + 프록시 목록을 N건 단위로 순환. PROXY_URLS 미설정 시 None."""
     global _ip_rotate_counter, _ip_rotate_idx, _ip_rotate_label, _refresh_log_total
     from backend.core.config import settings
     proxy_urls = settings.proxy_urls
@@ -100,15 +100,18 @@ def _get_rotated_proxy() -> str | None:
     proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
     if not proxies:
         return None
+    # 메인 IP(None) + 프록시들로 풀 구성
+    pool: list[str | None] = [None] + proxies
     _ip_rotate_counter += 1
     if _ip_rotate_counter >= IP_ROTATE_EVERY or _ip_rotate_label == "":
         _ip_rotate_counter = 0
         if _ip_rotate_label != "":
-            _ip_rotate_idx = (_ip_rotate_idx + 1) % len(proxies)
-        label = proxies[_ip_rotate_idx].split("@")[-1] if "@" in proxies[_ip_rotate_idx] else f"proxy-{_ip_rotate_idx}"
+            _ip_rotate_idx = (_ip_rotate_idx + 1) % len(pool)
+        selected = pool[_ip_rotate_idx]
+        label = "main" if selected is None else (selected.split("@")[-1] if "@" in selected else f"proxy-{_ip_rotate_idx}")
         if label != _ip_rotate_label:
             _ip_rotate_label = label
-            logger.info(f"[오토튠] IP -> {label}")
+            logger.info(f"[autotune] IP -> {label}")
             now = datetime.now(timezone.utc)
             kst = now + timedelta(hours=9)
             _refresh_log_buffer.append({
@@ -121,7 +124,7 @@ def _get_rotated_proxy() -> str | None:
                 "source": "autotune",
             })
             _refresh_log_total += 1
-    return proxies[_ip_rotate_idx]
+    return pool[_ip_rotate_idx]
 
 
 # 쿠키 로테이션: 100건마다 다음 쿠키로 전환
