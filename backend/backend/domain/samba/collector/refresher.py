@@ -32,13 +32,13 @@ SITE_CONCURRENCY: dict[str, int] = {
 }
 # 소싱처별 기본 인터벌 (초)
 SITE_BASE_INTERVAL: dict[str, float] = {
-    "MUSINSA": 0.3,
+    "MUSINSA": 1.0,
     "SSG": 1.0,
     "LOTTEON": 0.5,
 }
 # 소싱처별 최소 인터벌 (초)
 SITE_MIN_INTERVAL: dict[str, float] = {
-    "MUSINSA": 0.3,
+    "MUSINSA": 1.0,
     "SSG": 0.5,
     "LOTTEON": 0.3,
 }
@@ -85,7 +85,7 @@ async def _prepare_musinsa_cache() -> None:
 
 
 # IP 로테이션: 프록시 목록 순환 (100건마다 다음 프록시)
-IP_ROTATE_EVERY = 30
+IP_ROTATE_EVERY = 50
 _ip_rotate_counter = 0
 _ip_rotate_idx = 0
 _ip_rotate_label: str = ""
@@ -100,8 +100,8 @@ def _get_rotated_proxy() -> str | None:
     proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
     if not proxies:
         return None
-    # 메인 IP(None) + 프록시들로 풀 구성
-    pool: list[str | None] = [None] + proxies
+    # 프록시만 사용 (메인 IP 제외)
+    pool: list[str | None] = proxies
     _ip_rotate_counter += 1
     if _ip_rotate_counter >= IP_ROTATE_EVERY or _ip_rotate_label == "":
         _ip_rotate_counter = 0
@@ -139,7 +139,7 @@ def force_rotate_proxy():
     proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
     if not proxies:
         return
-    pool: list[str | None] = [None] + proxies
+    pool = proxies
     _ip_rotate_counter = 0
     _ip_rotate_idx = (_ip_rotate_idx + 1) % len(pool)
     selected = pool[_ip_rotate_idx]
