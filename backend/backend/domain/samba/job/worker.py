@@ -1,4 +1,7 @@
-"""백그라운드 잡 워커 — FastAPI lifespan에서 실행."""
+"""백그라운드 잡 워커 — FastAPI lifespan에서 실행.
+
+재시작 시 stuck running 잡 자동 복구 포함.
+"""
 
 import asyncio
 import logging
