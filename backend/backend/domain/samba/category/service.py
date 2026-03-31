@@ -317,18 +317,23 @@ def _similarity_match_smartstore(
         all_keywords |= _expand_synonyms({seg})
 
     # 대분류부터 순차 필터링 — 세그먼트 레벨 매칭
-    # 각 소싱 세그먼트를 마켓 카테고리의 해당 깊이(±1) 세그먼트에서만 매칭
-    # 예: 소싱 대분류 "뷰티" → 마켓의 1~2번째 세그먼트에서만 "뷰티"/"화장품" 검색
+    # 대분류(i=0): 마켓 카테고리의 첫 번째 세그먼트에서만 매칭 (다른 레벨에 같은 이름이 있어도 무시)
+    # 중분류 이하: 해당 깊이 ~ +1 범위에서 매칭
     candidates = list(market_cats)
     for i, seg in enumerate(segs):
         seg_keywords = _expand_synonyms({seg})
         narrowed = []
         for c in candidates:
             c_parts = [s.strip() for s in c.split(" > ")]
-            # 현재 레벨 ~ +1 범위에서만 매칭 (위치 인식)
-            search_range = c_parts[max(0, i):min(len(c_parts), i + 2)]
-            if any(any(kw in part for kw in seg_keywords) for part in search_range):
-                narrowed.append(c)
+            if i == 0:
+                # 대분류: 첫 번째 세그먼트에서만 매칭
+                if any(kw in c_parts[0] for kw in seg_keywords):
+                    narrowed.append(c)
+            else:
+                # 중분류 이하: 해당 레벨 ~ +1 범위
+                search_range = c_parts[max(0, i):min(len(c_parts), i + 2)]
+                if any(any(kw in part for kw in seg_keywords) for part in search_range):
+                    narrowed.append(c)
         if narrowed:
             candidates = narrowed
         # 후보가 없으면 현재 범위 유지하고 다음 세그먼트로
@@ -387,6 +392,11 @@ _SYNONYM_MAP: dict[str, list[str]] = {
     "상의": ["상의", "탑", "톱", "의류"],
     "하의": ["하의", "바지", "팬츠", "보텀"],
     "아우터": ["아우터", "외투", "겉옷", "자켓"],
+    "뷰티": ["뷰티", "화장품", "코스메틱", "미용"],
+    "화장품": ["화장품", "뷰티", "코스메틱"],
+    "메이크업": ["메이크업", "색조", "베이스메이크업"],
+    "패션잡화": ["패션잡화", "잡화", "액세서리"],
+    "신발": ["신발", "슈즈", "구두"],
     "신발": ["신발", "슈즈", "풋웨어"],
     "가방": ["가방", "백", "백팩"],
 }
