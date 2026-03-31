@@ -594,9 +594,10 @@ def _process_musinsa_detail(product, detail, site_product_id, warnings, _idx, _t
     except (ValueError, TypeError):
         _cost_display = 0
         _new_cost_display = 0
+    _ip_tag = f"[P]" if _proxy else ""
     _log_refresh(
         "MUSINSA", product.id, _prod_label,
-        f"{_status}{_market_info} [원가 {int(old_sale):,}>{int(new_sale_price):,}, 판매가 {_cost_display:,}>{_new_cost_display:,}, 재고변동 {_stock_changes}건]",
+        f"{_status}{_market_info}{_ip_tag} [원가 {int(old_sale):,}>{int(new_sale_price):,}, 판매가 {_cost_display:,}>{_new_cost_display:,}, 재고변동 {_stock_changes}건]",
         idx=_idx, total=_total,
     )
 
