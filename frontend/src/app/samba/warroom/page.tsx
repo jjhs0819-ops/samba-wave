@@ -444,7 +444,7 @@ export default function WarroomPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '360px', overflow: 'auto' }}>
             {filteredEvents.map(e => {
               const t = new Date(e.created_at)
-              const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+              const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`
               const d = e.detail as Record<string, unknown> | undefined
               const detailTags: { label: string; value: string; color: string }[] = []
               if (d) {
