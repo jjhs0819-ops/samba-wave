@@ -438,13 +438,14 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         _err_name = getattr(product, "name", "") or ""
         _err_spid = getattr(product, "site_product_id", "") or ""
         _err_label = f"{_err_brand} {_err_name} ({_err_spid})".strip() if _err_spid else f"{_err_brand} {_err_name}".strip()
+        _err_msg = str(e).strip() or type(e).__name__
         _log_refresh(
             "MUSINSA", product.id,
             _err_label,
-            f"실패 — {e}",
+            f"실패 — {_err_msg}",
             level="error", idx=_idx, total=_total,
         )
-        return RefreshResult(product_id=product.id, error=f"무신사 API 오류: {e}")
+        return RefreshResult(product_id=product.id, error=f"무신사 API 오류: {_err_msg}")
 
     # detail이 None이면 예기치 않은 경로 — 안전하게 에러 반환
     if detail is None:

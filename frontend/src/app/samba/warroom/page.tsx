@@ -124,12 +124,15 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
         ) : (
           logs.map((log, i) => {
             let color = '#DCE0E8'
-            if (log.msg.includes('실패') || log.msg.includes('오류') || log.msg.includes('차단')) color = '#C4736E'
+            let fontWeight: number | string = 400
+            if (log.msg.includes('쿠키 로테이션')) { color = '#FFFFFF'; fontWeight = 700 }
+            else if (log.msg.includes('실패') || log.msg.includes('오류') || log.msg.includes('차단')) color = '#C4736E'
+            else if (log.msg.includes('가격전송') || log.msg.includes('재고전송')) color = '#FFFFFF'
             else if (log.msg.includes('전송')) color = '#FFFFFF'
             else if (log.msg.includes('스킵')) color = '#888'
             else if (log.msg.includes('변동')) color = '#FFD93D'
             else if (log.msg.includes('성공')) color = '#7BAF7E'
-            return <div key={`${log.ts}-${i}`} style={{ color }}>{log.msg}</div>
+            return <div key={`${log.ts}-${i}`} style={{ color, fontWeight }}>{log.msg}</div>
           })
         )}
       </div>
