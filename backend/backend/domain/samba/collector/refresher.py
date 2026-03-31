@@ -380,9 +380,13 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         )
         return RefreshResult(product_id=product.id, error="응답 없음: 45초 타임아웃")
     except Exception as e:
+        _err_brand = getattr(product, "brand", "") or ""
+        _err_name = getattr(product, "name", "") or ""
+        _err_spid = getattr(product, "site_product_id", "") or ""
+        _err_label = f"{_err_brand} {_err_name} ({_err_spid})".strip() if _err_spid else f"{_err_brand} {_err_name}".strip()
         _log_refresh(
             "MUSINSA", product.id,
-            getattr(product, "name", ""),
+            _err_label,
             f"실패 — {e}",
             level="error", idx=_idx, total=_total,
         )
