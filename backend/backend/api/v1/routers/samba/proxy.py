@@ -2059,6 +2059,34 @@ async def musinsa_auth_delete(
     return {"success": True, "isLoggedIn": False, "message": "로그아웃 완료"}
 
 
+class MusinsaCookiesRequest(BaseModel):
+    cookies: list[str]
+
+
+@router.post("/musinsa/cookies")
+async def set_musinsa_cookies(
+    body: MusinsaCookiesRequest,
+    write_session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """무신사 쿠키 로테이션 목록 저장."""
+    import json
+    await _set_setting(write_session, "musinsa_cookies", json.dumps(body.cookies))
+    return {"ok": True, "count": len(body.cookies)}
+
+
+@router.get("/musinsa/cookies")
+async def get_musinsa_cookies(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """무신사 쿠키 로테이션 목록 조회."""
+    import json
+    raw = await _get_setting(session, "musinsa_cookies")
+    if raw:
+        cookies = json.loads(raw) if isinstance(raw, str) else raw
+        return {"cookies": cookies, "count": len(cookies)}
+    return {"cookies": [], "count": 0}
+
+
 class StockCheckRequest(BaseModel):
     goodsNos: list[str]
 
