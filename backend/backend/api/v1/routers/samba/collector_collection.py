@@ -254,6 +254,11 @@ async def collect_by_url(
                     if not detail or not detail.get("name"):
                         await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
+                    # 긴 상세이미지 분할 (추가이미지 보충분)
+                    orig_cnt = detail.get("originalImageCount", len(detail.get("images", [])))
+                    if orig_cnt < len(detail.get("images", [])):
+                        from backend.domain.samba.image.service import split_long_images
+                        detail["images"] = await split_long_images(detail["images"], orig_cnt, session)
 
                     if exclude_preorder and detail.get("saleStatus") == "preorder":
                         skipped_preorder += 1
@@ -340,6 +345,11 @@ async def collect_by_url(
             data = await client.get_goods_detail(goods_no)
             if not data or not data.get("name"):
                 raise HTTPException(502, "무신사 상품 조회 실패")
+            # 긴 상세이미지 분할 (추가이미지 보충분)
+            orig_cnt = data.get("originalImageCount", len(data.get("images", [])))
+            if orig_cnt < len(data.get("images", [])):
+                from backend.domain.samba.image.service import split_long_images
+                data["images"] = await split_long_images(data["images"], orig_cnt, session)
 
             from datetime import datetime, timezone
             # 가격이력 초기 스냅샷
@@ -1291,6 +1301,11 @@ async def enrich_product(
 
         if not detail or not detail.get("name"):
             raise HTTPException(502, "무신사 상세 조회 실패: 데이터 없음")
+        # 긴 상세이미지 분할 (추가이미지 보충분)
+        orig_cnt = detail.get("originalImageCount", len(detail.get("images", [])))
+        if orig_cnt < len(detail.get("images", [])):
+            from backend.domain.samba.image.service import split_long_images
+            detail["images"] = await split_long_images(detail["images"], orig_cnt, session)
 
         # get_goods_detail은 { category: "키즈 > ...", category1: "키즈", ... } 형태로 반환
         from datetime import datetime, timezone
@@ -1547,6 +1562,11 @@ async def enrich_all_products(
             detail = await client.get_goods_detail(product.site_product_id)
             if not detail or not detail.get("name"):
                 continue
+            # 긴 상세이미지 분할 (추가이미지 보충분)
+            orig_cnt = detail.get("originalImageCount", len(detail.get("images", [])))
+            if orig_cnt < len(detail.get("images", [])):
+                from backend.domain.samba.image.service import split_long_images
+                detail["images"] = await split_long_images(detail["images"], orig_cnt, session)
 
             new_sale_status = detail.get("saleStatus", "in_stock")
             api_sale = detail.get("salePrice")

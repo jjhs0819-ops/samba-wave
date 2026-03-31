@@ -167,6 +167,7 @@ class MusinsaClient:
                     )
                 all_images = [i for i in all_images if i]
                 unique_images = list(dict.fromkeys(all_images))
+                original_image_count = len(unique_images)
                 # 추가이미지 부족 시 상세페이지 이미지로 보충 (최대 9장)
                 if len(unique_images) < 9 and detail_images:
                     existing = set(unique_images)
@@ -175,7 +176,7 @@ class MusinsaClient:
                             unique_images.append(di)
                             existing.add(di)
                 unique_images = unique_images[:9]
-                logger.info(f"[무신사 이미지 최종] {goods_no}: images={len(unique_images)}개, detail_images={len(detail_images)}개")
+                logger.info(f"[무신사 이미지 최종] {goods_no}: images={len(unique_images)}개 (원본 {original_image_count}+보충 {len(unique_images)-original_image_count}), detail_images={len(detail_images)}개")
 
             # 소재 정보
             materials = (d.get("goodsMaterial") or {}).get("materials", [])
@@ -321,6 +322,7 @@ class MusinsaClient:
                     or ""
                 ),
                 "images": unique_images,
+                "originalImageCount": original_image_count,
                 "detailImages": detail_images,
                 "detailHtml": desc_html,
                 "options": options,
