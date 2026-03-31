@@ -421,9 +421,21 @@ class SambaShipmentService:
     _transmitting_products.add(product_id)
 
     try:
-      return await self._transmit_product_inner(
-        product_id, target_account_ids, update_items, skip_unchanged,
+      return await asyncio.wait_for(
+        self._transmit_product_inner(
+          product_id, target_account_ids, update_items, skip_unchanged,
+        ),
+        timeout=60,  # 상품 1건당 최대 60초, 초과 시 스킵
       )
+    except asyncio.TimeoutError:
+      logger.warning(f"[전송] 상품 {product_id} 전송 60초 타임아웃 — 스킵")
+      shipment = await self.repo.create_async(
+        product_id=product_id, target_account_ids=target_account_ids,
+        update_items=update_items, status="failed",
+        update_result={}, transmit_result={},
+        transmit_error={"_all": "전송 60초 타임아웃"},
+      )
+      return shipment
     finally:
       _transmitting_products.discard(product_id)
 
@@ -747,6 +759,56 @@ class SambaShipmentService:
     _stmt2 = _sel2(_SMA).where(_SMA.id.in_(target_account_ids))
     _res2 = await self.session.execute(_stmt2)
     _dispatch_account_map = {a.id: a for a in _res2.scalars().all()}
+
+    # 전 옵션 품절 시 소싱처 1회 최신화 시도 (30초 타임아웃)
+    _all_opts = product_dict.get("options") or []
+    _all_sold = _all_opts and all(
+      (o.get("isSoldOut", False) or (o.get("stock") or 0) <= 0)
+      for o in _all_opts if isinstance(o, dict)
+    )
+    if _all_sold and not pending_refresh_updates and product_row.source_site and product_row.site_product_id:
+      logger.info(f"[전송] 상품 {product_id} 전 옵션 품절 → 소싱처 1회 최신화 시도 (30초)")
+      try:
+        from backend.domain.samba.collector.refresher import refresh_product as _refresh_sold
+        _sold_refresh = await asyncio.wait_for(
+          _refresh_sold(product_row, source="transmit"),
+          timeout=30,
+        )
+        if not _sold_refresh.error and _sold_refresh.new_options is not None:
+          # 옵션/가격 업데이트
+          product_dict["options"] = _sold_refresh.new_options
+          if _sold_refresh.new_sale_price is not None:
+            product_dict["sale_price"] = _sold_refresh.new_sale_price
+          if _sold_refresh.new_original_price is not None:
+            product_dict["original_price"] = _sold_refresh.new_original_price
+          if _sold_refresh.new_cost is not None:
+            product_dict["cost"] = _sold_refresh.new_cost
+          if _sold_refresh.new_sale_status:
+            product_dict["sale_status"] = _sold_refresh.new_sale_status
+          # pending_refresh_updates에도 반영 (최종 DB 저장용)
+          pending_refresh_updates.update({
+            "options": _sold_refresh.new_options,
+            "last_refreshed_at": datetime.now(UTC),
+          })
+          if _sold_refresh.new_sale_price is not None:
+            pending_refresh_updates["sale_price"] = _sold_refresh.new_sale_price
+          if _sold_refresh.new_original_price is not None:
+            pending_refresh_updates["original_price"] = _sold_refresh.new_original_price
+          if _sold_refresh.new_cost is not None:
+            pending_refresh_updates["cost"] = _sold_refresh.new_cost
+          if _sold_refresh.new_sale_status:
+            pending_refresh_updates["sale_status"] = _sold_refresh.new_sale_status
+          _new_in_stock = sum(1 for o in _sold_refresh.new_options if not o.get("isSoldOut", False) and (o.get("stock") or 0) > 0)
+          logger.info(f"[전송] 품절 최신화 완료 — 재고 있는 옵션: {_new_in_stock}/{len(_sold_refresh.new_options)}")
+          if not refresh_status:
+            refresh_status = f"품절최신화: 재고복구 {_new_in_stock}건"
+        else:
+          _err = _sold_refresh.error if _sold_refresh.error else "옵션 데이터 없음"
+          logger.info(f"[전송] 품절 최신화 실패 — {_err}")
+      except asyncio.TimeoutError:
+        logger.warning(f"[전송] 전 옵션 품절 소싱처 최신화 타임아웃 (30초)")
+      except Exception as _sold_e:
+        logger.warning(f"[전송] 전 옵션 품절 소싱처 최신화 예외: {_sold_e}")
 
     # 계정별 전송을 병렬 코루틴으로 실행
 
