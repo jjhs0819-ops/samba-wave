@@ -2,10 +2,9 @@
  * SambaWave API client - 인증 없이 접근
  */
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL ||
-  (process.env.NODE_ENV === 'production'
-    ? 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
-    : 'http://localhost:28080')
+import { API_BASE_URL } from '@/config/api'
+
+export const API_BASE = API_BASE_URL
 
 const SAMBA_PREFIX = `${API_BASE}/api/v1/samba`;
 
@@ -17,7 +16,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const data = await res.json().catch(() => null);
-    throw new Error(data?.detail || `HTTP ${res.status}`);
+    const detail = data?.detail
+    const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: Record<string, unknown>) => d.msg || JSON.stringify(d)).join(', ') : `HTTP ${res.status}`
+    throw new Error(msg);
   }
   const text = await res.text();
   if (!text) return {} as T;
@@ -68,6 +69,8 @@ export interface SambaOrder {
   tracking_number?: string;
   notes?: string;
   ext_order_number?: string;
+  sourcing_order_number?: string;
+  sourcing_account_id?: string;
   source?: string;
   shipment_id?: string;
   created_at: string;
@@ -213,6 +216,7 @@ export interface SambaSearchFilter {
   ss_brand_name?: string;
   ss_manufacturer_id?: number;
   ss_manufacturer_name?: string;
+  target_mappings?: Record<string, string>;
   created_at: string;
   // 트리 구조
   parent_id?: string | null;
@@ -323,6 +327,17 @@ export const collectorApi = {
     request<SambaSearchFilter>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteFilter: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "DELETE" }),
+
+  // Brand Sourcing
+  brandScan: (brand: string, gf?: string, keyword?: string) =>
+    request<{ categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]; total: number; groupCount: number }>(
+      `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '' }) }),
+  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean> }) =>
+    request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
+      `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),
+  brandRefresh: (data: { brand: string; brand_name?: string; gf?: string; options?: Record<string, boolean> }) =>
+    request<{ scanned: number; new_groups: number; updated_groups: number; message: string }>(
+      `${SAMBA_PREFIX}/collector/brand-refresh`, { method: "POST", body: JSON.stringify(data) }),
 
   // Collected Products
   listProducts: (skip = 0, limit = 50, status?: string) => {
@@ -659,6 +674,12 @@ export const proxyApi = {
     const qs = new URLSearchParams({ keyword, size: '1', ...params })
     return request<{ success: boolean; totalCount: number }>(`${SAMBA_PREFIX}/proxy/musinsa/search-api?${qs}`)
   },
+  // 범용 소싱처 검색 카운트
+  searchCount: (sourceSite: string, keyword: string, url?: string) => {
+    const qs = new URLSearchParams({ source_site: sourceSite, keyword })
+    if (url) qs.set('url', url)
+    return request<{ totalCount: number }>(`${SAMBA_PREFIX}/proxy/search-count?${qs}`)
+  },
   falStatus: () =>
     request<{ status: string; message: string }>(
       `${SAMBA_PREFIX}/proxy/fal/status`),
@@ -868,7 +889,7 @@ export const returnApi = {
       `${SAMBA_PREFIX}/returns/sync-from-markets`, { method: "POST", body: JSON.stringify(body) }
     )
   },
-  patch: (id: string, data: { confirmed?: boolean; settlement_amount?: number; recovery_amount?: number; check_date?: string; memo?: string; product_location?: string; completion_detail?: string; status?: string; customer_order_no?: string; original_order_no?: string }) =>
+  patch: (id: string, data: { confirmed?: boolean; settlement_amount?: number; recovery_amount?: number; check_date?: string; memo?: string; product_location?: string; completion_detail?: string; status?: string; customer_order_no?: string; original_order_no?: string; return_source?: string }) =>
     request<SambaReturn>(`${SAMBA_PREFIX}/returns/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 };
 
@@ -1472,4 +1493,6 @@ export const sourcingAccountApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}`, { method: 'DELETE' }),
   getBalance: (id: string) =>
     request<{ balance: number; mileage: number; balance_updated_at: string; has_cookie: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/balance`),
+  requestBalanceCheck: () =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/request-balance-check`, { method: 'POST' }),
 }

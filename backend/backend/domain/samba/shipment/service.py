@@ -155,8 +155,18 @@ class SambaShipmentService:
     cat_parts = [first.category1, first.category2, first.category3, first.category4]
     raw_category = " > ".join(c for c in cat_parts if c) or first.category or ""
 
+    # 그룹 매핑 조회
+    group_mappings = None
+    if first.search_filter_id:
+      from backend.domain.samba.collector.repository import SambaSearchFilterRepository
+      sf_repo = SambaSearchFilterRepository(self.session)
+      sf = await sf_repo.get_async(first.search_filter_id)
+      if sf and sf.target_mappings:
+        group_mappings = sf.target_mappings
+
     mapped = await self._resolve_category_mappings(
-      first.source_site or "", raw_category, [account_id]
+      first.source_site or "", raw_category, [account_id],
+      group_mappings=group_mappings,
     )
     category_id = mapped.get("smartstore", "")
     if not category_id:
@@ -505,10 +515,21 @@ class SambaShipmentService:
             sex_prefix = "여성의류"
 
     source_category = f"{sex_prefix} > {raw_category}" if sex_prefix and raw_category else raw_category
+
+    # 그룹 매핑 조회
+    group_mappings = None
+    if product_row.search_filter_id:
+      from backend.domain.samba.collector.repository import SambaSearchFilterRepository
+      sf_repo = SambaSearchFilterRepository(self.session)
+      sf = await sf_repo.get_async(product_row.search_filter_id)
+      if sf and sf.target_mappings:
+        group_mappings = sf.target_mappings
+
     mapped_categories = await self._resolve_category_mappings(
       product_row.source_site or "",
       source_category,
       target_account_ids,
+      group_mappings=group_mappings,
     )
     # 성별 prefix 포함 시 매핑 못 찾으면 prefix 없이 재시도
     if sex_prefix and not mapped_categories:
@@ -516,6 +537,7 @@ class SambaShipmentService:
         product_row.source_site or "",
         raw_category,
         target_account_ids,
+        group_mappings=group_mappings,
       )
     await self.repo.update_async(shipment.id, mapped_categories=mapped_categories)
 
@@ -907,7 +929,7 @@ class SambaShipmentService:
 
     # SEO 검색키워드: seo_keywords 배열을 공백 연결
     seo_kws = product.get("seo_keywords") or []
-    seo_text = " ".join(seo_kws[:3]) if seo_kws else ""
+    seo_text = " ".join(seo_kws[:2]) if seo_kws else ""
 
     tag_map = {
       "{상품명}": product.get("name", ""),
@@ -1040,22 +1062,30 @@ class SambaShipmentService:
     source_site: str,
     source_category: str,
     target_account_ids: list[str],
+    group_mappings: dict[str, str] | None = None,  # 그룹별 매핑 (우선 적용)
   ) -> dict[str, str]:
     """수집 상품의 소싱처 카테고리 → 각 마켓 카테고리 자동 매핑.
 
-    1. DB에 저장된 매핑이 있으면 사용
-    2. 없으면 키워드 기반 자동 제안으로 첫 번째 결과 사용
+    1. 그룹별 매핑이 있으면 우선 사용 (상품수집에서 설정)
+    2. DB에 저장된 매핑이 있으면 사용 (카테고리매핑 페이지에서 설정)
+    3. 없으면 키워드 기반 자동 제안으로 첫 번째 결과 사용
     """
     from backend.domain.samba.account.repository import SambaMarketAccountRepository
     from backend.domain.samba.category.repository import SambaCategoryMappingRepository
     from backend.domain.samba.category.service import SambaCategoryService
 
+    if not source_category and not group_mappings:
+      return {}
+
+    # '브랜드' 접두어 제거 (예: "브랜드 여성의류 > 재킷" → "여성의류 > 재킷")
+    import re as _re
+    source_category = _re.sub(r"^브랜드\s+", "", source_category).strip()
     if not source_category:
       return {}
 
     # DB에서 매핑 조회
     mapping_repo = SambaCategoryMappingRepository(self.session)
-    mapping = await mapping_repo.find_mapping(source_site, source_category)
+    mapping = await mapping_repo.find_mapping(source_site, source_category) if source_category else None
 
     result: dict[str, str] = {}
 
@@ -1071,7 +1101,12 @@ class SambaShipmentService:
     code_required_markets = market_types  # 전체 대상 마켓
 
     for market_type in market_types:
-      # DB 매핑에 있으면 사용
+      # 1순위: 그룹별 매핑 (상품수집에서 설정)
+      if group_mappings and group_mappings.get(market_type):
+        result[market_type] = group_mappings[market_type]
+        continue
+
+      # 2순위: DB 매핑 (카테고리매핑 페이지에서 설정)
       if mapping and mapping.target_mappings:
         target = mapping.target_mappings.get(market_type, "")
         if target:
@@ -1136,10 +1171,21 @@ class SambaShipmentService:
 
     # 카테고리 매핑 재조회
     raw_category = product_row.category or ""
+
+    # 그룹 매핑 조회
+    group_mappings = None
+    if product_row.search_filter_id:
+      from backend.domain.samba.collector.repository import SambaSearchFilterRepository
+      sf_repo = SambaSearchFilterRepository(self.session)
+      sf = await sf_repo.get_async(product_row.search_filter_id)
+      if sf and sf.target_mappings:
+        group_mappings = sf.target_mappings
+
     mapped_categories = await self._resolve_category_mappings(
       product_row.source_site or "",
       raw_category,
       failed_accounts,
+      group_mappings=group_mappings,
     )
 
     for account_id in failed_accounts:

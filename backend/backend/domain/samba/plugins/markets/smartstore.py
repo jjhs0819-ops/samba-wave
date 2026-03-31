@@ -221,12 +221,18 @@ class SmartStorePlugin(MarketPlugin):
       if detail_img_urls:
         detail_map = img_results[thumb_count:]
         replaced = 0
+        removed = 0
         for orig, naver_url in zip(detail_img_urls, detail_map):
           if naver_url:
             detail_html = detail_html.replace(orig, naver_url)
             replaced += 1
+          else:
+            # 업로드 실패 이미지 → 상세설명에서 해당 img 태그 제거 (소싱처 CDN 차단 방지)
+            img_tag_pat = re.compile(r'<img[^>]*src=["\']' + re.escape(orig) + r'["\'][^>]*/?\s*>', re.I)
+            detail_html = img_tag_pat.sub('', detail_html)
+            removed += 1
         product_copy["detail_html"] = detail_html
-        logger.info(f"[스마트스토어] 이미지 업로드 완료 — 대표 {len(naver_images)}장, 상세 {replaced}장")
+        logger.info(f"[스마트스토어] 이미지 업로드 완료 — 대표 {len(naver_images)}장, 상세 {replaced}장, 제거 {removed}장")
       elif naver_images:
         logger.info(f"[스마트스토어] 이미지 업로드 완료 — 대표 {len(naver_images)}장")
 

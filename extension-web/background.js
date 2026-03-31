@@ -784,8 +784,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'collectPoll') {
     runPollCycle()
   }
-  if (alarm.name === 'musinsaBalanceCheck') {
-    checkMusinsaBalance()
+  if (alarm.name === 'balanceCheckPoll') {
+    pollBalanceCheckRequest()
   }
 })
 
@@ -809,31 +809,54 @@ function stopCollectPolling() {
   console.log('[수집] 폴링 중지 (빈 결과 5분 연속)')
 }
 
-// 무신사 잔액 자동 체크 (12시간 주기)
+// 무신사 잔액 체크 — 버튼 요청 시에만 실행
 async function checkMusinsaBalance() {
-  console.log('[잔액] 자동 잔액 체크 시작')
+  console.log('[잔액] 잔액 체크 시작')
   let tab = null
   try {
     tab = await chrome.tabs.create({ url: 'https://www.musinsa.com/mypage', active: false })
     await new Promise(r => setTimeout(r, 15000))
   } catch (e) {
-    console.log(`[잔액] 자동 체크 실패: ${e.message}`)
+    console.log(`[잔액] 체크 실패: ${e.message}`)
   } finally {
     if (tab?.id) try { await chrome.tabs.remove(tab.id) } catch {}
+    // 체크 완료 → 폴링 중지
+    chrome.alarms.clear('balanceCheckPoll')
+    console.log('[잔액] 체크 완료 → 폴링 중지')
   }
 }
 
-// 잔액 체크 alarm 설정 (12시간 주기)
-chrome.alarms.get('musinsaBalanceCheck', (alarm) => {
+// 서버에서 잔액 체크 요청 확인 (버튼 클릭 시에만 폴링 활성)
+async function pollBalanceCheckRequest() {
+  const urls = [
+    'http://localhost:28080/api/v1/samba/sourcing-accounts/balance-check-requested',
+    `${PROXY_URL}/api/v1/samba/sourcing-accounts/balance-check-requested`,
+  ]
+  for (const url of urls) {
+    try {
+      const r = await fetch(url)
+      if (r.ok) {
+        const data = await r.json()
+        if (data.requested) {
+          console.log(`[잔액] 서버 요청 감지 → 잔액 체크 실행`)
+          checkMusinsaBalance()
+          return
+        }
+      }
+    } catch { /* 무시 */ }
+  }
+}
+
+// 잔액 폴링 (5분 주기, 서버에 요청 없으면 아무 동작 안 함)
+chrome.alarms.get('balanceCheckPoll', (alarm) => {
   if (!alarm) {
-    chrome.alarms.create('musinsaBalanceCheck', { delayInMinutes: 1, periodInMinutes: 720 })
-    console.log('[잔액] 자동 체크 alarm 설정: 12시간 주기')
+    chrome.alarms.create('balanceCheckPoll', { periodInMinutes: 5 })
   }
 })
 
-// 설치/업데이트 시 — 수집 폴링 시작 (5분간 job 없으면 자동 중지)
-chrome.runtime.onInstalled.addListener(() => { startCollectPolling() })
-chrome.runtime.onStartup.addListener(() => { startCollectPolling() })
+// 설치/업데이트/시작 시 — 수집 폴링은 시작하지 않음 (서버에서 수집 요청 시에만 시작)
+chrome.runtime.onInstalled.addListener(() => {})
+chrome.runtime.onStartup.addListener(() => {})
 
 // ==================== AI소싱 큐 폴링 ====================
 

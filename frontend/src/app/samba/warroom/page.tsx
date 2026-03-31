@@ -64,13 +64,18 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           {Object.keys(intervals).length > 0 && (
             <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.7rem' }}>
-              {Object.entries(intervals).map(([site, interval]) => (
+              {Object.entries(intervals).filter(([, v]) => (v as number) > 0).map(([site, interval]) => (
                 <span key={site} style={{ color: siteColors[site] || '#888' }}>
                   {site} {(interval as number).toFixed(1)}s
                 </span>
               ))}
             </div>
           )}
+          <button onClick={() => {
+            const text = logs.map(l => l.msg).join('\n')
+            navigator.clipboard.writeText(text)
+          }} style={{ padding: '2px 8px', fontSize: '0.65rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', color: '#4C9AFF', borderRadius: '4px', cursor: 'pointer' }}>복사</button>
+          <button onClick={() => { setLogs([]); sinceIdxRef.current = 0 }} style={{ padding: '2px 8px', fontSize: '0.65rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
         </div>
       </div>
       <div

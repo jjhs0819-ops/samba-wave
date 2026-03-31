@@ -70,7 +70,34 @@ class SambaCollectorService:
         self._sanitize_kream_data(data)
         self._clean_company_names(data)
         self._fill_optional_images(data)
+        await self._inherit_group_attributes(data)
         return await self.product_repo.create_async(**data)
+
+    async def _inherit_group_attributes(self, data: Dict[str, Any]) -> None:
+        """같은 그룹 기존 상품의 태그/SEO/정책/마켓가격을 신규 상품에 상속."""
+        fid = data.get("search_filter_id")
+        if not fid:
+            return
+        # 이미 설정된 값은 덮어쓰지 않음
+        if data.get("tags") or data.get("seo_keywords") or data.get("applied_policy_id"):
+            return
+        existing = await self.product_repo.list_by_filter(fid, limit=1)
+        if not existing:
+            return
+        ref = existing[0]
+        # 태그 복사 (내부 시스템 태그 제외)
+        ref_tags = [t for t in (ref.tags or []) if not t.startswith("__")]
+        if ref_tags:
+            data["tags"] = ref_tags + ["__ai_tagged__"]
+        # SEO 키워드 복사
+        if ref.seo_keywords:
+            data["seo_keywords"] = list(ref.seo_keywords)
+        # 정책 복사
+        if ref.applied_policy_id:
+            data["applied_policy_id"] = ref.applied_policy_id
+        # 마켓 가격 복사
+        if ref.market_prices:
+            data["market_prices"] = dict(ref.market_prices)
 
     def prepare_product_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """전처리만 수행 (배치 저장용). DB 저장은 별도."""

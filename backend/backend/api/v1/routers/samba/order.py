@@ -698,9 +698,33 @@ async def sync_orders_from_markets(
                 results.append({"account": label, "status": "skip", "message": "쿠팡 주문 조회 미구현"})
                 continue
             elif market_type == "11st":
-                # 11번가 주문 조회 (구현 대기)
-                results.append({"account": label, "status": "skip", "message": "11번가 주문 조회 미구현"})
-                continue
+                # 11번가 주문 조회
+                from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+                api_key = account.api_key or extras.get("apiKey", "")
+                if not api_key:
+                    results.append({"account": label, "status": "skip", "message": "11번가 API 키 없음"})
+                    continue
+                elevenst_client = ElevenstClient(api_key)
+                from datetime import datetime, timedelta
+                end_dt = datetime.now()
+                start_dt = end_dt - timedelta(days=body.days)
+                start_str = start_dt.strftime("%Y%m%d%H%M")
+                end_str = end_dt.strftime("%Y%m%d%H%M")
+                raw_orders = await elevenst_client.get_orders(start_str, end_str)
+                for ord_dict in raw_orders:
+                    orders_data.append(_parse_elevenst_order(ord_dict, account.id, label))
+                # 결제완료 주문 자동 발주확인
+                elevenst_confirmed = 0
+                for ord_dict in raw_orders:
+                    try:
+                        ord_no = ord_dict.get("ordNo", "")
+                        ord_prd_seq = ord_dict.get("ordPrdSeq", "")
+                        dlv_no = ord_dict.get("dlvNo", "")
+                        if ord_no and ord_prd_seq and dlv_no:
+                            await elevenst_client.confirm_order(ord_no, ord_prd_seq, dlv_no)
+                            elevenst_confirmed += 1
+                    except Exception as ce:
+                        logger.warning("[주문동기화] 11번가 발주확인 실패 ordNo=%s: %s", ord_dict.get("ordNo", ""), ce)
             else:
                 results.append({"account": label, "status": "skip", "message": f"{market_type} 주문 조회 미지원"})
                 continue
@@ -713,12 +737,19 @@ async def sync_orders_from_markets(
             ))
             _mpn_cache: dict[str, dict] = {}
             _sourcing_urls = {
-                "MUSINSA": "https://www.musinsa.com/app/goods/{}",
+                "MUSINSA": "https://www.musinsa.com/products/{}",
                 "KREAM": "https://kream.co.kr/products/{}",
-                "LOTTEON": "https://www.lotteon.com/product/{}",
+                "FashionPlus": "https://www.fashionplus.co.kr/goods/detail/{}",
+                "ABCmart": "https://www.a-rt.com/product?prdtNo={}",
+                "GrandStage": "https://www.a-rt.com/product?prdtNo={}",
+                "OKmall": "https://www.okmall.com/products/detail/{}",
+                "LOTTEON": "https://www.lotteon.com/product/productDetail.lotte?spdNo={}",
+                "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={}",
+                "ElandMall": "https://www.elandmall.com/goods/goods.action?goodsNo={}",
+                "SSF": "https://www.ssfshop.com/goods/{}",
                 "SSG": "https://www.ssg.com/item/itemView.ssg?itemId={}",
-                "ABCmart": "https://abcmart.a-rt.com/product/{}",
                 "Nike": "https://www.nike.com/kr/t/{}",
+                "Adidas": "https://www.adidas.co.kr/{}.html",
             }
             for _row in _cp_result.fetchall():
                 _site, _spid, _imgs, _mpnos = _row
@@ -726,13 +757,20 @@ async def sync_orders_from_markets(
                     _thumb = _imgs[0] if _imgs and isinstance(_imgs, list) and _imgs else ""
                     _olink = _sourcing_urls.get(_site, "").format(_spid) if _site in _sourcing_urls and _spid else ""
                     for _k, _v in _mpnos.items():
-                        if _v:
+                        if not _v:
+                            continue
+                        if isinstance(_v, dict):
+                            # 중첩 구조: {"originProductNo": "...", "smartstoreChannelProductNo": "..."}
+                            for _sub_v in [_v.get("smartstoreChannelProductNo"), _v.get("originProductNo"), _v.get("channelProductNo")]:
+                                if _sub_v:
+                                    _mpn_cache[str(_sub_v)] = {"source_site": _site, "product_image": _thumb, "original_link": _olink}
+                        else:
                             _mpn_cache[str(_v)] = {"source_site": _site, "product_image": _thumb, "original_link": _olink}
 
             # 미등록 입력 캐시: 동일 product_id+channel_name에 대해 수동 등록된 source_url/product_image 재활용
             _unreg_cache: dict[str, dict[str, str]] = {}
             _unreg_result = await session.execute(
-                sa_text(
+                _sa_text(
                     "SELECT product_id, channel_name, source_url, product_image "
                     "FROM samba_order WHERE source_url IS NOT NULL AND product_id IS NOT NULL"
                 )
@@ -744,7 +782,7 @@ async def sync_orders_from_markets(
             # 중복 확인 후 저장 (기존 주문은 금액/상태 업데이트)
             synced = 0
             for order_data in orders_data:
-                # 수집상품 매칭 — product_image, source_site 보충
+                # 수집상품 매칭 — product_image, source_site, source_url 보충
                 _pid = str(order_data.get("product_id", ""))
                 _matched = _mpn_cache.get(_pid)
                 if _matched:
@@ -752,6 +790,8 @@ async def sync_orders_from_markets(
                         order_data["product_image"] = _matched["product_image"]
                     if not order_data.get("source_site"):
                         order_data["source_site"] = _matched["source_site"]
+                    if not order_data.get("source_url") and _matched.get("original_link"):
+                        order_data["source_url"] = _matched["original_link"]
                 # 미등록 입력 자동 적용: 동일 상품의 기존 source_url/product_image 복사
                 _ukey = f"{_pid}|{order_data.get('channel_name', '')}"
                 _unreg_matched = _unreg_cache.get(_ukey)
@@ -760,8 +800,45 @@ async def sync_orders_from_markets(
                         order_data["source_url"] = _unreg_matched["source_url"]
                     if not order_data.get("product_image") and _unreg_matched["product_image"]:
                         order_data["product_image"] = _unreg_matched["product_image"]
-                # order_number 기준 중복 체크
+                # 상품명에서 소싱처 상품번호 추출 → source_site/source_url 보충
+                if not order_data.get("source_url"):
+                    import re as _re
+                    _pname = order_data.get("product_name", "")
+                    _id_match = _re.search(r'\b(\d{6,})\s*$', _pname)
+                    if _id_match:
+                        _sid = _id_match.group(1)
+                        # 1차: DB에서 수집상품 조회
+                        _cp_check = await session.execute(_sa_text(
+                            "SELECT source_site, images FROM samba_collected_product WHERE site_product_id = :sid LIMIT 1"
+                        ), {"sid": _sid})
+                        _cp_row = _cp_check.fetchone()
+                        if _cp_row:
+                            order_data["source_site"] = _cp_row[0]
+                            order_data["source_url"] = _sourcing_urls.get(_cp_row[0], "").format(_sid)
+                            if not order_data.get("product_image") and _cp_row[1] and isinstance(_cp_row[1], list):
+                                order_data["product_image"] = _cp_row[1][0]
+                        else:
+                            # 2차: DB에 없어도 상품명 패턴으로 소싱처 추론
+                            if len(_sid) >= 9:  # 패션플러스 상품번호는 9자리 이상
+                                order_data["source_site"] = "FashionPlus"
+                                order_data["source_url"] = f"https://www.fashionplus.co.kr/goods/detail/{_sid}"
+                            elif len(_sid) >= 7:  # 무신사 상품번호는 7자리
+                                order_data["source_site"] = "MUSINSA"
+                                order_data["source_url"] = f"https://www.musinsa.com/products/{_sid}"
+                # order_number 기준 중복 체크 + shipment_id 기반 2차 체크 (발주확인 후 productOrderId 변경 대응)
                 existing = await svc.repo.find_by_async(order_number=order_data["order_number"])
+                if not existing and order_data.get("shipment_id") and order_data.get("product_id"):
+                    # 같은 orderId + 상품번호로 이미 있는 주문 검색
+                    _dup_candidates = await svc.repo.filter_by_async(
+                        shipment_id=order_data["shipment_id"], limit=10
+                    )
+                    existing = next(
+                        (d for d in _dup_candidates if d.product_id == order_data["product_id"]),
+                        None,
+                    )
+                    if existing:
+                        # order_number 갱신 (발주확인 후 변경된 productOrderId)
+                        await svc.repo.update_async(existing.id, order_number=order_data["order_number"])
                 if existing:
                     # 기존 주문: sale_price, 이미지, 상태, 마켓주문상태 업데이트
                     update_fields: dict[str, Any] = {}
@@ -771,6 +848,8 @@ async def sync_orders_from_markets(
                         update_fields["product_image"] = order_data["product_image"]
                     if order_data.get("source_site") and not existing.source_site:
                         update_fields["source_site"] = order_data["source_site"]
+                    if order_data.get("source_url") and not existing.source_url:
+                        update_fields["source_url"] = order_data["source_url"]
                     if order_data.get("shipment_id") and not existing.shipment_id:
                         update_fields["shipment_id"] = order_data["shipment_id"]
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
@@ -805,7 +884,12 @@ async def sync_orders_from_markets(
                 synced += 1
 
             total_synced += synced
-            confirmed_count = len(unconfirmed_ids) if market_type == "smartstore" else 0
+            if market_type == "smartstore":
+                confirmed_count = len(unconfirmed_ids)
+            elif market_type == "11st":
+                confirmed_count = elevenst_confirmed
+            else:
+                confirmed_count = 0
             # 취소/반품/교환 요청 건수 (송장 미입력건만)
             cancel_requested = sum(
                 1 for od in orders_data
@@ -825,6 +909,84 @@ async def sync_orders_from_markets(
             results.append({"account": label, "status": "error", "message": str(e)})
 
     return {"total_synced": total_synced, "results": results}
+
+
+def _parse_elevenst_order(order: dict, account_id: str, account_label: str) -> dict:
+    """11번가 주문 XML dict → SambaOrder 데이터 변환."""
+    # 11번가 주문상태 코드 → 내부 status 매핑
+    status_map = {
+        "T1100": "pending",    # 결제완료
+        "T1200": "pending",    # 배송준비중
+        "T2100": "shipped",    # 배송중
+        "T2200": "shipped",    # 배송완료
+        "T3100": "completed",  # 구매확정
+        "T9100": "cancelled",  # 취소완료
+        "T9200": "returned",   # 반품완료
+    }
+    # 11번가 주문상태 코드 → 한글 표시
+    status_label_map = {
+        "T1100": "결제완료",
+        "T1200": "배송준비중",
+        "T2100": "배송중",
+        "T2200": "배송완료",
+        "T3100": "구매확정",
+        "T8100": "취소요청",
+        "T8200": "반품요청",
+        "T9100": "취소완료",
+        "T9200": "반품완료",
+    }
+
+    ord_status_cd = order.get("ordStsCd", "") or order.get("ordStatusCd", "")
+    status = status_map.get(ord_status_cd, "pending")
+    shipping_status = status_label_map.get(ord_status_cd, ord_status_cd or "결제완료")
+
+    # 배송비
+    try:
+        shipping_fee = int(order.get("dlvCst", 0) or 0)
+    except (ValueError, TypeError):
+        shipping_fee = 0
+
+    # 판매금액 (옵션별 단가 * 수량)
+    try:
+        sale_price = int(order.get("selPrc", 0) or order.get("selAmt", 0) or 0)
+    except (ValueError, TypeError):
+        sale_price = 0
+
+    try:
+        quantity = int(order.get("ordQty", 1) or 1)
+    except (ValueError, TypeError):
+        quantity = 1
+
+    # 배송지 주소 합치기
+    base_addr = order.get("rcvrBaseAddr", "") or order.get("rcvrAddr", "") or ""
+    detail_addr = order.get("rcvrDtlsAddr", "") or order.get("rcvrAddrDtl", "") or ""
+    full_addr = (base_addr + " " + detail_addr).strip()
+
+    return {
+        "order_number": str(order.get("ordNo", "") or order.get("ordrNo", "")),
+        "shipment_id": str(order.get("ordNo", "") or ""),
+        "channel_id": account_id,
+        "channel_name": account_label,
+        "product_id": str(order.get("prdNo", "") or order.get("sellerPrdCd", "")),
+        "product_name": order.get("prdNm", "") or order.get("goodsNm", "") or "",
+        "product_option": order.get("slctPrdOptNm", "") or order.get("optionNm", "") or "",
+        "product_image": "",
+        "customer_name": order.get("rcvrNm", "") or order.get("buyerNm", "") or "",
+        "customer_phone": order.get("rcvrPrtblNo", "") or order.get("rcvrMblNo", "") or order.get("rcvrTlNo", "") or "",
+        "customer_address": full_addr,
+        "quantity": quantity,
+        "sale_price": sale_price,
+        "cost": 0,
+        "fee_rate": 0,
+        "revenue": sale_price,
+        "shipping_fee": shipping_fee,
+        "status": status,
+        "shipping_status": shipping_status,
+        "shipping_company": order.get("dlvCrpNm", "") or "",
+        "tracking_number": order.get("invcNo", "") or "",
+        "ext_order_number": order.get("dlvNo", "") or "",  # 발송처리 시 사용할 배송번호
+        "source": "11st",
+    }
 
 
 def _parse_smartstore_order(
@@ -940,3 +1102,340 @@ def _parse_smartstore_order(
         "tracking_number": po.get("trackingNumber", ""),
         "source": "smartstore",
     }
+
+
+# ══════════════════════════════════════════════
+# 11번가 발송처리
+# ══════════════════════════════════════════════
+
+
+class ElevenstShipRequest(BaseModel):
+    order_id: str           # DB SambaOrder.id
+    invc_no: str            # 송장번호
+    dlv_etprs_cd: str       # 택배사 코드 (예: 00034=CJ대한통운)
+    dlv_mthd_cd: str = "01" # 배송방식 (01=택배)
+    send_dt: Optional[str] = None  # 발송일 YYYYMMDDhhmm (미입력 시 현재)
+
+
+@router.post("/11st/ship")
+async def ship_elevenst_order(
+    body: ElevenstShipRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """11번가 발송처리 — 송장번호 등록 후 배송중 상태로 변경."""
+    from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    # 주문 조회
+    svc = _write_service(session)
+    order = await svc.get_order(body.order_id)
+    if not order:
+        raise HTTPException(404, "주문을 찾을 수 없습니다")
+
+    # 11번가 계정 조회
+    account_repo = SambaMarketAccountRepository(session)
+    account = await account_repo.get_async(order.channel_id)
+    if not account:
+        raise HTTPException(404, "마켓 계정을 찾을 수 없습니다")
+
+    extras = account.additional_fields or {}
+    api_key = account.api_key or extras.get("apiKey", "")
+    if not api_key:
+        raise HTTPException(400, "11번가 API 키가 없습니다")
+
+    # ext_order_number = dlvNo (주문 수집 시 저장된 배송번호)
+    dlv_no = order.ext_order_number or ""
+    if not dlv_no:
+        raise HTTPException(400, "배송번호(dlvNo)가 없습니다. 주문을 다시 동기화해주세요")
+
+    client = ElevenstClient(api_key)
+    try:
+        await client.ship_order(
+            dlv_no=dlv_no,
+            invc_no=body.invc_no,
+            dlv_etprs_cd=body.dlv_etprs_cd,
+            dlv_mthd_cd=body.dlv_mthd_cd,
+            send_dt=body.send_dt,
+        )
+    except ElevenstApiError as e:
+        raise HTTPException(400, str(e))
+
+    # DB 업데이트
+    await svc.update_order(body.order_id, {
+        "tracking_number": body.invc_no,
+        "shipping_status": "SHIPPING",
+        "status": "shipping",
+    })
+
+    logger.info("[11번가] 발송처리 완료 orderId=%s invcNo=%s", body.order_id, body.invc_no)
+    return {"success": True, "message": f"발송처리 완료 (송장: {body.invc_no})"}
+
+
+# ══════════════════════════════════════════════
+# 11번가 주문 상태 동기화 (Phase 4)
+# ══════════════════════════════════════════════
+
+# 11번가 ordPrdStat 코드 → 내부 status/shipping_status 매핑
+_ELEVENST_STAT_MAP = {
+    "202": ("pending",   "결제완료"),
+    "301": ("pending",   "발주확인"),
+    "401": ("shipped",   "발송완료"),
+    "501": ("delivered", "배송완료"),
+    "901": ("completed", "구매확정"),
+    "A01": ("returned",  "반품완료"),
+    "B01": ("cancelled", "주문취소"),
+}
+
+
+@router.post("/11st/sync-status")
+async def sync_elevenst_order_status(
+    account_id: Optional[str] = None,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """DB에 저장된 11번가 주문 상태를 11번가 API에서 조회해 업데이트."""
+    from sqlalchemy import select
+    from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    account_repo = SambaMarketAccountRepository(session)
+    accounts = await account_repo.list_by_market_type("11st")
+
+    updated = 0
+    errors = 0
+
+    for account in accounts:
+        if account_id and str(account.id) != account_id:
+            continue
+
+        extras = account.additional_fields or {}
+        api_key = account.api_key or extras.get("apiKey", "")
+        if not api_key:
+            continue
+
+        client = ElevenstClient(api_key)
+
+        # 해당 계정의 미완료 주문 조회 (취소/완료 제외)
+        stmt = select(SambaOrder).where(
+            SambaOrder.channel_id == str(account.id),
+            SambaOrder.source == "11st",
+            SambaOrder.status.notin_(["completed", "cancelled", "returned"]),
+        )
+        result = await session.execute(stmt)
+        orders = result.scalars().all()
+
+        for order in orders:
+            if not order.order_number:
+                continue
+            try:
+                status_data = await client.get_order_status(order.order_number)
+                stat_cd = status_data.get("ordPrdStat", "")
+                if not stat_cd:
+                    continue
+
+                new_status, new_shipping_status = _ELEVENST_STAT_MAP.get(
+                    stat_cd, (order.status, order.shipping_status)
+                )
+
+                # 변경이 있을 때만 업데이트
+                if new_status != order.status or new_shipping_status != order.shipping_status:
+                    svc = _write_service(session)
+                    await svc.update_order(str(order.id), {
+                        "status": new_status,
+                        "shipping_status": new_shipping_status,
+                        "tracking_number": status_data.get("invcNo", "") or order.tracking_number or "",
+                        "shipping_company": status_data.get("dlvCrpNm", "") or order.shipping_company or "",
+                    })
+                    updated += 1
+                    logger.info("[11번가] 주문상태 업데이트 ordNo=%s %s→%s", order.order_number, order.status, new_status)
+
+            except ElevenstApiError as e:
+                logger.warning("[11번가] 주문상태 조회 실패 ordNo=%s: %s", order.order_number, e)
+                errors += 1
+
+    return {"updated": updated, "errors": errors}
+
+
+# ══════════════════════════════════════════════
+# 11번가 취소 처리 (feature/elevenst-return)
+# ══════════════════════════════════════════════
+
+class ElevenstCancelListRequest(BaseModel):
+    account_id: Optional[str] = None
+    start_time: str  # YYYYMMDDhhmm
+    end_time: str    # YYYYMMDDhhmm
+
+
+class ElevenstCancelConfirmRequest(BaseModel):
+    account_id: str
+    ord_prd_cn_seq: str  # 클레임번호
+    ord_no: str          # 주문번호
+    ord_prd_seq: str     # 주문순번
+
+
+@router.post("/11st/cancel-list")
+async def list_elevenst_cancel_requests(
+    body: ElevenstCancelListRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """11번가 취소 요청 목록 조회."""
+    from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    account_repo = SambaMarketAccountRepository(session)
+    accounts = await account_repo.list_by_market_type("11st")
+
+    results = []
+    for account in accounts:
+        if body.account_id and str(account.id) != body.account_id:
+            continue
+
+        extras = account.additional_fields or {}
+        api_key = account.api_key or extras.get("apiKey", "")
+        if not api_key:
+            continue
+
+        client = ElevenstClient(api_key)
+        try:
+            items = await client.get_cancel_requests(body.start_time, body.end_time)
+            results.extend(items)
+            logger.info("[11번가] 취소 요청 목록 조회 accountId=%s: %d건", account.id, len(items))
+        except ElevenstApiError as e:
+            logger.warning("[11번가] 취소 요청 목록 조회 실패 accountId=%s: %s", account.id, e)
+
+    return {"count": len(results), "items": results}
+
+
+@router.post("/11st/cancel")
+async def confirm_elevenst_cancel(
+    body: ElevenstCancelConfirmRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """11번가 취소 승인 처리."""
+    from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    account_repo = SambaMarketAccountRepository(session)
+    accounts = await account_repo.list_by_market_type("11st")
+
+    account = next((a for a in accounts if str(a.id) == body.account_id), None)
+    if not account:
+        raise HTTPException(404, "계정을 찾을 수 없습니다.")
+
+    extras = account.additional_fields or {}
+    api_key = account.api_key or extras.get("apiKey", "")
+    if not api_key:
+        raise HTTPException(400, "API Key가 설정되지 않았습니다.")
+
+    client = ElevenstClient(api_key)
+    try:
+        await client.confirm_cancel(body.ord_prd_cn_seq, body.ord_no, body.ord_prd_seq)
+    except ElevenstApiError as e:
+        raise HTTPException(400, str(e))
+
+    # DB 주문 상태 업데이트
+    svc = _write_service(session)
+    from sqlalchemy import select
+    stmt = select(SambaOrder).where(
+        SambaOrder.order_number == body.ord_no,
+        SambaOrder.source == "11st",
+    )
+    result = await session.execute(stmt)
+    order = result.scalars().first()
+    if order:
+        await svc.update_order(str(order.id), {"status": "cancelled", "shipping_status": "주문취소"})
+
+    logger.info("[11번가] 취소승인 완료 ordNo=%s ordPrdCnSeq=%s", body.ord_no, body.ord_prd_cn_seq)
+    return {"success": True, "message": f"취소 승인 완료 (주문번호: {body.ord_no})"}
+
+
+# ══════════════════════════════════════════════
+# 11번가 반품 처리 (feature/elevenst-return)
+# ══════════════════════════════════════════════
+
+class ElevenstReturnListRequest(BaseModel):
+    account_id: Optional[str] = None
+    start_time: str  # YYYYMMDDhhmm
+    end_time: str    # YYYYMMDDhhmm
+
+
+class ElevenstReturnConfirmRequest(BaseModel):
+    account_id: str
+    clm_req_seq: str  # 클레임번호
+    ord_no: str       # 주문번호
+    ord_prd_seq: str  # 주문순번
+
+
+@router.post("/11st/return-list")
+async def list_elevenst_return_requests(
+    body: ElevenstReturnListRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """11번가 반품 요청 목록 조회."""
+    from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    account_repo = SambaMarketAccountRepository(session)
+    accounts = await account_repo.list_by_market_type("11st")
+
+    results = []
+    for account in accounts:
+        if body.account_id and str(account.id) != body.account_id:
+            continue
+
+        extras = account.additional_fields or {}
+        api_key = account.api_key or extras.get("apiKey", "")
+        if not api_key:
+            continue
+
+        client = ElevenstClient(api_key)
+        try:
+            items = await client.get_return_requests(body.start_time, body.end_time)
+            results.extend(items)
+            logger.info("[11번가] 반품 요청 목록 조회 accountId=%s: %d건", account.id, len(items))
+        except ElevenstApiError as e:
+            logger.warning("[11번가] 반품 요청 목록 조회 실패 accountId=%s: %s", account.id, e)
+
+    return {"count": len(results), "items": results}
+
+
+@router.post("/11st/return")
+async def confirm_elevenst_return(
+    body: ElevenstReturnConfirmRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """11번가 반품 승인 처리."""
+    from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    account_repo = SambaMarketAccountRepository(session)
+    accounts = await account_repo.list_by_market_type("11st")
+
+    account = next((a for a in accounts if str(a.id) == body.account_id), None)
+    if not account:
+        raise HTTPException(404, "계정을 찾을 수 없습니다.")
+
+    extras = account.additional_fields or {}
+    api_key = account.api_key or extras.get("apiKey", "")
+    if not api_key:
+        raise HTTPException(400, "API Key가 설정되지 않았습니다.")
+
+    client = ElevenstClient(api_key)
+    try:
+        await client.confirm_return(body.clm_req_seq, body.ord_no, body.ord_prd_seq)
+    except ElevenstApiError as e:
+        raise HTTPException(400, str(e))
+
+    # DB 주문 상태 업데이트
+    svc = _write_service(session)
+    from sqlalchemy import select
+    stmt = select(SambaOrder).where(
+        SambaOrder.order_number == body.ord_no,
+        SambaOrder.source == "11st",
+    )
+    result = await session.execute(stmt)
+    order = result.scalars().first()
+    if order:
+        await svc.update_order(str(order.id), {"status": "returned", "shipping_status": "반품완료"})
+
+    logger.info("[11번가] 반품승인 완료 ordNo=%s clmReqSeq=%s", body.ord_no, body.clm_req_seq)
+    return {"success": True, "message": f"반품 승인 완료 (주문번호: {body.ord_no})"}

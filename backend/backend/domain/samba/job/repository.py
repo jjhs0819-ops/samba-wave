@@ -33,6 +33,24 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             await self.session.flush()
         return job
 
+    async def list_pending(self, limit: int = 5) -> list[SambaJob]:
+        """pending 잡을 오래된 순으로 조회 (running 변경 포함)."""
+        stmt = (
+            select(SambaJob)
+            .where(SambaJob.status == "pending")
+            .order_by(SambaJob.created_at.asc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        jobs = list(result.scalars().all())
+        for job in jobs:
+            job.status = "running"
+            job.started_at = datetime.now(UTC)
+            self.session.add(job)
+        if jobs:
+            await self.session.flush()
+        return jobs
+
     async def update_progress(self, job_id: str, current: int, total: int):
         """진행률 업데이트."""
         job = await self.get_async(job_id)
