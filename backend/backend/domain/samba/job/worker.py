@@ -23,10 +23,18 @@ def get_job_logs(job_id: str, since: int = 0) -> list[str]:
     return buf[since:]
 
 def _add_job_log(job_id: str, msg: str):
-    """Job 로그 추가."""
+    """Job 로그 추가 (최대 _MAX_JOB_LOGS 유지)."""
     if job_id not in _job_logs:
         _job_logs[job_id] = []
-    _job_logs[job_id].append(msg)
+    buf = _job_logs[job_id]
+    buf.append(msg)
+    if len(buf) > _MAX_JOB_LOGS:
+        _job_logs[job_id] = buf[-_MAX_JOB_LOGS:]
+
+
+def clear_job_logs(job_id: str):
+    """완료된 잡 로그 삭제 — 메모리 해제."""
+    _job_logs.pop(job_id, None)
 
 
 def _run_collect_in_thread(worker: 'JobWorker', job_id: str, payload: dict):
@@ -187,6 +195,7 @@ class JobWorker:
                         pass
         finally:
             self._active_types.discard(_job_type)
+            clear_job_logs(_job_id)
 
     async def _execute_collect_isolated(self, job_id: str, payload: dict):
         """격리된 이벤트 루프에서 수집 잡 실행 — 자체 DB 세션 관리."""
