@@ -447,6 +447,16 @@ class SambaShipmentService:
     skip_unchanged: bool = False,
   ) -> SambaShipment:
     """상품 전송 실제 구현 (락 획득 후 호출)."""
+    def _mem_mb():
+      try:
+        with open("/proc/self/status") as f:
+          for line in f:
+            if line.startswith("VmRSS:"):
+              return int(line.split()[1]) // 1024
+      except Exception:
+        return -1
+    logger.info(f"[메모리] 전송시작: {_mem_mb()}MB")
+
     from backend.domain.samba.account.model import SambaMarketAccount
     from backend.domain.samba.account.repository import SambaMarketAccountRepository
     from backend.domain.samba.collector.model import SambaCollectedProduct
@@ -941,6 +951,7 @@ class SambaShipmentService:
 
           acct_product["sale_price"] = calc_price
           logger.info(f"[전송] 정책 가격 계산: 원가={cost}, 마진={margin_amt}({m_margin_rate}%), 배송={m_shipping}, 수수료={m_fee}% → 판매가={calc_price}")
+          logger.info(f"[메모리] 가격계산 후: {_mem_mb()}MB")
 
         # 스킵 판단
         cur_price = int(acct_product.get("sale_price") or 0)
@@ -985,6 +996,7 @@ class SambaShipmentService:
           logger.warning(f"[전송] 계정 {account_id} 세마포어 30초 타임아웃")
           return res
         try:
+          logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
           result = await dispatch_to_market(
             self.session, market_type, acct_product, category_id,
             account=account,

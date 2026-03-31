@@ -862,6 +862,15 @@ class SmartStoreClient:
     from backend.domain.samba.image.exif import strip_exif
 
     # 이미지 다운로드 + 전처리
+    def _mem_mb():
+      try:
+        with open("/proc/self/status") as f:
+          for line in f:
+            if line.startswith("VmRSS:"):
+              return int(line.split()[1]) // 1024
+      except Exception:
+        return -1
+    logger.info(f"[메모리] 이미지다운로드 전: {_mem_mb()}MB, urls={len(image_urls)}장")
     files_list: list[tuple[str, bytes, str]] = []
     async with httpx.AsyncClient(timeout=settings.http_timeout_default, follow_redirects=True) as dl:
       for url in image_urls[:4]:
@@ -913,6 +922,7 @@ class SmartStoreClient:
         except Exception as e:
           logger.warning(f"[스마트스토어] 이미지 다운로드 실패: {e}")
 
+    logger.info(f"[메모리] 이미지다운로드 후: {_mem_mb()}MB, files={len(files_list)}장, total={sum(len(f[1]) for f in files_list)//1024}KB")
     if not files_list:
       return []
 
@@ -932,6 +942,7 @@ class SmartStoreClient:
           continue
         if not resp.is_success:
           raise SmartStoreApiError(f"이미지 업로드 실패: {resp.status_code} {resp.text[:200]}")
+        logger.info(f"[메모리] 네이버업로드 후: {_mem_mb()}MB")
         data = resp.json()
         return [img.get("url", "") for img in data.get("images", [])]
     raise SmartStoreApiError("이미지 업로드 실패: 429 Rate Limit 초과")
