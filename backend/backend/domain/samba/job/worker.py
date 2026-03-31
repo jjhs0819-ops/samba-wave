@@ -1046,7 +1046,7 @@ class JobWorker:
                 return
             try:
                 _req_id, _future = SourcingQueue.add_search_job(site, keyword, url=original_url, max_count=remaining)
-                ext_result = await asyncio.wait_for(_future, timeout=60)
+                ext_result = await asyncio.wait_for(_future, timeout=300)
                 items_list = ext_result.get("products", [])
                 logger.info(
                     f"[잡워커] {site} 확장앱 검색 '{keyword}' → {len(items_list)}건"
