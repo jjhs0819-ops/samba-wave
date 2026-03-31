@@ -86,8 +86,10 @@ class BackendSettings(BaseSettings):
     http_timeout_default: int = 30  # 기본 API (등록, 수정)
     http_timeout_upload: int = 60   # 이미지 업로드 등 느린 작업
 
-    # 프록시 URL 목록 (콤마 구분, 오토튠 IP 로테이션용)
+    # 프록시 URL (오토튠용, 콤마 구분 — 로테이션)
     proxy_urls: str = ""
+    # 프록시 URL (수집용)
+    collect_proxy_url: str = ""
 
     # 추가 허용 origin (콤마 구분, Railway 환경변수로 주입)
     cors_extra_origins: str = ""

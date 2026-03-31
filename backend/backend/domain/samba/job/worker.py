@@ -428,7 +428,12 @@ class JobWorker:
             await repo.fail_job(job.id, "무신사 로그인(쿠키) 필요")
             return
 
-        client = MusinsaClient(cookie=cookie)
+        # 수집용 프록시 적용
+        from backend.core.config import settings as _settings
+        _collect_proxy = _settings.collect_proxy_url or None
+        client = MusinsaClient(cookie=cookie, proxy_url=_collect_proxy)
+        if _collect_proxy:
+            logger.info(f"[잡워커] 수집 프록시: {_collect_proxy.split('@')[-1] if '@' in _collect_proxy else 'on'}")
 
         # 키워드/옵션 추출
         keyword_or_url = sf.keyword or ""
