@@ -18,12 +18,21 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
+      - name: Configure Docker
+        run: gcloud auth configure-docker asia-northeast3-docker.pkg.dev --quiet
+
+      - name: Build Docker image
+        run: docker build -t asia-northeast3-docker.pkg.dev/glass-sight-452013-n6/samba-wave/backend:latest ./backend
+
+      - name: Push Docker image
+        run: docker push asia-northeast3-docker.pkg.dev/glass-sight-452013-n6/samba-wave/backend:latest
+
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Build and Deploy to Cloud Run
+      - name: Deploy to Cloud Run
         run: |
           gcloud run deploy samba-wave-backend \
-            --source ./backend \
+            --image asia-northeast3-docker.pkg.dev/glass-sight-452013-n6/samba-wave/backend:latest \
             --region asia-northeast3 \
             --platform managed \
             --allow-unauthenticated \
