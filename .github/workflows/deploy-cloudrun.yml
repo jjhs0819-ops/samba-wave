@@ -22,13 +22,8 @@ jobs:
 
       - name: Build and Deploy to Cloud Run
         run: |
-          gcloud builds submit \
-            --tag asia-northeast3-docker.pkg.dev/glass-sight-452013-n6/samba-wave/backend:latest \
-            ./backend \
-            --project glass-sight-452013-n6
-
           gcloud run deploy samba-wave-backend \
-            --image asia-northeast3-docker.pkg.dev/glass-sight-452013-n6/samba-wave/backend:latest \
+            --source ./backend \
             --region asia-northeast3 \
             --platform managed \
             --allow-unauthenticated \
