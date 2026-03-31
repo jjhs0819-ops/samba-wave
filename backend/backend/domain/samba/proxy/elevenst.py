@@ -792,7 +792,6 @@ class ElevenstClient:
   <selPrc>{sale_price}</selPrc>
   <selMthdCd>01</selMthdCd>
   <aplBgnDy>{datetime.now().strftime('%Y%m%d')}</aplBgnDy>
-  <aplEndDy>20991231</aplEndDy>
   <prdWeight>0</prdWeight>
   <rmaterialTypCd>04</rmaterialTypCd>
   <orgnTypCd>{orgn_typ_cd}</orgnTypCd>
