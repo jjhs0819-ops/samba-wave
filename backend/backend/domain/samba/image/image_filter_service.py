@@ -94,22 +94,6 @@ class ImageFilterService:
       b64 = base64.b64encode(img_bytes).decode("ascii")
     return b64, media_type, w, h
 
-  async def _check_dimensions_partial(self, url: str) -> tuple[int, int] | None:
-    """부분 다운로드(64KB)로 이미지 크기만 확인. 실패 시 None 반환."""
-    try:
-      from io import BytesIO
-      from PIL import Image
-      async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-        resp = await client.get(url, headers={
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "Referer": url,
-        })
-        data = resp.content[:65536]  # 첫 64KB만 사용
-        img = Image.open(BytesIO(data))
-        return img.size
-    except Exception:
-      return None
-
   # ------------------------------------------------------------------
   # Claude Vision 분류
   # ------------------------------------------------------------------
@@ -142,8 +126,7 @@ class ImageFilterService:
 
     # 이미지 다운로드 + base64 인코딩
     encoded: list[tuple[int, str, str, str]] = []  # (index, url, b64, media_type)
-    failed_indices: set[int] = set()
-    # 비율 기반 사전 필터링 — 세로가 가로의 2배 이상이면 상세페이지 이미지로 판단
+    # 비율 기반 사전 필터링 또는 다운로드 실패 → 제거 대상
     tall_indices: set[int] = set()
 
     for idx, url in enumerate(urls):
@@ -155,14 +138,8 @@ class ImageFilterService:
           continue
         encoded.append((idx, url, b64, media_type))
       except Exception as e:
-        logger.warning(f"[이미지필터] 다운로드 실패: {url[:80]} — {e}")
-        # 다운로드 실패 시 부분 다운로드로 비율만 체크
-        dims = await self._check_dimensions_partial(url)
-        if dims and dims[1] > dims[0] * 2:
-          logger.info(f"[이미지필터] 다운로드 실패했지만 비율 체크로 제외 ({dims[0]}x{dims[1]}): {url[:80]}")
-          tall_indices.add(idx)
-        else:
-          failed_indices.add(idx)
+        logger.warning(f"[이미지필터] 다운로드 실패 → 제거 대상: {url[:80]} — {e}")
+        tall_indices.add(idx)
 
     if not encoded:
       # 모든 이미지 다운로드 실패 -> 전부 product로 분류 (원본 유지)
@@ -225,11 +202,7 @@ class ImageFilterService:
         for _, url, _, _ in chunk:
           results.append({"url": url, "type": "product"})
 
-    # 다운로드 실패한 이미지도 product로 추가 (원본 유지)
-    for idx in failed_indices:
-      results.append({"url": urls[idx], "type": "product"})
-
-    # 비율 필터링된 이미지는 other로 추가 (상세페이지 이미지)
+    # 비율 필터링 또는 다운로드 실패 이미지 → other로 추가 (제거 대상)
     for idx in tall_indices:
       results.append({"url": urls[idx], "type": "other"})
 
