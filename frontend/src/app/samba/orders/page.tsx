@@ -58,6 +58,7 @@ const ACTION_BUTTONS = [
 ] as const
 
 export default function OrdersPage() {
+  useEffect(() => { document.title = 'SAMBA-주문관리' }, [])
   const searchParams = useSearchParams()
   const [orders, setOrders] = useState<SambaOrder[]>([])
   const [channels, setChannels] = useState<SambaChannel[]>([])

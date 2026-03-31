@@ -40,6 +40,7 @@ interface DailyRow {
 }
 
 export default function AnalyticsPage() {
+  useEffect(() => { document.title = 'SAMBA-분석' }, [])
   const [loading, setLoading] = useState(true)
   const [marketAccounts, setMarketAccounts] = useState<SambaMarketAccount[]>([])
   const [orders, setOrders] = useState<SambaOrder[]>([])

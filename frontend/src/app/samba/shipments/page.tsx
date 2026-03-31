@@ -22,6 +22,7 @@ const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adid
 const MARKET_TYPE_TO_POLICY_KEY = SHARED_POLICY_KEY
 
 export default function ShipmentsPage() {
+  useEffect(() => { document.title = 'SAMBA-상품전송삭제' }, [])
   const searchParams = useSearchParams()
   const [products, setProducts] = useState<SambaCollectedProduct[]>([])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])

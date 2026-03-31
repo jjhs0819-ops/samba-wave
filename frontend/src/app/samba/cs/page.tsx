@@ -31,6 +31,7 @@ const INQUIRY_TYPE_MAP: Record<string, { label: string; color: string }> = {
 const MARKETS = CS_MARKET_FILTERS
 
 export default function CSPage() {
+  useEffect(() => { document.title = 'SAMBA-CS관리' }, [])
   // 데이터
   const [inquiries, setInquiries] = useState<SambaCSInquiry[]>([])
   const [total, setTotal] = useState(0)

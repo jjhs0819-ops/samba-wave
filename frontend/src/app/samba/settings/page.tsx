@@ -811,6 +811,7 @@ const STORE_MARKETS: MarketConfig[] = [
 ]
 
 export default function SettingsPage() {
+  useEffect(() => { document.title = 'SAMBA-설정' }, [])
   // Accounts state
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [accountLoading, setAccountLoading] = useState(true)

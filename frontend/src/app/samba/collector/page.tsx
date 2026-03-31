@@ -135,6 +135,7 @@ function MappingMarketRow({ marketType, marketName, value, onChange, onClear }: 
 }
 
 export default function CollectorPage() {
+  useEffect(() => { document.title = 'SAMBA-상품수집' }, [])
   const router = useRouter();
   const [filters, setFilters] = useState<SambaSearchFilter[]>([]);
   const [policies, setPolicies] = useState<SambaPolicy[]>([]);

@@ -33,6 +33,7 @@ const COST_PER_CALL_KRW = 15
 const COST_BASIS = 'Sonnet4 $3/M in + $15/M out × ₩1,450'
 
 export default function CategoriesPage() {
+  useEffect(() => { document.title = 'SAMBA-카테고리' }, [])
   const router = useRouter()
   const [products, setProducts] = useState<SambaCollectedProduct[]>([])
   const [loading, setLoading] = useState(true)

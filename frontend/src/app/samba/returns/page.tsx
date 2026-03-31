@@ -49,6 +49,7 @@ const fmtMD = (d?: string | null) => {
 const tdCenter = { padding: '0.625rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' as const, textAlign: 'center' as const, verticalAlign: 'middle' as const }
 
 export default function ReturnsPage() {
+  useEffect(() => { document.title = 'SAMBA-반품관리' }, [])
   const [returns, setReturns] = useState<SambaReturn[]>([])
   const [stats, setStats] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)

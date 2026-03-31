@@ -72,6 +72,7 @@ const defaultPricing: PricingForm = {
 
 
 export default function PoliciesPage() {
+  useEffect(() => { document.title = 'SAMBA-정책관리' }, [])
   const searchParams = useSearchParams()
   const [policies, setPolicies] = useState<SambaPolicy[]>([])
   const [loading, setLoading] = useState(true)

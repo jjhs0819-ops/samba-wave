@@ -158,6 +158,7 @@ const selectStyle: React.CSSProperties = {
 // ── 메인 컴포넌트 ──
 
 export default function SNSPage() {
+  useEffect(() => { document.title = 'SAMBA-SNS' }, [])
   const [tab, setTab] = useState<TabType>('overview')
 
   // 종합현황

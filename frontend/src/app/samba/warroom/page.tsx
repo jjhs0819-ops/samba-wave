@@ -194,6 +194,7 @@ type StoreScore = {
 }
 
 export default function WarroomPage() {
+  useEffect(() => { document.title = 'SAMBA-오토튠' }, [])
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [events, setEvents] = useState<MonitorEvent[]>([])
   const [loading, setLoading] = useState(true)

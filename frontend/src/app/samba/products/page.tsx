@@ -28,6 +28,7 @@ function fmt(n: number): string {
 }
 
 export default function ProductsPage() {
+  useEffect(() => { document.title = 'SAMBA-상품관리' }, [])
   const searchParams = useSearchParams();
   const router = useRouter();
 

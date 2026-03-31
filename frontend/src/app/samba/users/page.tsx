@@ -14,6 +14,7 @@ const STATUS_MAP: Record<string, { label: string; color: string }> = {
 }
 
 export default function UsersPage() {
+  useEffect(() => { document.title = 'SAMBA-사용자' }, [])
   const [users, setUsers] = useState<SambaUser[]>([])
   const [loading, setLoading] = useState(true)
 
