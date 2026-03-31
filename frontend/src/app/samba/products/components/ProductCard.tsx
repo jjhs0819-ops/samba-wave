@@ -1125,7 +1125,7 @@ const ProductCard = React.memo(function ProductCard({
                 }
 
                 if (parts.length === 0) { showAlert('정책 템플릿이 적용되지 않았거나 표시할 이미지가 없습니다'); return }
-                const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>상세페이지 미리보기 - ${(p.name || '').replace(/"/g, '')}</title><style>body{margin:0;background:#fff;display:flex;flex-direction:column;align-items:center;padding:0}img{max-width:860px;width:100%;display:block;margin:0 auto}</style></head><body>${parts.join('\n')}</body></html>`
+                const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>상세페이지 미리보기 - ${(p.name || '').replace(/"/g, '')}</title><style>body{margin:0 auto;background:#fff;padding:0;max-width:860px}img{max-width:860px;width:100%;display:block;margin:0 auto}</style></head><body>${parts.join('\n')}</body></html>`
                 const blob = new Blob([html], { type: 'text/html' })
                 window.open(URL.createObjectURL(blob), '_blank')
               }}

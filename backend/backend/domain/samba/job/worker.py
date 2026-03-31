@@ -195,7 +195,8 @@ class JobWorker:
                         pass
         finally:
             self._active_types.discard(_job_type)
-            clear_job_logs(_job_id)
+            # 프론트 폴링이 로그를 읽을 시간 확보 후 삭제 (60초)
+            asyncio.get_event_loop().call_later(60, clear_job_logs, _job_id)
 
     async def _execute_collect_isolated(self, job_id: str, payload: dict):
         """격리된 이벤트 루프에서 수집 잡 실행 — 자체 DB 세션 관리."""
