@@ -904,9 +904,10 @@ async def refresh_products_bulk(
                 if _bulk_cancel_requested:
                     return RefreshResult(product_id=getattr(p, "id", "unknown"), error="cancelled")
                 _counter["i"] += 1
+                _idx = _counter["i"]
                 try:
                     r = await asyncio.wait_for(
-                        refresh_product(p, idx=_counter["i"], total=_site_total, source=source),
+                        refresh_product(p, idx=_idx, total=_site_total, source=source),
                         timeout=60,
                     )
                 except asyncio.TimeoutError:
@@ -917,6 +918,24 @@ async def refresh_products_bulk(
                         level="warning",
                     )
                     r = RefreshResult(product_id=getattr(p, "id", "unknown"), error="전체 처리 타임아웃: 60초")
+                # 실패 시 1회 재시도 (오토튠만)
+                if r.error and source == "autotune":
+                    interval = _site_intervals.get(site, base_interval)
+                    await asyncio.sleep(interval)
+                    try:
+                        r = await asyncio.wait_for(
+                            refresh_product(p, idx=_idx, total=_site_total, source=source),
+                            timeout=60,
+                        )
+                        if not r.error:
+                            _log_refresh(
+                                site, getattr(p, "id", "unknown"),
+                                getattr(p, "name", "")[:40],
+                                "재시도 성공",
+                                idx=_idx, total=_site_total,
+                            )
+                    except asyncio.TimeoutError:
+                        pass  # 재시도도 실패 → 원래 에러 유지
                 # 소싱처별 적응형 인터벌 (기본값은 소싱처별 base_interval)
                 interval = _site_intervals.get(site, base_interval)
                 await asyncio.sleep(interval)
