@@ -84,34 +84,34 @@ async def _prepare_musinsa_cache() -> None:
     logger.info(f"[쿠키 캐싱] 쿠키 {len(cookies)}개 로드, 현재 인덱스 {_bulk_musinsa_cache.get('cookie_idx', 0)}, 사용량 {_bulk_musinsa_cache.get('cookie_usage', 0)}")
 
 
-# IP 로테이션: 메인 IP ↔ 프록시 교대 사용
+# IP 로테이션: 메인 IP ↔ 프록시 100건 단위 교대
+IP_ROTATE_EVERY = 100
 _ip_rotate_counter = 0
-_ip_rotate_last: str | None = "__init__"  # 마지막 사용 IP 추적 (로그용)
+_ip_rotate_current: str | None = None  # 현재 사용 중인 프록시 (None=메인)
+_ip_rotate_label: str = ""
 
 def _get_rotated_proxy() -> str | None:
-    """메인 IP(None)과 프록시를 교대로 반환. PROXY_URLS 미설정 시 항상 None."""
-    global _ip_rotate_counter, _ip_rotate_last
+    """100건 단위로 메인↔프록시 교대. PROXY_URLS 미설정 시 항상 None."""
+    global _ip_rotate_counter, _ip_rotate_current, _ip_rotate_label
     proxy_urls = os.getenv("PROXY_URLS", "")
     if not proxy_urls:
         return None
     proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
     if not proxies:
         return None
-    # [None, proxy1, None, proxy2, ...] 식으로 메인과 프록시 교대
-    pool = []
-    for p in proxies:
-        pool.append(None)  # 메인 IP
-        pool.append(p)     # 프록시
-    idx = _ip_rotate_counter % len(pool)
     _ip_rotate_counter += 1
-    selected = pool[idx]
-    # IP 전환 시 로그 (logger 직접 사용 — context 무관하게 항상 출력)
-    label = "메인" if selected is None else selected.split("@")[-1] if "@" in selected else "프록시"
-    if _ip_rotate_last != label:
-        _ip_rotate_last = label
+    if _ip_rotate_counter >= IP_ROTATE_EVERY or _ip_rotate_label == "":
+        _ip_rotate_counter = 0
+        # 현재 메인이면 → 프록시, 프록시면 → 메인
+        if _ip_rotate_current is None:
+            _ip_rotate_current = proxies[0]
+        else:
+            _ip_rotate_current = None
+        label = "메인" if _ip_rotate_current is None else _ip_rotate_current.split("@")[-1]
+        _ip_rotate_label = label
         logger.info(f"[오토튠] 🔀 IP 전환 → {label}")
         _log_refresh("MUSINSA", "", "", f"🔀 IP 전환 → {label}")
-    return selected
+    return _ip_rotate_current
 
 
 # 쿠키 로테이션: 100건마다 다음 쿠키로 전환
