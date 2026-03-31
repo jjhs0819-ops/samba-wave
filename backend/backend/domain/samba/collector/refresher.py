@@ -96,6 +96,7 @@ def _get_rotated_proxy() -> str | None:
     from backend.core.config import settings
     proxy_urls = settings.proxy_urls
     if not proxy_urls:
+        logger.debug(f"[IP로테이션] PROXY_URLS 비어있음: '{proxy_urls}'")
         return None
     proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
     if not proxies:
@@ -387,7 +388,10 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
     else:
         cookie = _bulk_musinsa_cache.get("cookie") or await _get_musinsa_cookie()
     # 오토튠이면 메인↔프록시 IP 로테이션
-    _proxy = _get_rotated_proxy() if _current_refresh_source.get("") == "autotune" else None
+    _src = _current_refresh_source.get("")
+    _proxy = _get_rotated_proxy() if _src == "autotune" else None
+    if _idx <= 2:  # 첫 2건만 디버그 로그
+        logger.info(f"[IP디버그] source={_src}, proxy={_proxy}")
     client = MusinsaClient(cookie, proxy_url=_proxy)
     cached_grade_rate = _bulk_musinsa_cache.get("grade_rate")
     warnings: list[str] = []
