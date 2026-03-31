@@ -68,14 +68,35 @@ _bulk_musinsa_cache: dict[str, Any] = {}
 
 
 async def _prepare_musinsa_cache() -> None:
-    """MUSINSA 벌크 갱신 전 쿠키 1회 캐싱.
+    """MUSINSA 벌크 갱신 전 쿠키 캐싱 (로테이션 지원).
 
     등급할인율은 상품 API의 memberGrade.discountRate에서 직접 추출하므로
     별도 회원 API 호출 불필요 (새 멤버십 시스템).
     """
-    cookie = await _get_musinsa_cookie()
-    _bulk_musinsa_cache["cookie"] = cookie
+    cookies = await _get_musinsa_cookies()
+    _bulk_musinsa_cache["cookies"] = cookies
+    _bulk_musinsa_cache["cookie_idx"] = 0
+    _bulk_musinsa_cache["cookie_usage"] = 0
+    _bulk_musinsa_cache["cookie"] = cookies[0] if cookies else ""
     _bulk_musinsa_cache["grade_rate"] = 0
+
+
+# 쿠키 로테이션: 100건마다 다음 쿠키로 전환
+COOKIE_ROTATE_EVERY = 100
+
+def _rotate_musinsa_cookie() -> str:
+    """벌크 갱신 중 쿠키 로테이션. 100건마다 다음 쿠키로 전환."""
+    cookies = _bulk_musinsa_cache.get("cookies", [])
+    if not cookies:
+        return _bulk_musinsa_cache.get("cookie", "")
+    _bulk_musinsa_cache["cookie_usage"] = _bulk_musinsa_cache.get("cookie_usage", 0) + 1
+    if _bulk_musinsa_cache["cookie_usage"] >= COOKIE_ROTATE_EVERY:
+        _bulk_musinsa_cache["cookie_usage"] = 0
+        idx = (_bulk_musinsa_cache.get("cookie_idx", 0) + 1) % len(cookies)
+        _bulk_musinsa_cache["cookie_idx"] = idx
+        _bulk_musinsa_cache["cookie"] = cookies[idx]
+        logger.info(f"[쿠키 로테이션] 쿠키 {idx + 1}/{len(cookies)}로 전환")
+    return _bulk_musinsa_cache.get("cookie", "")
 
 
 # ── 벌크 갱신 취소 플래그 ──
@@ -283,6 +304,31 @@ async def _get_musinsa_cookie() -> str:
     return await get_musinsa_cookie()
 
 
+async def _get_musinsa_cookies() -> list[str]:
+    """DB에서 무신사 쿠키 목록 조회 (musinsa_cookies JSON 배열 또는 musinsa_cookie 단일)."""
+    try:
+        from backend.db.orm import get_read_session
+        from backend.domain.samba.forbidden.model import SambaSettings
+        from sqlmodel import select as _sel
+        import json
+        async with get_read_session() as session:
+            # 먼저 복수 쿠키 키 확인
+            result = await session.execute(
+                _sel(SambaSettings).where(SambaSettings.key == "musinsa_cookies")
+            )
+            row = result.scalar_one_or_none()
+            if row and row.value:
+                val = json.loads(row.value) if isinstance(row.value, str) else row.value
+                if isinstance(val, list) and val:
+                    return [c for c in val if c]
+            # 없으면 단일 쿠키 폴백
+            cookie = await _get_musinsa_cookie()
+            return [cookie] if cookie else []
+    except Exception:
+        cookie = await _get_musinsa_cookie()
+        return [cookie] if cookie else []
+
+
 async def _parse_musinsa(product: Any) -> RefreshResult:
     """무신사 상품 가격/재고 재수집 (MusinsaClient 활용)."""
     from backend.domain.samba.proxy.musinsa import MusinsaClient, RateLimitError
@@ -294,7 +340,11 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
     if not site_product_id:
         return RefreshResult(product_id=product.id, error="site_product_id 없음")
 
-    cookie = _bulk_musinsa_cache.get("cookie") or await _get_musinsa_cookie()
+    # 벌크 모드면 로테이션 쿠키, 아니면 단일 쿠키
+    if _bulk_musinsa_cache.get("cookies"):
+        cookie = _rotate_musinsa_cookie()
+    else:
+        cookie = _bulk_musinsa_cache.get("cookie") or await _get_musinsa_cookie()
     client = MusinsaClient(cookie)
     cached_grade_rate = _bulk_musinsa_cache.get("grade_rate")
     warnings: list[str] = []
