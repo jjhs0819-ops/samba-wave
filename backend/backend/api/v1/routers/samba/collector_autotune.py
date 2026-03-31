@@ -200,6 +200,26 @@ async def _autotune_loop():
                     _ref_mod._refresh_log_total += 1
                     log.info("[오토튠] 사이클 완료: %d성공, %d실패 (타임아웃 %d) / %d건", _ok_count, _err_count, _timeout_count, len(results))
 
+                    # 이벤트 먼저 발행 (별도 세션 — 결과 처리 실패해도 타임라인 기록)
+                    try:
+                        async with get_write_session() as ev_session:
+                            monitor = SambaMonitorService(ev_session)
+                            await monitor.emit(
+                                "scheduler_tick", "info",
+                                summary=f"오토튠 — 대상 {filtered_count}건, 갱신 {summary.refreshed}건 (성공 {_ok_count}, 실패 {_err_count})",
+                                detail={
+                                    "total": filtered_count,
+                                    "refreshed": summary.refreshed,
+                                    "ok": _ok_count,
+                                    "errors": _err_count,
+                                    "timeouts": _timeout_count,
+                                },
+                            )
+                            await ev_session.commit()
+                        log.info("[오토튠] 이벤트 발행 완료")
+                    except Exception as ev_err:
+                        log.error("[오토튠] 이벤트 발행 실패: %s", ev_err)
+
                     # DB 세션 복구 — 긴 갱신 후 유휴 세션이 끊겼을 수 있음
                     try:
                         from sqlmodel import text as _txt
@@ -468,27 +488,6 @@ async def _autotune_loop():
                         await session.commit()
 
                     log.info("[오토튠] tick 완료: 대상 %d, 갱신 %d, 가격전송 %d, 재고전송 %d, 삭제 %d", filtered_count, summary.refreshed, len(_all_price_pids), len(_all_stock_pids), deleted_count)
-
-                    # 이벤트 발행 — 별도 세션 (메인 세션 타임아웃 영향 방지)
-                    try:
-                        async with get_write_session() as ev_session:
-                            monitor = SambaMonitorService(ev_session)
-                            await monitor.emit(
-                                "scheduler_tick", "info",
-                                summary=f"오토튠 — 대상 {filtered_count}건, 갱신 {summary.refreshed}건, 가격전송 {len(_all_price_pids)}건, 재고전송 {len(_all_stock_pids)}건, 삭제 {deleted_count}건",
-                                detail={
-                                    "total": filtered_count,
-                                    "refreshed": summary.refreshed,
-                                    "price_transmit": len(_all_price_pids),
-                                    "stock_transmit": len(_all_stock_pids),
-                                    "sold_out": summary.sold_out,
-                                    "retransmitted": retransmitted,
-                                    "deleted": deleted_count,
-                                },
-                            )
-                            await ev_session.commit()
-                    except Exception as ev_err:
-                        log.error("[오토튠] 이벤트 발행 실패: %s", ev_err)
                 else:
                     await asyncio.sleep(5)
 
