@@ -425,15 +425,15 @@ class SambaShipmentService:
         self._transmit_product_inner(
           product_id, target_account_ids, update_items, skip_unchanged,
         ),
-        timeout=60,  # 상품 1건당 최대 60초, 초과 시 스킵
+        timeout=180,  # 상품 1건당 최대 180초 (최신화+이미지업로드 포함)
       )
     except asyncio.TimeoutError:
-      logger.warning(f"[전송] 상품 {product_id} 전송 60초 타임아웃 — 스킵")
+      logger.warning(f"[전송] 상품 {product_id} 전송 180초 타임아웃 — 스킵")
       shipment = await self.repo.create_async(
         product_id=product_id, target_account_ids=target_account_ids,
         update_items=update_items, status="failed",
         update_result={}, transmit_result={},
-        transmit_error={"_all": "전송 60초 타임아웃"},
+        transmit_error={"_all": "전송 180초 타임아웃"},
       )
       return shipment
     finally:
