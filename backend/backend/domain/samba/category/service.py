@@ -331,20 +331,89 @@ def _rule_match(
 def _similarity_match_smartstore(
     source_category: str, market_cats: list[str]
 ) -> Optional[str]:
-    """2단계: 키워드 유사도 매칭. 소싱 카테고리의 leaf 키워드로 가장 적합한 마켓 카테고리를 찾는다."""
+    """2단계: 키워드 유사도 매칭.
+
+    대분류부터 순차적으로 후보를 좁혀가며 매칭.
+    소싱 카테고리에 명시적 키워드가 없는 특수 대분류는 제외.
+    대분류 매칭 신뢰도가 낮으면 None 반환 → AI(3단계)에 위임.
+    """
     segs = [s.strip() for s in source_category.split(">") if s.strip()]
     if not segs:
         return None
 
-    leaf = segs[-1]
-    # 동의어 확장
-    keywords = _expand_synonyms({leaf})
-    if len(segs) > 1:
-        keywords |= _expand_synonyms({segs[-2]})
+    source_text = source_category.lower()
 
-    # 1차: leaf 키워드가 포함된 카테고리 필터
-    candidates = [c for c in market_cats if any(kw in c for kw in keywords)]
+    # ── 특수 대분류 제외: 소싱 카테고리에 해당 키워드가 없으면 후보에서 제거 ──
+    _RESTRICTED_TOPS: list[tuple[list[str], list[str]]] = [
+        # (대분류 키워드 목록, 소싱에 있어야 할 키워드)
+        (["유아동", "유아", "아동", "키즈"], ["유아", "아동", "키즈", "주니어", "베이비"]),
+        (["자동차", "모터바이크"], ["자동차", "차량", "모터바이크", "바이크", "오토바이"]),
+        (["반려동물", "강아지", "고양이"], ["반려", "강아지", "고양이", "펫"]),
+        (["수입명품"], ["명품", "럭셔리", "수입명품"]),
+        (["브랜드 "], ["브랜드"]),
+        (["노트북", "데스크탑", "PC주변"], ["노트북", "데스크탑", "PC", "컴퓨터"]),
+        (["모니터", "프린터"], ["모니터", "프린터"]),
+        (["저장장치"], ["저장장치", "SSD", "HDD"]),
+        (["영상가전", "계절가전"], ["가전", "TV", "에어컨"]),
+        (["음향기기"], ["스피커", "이어폰", "헤드폰", "음향"]),
+    ]
+
+    def _is_restricted_top(top_seg: str) -> bool:
+        """소싱 카테고리에 관련 키워드가 없는 특수 대분류인지 확인."""
+        top_lower = top_seg.lower()
+        for top_kws, require_kws in _RESTRICTED_TOPS:
+            if any(tk in top_lower for tk in top_kws):
+                # 이 대분류에 해당 → 소싱에 관련 키워드가 있는지 확인
+                if not any(rk in source_text for rk in require_kws):
+                    return True  # 소싱에 키워드 없음 → 제외
+        return False
+
+    # 특수 대분류 제외된 후보
+    candidates = [c for c in market_cats if not _is_restricted_top(c.split(" > ")[0])]
+
+    # 전체 세그먼트의 키워드 + 동의어 (최종 점수 계산용)
+    all_keywords = set()
+    for seg in segs:
+        all_keywords |= _expand_synonyms({seg})
+
+    # 마켓 대분류 목록 수집 (세그먼트가 대분류에 직접 일치하면 후보 보존용)
+    market_top_set = {c.split(" > ")[0] for c in candidates}
+
+    # ── 대분류부터 순차 필터링 ──
+    for i, seg in enumerate(segs):
+        seg_keywords = _expand_synonyms({seg})
+        narrowed = []
+        for c in candidates:
+            c_parts = [s.strip() for s in c.split(" > ")]
+            if i == 0:
+                # 대분류: 첫 번째 세그먼트에서만 매칭
+                if any(kw in c_parts[0] for kw in seg_keywords):
+                    narrowed.append(c)
+            else:
+                # 중분류 이하: 해당 레벨 ~ +1 범위
+                search_range = c_parts[max(0, i):min(len(c_parts), i + 2)]
+                if any(any(kw in part for kw in seg_keywords) for part in search_range):
+                    narrowed.append(c)
+        if narrowed:
+            candidates = narrowed
+
+    # ── 소싱 하위 세그먼트가 마켓 대분류와 직접 일치하면 해당 대분류도 후보에 추가 ──
+    # 예: "패션잡화 > 신발 > 스니커즈" → "신발"이 G마켓 대분류에 있으면 "신발 > ..." 카테고리도 포함
+    for seg in segs[1:]:
+        seg_kws = _expand_synonyms({seg})
+        for top in market_top_set:
+            if any(kw == top or (len(kw) >= 2 and kw in top and len(kw) / len(top) > 0.5) for kw in seg_kws):
+                extra = [c for c in market_cats if c.split(" > ")[0] == top and c not in candidates and not _is_restricted_top(top)]
+                if extra:
+                    candidates.extend(extra)
+
     if not candidates:
+        return None
+
+    # ── 대분류 신뢰도 체크: 후보가 너무 많은 대분류에 분산되면 AI에 위임 ──
+    top_set = {c.split(" > ")[0] for c in candidates}
+    if len(top_set) > 4:
+        # 5개 이상 대분류에 분산 → 유사도 매칭 불확실 → AI에 위임
         return None
 
     # 패션의류 우선 (의류 카테고리는 패션의류 하위가 가장 적합)
@@ -352,12 +421,11 @@ def _similarity_match_smartstore(
     if fashion:
         candidates = fashion
 
-    # 가장 짧은 경로(= 가장 넓은 카테고리)를 선택하면 안전
-    # 대신 가장 많은 키워드가 매칭되는 카테고리 선택
+    # 전체 키워드 매칭 점수로 최적 카테고리 선택
     best = None
     best_score = 0
     for c in candidates:
-        score = sum(1 for kw in keywords if kw in c)
+        score = sum(1 for kw in all_keywords if kw in c)
         if score > best_score:
             best_score = score
             best = c
@@ -400,6 +468,11 @@ _SYNONYM_MAP: dict[str, list[str]] = {
     "하의": ["하의", "바지", "팬츠", "보텀"],
     "스포츠": ["스포츠", "스포츠의류", "트레이닝", "트레이닝복", "운동복"],
     "아우터": ["아우터", "외투", "겉옷", "자켓"],
+    "뷰티": ["뷰티", "화장품", "코스메틱", "미용"],
+    "화장품": ["화장품", "뷰티", "코스메틱"],
+    "메이크업": ["메이크업", "색조", "베이스메이크업"],
+    "패션잡화": ["패션잡화", "잡화", "액세서리"],
+    "신발": ["신발", "슈즈", "구두"],
     "신발": ["신발", "슈즈", "풋웨어"],
     "가방": ["가방", "백", "백팩"],
 }
@@ -1075,7 +1148,7 @@ class SambaCategoryService:
     # ==================== Category Mappings ====================
 
     async def list_mappings(
-        self, skip: int = 0, limit: int = 50
+        self, skip: int = 0, limit: int = 10000
     ) -> List[SambaCategoryMapping]:
         return await self.mapping_repo.list_async(
             skip=skip, limit=limit, order_by="-created_at"
@@ -1098,6 +1171,101 @@ class SambaCategoryService:
         self, source_site: str, source_category: str
     ) -> Optional[SambaCategoryMapping]:
         return await self.mapping_repo.find_mapping(source_site, source_category)
+
+    # ==================== ESM 크로스매핑 복사 ====================
+
+    async def copy_esm_cross_mapping(
+        self,
+        from_market: str = "gmarket",
+        to_market: str = "auction",
+        mapping_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """지마켓↔옥션 카테고리 매핑을 크로스매핑으로 복사.
+
+        from_market에 매핑이 있고 to_market에 없는 행만 대상.
+        경로 → 숫자코드 → 크로스매핑 → 역조회(경로) 순으로 변환.
+
+        Args:
+            from_market: 원본 마켓 (기본: gmarket)
+            to_market: 대상 마켓 (기본: auction)
+            mapping_ids: 대상 매핑 ID 목록 (None이면 전체)
+
+        Returns:
+            {"copied": 복사된 수, "skipped": 스킵된 수, "failed": 실패 수}
+        """
+        from backend.domain.samba.proxy.esmplus import esm_map_category
+
+        # 원본/대상 카테고리 트리 (경로↔코드 변환용)
+        from_tree = await self.tree_repo.get_by_site(from_market)
+        to_tree = await self.tree_repo.get_by_site(to_market)
+        if not from_tree or not from_tree.cat2 or not to_tree or not to_tree.cat2:
+            return {"copied": 0, "skipped": 0, "failed": 0, "error": "카테고리 트리가 동기화되지 않았습니다"}
+
+        from_code_map = from_tree.cat2  # {경로: 코드}
+        to_code_map = to_tree.cat2      # {경로: 코드}
+        # 역방향 맵: 코드 → 경로
+        to_reverse = {str(v): k for k, v in to_code_map.items()}
+
+        # 전체 매핑 조회
+        all_mappings = await self.mapping_repo.list_async(skip=0, limit=100000, order_by="-created_at")
+
+        copied = 0
+        skipped = 0
+        failed = 0
+
+        for mapping in all_mappings:
+            # mapping_ids 지정 시 해당 ID만 대상
+            if mapping_ids and mapping.id not in mapping_ids:
+                continue
+
+            targets = mapping.target_mappings or {}
+
+            # 원본 마켓 매핑이 없으면 스킵
+            from_path = targets.get(from_market, "")
+            if not from_path:
+                skipped += 1
+                continue
+
+            # 대상 마켓에 이미 매핑이 있으면 스킵
+            if targets.get(to_market):
+                skipped += 1
+                continue
+
+            # 경로 → 숫자코드 변환
+            from_code = str(from_code_map.get(from_path, ""))
+            if not from_code:
+                # 퍼지 매칭 시도
+                from_code = await self.resolve_category_code(from_market, from_path)
+            if not from_code:
+                failed += 1
+                logger.warning("[ESM 크로스복사] %s 코드 변환 실패: %s", from_market, from_path)
+                continue
+
+            # 크로스매핑: 지마켓 코드 → 옥션 코드
+            to_code = esm_map_category(from_code, from_market, to_market)
+            if not to_code:
+                failed += 1
+                logger.warning("[ESM 크로스복사] 크로스매핑 실패: %s(%s)", from_market, from_code)
+                continue
+
+            # 숫자코드 → 경로 역조회
+            to_path = to_reverse.get(str(to_code), "")
+            if not to_path:
+                failed += 1
+                logger.warning("[ESM 크로스복사] %s 경로 역조회 실패: %s", to_market, to_code)
+                continue
+
+            # 매핑 업데이트
+            updated_targets = {**targets, to_market: to_path}
+            await self.mapping_repo.update_async(mapping.id, target_mappings=updated_targets)
+            copied += 1
+            logger.info(
+                "[ESM 크로스복사] %s → %s: %s → %s",
+                from_market, to_market, from_path, to_path,
+            )
+
+        await self.mapping_repo.session.commit()
+        return {"copied": copied, "skipped": skipped, "failed": failed}
 
     # ==================== Category Tree ====================
 
@@ -1592,6 +1760,8 @@ class SambaCategoryService:
             "11st": self._sync_elevenst,
             "lottehome": self._sync_lottehome,
             "cafe24": self._sync_cafe24,
+            "gmarket": self._sync_esm_market,
+            "auction": self._sync_esm_market,
         }
         method = sync_methods.get(market_type)
         if not method:
@@ -2014,6 +2184,50 @@ class SambaCategoryService:
 
         return categories, code_map if code_map else None
 
+    async def _sync_esm_market(self, account) -> tuple:
+        """ESM Plus(지마켓/옥션) 카테고리 동기화. (카테고리목록, 코드맵) 반환.
+
+        사전 수집된 JSON 파일이 있으면 즉시 로드, 없으면 API로 수집.
+        """
+        import json as _json
+        from pathlib import Path as _Path
+
+        market_type = account.market_type  # "gmarket" or "auction"
+        file_name = "esm_gmarket_cats.json" if market_type == "gmarket" else "esm_auction_cats.json"
+        json_path = _Path(__file__).resolve().parent / file_name
+
+        if json_path.exists():
+            # 사전 수집된 JSON 로드
+            with open(json_path, encoding="utf-8") as f:
+                tree = _json.load(f)  # {경로: 코드}
+            categories = list(tree.keys())
+            code_map = tree
+            logger.info(f"[{market_type}] 카테고리 JSON 로드: {len(categories)}개")
+            return categories, code_map
+
+        # JSON 없으면 API로 수집
+        from backend.domain.samba.proxy.esmplus import ESMPlusClient
+
+        extra = account.additional_fields or {}
+        seller_id = extra.get("apiKey") or extra.get("sellerId") or ""
+        if not seller_id:
+            raise ValueError(f"{market_type} 판매자 ID가 없습니다")
+
+        hosting_id = extra.get("hostingId") or "hlccorp"
+        secret_key = extra.get("secretKey") or "M2U0NWFhMmYtZGY0MS00Yjdk"
+
+        client = ESMPlusClient(hosting_id, secret_key, seller_id, site=market_type)
+        tree = await client.fetch_category_tree(delay=0.5)
+
+        # JSON 파일로 저장 (다음 동기화 시 빠른 로드용)
+        with open(json_path, "w", encoding="utf-8") as f:
+            _json.dump(tree, f, ensure_ascii=False, indent=2)
+        logger.info(f"[{market_type}] 카테고리 API 수집 + JSON 저장: {len(tree)}개")
+
+        categories = list(tree.keys())
+        code_map = tree
+        return categories, code_map
+
     async def _sync_lottehome(self, account) -> tuple:
         """롯데홈쇼핑 카테고리 동기화. (카테고리목록, 코드맵) 반환."""
         from backend.domain.samba.proxy.lottehome import LotteHomeClient
@@ -2221,11 +2435,14 @@ class SambaCategoryService:
                 group_str = ", ".join(item.get("groups", [])[:3])
                 sample_names = [n for n in (item.get("samples") or []) if n][:2]
                 gender_hint = {"male": "남성", "female": "여성", "unisex": "남녀공용"}.get(item.get("gender", ""), "")
+                ss_hint = item.get("ss_mapped", "")
                 entry = f'{idx + 1}. [{item["site"]}] {item["leaf_path"]}'
                 if gender_hint:
                     entry += f' | 성별: {gender_hint}'
                 if sample_names:
                     entry += f' | 상품명: {" / ".join(sample_names)}'
+                if ss_hint:
+                    entry += f' | 스마트스토어매핑: {ss_hint}'
                 if seo_str:
                     entry += f' | SEO: {seo_str}'
                 if tag_str:
@@ -2268,9 +2485,37 @@ class SambaCategoryService:
                 leaf_kw = _expand_synonyms(leaf_kw)
                 parent_kw = _expand_synonyms(parent_kw)
 
+                # 배치 내 소싱 카테고리 원문 (특수 대분류 제외 판별용)
+                batch_source_text = " ".join(item["leaf_path"].lower() for item in batch)
+
+                # 소싱에 없는 특수 대분류 제외 (2단계와 동일 로직)
+                _AI_RESTRICTED_TOPS = [
+                    (["유아동", "유아", "아동", "키즈"], ["유아", "아동", "키즈", "주니어", "베이비"]),
+                    (["자동차", "모터바이크"], ["자동차", "차량", "모터바이크", "바이크", "오토바이"]),
+                    (["반려동물", "강아지", "고양이"], ["반려", "강아지", "고양이", "펫"]),
+                    (["수입명품"], ["명품", "럭셔리", "수입명품"]),
+                    (["브랜드 "], ["브랜드"]),
+                    (["노트북", "데스크탑", "PC주변"], ["노트북", "데스크탑", "PC", "컴퓨터"]),
+                    (["모니터", "프린터"], ["모니터", "프린터"]),
+                    (["저장장치"], ["저장장치", "SSD", "HDD"]),
+                    (["영상가전", "계절가전"], ["가전", "TV", "에어컨"]),
+                    (["음향기기"], ["스피커", "이어폰", "헤드폰", "음향"]),
+                ]
+
+                def _ai_filter_restricted(top_seg: str) -> bool:
+                    top_lower = top_seg.lower()
+                    for top_kws, require_kws in _AI_RESTRICTED_TOPS:
+                        if any(tk in top_lower for tk in top_kws):
+                            if not any(rk in batch_source_text for rk in require_kws):
+                                return True
+                    return False
+
                 lines = []
                 has_enough_matches = True
                 for m, cats in market_cat_lists.items():
+                    # ESM 마켓은 특수 대분류 제외 적용
+                    if m in ("gmarket", "auction"):
+                        cats = [c for c in cats if not _ai_filter_restricted(c.split(" > ")[0])]
                     leaf_matches = [c for c in cats if any(kw in c for kw in leaf_kw)]
                     if len(leaf_matches) >= 5:
                         relevant = leaf_matches[:30]
@@ -2726,8 +2971,9 @@ JSON만:
                     logger.info(f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})")
 
             # ── 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만, 롯데ON 제외) ──
-            # 롯데ON은 카테고리 구조가 복잡하여 유사도 매칭이 오히려 오류를 유발
-            # → 룰에서 못 찾으면 AI에 위임
+            # ESM(지마켓/옥션): SS 매핑이 있으면 SS 결과를 브릿지로 사용
+            # 롯데ON은 카테고리 구조가 복잡하여 유사도 매칭이 오히려 오류를 유발 → 룰에서 못 찾으면 AI에 위임
+            ss_mapped = current_targets.get("smartstore") or resolved.get("smartstore", "")
             for mk in list(missing_markets):
                 if mk in resolved:
                     continue
@@ -2735,6 +2981,13 @@ JSON만:
                     continue
                 mk_cats = ss_cats if mk == "smartstore" else await self._get_market_categories(mk)
                 if mk_cats:
+                    # ESM 마켓은 SS 매핑 결과를 브릿지로 사용 (SS 카테고리 이름이 ESM과 더 유사)
+                    if mk in ("gmarket", "auction") and ss_mapped:
+                        sim_result = _similarity_match_smartstore(ss_mapped, mk_cats)
+                        if sim_result:
+                            resolved[mk] = sim_result
+                            logger.info(f"[매핑-SS브릿지] {leaf_path} → SS:{ss_mapped[:30]} → {mk}: {sim_result}")
+                            continue
                     sim_result = _similarity_match_smartstore(leaf_path, mk_cats)
                     if sim_result:
                         resolved[mk] = sim_result
@@ -2775,6 +3028,8 @@ JSON만:
 
             # ── 3단계: 나머지 마켓은 AI에 위임 ──
             if missing_markets:
+                # AI에 SS 매핑 결과 전달 (ESM 정확도 향상용)
+                ss_hint = current_targets.get("smartstore") or resolved.get("smartstore", "")
                 batch_items.append({
                     "site": site,
                     "leaf_path": leaf_path,
@@ -2783,6 +3038,7 @@ JSON만:
                     "seo": cat_seo.get((site, leaf_path), []),
                     "groups": list(cat_groups.get((site, leaf_path), set())),
                     "gender": gender,
+                    "ss_mapped": ss_hint,
                     "target_markets": list(missing_markets),
                     "existing": existing,
                     "mode": "update" if existing else "create",
@@ -2819,7 +3075,9 @@ JSON만:
 
                 if item["mode"] == "update":
                     existing = item["existing"]
-                    current_targets = existing.target_mappings or {}
+                    # DB에서 최신 target_mappings 다시 로드 (1~2단계 결과 반영)
+                    refreshed = await self.mapping_repo.get_async(existing.id)
+                    current_targets = (refreshed.target_mappings if refreshed else existing.target_mappings) or {}
                     new_targets = {**current_targets}
                     for market, cat in ai_result.items():
                         if cat:
@@ -2859,5 +3117,23 @@ JSON만:
                 logger.info(f"[벌크매핑] {len(retry_items)}개 빈 결과 재시도")
                 import asyncio
                 await asyncio.sleep(3)
+
+        # ── ESM 크로스매핑 자동 적용 ──
+        # 지마켓/옥션 중 하나만 매핑된 경우 반대쪽 자동 복사
+        esm_pair = {"gmarket", "auction"}
+        if esm_pair & all_market_keys:
+            esm_copied = 0
+            for from_mk, to_mk in [("gmarket", "auction"), ("auction", "gmarket")]:
+                if from_mk in all_market_keys and to_mk in all_market_keys:
+                    try:
+                        cross_result = await self.copy_esm_cross_mapping(
+                            from_market=from_mk, to_market=to_mk,
+                        )
+                        esm_copied += cross_result.get("copied", 0)
+                    except Exception as e:
+                        logger.warning("[벌크매핑] ESM 크로스매핑 실패: %s", e)
+            if esm_copied:
+                logger.info("[벌크매핑] ESM 크로스매핑 자동 적용: %d건", esm_copied)
+                updated += esm_copied
 
         return {"mapped": mapped, "updated": updated, "skipped": skipped, "rule_mapped": rule_mapped, "errors": errors}

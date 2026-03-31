@@ -33,6 +33,7 @@ const COST_PER_CALL_KRW = 15
 const COST_BASIS = 'Sonnet4 $3/M in + $15/M out × ₩1,450'
 
 export default function CategoriesPage() {
+  useEffect(() => { document.title = 'SAMBA-카테고리' }, [])
   const router = useRouter()
   const [products, setProducts] = useState<SambaCollectedProduct[]>([])
   const [loading, setLoading] = useState(true)
@@ -93,7 +94,7 @@ export default function CategoriesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const all = await collectorApi.listProducts(0, 500)
+      const all = await collectorApi.listProducts(0, 100000)
       if (Array.isArray(all) && all.length > 0) {
         setProducts(all)
         buildTree(all)
@@ -510,12 +511,10 @@ export default function CategoriesPage() {
     products.forEach(p => {
       const site = p.source_site || ''
       if (!site) return
-      const cats = [p.category1, p.category2, p.category3, p.category4].filter(Boolean) as string[]
-      if (cats.length === 0 && p.category) {
-        cats.push(...p.category.split('>').map(c => c.trim()).filter(Boolean))
-      }
-      if (cats.length === 0) return
-      const leafPath = cats.join(' > ')
+      // DB의 category 컬럼을 직접 사용 (category1~4 조합과 불일치 방지)
+      const leafPath = p.category?.trim()
+        || [p.category1, p.category2, p.category3, p.category4].filter(Boolean).join(' > ')
+      if (!leafPath) return
       const key = `${site}::${leafPath}`
       if (!productCats.has(key)) {
         productCats.set(key, { site, category: leafPath })
@@ -771,16 +770,26 @@ export default function CategoriesPage() {
       showAlert('리매핑할 매핑 데이터가 없습니다', 'info')
       return
     }
+    // 이미 해당 마켓 매핑이 있는 행은 제외
+    const needMapping = filteredMappings.filter(row => {
+      const existing = row.target_mappings?.[market]
+      return !existing || existing === ''
+    })
+    if (needMapping.length === 0) {
+      showAlert(`${MARKET_LABELS[market]} 매핑이 모두 완료되어 있습니다`, 'info')
+      return
+    }
+    const skippedCount = filteredMappings.length - needMapping.length
     setMarketAiLoading(market)
-    const total = filteredMappings.length
+    const total = needMapping.length
     setMarketAiProgress({ market, current: 0, total, success: 0, fail: 0 })
 
     let successCount = 0
     let errorCount = 0
     const updatedMappings = [...mappings]
 
-    for (let i = 0; i < filteredMappings.length; i++) {
-      const row = filteredMappings[i]
+    for (let i = 0; i < needMapping.length; i++) {
+      const row = needMapping[i]
       setMarketAiProgress({ market, current: i + 1, total, success: successCount, fail: errorCount })
 
       const rowProducts = products.filter(p =>
@@ -789,7 +798,6 @@ export default function CategoriesPage() {
           .filter(Boolean).join(' > ') === row.source_category
       )
       const sampleNames = rowProducts.slice(0, 5).map(p => p.name)
-      // 태그는 그룹 동일 → 첫 상품 것만
       const sampleTags = (rowProducts[0]?.tags || []).filter((t: string) => !t.startsWith('__')).slice(0, 10)
 
       try {
@@ -803,7 +811,6 @@ export default function CategoriesPage() {
         const newCat = result[market]
         if (newCat) {
           if (row.id.startsWith('unmapped_')) {
-            // 미매핑 → 신규 생성
             const created = await categoryApi.createMapping({
               source_site: row.source_site,
               source_category: row.source_category,
@@ -830,8 +837,34 @@ export default function CategoriesPage() {
     setMappings(updatedMappings)
     setMarketAiLoading(null)
     setLastAiUsage({ calls: successCount, tokens: successCount * 1800, cost: successCount * COST_PER_CALL_KRW, date: new Date().toLocaleTimeString() })
-    // 완료 상태로 모달 갱신 (자동 닫힘 아님)
     setMarketAiProgress({ market, current: total, total, success: successCount, fail: errorCount })
+    if (skippedCount > 0) showAlert(`${skippedCount}건은 이미 매핑되어 건너뜀`, 'info')
+  }
+
+  // ESM 크로스매핑 복사 (지마켓→옥션)
+  const [esmCopyLoading, setEsmCopyLoading] = useState(false)
+
+  const handleEsmCrossCopy = async (fromMarket: string, toMarket: string) => {
+    const ids = filteredMappings.map(m => m.id).filter(id => !id.startsWith('unmapped_'))
+    if (ids.length === 0) {
+      showAlert('복사할 매핑 데이터가 없습니다', 'info')
+      return
+    }
+    setEsmCopyLoading(true)
+    try {
+      const result = await categoryApi.copyEsmMapping(fromMarket, toMarket, ids)
+      const label = fromMarket === 'gmarket' ? 'G마켓→옥션' : '옥션→G마켓'
+      showAlert(`${label} 크로스매핑: ${result.copied}건 복사, ${result.skipped}건 스킵, ${result.failed}건 실패`, 'success')
+      if (result.copied > 0) {
+        const refreshed = await categoryApi.listMappings() as MappingRow[]
+        setMappings(refreshed)
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '복사 실패'
+      showAlert(`크로스매핑 실패: ${msg}`, 'error')
+    } finally {
+      setEsmCopyLoading(false)
+    }
   }
 
   // 마켓 키 목록
@@ -1057,6 +1090,47 @@ export default function CategoriesPage() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                         <span>{MARKET_LABELS[mk]}</span>
+                        {/* ESM 크로스매핑 버튼: 옥션은 G→A, 지마켓은 A→G */}
+                        {mk === 'auction' && (
+                          <button
+                            onClick={() => handleEsmCrossCopy('gmarket', 'auction')}
+                            disabled={esmCopyLoading || filteredMappings.length === 0}
+                            style={{
+                              background: 'none',
+                              border: '1px solid transparent',
+                              borderRadius: '3px',
+                              color: esmCopyLoading ? '#4C9AFF' : '#555',
+                              fontSize: '0.5625rem',
+                              cursor: esmCopyLoading ? 'not-allowed' : 'pointer',
+                              padding: '1px 3px',
+                              lineHeight: 1,
+                              fontWeight: 700,
+                            }}
+                            onMouseEnter={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#4C9AFF'; e.currentTarget.style.borderColor = 'rgba(76,154,255,0.3)' } }}
+                            onMouseLeave={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#555'; e.currentTarget.style.borderColor = 'transparent' } }}
+                            title="G마켓 매핑을 옥션으로 크로스매핑 복사"
+                          >{esmCopyLoading ? '...' : 'G→A'}</button>
+                        )}
+                        {mk === 'gmarket' && (
+                          <button
+                            onClick={() => handleEsmCrossCopy('auction', 'gmarket')}
+                            disabled={esmCopyLoading || filteredMappings.length === 0}
+                            style={{
+                              background: 'none',
+                              border: '1px solid transparent',
+                              borderRadius: '3px',
+                              color: esmCopyLoading ? '#4C9AFF' : '#555',
+                              fontSize: '0.5625rem',
+                              cursor: esmCopyLoading ? 'not-allowed' : 'pointer',
+                              padding: '1px 3px',
+                              lineHeight: 1,
+                              fontWeight: 700,
+                            }}
+                            onMouseEnter={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#4C9AFF'; e.currentTarget.style.borderColor = 'rgba(76,154,255,0.3)' } }}
+                            onMouseLeave={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#555'; e.currentTarget.style.borderColor = 'transparent' } }}
+                            title="옥션 매핑을 G마켓으로 크로스매핑 복사"
+                          >{esmCopyLoading ? '...' : 'A→G'}</button>
+                        )}
                         <button
                           onClick={() => handleMarketAiRemap(mk)}
                           disabled={marketAiLoading !== null || filteredMappings.length === 0}

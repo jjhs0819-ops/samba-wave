@@ -102,6 +102,7 @@ class SambaCollectedProduct(SQLModel, table=True):
     __tablename__ = "samba_collected_product"
     __table_args__ = (
         Index("ix_scp_status_source_site", "status", "source_site"),
+        Index("uq_scp_source_product", "source_site", "site_product_id", unique=True),
     )
 
     id: str = Field(
@@ -139,6 +140,7 @@ class SambaCollectedProduct(SQLModel, table=True):
 
     # 이미지/옵션 (JSON)
     images: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    coupang_main_image: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     detail_images: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
     video_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     options: Optional[List[Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))

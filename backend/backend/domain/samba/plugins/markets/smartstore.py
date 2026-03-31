@@ -12,6 +12,12 @@ from typing import Any
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
 
+# 전송 속도 최적화: API 결과 캐시 (같은 브랜드/카테고리/제조사 반복 호출 방지)
+_brand_cache: dict[str, Any] = {}      # brand_name → (id, name) or None
+_mfr_cache: dict[str, Any] = {}        # mfr_name → id or None
+_cat_attrs_cache: dict[str, Any] = {}  # category_id → attrs
+_cert_cache: dict[str, Any] = {}       # category_id → cert_infos
+
 
 class SmartStorePlugin(MarketPlugin):
   market_type = "smartstore"
@@ -175,20 +181,38 @@ class SmartStorePlugin(MarketPlugin):
         return None
 
       async def _search_brand():
-        if brand_name:
-          return await client.search_brand(brand_name)
-        return None
+        if not brand_name:
+          return None
+        if brand_name in _brand_cache:
+          return _brand_cache[brand_name]
+        result = await client.search_brand(brand_name)
+        _brand_cache[brand_name] = result
+        return result
 
       async def _search_mfr():
-        if mfr_name:
-          return await client.search_manufacturer(mfr_name)
-        return None
+        if not mfr_name:
+          return None
+        if mfr_name in _mfr_cache:
+          return _mfr_cache[mfr_name]
+        result = await client.search_manufacturer(mfr_name)
+        _mfr_cache[mfr_name] = result
+        return result
 
       async def _get_cat_attrs():
-        return await client.get_category_attributes(category_id)
+        cid = str(category_id)
+        if cid in _cat_attrs_cache:
+          return _cat_attrs_cache[cid]
+        result = await client.get_category_attributes(category_id)
+        _cat_attrs_cache[cid] = result
+        return result
 
       async def _get_cert_infos():
-        return await client.get_category_certification_infos(category_id)
+        cid = str(category_id)
+        if cid in _cert_cache:
+          return _cert_cache[cid]
+        result = await client.get_category_certification_infos(category_id)
+        _cert_cache[cid] = result
+        return result
 
       # 이미지 URL 수집
       images_raw = product.get("images") or []
@@ -204,8 +228,19 @@ class SmartStorePlugin(MarketPlugin):
       all_img_urls = list(images_raw[:5]) + detail_img_urls
 
       async def _upload_all_images():
-        """대표 + 상세 이미지 통합 업로드."""
-        return await _aio.gather(*[_upload_safe(url) for url in all_img_urls])
+        """대표 + 상세 이미지 4장씩 배치 업로드 (API 호출 1/4 감소)."""
+        results: list[str | None] = []
+        for i in range(0, len(all_img_urls), 4):
+          batch = all_img_urls[i:i+4]
+          try:
+            batch_results = await client.upload_images_batch(batch)
+            results.extend(batch_results)
+            # 부족분 None 채우기
+            results.extend([None] * (len(batch) - len(batch_results)))
+          except Exception as e:
+            logger.warning(f"[스마트스토어] 배치 이미지 업로드 실패: {e}")
+            results.extend([None] * len(batch))
+        return results
 
       # 이미지 업로드 + 5개 API 조회 동시 실행
       img_results, catalog, brand_id, mfr_id, cat_attrs, cert_infos = await _aio.gather(
@@ -221,12 +256,18 @@ class SmartStorePlugin(MarketPlugin):
       if detail_img_urls:
         detail_map = img_results[thumb_count:]
         replaced = 0
+        removed = 0
         for orig, naver_url in zip(detail_img_urls, detail_map):
           if naver_url:
             detail_html = detail_html.replace(orig, naver_url)
             replaced += 1
+          else:
+            # 업로드 실패 이미지 → 상세설명에서 해당 img 태그 제거 (소싱처 CDN 차단 방지)
+            img_tag_pat = re.compile(r'<img[^>]*src=["\']' + re.escape(orig) + r'["\'][^>]*/?\s*>', re.I)
+            detail_html = img_tag_pat.sub('', detail_html)
+            removed += 1
         product_copy["detail_html"] = detail_html
-        logger.info(f"[스마트스토어] 이미지 업로드 완료 — 대표 {len(naver_images)}장, 상세 {replaced}장")
+        logger.info(f"[스마트스토어] 이미지 업로드 완료 — 대표 {len(naver_images)}장, 상세 {replaced}장, 제거 {removed}장")
       elif naver_images:
         logger.info(f"[스마트스토어] 이미지 업로드 완료 — 대표 {len(naver_images)}장")
 

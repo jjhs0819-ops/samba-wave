@@ -979,6 +979,11 @@ p.desc {
   </div>
 
   <div class="sidebar-section">
+    <div class="sidebar-section-title">마켓 개발 가이드</div>
+    <a href="#kream-guide" class="sidebar-link"><span class="icon">👟</span> KREAM 상품등록</a>
+  </div>
+
+  <div class="sidebar-section">
     <div class="sidebar-section-title">참고</div>
     <a href="#names" class="sidebar-link"><span class="icon">📋</span> 담당자 할당표</a>
   </div>
@@ -1255,8 +1260,8 @@ p.desc {
             <div class="code-body"><span class="keyword">cd</span> backend
 <span class="keyword">uv</span> venv
 <span class="keyword">source</span> .venv/Scripts/activate   <span class="comment"># 터미널 맨 앞에 (.venv)가 보이면 성공</span>
-<span class="keyword">uv</span> pip install -e .
-<span class="keyword">uv</span> pip install -e .[dev]</div>
+<span class="keyword">uv</span> sync                        <span class="comment"># uv.lock 기반으로 패키지 설치</span>
+<span class="keyword">uv</span> sync --group dev             <span class="comment"># 개발 도구 (black, ruff 등)</span></div>
           </div>
         </div>
       </div>
@@ -1268,13 +1273,21 @@ p.desc {
           <div class="step-connector"></div>
         </div>
         <div class="step-content">
-          <h4>로컬 DB + 환경 설정</h4>
+          <h4>로컬 DB + 환경 설정 + 마이그레이션</h4>
           <div class="code-block">
             <div class="code-header">
               <div class="code-header-left"><div class="code-dots"><span></span><span></span><span></span></div><span class="code-filename">터미널 (backend 폴더에서)</span></div>
             </div>
             <div class="code-body"><span class="keyword">docker</span> compose up -d              <span class="comment"># Docker Desktop이 실행 중이어야 함</span>
-<span class="keyword">cp</span> .env.example .env               <span class="comment"># 수정할 것 없음, 그대로 사용</span></div>
+<span class="keyword">cp</span> .env.example .env               <span class="comment"># 수정할 것 없음, 그대로 사용</span>
+<span class="keyword">alembic</span> upgrade head               <span class="comment"># DB 테이블 생성 (필수!)</span></div>
+          </div>
+          <div class="alert alert-warning">
+            <div class="alert-icon">⚠️</div>
+            <div class="alert-content">
+              <strong>git pull 후에도 alembic upgrade head를 실행하세요.</strong>
+              다른 팀원이 DB 컬럼을 추가했을 수 있습니다. 안 하면 "column does not exist" 에러가 납니다.
+            </div>
           </div>
         </div>
       </div>
@@ -1313,6 +1326,15 @@ p.desc {
         <div class="step-content">
           <h4>백엔드 실행해서 확인</h4>
 
+          <div class="code-block">
+            <div class="code-header">
+              <div class="code-header-left"><div class="code-dots"><span></span><span></span><span></span></div><span class="code-filename">터미널 (backend 폴더에서)</span></div>
+            </div>
+            <div class="code-body"><span class="keyword">cd</span> backend
+<span class="keyword">.venv/Scripts/python.exe</span> run.py   <span class="comment"># http://127.0.0.1:28080</span></div>
+          </div>
+
+          <p style="margin:0.5rem 0; color:var(--text-muted); font-size:0.85rem;">또는 Claude Code에 말하기:</p>
           <div class="claude-prompt">
             <div class="claude-prompt-label">💬 Claude Code에 말하기</div>
             <div class="claude-prompt-text">"백엔드 서버 실행해줘"</div>
@@ -1322,7 +1344,7 @@ p.desc {
             <div class="alert-icon">✅</div>
             <div class="alert-content">
               <strong>성공 확인</strong>
-              로그에 <code>[플러그인] 마켓 18개, 소싱 3개 등록 완료</code>가 보이면 성공!
+              로그에 <code>[플러그인] 마켓 18개, 소싱 15개 등록 완료</code>가 보이면 성공!
               에러가 나면 팀장에게 스크린샷 보내주세요.
             </div>
           </div>
@@ -1567,6 +1589,262 @@ p.desc {
 
   <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
   <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <!-- SECTION: KREAM 상품등록 개발 가이드 -->
+  <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <div class="section" id="kream-guide">
+    <div class="section-header">
+      <div class="section-number">👟</div>
+      <h3 class="section-title">KREAM 상품등록 개발 가이드</h3>
+    </div>
+
+    <p class="desc">
+      KREAM은 <strong>경매(입찰) 방식</strong>의 마켓입니다. 일반 마켓과 달리 상품을 "등록"하는 게 아니라, 사이즈별로 <strong>판매 입찰(Ask)</strong>을 거는 구조입니다.
+    </p>
+
+    <div class="alert alert-info">
+      <div class="alert-icon">📌</div>
+      <div class="alert-content">
+        <strong>담당자: 하진</strong> &nbsp;|&nbsp; 브랜치: <code>feature/kream-plugin</code><br>
+        수정할 파일: <code>plugins/markets/kream.py</code> + <code>proxy/kream.py</code>
+      </div>
+    </div>
+
+    <!-- 아키텍처 -->
+    <h4 style="color:var(--accent); margin: 1.5rem 0 0.75rem; font-size: 1rem;">🏗️ 현재 아키텍처</h4>
+
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>파일</th><th>역할</th><th>수정 가능</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>plugins/markets/kream.py</code></td>
+            <td>마켓 플러그인 — <code>execute()</code>에서 사이즈별 입찰 등록</td>
+            <td style="color:var(--green)">✅ 주 작업 파일</td>
+          </tr>
+          <tr>
+            <td><code>proxy/kream.py</code></td>
+            <td>KREAM API 클라이언트 — 로그인, 검색, 입찰(Ask) 생성/수정/취소</td>
+            <td style="color:var(--green)">✅ 주 작업 파일</td>
+          </tr>
+          <tr>
+            <td><code>plugins/sourcing/kream.py</code></td>
+            <td>소싱 플러그인 — 상품 검색/상세 (이미 구현됨)</td>
+            <td style="color:var(--yellow)">⚠️ 필요 시만</td>
+          </tr>
+          <tr>
+            <td><code>plugins/market_base.py</code></td>
+            <td>마켓 플러그인 기본 클래스</td>
+            <td style="color:var(--red)">❌ 수정 금지</td>
+          </tr>
+          <tr>
+            <td><code>plugins/__init__.py</code></td>
+            <td>플러그인 자동 등록</td>
+            <td style="color:var(--red)">❌ 수정 금지</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 데이터 흐름 -->
+    <h4 style="color:var(--accent); margin: 1.5rem 0 0.75rem; font-size: 1rem;">🔄 데이터 흐름</h4>
+
+    <div class="code-block">
+      <div class="code-header">
+        <span>KREAM 전송 흐름</span>
+      </div>
+      <pre class="code-body">1. 사용자가 "전송" 클릭
+   ↓
+2. shipment/dispatcher.py → MARKET_PLUGINS["kream"] 조회
+   ↓
+3. market_base.py → handle() 실행
+   ├─ _load_auth()  → DB에서 kream_token, kream_cookie 조회
+   ├─ _apply_market_settings() → 정책 적용
+   └─ execute()    → 👈 여기가 당신이 구현할 부분
+      ↓
+4. plugins/markets/kream.py → execute()
+   ├─ product["kream_data"]["product_id"] 추출
+   ├─ product["options"] 순회 (사이즈별)
+   └─ KreamClient.create_ask(product_id, size, price) 호출
+      ↓
+5. proxy/kream.py → KREAM API 호출 (POST /api/...)
+   └─ 결과 반환: {"success": true, "ask_id": "..."}</pre>
+    </div>
+
+    <!-- 핵심 데이터 구조 -->
+    <h4 style="color:var(--accent); margin: 1.5rem 0 0.75rem; font-size: 1rem;">📦 핵심 데이터 구조</h4>
+
+    <div class="code-block">
+      <div class="code-header">
+        <span>product["kream_data"] — KREAM 전용 데이터 (DB: kream_data JSON 컬럼)</span>
+      </div>
+      <pre class="code-body">{
+  "product_id": "12345",          # KREAM 상품 ID
+  "modelNo": "DV2988-003",       # 스타일 코드
+  "releaseDate": "2024-01-15",   # 발매일
+  "retailPrice": 189000,         # 발매가
+  "askPrices": {                  # 사이즈별 판매 입찰가
+    "250": {"fast": 180000, "normal": 175000, "general": 170000},
+    "260": {"fast": 190000, "normal": 185000, "general": 180000}
+  },
+  "bidPrices": {                  # 사이즈별 구매 입찰가
+    "250": {"general": 165000},
+    "260": {"general": 175000}
+  },
+  "lastSalePrices": {             # 최근 체결가
+    "250": {"price": 172000, "date": "2026-03-30"},
+    "260": {"price": 182000, "date": "2026-03-29"}
+  },
+  "saleTypes": {                  # 판매 방식
+    "general": true,              # 일반 배송
+    "storage": true,              # 보관 판매
+    "grade95": false              # 95등급
+  }
+}</pre>
+    </div>
+
+    <div class="code-block">
+      <div class="code-header">
+        <span>product["options"] — 사이즈별 옵션 (일반 마켓의 옵션과 동일 구조)</span>
+      </div>
+      <pre class="code-body">[
+  {
+    "name": "250",               # 사이즈
+    "price": 170000,             # 최저 Ask 가격
+    "stock": 1,                  # 1=재고있음, 0=품절
+    "kreamAsk": 170000,          # 일반 판매 입찰가
+    "kreamBid": 165000,          # 일반 구매 입찰가
+    "kreamLastSale": 172000      # 최근 체결가
+  },
+  ...
+]</pre>
+    </div>
+
+    <!-- 인증 -->
+    <h4 style="color:var(--accent); margin: 1.5rem 0 0.75rem; font-size: 1rem;">🔑 인증 방식</h4>
+
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>키</th><th>저장 위치</th><th>용도</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>kream_token</code></td>
+            <td>samba_settings 테이블</td>
+            <td>API Bearer 토큰 (입찰 등록/수정/취소)</td>
+          </tr>
+          <tr>
+            <td><code>kream_cookie</code></td>
+            <td>samba_settings 테이블</td>
+            <td>브라우저 세션 (가격 조회)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="desc">
+      <code>_load_auth()</code>는 base 클래스에서 자동 호출됩니다.
+      <code>kream.py</code>에서 오버라이드하여 위 2개 키를 DB에서 읽습니다.
+    </p>
+
+    <!-- 주요 API 메서드 -->
+    <h4 style="color:var(--accent); margin: 1.5rem 0 0.75rem; font-size: 1rem;">🛠️ KreamClient 주요 메서드 (proxy/kream.py)</h4>
+
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>메서드</th><th>용도</th><th>인증</th></tr></thead>
+        <tbody>
+          <tr><td><code>create_ask(product_id, size, price, sale_type)</code></td><td>판매 입찰 등록</td><td>token</td></tr>
+          <tr><td><code>update_ask(ask_id, price)</code></td><td>입찰 가격 수정</td><td>token</td></tr>
+          <tr><td><code>cancel_ask(ask_id)</code></td><td>입찰 취소</td><td>token</td></tr>
+          <tr><td><code>get_my_asks()</code></td><td>내 입찰 목록 조회</td><td>token</td></tr>
+          <tr><td><code>get_prices(product_id)</code></td><td>사이즈별 시세 조회</td><td>cookie</td></tr>
+          <tr><td><code>search(keyword)</code></td><td>상품 검색 (SSR 파싱)</td><td>없음</td></tr>
+          <tr><td><code>get_product(product_id)</code></td><td>상품 상세 (SSR 파싱)</td><td>없음</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 구현 체크리스트 -->
+    <h4 style="color:var(--accent); margin: 1.5rem 0 0.75rem; font-size: 1rem;">✅ 구현 체크리스트</h4>
+
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>#</th><th>작업</th><th>파일</th><th>난이도</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td><strong>execute() 고도화</strong> — 기존 입찰 확인 → 가격 변동 시 update, 신규면 create</td>
+            <td><code>plugins/markets/kream.py</code></td>
+            <td><span class="badge badge-orange">중</span></td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><strong>delete() 구현</strong> — 마켓 삭제 시 해당 상품 입찰 전부 취소</td>
+            <td><code>plugins/markets/kream.py</code></td>
+            <td><span class="badge badge-green">하</span></td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td><strong>가격 전략</strong> — 최저 Ask 대비 자동 가격 설정 (정책 연동)</td>
+            <td><code>plugins/markets/kream.py</code></td>
+            <td><span class="badge badge-orange">중</span></td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td><strong>에러 처리</strong> — 토큰 만료, 입찰 제한, 네트워크 에러 대응</td>
+            <td><code>proxy/kream.py</code></td>
+            <td><span class="badge badge-green">하</span></td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td><strong>오토튠 연동</strong> — 시세 변동 감지 시 입찰가 자동 조정</td>
+            <td><code>plugins/markets/kream.py</code></td>
+            <td><span class="badge badge-red">상</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 일반 마켓과 차이점 -->
+    <h4 style="color:var(--accent); margin: 1.5rem 0 0.75rem; font-size: 1rem;">⚡ 일반 마켓과 차이점</h4>
+
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th></th><th>일반 마켓 (스마트스토어 등)</th><th>KREAM</th></tr></thead>
+        <tbody>
+          <tr><td><strong>등록 방식</strong></td><td>상품 1개 등록 (POST)</td><td>사이즈별 입찰 등록 (반복 POST)</td></tr>
+          <tr><td><strong>이미지</strong></td><td>업로드 필수</td><td>불필요 (KREAM에 이미 있음)</td></tr>
+          <tr><td><strong>카테고리</strong></td><td>마켓 카테고리 매핑 필수</td><td>불필요</td></tr>
+          <tr><td><strong>상세페이지</strong></td><td>HTML 생성 필요</td><td>불필요</td></tr>
+          <tr><td><strong>가격</strong></td><td>정책 기반 마진 계산</td><td>시세 기반 입찰가 설정</td></tr>
+          <tr><td><strong>수정</strong></td><td>PUT /products/{id}</td><td>update_ask(ask_id, new_price)</td></tr>
+          <tr><td><strong>삭제</strong></td><td>DELETE /products/{id}</td><td>cancel_ask(ask_id) × 사이즈 수</td></tr>
+          <tr><td><strong>transform()</strong></td><td>복잡한 페이로드 변환</td><td>거의 없음 (그대로 전달)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 참고: 브라우저 확장앱 연동 -->
+    <div class="alert alert-info" style="margin-top: 1.5rem;">
+      <div class="alert-icon">💡</div>
+      <div class="alert-content">
+        <strong>브라우저 확장앱 연동</strong><br>
+        KREAM은 일부 API가 브라우저 확장앱을 통해 동작합니다. <code>KreamClient</code>에 <code>collect_queue</code>/<code>search_queue</code>가 있어 확장앱과 비동기 통신합니다. 타임아웃은 90초입니다.<br>
+        <strong>상품등록(입찰)은 확장앱 불필요</strong> — API 토큰으로 직접 호출합니다.
+      </div>
+    </div>
+
+    <div class="alert" style="background:var(--red-dim); border-color:var(--red); margin-top: 1rem;">
+      <div class="alert-icon">⚠️</div>
+      <div class="alert-content">
+        <strong>절대 수정 금지 파일</strong><br>
+        <code>plugins/__init__.py</code>, <code>market_base.py</code>, <code>sourcing_base.py</code>, <code>collector/</code> 폴더<br>
+        이 파일들은 팀장이 관리합니다. 수정이 필요하면 팀장에게 요청하세요.
+      </div>
+    </div>
+  </div>
+
+  <div class="separator"></div>
+
   <!-- SECTION 6: 담당자 할당표 -->
   <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
   <div class="section" id="names">
@@ -1946,7 +2224,7 @@ p.desc {
   <!-- ─── Footer ─── -->
   <div style="text-align:center; padding:2rem 0;">
     <p style="color:var(--text-dim); font-size:0.75rem; font-family:var(--font-mono);">
-      SambaWave Team Dev Guide v3.0 — Last updated 2026-03-25
+      SambaWave Team Dev Guide v3.1 — Last updated 2026-03-31
     </p>
   </div>
 

@@ -4,10 +4,7 @@
  * Handles all API requests with automatic token management.
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ||
-  (process.env.NODE_ENV === 'production'
-    ? 'https://samba-wave-production.up.railway.app'
-    : 'http://localhost:28080')
+import { API_BASE_URL } from '@/config/api'
 
 export interface LoginResponse {
   user_id: string;

@@ -11,8 +11,10 @@ import {
   type SambaMarketAccount,
   type SambaNameRule,
   type SambaDetailTemplate,
+  type SambaSearchFilter,
 } from '@/lib/samba/api'
 import { showAlert } from '@/components/samba/Modal'
+import { fmtDate } from '@/lib/samba/utils'
 import ProductImage from './ProductImage'
 import OptionPanel from './OptionPanel'
 
@@ -144,7 +146,8 @@ function getSourceUrl(p: { source_url?: string; source_site: string; site_produc
 let _deletionRegexCache: { words: string[]; regex: RegExp } | null = null
 function getDeletionRegex(deletionWords: string[]): RegExp | null {
   if (!deletionWords.length) return null
-  if (_deletionRegexCache && _deletionRegexCache.words === deletionWords) return _deletionRegexCache.regex
+  // 값 기반 비교로 캐시 히트 판단 (배열 참조가 달라도 내용이 같으면 재사용)
+  if (_deletionRegexCache && _deletionRegexCache.words.join(',') === deletionWords.join(',')) return _deletionRegexCache.regex
   const escaped = deletionWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
   const regex = new RegExp(`(${escaped.join('|')})`, 'gi')
   _deletionRegexCache = { words: deletionWords, regex }
@@ -174,7 +177,7 @@ export function composeProductName(
   const tagMap: Record<string, string> = {
     '{상품명}': product.name || '',
     '{브랜드명}': product.brand || '',
-    '{모델명}': product.model_no || '',
+    '{모델명}': product.style_code || '',
     '{사이트명}': product.source_site || '',
     '{상품번호}': product.site_product_id || '',
     '{검색키워드}': seoKws.slice(0, 3).join(' '),
@@ -248,6 +251,7 @@ interface ProductCardProps {
   onProductUpdate: (productId: string, data: Partial<SambaCollectedProduct>) => void
   logMessage?: string
   catMappingMap: Map<string, Record<string, string>>
+  filters?: SambaSearchFilter[]
   detailTemplates: SambaDetailTemplate[]
   compact?: boolean
   expanded?: boolean
@@ -257,7 +261,7 @@ interface ProductCardProps {
 const ProductCard = React.memo(function ProductCard({
   product: p, idx, policies, accounts, nameRules, selectedIds, filterNameMap, deletionWords,
   onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onTagUpdate, onMarketDelete, onAddTaskLog, onProductUpdate, logMessage,
-  catMappingMap, detailTemplates, compact, expanded, onToggleExpand,
+  catMappingMap, filters, detailTemplates, compact, expanded, onToggleExpand,
 }: ProductCardProps) {
   const accMap = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts])
   const [showPriceHistoryModal, setShowPriceHistoryModal] = useState(false)
@@ -313,12 +317,6 @@ const ProductCard = React.memo(function ProductCard({
   const statusBg = isActive ? 'rgba(81,207,102,0.12)' : 'rgba(100,100,100,0.15)'
   const statusText = p.status === 'registered' ? '등록됨' : p.status === 'saved' ? '저장됨' : ''
 
-  const fmtDate = useCallback((dt: string | undefined) => {
-    if (!dt) return '-'
-    const d = new Date(dt)
-    if (isNaN(d.getTime())) return dt.slice(0, 10)
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  }, [])
   const regDate = fmtDate(p.created_at)
   const updatedDate = fmtDate(p.updated_at)
   const no = String(idx + 1).padStart(6, '0')
@@ -334,8 +332,16 @@ const ProductCard = React.memo(function ProductCard({
 
   const marketEnabled = (p.market_enabled || {}) as Record<string, boolean>
 
-  // 상품의 카테고리 매핑 조회
+  // 상품의 카테고리 매핑 조회 (그룹 매핑 우선 → 카테고리 매핑 fallback)
   const productCatMapping = useMemo(() => {
+    // 1순위: 그룹(search_filter_id)의 target_mappings
+    if (p.search_filter_id && filters) {
+      const sf = filters.find(f => f.id === p.search_filter_id)
+      if (sf?.target_mappings && Object.keys(sf.target_mappings).length > 0) {
+        return sf.target_mappings as Record<string, string>
+      }
+    }
+    // 2순위: 카테고리 경로 기반 매핑
     const site = p.source_site || ''
     const cats = [p.category1, p.category2, p.category3, p.category4].filter(Boolean) as string[]
     if (cats.length === 0 && p.category) {
@@ -344,7 +350,7 @@ const ProductCard = React.memo(function ProductCard({
     if (!site || cats.length === 0) return {}
     const leafPath = cats.join(' > ')
     return catMappingMap.get(`${site}::${leafPath}`) || {}
-  }, [p.source_site, p.category, p.category1, p.category2, p.category3, p.category4, catMappingMap])
+  }, [p.source_site, p.category, p.category1, p.category2, p.category3, p.category4, p.search_filter_id, catMappingMap, filters])
 
   // 등록된 계정 기반 마켓 정보 (등록한 마켓만 표시용)
   const regAccIds = p.registered_accounts ?? []
@@ -546,7 +552,7 @@ const ProductCard = React.memo(function ProductCard({
                             {/* 옵션 상세 행 */}
                             {opts.map((opt, oi) => {
                               const kOpt = opt as Record<string, unknown>
-                              const soldOut = opt.isSoldOut || (opt.stock !== undefined && opt.stock <= 0)
+                              const soldOut = opt.isSoldOut || (opt.stock !== undefined && opt.stock !== null && opt.stock <= 0)
                               const stockLabel = soldOut
                                 ? '품절'
                                 : opt.stock !== undefined
@@ -596,6 +602,7 @@ const ProductCard = React.memo(function ProductCard({
       {showImageModal && (() => {
         // 대표이미지: 첫번째, 추가이미지: 나머지
         const mainImg = productImages[0] || ''
+        const coupangMainImg = p.coupang_main_image || ''
         const extraImgs = productImages.slice(1)
         // 상세페이지 이미지: detail_images 필드 우선, 없으면 detail_html에서 추출
         const detailImgs = detailImgList
@@ -689,62 +696,136 @@ const ProductCard = React.memo(function ProductCard({
               <div style={{ overflowY: 'auto', padding: '16px 20px', flex: 1 }}>
                 {imageTab === 'main' && (
                   <div>
-                    <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '12px' }}>
-                      ※ 대표이미지를 변경하시면 모든 마켓의 대표이미지가 변경됩니다.
-                    </p>
-                    {mainImg ? (
-                      <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
-                        <div>
-                          <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 대표이미지]</p>
-                          <img src={mainImg} alt="대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                            onClick={() => openZoom(mainImg)}
-                            style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #2D2D2D', cursor: 'pointer' }} />
-                          <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{mainImg}</p>
+                    {/* ── 공통 대표이미지 ── */}
+                    <div style={{ marginBottom: '20px' }}>
+                      <p style={{ fontSize: '0.78rem', color: '#FF8C00', fontWeight: 600, marginBottom: '8px' }}>공통 대표이미지</p>
+                      <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '12px' }}>
+                        ※ 쿠팡을 제외한 모든 마켓에 적용됩니다. 쿠팡 대표이미지가 미설정이면 공통이 사용됩니다.
+                      </p>
+                      {mainImg ? (
+                        <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
+                          <div>
+                            <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 대표이미지]</p>
+                            <img src={mainImg} alt="대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                              onClick={() => openZoom(mainImg)}
+                              style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #2D2D2D', cursor: 'pointer' }} />
+                            <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{mainImg}</p>
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>이미지 URL 변경</p>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <input type="text" placeholder="http:// 를 포함한 이미지 경로" defaultValue=""
+                                id="main-image-url-input"
+                                style={{ flex: 1, fontSize: '0.78rem', padding: '6px 10px', background: '#1E1E1E', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '6px' }} />
+                              <button onClick={() => {
+                                const input = document.getElementById('main-image-url-input') as HTMLInputElement
+                                if (input?.value.trim()) {
+                                  const newImgs = [input.value.trim(), ...productImages.slice(1)]
+                                  setProductImages(newImgs)
+                                  const ud: Partial<SambaCollectedProduct> = { images: newImgs }
+                                  if (!(p.tags || []).includes('__img_edited__')) {
+                                    ud.tags = [...(p.tags || []), '__img_edited__']
+                                  }
+                                  collectorApi.updateProduct(p.id, ud).then(() => {
+                                    onProductUpdate(p.id, ud)
+                                  }).catch(() => {})
+                                  input.value = ''
+                                }
+                              }} style={{ padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid #FF8C00', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>변경완료</button>
+                            </div>
+                            <button onClick={() => {
+                              const remaining = productImages.slice(1)
+                              const newImgs = remaining.length > 0 ? remaining : []
+                              setProductImages(newImgs)
+                              const updateData: Partial<SambaCollectedProduct> = { images: newImgs }
+                              if (!(p.tags || []).includes('__img_edited__')) {
+                                updateData.tags = [...(p.tags || []), '__img_edited__']
+                              }
+                              collectorApi.updateProduct(p.id, updateData).then(() => {
+                                onProductUpdate(p.id, updateData)
+                              }).catch(() => {})
+                            }} style={{
+                              marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
+                              border: '1px solid rgba(255,107,107,0.4)', background: 'rgba(255,107,107,0.08)',
+                              color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}>대표이미지 삭제</button>
+                            <button onClick={() => {
+                              setCardConfirm({
+                                msg: '이 대표이미지를 동일 이미지를 가진 모든 상품에서 삭제하시겠습니까?',
+                                onOk: async () => {
+                                  setCardConfirm(null)
+                                  try {
+                                    const res = await collectorApi.bulkRemoveImage(mainImg, 'images')
+                                    const remaining = productImages.slice(1)
+                                    setProductImages(remaining)
+                                    setCardAlert({ msg: `${res.removed}개 상품에서 대표이미지 추적삭제 완료`, type: 'success' })
+                                  } catch (e) { setCardAlert({ msg: '추적삭제 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' }) }
+                                },
+                              })
+                            }} style={{
+                              marginTop: '4px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
+                              border: '1px solid rgba(168,85,247,0.4)', background: 'rgba(168,85,247,0.08)',
+                              color: '#A855F7', cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}>추적삭제</button>
+                          </div>
                         </div>
+                      ) : (
+                        <div style={{ padding: '2rem', textAlign: 'center', color: '#555' }}>대표이미지 없음</div>
+                      )}
+                    </div>
+
+                    {/* ── 쿠팡 대표이미지 ── */}
+                    <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '16px' }}>
+                      <p style={{ fontSize: '0.78rem', color: '#00B4D8', fontWeight: 600, marginBottom: '8px' }}>쿠팡 대표이미지</p>
+                      <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '12px' }}>
+                        ※ 쿠팡은 상품컷(누끼)이 필요합니다. 미설정 시 공통 대표이미지가 사용됩니다.
+                      </p>
+                      <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
+                        {coupangMainImg && (
+                          <div>
+                            <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 쿠팡 대표이미지]</p>
+                            <img src={coupangMainImg} alt="쿠팡 대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                              onClick={() => openZoom(coupangMainImg)}
+                              style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #00B4D8', cursor: 'pointer' }} />
+                            <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{coupangMainImg}</p>
+                          </div>
+                        )}
                         <div style={{ flex: 1 }}>
-                          <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>이미지 URL 변경</p>
+                          <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>쿠팡 대표이미지 URL</p>
                           <div style={{ display: 'flex', gap: '6px' }}>
-                            <input type="text" placeholder="http:// 를 포함한 이미지 경로" defaultValue=""
-                              id="main-image-url-input"
+                            <input type="text" placeholder="http:// 를 포함한 상품컷 이미지 경로" defaultValue=""
+                              id="coupang-main-image-url-input"
                               style={{ flex: 1, fontSize: '0.78rem', padding: '6px 10px', background: '#1E1E1E', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '6px' }} />
                             <button onClick={() => {
-                              const input = document.getElementById('main-image-url-input') as HTMLInputElement
-                              if (input?.value.trim()) {
-                                const newImgs = [input.value.trim(), ...productImages.slice(1)]
-                                setProductImages(newImgs)
-                                const ud: Partial<SambaCollectedProduct> = { images: newImgs }
-                                if (!(p.tags || []).includes('__img_edited__')) {
-                                  ud.tags = [...(p.tags || []), '__img_edited__']
-                                }
-                                collectorApi.updateProduct(p.id, ud).then(() => {
-                                  onProductUpdate(p.id, ud)
-                                }).catch(() => {})
-                                input.value = ''
-                              }
-                            }} style={{ padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid #FF8C00', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>변경완료</button>
+                              const input = document.getElementById('coupang-main-image-url-input') as HTMLInputElement
+                              const val = input?.value.trim() || ''
+                              const ud: Partial<SambaCollectedProduct> = { coupang_main_image: val || undefined }
+                              collectorApi.updateProduct(p.id, ud).then(() => {
+                                onProductUpdate(p.id, ud)
+                              }).catch(() => {})
+                              if (input) input.value = ''
+                            }} style={{ padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid #00B4D8', background: 'rgba(0,180,216,0.15)', color: '#00B4D8', cursor: 'pointer', whiteSpace: 'nowrap' }}>변경완료</button>
                           </div>
-                          <button onClick={() => {
-                            // 대표이미지 삭제 → 추가이미지[0]이 대표로 승격
-                            const remaining = productImages.slice(1)
-                            const newImgs = remaining.length > 0 ? remaining : []
-                            setProductImages(newImgs)
-                            const updateData: Partial<SambaCollectedProduct> = { images: newImgs }
-                            if (!(p.tags || []).includes('__img_edited__')) {
-                              updateData.tags = [...(p.tags || []), '__img_edited__']
-                            }
-                            collectorApi.updateProduct(p.id, updateData).then(() => {
-                              onProductUpdate(p.id, updateData)
-                            }).catch(() => {})
-                          }} style={{
-                            marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
-                            border: '1px solid rgba(255,107,107,0.4)', background: 'rgba(255,107,107,0.08)',
-                            color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap',
-                          }}>대표이미지 삭제</button>
+                          {coupangMainImg && (
+                            <button onClick={() => {
+                              const ud: Partial<SambaCollectedProduct> = { coupang_main_image: '' }
+                              collectorApi.updateProduct(p.id, ud).then(() => {
+                                onProductUpdate(p.id, ud)
+                              }).catch(() => {})
+                            }} style={{
+                              marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
+                              border: '1px solid rgba(255,107,107,0.4)', background: 'rgba(255,107,107,0.08)',
+                              color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}>쿠팡 대표이미지 삭제</button>
+                          )}
+                          {!coupangMainImg && (
+                            <p style={{ marginTop: '8px', fontSize: '0.72rem', color: '#666' }}>
+                              미설정 → 공통 대표이미지 사용 중
+                            </p>
+                          )}
                         </div>
                       </div>
-                    ) : (
-                      <div style={{ padding: '2rem', textAlign: 'center', color: '#555' }}>대표이미지 없음</div>
-                    )}
+                    </div>
                   </div>
                 )}
 
@@ -1088,18 +1169,20 @@ const ProductCard = React.memo(function ProductCard({
                 const imgTag = (url: string) => `<div style="text-align:center;"><img src="${url}" style="max-width:860px;width:100%;" /></div>`
                 const parts: string[] = []
 
+                // 추가이미지(sub)에서 출력된 URL → detail에서 중복 제외
+                const subSet = new Set(imgs.slice(1))
                 for (const item of order) {
                   if (!checks[item]) continue
                   if (item === 'topImg' && topImg) { parts.push(imgTag(topImg)) }
                   else if (item === 'main' && imgs[0]) { parts.push(imgTag(imgs[0])) }
                   else if (item === 'sub' && imgs.length > 1) { imgs.slice(1).forEach(u => parts.push(imgTag(u))) }
                   else if (item === 'title' && p.name) { parts.push(`<div style="text-align:center;padding:1rem 0;"><h2 style="color:#333;font-size:1.25rem;">${p.name}</h2></div>`) }
-                  else if (item === 'detail' && detailImgs.length > 0) { detailImgs.forEach(u => parts.push(imgTag(u))) }
+                  else if (item === 'detail' && detailImgs.length > 0) { detailImgs.filter(u => !subSet.has(u)).forEach(u => parts.push(imgTag(u))) }
                   else if (item === 'bottomImg' && bottomImg) { parts.push(imgTag(bottomImg)) }
                 }
 
                 if (parts.length === 0) { showAlert('정책 템플릿이 적용되지 않았거나 표시할 이미지가 없습니다'); return }
-                const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>상세페이지 미리보기 - ${(p.name || '').replace(/"/g, '')}</title><style>body{margin:0;background:#fff;display:flex;flex-direction:column;align-items:center;padding:0}img{max-width:860px;width:100%;display:block;margin:0 auto}</style></head><body>${parts.join('\n')}</body></html>`
+                const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>상세페이지 미리보기 - ${(p.name || '').replace(/"/g, '')}</title><style>body{margin:0 auto;background:#fff;padding:0;max-width:860px}img{max-width:860px;width:100%;display:block;margin:0 auto}</style></head><body>${parts.join('\n')}</body></html>`
                 const blob = new Blob([html], { type: 'text/html' })
                 window.open(URL.createObjectURL(blob), '_blank')
               }}
@@ -1119,20 +1202,6 @@ const ProductCard = React.memo(function ProductCard({
               fontSize: '0.72rem', padding: '3px 9px', background: '#1E1E1E',
               color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.2)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap',
             }}>마켓삭제</button>
-            {/* 등록된 마켓 바로가기 — 등록한 계정만 표시 */}
-            {p.status === 'registered' && registeredMarkets.map(rm => (
-              <button key={rm.accId}
-                onClick={() => window.open(rm.url, '_blank')}
-                style={{
-                  fontSize: '0.65rem', padding: '2px 6px', background: 'rgba(81,207,102,0.08)',
-                  color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px',
-                  cursor: 'pointer', whiteSpace: 'nowrap',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
-                title={`${rm.label} 상품 구매페이지 열기`}
-              >{rm.label}</button>
-            ))}
           </div>
 
           {/* Detail table */}
@@ -1243,12 +1312,24 @@ const ProductCard = React.memo(function ProductCard({
                         {(() => {
                           const marketKey = MARKETS.find(mk => m.marketName.includes(mk.name))?.id
                             || m.marketName.toLowerCase().replace(/\s/g, '')
+                          const rm = registeredMarkets.find(r => r.marketId === marketKey)
                           const mappedCat = productCatMapping[marketKey] || ''
-                          return mappedCat ? (
-                            <span style={{ fontSize: '0.68rem', color: '#888', background: 'rgba(255,255,255,0.04)', padding: '1px 6px', borderRadius: '3px', border: '1px solid #2D2D2D' }}>{mappedCat}</span>
-                          ) : (
-                            <span style={{ fontSize: '0.68rem', color: '#555' }}>미매핑</span>
-                          )
+                          return (<>
+                            {rm && (
+                              <button
+                                onClick={() => window.open(rm.url, '_blank')}
+                                style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
+                                title={`${rm.label} 구매페이지`}
+                              >구매페이지</button>
+                            )}
+                            {mappedCat ? (
+                              <span style={{ fontSize: '0.68rem', color: '#888', background: 'rgba(255,255,255,0.04)', padding: '1px 6px', borderRadius: '3px', border: '1px solid #2D2D2D' }}>{mappedCat}</span>
+                            ) : (
+                              <span style={{ fontSize: '0.68rem', color: '#555' }}>미매핑</span>
+                            )}
+                          </>)
                         })()}
                       </div>
                       <span style={{ fontSize: '0.72rem', color: '#666' }}>{m.calcStr}</span>

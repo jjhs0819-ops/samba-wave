@@ -91,6 +91,9 @@ class SambaOrder(SQLModel, table=True):
     # 소싱처 구매주문번호
     sourcing_order_number: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
+    # 소싱처 주문계정 ID
+    sourcing_account_id: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+
     # 출처
     source: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     shipment_id: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))

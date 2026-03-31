@@ -2,14 +2,16 @@
 
 import React, { useCallback, useEffect, useRef, useState, memo } from 'react'
 import { monitorApi, collectorApi, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api'
+import { SITE_COLORS } from '@/lib/samba/constants'
 
 const POLL_INTERVAL = 30_000
-const LOG_POLL_INTERVAL = 5_000
+const LOG_POLL_INTERVAL = 500
 
 // 오토튠 실시간 로그 (독립 컴포넌트 — 대시보드 리렌더링 영향 없음)
-const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusChange }: {
+const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusChange, externalRunning }: {
   siteColors: Record<string, string>
-  onStatusChange?: (running: boolean, cycles: number, lastTick: string | null) => void
+  onStatusChange?: (running: boolean, cycles: number, lastTick: string | null, refreshed: number) => void
+  externalRunning?: boolean
 }) {
   const [logs, setLogs] = useState<RefreshLogEntry[]>([])
   const [intervals, setIntervals] = useState<Record<string, number>>({})
@@ -17,23 +19,56 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
   const containerRef = useRef<HTMLDivElement>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // 단일 useEffect로 폴링 관리 — 타이머 중복 방지
+  const pollingRef = useRef(false)
+
+  // 마운트 시 오토튠 상태 자동 감지 (탭 재진입 대응)
+  const [selfDetectedRunning, setSelfDetectedRunning] = useState(false)
+  const isRunning = externalRunning || selfDetectedRunning
+
   useEffect(() => {
+    // 마운트 직후 서버 상태 확인 — running이면 자동 폴링 시작
+    collectorApi.autotuneStatus().then(st => {
+      if (st) {
+        if (onStatusChange) onStatusChange(st.running, st.cycle_count, st.last_tick, st.refreshed_count || 0)
+        if (st.running) setSelfDetectedRunning(true)
+      }
+    }).catch(() => {})
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    // 오토튠 꺼져있으면 폴링 안 함
+    if (!isRunning) {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+      return
+    }
+
+    // 이미 타이머가 있으면 중복 생성 안 함
+    if (timerRef.current) return
+
     const poll = async () => {
+      if (pollingRef.current) return
+      pollingRef.current = true
       try {
-        const [res, atStatus] = await Promise.all([
-          monitorApi.refreshLogs(sinceIdxRef.current),
-          collectorApi.autotuneStatus().catch(() => null),
-        ])
-        if (res.current_idx < sinceIdxRef.current) {
+        const atStatus = await collectorApi.autotuneStatus().catch(() => null)
+        if (atStatus) {
+          if (onStatusChange) onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
+          if (!atStatus.running) setSelfDetectedRunning(false)
+        }
+        // running 상태와 무관하게 로그 폴링 유지 (별도 스레드 타이밍 차이 대응)
+        const idx = sinceIdxRef.current
+        const res = await monitorApi.refreshLogs(idx)
+        if (res.current_idx < idx) {
           sinceIdxRef.current = 0
+          pollingRef.current = false
           return
         }
-        if (res.logs.length > 0) {
+        if (res.logs.length > 0 && res.current_idx > idx) {
+          sinceIdxRef.current = res.current_idx
           setLogs(prev => {
             const next = [...prev, ...res.logs]
-            return next.length > 300 ? next.slice(next.length - 300) : next
+            return next.slice(-30)
           })
-          sinceIdxRef.current = res.current_idx
           requestAnimationFrame(() => {
             if (containerRef.current) {
               containerRef.current.scrollTop = containerRef.current.scrollHeight
@@ -43,34 +78,45 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
         if (res.intervals?.intervals) {
           setIntervals(res.intervals.intervals)
         }
-        // 오토튠 상태 부모에 전달
-        if (atStatus && onStatusChange) {
-          onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick)
-        }
       } catch { /* 무시 */ }
+      pollingRef.current = false
     }
     poll()
     timerRef.current = setInterval(poll, LOG_POLL_INTERVAL)
-    return () => { if (timerRef.current) clearInterval(timerRef.current) }
-  }, [onStatusChange])
+
+    return () => {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+    }
+  }, [isRunning, onStatusChange])
 
   return (
     <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>오토튠 실시간 로그</span>
-          <span style={{ fontSize: '0.65rem', color: '#666' }}>5초 폴링</span>
+          <span style={{ fontSize: '0.65rem', color: '#666' }}>실시간</span>
         </div>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           {Object.keys(intervals).length > 0 && (
             <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.7rem' }}>
-              {Object.entries(intervals).map(([site, interval]) => (
+              {Object.entries(intervals).filter(([, v]) => (v as number) > 0).map(([site, interval]) => (
                 <span key={site} style={{ color: siteColors[site] || '#888' }}>
                   {site} {(interval as number).toFixed(1)}s
                 </span>
               ))}
             </div>
           )}
+          <button onClick={() => {
+            const text = logs.map(l => l.msg).join('\n')
+            navigator.clipboard.writeText(text)
+          }} style={{ padding: '2px 8px', fontSize: '0.65rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', color: '#4C9AFF', borderRadius: '4px', cursor: 'pointer' }}>복사</button>
+          <button onClick={async () => {
+            setLogs([]); sinceIdxRef.current = 0
+            try {
+              const { API_BASE_URL: apiBase } = await import('@/config/api')
+              await fetch(`${apiBase}/api/v1/samba/monitor/refresh-logs/clear`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+            } catch { /* ignore */ }
+          }} style={{ padding: '2px 8px', fontSize: '0.65rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
         </div>
       </div>
       <div
@@ -84,12 +130,17 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
         ) : (
           logs.map((log, i) => {
             let color = '#DCE0E8'
-            if (log.msg.includes('실패') || log.msg.includes('오류') || log.msg.includes('차단')) color = '#C4736E'
+            let fontWeight: number | string = 400
+            if (log.msg.includes('쿠키 로테이션')) { color = '#FFFFFF'; fontWeight = 700 }
+            else if (log.msg.includes('실패') || log.msg.includes('오류') || log.msg.includes('차단')) color = '#C4736E'
+            else if (log.msg.includes('가격전송') && log.msg.includes('재고전송')) color = '#FFFFFF'
+            else if (log.msg.includes('재고전송')) color = '#FFD93D'
+            else if (log.msg.includes('가격전송')) color = '#FFFFFF'
             else if (log.msg.includes('전송')) color = '#FFFFFF'
             else if (log.msg.includes('스킵')) color = '#888'
             else if (log.msg.includes('변동')) color = '#FFD93D'
             else if (log.msg.includes('성공')) color = '#7BAF7E'
-            return <div key={`${log.ts}-${i}`} style={{ color }}>{log.msg}</div>
+            return <div key={`${log.ts}-${i}`} style={{ color, fontWeight }}>{log.msg}</div>
           })
         )}
       </div>
@@ -122,17 +173,6 @@ const LOG_LEVEL_COLORS: Record<string, string> = {
   error: '#FF6B6B',
 }
 
-const SITE_COLORS: Record<string, string> = {
-  MUSINSA: '#4C9AFF',
-  KREAM: '#51CF66',
-  Nike: '#FF6B6B',
-  ABCmart: '#FFD93D',
-  Adidas: '#A78BFA',
-  GrandStage: '#F472B6',
-  LOTTEON: '#FB923C',
-  GSShop: '#34D399',
-}
-
 const card: React.CSSProperties = {
   background: 'rgba(30,30,30,0.5)',
   backdropFilter: 'blur(20px)',
@@ -154,6 +194,7 @@ type StoreScore = {
 }
 
 export default function WarroomPage() {
+  useEffect(() => { document.title = 'SAMBA-오토튠' }, [])
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [events, setEvents] = useState<MonitorEvent[]>([])
   const [loading, setLoading] = useState(true)
@@ -175,12 +216,27 @@ export default function WarroomPage() {
   // 오토튠 상태
   const [autotuneRunning, setAutotuneRunning] = useState(false)
   const [autotuneCycles, setAutotuneCycles] = useState(0)
+  const [autotuneRefreshed, setAutotuneRefreshed] = useState(0)
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
-  const [autotuneTarget, setAutotuneTarget] = useState('all')
-  const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null) => {
+  const prevCyclesRef = useRef(0)
+  const falseCountRef = useRef(0)
+  const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number) => {
+    // 별도 스레드 타이밍 차이 대응 — 3회 연속 false일 때만 정지 표시
+    if (!running) {
+      falseCountRef.current++
+      if (falseCountRef.current < 3) return  // 일시적 false 무시
+    } else {
+      falseCountRef.current = 0
+    }
     setAutotuneRunning(running)
     setAutotuneCycles(cycles)
     setAutotuneLastTick(lastTick)
+    setAutotuneRefreshed(refreshed)
+    // 사이클 완료 시 이벤트 타임라인 갱신
+    if (cycles > prevCyclesRef.current) {
+      prevCyclesRef.current = cycles
+      monitorApi.recentEvents(10).then(ev => setEvents(ev)).catch(() => {})
+    }
   }, [])
 
   const runProbe = async () => {
@@ -196,19 +252,17 @@ export default function WarroomPage() {
     try {
       const [dashboard, recentEvents, probeStatus, atStatus, scores] = await Promise.all([
         monitorApi.dashboard().catch(() => null),
-        monitorApi.recentEvents(20).catch(() => []),
+        monitorApi.recentEvents(10).catch(() => []),
         collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>,
-        collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, target: 'registered' })),
+        collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number> })),
         monitorApi.storeScores().catch(() => ({})),
       ])
       if (dashboard) setStats(dashboard)
       setEvents(recentEvents)
       if (probeStatus && Object.keys(probeStatus).length > 0) setProbeData(probeStatus)
-      setAutotuneRunning(atStatus.running)
-      setAutotuneCycles(atStatus.cycle_count)
-      if (atStatus.target) setAutotuneTarget(atStatus.target)
+      // 오토튠 상태는 handleAutotuneStatus를 통해 처리 (falseCountRef 가드 적용, 경쟁 상태 방지)
+      handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
       if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
-      setAutotuneLastTick(atStatus.last_tick)
       setLastFetched(new Date())
       nextPollRef.current = POLL_INTERVAL / 1000
     } catch {
@@ -222,6 +276,8 @@ export default function WarroomPage() {
 
   useEffect(() => {
     load()
+    const poll = setInterval(() => load(), POLL_INTERVAL)
+    return () => clearInterval(poll)
   }, [load])
 
   // 시간 차이 표시
@@ -238,18 +294,30 @@ export default function WarroomPage() {
     return timeAgo(new Date(iso))
   }
 
-  // 이벤트 필터링 (모든 이벤트 표시, 오토튠 텍스트만 정리)
-  const filteredEvents = events.map(e => ({
-    ...e,
-    summary: e.summary?.replace(/오토튠\(registered\)\s*—\s*/, '') ?? e.summary,
-  })).filter(e => {
-    if (eventFilter === 'all') return true
-    if (eventFilter === 'critical') return e.severity === 'critical' || e.severity === 'warning'
-    if (eventFilter === 'price_changed') return e.event_type === 'price_changed'
-    if (eventFilter === 'sold_out') return e.event_type === 'sold_out'
-    if (eventFilter === 'system') return SYSTEM_TYPES.includes(e.event_type)
-    return true
-  })
+  // 이벤트 필터링 — scheduler_tick 최신 3건 표시
+  const filteredEvents = (() => {
+    const mapped = events.map(e => ({
+      ...e,
+      summary: e.summary?.replace(/오토튠\(registered\)\s*—\s*/, '') ?? e.summary,
+    }))
+    // scheduler_tick 최신 3건만 유지
+    let tickCount = 0
+    const deduped = mapped.filter(e => {
+      if (e.event_type === 'scheduler_tick') {
+        tickCount++
+        if (tickCount > 3) return false
+      }
+      return true
+    })
+    return deduped.filter(e => {
+      if (eventFilter === 'all') return true
+      if (eventFilter === 'critical') return e.severity === 'critical' || e.severity === 'warning'
+      if (eventFilter === 'price_changed') return e.event_type === 'price_changed'
+      if (eventFilter === 'sold_out') return e.event_type === 'sold_out'
+      if (eventFilter === 'system') return SYSTEM_TYPES.includes(e.event_type)
+      return true
+    })
+  })()
 
   if (loading || !stats) {
     return (
@@ -285,32 +353,195 @@ export default function WarroomPage() {
           {autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중 ({autotuneCycles}회)</span>}
           {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
         </div>
-        <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
           <button
             onClick={async () => {
               try {
-                if (autotuneRunning) {
-                  await collectorApi.autotuneStop()
-                  setAutotuneRunning(false)
-                } else {
-                  await collectorApi.autotuneStart('registered')
-                  setAutotuneRunning(true)
-                  setAutotuneCycles(0)
-                }
+                const { API_BASE_URL: apiBase } = await import('@/config/api')
+                await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+                await collectorApi.autotuneStart('registered')
+                falseCountRef.current = 0
+                setAutotuneRunning(true)
+                setAutotuneCycles(0)
               } catch { /* ignore */ }
             }}
             style={{
               padding: '0.25rem 0.75rem',
-              background: autotuneRunning ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)',
-              border: `1px solid ${autotuneRunning ? 'rgba(239,68,68,0.35)' : 'rgba(34,197,94,0.35)'}`,
+              background: 'rgba(34,197,94,0.12)',
+              border: '1px solid rgba(34,197,94,0.35)',
               borderRadius: '6px',
-              color: autotuneRunning ? '#EF4444' : '#22C55E',
+              color: '#22C55E',
               fontSize: '0.8125rem',
               fontWeight: 600,
               cursor: 'pointer',
             }}
-          >{autotuneRunning ? '정지' : '시작'}</button>
+          >시작</button>
+          <button
+            onClick={async () => {
+              try {
+                const { API_BASE_URL: apiBase } = await import('@/config/api')
+                await fetch(`${apiBase}/api/v1/samba/collector/autotune/stop`, { method: 'POST' })
+                setAutotuneRunning(false)
+              } catch { /* ignore */ }
+            }}
+            style={{
+              padding: '0.25rem 0.75rem',
+              background: 'rgba(239,68,68,0.12)',
+              border: '1px solid rgba(239,68,68,0.35)',
+              borderRadius: '6px',
+              color: '#EF4444',
+              fontSize: '0.8125rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >강제중단</button>
         </div>
+      </div>
+
+      {/* 오토튠 실시간 로그 (시작/강제중단 버튼 바로 아래) */}
+      <AutotuneLogPanel
+        siteColors={SITE_COLORS}
+        onStatusChange={handleAutotuneStatus}
+        externalRunning={autotuneRunning}
+      />
+
+      {/* 이벤트 타임라인 (로그 아래) */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00' }}>이벤트 타임라인</div>
+          <div style={{ display: 'flex', gap: '0.25rem' }}>
+            {([
+              ['all', '전체'],
+              ['critical', '중요'],
+              ['price_changed', '가격변동'],
+              ['sold_out', '품절'],
+              ['system', '시스템'],
+            ] as [EventFilter, string][]).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setEventFilter(key)}
+                style={{
+                  padding: '0.25rem 0.75rem',
+                  fontSize: '0.7rem',
+                  borderRadius: '4px',
+                  border: '1px solid',
+                  borderColor: eventFilter === key ? '#FF8C00' : '#3D3D3D',
+                  background: eventFilter === key ? 'rgba(255,140,0,0.15)' : 'transparent',
+                  color: eventFilter === key ? '#FF8C00' : '#888',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {filteredEvents.length === 0 ? (
+          <div style={{ fontSize: '0.8rem', color: '#666', padding: '1rem 0', textAlign: 'center' }}>이벤트 없음</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '360px', overflow: 'auto' }}>
+            {filteredEvents.map((e, ei) => {
+              const t = new Date(e.created_at)
+              const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`
+              // 시작~종료 시간 + 초당 처리건수 (detail에서 직접 읽기)
+              const _d = e.detail as Record<string, unknown> | undefined
+              let rateStr = ''
+              let durationStr = ''
+              if (e.event_type === 'scheduler_tick' && _d) {
+                if (_d.rate) rateStr = `${_d.rate}건/초`
+                if (_d.duration_sec) durationStr = `${Math.round(Number(_d.duration_sec))}초`
+                if (_d.started_at && _d.ended_at) {
+                  const s = new Date(String(_d.started_at))
+                  const en = new Date(String(_d.ended_at))
+                  const sf = `${String(s.getHours()).padStart(2, '0')}:${String(s.getMinutes()).padStart(2, '0')}:${String(s.getSeconds()).padStart(2, '0')}`
+                  const ef = `${String(en.getHours()).padStart(2, '0')}:${String(en.getMinutes()).padStart(2, '0')}:${String(en.getSeconds()).padStart(2, '0')}`
+                  durationStr = `${sf}~${ef} (${durationStr})`
+                }
+              }
+              const d = e.detail as Record<string, unknown> | undefined
+              const detailTags: { label: string; value: string; color: string }[] = []
+              if (d) {
+                if (d.old_price != null && d.new_price != null) {
+                  const diff = d.diff_pct as number | undefined
+                  const sign = diff && diff > 0 ? '+' : ''
+                  detailTags.push({
+                    label: '가격',
+                    value: `₩${Number(d.old_price).toLocaleString()} → ₩${Number(d.new_price).toLocaleString()}${diff != null ? ` (${sign}${diff}%)` : ''}`,
+                    color: (diff ?? 0) > 0 ? '#FF6B6B' : '#51CF66',
+                  })
+                }
+                if (typeof d.refreshed === 'number' && d.refreshed > 0)
+                  detailTags.push({ label: '갱신', value: `${d.refreshed}건`, color: '#4C9AFF' })
+                if (typeof d.changed === 'number' && d.changed > 0)
+                  detailTags.push({ label: '변동', value: `${d.changed}건`, color: '#FFD93D' })
+                if (typeof d.sold_out === 'number' && d.sold_out > 0)
+                  detailTags.push({ label: '품절', value: `${d.sold_out}건`, color: '#FF6B6B' })
+                if (typeof d.retransmitted === 'number' && d.retransmitted > 0)
+                  detailTags.push({ label: '재전송', value: `${d.retransmitted}건`, color: '#A78BFA' })
+                if (typeof d.deleted === 'number' && d.deleted > 0)
+                  detailTags.push({ label: '삭제', value: `${d.deleted}건`, color: '#FF6B6B' })
+                if (typeof d.count === 'number' && d.count > 0 && detailTags.length === 0)
+                  detailTags.push({ label: '건수', value: `${d.count}건`, color: '#4C9AFF' })
+                if (d.error && typeof d.error === 'string')
+                  detailTags.push({ label: '에러', value: String(d.error).slice(0, 60), color: '#FF6B6B' })
+                if (Array.isArray(d.missing_fields) && d.missing_fields.length > 0)
+                  detailTags.push({ label: '누락필드', value: (d.missing_fields as string[]).join(', '), color: '#FFD93D' })
+              }
+              return (
+                <div
+                  key={e.id}
+                  style={{
+                    padding: '0.4rem 0.5rem',
+                    borderRadius: '6px',
+                    background: e.severity === 'critical' ? 'rgba(255,107,107,0.08)' : 'transparent',
+                    borderBottom: '1px solid #1A1A1A',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                    <span style={{
+                      width: 8, height: 8, borderRadius: '50%',
+                      background: SEV_COLORS[e.severity] || '#666',
+                      marginTop: '4px', flexShrink: 0,
+                    }} />
+                    <span style={{ fontSize: '0.75rem', color: '#666', minWidth: '3rem', flexShrink: 0 }}>{timeStr}</span>
+                    <span style={{ fontSize: '0.8rem', color: '#E5E5E5', flex: 1 }}>
+                      {e.summary}
+                      {durationStr && <span style={{ marginLeft: '6px', fontSize: '0.7rem', color: '#888' }}>{durationStr}</span>}
+                      {rateStr && <span style={{ marginLeft: '4px', fontSize: '0.7rem', color: '#51CF66', fontWeight: 600 }}>({rateStr})</span>}
+                    </span>
+                    {e.source_site && (
+                      <span style={{
+                        fontSize: '0.65rem', color: SITE_COLORS[e.source_site] || '#888',
+                        padding: '0.1rem 0.3rem', borderRadius: '3px',
+                        background: 'rgba(255,255,255,0.05)', flexShrink: 0,
+                      }}>
+                        {e.source_site}
+                      </span>
+                    )}
+                  </div>
+                  {detailTags.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', marginTop: '0.25rem', paddingLeft: '2.5rem' }}>
+                      {detailTags.map((tag, i) => (
+                        <span key={i} style={{
+                          fontSize: '0.65rem',
+                          padding: '0.1rem 0.4rem',
+                          borderRadius: '3px',
+                          background: `${tag.color}15`,
+                          color: tag.color,
+                          border: `1px solid ${tag.color}30`,
+                        }}>
+                          {tag.label}: {tag.value}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {/* A-2. 마켓별 스토어 현황 분석 */}
@@ -460,11 +691,14 @@ export default function WarroomPage() {
           </div>
         </div>
 
-        {/* 24시간 오토튠 */}
+        {/* 등록상품 / 오토튠 */}
         <div style={card}>
-          <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>24시간 오토튠</div>
+          <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>등록상품 / 오토튠</div>
           <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#4C9AFF' }}>
-            {refresh_stats.refreshed_24h.toLocaleString()}
+            {(product_stats.registered ?? 0).toLocaleString()}
+          </div>
+          <div style={{ fontSize: '0.7rem', color: '#888', marginTop: '0.25rem' }}>
+            24h 갱신 {autotuneRefreshed.toLocaleString()}건
           </div>
         </div>
 
@@ -690,7 +924,7 @@ export default function WarroomPage() {
                       transition: 'width 0.3s',
                     }} />
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt.toLocaleString()}</span>
                 </div>
               ))}
           </div>
@@ -715,7 +949,7 @@ export default function WarroomPage() {
                       transition: 'width 0.3s',
                     }} />
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt.toLocaleString()}</span>
                 </div>
               )
             })}
@@ -740,141 +974,12 @@ export default function WarroomPage() {
                       transition: 'width 0.3s',
                     }} />
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#E5E5E5', minWidth: '2.5rem', textAlign: 'right' }}>{cnt.toLocaleString()}</span>
                 </div>
               )
             })}
           </div>
         </div>
-      </div>
-
-      {/* F. 오토튠 실시간 로그 (독립 컴포넌트) */}
-      <AutotuneLogPanel
-        siteColors={SITE_COLORS}
-        onStatusChange={handleAutotuneStatus}
-      />
-
-      {/* G. 이벤트 타임라인 */}
-      <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FF8C00' }}>이벤트 타임라인</div>
-          <div style={{ display: 'flex', gap: '0.25rem' }}>
-            {([
-              ['all', '전체'],
-              ['critical', '중요'],
-              ['price_changed', '가격변동'],
-              ['sold_out', '품절'],
-              ['system', '시스템'],
-            ] as [EventFilter, string][]).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setEventFilter(key)}
-                style={{
-                  padding: '0.25rem 0.75rem',
-                  fontSize: '0.7rem',
-                  borderRadius: '4px',
-                  border: '1px solid',
-                  borderColor: eventFilter === key ? '#FF8C00' : '#3D3D3D',
-                  background: eventFilter === key ? 'rgba(255,140,0,0.15)' : 'transparent',
-                  color: eventFilter === key ? '#FF8C00' : '#888',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {filteredEvents.length === 0 ? (
-          <div style={{ fontSize: '0.8rem', color: '#666', padding: '1rem 0', textAlign: 'center' }}>이벤트 없음</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '360px', overflow: 'auto' }}>
-            {filteredEvents.map(e => {
-              const t = new Date(e.created_at)
-              const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
-              const d = e.detail as Record<string, unknown> | undefined
-              // detail에서 표시할 태그 목록 생성
-              const detailTags: { label: string; value: string; color: string }[] = []
-              if (d) {
-                if (d.old_price != null && d.new_price != null) {
-                  const diff = d.diff_pct as number | undefined
-                  const sign = diff && diff > 0 ? '+' : ''
-                  detailTags.push({
-                    label: '가격',
-                    value: `₩${Number(d.old_price).toLocaleString()} → ₩${Number(d.new_price).toLocaleString()}${diff != null ? ` (${sign}${diff}%)` : ''}`,
-                    color: (diff ?? 0) > 0 ? '#FF6B6B' : '#51CF66',
-                  })
-                }
-                if (typeof d.refreshed === 'number' && d.refreshed > 0)
-                  detailTags.push({ label: '갱신', value: `${d.refreshed}건`, color: '#4C9AFF' })
-                if (typeof d.changed === 'number' && d.changed > 0)
-                  detailTags.push({ label: '변동', value: `${d.changed}건`, color: '#FFD93D' })
-                if (typeof d.sold_out === 'number' && d.sold_out > 0)
-                  detailTags.push({ label: '품절', value: `${d.sold_out}건`, color: '#FF6B6B' })
-                if (typeof d.retransmitted === 'number' && d.retransmitted > 0)
-                  detailTags.push({ label: '재전송', value: `${d.retransmitted}건`, color: '#A78BFA' })
-                if (typeof d.deleted === 'number' && d.deleted > 0)
-                  detailTags.push({ label: '삭제', value: `${d.deleted}건`, color: '#FF6B6B' })
-                if (typeof d.count === 'number' && d.count > 0 && detailTags.length === 0)
-                  detailTags.push({ label: '건수', value: `${d.count}건`, color: '#4C9AFF' })
-                if (d.error && typeof d.error === 'string')
-                  detailTags.push({ label: '에러', value: String(d.error).slice(0, 60), color: '#FF6B6B' })
-                if (Array.isArray(d.missing_fields) && d.missing_fields.length > 0)
-                  detailTags.push({ label: '누락필드', value: (d.missing_fields as string[]).join(', '), color: '#FFD93D' })
-              }
-              return (
-                <div
-                  key={e.id}
-                  style={{
-                    padding: '0.4rem 0.5rem',
-                    borderRadius: '6px',
-                    background: e.severity === 'critical' ? 'rgba(255,107,107,0.08)' : 'transparent',
-                    borderBottom: '1px solid #1A1A1A',
-                  }}
-                >
-                  {/* 메인 로그 */}
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-                    <span style={{
-                      width: 8, height: 8, borderRadius: '50%',
-                      background: SEV_COLORS[e.severity] || '#666',
-                      marginTop: '4px', flexShrink: 0,
-                    }} />
-                    <span style={{ fontSize: '0.75rem', color: '#666', minWidth: '3rem', flexShrink: 0 }}>{timeStr}</span>
-                    <span style={{ fontSize: '0.8rem', color: '#E5E5E5', flex: 1 }}>{e.summary}</span>
-                    {e.source_site && (
-                      <span style={{
-                        fontSize: '0.65rem', color: SITE_COLORS[e.source_site] || '#888',
-                        padding: '0.1rem 0.3rem', borderRadius: '3px',
-                        background: 'rgba(255,255,255,0.05)', flexShrink: 0,
-                      }}>
-                        {e.source_site}
-                      </span>
-                    )}
-                  </div>
-                  {/* 변동 정보 태그 (변동 있는 건만 표시) */}
-                  {detailTags.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', marginTop: '0.25rem', paddingLeft: '2.5rem' }}>
-                      {detailTags.map((tag, i) => (
-                        <span key={i} style={{
-                          fontSize: '0.65rem',
-                          padding: '0.1rem 0.4rem',
-                          borderRadius: '3px',
-                          background: `${tag.color}15`,
-                          color: tag.color,
-                          border: `1px solid ${tag.color}30`,
-                        }}>
-                          {tag.label}: {tag.value}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
       </div>
 
       {/* 소싱처/마켓 상태 대시보드 */}

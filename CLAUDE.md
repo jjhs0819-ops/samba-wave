@@ -83,10 +83,17 @@ pre-commit run --all-files       # Run all pre-commit hooks
 
 **Deployment:**
 
-- Backend: Railway (Dockerfile 기반)
+- Backend: Cloud Run (asia-northeast3, 서울)
 - Frontend: Vercel
-- Database: Railway PostgreSQL
+- Database: Cloud SQL PostgreSQL (asia-northeast3)
 - Image Storage: Cloudflare R2
+
+**프록시 (IP 분리):**
+
+- 전송: Cloud Run 메인 IP (직접 연결)
+- 수집: 전용 프록시 (COLLECT_PROXY_URL)
+- 오토튠: 프록시 2개 로테이션 (PROXY_URLS, 50건 교대)
+- 프록시 인증 정보: GitHub Secrets에 저장 (PROXY_URLS, COLLECT_PROXY_URL)
 
 ## Frontend Development
 
@@ -159,12 +166,21 @@ Backend and frontend both require `.env` files:
 
 ### Git Workflow
 
-- Main branch: `main` (protected, auto-deploys backend to AWS ECS)
+- Main branch: `main`
 - Create feature branches for development
-- Backend deployment triggers automatically on push to `main` via `.github/workflows/deploy-real.yaml`
-  - Builds Docker image and pushes to ECR: `206404754787.dkr.ecr.ap-northeast-2.amazonaws.com/qwarty-backend:latest`
-  - Deploys to ECS service: `prod-apne2-qwarty-backend-svc` in cluster `qwarty-backend-cluster`
-  - Task definition: `backend/prod-apne2-qwarty-backend-task-def.json`
+- Backend deployment: push to `main` → `.github/workflows/deploy-cloudrun.yml` → Cloud Run 자동 배포
+  - 코드 + 환경변수 동시 배포 (환경변수는 GitHub Secrets 참조)
+  - 프로젝트: `fresh-sanctuary-489804-v4`
+  - 서비스: `samba-wave-api` (asia-northeast3)
+  - Health check: `https://samba-wave-api-363598397345.asia-northeast3.run.app/api/v1/health`
+
+### Cloud Run 환경변수 관리 [중요]
+
+- 환경변수는 `.github/workflows/deploy-cloudrun.yml`에서 관리
+- 민감 정보(프록시 URL, DB 비밀번호)는 GitHub Secrets / GCP Secret Manager 사용
+- **`gcloud run services update --env-vars-file`은 모든 환경변수를 교체하므로 주의**
+- 환경변수 추가/변경 시: GitHub Secrets 업데이트 → 워크플로우 재배포
+- 환경변수를 수동으로 gcloud CLI로 변경하면 다음 배포 시 워크플로우 값으로 덮어씌워짐
 
 ### Key Design Patterns
 

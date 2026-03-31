@@ -22,7 +22,7 @@ class SSGPlugin(MarketPlugin):
     from backend.domain.samba.proxy.ssg import SSGClient
 
     api_key = kwargs.get("api_key", "")
-    store_id = kwargs.get("store_id", "6004")
+    store_id = kwargs.get("store_id", SSGClient.DEFAULT_SITE_NO)
     infra = kwargs.get("infra", {})
     client = SSGClient(api_key, site_no=store_id)
     return client.transform_product(product, category_id, infra=infra)
@@ -43,7 +43,7 @@ class SSGPlugin(MarketPlugin):
     if not api_key:
       return {"success": False, "message": "SSG 인증키가 비어있습니다."}
 
-    store_id = creds.get("storeId", "6004")
+    store_id = creds.get("storeId", SSGClient.DEFAULT_SITE_NO)
     client = SSGClient(api_key, site_no=store_id)
 
     # 배송비/주소 인프라 데이터 자동 조회

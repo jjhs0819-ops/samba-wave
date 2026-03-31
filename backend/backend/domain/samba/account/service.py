@@ -65,9 +65,6 @@ SUPPORTED_MARKETS: List[Dict[str, Any]] = [
     {"id": "quten", "name": "큐텐", "group": "해외", "api_fields": ["apiKey", "qUserId"]},
     # Resale
     {"id": "kream", "name": "KREAM", "group": "리셀", "api_fields": ["email", "password"]},
-    # 해외 추가
-    {"id": "ebay", "name": "eBay", "group": "해외", "api_fields": ["clientId", "clientSecret", "oauthToken"]},
-    {"id": "lazada", "name": "Lazada", "group": "해외", "api_fields": ["appKey", "appSecret", "accessToken"]},
     {"id": "shopify", "name": "Shopify", "group": "해외", "api_fields": ["accessToken"]},
     {"id": "zoom", "name": "Zum(줌)", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
 ]

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import logging
 import os
 import uuid
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -925,3 +927,194 @@ class ImageTransformService:
       "uploaded": uploaded,
       "failed": failed,
     }
+
+
+# ── 긴 이미지 분할 (수집 시 상세이미지→추가이미지 보충용) ─────────
+
+async def split_long_images(
+  image_urls: list[str],
+  original_count: int,
+  session: AsyncSession,
+) -> list[str]:
+  """추가이미지에 보충된 상세이미지 중 긴 이미지를 분할.
+
+  Args:
+    image_urls: 전체 이미지 URL 리스트 (썸네일+추가+보충된 상세)
+    original_count: 보충 전 원본 이미지 수 (이 인덱스 이후가 상세이미지)
+    session: DB 세션 (R2 설정 조회용)
+
+  Returns:
+    분할 처리된 이미지 URL 리스트 (최대 9장)
+  """
+  if original_count >= len(image_urls):
+    return image_urls  # 보충된 이미지 없음
+
+  # R2 클라이언트 준비
+  from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+  repo = SambaSettingsRepository(session)
+  row = await repo.find_by_async(key="cloudflare_r2")
+  if not row or not isinstance(row.value, dict):
+    return image_urls
+  creds = row.value
+  account_id = str(creds.get("accountId", "")).strip()
+  access_key = str(creds.get("accessKey", "")).strip()
+  secret_key = str(creds.get("secretKey", "")).strip()
+  bucket_name = str(creds.get("bucketName", "")).strip()
+  public_url = str(creds.get("publicUrl", "")).strip().rstrip("/")
+  if not access_key or not secret_key or not bucket_name:
+    return image_urls
+
+  import boto3
+  r2 = boto3.client(
+    "s3",
+    endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+    aws_access_key_id=access_key,
+    aws_secret_access_key=secret_key,
+    region_name="auto",
+  )
+
+  # 원본 이미지는 그대로 유지
+  result = list(image_urls[:original_count])
+
+  # 보충된 상세이미지만 처리
+  for url in image_urls[original_count:]:
+    if len(result) >= 9:
+      break
+    try:
+      split_urls = await _split_single_image(url, r2, bucket_name, public_url)
+      for su in split_urls:
+        if len(result) < 9:
+          result.append(su)
+    except Exception as e:
+      logger.warning(f"[이미지분할] 실패 {url}: {e}")
+      if len(result) < 9:
+        result.append(url)
+
+  return result
+
+
+async def _split_single_image(
+  url: str, r2_client: Any, bucket_name: str, public_url: str,
+) -> list[str]:
+  """단일 이미지 다운로드 → 비율 체크 → 분할 → R2 업로드."""
+  from PIL import Image
+  from urllib.parse import urlparse
+
+  parsed = urlparse(url)
+  referer = f"{parsed.scheme}://{parsed.netloc}/"
+  if "msscdn.net" in (parsed.netloc or ""):
+    referer = "https://www.musinsa.com/"
+
+  async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    resp = await client.get(url, headers={
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Referer": referer,
+    })
+    resp.raise_for_status()
+
+  img = Image.open(io.BytesIO(resp.content))
+  w, h = img.size
+
+  # 텍스트 이미지면 제외
+  if _is_text_image(img):
+    logger.info(f"[이미지분할] 텍스트 이미지 제외: {url} ({w}x{h})")
+    return []
+
+  # 세로가 가로의 2배 이하 → 분할 불필요
+  if h <= w * 2:
+    return [url]
+
+  # 상단 텍스트 영역 감지 → 텍스트 끝나는 지점부터 분할 시작
+  crop_y = _find_content_start(img, w, h)
+  if crop_y > 0:
+    logger.info(f"[이미지분할] 상단 텍스트 {crop_y}px 제거: {url}")
+
+  # 가로 크기 기준 정사각형 단위로 분할
+  segment_h = w
+  segments: list[Image.Image] = []
+  y = crop_y
+  while y < h:
+    bottom = min(y + segment_h, h)
+    # 마지막 세그먼트가 가로의 1/3 미만이면 버림
+    if bottom - y < w // 3 and segments:
+      break
+    segments.append(img.crop((0, y, w, bottom)))
+    y = bottom
+
+  # 텍스트 이미지 필터링 후 R2에 업로드
+  url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+  uploaded: list[str] = []
+  for idx, seg in enumerate(segments):
+    if _is_text_image(seg):
+      logger.info(f"[이미지분할] 텍스트 이미지 제외: {url} seg#{idx}")
+      continue
+    buf = io.BytesIO()
+    seg.convert("RGB").save(buf, format="WEBP", quality=85)
+    buf.seek(0)
+    filename = f"split_{url_hash}_{idx}_{uuid.uuid4().hex[:6]}.webp"
+    await asyncio.to_thread(
+      partial(
+        r2_client.upload_fileobj,
+        buf, bucket_name, f"split/{filename}",
+        ExtraArgs={"ContentType": "image/webp"},
+      ),
+    )
+    uploaded.append(f"{public_url}/split/{filename}")
+
+  logger.info(f"[이미지분할] {url} → {len(uploaded)}장 ({w}x{h})")
+  return uploaded
+
+
+def _find_content_start(img: Any, w: int, h: int) -> int:
+  """상단 텍스트/공지 영역의 끝(상품 사진 시작) y좌표를 반환.
+
+  위에서부터 가로 스트립(높이 = 가로의 1/10)을 스캔하여
+  컬러 픽셀이 10% 이상인 첫 스트립의 시작 y를 반환한다.
+  """
+  from PIL import Image
+
+  strip_h = max(w // 10, 20)
+  # 성능을 위해 가로를 200px로 리사이즈
+  scale = min(1.0, 200 / w)
+  sw = int(w * scale)
+
+  y = 0
+  while y < h:
+    bottom = min(y + strip_h, h)
+    strip = img.crop((0, y, w, bottom))
+    if sw < w:
+      strip = strip.resize((sw, int((bottom - y) * scale)), Image.LANCZOS)
+    hsv = strip.convert("HSV")
+    hist = hsv.split()[1].histogram()
+    total = sum(hist)
+    color_pixels = sum(hist[30:])
+    if total > 0 and color_pixels / total >= 0.10:
+      return y  # 상품 사진 시작 지점
+    y = bottom
+
+  return 0  # 전체가 텍스트면 처음부터 분할
+
+
+def _is_text_image(img: Any) -> bool:
+  """텍스트/공지 이미지 판별 — 컬러 픽셀 비율이 10% 미만이면 텍스트로 간주.
+
+  상품 사진은 색상이 다양하지만, 텍스트 이미지(공지사항, 배송안내 등)는
+  흰 배경 + 검은 글씨로 채도가 거의 없다.
+  """
+  from PIL import Image
+
+  rgb = img.convert("RGB")
+  # 성능을 위해 리사이즈 (최대 200px)
+  w, h = rgb.size
+  if max(w, h) > 200:
+    ratio = 200 / max(w, h)
+    rgb = rgb.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+
+  hsv = rgb.convert("HSV")
+  # S(채도) 채널 히스토그램 — 0~255, 인덱스 0~255
+  hist = hsv.split()[1].histogram()  # S 채널
+  total_pixels = sum(hist)
+  # 채도 30 이상인 픽셀 수 = 컬러 픽셀
+  color_pixels = sum(hist[30:])
+  color_ratio = color_pixels / total_pixels if total_pixels > 0 else 0
+  return color_ratio < 0.10

@@ -12,6 +12,49 @@ from backend.domain.samba.shipment.model import SambaShipment
 from backend.domain.samba.shipment.repository import SambaShipmentRepository
 from backend.utils.logger import logger
 
+import math
+
+# 마켓타입 → 정책키 매핑
+MARKET_TYPE_TO_POLICY_KEY = {
+    'coupang': '쿠팡', 'ssg': '신세계몰', 'smartstore': '스마트스토어',
+    '11st': '11번가', 'gmarket': '지마켓', 'auction': '옥션',
+    'gsshop': 'GS샵', 'lotteon': '롯데ON', 'lottehome': '롯데홈쇼핑',
+    'homeand': '홈앤쇼핑', 'hmall': 'HMALL', 'kream': 'KREAM',
+}
+
+
+def calc_market_price(cost: float, policy_pricing: dict, market_type: str, market_policies: dict | None = None) -> int:
+    """정책 기반 마켓 최종 판매가 계산.
+
+    원가 + 마진 + 배송비 → 수수료 역산 → 추가요금.
+    마켓별 오버라이드 적용.
+    """
+    if not policy_pricing:
+        return int(cost)
+    pr = policy_pricing
+    common_margin_rate = pr.get("marginRate", 15)
+    common_shipping = pr.get("shippingCost", 0)
+    common_extra = pr.get("extraCharge", 0)
+    common_fee = pr.get("feeRate", 0)
+    min_margin = pr.get("minMarginAmount", 0)
+
+    policy_key = MARKET_TYPE_TO_POLICY_KEY.get(market_type, "")
+    mp = (market_policies or {}).get(policy_key, {}) if policy_key else {}
+    m_margin_rate = mp.get("marginRate") or common_margin_rate
+    m_shipping = mp.get("shippingCost") or common_shipping
+    m_fee = mp.get("feeRate") or common_fee
+
+    margin_amt = round(cost * m_margin_rate / 100)
+    if min_margin > 0 and margin_amt < min_margin:
+        margin_amt = min_margin
+    calc_price = cost + margin_amt + m_shipping
+    if m_fee > 0 and calc_price > 0:
+        calc_price = math.ceil(calc_price / (1 - m_fee / 100))
+    if common_extra > 0:
+        calc_price += common_extra
+    return int(calc_price)
+
+
 # 그룹상품 동시성 제어 락 (account_id별)
 _group_locks: dict[str, asyncio.Lock] = {}
 
@@ -21,12 +64,29 @@ _transmitting_products: set[str] = set()
 # 계정별 세마포어 — API Rate Limit 방지 (계정당 동시 1건)
 _account_semaphores: dict[str, asyncio.Semaphore] = {}
 
+# 전송 중단 플래그 (threading.Event — 스레드 간 동기화 보장)
+import threading as _threading
+_cancel_event = _threading.Event()
+
+def request_cancel_transmit():
+  _cancel_event.set()
+
+def clear_cancel_transmit():
+  _cancel_event.clear()
+
+def is_cancel_requested() -> bool:
+  return _cancel_event.is_set()
+
 
 def _get_group_lock(account_id: str) -> asyncio.Lock:
   if account_id not in _group_locks:
     _group_locks[account_id] = asyncio.Lock()
   return _group_locks[account_id]
 
+
+def clear_account_semaphores():
+  """별도 스레드 실행 시 이전 이벤트 루프 세마포어 정리."""
+  _account_semaphores.clear()
 
 def _get_account_semaphore(account_id: str) -> asyncio.Semaphore:
   if account_id not in _account_semaphores:
@@ -89,11 +149,20 @@ class SambaShipmentService:
   ) -> dict[str, Any]:
     """여러 상품을 대상 마켓 계정으로 실제 전송. 마켓별 결과 반환."""
     from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+    # 이전 취소 플래그 잔존 방지
+    clear_cancel_transmit()
 
     processed = 0
     skipped = 0
+    cancelled = 0
     results: list[dict[str, Any]] = []
     for product_id in product_ids:
+      # 중단 체크
+      if is_cancel_requested():
+        cancelled = len(product_ids) - processed
+        logger.info(f"[전송] 강제 중단 — {processed}건 완료, {cancelled}건 취소")
+        clear_cancel_transmit()
+        break
       try:
         shipment = await self._transmit_product(
           product_id, target_account_ids, update_items,
@@ -115,13 +184,12 @@ class SambaShipmentService:
           "error": str(exc),
         })
 
-    return {"processed": processed, "skipped": skipped, "results": results}
+    return {"processed": processed, "skipped": skipped, "cancelled": cancelled, "results": results}
 
   # ==================== 그룹상품 전송 ====================
 
   async def transmit_group(self, product_ids: list[str], account_id: str) -> dict:
     """그룹상품을 스마트스토어에 등록."""
-    import math
 
     from backend.domain.samba.account.repository import SambaMarketAccountRepository
     from backend.domain.samba.collector.repository import SambaCollectedProductRepository
@@ -286,7 +354,7 @@ class SambaShipmentService:
 
       # 폴링
       try:
-        poll_result = await client.poll_group_status(max_wait=300)
+        poll_result = await client.poll_group_status(max_wait=120)
       except Exception as e:
         # 그룹 등록 실패 → 삭제된 상품 롤백 (단일상품 재등록)
         logger.error(f"그룹등록 실패, 단일상품으로 롤백: {e}")
@@ -353,9 +421,21 @@ class SambaShipmentService:
     _transmitting_products.add(product_id)
 
     try:
-      return await self._transmit_product_inner(
-        product_id, target_account_ids, update_items, skip_unchanged,
+      return await asyncio.wait_for(
+        self._transmit_product_inner(
+          product_id, target_account_ids, update_items, skip_unchanged,
+        ),
+        timeout=180,  # 상품 1건당 최대 180초 (최신화+이미지업로드 포함)
       )
+    except asyncio.TimeoutError:
+      logger.warning(f"[전송] 상품 {product_id} 전송 180초 타임아웃 — 스킵")
+      shipment = await self.repo.create_async(
+        product_id=product_id, target_account_ids=target_account_ids,
+        update_items=update_items, status="failed",
+        update_result={}, transmit_result={},
+        transmit_error={"_all": "전송 180초 타임아웃"},
+      )
+      return shipment
     finally:
       _transmitting_products.discard(product_id)
 
@@ -367,11 +447,25 @@ class SambaShipmentService:
     skip_unchanged: bool = False,
   ) -> SambaShipment:
     """상품 전송 실제 구현 (락 획득 후 호출)."""
+    def _mem_mb():
+      try:
+        with open("/proc/self/status") as f:
+          for line in f:
+            if line.startswith("VmRSS:"):
+              return int(line.split()[1]) // 1024
+      except Exception:
+        return -1
+    logger.info(f"[메모리] 전송시작: {_mem_mb()}MB")
+
     from backend.domain.samba.account.model import SambaMarketAccount
     from backend.domain.samba.account.repository import SambaMarketAccountRepository
     from backend.domain.samba.collector.model import SambaCollectedProduct
     from backend.domain.samba.collector.repository import SambaCollectedProductRepository
     from backend.domain.samba.shipment.dispatcher import dispatch_to_market
+
+    # 강제 중단 체크
+    if is_cancel_requested():
+        raise Exception("전송 강제 중단됨")
 
     # 1. shipment 레코드 생성
     shipment = await self.repo.create_async(
@@ -402,7 +496,10 @@ class SambaShipmentService:
     if has_update and product_row.source_site and product_row.site_product_id:
       try:
         from backend.domain.samba.collector.refresher import refresh_product
-        refresh_result = await refresh_product(product_row)
+        refresh_result = await asyncio.wait_for(
+            refresh_product(product_row, source="transmit"),
+            timeout=60,  # 갱신이 전송 전체를 막지 않도록 60초 제한
+        )
         if refresh_result.error:
           refresh_status = f"최신화실패:{refresh_result.error[:30]}"
           logger.warning(f"[전송] 소싱처 최신화 실패: {refresh_result.error}")
@@ -421,7 +518,7 @@ class SambaShipmentService:
             refresh_updates["options"] = refresh_result.new_options
           if refresh_result.new_sale_status:
             refresh_updates["sale_status"] = refresh_result.new_sale_status
-            refresh_updates["is_sold_out"] = refresh_result.new_sale_status == "sold_out"
+            # is_sold_out 제거 → sale_status로 통일
           # 이미지 갱신: update_items에 "image"가 명시적으로 체크된 경우만
           _update_image = update_items and "image" in update_items
           if refresh_result.new_images and _update_image:
@@ -470,23 +567,46 @@ class SambaShipmentService:
           cur_cost_val = int(new_cost) if new_cost is not None else (int(old_cost) if old_cost else 0)
           old_cost_int = int(old_cost) if old_cost else 0
           new_cost_int = int(new_cost) if new_cost is not None else old_cost_int
-          refresh_status = f"원가 {old_cost_int}>{new_cost_int}, 재고변동 {stock_change_count}건"
+          refresh_status = f"원가 {old_cost_int:,}>{new_cost_int:,}, 재고변동 {stock_change_count}건"
           logger.info(f"[전송] 소싱처 최신화 완료 — {refresh_status}")
+      except asyncio.TimeoutError:
+        refresh_status = "최신화실패:60초 타임아웃"
+        logger.warning("[전송] 소싱처 최신화 타임아웃 (60초) — 갱신 건너뜀")
       except Exception as ref_e:
         refresh_status = f"최신화예외:{str(ref_e)[:30]}"
         logger.warning(f"[전송] 소싱처 최신화 예외: {ref_e}")
-    # refresh_status는 최종 shipment 업데이트에서 기록
+    # 최신화를 안 했어도 현재 원가 표시
+    if not refresh_status:
+      _cur_cost = int(product_row.cost or product_row.sale_price or 0)
+      _opt_count = len(product_row.options or [])
+      refresh_status = f"원가 {_cur_cost:,}, 옵션 {_opt_count}건"
 
-    # 이미지/상세페이지 업데이트 필요 여부 판단
-    # 최초 전송(미등록 상품)이면 update_items와 무관하게 항상 상세페이지 생성
-    is_first_transmit = product_row.status != "registered" and not product_row.registered_accounts
-    needs_image = is_first_transmit or not update_items or "image" in update_items or "description" in update_items
-    if not needs_image:
-      product_dict["_skip_image_upload"] = True
-    # 가격/재고만 수정 시 404 → POST 신규등록 차단 (중복 등록 방지)
-    is_price_only = update_items and set(update_items) <= {"price", "stock"}
-    if is_price_only:
-      product_dict["_price_stock_only"] = True
+    # 조기 스킵: 이미 등록된 상품 + 가격재고 업데이트 모드 + 변동 없음 → 나머지 로직 전부 건너뜀
+    _is_registered = product_row.status == "registered" and bool(product_row.registered_accounts)
+    if skip_unchanged and has_update and _is_registered:
+      # 소싱처 최신화에서 변동이 없었으면 즉시 스킵
+      if not pending_refresh_updates or refresh_status.startswith("최신화실패"):
+        pass  # 최신화 안 했거나 실패 → 스킵 판정 불가, 계속 진행
+      else:
+        _old_cost = product_row.cost or 0
+        _new_cost = pending_refresh_updates.get("cost", _old_cost)
+        _old_opts = product_row.options or []
+        _new_opts = pending_refresh_updates.get("options", _old_opts)
+        if _new_cost == _old_cost and _new_opts == _old_opts:
+          logger.info(f"[전송] 조기 스킵 — 소싱처 변동 없음 (원가 {int(_old_cost):,})")
+          shipment = SambaShipment(
+            product_id=product_id, status="completed",
+            result={"refresh": refresh_status} if refresh_status else None,
+          )
+          self.session.add(shipment)
+          await self.session.flush()
+          return shipment
+
+    # 이미지/상세페이지 전송 판단
+    # 오토튠 재전송(price/stock만) → 이미지 불필요
+    # 그 외(수동 전송) → 항상 이미지 전송 (DB 현재 이미지 사용)
+    is_price_stock_only = update_items and set(update_items) <= {"price", "stock"}
+    needs_image = not is_price_stock_only
 
     # 2-1. 정책의 상세 템플릿으로 detail_html 재생성 (이미지/상세 업데이트 시에만)
     if needs_image:
@@ -589,6 +709,9 @@ class SambaShipmentService:
         name_rule = result.first()
         if name_rule:
           product_dict["name"] = self._compose_product_name(product_dict, name_rule)
+          # 마켓별 상품명 조합이 있으면 _dispatch_one에서 덮어쓸 수 있도록 name_rule 보관
+          product_dict["_name_rule"] = name_rule
+          product_dict["_original_name"] = product_row.model_dump().get("name", "")
 
     # 글로벌 삭제어 적용 (상품명에서 금칙어 제거)
     # DB 실제 데이터: type='deletion', scope='all'
@@ -651,8 +774,81 @@ class SambaShipmentService:
     _res2 = await self.session.execute(_stmt2)
     _dispatch_account_map = {a.id: a for a in _res2.scalars().all()}
 
+    # 전 옵션 품절 시 소싱처 1회 최신화 시도 (30초 타임아웃)
+    _all_opts = product_dict.get("options") or []
+    _all_sold = _all_opts and all(
+      (o.get("isSoldOut", False) or (o.get("stock") or 0) <= 0)
+      for o in _all_opts if isinstance(o, dict)
+    )
+    if _all_sold and not pending_refresh_updates and product_row.source_site and product_row.site_product_id:
+      logger.info(f"[전송] 상품 {product_id} 전 옵션 품절 → 소싱처 1회 최신화 시도 (30초)")
+      try:
+        from backend.domain.samba.collector.refresher import refresh_product as _refresh_sold
+        _sold_refresh = await asyncio.wait_for(
+          _refresh_sold(product_row, source="transmit"),
+          timeout=30,
+        )
+        if not _sold_refresh.error and _sold_refresh.new_options is not None:
+          # 옵션/가격 업데이트
+          product_dict["options"] = _sold_refresh.new_options
+          if _sold_refresh.new_sale_price is not None:
+            product_dict["sale_price"] = _sold_refresh.new_sale_price
+          if _sold_refresh.new_original_price is not None:
+            product_dict["original_price"] = _sold_refresh.new_original_price
+          if _sold_refresh.new_cost is not None:
+            product_dict["cost"] = _sold_refresh.new_cost
+          if _sold_refresh.new_sale_status:
+            product_dict["sale_status"] = _sold_refresh.new_sale_status
+          # pending_refresh_updates에도 반영 (최종 DB 저장용)
+          pending_refresh_updates.update({
+            "options": _sold_refresh.new_options,
+            "last_refreshed_at": datetime.now(UTC),
+          })
+          if _sold_refresh.new_sale_price is not None:
+            pending_refresh_updates["sale_price"] = _sold_refresh.new_sale_price
+          if _sold_refresh.new_original_price is not None:
+            pending_refresh_updates["original_price"] = _sold_refresh.new_original_price
+          if _sold_refresh.new_cost is not None:
+            pending_refresh_updates["cost"] = _sold_refresh.new_cost
+          if _sold_refresh.new_sale_status:
+            pending_refresh_updates["sale_status"] = _sold_refresh.new_sale_status
+          # 가격/재고 변동 계산 (기존 최신화와 동일 포맷)
+          _old_cost = getattr(product_row, "cost", None) or 0
+          _new_cost = _sold_refresh.new_cost if _sold_refresh.new_cost is not None else _old_cost
+          _old_opts = getattr(product_row, "options", None) or []
+          _old_stocks = {o.get("name", ""): o.get("stock", 0) for o in _old_opts}
+          _new_stocks = {o.get("name", ""): o.get("stock", 0) for o in _sold_refresh.new_options}
+          _stock_changes = [k for k in set(list(_old_stocks.keys()) + list(_new_stocks.keys())) if _old_stocks.get(k) != _new_stocks.get(k)]
+          _stock_change_count = len(_stock_changes)
+          # 가격/재고 이력 스냅샷 기록
+          _snap = {
+            "date": datetime.now(UTC).isoformat(),
+            "source": "transmit_soldout_refresh",
+            "sale_price": _sold_refresh.new_sale_price if _sold_refresh.new_sale_price is not None else product_row.sale_price,
+            "original_price": _sold_refresh.new_original_price if _sold_refresh.new_original_price is not None else product_row.original_price,
+            "cost": _sold_refresh.new_cost if _sold_refresh.new_cost is not None else product_row.cost,
+            "sale_status": _sold_refresh.new_sale_status or "in_stock",
+            "changed": _sold_refresh.changed,
+            "options": _sold_refresh.new_options,
+          }
+          _history = list(product_row.price_history or [])
+          _history.insert(0, _snap)
+          if len(_history) <= 5:
+            pending_refresh_updates["price_history"] = _history
+          else:
+            pending_refresh_updates["price_history"] = _history[:4] + [_history[-1]]
+          logger.info(f"[전송] 품절 최신화 완료 — 원가 {int(_old_cost):,}>{int(_new_cost):,}, 재고변동 {_stock_change_count}건")
+          if not refresh_status:
+            refresh_status = f"원가 {int(_old_cost):,}>{int(_new_cost):,}, 재고변동 {_stock_change_count}건"
+        else:
+          _err = _sold_refresh.error if _sold_refresh.error else "옵션 데이터 없음"
+          logger.info(f"[전송] 품절 최신화 실패 — {_err}")
+      except asyncio.TimeoutError:
+        logger.warning(f"[전송] 전 옵션 품절 소싱처 최신화 타임아웃 (30초)")
+      except Exception as _sold_e:
+        logger.warning(f"[전송] 전 옵션 품절 소싱처 최신화 예외: {_sold_e}")
+
     # 계정별 전송을 병렬 코루틴으로 실행
-    import math
 
     async def _dispatch_one(account_id: str) -> dict[str, Any]:
       """단일 계정 전송 — 결과 dict 반환."""
@@ -666,6 +862,16 @@ class SambaShipmentService:
         market_type = account.market_type
         category_id = mapped_categories.get(market_type, "")
 
+        # ESM Plus 크로스매핑: 지마켓↔옥션 자동 변환
+        if not category_id and market_type in ("gmarket", "auction"):
+          other = "auction" if market_type == "gmarket" else "gmarket"
+          other_id = mapped_categories.get(other, "")
+          if other_id and str(other_id).isdigit():
+            from backend.domain.samba.proxy.esmplus import esm_map_category
+            category_id = esm_map_category(other_id, other, market_type)
+            if category_id:
+              logger.info(f"[ESM 크로스매핑] {other}({other_id}) → {market_type}({category_id})")
+
         if not category_id:
           res["error"] = "카테고리 매핑 없음"
           logger.warning(f"[전송] 상품 {product_id} → {market_type} 카테고리 매핑 없음 (스킵)")
@@ -678,8 +884,49 @@ class SambaShipmentService:
           logger.warning(f"[전송] 상품 {product_id} → {market_type} 최하단 카테고리 미매핑: '{category_id}' (스킵)")
           return res
 
+        # 전 옵션 품절 체크 — 마켓 등록 상품이면 마켓 삭제, 미등록이면 스킵
+        _opts = product_dict.get("options") or []
+        if _opts and all(
+          (o.get("isSoldOut", False) or (o.get("stock") or 0) <= 0)
+          for o in _opts if isinstance(o, dict)
+        ):
+          # 이미 마켓 등록된 상품이면 삭제 처리
+          _reg_accs = product_dict.get("registered_accounts") or []
+          if account_id in _reg_accs and existing_product_no:
+            try:
+              from backend.domain.samba.shipment.dispatcher import delete_from_market
+              del_result = await delete_from_market(
+                self.session, market_type, product_dict, account_id
+              )
+              if del_result.get("success"):
+                # registered_accounts에서 제거 + DB 반영
+                _prod = await SambaCollectedProductRepository(self.session).get_async(product_id)
+                if _prod:
+                  new_reg = [a for a in (_prod.registered_accounts or []) if a != account_id]
+                  _prod.registered_accounts = new_reg if new_reg else None
+                  await self.session.commit()
+                res["status"] = "completed"
+                res["results"] = {account_id: "deleted"}
+                logger.info(f"[전송] 상품 {product_id} → {market_type} 전 옵션 품절 → 마켓 삭제 완료")
+                return res
+            except Exception as e:
+              logger.warning(f"[전송] 전 옵션 품절 마켓 삭제 실패: {e}")
+          res["error"] = "전 옵션 품절 (등록 불가)"
+          logger.info(f"[전송] 상품 {product_id} → {market_type} 전 옵션 품절 스킵")
+          return res
+
         # 마켓별 판매가 계산 (product_dict 원본 보호를 위해 복사본 사용)
         acct_product = dict(product_dict)
+
+        # 마켓별 상품명 조합 덮어쓰기
+        _nr = product_dict.get("_name_rule")
+        if _nr and getattr(_nr, "market_name_compositions", None):
+          _market_comp = _nr.market_name_compositions.get(market_type)
+          if _market_comp:
+            # 원본 상품 데이터로 마켓별 조합 실행
+            _orig = dict(product_dict)
+            _orig["name"] = product_dict.get("_original_name", product_dict.get("name", ""))
+            acct_product["name"] = self._compose_product_name(_orig, _nr, market_type=market_type)
         cost = acct_product.get("cost") or acct_product.get("sale_price") or acct_product.get("original_price") or 0
         if policy and policy.pricing:
           pr = policy.pricing
@@ -706,6 +953,7 @@ class SambaShipmentService:
 
           acct_product["sale_price"] = calc_price
           logger.info(f"[전송] 정책 가격 계산: 원가={cost}, 마진={margin_amt}({m_margin_rate}%), 배송={m_shipping}, 수수료={m_fee}% → 판매가={calc_price}")
+          logger.info(f"[메모리] 가격계산 후: {_mem_mb()}MB")
 
         # 스킵 판단
         cur_price = int(acct_product.get("sale_price") or 0)
@@ -741,14 +989,23 @@ class SambaShipmentService:
           res["is_update"] = True
           logger.info(f"[전송] 기존 상품번호 발견 → 수정 모드: {market_type} #{existing_product_no}")
 
-        # 마켓 API 호출 (계정별 세마포어)
+        # 마켓 API 호출 (계정별 세마포어 — 30초 타임아웃)
         account_sem = _get_account_semaphore(account_id)
-        async with account_sem:
+        try:
+          await asyncio.wait_for(account_sem.acquire(), timeout=30)
+        except asyncio.TimeoutError:
+          res["error"] = f"계정 사용 중 (30초 타임아웃, {market_type})"
+          logger.warning(f"[전송] 계정 {account_id} 세마포어 30초 타임아웃")
+          return res
+        try:
+          logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
           result = await dispatch_to_market(
             self.session, market_type, acct_product, category_id,
             account=account,
             existing_product_no=existing_product_no,
           )
+        finally:
+          account_sem.release()
 
         # 404 → 상품번호 초기화
         if result.get("_clear_product_no"):
@@ -805,12 +1062,19 @@ class SambaShipmentService:
           action = "수정" if existing_product_no else "등록"
           logger.info(f"[전송] {market_type} {action} 성공 - 상품: {product_id}, 계정: {account_id}")
         else:
-          res["error"] = result.get("message", "알 수 없는 오류")
-          logger.warning(f"[전송] {market_type} 실패 - {result.get('message')}")
+          _msg = result.get("message", "알 수 없는 오류")
+          res["error"] = str(_msg) if not isinstance(_msg, str) else _msg
+          logger.warning(f"[전송] {market_type} 실패 - {_msg}")
 
       except Exception as exc:
-        res["error"] = str(exc)
-        logger.error(f"[전송] 계정 {account_id} 예외: {exc}")
+        _err = str(exc)
+        # asyncio 내부 객체 누출 방지
+        if "<asyncio" in _err or "Semaphore" in _err:
+          _err = f"전송 타임아웃 또는 동시성 오류 ({market_type})"
+          logger.error(f"[전송] 계정 {account_id} 세마포어 누출: {exc}")
+        else:
+          logger.error(f"[전송] 계정 {account_id} 예외: {exc}")
+        res["error"] = _err
       return res
 
     # 모든 계정 병렬 전송
@@ -923,20 +1187,28 @@ class SambaShipmentService:
 
   # ==================== 상품명 조합 ====================
 
-  def _compose_product_name(self, product: dict[str, Any], name_rule: Any) -> str:
-    """정책의 상품명 규칙(name_composition)에 따라 상품명을 조합."""
-    composition = name_rule.name_composition
+  def _compose_product_name(self, product: dict[str, Any], name_rule: Any, *, market_type: str | None = None) -> str:
+    """정책의 상품명 규칙(name_composition)에 따라 상품명을 조합.
+
+    market_type이 지정되고 market_name_compositions에 해당 마켓 설정이 있으면 마켓별 조합 사용.
+    """
+    # 마켓별 조합이 있으면 우선 사용
+    composition = None
+    if market_type and getattr(name_rule, "market_name_compositions", None):
+      composition = name_rule.market_name_compositions.get(market_type)
+    if not composition:
+      composition = name_rule.name_composition
     if not composition:
       return product.get("name", "")
 
     # SEO 검색키워드: seo_keywords 배열을 공백 연결
     seo_kws = product.get("seo_keywords") or []
-    seo_text = " ".join(seo_kws[:3]) if seo_kws else ""
+    seo_text = " ".join(seo_kws[:2]) if seo_kws else ""
 
     tag_map = {
       "{상품명}": product.get("name", ""),
       "{브랜드명}": product.get("brand", ""),
-      "{모델명}": product.get("model_no", ""),
+      "{모델명}": product.get("style_code", ""),
       "{사이트명}": product.get("source_site", ""),
       "{상품번호}": product.get("site_product_id", ""),
       "{검색키워드}": seo_text,
@@ -1030,6 +1302,8 @@ class SambaShipmentService:
 
     images = product.get("images") or []
     detail_images = product.get("detail_images") or []
+    # 추가이미지(sub)에서 출력된 URL을 추적 → detail에서 중복 제외
+    sub_set = set(images[1:]) if len(images) > 1 else set()
 
     # img_order 순서대로, img_checks가 True인 항목만 생성
     for item_id in img_order:
@@ -1048,7 +1322,8 @@ class SambaShipmentService:
           parts.append(f'<div style="text-align:center;padding:1rem 0;"><h2 style="color:#333;font-size:1.25rem;">{name}</h2></div>')
       elif item_id == "detail":
         for d_img in detail_images:
-          parts.append(img_tag.format(url=d_img))
+          if d_img not in sub_set:
+            parts.append(img_tag.format(url=d_img))
       elif item_id == "bottomImg" and bottom_img:
         parts.append(img_tag.format(url=bottom_img))
 
@@ -1076,12 +1351,12 @@ class SambaShipmentService:
     from backend.domain.samba.category.repository import SambaCategoryMappingRepository
     from backend.domain.samba.category.service import SambaCategoryService
 
-    if not source_category:
+    if not source_category and not group_mappings:
       return {}
 
     # DB에서 매핑 조회
     mapping_repo = SambaCategoryMappingRepository(self.session)
-    mapping = await mapping_repo.find_mapping(source_site, source_category)
+    mapping = await mapping_repo.find_mapping(source_site, source_category) if source_category else None
 
     result: dict[str, str] = {}
 
@@ -1190,6 +1465,15 @@ class SambaShipmentService:
         if not account:
           continue
         category_id = mapped_categories.get(account.market_type, "")
+        # ESM Plus 크로스매핑: 지마켓↔옥션 자동 변환
+        if not category_id and account.market_type in ("gmarket", "auction"):
+          other = "auction" if account.market_type == "gmarket" else "gmarket"
+          other_id = mapped_categories.get(other, "")
+          if other_id and str(other_id).isdigit():
+            from backend.domain.samba.proxy.esmplus import esm_map_category
+            category_id = esm_map_category(other_id, other, account.market_type)
+            if category_id:
+              logger.info(f"[ESM 크로스매핑] {other}({other_id}) → {account.market_type}({category_id})")
         if not category_id:
           new_result[account_id] = "failed"
           new_errors[account_id] = "카테고리 매핑 없음"
@@ -1229,7 +1513,7 @@ class SambaShipmentService:
     product_ids: list[str],
     target_account_ids: list[str],
   ) -> dict[str, Any]:
-    """선택된 상품을 대상 마켓에서 판매중지/삭제."""
+    """선택된 상품을 대상 마켓에서 삭제."""
     from backend.domain.samba.account.repository import SambaMarketAccountRepository
     from backend.domain.samba.collector.repository import SambaCollectedProductRepository
     from backend.domain.samba.shipment.dispatcher import delete_from_market
@@ -1246,6 +1530,10 @@ class SambaShipmentService:
     results: list[dict[str, Any]] = []
 
     for product_id in product_ids:
+      # 강제 중단 체크
+      if is_cancel_requested():
+        logger.info(f"[마켓삭제] 강제 중단 — {len(results)}건 완료, {len(product_ids) - len(results)}건 취소")
+        break
       product_row = await product_repo.get_async(product_id)
       if not product_row:
         results.append({"product_id": product_id, "status": "failed", "error": "상품 없음"})
@@ -1277,6 +1565,8 @@ class SambaShipmentService:
         result = await delete_from_market(
           self.session, account.market_type, product_dict, account=account
         )
+        # 429 방지 — 삭제 요청 간 0.5초 딜레이
+        await asyncio.sleep(0.5)
 
         if result.get("success"):
           delete_results[account_id] = "success"
@@ -1289,14 +1579,12 @@ class SambaShipmentService:
             f"[마켓삭제] {account.market_type} 실패 - {result.get('message')}"
           )
 
-      # 삭제 요청한 계정은 성공/실패 관계없이 registered_accounts에서 제거
-      # (마켓에서 이미 삭제됐거나, 상품번호 없는 경우에도 등록 기록 정리)
-      processed_ids = list(delete_results.keys())
-      if processed_ids:
-        new_reg = [a for a in reg_accounts if a not in processed_ids]
-        # account_id + {account_id}_origin 모두 제거
-        remove_keys = set(processed_ids)
-        for aid in processed_ids:
+      # 성공한 계정만 등록 해제 (429 등 실패 시 등록 상태 유지)
+      success_ids = [aid for aid, status in delete_results.items() if status == "success"]
+      if success_ids:
+        new_reg = [a for a in reg_accounts if a not in success_ids]
+        remove_keys = set(success_ids)
+        for aid in success_ids:
           remove_keys.add(f"{aid}_origin")
         new_nos = {k: v for k, v in market_product_nos.items() if k not in remove_keys}
         update_data: dict[str, Any] = {

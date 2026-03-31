@@ -46,8 +46,9 @@ class MusinsaClient:
         "Origin": "https://www.musinsa.com",
     }
 
-    def __init__(self, cookie: str = "") -> None:
+    def __init__(self, cookie: str = "", *, proxy_url: str | None = None) -> None:
         self.cookie = cookie
+        self.proxy_url = proxy_url
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -79,10 +80,12 @@ class MusinsaClient:
         self, goods_no: str, *,
         member_grade_rate: Optional[float] = None,
         refresh_only: bool = False,
+        _shared_client: Optional[httpx.AsyncClient] = None,
     ) -> dict[str, Any]:
         """상품 상세 조회 - 상세 + 옵션 + 재고 + 고시정보 + 쿠폰 + 혜택가.
 
         proxy-server.mjs ``fetchMusinsaProduct()`` 전체 로직 포팅.
+        _shared_client: 외부에서 공유 클라이언트를 넘기면 연결 재사용 (병렬 수집 성능 향상)
         """
         # 무신사는 로그인(쿠키) 필수
         if not self.cookie:
@@ -91,7 +94,22 @@ class MusinsaClient:
                 "확장앱에서 무신사 로그인 후 다시 시도하세요."
             )
         timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        # 공유 클라이언트 재사용 (TCP 연결 풀링) 또는 새로 생성
+        _own_client = None
+        if _shared_client:
+            client = _shared_client
+        else:
+            _client_kwargs: dict[str, Any] = {"timeout": timeout}
+            if self.proxy_url:
+                _client_kwargs["proxy"] = self.proxy_url
+            _own_client = httpx.AsyncClient(**_client_kwargs)
+            client = _own_client
+        try:
+            # 방어적 초기화 — 모든 코드 경로에서 UnboundLocalError 방지
+            desc_html = ""
+            unique_images: list[str] = []
+            detail_images: list[str] = []
+
             # 1) 상품 상세 API
             detail_resp = await client.get(
                 f"{self.BASE_DETAIL}/{goods_no}",
@@ -125,39 +143,44 @@ class MusinsaClient:
             ]
             category_levels = [c for c in category_levels if c]
 
-            # 상세페이지 이미지 추출
-            desc_html = d.get("goodsContents", "")
-            detail_images = self._extract_detail_images(desc_html)
+            # 이미지 파싱 (갱신 모드에서는 스킵 — 가격/재고만 필요)
+            unique_images = []
+            original_image_count = 0
+            detail_images = []
+            desc_html = ""
+            if not refresh_only:
+                desc_html = d.get("goodsContents", "")
+                detail_images = self._extract_detail_images(desc_html)
 
-            # 이미지: 썸네일 + 상품이미지 최대 8장
-            thumbnail_url = d.get("thumbnailImageUrl", "")
-            goods_images_raw = d.get("goodsImages") or []
-            logger.info(
-                f"[무신사 이미지] {goods_no}: "
-                f"thumbnail={thumbnail_url!r}, "
-                f"goodsImages={len(goods_images_raw)}개, "
-                f"goodsContents길이={len(desc_html)}, "
-                f"detailImages={len(detail_images)}개"
-            )
-            if goods_images_raw:
-                logger.info(f"[무신사 이미지 상세] goodsImages 샘플: {goods_images_raw[:3]}")
-
-            all_images = [self._to_image_url(thumbnail_url)]
-            for img in goods_images_raw:
-                all_images.append(
-                    self._to_image_url(img.get("imageUrl") or img.get("url", ""))
+                thumbnail_url = d.get("thumbnailImageUrl", "")
+                goods_images_raw = d.get("goodsImages") or []
+                logger.info(
+                    f"[무신사 이미지] {goods_no}: "
+                    f"thumbnail={thumbnail_url!r}, "
+                    f"goodsImages={len(goods_images_raw)}개, "
+                    f"goodsContents길이={len(desc_html)}, "
+                    f"detailImages={len(detail_images)}개"
                 )
-            all_images = [i for i in all_images if i]
-            unique_images = list(dict.fromkeys(all_images))
-            # 추가이미지 부족 시 상세페이지 이미지로 보충 (최대 9장)
-            if len(unique_images) < 9 and detail_images:
-                existing = set(unique_images)
-                for di in detail_images:
-                    if di not in existing and len(unique_images) < 9:
-                        unique_images.append(di)
-                        existing.add(di)
-            unique_images = unique_images[:9]
-            logger.info(f"[무신사 이미지 최종] {goods_no}: images={len(unique_images)}개, detail_images={len(detail_images)}개")
+                if goods_images_raw:
+                    logger.info(f"[무신사 이미지 상세] goodsImages 샘플: {goods_images_raw[:3]}")
+
+                all_images = [self._to_image_url(thumbnail_url)]
+                for img in goods_images_raw:
+                    all_images.append(
+                        self._to_image_url(img.get("imageUrl") or img.get("url", ""))
+                    )
+                all_images = [i for i in all_images if i]
+                unique_images = list(dict.fromkeys(all_images))
+                original_image_count = len(unique_images)
+                # 추가이미지 부족 시 상세페이지 이미지로 보충 (최대 9장)
+                if len(unique_images) < 9 and detail_images:
+                    existing = set(unique_images)
+                    for di in detail_images:
+                        if di not in existing and len(unique_images) < 9:
+                            unique_images.append(di)
+                            existing.add(di)
+                unique_images = unique_images[:9]
+                logger.info(f"[무신사 이미지 최종] {goods_no}: images={len(unique_images)}개 (원본 {original_image_count}+보충 {len(unique_images)-original_image_count}), detail_images={len(detail_images)}개")
 
             # 소재 정보
             materials = (d.get("goodsMaterial") or {}).get("materials", [])
@@ -303,6 +326,7 @@ class MusinsaClient:
                     or ""
                 ),
                 "images": unique_images,
+                "originalImageCount": original_image_count,
                 "detailImages": detail_images,
                 "detailHtml": desc_html,
                 "options": options,
@@ -386,6 +410,9 @@ class MusinsaClient:
                 "collectedAt": now_iso,
                 "updatedAt": now_iso,
             }
+        finally:
+            if _own_client:
+                await _own_client.aclose()
 
     async def search_products(
         self,
@@ -1115,3 +1142,96 @@ class MusinsaClient:
                     continue
 
         raise ValueError(f"무신사 주문취소 실패: {order_no} (모든 API 시도 실패)")
+
+    # ------------------------------------------------------------------
+    # 브랜드 카테고리 스캔
+    # ------------------------------------------------------------------
+
+    async def scan_brand_categories(
+        self, brand: str, gf: str = "A", keyword: str = "",
+    ) -> list[dict[str, Any]]:
+        """브랜드의 최하위 카테고리 목록 + 상품 수 반환.
+
+        무신사 필터 API로 대>중분류를 가져온 뒤,
+        각 중분류에 대해 소분류를 재귀 탐색하여 최하위 카테고리별 상품 수를 집계한다.
+        """
+        timeout = httpx.Timeout(30.0, connect=10.0)
+        base_params = {"caller": "SEARCH", "keyword": keyword or brand, "brand": brand, "gf": gf}
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            # 1) 필터 API로 대>중분류 가져오기
+            resp = await client.get(
+                "https://api.musinsa.com/api2/dp/v1/plp/filter",
+                params=base_params, headers=self._headers(),
+            )
+            resp.raise_for_status()
+            cats = resp.json().get("data", {}).get("detail", {}).get("category", {}).get("list", [])
+
+            results: list[dict[str, Any]] = []
+
+            for cat in cats:
+                big_name = cat.get("displayText", "")
+                big_code = cat.get("value", "")
+                subs = cat.get("categoryList", [])
+
+                for sub in subs:
+                    mid_name = sub.get("displayText", "")
+                    mid_code = sub.get("value", "")
+
+                    # 2) 중분류 선택 후 소분류 필터 확인
+                    resp2 = await client.get(
+                        "https://api.musinsa.com/api2/dp/v1/plp/filter",
+                        params={**base_params, "category": mid_code},
+                        headers=self._headers(),
+                    )
+                    sub_cats = []
+                    if resp2.status_code == 200:
+                        for d1 in resp2.json().get("data", {}).get("detail", {}).get("category", {}).get("list", []):
+                            sub_cats.extend(d1.get("categoryList", []))
+
+                    if sub_cats:
+                        # 소분류별 상품 수 조회
+                        for small in sub_cats:
+                            small_name = small.get("displayText", "")
+                            small_code = small.get("value", "")
+                            resp3 = await client.get(
+                                "https://api.musinsa.com/api2/dp/v1/plp/goods",
+                                params={**base_params, "category": small_code, "page": "1", "size": "1"},
+                                headers=self._headers(),
+                            )
+                            cnt = 0
+                            if resp3.status_code == 200:
+                                cnt = resp3.json().get("data", {}).get("pagination", {}).get("totalCount", 0)
+                            if cnt > 0:
+                                # 소분류가 중분류와 동일하면 생략
+                                actual_cat3 = "" if small_name == mid_name else small_name
+                                path = f"{big_name} > {mid_name} > {small_name}" if actual_cat3 else f"{big_name} > {mid_name}"
+                                results.append({
+                                    "category1": big_name, "category2": mid_name, "category3": actual_cat3,
+                                    "categoryCode": small_code,
+                                    "path": path,
+                                    "count": cnt,
+                                })
+                    else:
+                        # 소분류 없으면 중분류가 최하단
+                        resp3 = await client.get(
+                            "https://api.musinsa.com/api2/dp/v1/plp/goods",
+                            params={**base_params, "category": mid_code, "page": "1", "size": "1"},
+                            headers=self._headers(),
+                        )
+                        cnt = 0
+                        if resp3.status_code == 200:
+                            cnt = resp3.json().get("data", {}).get("pagination", {}).get("totalCount", 0)
+                        if cnt > 0:
+                            results.append({
+                                "category1": big_name, "category2": mid_name, "category3": "",
+                                "categoryCode": mid_code,
+                                "path": f"{big_name} > {mid_name}",
+                                "count": cnt,
+                            })
+
+            # 상품 수 내림차순 정렬
+            results.sort(key=lambda x: -x["count"])
+            total = sum(r["count"] for r in results)
+            logger.info(f"[무신사 브랜드스캔] {brand}: {len(results)}개 카테고리, 총 {total}건")
+            return results

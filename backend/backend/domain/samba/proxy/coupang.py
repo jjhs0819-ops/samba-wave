@@ -247,6 +247,7 @@ class CoupangClient:
     from datetime import datetime as dt, timezone as tz
 
     images_raw = product.get("images") or []
+    coupang_main = product.get("coupang_main_image") or ""
     color = product.get("color", "") or "상세 이미지 참조"
     detail_html = product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>"
 
@@ -263,12 +264,14 @@ class CoupangClient:
     # 아이템별 공통 필드 생성 함수
     def _build_item(item_name: str, stock: int, size_val: str) -> dict[str, Any]:
       # 아이템별 이미지 (대표 + 상세)
+      # 쿠팡 전용 대표이미지가 있으면 우선 사용, 없으면 공통 대표(images[0])
+      rep_image = coupang_main or (images_raw[0] if images_raw else "")
       item_images: list[dict[str, Any]] = []
-      if images_raw:
+      if rep_image:
         item_images.append({
           "imageOrder": 0,
           "imageType": "REPRESENTATION",
-          "vendorPath": images_raw[0],
+          "vendorPath": rep_image,
         })
         for idx, url in enumerate(images_raw[1:10], start=1):
           item_images.append({

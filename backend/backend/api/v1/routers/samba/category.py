@@ -288,6 +288,35 @@ async def clear_market_column(
     return {"ok": True, "cleared": cleared}
 
 
+class EsmCrossCopyRequest(BaseModel):
+    """ESM 크로스매핑 복사 요청 (지마켓↔옥션)."""
+    from_market: str = Field(default="gmarket", description="원본 마켓")
+    to_market: str = Field(default="auction", description="대상 마켓")
+    mapping_ids: Optional[List[str]] = Field(default=None, description="대상 매핑 ID (미지정 시 전체)")
+
+
+@router.post("/mappings/copy-esm")
+async def copy_esm_cross_mapping(
+    body: EsmCrossCopyRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """지마켓↔옥션 카테고리 매핑을 크로스매핑으로 복사."""
+    valid_markets = {"gmarket", "auction"}
+    if body.from_market not in valid_markets or body.to_market not in valid_markets:
+        raise HTTPException(400, "ESM 크로스매핑은 gmarket ↔ auction만 지원합니다")
+    if body.from_market == body.to_market:
+        raise HTTPException(400, "원본과 대상 마켓이 같습니다")
+    svc = _get_service(session)
+    result = await svc.copy_esm_cross_mapping(
+        from_market=body.from_market,
+        to_market=body.to_market,
+        mapping_ids=body.mapping_ids,
+    )
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    return result
+
+
 # ── Market Category Seed ──
 
 @router.get("/markets/counts")

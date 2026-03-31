@@ -121,13 +121,12 @@ def _build_origin_area(origin: str) -> dict:
 
 
 def _build_certification_infos(cert_infos: list[dict] | None) -> dict:
-  """카테고리 인증정보 → productCertificationInfos 변환.
+  """카테고리 인증정보 → productCertificationInfos + 인증대상 제외 변환.
 
   카테고리 API 조회 결과 중 필수(nonEssential=false)만 선택.
   네이버 API 제한: 최대 5개.
-  kindType별 기본값:
-    GREEN_PRODUCTS → 인증번호 숫자+하이픈만 허용
-    companyName=true → 인증상호 필수
+  KC/어린이제품 인증 → certificationTargetExcludeContent로 면제 선언.
+  GREEN_PRODUCTS → 인증번호 숫자+하이픈만 허용.
   """
   if not cert_infos:
     return {}
@@ -136,12 +135,20 @@ def _build_certification_infos(cert_infos: list[dict] | None) -> dict:
   if not required:
     return {}
   items = []
+  exclude_content: dict[str, object] = {}
+  # KC/어린이제품 인증 면제 대상 kindType
+  KC_CHILD_TYPES = {"KC_CERTIFICATION", "CHILD_CERTIFICATION"}
   for info in required[:5]:  # 최대 5개
     cert_id = info.get("id")
     if cert_id is None:
       continue
     kind_types = info.get("kindTypes") or []
     kind_type = kind_types[0] if kind_types else "ETC"
+    # KC/어린이제품 인증 → 인증대상 제외 선언 (실제 인증서 없음)
+    if kind_type in KC_CHILD_TYPES:
+      exclude_content["childCertifiedProductExclusionYn"] = True
+      exclude_content["kcCertifiedProductExclusionYn"] = "TRUE"
+      continue
     # 친환경인증: 인증번호 숫자+하이픈만 허용
     if info.get("green") or kind_type == "GREEN_PRODUCTS":
       cert_number = "0000-0000"
@@ -155,9 +162,12 @@ def _build_certification_infos(cert_infos: list[dict] | None) -> dict:
       "name": name,
       "certificationNumber": cert_number,
     })
-  if not items:
-    return {}
-  return {"productCertificationInfos": items}
+  result: dict[str, object] = {}
+  if items:
+    result["productCertificationInfos"] = items
+  if exclude_content:
+    result["certificationTargetExcludeContent"] = exclude_content
+  return result
 
 
 def _build_combination_options(
@@ -240,6 +250,10 @@ def _build_combination_options(
     if min_price > 0:
       for c in combinations:
         c["price"] = c["price"] - min_price
+    # 재조정 후에도 조건 미충족 (전 옵션 품절/재고0) → 빈 combinations 반환하여 전송 스킵 유도
+    has_base = any(c["price"] == 0 and c["stockQuantity"] > 0 and c["usable"] for c in combinations)
+    if not has_base:
+      return None  # 전 옵션 품절 → 등록 불가
 
   return {
     "optionCombinationSortType": "CREATE",
@@ -751,16 +765,28 @@ class SmartStoreClient:
     # 이미지 다운로드 (클라이언트 재사용)
     dl = _dl_client or httpx.AsyncClient(timeout=settings.http_timeout_default, follow_redirects=True)
     try:
-      img_resp = await dl.get(image_url, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": referer,
-        "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-      })
+      try:
+        img_resp = await dl.get(image_url, headers={
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Referer": referer,
+          "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+        })
+      except httpx.ConnectTimeout:
+        logger.error(f"[이미지] 다운로드 연결 타임아웃 — CDN 차단 가능성: {image_url[:80]}")
+        raise SmartStoreApiError(f"이미지 다운로드 연결 타임아웃 — CDN 차단 가능성")
+      except httpx.ReadTimeout:
+        logger.error(f"[이미지] 다운로드 읽기 타임아웃 — CDN 차단 가능성: {image_url[:80]}")
+        raise SmartStoreApiError(f"이미지 다운로드 읽기 타임아웃 — CDN 차단 가능성")
+      except Exception as dl_err:
+        logger.error(f"[이미지] 다운로드 실패: {type(dl_err).__name__}: {dl_err}")
+        raise SmartStoreApiError(f"이미지 다운로드 실패: {type(dl_err).__name__}")
       if not img_resp.is_success:
-        raise SmartStoreApiError(f"이미지 다운로드 실패: {img_resp.status_code}")
+        logger.warning(f"[이미지] 다운로드 HTTP {img_resp.status_code}: {image_url[:80]}")
+        raise SmartStoreApiError(f"이미지 다운로드 실패: HTTP {img_resp.status_code}")
       img_bytes = img_resp.content
       content_type = img_resp.headers.get("content-type", "image/jpeg")
       if len(img_bytes) < 1000:
+        logger.warning(f"[이미지] 비정상 크기({len(img_bytes)}B) — CDN 차단 가능성: {image_url[:80]}")
         raise SmartStoreApiError(f"이미지가 비정상적으로 작음({len(img_bytes)}B) — CDN 차단 가능성")
     finally:
       if not _dl_client:
@@ -770,11 +796,26 @@ class SmartStoreClient:
     from backend.domain.samba.image.exif import strip_exif
     img_bytes = strip_exif(img_bytes)
 
+    # content_type 불명확 시 바이트 시그니처로 감지
+    if not content_type.startswith("image/"):
+      if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+        content_type = "image/png"
+      elif img_bytes[:2] == b'\xff\xd8':
+        content_type = "image/jpeg"
+      elif img_bytes[:4] == b'RIFF' and img_bytes[8:12] == b'WEBP':
+        content_type = "image/webp"
+      elif img_bytes[:6] in (b'GIF87a', b'GIF89a'):
+        content_type = "image/gif"
+      else:
+        content_type = "image/jpeg"  # 기본 폴백
+
     # webp → PNG 변환
     ext = "jpg"
     upload_type = content_type
     if "png" in content_type:
       ext = "png"
+    elif "gif" in content_type:
+      ext = "gif"
     elif "webp" in content_type or image_url.endswith(".webp"):
       from PIL import Image as _PILImage
       import io as _io
@@ -811,6 +852,100 @@ class SmartStoreClient:
       if not _ul_client:
         await ul.aclose()
     raise SmartStoreApiError("이미지 업로드 실패: 429 Rate Limit 초과 (재시도 3회 실패)")
+
+  async def upload_images_batch(self, image_urls: list[str]) -> list[str]:
+    """외부 이미지 URL 최대 4장을 1회 API 호출로 업로드. 네이버 URL 리스트 반환."""
+    if not image_urls:
+      return []
+    token = await self._ensure_token()
+    from urllib.parse import urlparse
+    from backend.domain.samba.image.exif import strip_exif
+
+    # 이미지 다운로드 + 전처리
+    def _mem_mb():
+      try:
+        with open("/proc/self/status") as f:
+          for line in f:
+            if line.startswith("VmRSS:"):
+              return int(line.split()[1]) // 1024
+      except Exception:
+        return -1
+    logger.info(f"[메모리] 이미지다운로드 전: {_mem_mb()}MB, urls={len(image_urls)}장")
+    files_list: list[tuple[str, bytes, str]] = []
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default, follow_redirects=True) as dl:
+      for url in image_urls[:4]:
+        try:
+          parsed = urlparse(url)
+          referer = f"{parsed.scheme}://{parsed.netloc}/"
+          if "msscdn.net" in (parsed.netloc or ""):
+            referer = "https://www.musinsa.com/"
+          elif "fashionplus" in (parsed.netloc or ""):
+            referer = "https://www.fashionplus.co.kr/"
+          resp = await dl.get(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": referer,
+            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+          })
+          if not resp.is_success or len(resp.content) < 1000:
+            logger.warning(f"[스마트스토어] 이미지 다운로드 실패: {url[:60]}")
+            continue
+          img_bytes = strip_exif(resp.content)
+          content_type = resp.headers.get("content-type", "image/jpeg")
+
+          # content_type 불명확 시 바이트 시그니처로 감지
+          if not content_type.startswith("image/"):
+            if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+              content_type = "image/png"
+            elif img_bytes[:2] == b'\xff\xd8':
+              content_type = "image/jpeg"
+            elif img_bytes[:4] == b'RIFF' and img_bytes[8:12] == b'WEBP':
+              content_type = "image/webp"
+            elif img_bytes[:6] in (b'GIF87a', b'GIF89a'):
+              content_type = "image/gif"
+            else:
+              content_type = "image/jpeg"
+          ext = "jpg"
+          if "png" in content_type:
+            ext = "png"
+          elif "gif" in content_type:
+            ext = "gif"
+          elif "webp" in content_type or url.endswith(".webp"):
+            from PIL import Image as _PILImage
+            import io as _io
+            pil_img = _PILImage.open(_io.BytesIO(img_bytes)).convert("RGB")
+            buf = _io.BytesIO()
+            pil_img.save(buf, format="PNG")
+            img_bytes = buf.getvalue()
+            ext = "png"
+            content_type = "image/png"
+          files_list.append((f"image_{len(files_list)}.{ext}", img_bytes, content_type))
+        except Exception as e:
+          logger.warning(f"[스마트스토어] 이미지 다운로드 실패: {e}")
+
+    logger.info(f"[메모리] 이미지다운로드 후: {_mem_mb()}MB, files={len(files_list)}장, total={sum(len(f[1]) for f in files_list)//1024}KB")
+    if not files_list:
+      return []
+
+    # 네이버 업로드 (4장 동시, 429 재시도)
+    import asyncio as _aio_batch
+    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as ul:
+      for attempt in range(4):
+        resp = await ul.post(
+          f"{self.BASE_URL}/v1/product-images/upload",
+          headers={"Authorization": f"Bearer {token}"},
+          files=[("imageFiles", (f[0], f[1], f[2])) for f in files_list],
+        )
+        if resp.status_code == 429:
+          wait = 2 ** attempt
+          logger.warning(f"[스마트스토어] 배치 이미지 업로드 429 → {wait}초 후 재시도 ({attempt + 1}/4)")
+          await _aio_batch.sleep(wait)
+          continue
+        if not resp.is_success:
+          raise SmartStoreApiError(f"이미지 업로드 실패: {resp.status_code} {resp.text[:200]}")
+        logger.info(f"[메모리] 네이버업로드 후: {_mem_mb()}MB")
+        data = resp.json()
+        return [img.get("url", "") for img in data.get("images", [])]
+    raise SmartStoreApiError("이미지 업로드 실패: 429 Rate Limit 초과")
 
   async def register_product(self, product_data: dict[str, Any]) -> dict[str, Any]:
     """상품 등록.
@@ -1363,14 +1498,14 @@ class SmartStoreClient:
           "minorPurchasable": True,
           "productInfoProvidedNotice": _build_ss_notice(
             product, color_text=color_text,
-            size_text=f"발길이(mm): {size_text}" if sizes else "FREE (상세 이미지 참조)",
+            size_text=(f"발길이(mm): {size_text}")[:200] if sizes else "FREE (상세 이미지 참조)",
             mfr=mfr, brand=brand, ss_category_id=category_id,
           ),
-          **({"optionInfo": _build_combination_options(
+          **({"optionInfo": _opt_result} if options and (_opt_result := _build_combination_options(
             options, sale_price,
             max_stock_per_option=stock_qty,
             option_deletion_words=product.get("_option_deletion_words"),
-          )} if options else {}),
+          )) else {}),
           **_build_certification_infos(product.get("_certification_infos")),
         },
       },
@@ -1565,7 +1700,7 @@ class SmartStoreClient:
     """그룹상품 등록 (비동기). 결과는 poll_group_status로 확인."""
     return await self._call_api("POST", "/v2/standard-group-products", body=payload)
 
-  async def poll_group_status(self, max_wait: int = 300) -> dict:
+  async def poll_group_status(self, max_wait: int = 120) -> dict:
     """그룹상품 등록/수정 결과 폴링. 최대 max_wait초 대기. 지수백오프."""
     import asyncio as _asyncio
     start = time.time()
@@ -1582,7 +1717,7 @@ class SmartStoreClient:
       wait = min(0.5 * (2 ** attempt), 3)
       await _asyncio.sleep(wait)
       attempt += 1
-    raise TimeoutError("그룹상품 등록 타임아웃 (5분 초과)")
+    raise TimeoutError("그룹상품 등록 타임아웃 (2분 초과)")
 
   async def update_group_product(self, group_no: int, payload: dict) -> dict:
     """그룹상품 수정."""

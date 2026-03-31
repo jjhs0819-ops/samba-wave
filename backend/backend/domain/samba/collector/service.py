@@ -2,6 +2,8 @@
 
 from typing import Any, Dict, List, Optional
 
+from sqlmodel import select
+
 from backend.domain.samba.collector.model import SambaCollectedProduct, SambaSearchFilter
 from backend.domain.samba.collector.repository import (
     SambaCollectedProductRepository,
@@ -127,10 +129,32 @@ class SambaCollectorService:
                 if fid in filter_policy_map:
                     item["applied_policy_id"] = filter_policy_map[fid]
         from backend.domain.samba.collector.model import SambaCollectedProduct
-        objects = [SambaCollectedProduct(**d) for d in items]
-        self.product_repo.session.add_all(objects)
+        from sqlalchemy.exc import IntegrityError
+        created = 0
+        for d in items:
+            obj = SambaCollectedProduct(**d)
+            self.product_repo.session.add(obj)
+            try:
+                await self.product_repo.session.flush()
+                created += 1
+            except IntegrityError:
+                # 동시 수집으로 중복 발생 시 기존 상품 업데이트
+                await self.product_repo.session.rollback()
+                existing = (await self.product_repo.session.execute(
+                    select(SambaCollectedProduct).where(
+                        SambaCollectedProduct.source_site == d.get("source_site"),
+                        SambaCollectedProduct.site_product_id == d.get("site_product_id"),
+                    )
+                )).scalars().first()
+                if existing:
+                    update_fields = {k: v for k, v in d.items()
+                                     if k not in ("id", "source_site", "site_product_id", "created_at")}
+                    for k, v in update_fields.items():
+                        setattr(existing, k, v)
+                    await self.product_repo.session.flush()
+                    created += 1
         await self.product_repo.session.commit()
-        return len(objects)
+        return created
 
     async def update_collected_product(
         self, product_id: str, data: Dict[str, Any]

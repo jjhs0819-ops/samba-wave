@@ -50,10 +50,55 @@ async def lifespan(app: FastAPI):
     from backend.domain.samba.cache import cache
     await cache.connect()
 
-    # 백그라운드 잡 워커 시작
+    # 서버 시작 시 좀비 running Job → pending 복구 (배포 중 끊긴 Job 재처리)
+    try:
+        from backend.db.orm import get_write_session
+        from sqlalchemy import text
+        async with get_write_session() as session:
+            r = await session.execute(text(
+                "UPDATE samba_jobs SET status = 'pending', started_at = NULL, progress_current = 0 "
+                "WHERE status = 'running'"
+            ))
+            if r.rowcount > 0:
+                import logging
+                logging.getLogger("backend.startup").info(
+                    f"[startup] 좀비 running Job {r.rowcount}건 → pending 복구"
+                )
+            await session.commit()
+    except Exception:
+        pass
+
+    # 백그라운드 잡 워커 시작 + watchdog (죽으면 자동 재시작)
     from backend.domain.samba.job.worker import JobWorker
+    import logging as _logging
+    _wd_log = _logging.getLogger("backend.watchdog")
     worker = JobWorker()
     worker_task = asyncio.create_task(worker.start())
+
+    async def _worker_watchdog():
+        """워커 태스크 감시 — 죽으면 3초 후 자동 재시작."""
+        nonlocal worker, worker_task
+        while True:
+            try:
+                await asyncio.sleep(10)
+                if worker_task.done():
+                    exc = worker_task.exception() if not worker_task.cancelled() else None
+                    _wd_log.error(f"[watchdog] 잡워커 죽음 감지 (exc={exc}) — 3초 후 재시작")
+                    await asyncio.sleep(3)
+                    worker = JobWorker()
+                    worker_task = asyncio.create_task(worker.start())
+                    _wd_log.info("[watchdog] 잡워커 재시작 완료")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                _wd_log.error(f"[watchdog] 감시 에러: {e}")
+                await asyncio.sleep(10)
+
+    watchdog_task = asyncio.create_task(_worker_watchdog())
+
+    # 오토튠 자동 시작 (DB에 ON 상태면 자동 실행)
+    from backend.api.v1.routers.samba.collector_autotune import auto_start_if_enabled
+    await auto_start_if_enabled()
 
     # Startup validation
     if settings.mock_auth_enabled and settings.environment == "production":
@@ -71,13 +116,41 @@ async def lifespan(app: FastAPI):
         )
 
     yield
-    # Shutdown — 잡 워커 정리
+    # Graceful Shutdown — 진행 중인 작업 완료 대기 후 종료
+    import logging
+    _log = logging.getLogger("backend.shutdown")
+    _log.info("[shutdown] SIGTERM 수신 — graceful shutdown 시작")
+
+    # 1) running 잡 → pending 복구 (최우선 — 10초 안에 완료해야 함)
+    try:
+        from backend.db.orm import get_write_session
+        from sqlalchemy import text
+        async with get_write_session() as session:
+            r = await session.execute(text(
+                "UPDATE samba_jobs SET status = 'pending' "
+                "WHERE status = 'running'"
+            ))
+            if r.rowcount > 0:
+                _log.info(f"[shutdown] running Job {r.rowcount}건 → pending 복구")
+            await session.commit()
+    except Exception as e:
+        _log.warning(f"[shutdown] Job 복구 실패: {e}")
+
+    # 2) 오토튠 + 잡 워커 즉시 정지 (대기 없음)
+    from backend.api.v1.routers.samba.collector_autotune import (
+        _autotune_running_event,
+        _autotune_task,
+    )
+    from backend.domain.samba.collector.refresher import request_bulk_cancel
+    _autotune_running_event.clear()
+    request_bulk_cancel()
+    if _autotune_task and not _autotune_task.done():
+        _autotune_task.cancel()
+    watchdog_task.cancel()
     worker.stop()
     worker_task.cancel()
-    try:
-        await worker_task
-    except asyncio.CancelledError:
-        pass
+
+    _log.info("[shutdown] graceful shutdown 완료")
 
 
 def create_application() -> FastAPI:
@@ -157,8 +230,9 @@ def create_application() -> FastAPI:
         }
 
     @app.get("/api/v1/health")
-    async def health() -> dict[str, str]:
-        return {"status": "healthy"}
+    async def health() -> dict:
+        from backend.domain.samba.job.worker import get_worker_status
+        return {"status": "healthy", "worker": get_worker_status()}
 
     return app
 

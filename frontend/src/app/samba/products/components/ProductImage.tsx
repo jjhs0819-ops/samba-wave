@@ -2,8 +2,10 @@
 
 import React, { useState } from 'react'
 
+import { API_BASE_URL } from '@/config/api'
+
 /** 상품 이미지 컴포넌트 — 로드 실패 시 이름 첫 글자 표시. */
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:28080'
+const API_BASE = API_BASE_URL
 
 // /static/ 상대 경로를 백엔드 절대 URL로 변환
 function resolveImageUrl(url?: string): string | undefined {

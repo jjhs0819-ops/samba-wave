@@ -19,7 +19,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const data = await res.json().catch(() => null);
-    throw new Error(data?.detail || `HTTP ${res.status}`);
+    const detail = data?.detail
+    const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: Record<string, unknown>) => d.msg || JSON.stringify(d)).join(', ') : `HTTP ${res.status}`
+    throw new Error(msg);
   }
   const text = await res.text();
   if (!text) return {} as T;
@@ -71,6 +73,7 @@ export interface SambaOrder {
   notes?: string;
   ext_order_number?: string;
   sourcing_order_number?: string;
+  sourcing_account_id?: string;
   source?: string;
   shipment_id?: string;
   created_at: string;
@@ -238,6 +241,7 @@ export interface SambaCollectedProduct {
   sale_price: number;
   cost?: number;
   images?: string[];
+  coupang_main_image?: string;
   options?: unknown[];
   category?: string;
   category1?: string;
@@ -332,9 +336,12 @@ export const collectorApi = {
   brandScan: (brand: string, gf?: string, keyword?: string, source_site?: string) =>
     request<{ categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]; total: number; groupCount: number }>(
       `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA' }) }),
-  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; applied_policy_id?: string; options?: Record<string, boolean>; source_site?: string }) =>
+  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean>; source_site?: string }) =>
     request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
       `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),
+  brandRefresh: (data: { brand: string; brand_name?: string; gf?: string; options?: Record<string, boolean> }) =>
+    request<{ scanned: number; new_groups: number; updated_groups: number; message: string }>(
+      `${SAMBA_PREFIX}/collector/brand-refresh`, { method: "POST", body: JSON.stringify(data) }),
 
   // Collected Products
   listProducts: (skip = 0, limit = 50, status?: string) => {
@@ -435,13 +442,6 @@ export const collectorApi = {
       body: JSON.stringify({ product_id: productId, max_images: maxImages, duration_per_image: durationPerImage }),
     }),
 
-  // 모니터링 우선순위 변경
-  updateMonitorPriority: (productIds: string[], priority: string) =>
-    request<{ updated: number }>(`${SAMBA_PREFIX}/collector/products/monitor-priority`, {
-      method: 'PUT',
-      body: JSON.stringify({ product_ids: productIds, priority }),
-    }),
-
   // Probe (소싱처/마켓 헬스체크)
   probeStatus: () =>
     request<Record<string, unknown>>(`${SAMBA_PREFIX}/collector/probe/status`),
@@ -452,7 +452,7 @@ export const collectorApi = {
   autotuneStop: () =>
     request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/stop`, { method: 'POST' }),
   autotuneStatus: () =>
-    request<{ running: boolean; last_tick: string | null; cycle_count: number; target: string }>(`${SAMBA_PREFIX}/collector/autotune/status`),
+    request<{ running: boolean; last_tick: string | null; cycle_count: number; target: string; refreshed_count: number; breaker_tripped: Record<string, number>; traffic?: { collecting: boolean; transmitting: boolean; busy: boolean } }>(`${SAMBA_PREFIX}/collector/autotune/status`),
 }
 
 // ── Market Accounts ──
@@ -817,6 +817,12 @@ export const categoryApi = {
   syncAll: () =>
     request<{ ok: boolean; results: Record<string, unknown> }>(
       `${SAMBA_PREFIX}/categories/markets/sync-all`, { method: 'POST' }),
+  copyEsmMapping: (fromMarket: string, toMarket: string, mappingIds?: string[]) =>
+    request<{ copied: number; skipped: number; failed: number }>(
+      `${SAMBA_PREFIX}/categories/mappings/copy-esm`, {
+        method: 'POST',
+        body: JSON.stringify({ from_market: fromMarket, to_market: toMarket, mapping_ids: mappingIds }),
+      }),
 };
 
 // ── Returns ──
@@ -887,7 +893,7 @@ export const returnApi = {
       `${SAMBA_PREFIX}/returns/sync-from-markets`, { method: "POST", body: JSON.stringify(body) }
     )
   },
-  patch: (id: string, data: { confirmed?: boolean; settlement_amount?: number; recovery_amount?: number; check_date?: string; memo?: string; product_location?: string; completion_detail?: string; status?: string; customer_order_no?: string; original_order_no?: string; type?: string; market_order_status?: string }) =>
+  patch: (id: string, data: { confirmed?: boolean; settlement_amount?: number; recovery_amount?: number; check_date?: string; memo?: string; product_location?: string; completion_detail?: string; status?: string; customer_order_no?: string; original_order_no?: string; type?: string; market_order_status?: string; return_source?: string }) =>
     request<SambaReturn>(`${SAMBA_PREFIX}/returns/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 };
 
@@ -986,17 +992,6 @@ export interface AnalyticsStats {
   profit_rate: number;
 }
 
-export const analyticsApi = {
-  today: () => request<AnalyticsStats>(`${SAMBA_PREFIX}/analytics/today`),
-  range: (startDate: string, endDate: string) =>
-    request<AnalyticsStats>(`${SAMBA_PREFIX}/analytics/range?start_date=${startDate}&end_date=${endDate}`),
-  byChannel: () => request<unknown[]>(`${SAMBA_PREFIX}/analytics/channels`),
-  byProduct: () => request<unknown[]>(`${SAMBA_PREFIX}/analytics/products`),
-  daily: (days = 30) => request<unknown[]>(`${SAMBA_PREFIX}/analytics/daily?days=${days}`),
-  monthly: () => request<unknown[]>(`${SAMBA_PREFIX}/analytics/monthly`),
-  kpi: () => request<Record<string, unknown>>(`${SAMBA_PREFIX}/analytics/kpi`),
-  orderStatus: () => request<Record<string, number>>(`${SAMBA_PREFIX}/analytics/order-status`),
-};
 
 // ── Detail Templates ──
 
@@ -1044,6 +1039,7 @@ export interface SambaNameRule {
   replace_mode?: string;
   option_rules?: Array<{ from: string; to: string }>;
   name_composition?: string[];
+  market_name_compositions?: Record<string, string[]>;
   brand_display?: string;
   dedup_enabled?: boolean;
   created_at: string;
@@ -1069,7 +1065,7 @@ export const nameRuleApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/policies/name-rules/${id}`, { method: 'DELETE' }),
 };
 
-// ── Monitor (워룸) ──
+// ── Monitor (오토튠) ──
 
 export interface MonitorEvent {
   id: string
@@ -1087,6 +1083,7 @@ export interface MonitorEvent {
 export interface DashboardStats {
   product_stats: {
     total: number
+    registered?: number
     by_source: Record<string, number>
     by_priority: Record<string, number>
     by_sale_status: Record<string, number>
@@ -1492,4 +1489,6 @@ export const sourcingAccountApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}`, { method: 'DELETE' }),
   getBalance: (id: string) =>
     request<{ balance: number; mileage: number; balance_updated_at: string; has_cookie: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/${id}/balance`),
+  requestBalanceCheck: () =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/sourcing-accounts/request-balance-check`, { method: 'POST' }),
 }

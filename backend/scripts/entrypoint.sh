@@ -21,9 +21,9 @@ fi
 echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
-  # Run the production server with Gunicorn
-  echo "Starting production server with Gunicorn..."
-  exec uv run -m gunicorn -w 8 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080
+  # Uvicorn 단일 프로세스 — 인메모리 잡 로그 + 워커 중복 실행 방지
+  echo "Starting production server with Uvicorn (single process)..."
+  exec uv run -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
 else
   # Run the development server with Uvicorn and --reload
   echo "Starting development server with Uvicorn..."
@@ -34,3 +34,4 @@ fi
 # fuser -k 8000/tcp
 
 disown
+# force redeploy 1774848910

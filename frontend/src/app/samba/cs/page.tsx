@@ -5,6 +5,8 @@ import { csInquiryApi, orderApi, accountApi, type SambaCSInquiry, type CSReplyTe
 import { CS_MARKET_FILTERS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle } from '@/lib/samba/styles'
+import { PERIOD_BUTTONS } from '@/lib/samba/constants'
+import { fmtDate } from '@/lib/samba/utils'
 
 // 답변 상태 맵
 const REPLY_STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
@@ -28,18 +30,8 @@ const INQUIRY_TYPE_MAP: Record<string, { label: string; color: string }> = {
 // 마켓 리스트 (@/lib/samba/markets에서 import)
 const MARKETS = CS_MARKET_FILTERS
 
-// 기간 버튼
-const PERIOD_BUTTONS = [
-  { key: 'lastmonth', label: '지난달' },
-  { key: 'thismonth', label: '이번달' },
-  { key: 'lastweek', label: '지난주' },
-  { key: 'thisweek', label: '이번주' },
-  { key: 'yesterday', label: '어제' },
-  { key: 'today', label: '오늘' },
-  { key: 'thisyear', label: '올해' },
-]
-
 export default function CSPage() {
+  useEffect(() => { document.title = 'SAMBA-CS관리' }, [])
   // 데이터
   const [inquiries, setInquiries] = useState<SambaCSInquiry[]>([])
   const [total, setTotal] = useState(0)
@@ -328,18 +320,6 @@ export default function CSPage() {
     } catch (e) {
       showAlert(e instanceof Error ? e.message : '숨기기 실패', 'error')
     }
-  }
-
-  // 날짜 포맷
-  const fmtDate = (d?: string) => {
-    if (!d) return '-'
-    const dt = new Date(d)
-    const y = dt.getFullYear()
-    const m = String(dt.getMonth() + 1).padStart(2, '0')
-    const day = String(dt.getDate()).padStart(2, '0')
-    const h = String(dt.getHours()).padStart(2, '0')
-    const min = String(dt.getMinutes()).padStart(2, '0')
-    return `${y}-${m}-${day} ${h}:${min}`
   }
 
   const totalPages = Math.ceil(total / pageSize)

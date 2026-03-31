@@ -5,6 +5,7 @@ import { accountApi, collectorApi, forbiddenApi, proxyApi, sourcingAccountApi, A
 import { MARKET_SELECT_OPTIONS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum, parseNum } from '@/lib/samba/styles'
+import { NumInputStr as NumInput } from '@/components/samba/NumInput'
 
 // 마켓 셀렉트 옵션 (markets.ts 단일 소스)
 const MARKET_TYPES = MARKET_SELECT_OPTIONS
@@ -23,47 +24,6 @@ const AI_FEATURES = [
   { key: 'imageProcess', label: '이미지 가공' },
 ]
 
-
-// 숫자 입력 컴포넌트 (콤마 서식 + 스피너 제거)
-function NumInput({ value, onChange, style, placeholder }: {
-  value: string
-  onChange: (v: string) => void
-  style?: React.CSSProperties
-  placeholder?: string
-}) {
-  const [display, setDisplay] = useState(() => {
-    const n = parseNum(value)
-    return n > 0 ? fmtNum(n) : ''
-  })
-  const ref = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (document.activeElement !== ref.current) {
-      const n = parseNum(value)
-      setDisplay(n > 0 ? fmtNum(n) : '')
-    }
-  }, [value])
-
-  return (
-    <input
-      ref={ref}
-      type="text"
-      inputMode="numeric"
-      style={{ ...inputStyle, ...style }}
-      value={display}
-      placeholder={placeholder || '0'}
-      onChange={(e) => {
-        const raw = e.target.value.replace(/[^0-9]/g, '')
-        setDisplay(raw)
-      }}
-      onBlur={(e) => {
-        const n = parseNum(e.target.value)
-        setDisplay(n > 0 ? fmtNum(n) : '')
-        onChange(n > 0 ? String(n) : '')
-      }}
-    />
-  )
-}
 
 // 마켓별 스토어 연결 필드 정의
 interface MarketConfig {
@@ -204,31 +164,30 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'owhpNo', label: '출고지번호', type: 'text', placeholder: '예: PLO3293317' },
     { name: 'rtrpNo', label: '회수지번호', type: 'text', placeholder: '예: PLO3293317' },
     { name: 'bundleDelivery', label: '묶음배송', type: 'select', options: [
-      { value: 'Y', label: '가능' }, { value: 'N', label: '불가능' },
+      { value: 'N', label: '불가능' }, { value: 'Y', label: '가능' },
     ]},
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '010-1234-5678' },
     { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '상세페이지 참조' },
-    { name: 'publicityPhrase', label: '상품 홍보문구', type: 'text', placeholder: '예: 국내 A/S가능한 제품만 판매합니다.' },
+    { name: 'promotionMessage', label: '상품홍보문구', type: 'text', placeholder: '홍보 문구 입력' },
+    { name: 'discountRate', label: '즉시할인율(%)', type: 'number', placeholder: '0 (미설정)' },
     { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '3000' },
     { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '6000' },
     { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
-    { name: '_divider_store_discount', label: '스토어 즉시할인', type: 'divider' },
-    { name: 'discountRate', label: '즉시할인율 (%)', type: 'number', placeholder: '0 (미설정)' },
-    { name: '_divider_lpoint', label: 'L.POINT 추가적립', type: 'divider' },
-    { name: 'purchasePointRate', label: '구매확정 적립 L.POINT (P)', type: 'number', placeholder: '0' },
-    { name: 'lpointAccmDays', label: '구매확정 기간', type: 'select', options: [
-      { value: '3', label: '3일' },
-      { value: '4', label: '4일' },
-      { value: '5', label: '5일' },
-      { value: '6', label: '6일' },
-      { value: '7', label: '7일 (기본)' },
-      { value: '8', label: '8일' },
+    { name: '_divider_point', label: '스토어 즉시할인', type: 'divider' },
+    { name: 'purchasePointRate', label: '즉시 할인율 (%)', type: 'number', placeholder: '1' },
+    { name: '_divider_review', label: 'LPOINT 추가적립', type: 'divider' },
+    { name: 'reviewTextPoint', label: '구매확정 적립 LPOINT', type: 'number', placeholder: '원' },
+    { name: 'reviewPhotoPoint', label: '리뷰작성시 LPOINT', type: 'number', placeholder: '원' },
+    { name: 'reviewMonthTextPoint', label: '사진첨부시 LPOINT', type: 'number', placeholder: '원' },
+    { name: 'reviewMonthPhotoPoint', label: '동영상첨부시 LPOINT', type: 'number', placeholder: '원' },
+    { name: '_divider_purchase_confirm', label: '구매확정', type: 'divider' },
+    { name: 'purchaseConfirmDays', label: '구매확정기간', type: 'select', options: [
+      { value: '1', label: '1일' }, { value: '3', label: '3일' }, { value: '5', label: '5일' },
+      { value: '7', label: '7일' }, { value: '10', label: '10일' }, { value: '14', label: '14일' },
+      { value: '20', label: '20일' }, { value: '30', label: '30일' },
     ]},
-    { name: 'reviewTextPoint', label: '리뷰작성시 L.POINT (P)', type: 'number', placeholder: '0' },
-    { name: 'reviewPhotoPoint', label: '사진첨부시 L.POINT (P)', type: 'number', placeholder: '0' },
-    { name: 'reviewVideoPoint', label: '동영상첨부시 L.POINT (P)', type: 'number', placeholder: '0' },
   ]},
   { key: '11st', label: '11번가', authField: 'apiKey', guideUrl: 'https://openapi.11st.co.kr/openapi/OpenApiServiceRegister.tmall', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
@@ -852,6 +811,7 @@ const STORE_MARKETS: MarketConfig[] = [
 ]
 
 export default function SettingsPage() {
+  useEffect(() => { document.title = 'SAMBA-설정' }, [])
   // Accounts state
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [accountLoading, setAccountLoading] = useState(true)
@@ -1452,9 +1412,11 @@ export default function SettingsPage() {
 
   const handleFetchAllBalances = async () => {
     try {
-      await loadSourcingAccounts()
-      showAlert('잔액 갱신 완료 (확장앱에서 수집된 데이터)', 'success')
-    } catch (err) { showAlert(err instanceof Error ? err.message : '전체 잔액 조회 실패', 'error') }
+      await sourcingAccountApi.requestBalanceCheck()
+      showAlert('잔액 체크 요청 완료 — 확장앱이 30초 내 자동 수집합니다', 'success')
+      // 15초 후 자동 새로고침
+      setTimeout(() => loadSourcingAccounts(), 15000)
+    } catch (err) { showAlert(err instanceof Error ? err.message : '잔액 체크 요청 실패', 'error') }
   }
 
   return (
@@ -1785,7 +1747,7 @@ export default function SettingsPage() {
               <button
                 onClick={handleFetchAllBalances}
                 style={{ padding: '0.625rem 1.25rem', background: 'rgba(76,154,255,0.15)', border: '1px solid rgba(76,154,255,0.3)', color: '#4C9AFF', borderRadius: '6px', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer' }}
-              >전체 잔액 조회</button>
+              >잔액 새로고침</button>
             </div>
           </div>
 

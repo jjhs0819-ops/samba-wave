@@ -49,22 +49,30 @@ class ImageFilterService:
   # 이미지 다운로드 + 인코딩
   # ------------------------------------------------------------------
 
-  async def _download_and_encode(self, url: str) -> tuple[str, str]:
+  async def _download_and_encode(self, url: str) -> tuple[str, str, int, int]:
     """이미지 URL -> 바이트 다운로드 -> 5MB 초과 시 리사이즈 -> base64 인코딩.
 
     Returns:
-      (base64_data, media_type) 튜플
+      (base64_data, media_type, width, height) 튜플
     """
+    _headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Referer": url,
+    }
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-      # 10MB 초과 이미지는 스킵 (메모리 보호)
-      head_resp = await client.head(url, headers={"User-Agent": "Mozilla/5.0", "Referer": url})
-      content_length = int(head_resp.headers.get("content-length", 0))
-      if content_length > 10_000_000:
-        raise ValueError(f"이미지 크기 초과: {content_length // 1_000_000}MB")
-      resp = await client.get(url, headers={
-        "User-Agent": "Mozilla/5.0",
-        "Referer": url,
-      })
+      # 10MB 초과 이미지는 스킵 (HEAD 실패 시 무시하고 GET 진행)
+      try:
+        head_resp = await client.head(url, headers=_headers)
+        content_length = int(head_resp.headers.get("content-length", 0))
+        if content_length > 10_000_000:
+          raise ValueError(f"이미지 크기 초과: {content_length // 1_000_000}MB")
+      except ValueError:
+        raise
+      except Exception:
+        pass  # HEAD 실패 시 GET으로 진행
+      resp = await client.get(url, headers=_headers)
       resp.raise_for_status()
       img_bytes = resp.content
       content_type = resp.headers.get("content-type", "image/jpeg")
@@ -72,20 +80,22 @@ class ImageFilterService:
       if not media_type.startswith("image/"):
         media_type = "image/jpeg"
 
-      # Claude Vision base64 제한 5MB → 원본 3.5MB 이상이면 리사이즈
-      if len(img_bytes) > 3_500_000:
-        from io import BytesIO
-        from PIL import Image
-        img = Image.open(BytesIO(img_bytes))
-        # 장축 1500px로 축소
+      # Claude Vision 제한: base64 5MB + 해상도 8000px → 초과 시 리사이즈
+      from io import BytesIO
+      from PIL import Image
+      img = Image.open(BytesIO(img_bytes))
+      w, h = img.size
+      if len(img_bytes) > 3_500_000 or w > 7999 or h > 7999:
         img.thumbnail((1500, 1500), Image.LANCZOS)
+        if img.mode == "RGBA":
+          img = img.convert("RGB")
         buf = BytesIO()
         img.save(buf, format="JPEG", quality=85)
         img_bytes = buf.getvalue()
         media_type = "image/jpeg"
 
       b64 = base64.b64encode(img_bytes).decode("ascii")
-    return b64, media_type
+    return b64, media_type, w, h
 
   # ------------------------------------------------------------------
   # Claude Vision 분류
@@ -119,15 +129,21 @@ class ImageFilterService:
 
     # 이미지 다운로드 + base64 인코딩
     encoded: list[tuple[int, str, str, str]] = []  # (index, url, b64, media_type)
-    failed_indices: set[int] = set()
+    tall_indices: dict[int, str] = {}   # 비율 제거 대상 (idx -> 사유)
+    failed_indices: dict[int, str] = {}  # 다운로드 실패 → 유지 (idx -> 에러)
 
     for idx, url in enumerate(urls):
       try:
-        b64, media_type = await self._download_and_encode(url)
+        b64, media_type, w, h = await self._download_and_encode(url)
+        if w > 0 and h > w * 2:
+          reason = f"tall:{w}x{h}"
+          logger.info(f"[이미지필터] 상세페이지 이미지 제외 ({w}x{h}, 비율 {w/h:.2f}): {url[:80]}")
+          tall_indices[idx] = reason
+          continue
         encoded.append((idx, url, b64, media_type))
       except Exception as e:
         logger.warning(f"[이미지필터] 다운로드 실패 (원본 유지): {url[:80]} — {e}")
-        failed_indices.add(idx)
+        failed_indices[idx] = str(e)
 
     if not encoded:
       # 모든 이미지 다운로드 실패 -> 전부 product로 분류 (원본 유지)
@@ -190,9 +206,13 @@ class ImageFilterService:
         for _, url, _, _ in chunk:
           results.append({"url": url, "type": "product"})
 
-    # 다운로드 실패한 이미지도 product로 추가
-    for idx in failed_indices:
-      results.append({"url": urls[idx], "type": "product"})
+    # 다운로드 실패 이미지 → product로 유지
+    for idx, err in failed_indices.items():
+      results.append({"url": urls[idx], "type": "product", "reason": f"download_fail:{err}"})
+
+    # 비율 필터링 이미지 → other로 제거
+    for idx, reason in tall_indices.items():
+      results.append({"url": urls[idx], "type": "other", "reason": reason})
 
     # 원본 순서대로 정렬
     url_order = {u: i for i, u in enumerate(urls)}
@@ -233,7 +253,7 @@ class ImageFilterService:
   ) -> dict[str, Any]:
     """단일 상품 이미지 필터링.
 
-    scope: "images" (대표+추가), "detail" (상세페이지), "all" (전체)
+    scope: "images" (대표+추가), "detail_images" (추가만), "detail" (상세페이지), "all" (전체)
 
     대표+추가이미지 필터링 규칙:
     - 이미지컷이 있으면 나머지 제거
@@ -256,14 +276,47 @@ class ImageFilterService:
       if images:
         classifications = await self.classify_images(images)
         product_cuts = [c["url"] for c in classifications if c["type"] == "product"]
+        other_cuts = [c["url"] for c in classifications if c["type"] == "other"]
 
+        # 분류 결과 로그
+        logger.info(
+          f"[이미지필터] 상품 {product_id} images — "
+          f"총 {len(images)}장: product {len(product_cuts)}장, other {len(other_cuts)}장"
+        )
+        for c in classifications:
+          logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
+
+        cls_detail = [{"url": c["url"][-60:], "type": c["type"]} for c in classifications]
         if not product_cuts:
           # 이미지컷 없음 → 작업하지 않음 (AI 변환용 소스 보존)
-          result_info["images"] = {"action": "skipped", "reason": "no_product_cuts"}
+          logger.warning(f"[이미지필터] 상품 {product_id} — 이미지컷 0장, 필터링 스킵")
+          result_info["images"] = {"action": "skipped", "reason": "no_product_cuts", "classifications": cls_detail}
         else:
           removed = len(images) - len(product_cuts)
           update_data["images"] = product_cuts
-          result_info["images"] = {"kept": len(product_cuts), "removed": removed}
+          result_info["images"] = {"kept": len(product_cuts), "removed": removed, "classifications": cls_detail}
+
+    # 추가이미지만 필터링 (대표이미지 유지)
+    if scope == "detail_images":
+      images = product.images or []
+      if len(images) > 1:
+        main_image = images[0]
+        additional = images[1:]
+        classifications = await self.classify_images(additional)
+        product_cuts = [c["url"] for c in classifications if c["type"] == "product"]
+        other_cuts = [c["url"] for c in classifications if c["type"] == "other"]
+
+        logger.info(
+          f"[이미지필터] 상품 {product_id} 추가이미지 — "
+          f"총 {len(additional)}장: product {len(product_cuts)}장, other {len(other_cuts)}장"
+        )
+        for c in classifications:
+          logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
+
+        cls_detail = [{"url": c["url"][-60:], "type": c["type"]} for c in classifications]
+        removed = len(additional) - len(product_cuts)
+        update_data["images"] = [main_image] + product_cuts
+        result_info["images"] = {"kept": len(product_cuts), "removed": removed, "classifications": cls_detail}
 
     # 상세페이지 이미지 필터링
     if scope in ("detail", "all"):
@@ -271,13 +324,24 @@ class ImageFilterService:
       if detail_images:
         classifications = await self.classify_images(detail_images)
         product_cuts = [c["url"] for c in classifications if c["type"] == "product"]
+        other_cuts = [c["url"] for c in classifications if c["type"] == "other"]
 
+        # 분류 결과 로그
+        logger.info(
+          f"[이미지필터] 상품 {product_id} detail — "
+          f"총 {len(detail_images)}장: product {len(product_cuts)}장, other {len(other_cuts)}장"
+        )
+        for c in classifications:
+          logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
+
+        cls_detail = [{"url": c["url"][-60:], "type": c["type"]} for c in classifications]
         if not product_cuts:
-          result_info["detail"] = {"action": "skipped", "reason": "no_product_cuts"}
+          logger.warning(f"[이미지필터] 상품 {product_id} detail — 이미지컷 0장, 필터링 스킵")
+          result_info["detail"] = {"action": "skipped", "reason": "no_product_cuts", "classifications": cls_detail}
         else:
           removed = len(detail_images) - len(product_cuts)
           update_data["detail_images"] = product_cuts
-          result_info["detail"] = {"kept": len(product_cuts), "removed": removed}
+          result_info["detail"] = {"kept": len(product_cuts), "removed": removed, "classifications": cls_detail}
 
     if update_data:
       # __img_filtered__ 태그 추가
