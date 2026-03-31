@@ -219,7 +219,7 @@ def _log_refresh(
     kst = now + timedelta(hours=9)
     ts_str = kst.strftime("%H:%M:%S")
     prefix = f"[{idx}/{total}] " if idx and total else ""
-    name_label = f"{product_name[:40]}: " if product_name else ""
+    name_label = f"{product_name[:80]}: " if product_name else ""
     full_msg = f"[{ts_str}] {prefix}{name_label}{message}"
     _refresh_log_buffer.append({
         "ts": now.isoformat(),
