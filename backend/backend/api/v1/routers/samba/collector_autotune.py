@@ -496,7 +496,20 @@ async def _autotune_loop():
                         if _del_pids:
                             log.info("[오토튠] 품절 상품 %d건 마켓삭제 완료 (DB 유지)", deleted_count)
 
-                        await session.commit()
+                        try:
+                            await asyncio.wait_for(session.commit(), timeout=30)
+                        except (asyncio.TimeoutError, Exception) as commit_err:
+                            log.error("[오토튠] 결과 commit 실패 (무시하고 진행): %s", commit_err)
+                            _ref_mod._refresh_log_buffer.append({
+                                "ts": datetime.now(timezone.utc).isoformat(), "site": "", "product_id": "", "name": "",
+                                "msg": f"[{(datetime.now(timezone.utc) + timedelta(hours=9)).strftime('%H:%M:%S')}] 결과 commit 실패: {type(commit_err).__name__}: {str(commit_err)[:100]}",
+                                "level": "error", "source": "autotune",
+                            })
+                            _ref_mod._refresh_log_total += 1
+                            try:
+                                await asyncio.wait_for(session.rollback(), timeout=10)
+                            except Exception:
+                                pass
 
                     log.info("[오토튠] tick 완료: 대상 %d, 갱신 %d, 가격전송 %d, 재고전송 %d, 삭제 %d", filtered_count, summary.refreshed, len(_all_price_pids), len(_all_stock_pids), deleted_count)
                 else:
