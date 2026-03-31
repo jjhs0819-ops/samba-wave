@@ -112,7 +112,7 @@ def _get_rotated_proxy() -> str | None:
             _ip_rotate_current = None
         label = "메인" if _ip_rotate_current is None else _ip_rotate_current.split("@")[-1]
         _ip_rotate_label = label
-        logger.info(f"[오토튠] 🔀 IP 전환 → {label}")
+        logger.info(f"[오토튠] IP 전환 -> {label}")
         # _log_refresh 우회 — context 무관하게 직접 버퍼에 추가
         global _refresh_log_total
         now = datetime.now(timezone.utc)
@@ -122,7 +122,7 @@ def _get_rotated_proxy() -> str | None:
             "site": "MUSINSA",
             "product_id": "",
             "name": "",
-            "msg": f"[{kst.strftime('%H:%M:%S')}] 🔀 IP 전환 → {label}",
+            "msg": f"[{kst.strftime('%H:%M:%S')}] IP 전환 -> {label}",
             "level": "info",
             "source": "autotune",
         })
