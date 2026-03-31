@@ -723,7 +723,6 @@ class ElevenstClient:
   <selPrc>{sale_price}</selPrc>
   <selMthdCd>01</selMthdCd>
   <aplBgnDy>{datetime.now().strftime('%Y%m%d')}</aplBgnDy>
-  <aplEndDy>{(datetime.now().replace(year=datetime.now().year + 1)).strftime('%Y%m%d')}</aplEndDy>
   <prdWeight>0</prdWeight>
   <dlvCnFee>{delivery_fee}</dlvCnFee>
   <dlvGrntYn>Y</dlvGrntYn>
