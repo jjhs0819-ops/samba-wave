@@ -127,19 +127,21 @@ class ImageFilterService:
     # 이미지 다운로드 + base64 인코딩
     encoded: list[tuple[int, str, str, str]] = []  # (index, url, b64, media_type)
     # 비율 기반 사전 필터링 또는 다운로드 실패 → 제거 대상
-    tall_indices: set[int] = set()
+    tall_indices: dict[int, str] = {}  # idx -> 사유
 
     for idx, url in enumerate(urls):
       try:
         b64, media_type, w, h = await self._download_and_encode(url)
         if w > 0 and h > w * 2:
+          reason = f"tall:{w}x{h}"
           logger.info(f"[이미지필터] 상세페이지 이미지 제외 ({w}x{h}, 비율 {w/h:.2f}): {url[:80]}")
-          tall_indices.add(idx)
+          tall_indices[idx] = reason
           continue
         encoded.append((idx, url, b64, media_type))
       except Exception as e:
+        reason = f"download_fail:{e}"
         logger.warning(f"[이미지필터] 다운로드 실패 → 제거 대상: {url[:80]} — {e}")
-        tall_indices.add(idx)
+        tall_indices[idx] = reason
 
     if not encoded:
       # 모든 이미지 다운로드 실패 -> 전부 product로 분류 (원본 유지)
@@ -203,8 +205,8 @@ class ImageFilterService:
           results.append({"url": url, "type": "product"})
 
     # 비율 필터링 또는 다운로드 실패 이미지 → other로 추가 (제거 대상)
-    for idx in tall_indices:
-      results.append({"url": urls[idx], "type": "other"})
+    for idx, reason in tall_indices.items():
+      results.append({"url": urls[idx], "type": "other", "reason": reason})
 
     # 원본 순서대로 정렬
     url_order = {u: i for i, u in enumerate(urls)}
