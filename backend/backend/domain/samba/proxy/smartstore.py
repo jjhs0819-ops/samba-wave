@@ -765,16 +765,28 @@ class SmartStoreClient:
     # 이미지 다운로드 (클라이언트 재사용)
     dl = _dl_client or httpx.AsyncClient(timeout=settings.http_timeout_default, follow_redirects=True)
     try:
-      img_resp = await dl.get(image_url, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": referer,
-        "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-      })
+      try:
+        img_resp = await dl.get(image_url, headers={
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Referer": referer,
+          "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+        })
+      except httpx.ConnectTimeout:
+        logger.error(f"[이미지] 다운로드 연결 타임아웃 — CDN 차단 가능성: {image_url[:80]}")
+        raise SmartStoreApiError(f"이미지 다운로드 연결 타임아웃 — CDN 차단 가능성")
+      except httpx.ReadTimeout:
+        logger.error(f"[이미지] 다운로드 읽기 타임아웃 — CDN 차단 가능성: {image_url[:80]}")
+        raise SmartStoreApiError(f"이미지 다운로드 읽기 타임아웃 — CDN 차단 가능성")
+      except Exception as dl_err:
+        logger.error(f"[이미지] 다운로드 실패: {type(dl_err).__name__}: {dl_err}")
+        raise SmartStoreApiError(f"이미지 다운로드 실패: {type(dl_err).__name__}")
       if not img_resp.is_success:
-        raise SmartStoreApiError(f"이미지 다운로드 실패: {img_resp.status_code}")
+        logger.warning(f"[이미지] 다운로드 HTTP {img_resp.status_code}: {image_url[:80]}")
+        raise SmartStoreApiError(f"이미지 다운로드 실패: HTTP {img_resp.status_code}")
       img_bytes = img_resp.content
       content_type = img_resp.headers.get("content-type", "image/jpeg")
       if len(img_bytes) < 1000:
+        logger.warning(f"[이미지] 비정상 크기({len(img_bytes)}B) — CDN 차단 가능성: {image_url[:80]}")
         raise SmartStoreApiError(f"이미지가 비정상적으로 작음({len(img_bytes)}B) — CDN 차단 가능성")
     finally:
       if not _dl_client:
