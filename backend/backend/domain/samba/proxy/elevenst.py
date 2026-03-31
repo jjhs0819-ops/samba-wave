@@ -811,6 +811,10 @@ class ElevenstClient:
   {f'<pay11Value>{llpay_pnt_value}</pay11Value><pay11WyCd>{llpay_pnt_type}</pay11WyCd>' if llpay_pnt_yn == 'Y' else ''}
   <pluYN>{mnp_buy_yn}</pluYN>
   {f'<pluDscCd>{mnp_buy_basis_type}</pluDscCd><pluDscMthdCd>{mnp_buy_dsc_method}</pluDscMthdCd><pluDscBasis>{mnp_buy_qty}</pluDscBasis><pluDscAmtPercnt>{mnp_buy_amt}</pluDscAmtPercnt>' if mnp_buy_yn == 'Y' else ''}
+  <crtfGrpObjClfCd01>03</crtfGrpObjClfCd01>
+  <crtfGrpObjClfCd02>03</crtfGrpObjClfCd02>
+  <crtfGrpObjClfCd03>03</crtfGrpObjClfCd03>
+  <crtfGrpObjClfCd04>05</crtfGrpObjClfCd04>
   {image_xml}
   <htmlDetail><![CDATA[{detail_html.replace("]]>", "]]]]><![CDATA[>")}]]></htmlDetail>
   {option_xml}
@@ -1278,7 +1282,7 @@ def _build_elevenst_notice_xml(product: dict[str, Any]) -> str:
   return f"""<ProductNotification>
   <type>{type_code}</type>{items_xml}
   <company>{_escape_xml(company)}</company>
-  <modelNm>없음</modelNm>
+  <modelNm>{_escape_xml(product.get("style_code", "") or "없음")}</modelNm>
 </ProductNotification>"""
 
 
