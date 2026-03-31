@@ -1267,7 +1267,6 @@ export default function CollectorPage() {
                   try {
                     const res = await collectorApi.brandRefresh({ brand, brand_name: brandName, gf, options: checkedOptions })
                     addLog(`[추가수집] ${res.message}`)
-                    showAlert(res.message, 'success')
                     await load(); await loadTree()
                     // 갱신 후 자동 수집 시작
                     const updatedFilters = (await collectorApi.listFilters()).filter(f => {
@@ -1275,7 +1274,7 @@ export default function CollectorPage() {
                       return p?.searchParams.get('brand') === brand
                     })
                     if (updatedFilters.length > 0) {
-                      const collectOk = await showConfirm(`${updatedFilters.length}개 그룹 상품수집을 시작하시겠습니까?`)
+                      const collectOk = await showConfirm(`${res.message}\n\n${updatedFilters.length}개 그룹 상품수집을 시작하시겠습니까?`)
                       if (collectOk) {
                         const abort = new AbortController()
                         collectAbortRef.current = abort
