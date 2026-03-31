@@ -105,10 +105,11 @@ def _get_rotated_proxy() -> str | None:
     idx = _ip_rotate_counter % len(pool)
     _ip_rotate_counter += 1
     selected = pool[idx]
-    # IP 전환 시 로그
+    # IP 전환 시 로그 (logger 직접 사용 — context 무관하게 항상 출력)
     label = "메인" if selected is None else selected.split("@")[-1] if "@" in selected else "프록시"
     if _ip_rotate_last != label:
         _ip_rotate_last = label
+        logger.info(f"[오토튠] 🔀 IP 전환 → {label}")
         _log_refresh("MUSINSA", "", "", f"🔀 IP 전환 → {label}")
     return selected
 
