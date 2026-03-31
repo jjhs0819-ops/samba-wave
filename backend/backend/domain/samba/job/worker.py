@@ -179,9 +179,6 @@ class JobWorker:
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
         from backend.domain.samba.job.model import SambaJob
-        from backend.domain.samba.traffic import set_collecting, clear_collecting
-
-        set_collecting()
         try:
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
@@ -201,9 +198,6 @@ class JobWorker:
                         pass
         except Exception as e:
             logger.error(f"[잡워커] 수집 세션 에러: {job_id} — {e}")
-        finally:
-            clear_collecting()
-
     async def _execute_transmit_isolated(self, job_id: str, payload: dict):
         """격리된 이벤트 루프에서 전송 잡 실행 — 자체 DB 세션 관리."""
         from backend.db.orm import get_write_session
@@ -211,10 +205,8 @@ class JobWorker:
         from backend.domain.samba.job.model import SambaJob
         # 별도 이벤트 루프이므로 이전 루프의 세마포어 정리
         from backend.domain.samba.shipment.service import clear_account_semaphores
-        from backend.domain.samba.traffic import set_transmitting, clear_transmitting
         clear_account_semaphores()
 
-        set_transmitting()
         try:
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
@@ -234,9 +226,6 @@ class JobWorker:
                         pass
         except Exception as e:
             logger.error(f"[잡워커] 전송 세션 에러: {job_id} — {e}")
-        finally:
-            clear_transmitting()
-
     async def _run_transmit(self, job, repo, session):
         """전송 잡 실행 — 기존 shipment_service 호출."""
         from backend.domain.samba.shipment.service import SambaShipmentService, is_cancel_requested

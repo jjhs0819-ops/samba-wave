@@ -10,7 +10,7 @@ const LOG_POLL_INTERVAL = 500
 // 오토튠 실시간 로그 (독립 컴포넌트 — 대시보드 리렌더링 영향 없음)
 const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusChange, externalRunning }: {
   siteColors: Record<string, string>
-  onStatusChange?: (running: boolean, cycles: number, lastTick: string | null, refreshed: number, traffic?: { collecting: boolean; transmitting: boolean; busy: boolean }) => void
+  onStatusChange?: (running: boolean, cycles: number, lastTick: string | null, refreshed: number) => void
   externalRunning?: boolean
 }) {
   const [logs, setLogs] = useState<RefreshLogEntry[]>([])
@@ -30,7 +30,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
     // 마운트 직후 서버 상태 확인 — running이면 자동 폴링 시작
     collectorApi.autotuneStatus().then(st => {
       if (st) {
-        if (onStatusChange) onStatusChange(st.running, st.cycle_count, st.last_tick, st.refreshed_count || 0, st.traffic)
+        if (onStatusChange) onStatusChange(st.running, st.cycle_count, st.last_tick, st.refreshed_count || 0)
         if (st.running) setSelfDetectedRunning(true)
       }
     }).catch(() => {})
@@ -52,7 +52,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
       try {
         const atStatus = await collectorApi.autotuneStatus().catch(() => null)
         if (atStatus) {
-          if (onStatusChange) onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0, atStatus.traffic)
+          if (onStatusChange) onStatusChange(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
           if (!atStatus.running) setSelfDetectedRunning(false)
         }
         // running 상태와 무관하게 로그 폴링 유지 (별도 스레드 타이밍 차이 대응)
@@ -211,10 +211,9 @@ export default function WarroomPage() {
   const [autotuneCycles, setAutotuneCycles] = useState(0)
   const [autotuneRefreshed, setAutotuneRefreshed] = useState(0)
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
-  const [trafficBusy, setTrafficBusy] = useState<{ collecting: boolean; transmitting: boolean; busy: boolean } | null>(null)
   const prevCyclesRef = useRef(0)
   const falseCountRef = useRef(0)
-  const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number, traffic?: { collecting: boolean; transmitting: boolean; busy: boolean }) => {
+  const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number) => {
     // 별도 스레드 타이밍 차이 대응 — 3회 연속 false일 때만 정지 표시
     if (!running) {
       falseCountRef.current++
@@ -226,7 +225,6 @@ export default function WarroomPage() {
     setAutotuneCycles(cycles)
     setAutotuneLastTick(lastTick)
     setAutotuneRefreshed(refreshed)
-    if (traffic) setTrafficBusy(traffic)
     // 사이클 완료 시 이벤트 타임라인 갱신
     if (cycles > prevCyclesRef.current) {
       prevCyclesRef.current = cycles
@@ -249,14 +247,14 @@ export default function WarroomPage() {
         monitorApi.dashboard().catch(() => null),
         monitorApi.recentEvents(3).catch(() => []),
         collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>,
-        collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number>, traffic: { collecting: false, transmitting: false, busy: false } })),
+        collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number> })),
         monitorApi.storeScores().catch(() => ({})),
       ])
       if (dashboard) setStats(dashboard)
       setEvents(recentEvents)
       if (probeStatus && Object.keys(probeStatus).length > 0) setProbeData(probeStatus)
       // 오토튠 상태는 handleAutotuneStatus를 통해 처리 (falseCountRef 가드 적용, 경쟁 상태 방지)
-      handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0, atStatus.traffic)
+      handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
       if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
       setLastFetched(new Date())
       nextPollRef.current = POLL_INTERVAL / 1000
@@ -347,11 +345,6 @@ export default function WarroomPage() {
           <span style={{ fontWeight: 700, color: '#FF8C00', fontSize: '0.875rem' }}>오토튠 실시간 모니터링</span>
           {autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중 ({autotuneCycles}회)</span>}
           {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
-          {autotuneRunning && trafficBusy?.busy && (
-            <span style={{ fontSize: '0.7rem', color: '#FFA500', background: 'rgba(255,165,0,0.1)', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid rgba(255,165,0,0.3)' }}>
-              속도조절 중 ({[trafficBusy.collecting && '수집', trafficBusy.transmitting && '전송'].filter(Boolean).join('+')})
-            </span>
-          )}
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
           <button
