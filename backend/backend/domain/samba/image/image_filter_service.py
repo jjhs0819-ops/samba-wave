@@ -56,11 +56,16 @@ class ImageFilterService:
       (base64_data, media_type, width, height) 튜플
     """
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-      # 10MB 초과 이미지는 스킵 (메모리 보호)
-      head_resp = await client.head(url, headers={"User-Agent": "Mozilla/5.0", "Referer": url})
-      content_length = int(head_resp.headers.get("content-length", 0))
-      if content_length > 10_000_000:
-        raise ValueError(f"이미지 크기 초과: {content_length // 1_000_000}MB")
+      # 10MB 초과 이미지는 스킵 (HEAD 실패 시 무시하고 GET 진행)
+      try:
+        head_resp = await client.head(url, headers={"User-Agent": "Mozilla/5.0", "Referer": url})
+        content_length = int(head_resp.headers.get("content-length", 0))
+        if content_length > 10_000_000:
+          raise ValueError(f"이미지 크기 초과: {content_length // 1_000_000}MB")
+      except ValueError:
+        raise
+      except Exception:
+        pass  # HEAD 실패 시 GET으로 진행
       resp = await client.get(url, headers={
         "User-Agent": "Mozilla/5.0",
         "Referer": url,
