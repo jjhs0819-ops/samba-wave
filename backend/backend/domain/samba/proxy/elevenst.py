@@ -732,11 +732,13 @@ class ElevenstClient:
     # 셀러오피스 form 필드명: pluYN, pluDscCd(기준유형), pluDscMthdCd(할인방식), pluDscBasis(기준값), pluDscAmtPercnt(할인값)
     # pluDscCd: 01=수량기준, 02=금액기준
     # pluDscMthdCd: 02=정액(원), 01=정률(%)
-    mnp_buy_yn = "Y" if cfg.get("multiPurchaseDiscount") and str(cfg.get("multiPurchaseDiscount")) not in ("", "false", "0") else "N"
     mnp_buy_basis_type = str(cfg.get("multiPurchaseBasisType", "01") or "01")
     mnp_buy_dsc_method = str(cfg.get("multiPurchaseDiscountMethod", "02") or "02")
-    mnp_buy_qty = int(cfg.get("multiPurchaseQty", 2) or 2)
-    mnp_buy_amt = int(cfg.get("multiPurchaseAmt", 1000) or 1000)
+    mnp_buy_qty = int(float(cfg.get("multiPurchaseQty") or 2))
+    mnp_buy_amt = int(float(cfg.get("multiPurchaseAmt") or 0))
+    # 할인값이 10 미만이면 복수구매 할인 비활성화
+    _mnp_enabled = cfg.get("multiPurchaseDiscount") and str(cfg.get("multiPurchaseDiscount")) not in ("", "false", "0")
+    mnp_buy_yn = "Y" if _mnp_enabled and mnp_buy_amt >= 10 else "N"
     mnp_period_yn = "Y" if cfg.get("multiPurchasePeriodEnabled") and str(cfg.get("multiPurchasePeriodEnabled")) not in ("", "false", "0") else "N"
     mnp_start_dy = str(cfg.get("multiPurchaseStartDate", "") or "")
     mnp_end_dy = str(cfg.get("multiPurchaseEndDate", "") or "")
