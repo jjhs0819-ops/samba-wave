@@ -1015,6 +1015,11 @@ async def _split_single_image(
   img = Image.open(io.BytesIO(resp.content))
   w, h = img.size
 
+  # 텍스트 이미지면 제외
+  if _is_text_image(img):
+    logger.info(f"[이미지분할] 텍스트 이미지 제외: {url} ({w}x{h})")
+    return []
+
   # 세로가 가로의 2배 이하 → 분할 불필요
   if h <= w * 2:
     return [url]
@@ -1031,10 +1036,13 @@ async def _split_single_image(
     segments.append(img.crop((0, y, w, bottom)))
     y = bottom
 
-  # R2에 업로드
+  # 텍스트 이미지 필터링 후 R2에 업로드
   url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
   uploaded: list[str] = []
   for idx, seg in enumerate(segments):
+    if _is_text_image(seg):
+      logger.info(f"[이미지분할] 텍스트 이미지 제외: {url} seg#{idx}")
+      continue
     buf = io.BytesIO()
     seg.convert("RGB").save(buf, format="WEBP", quality=85)
     buf.seek(0)
@@ -1050,3 +1058,28 @@ async def _split_single_image(
 
   logger.info(f"[이미지분할] {url} → {len(uploaded)}장 ({w}x{h})")
   return uploaded
+
+
+def _is_text_image(img: Any) -> bool:
+  """텍스트/공지 이미지 판별 — 컬러 픽셀 비율이 10% 미만이면 텍스트로 간주.
+
+  상품 사진은 색상이 다양하지만, 텍스트 이미지(공지사항, 배송안내 등)는
+  흰 배경 + 검은 글씨로 채도가 거의 없다.
+  """
+  from PIL import Image
+
+  rgb = img.convert("RGB")
+  # 성능을 위해 리사이즈 (최대 200px)
+  w, h = rgb.size
+  if max(w, h) > 200:
+    ratio = 200 / max(w, h)
+    rgb = rgb.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+
+  hsv = rgb.convert("HSV")
+  # S(채도) 채널 히스토그램 — 0~255, 인덱스 0~255
+  hist = hsv.split()[1].histogram()  # S 채널
+  total_pixels = sum(hist)
+  # 채도 30 이상인 픽셀 수 = 컬러 픽셀
+  color_pixels = sum(hist[30:])
+  color_ratio = color_pixels / total_pixels if total_pixels > 0 else 0
+  return color_ratio < 0.10
