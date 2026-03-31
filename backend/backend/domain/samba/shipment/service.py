@@ -852,6 +852,16 @@ class SambaShipmentService:
         market_type = account.market_type
         category_id = mapped_categories.get(market_type, "")
 
+        # ESM Plus 크로스매핑: 지마켓↔옥션 자동 변환
+        if not category_id and market_type in ("gmarket", "auction"):
+          other = "auction" if market_type == "gmarket" else "gmarket"
+          other_id = mapped_categories.get(other, "")
+          if other_id and str(other_id).isdigit():
+            from backend.domain.samba.proxy.esmplus import esm_map_category
+            category_id = esm_map_category(other_id, other, market_type)
+            if category_id:
+              logger.info(f"[ESM 크로스매핑] {other}({other_id}) → {market_type}({category_id})")
+
         if not category_id:
           res["error"] = "카테고리 매핑 없음"
           logger.warning(f"[전송] 상품 {product_id} → {market_type} 카테고리 매핑 없음 (스킵)")
@@ -1441,6 +1451,15 @@ class SambaShipmentService:
         if not account:
           continue
         category_id = mapped_categories.get(account.market_type, "")
+        # ESM Plus 크로스매핑: 지마켓↔옥션 자동 변환
+        if not category_id and account.market_type in ("gmarket", "auction"):
+          other = "auction" if account.market_type == "gmarket" else "gmarket"
+          other_id = mapped_categories.get(other, "")
+          if other_id and str(other_id).isdigit():
+            from backend.domain.samba.proxy.esmplus import esm_map_category
+            category_id = esm_map_category(other_id, other, account.market_type)
+            if category_id:
+              logger.info(f"[ESM 크로스매핑] {other}({other_id}) → {account.market_type}({category_id})")
         if not category_id:
           new_result[account_id] = "failed"
           new_errors[account_id] = "카테고리 매핑 없음"
