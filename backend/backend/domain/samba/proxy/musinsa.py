@@ -144,6 +144,10 @@ class MusinsaClient:
             category_levels = [c for c in category_levels if c]
 
             # 이미지 파싱 (갱신 모드에서는 스킵 — 가격/재고만 필요)
+            unique_images = []
+            original_image_count = 0
+            detail_images = []
+            desc_html = ""
             if not refresh_only:
                 desc_html = d.get("goodsContents", "")
                 detail_images = self._extract_detail_images(desc_html)
