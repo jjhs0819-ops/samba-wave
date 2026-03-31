@@ -38,7 +38,7 @@ SITE_BASE_INTERVAL: dict[str, float] = {
 }
 # 소싱처별 최소 인터벌 (초)
 SITE_MIN_INTERVAL: dict[str, float] = {
-    "MUSINSA": 0.0,
+    "MUSINSA": 0.5,
     "SSG": 0.5,
     "LOTTEON": 0.3,
 }
