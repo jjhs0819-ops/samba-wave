@@ -93,7 +93,8 @@ _ip_rotate_label: str = ""
 def _get_rotated_proxy() -> str | None:
     """100건 단위로 메인↔프록시 교대. PROXY_URLS 미설정 시 항상 None."""
     global _ip_rotate_counter, _ip_rotate_current, _ip_rotate_label
-    proxy_urls = os.getenv("PROXY_URLS", "")
+    from backend.core.config import settings
+    proxy_urls = settings.proxy_urls
     if not proxy_urls:
         return None
     proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
