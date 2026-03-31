@@ -122,9 +122,13 @@ async def _autotune_loop():
     try:
       while _autotune_running_event.is_set():
         try:
-            # 이전 취소 플래그 잔존 방지
+            # 이전 취소/비상정지 플래그 잔존 방지
             from backend.domain.samba.collector.refresher import clear_bulk_cancel
             clear_bulk_cancel()
+            from backend.domain.samba.emergency import clear_emergency_stop, is_emergency_stopped as _is_es
+            if _is_es():
+                clear_emergency_stop()
+                log.info("[오토튠] 잔존 비상정지 해제 — 사이클 계속")
 
             from backend.db.orm import get_write_session
             async with get_write_session() as session:
