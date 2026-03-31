@@ -302,24 +302,49 @@ def _similarity_match_smartstore(
     """2단계: 키워드 유사도 매칭.
 
     대분류부터 순차적으로 후보를 좁혀가며 매칭.
-    1. 대분류 키워드로 후보 필터 (전체 → 해당 대분류 하위만)
-    2. 중분류 키워드로 추가 필터
-    3. 소분류/세분류 키워드로 최종 선택
-    각 단계에서 동의어 확장 적용.
+    소싱 카테고리에 명시적 키워드가 없는 특수 대분류는 제외.
+    대분류 매칭 신뢰도가 낮으면 None 반환 → AI(3단계)에 위임.
     """
     segs = [s.strip() for s in source_category.split(">") if s.strip()]
     if not segs:
         return None
+
+    source_text = source_category.lower()
+
+    # ── 특수 대분류 제외: 소싱 카테고리에 해당 키워드가 없으면 후보에서 제거 ──
+    _RESTRICTED_TOPS: list[tuple[list[str], list[str]]] = [
+        # (대분류 키워드 목록, 소싱에 있어야 할 키워드)
+        (["유아동", "유아", "아동", "키즈"], ["유아", "아동", "키즈", "주니어", "베이비"]),
+        (["자동차", "모터바이크"], ["자동차", "차량", "모터바이크", "바이크", "오토바이"]),
+        (["반려동물", "강아지", "고양이"], ["반려", "강아지", "고양이", "펫"]),
+        (["수입명품"], ["명품", "럭셔리", "수입명품"]),
+        (["브랜드 "], ["브랜드"]),
+        (["노트북", "데스크탑", "PC주변"], ["노트북", "데스크탑", "PC", "컴퓨터"]),
+        (["모니터", "프린터"], ["모니터", "프린터"]),
+        (["저장장치"], ["저장장치", "SSD", "HDD"]),
+        (["영상가전", "계절가전"], ["가전", "TV", "에어컨"]),
+        (["음향기기"], ["스피커", "이어폰", "헤드폰", "음향"]),
+    ]
+
+    def _is_restricted_top(top_seg: str) -> bool:
+        """소싱 카테고리에 관련 키워드가 없는 특수 대분류인지 확인."""
+        top_lower = top_seg.lower()
+        for top_kws, require_kws in _RESTRICTED_TOPS:
+            if any(tk in top_lower for tk in top_kws):
+                # 이 대분류에 해당 → 소싱에 관련 키워드가 있는지 확인
+                if not any(rk in source_text for rk in require_kws):
+                    return True  # 소싱에 키워드 없음 → 제외
+        return False
+
+    # 특수 대분류 제외된 후보
+    candidates = [c for c in market_cats if not _is_restricted_top(c.split(" > ")[0])]
 
     # 전체 세그먼트의 키워드 + 동의어 (최종 점수 계산용)
     all_keywords = set()
     for seg in segs:
         all_keywords |= _expand_synonyms({seg})
 
-    # 대분류부터 순차 필터링 — 세그먼트 레벨 매칭
-    # 대분류(i=0): 마켓 카테고리의 첫 번째 세그먼트에서만 매칭 (다른 레벨에 같은 이름이 있어도 무시)
-    # 중분류 이하: 해당 깊이 ~ +1 범위에서 매칭
-    candidates = list(market_cats)
+    # ── 대분류부터 순차 필터링 ──
     for i, seg in enumerate(segs):
         seg_keywords = _expand_synonyms({seg})
         narrowed = []
@@ -336,9 +361,14 @@ def _similarity_match_smartstore(
                     narrowed.append(c)
         if narrowed:
             candidates = narrowed
-        # 후보가 없으면 현재 범위 유지하고 다음 세그먼트로
 
     if not candidates:
+        return None
+
+    # ── 대분류 신뢰도 체크: 후보가 너무 많은 대분류에 분산되면 AI에 위임 ──
+    top_set = {c.split(" > ")[0] for c in candidates}
+    if len(top_set) > 4:
+        # 5개 이상 대분류에 분산 → 유사도 매칭 불확실 → AI에 위임
         return None
 
     # 패션의류 우선 (의류 카테고리는 패션의류 하위가 가장 적합)
