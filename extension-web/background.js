@@ -1144,7 +1144,46 @@ async function handleSourcingJob(job) {
     await wait(needsActive ? 5000 : 4000) // 패션플러스 상세는 렌더링 시간 추가
 
     let result = null
-    if (job.type === 'search') {
+    if (job.type === 'search' && job.site === 'GSShop') {
+      // GS샵: 페이지네이션 반복 수집
+      const maxCount = job.maxCount || 999
+      const allProducts = []
+      const seenIds = new Set()
+      let pageNum = 1
+      const maxPages = Math.ceil(maxCount / 60) + 1
+
+      while (allProducts.length < maxCount && pageNum <= maxPages) {
+        if (pageNum > 1) {
+          const eh = btoa(JSON.stringify({ pageNumber: pageNum, selected: 'opt-page' }))
+          const nextUrl = new URL(job.url)
+          nextUrl.searchParams.set('eh', eh)
+          await chrome.tabs.update(tabId, { url: nextUrl.toString() })
+          await waitForTabLoad(tabId, 30000)
+          await wait(4000)
+        }
+
+        const pageResult = await extractSearchResults(tabId, job.site, 999)
+        const pageProducts = pageResult?.products || []
+
+        if (pageProducts.length === 0) break
+
+        let newCount = 0
+        for (const p of pageProducts) {
+          if (!seenIds.has(p.site_product_id)) {
+            seenIds.add(p.site_product_id)
+            allProducts.push(p)
+            newCount++
+          }
+        }
+
+        console.log(`[소싱] GSShop 페이지 ${pageNum}: +${newCount}건 (총 ${allProducts.length}건)`)
+        if (newCount === 0) break
+
+        pageNum++
+      }
+
+      result = { success: true, products: allProducts.slice(0, maxCount), total: allProducts.length }
+    } else if (job.type === 'search') {
       result = await extractSearchResults(tabId, job.site, job.maxCount || 999)
     } else if (job.type === 'detail') {
       result = await extractDetailData(tabId, job.site, job.productId)

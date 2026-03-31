@@ -143,15 +143,15 @@ class GsShopSourcingClient:
       SourcingQueue.resolvers[request_id] = future
       logger.info(f"[GSSHOP] 큐 등록 완료: {request_id} → {url}")
 
-      # 확장앱 결과 대기 (최대 60초)
-      result = await asyncio.wait_for(future, timeout=60)
+      # 확장앱 결과 대기 (최대 120초 — 다중 페이지 수집 대응)
+      result = await asyncio.wait_for(future, timeout=120)
 
       products = result.get("products", []) if isinstance(result, dict) else []
       logger.info(f'[GSSHOP] 검색 완료: "{keyword}" -> {len(products)}개')
       return products[:size]
 
     except asyncio.TimeoutError:
-      logger.warning(f'[GSSHOP] 검색 타임아웃 (60초): "{keyword}"')
+      logger.warning(f'[GSSHOP] 검색 타임아웃 (120초): "{keyword}"')
       return []
     except Exception as e:
       logger.error(f"[GSSHOP] 검색 실패: {keyword} — {e}")
