@@ -70,6 +70,8 @@ export default function CategoriesPage() {
   // 카테고리 검색 드롭다운
   const [suggestions, setSuggestions] = useState<string[]>([])
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 제안 선택 여부 (onBlur의 handleSaveEdit 호출 방지용)
+  const suggestionSelectedRef = useRef(false)
   // 마켓별 카테고리 수
   const [marketCatCounts, setMarketCatCounts] = useState<Record<string, number>>({})
   // 마켓별 AI 리매핑 로딩 상태
@@ -1189,6 +1191,10 @@ export default function CategoriesPage() {
                                   onFocus={e => updateDropdownPos(e.target)}
                                   onBlur={() => {
                                     setTimeout(() => {
+                                      if (suggestionSelectedRef.current) {
+                                        suggestionSelectedRef.current = false
+                                        return
+                                      }
                                       if (editingCell?.id === row.id && editingCell?.market === mk) {
                                         handleSaveEdit()
                                       }
@@ -1279,6 +1285,7 @@ export default function CategoriesPage() {
               onMouseDown={e => {
                 e.preventDefault()
                 if (suggestions.length > 0) {
+                  suggestionSelectedRef.current = true
                   handleSelectSuggestion(s)
                 } else if (inlineFocusedMarket) {
                   setManualEdits(prev => ({ ...prev, [inlineFocusedMarket]: s }))
