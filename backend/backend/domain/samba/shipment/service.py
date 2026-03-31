@@ -798,10 +798,17 @@ class SambaShipmentService:
             pending_refresh_updates["cost"] = _sold_refresh.new_cost
           if _sold_refresh.new_sale_status:
             pending_refresh_updates["sale_status"] = _sold_refresh.new_sale_status
-          _new_in_stock = sum(1 for o in _sold_refresh.new_options if not o.get("isSoldOut", False) and (o.get("stock") or 0) > 0)
-          logger.info(f"[전송] 품절 최신화 완료 — 재고 있는 옵션: {_new_in_stock}/{len(_sold_refresh.new_options)}")
+          # 가격/재고 변동 계산 (기존 최신화와 동일 포맷)
+          _old_cost = getattr(product_row, "cost", None) or 0
+          _new_cost = _sold_refresh.new_cost if _sold_refresh.new_cost is not None else _old_cost
+          _old_opts = getattr(product_row, "options", None) or []
+          _old_stocks = {o.get("name", ""): o.get("stock", 0) for o in _old_opts}
+          _new_stocks = {o.get("name", ""): o.get("stock", 0) for o in _sold_refresh.new_options}
+          _stock_changes = [k for k in set(list(_old_stocks.keys()) + list(_new_stocks.keys())) if _old_stocks.get(k) != _new_stocks.get(k)]
+          _stock_change_count = len(_stock_changes)
+          logger.info(f"[전송] 품절 최신화 완료 — 원가 {int(_old_cost):,}>{int(_new_cost):,}, 재고변동 {_stock_change_count}건")
           if not refresh_status:
-            refresh_status = f"품절최신화: 재고복구 {_new_in_stock}건"
+            refresh_status = f"원가 {int(_old_cost):,}>{int(_new_cost):,}, 재고변동 {_stock_change_count}건"
         else:
           _err = _sold_refresh.error if _sold_refresh.error else "옵션 데이터 없음"
           logger.info(f"[전송] 품절 최신화 실패 — {_err}")
