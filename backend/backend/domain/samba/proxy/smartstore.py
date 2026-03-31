@@ -796,20 +796,6 @@ class SmartStoreClient:
     from backend.domain.samba.image.exif import strip_exif
     img_bytes = strip_exif(img_bytes)
 
-    # 대용량 이미지 리사이즈 (OOM 방지)
-    if len(img_bytes) > 2_000_000:
-      from PIL import Image as _PILImg
-      import io as _io
-      _img = _PILImg.open(_io.BytesIO(img_bytes))
-      _img.thumbnail((2000, 2000), _PILImg.LANCZOS)
-      if _img.mode == "RGBA":
-        _img = _img.convert("RGB")
-      _buf = _io.BytesIO()
-      _img.save(_buf, format="JPEG", quality=90)
-      img_bytes = _buf.getvalue()
-      content_type = "image/jpeg"
-      logger.info(f"[스마트스토어] 대용량 이미지 리사이즈: {len(img_bytes)//1024}KB")
-
     # content_type 불명확 시 바이트 시그니처로 감지
     if not content_type.startswith("image/"):
       if img_bytes[:8] == b'\x89PNG\r\n\x1a\n':
@@ -896,20 +882,6 @@ class SmartStoreClient:
             continue
           img_bytes = strip_exif(resp.content)
           content_type = resp.headers.get("content-type", "image/jpeg")
-
-          # 대용량 이미지 리사이즈 (OOM 방지)
-          if len(img_bytes) > 2_000_000:
-            from PIL import Image as _PILImg
-            import io as _io
-            _img = _PILImg.open(_io.BytesIO(img_bytes))
-            _img.thumbnail((2000, 2000), _PILImg.LANCZOS)
-            if _img.mode == "RGBA":
-              _img = _img.convert("RGB")
-            _buf = _io.BytesIO()
-            _img.save(_buf, format="JPEG", quality=90)
-            img_bytes = _buf.getvalue()
-            content_type = "image/jpeg"
-            logger.info(f"[스마트스토어] 배치 이미지 리사이즈: {len(img_bytes)//1024}KB")
 
           # content_type 불명확 시 바이트 시그니처로 감지
           if not content_type.startswith("image/"):
