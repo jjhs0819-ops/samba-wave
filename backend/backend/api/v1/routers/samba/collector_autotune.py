@@ -182,8 +182,17 @@ async def _autotune_loop():
 
                 if products:
                     filtered_count = len(products)
-                    # ③ 소싱처별 병렬 갱신
-                    results, summary = await refresh_products_bulk(products, max_concurrency=2)
+                    # ③ 소싱처별 병렬 갱신 (수집/전송 중이면 속도 조절)
+                    from backend.domain.samba.traffic import is_traffic_busy, get_traffic_status
+                    _busy = is_traffic_busy()
+                    _at_concurrency = 1 if _busy else 2
+                    if _busy:
+                        _ts = get_traffic_status()
+                        _reasons = []
+                        if _ts["collecting"]: _reasons.append("수집")
+                        if _ts["transmitting"]: _reasons.append("전송")
+                        log.info("[오토튠] %s 진행 중 — 속도 조절 (동시 %d건)", "+".join(_reasons), _at_concurrency)
+                    results, summary = await refresh_products_bulk(products, max_concurrency=_at_concurrency)
 
                     # 상품 딕셔너리 사전 구축 (N+1 쿼리 방지)
                     product_map: dict[str, object] = {p.id: p for p in products}
@@ -562,6 +571,7 @@ async def autotune_status():
     except Exception:
         refreshed_24h = 0
 
+    from backend.domain.samba.traffic import get_traffic_status
     return {
         "running": _autotune_running_event.is_set() and _autotune_task is not None and not _autotune_task.done(),
         "last_tick": _autotune_last_tick,
@@ -569,6 +579,7 @@ async def autotune_status():
         "refreshed_count": refreshed_24h,
         "target": "registered",
         "breaker_tripped": tripped,
+        "traffic": get_traffic_status(),
     }
 
 

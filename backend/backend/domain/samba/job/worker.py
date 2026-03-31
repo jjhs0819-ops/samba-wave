@@ -179,7 +179,9 @@ class JobWorker:
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
         from backend.domain.samba.job.model import SambaJob
+        from backend.domain.samba.traffic import set_collecting, clear_collecting
 
+        set_collecting()
         try:
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
@@ -199,6 +201,8 @@ class JobWorker:
                         pass
         except Exception as e:
             logger.error(f"[잡워커] 수집 세션 에러: {job_id} — {e}")
+        finally:
+            clear_collecting()
 
     async def _execute_transmit_isolated(self, job_id: str, payload: dict):
         """격리된 이벤트 루프에서 전송 잡 실행 — 자체 DB 세션 관리."""
@@ -207,8 +211,10 @@ class JobWorker:
         from backend.domain.samba.job.model import SambaJob
         # 별도 이벤트 루프이므로 이전 루프의 세마포어 정리
         from backend.domain.samba.shipment.service import clear_account_semaphores
+        from backend.domain.samba.traffic import set_transmitting, clear_transmitting
         clear_account_semaphores()
 
+        set_transmitting()
         try:
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
@@ -228,6 +234,8 @@ class JobWorker:
                         pass
         except Exception as e:
             logger.error(f"[잡워커] 전송 세션 에러: {job_id} — {e}")
+        finally:
+            clear_transmitting()
 
     async def _run_transmit(self, job, repo, session):
         """전송 잡 실행 — 기존 shipment_service 호출."""
@@ -317,9 +325,10 @@ class JobWorker:
                         refresh_info = r.get("update_result", {})
                         rl = refresh_info.get("refresh", "") if isinstance(refresh_info, dict) else ""
                         _add_job_log(job.id, f"[{i+1}/{total}] {prod_name}: 스킵 [{rl}]")
-                    elif r.get("error"):
+                    elif r.get("error") or tx_error.get("_all"):
                         fail_count += 1
-                        _add_job_log(job.id, f"[{i+1}/{total}] {prod_name}: {r['error'][:60]}")
+                        err_msg = r.get("error") or tx_error.get("_all", "실패")
+                        _add_job_log(job.id, f"[{i+1}/{total}] {prod_name}: {str(err_msg)[:60]}")
                     else:
                         fail_count += 1
                         _add_job_log(job.id, f"[{i+1}/{total}] {prod_name}: 실패")
