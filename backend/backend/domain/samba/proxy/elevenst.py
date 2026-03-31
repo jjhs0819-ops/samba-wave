@@ -809,6 +809,7 @@ class ElevenstClient:
   <prdTypCd>01</prdTypCd>
   <dispCtgrNo>{category_code}</dispCtgrNo>
   <brand>{_escape_xml(brand)}</brand>
+  <modelCd>{_escape_xml(_resolve_model_nm(product))}</modelCd>
   <selPrc>{sale_price}</selPrc>
   <selMthdCd>01</selMthdCd>
   <aplBgnDy>{datetime.now().strftime('%Y%m%d')}</aplBgnDy>
@@ -836,7 +837,7 @@ class ElevenstClient:
   <crtfGrpObjClfCd01>{kc_kids_code}</crtfGrpObjClfCd01>
   <crtfGrpObjClfCd02>03</crtfGrpObjClfCd02>
   <crtfGrpObjClfCd03>03</crtfGrpObjClfCd03>
-  <crtfGrpObjClfCd04>03</crtfGrpObjClfCd04>
+  <crtfGrpObjClfCd04>05</crtfGrpObjClfCd04>
   {image_xml}
   <htmlDetail><![CDATA[{detail_html.replace("]]>", "]]]]><![CDATA[>")}]]></htmlDetail>
   {option_xml}
