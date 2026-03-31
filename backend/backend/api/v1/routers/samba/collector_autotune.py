@@ -189,7 +189,6 @@ async def _autotune_loop():
                     _err_count = sum(1 for r in results if r.error)
                     _ok_count = len(results) - _err_count
                     _timeout_count = sum(1 for r in results if r.error and "Timeout" in r.error)
-                    from backend.domain.samba.collector.refresher import _refresh_log_buffer, _refresh_log_total as _rlt
                     import backend.domain.samba.collector.refresher as _ref_mod
                     _now = datetime.now(timezone.utc)
                     _kst = _now + timedelta(hours=9)
@@ -200,6 +199,17 @@ async def _autotune_loop():
                     })
                     _ref_mod._refresh_log_total += 1
                     log.info("[오토튠] 사이클 완료: %d성공, %d실패 (타임아웃 %d) / %d건", _ok_count, _err_count, _timeout_count, len(results))
+
+                    # DB 세션 복구 — 긴 갱신 후 유휴 세션이 끊겼을 수 있음
+                    try:
+                        from sqlmodel import text as _txt
+                        await session.execute(_txt("SELECT 1"))
+                    except Exception:
+                        log.warning("[오토튠] 세션 만료 — rollback 후 재연결")
+                        try:
+                            await session.rollback()
+                        except Exception:
+                            pass
 
                     # 상품 딕셔너리 사전 구축 (N+1 쿼리 방지)
                     product_map: dict[str, object] = {p.id: p for p in products}
@@ -457,22 +467,28 @@ async def _autotune_loop():
 
                         await session.commit()
 
-                    monitor = SambaMonitorService(session)
-                    await monitor.emit(
-                        "scheduler_tick", "info",
-                        summary=f"오토튠 — 대상 {filtered_count}건, 갱신 {summary.refreshed}건, 가격전송 {len(_all_price_pids)}건, 재고전송 {len(_all_stock_pids)}건, 삭제 {deleted_count}건",
-                        detail={
-                            "total": filtered_count,
-                            "refreshed": summary.refreshed,
-                            "price_transmit": len(_all_price_pids),
-                            "stock_transmit": len(_all_stock_pids),
-                            "sold_out": summary.sold_out,
-                            "retransmitted": retransmitted,
-                            "deleted": deleted_count,
-                        },
-                    )
-                    await session.commit()
                     log.info("[오토튠] tick 완료: 대상 %d, 갱신 %d, 가격전송 %d, 재고전송 %d, 삭제 %d", filtered_count, summary.refreshed, len(_all_price_pids), len(_all_stock_pids), deleted_count)
+
+                    # 이벤트 발행 — 별도 세션 (메인 세션 타임아웃 영향 방지)
+                    try:
+                        async with get_write_session() as ev_session:
+                            monitor = SambaMonitorService(ev_session)
+                            await monitor.emit(
+                                "scheduler_tick", "info",
+                                summary=f"오토튠 — 대상 {filtered_count}건, 갱신 {summary.refreshed}건, 가격전송 {len(_all_price_pids)}건, 재고전송 {len(_all_stock_pids)}건, 삭제 {deleted_count}건",
+                                detail={
+                                    "total": filtered_count,
+                                    "refreshed": summary.refreshed,
+                                    "price_transmit": len(_all_price_pids),
+                                    "stock_transmit": len(_all_stock_pids),
+                                    "sold_out": summary.sold_out,
+                                    "retransmitted": retransmitted,
+                                    "deleted": deleted_count,
+                                },
+                            )
+                            await ev_session.commit()
+                    except Exception as ev_err:
+                        log.error("[오토튠] 이벤트 발행 실패: %s", ev_err)
                 else:
                     await asyncio.sleep(5)
 
