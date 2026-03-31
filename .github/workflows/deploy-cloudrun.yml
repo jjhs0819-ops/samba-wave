@@ -20,12 +20,32 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Write env vars file
+        run: |
+          cat > /tmp/cloudrun-env.yaml << EOF
+          ENVIRONMENT: "production"
+          WRITE_DB_USER: "postgres"
+          WRITE_DB_HOST: "/cloudsql/fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
+          WRITE_DB_PORT: "5432"
+          WRITE_DB_NAME: "railway"
+          READ_DB_USER: "postgres"
+          READ_DB_HOST: "/cloudsql/fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
+          READ_DB_PORT: "5432"
+          READ_DB_NAME: "railway"
+          DB_SSL_REQUIRED: "false"
+          WEB_CONCURRENCY: "1"
+          TERMINATION_GRACE_HACK: "1"
+          PROXY_URLS: "${{ secrets.PROXY_URLS }}"
+          COLLECT_PROXY_URL: "${{ secrets.COLLECT_PROXY_URL }}"
+          EOF
+
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy samba-wave-api \
             --source ./backend \
             --region asia-northeast3 \
             --project fresh-sanctuary-489804-v4 \
+            --env-vars-file /tmp/cloudrun-env.yaml \
             --clear-base-image \
             --quiet
 
