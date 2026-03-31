@@ -1058,6 +1058,7 @@ export default function CategoriesPage() {
               <thead>
                 <tr style={{ borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
                   <th style={{ padding: '0.625rem 0.75rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap' }}>사이트</th>
+                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap' }}>소싱 카테고리</th>
                   {marketKeys.map(mk => (
                     <th key={mk} style={{ padding: '0.625rem 0.5rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
@@ -1114,7 +1115,6 @@ export default function CategoriesPage() {
                       </div>
                     </th>
                   ))}
-                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'left', color: '#888', fontWeight: 600, whiteSpace: 'nowrap' }}>소싱 카테고리</th>
                   <th style={{ padding: '0.625rem 0.75rem', width: '40px' }} />
                 </tr>
               </thead>
@@ -1181,6 +1181,7 @@ export default function CategoriesPage() {
                 {filteredMappings.map(row => (
                     <tr key={row.id} style={{ borderBottom: '1px solid #2D2D2D' }}>
                       <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap' }}>{row.source_site}</td>
+                      <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap' }}>{row.source_category}</td>
                       {marketKeys.map(mk => {
                         const val = row.target_mappings?.[mk] || ''
                         const isEditing = editingCell?.id === row.id && editingCell?.market === mk
@@ -1235,7 +1236,6 @@ export default function CategoriesPage() {
                           </td>
                         )
                       })}
-                      <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap' }}>{row.source_category}</td>
                       <td style={{ padding: '0.5rem 0.5rem', textAlign: 'center' }}>
                         {row.id.startsWith('unmapped_') ? (
                           <span style={{ color: '#555', fontSize: '0.7rem' }}>미매핑</span>
