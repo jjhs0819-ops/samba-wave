@@ -445,14 +445,19 @@ export default function WarroomPage() {
             {filteredEvents.map((e, ei) => {
               const t = new Date(e.created_at)
               const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`
-              // 초당 처리건수 계산 (다음 이벤트와의 시간차 기준)
+              // 시작~종료 시간 + 초당 처리건수 (detail에서 직접 읽기)
+              const _d = e.detail as Record<string, unknown> | undefined
               let rateStr = ''
-              if (e.event_type === 'scheduler_tick' && (e.detail as Record<string, unknown>)?.total) {
-                const total = Number((e.detail as Record<string, unknown>).total)
-                const nextTick = filteredEvents.slice(ei + 1).find(ne => ne.event_type === 'scheduler_tick')
-                if (nextTick) {
-                  const diff = (t.getTime() - new Date(nextTick.created_at).getTime()) / 1000
-                  if (diff > 0) rateStr = `${(total / diff).toFixed(1)}건/초`
+              let durationStr = ''
+              if (e.event_type === 'scheduler_tick' && _d) {
+                if (_d.rate) rateStr = `${_d.rate}건/초`
+                if (_d.duration_sec) durationStr = `${Math.round(Number(_d.duration_sec))}초`
+                if (_d.started_at && _d.ended_at) {
+                  const s = new Date(String(_d.started_at))
+                  const en = new Date(String(_d.ended_at))
+                  const sf = `${String(s.getHours()).padStart(2, '0')}:${String(s.getMinutes()).padStart(2, '0')}:${String(s.getSeconds()).padStart(2, '0')}`
+                  const ef = `${String(en.getHours()).padStart(2, '0')}:${String(en.getMinutes()).padStart(2, '0')}:${String(en.getSeconds()).padStart(2, '0')}`
+                  durationStr = `${sf}~${ef} (${durationStr})`
                 }
               }
               const d = e.detail as Record<string, unknown> | undefined
@@ -503,7 +508,8 @@ export default function WarroomPage() {
                     <span style={{ fontSize: '0.75rem', color: '#666', minWidth: '3rem', flexShrink: 0 }}>{timeStr}</span>
                     <span style={{ fontSize: '0.8rem', color: '#E5E5E5', flex: 1 }}>
                       {e.summary}
-                      {rateStr && <span style={{ marginLeft: '6px', fontSize: '0.7rem', color: '#51CF66', fontWeight: 600 }}>({rateStr})</span>}
+                      {durationStr && <span style={{ marginLeft: '6px', fontSize: '0.7rem', color: '#888' }}>{durationStr}</span>}
+                      {rateStr && <span style={{ marginLeft: '4px', fontSize: '0.7rem', color: '#51CF66', fontWeight: 600 }}>({rateStr})</span>}
                     </span>
                     {e.source_site && (
                       <span style={{

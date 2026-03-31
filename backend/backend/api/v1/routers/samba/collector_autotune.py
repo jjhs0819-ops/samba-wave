@@ -205,22 +205,29 @@ async def _autotune_loop():
                     log.info("[오토튠] 사이클 완료: %d성공, %d실패 (타임아웃 %d) / %d건", _ok_count, _err_count, _timeout_count, len(results))
 
                     # 이벤트 먼저 발행 (별도 세션 — 결과 처리 실패해도 타임라인 기록)
+                    _ended = datetime.now(timezone.utc)
+                    _duration_sec = round((_ended - now).total_seconds(), 1)
+                    _rate = round(filtered_count / _duration_sec, 1) if _duration_sec > 0 else 0
                     try:
                         async with get_write_session() as ev_session:
                             monitor = SambaMonitorService(ev_session)
                             await monitor.emit(
                                 "scheduler_tick", "info",
-                                summary=f"오토튠 — 대상 {filtered_count}건, 갱신 {summary.refreshed}건 (성공 {_ok_count}, 실패 {_err_count})",
+                                summary=f"오토튠 — 대상 {filtered_count}건, 갱신 {summary.refreshed}건 (성공 {_ok_count}, 실패 {_err_count}) | {_duration_sec}초, {_rate}건/초",
                                 detail={
                                     "total": filtered_count,
                                     "refreshed": summary.refreshed,
                                     "ok": _ok_count,
                                     "errors": _err_count,
                                     "timeouts": _timeout_count,
+                                    "started_at": now.isoformat(),
+                                    "ended_at": _ended.isoformat(),
+                                    "duration_sec": _duration_sec,
+                                    "rate": _rate,
                                 },
                             )
                             await ev_session.commit()
-                        log.info("[오토튠] 이벤트 발행 완료")
+                        log.info("[오토튠] 이벤트 발행 완료 (%s초, %s건/초)", _duration_sec, _rate)
                     except Exception as ev_err:
                         log.error("[오토튠] 이벤트 발행 실패: %s", ev_err)
 
