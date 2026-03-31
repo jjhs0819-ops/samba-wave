@@ -2688,15 +2688,19 @@ JSON만:
                     logger.info(f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})")
 
             # ── 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만) ──
+            # ESM(지마켓/옥션)은 스마트스토어 매핑 결과를 기준으로 매칭
+            ss_mapped = current_targets.get("smartstore") or resolved.get("smartstore", "")
             for mk in list(missing_markets):
                 if mk in resolved:
                     continue
                 mk_cats = ss_cats if mk == "smartstore" else await self._get_market_categories(mk)
                 if mk_cats:
-                    sim_result = _similarity_match_smartstore(leaf_path, mk_cats)
+                    # ESM 마켓은 스마트스토어 매핑을 기준으로 유사도 매칭
+                    match_source = ss_mapped if (mk in ("gmarket", "auction") and ss_mapped) else leaf_path
+                    sim_result = _similarity_match_smartstore(match_source, mk_cats)
                     if sim_result:
                         resolved[mk] = sim_result
-                        logger.info(f"[매핑-유사도] {site} > {leaf_path} → {mk}: {sim_result}")
+                        logger.info(f"[매핑-유사도] {site} > {leaf_path} → {mk}: {sim_result} (기준: {match_source[:30]})")
 
             # 1~2단계에서 해결된 마켓 저장
             if resolved:
