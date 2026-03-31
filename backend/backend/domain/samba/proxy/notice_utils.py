@@ -378,8 +378,14 @@ def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str,
       **common_fields,
       "type": _clean_special(_fashion_type),
     }
+  elif notice_type == "SHOES":
+    # 신발 — height 필드 필수
+    notice_data = {
+      **common_fields,
+      "height": _clean_special(size_text) or "상세 이미지 참조",
+    }
   else:
-    # WEAR, SHOES, BAG — 공통 필드 사용
+    # WEAR, BAG — 공통 필드 사용
     notice_data = common_fields
 
   # 화장품/식품/ETC에도 가이드 필드 추가
