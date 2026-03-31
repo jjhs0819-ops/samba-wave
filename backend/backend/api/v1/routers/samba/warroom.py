@@ -135,6 +135,14 @@ async def get_refresh_log_entries(
   }
 
 
+@router.post("/refresh-logs/clear")
+async def clear_refresh_logs_endpoint():
+  """오토튠 실시간 로그 버퍼 초기화."""
+  from backend.domain.samba.collector.refresher import clear_refresh_logs
+  clear_refresh_logs()
+  return {"ok": True}
+
+
 @router.delete("/events/cleanup")
 async def cleanup_old_events(
   days: int = Query(30, ge=1, le=365),

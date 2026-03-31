@@ -158,6 +158,13 @@ def _log_refresh(
     _refresh_log_total += 1
 
 
+def clear_refresh_logs() -> None:
+    """로그 버퍼 초기화."""
+    global _refresh_log_total
+    _refresh_log_buffer.clear()
+    _refresh_log_total = 0
+
+
 def get_refresh_logs(since_idx: int = 0, source_filter: str = "") -> tuple[List[Dict[str, Any]], int]:
     """로그 조회. since_idx 이후 로그만 반환 + 누적 인덱스.
     source_filter: "autotune"이면 오토튠 로그만, ""이면 전체.
