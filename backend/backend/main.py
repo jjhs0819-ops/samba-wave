@@ -68,10 +68,33 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
-    # 백그라운드 잡 워커 시작
+    # 백그라운드 잡 워커 시작 + watchdog (죽으면 자동 재시작)
     from backend.domain.samba.job.worker import JobWorker
+    import logging as _logging
+    _wd_log = _logging.getLogger("backend.watchdog")
     worker = JobWorker()
     worker_task = asyncio.create_task(worker.start())
+
+    async def _worker_watchdog():
+        """워커 태스크 감시 — 죽으면 3초 후 자동 재시작."""
+        nonlocal worker, worker_task
+        while True:
+            try:
+                await asyncio.sleep(10)
+                if worker_task.done():
+                    exc = worker_task.exception() if not worker_task.cancelled() else None
+                    _wd_log.error(f"[watchdog] 잡워커 죽음 감지 (exc={exc}) — 3초 후 재시작")
+                    await asyncio.sleep(3)
+                    worker = JobWorker()
+                    worker_task = asyncio.create_task(worker.start())
+                    _wd_log.info("[watchdog] 잡워커 재시작 완료")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                _wd_log.error(f"[watchdog] 감시 에러: {e}")
+                await asyncio.sleep(10)
+
+    watchdog_task = asyncio.create_task(_worker_watchdog())
 
     # 오토튠 자동 시작 (DB에 ON 상태면 자동 실행)
     from backend.api.v1.routers.samba.collector_autotune import auto_start_if_enabled
@@ -123,6 +146,7 @@ async def lifespan(app: FastAPI):
     request_bulk_cancel()
     if _autotune_task and not _autotune_task.done():
         _autotune_task.cancel()
+    watchdog_task.cancel()
     worker.stop()
     worker_task.cancel()
 
@@ -206,8 +230,9 @@ def create_application() -> FastAPI:
         }
 
     @app.get("/api/v1/health")
-    async def health() -> dict[str, str]:
-        return {"status": "healthy"}
+    async def health() -> dict:
+        from backend.domain.samba.job.worker import get_worker_status
+        return {"status": "healthy", "worker": get_worker_status()}
 
     return app
 

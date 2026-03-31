@@ -37,6 +37,19 @@ def clear_job_logs(job_id: str):
     _job_logs.pop(job_id, None)
 
 
+# 워커 상태 추적 (health 엔드포인트용)
+_worker_status: dict[str, str | None] = {
+    "alive": "false",
+    "last_poll": None,
+    "started_at": None,
+    "restarts": "0",
+}
+
+def get_worker_status() -> dict[str, str | None]:
+    """현재 워커 상태 반환."""
+    return dict(_worker_status)
+
+
 def _run_collect_in_thread(worker: 'JobWorker', job_id: str, payload: dict):
     """별도 스레드에서 독립 이벤트 루프로 수집 실행."""
     loop = asyncio.new_event_loop()
@@ -73,6 +86,9 @@ class JobWorker:
     async def start(self):
         """무한 루프: pending 잡 조회 → 타입별 병렬 실행."""
         logger.info("[잡워커] 시작 (병렬 모드: collect/transmit 동시 실행)")
+        _worker_status["alive"] = "true"
+        _worker_status["started_at"] = datetime.now(UTC).isoformat()
+        _worker_status["restarts"] = str(int(_worker_status.get("restarts") or 0) + 1)
         # 배포/재시작으로 stuck된 running 잡 자동 복구
         try:
             from backend.db.orm import get_write_session
@@ -94,6 +110,7 @@ class JobWorker:
             except Exception as e:
                 logger.error(f"[잡워커] 폴링 에러: {e}")
                 await asyncio.sleep(self.POLL_INTERVAL)
+        _worker_status["alive"] = "false"
         logger.info("[잡워커] 종료")
 
     def stop(self):
@@ -101,6 +118,7 @@ class JobWorker:
 
     async def _poll_once(self) -> bool:
         """pending 잡을 타입별로 1개씩 병렬 실행. 같은 타입은 순차."""
+        _worker_status["last_poll"] = datetime.now(UTC).isoformat()
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
 
