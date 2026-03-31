@@ -841,6 +841,32 @@ export default function CategoriesPage() {
     if (skippedCount > 0) showAlert(`${skippedCount}건은 이미 매핑되어 건너뜀`, 'info')
   }
 
+  // ESM 크로스매핑 복사 (지마켓→옥션)
+  const [esmCopyLoading, setEsmCopyLoading] = useState(false)
+
+  const handleEsmCrossCopy = async (fromMarket: string, toMarket: string) => {
+    const ids = filteredMappings.map(m => m.id).filter(id => !id.startsWith('unmapped_'))
+    if (ids.length === 0) {
+      showAlert('복사할 매핑 데이터가 없습니다', 'info')
+      return
+    }
+    setEsmCopyLoading(true)
+    try {
+      const result = await categoryApi.copyEsmMapping(fromMarket, toMarket, ids)
+      const label = fromMarket === 'gmarket' ? 'G마켓→옥션' : '옥션→G마켓'
+      showAlert(`${label} 크로스매핑: ${result.copied}건 복사, ${result.skipped}건 스킵, ${result.failed}건 실패`, 'success')
+      if (result.copied > 0) {
+        const refreshed = await categoryApi.listMappings() as MappingRow[]
+        setMappings(refreshed)
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '복사 실패'
+      showAlert(`크로스매핑 실패: ${msg}`, 'error')
+    } finally {
+      setEsmCopyLoading(false)
+    }
+  }
+
   // 마켓 키 목록
   const marketKeys = Object.keys(MARKET_LABELS)
 
@@ -1064,6 +1090,47 @@ export default function CategoriesPage() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                         <span>{MARKET_LABELS[mk]}</span>
+                        {/* ESM 크로스매핑 버튼: 옥션은 G→A, 지마켓은 A→G */}
+                        {mk === 'auction' && (
+                          <button
+                            onClick={() => handleEsmCrossCopy('gmarket', 'auction')}
+                            disabled={esmCopyLoading || filteredMappings.length === 0}
+                            style={{
+                              background: 'none',
+                              border: '1px solid transparent',
+                              borderRadius: '3px',
+                              color: esmCopyLoading ? '#4C9AFF' : '#555',
+                              fontSize: '0.5625rem',
+                              cursor: esmCopyLoading ? 'not-allowed' : 'pointer',
+                              padding: '1px 3px',
+                              lineHeight: 1,
+                              fontWeight: 700,
+                            }}
+                            onMouseEnter={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#4C9AFF'; e.currentTarget.style.borderColor = 'rgba(76,154,255,0.3)' } }}
+                            onMouseLeave={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#555'; e.currentTarget.style.borderColor = 'transparent' } }}
+                            title="G마켓 매핑을 옥션으로 크로스매핑 복사"
+                          >{esmCopyLoading ? '...' : 'G→A'}</button>
+                        )}
+                        {mk === 'gmarket' && (
+                          <button
+                            onClick={() => handleEsmCrossCopy('auction', 'gmarket')}
+                            disabled={esmCopyLoading || filteredMappings.length === 0}
+                            style={{
+                              background: 'none',
+                              border: '1px solid transparent',
+                              borderRadius: '3px',
+                              color: esmCopyLoading ? '#4C9AFF' : '#555',
+                              fontSize: '0.5625rem',
+                              cursor: esmCopyLoading ? 'not-allowed' : 'pointer',
+                              padding: '1px 3px',
+                              lineHeight: 1,
+                              fontWeight: 700,
+                            }}
+                            onMouseEnter={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#4C9AFF'; e.currentTarget.style.borderColor = 'rgba(76,154,255,0.3)' } }}
+                            onMouseLeave={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#555'; e.currentTarget.style.borderColor = 'transparent' } }}
+                            title="옥션 매핑을 G마켓으로 크로스매핑 복사"
+                          >{esmCopyLoading ? '...' : 'A→G'}</button>
+                        )}
                         <button
                           onClick={() => handleMarketAiRemap(mk)}
                           disabled={marketAiLoading !== null || filteredMappings.length === 0}

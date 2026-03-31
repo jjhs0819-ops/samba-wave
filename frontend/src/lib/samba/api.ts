@@ -813,6 +813,12 @@ export const categoryApi = {
   syncAll: () =>
     request<{ ok: boolean; results: Record<string, unknown> }>(
       `${SAMBA_PREFIX}/categories/markets/sync-all`, { method: 'POST' }),
+  copyEsmMapping: (fromMarket: string, toMarket: string, mappingIds?: string[]) =>
+    request<{ copied: number; skipped: number; failed: number }>(
+      `${SAMBA_PREFIX}/categories/mappings/copy-esm`, {
+        method: 'POST',
+        body: JSON.stringify({ from_market: fromMarket, to_market: toMarket, mapping_ids: mappingIds }),
+      }),
 };
 
 // ── Returns ──

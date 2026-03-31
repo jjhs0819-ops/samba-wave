@@ -1139,6 +1139,101 @@ class SambaCategoryService:
     ) -> Optional[SambaCategoryMapping]:
         return await self.mapping_repo.find_mapping(source_site, source_category)
 
+    # ==================== ESM 크로스매핑 복사 ====================
+
+    async def copy_esm_cross_mapping(
+        self,
+        from_market: str = "gmarket",
+        to_market: str = "auction",
+        mapping_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """지마켓↔옥션 카테고리 매핑을 크로스매핑으로 복사.
+
+        from_market에 매핑이 있고 to_market에 없는 행만 대상.
+        경로 → 숫자코드 → 크로스매핑 → 역조회(경로) 순으로 변환.
+
+        Args:
+            from_market: 원본 마켓 (기본: gmarket)
+            to_market: 대상 마켓 (기본: auction)
+            mapping_ids: 대상 매핑 ID 목록 (None이면 전체)
+
+        Returns:
+            {"copied": 복사된 수, "skipped": 스킵된 수, "failed": 실패 수}
+        """
+        from backend.domain.samba.proxy.esmplus import esm_map_category
+
+        # 원본/대상 카테고리 트리 (경로↔코드 변환용)
+        from_tree = await self.tree_repo.get_by_site(from_market)
+        to_tree = await self.tree_repo.get_by_site(to_market)
+        if not from_tree or not from_tree.cat2 or not to_tree or not to_tree.cat2:
+            return {"copied": 0, "skipped": 0, "failed": 0, "error": "카테고리 트리가 동기화되지 않았습니다"}
+
+        from_code_map = from_tree.cat2  # {경로: 코드}
+        to_code_map = to_tree.cat2      # {경로: 코드}
+        # 역방향 맵: 코드 → 경로
+        to_reverse = {str(v): k for k, v in to_code_map.items()}
+
+        # 전체 매핑 조회
+        all_mappings = await self.mapping_repo.list_async(skip=0, limit=100000, order_by="-created_at")
+
+        copied = 0
+        skipped = 0
+        failed = 0
+
+        for mapping in all_mappings:
+            # mapping_ids 지정 시 해당 ID만 대상
+            if mapping_ids and mapping.id not in mapping_ids:
+                continue
+
+            targets = mapping.target_mappings or {}
+
+            # 원본 마켓 매핑이 없으면 스킵
+            from_path = targets.get(from_market, "")
+            if not from_path:
+                skipped += 1
+                continue
+
+            # 대상 마켓에 이미 매핑이 있으면 스킵
+            if targets.get(to_market):
+                skipped += 1
+                continue
+
+            # 경로 → 숫자코드 변환
+            from_code = str(from_code_map.get(from_path, ""))
+            if not from_code:
+                # 퍼지 매칭 시도
+                from_code = await self.resolve_category_code(from_market, from_path)
+            if not from_code:
+                failed += 1
+                logger.warning("[ESM 크로스복사] %s 코드 변환 실패: %s", from_market, from_path)
+                continue
+
+            # 크로스매핑: 지마켓 코드 → 옥션 코드
+            to_code = esm_map_category(from_code, from_market, to_market)
+            if not to_code:
+                failed += 1
+                logger.warning("[ESM 크로스복사] 크로스매핑 실패: %s(%s)", from_market, from_code)
+                continue
+
+            # 숫자코드 → 경로 역조회
+            to_path = to_reverse.get(str(to_code), "")
+            if not to_path:
+                failed += 1
+                logger.warning("[ESM 크로스복사] %s 경로 역조회 실패: %s", to_market, to_code)
+                continue
+
+            # 매핑 업데이트
+            updated_targets = {**targets, to_market: to_path}
+            await self.mapping_repo.update_async(mapping.id, target_mappings=updated_targets)
+            copied += 1
+            logger.info(
+                "[ESM 크로스복사] %s → %s: %s → %s",
+                from_market, to_market, from_path, to_path,
+            )
+
+        await self.mapping_repo.session.commit()
+        return {"copied": copied, "skipped": skipped, "failed": failed}
+
     # ==================== Category Tree ====================
 
     async def get_category_tree(
@@ -2934,5 +3029,23 @@ JSON만:
                 logger.info(f"[벌크매핑] {len(retry_items)}개 빈 결과 재시도")
                 import asyncio
                 await asyncio.sleep(3)
+
+        # ── ESM 크로스매핑 자동 적용 ──
+        # 지마켓/옥션 중 하나만 매핑된 경우 반대쪽 자동 복사
+        esm_pair = {"gmarket", "auction"}
+        if esm_pair & all_market_keys:
+            esm_copied = 0
+            for from_mk, to_mk in [("gmarket", "auction"), ("auction", "gmarket")]:
+                if from_mk in all_market_keys and to_mk in all_market_keys:
+                    try:
+                        cross_result = await self.copy_esm_cross_mapping(
+                            from_market=from_mk, to_market=to_mk,
+                        )
+                        esm_copied += cross_result.get("copied", 0)
+                    except Exception as e:
+                        logger.warning("[벌크매핑] ESM 크로스매핑 실패: %s", e)
+            if esm_copied:
+                logger.info("[벌크매핑] ESM 크로스매핑 자동 적용: %d건", esm_copied)
+                updated += esm_copied
 
         return {"mapped": mapped, "updated": updated, "skipped": skipped, "rule_mapped": rule_mapped, "errors": errors}
