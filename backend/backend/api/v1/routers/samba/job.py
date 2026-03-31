@@ -117,11 +117,25 @@ async def cancel_job(
 async def cancel_all_jobs(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """대기 중(pending) + 실행 중(running) 잡 전부 취소."""
+    """대기 중(pending) + 실행 중(running) 잡 전부 취소 — 전송도 즉시 중단."""
     from sqlalchemy import text
+    from backend.domain.samba.emergency import trigger_emergency_stop, clear_emergency_stop
+    from backend.domain.samba.shipment.service import request_cancel_transmit
+
+    # 1) 인메모리 플래그로 즉시 중단 (진행 중 전송 포함)
+    request_cancel_transmit()
+    trigger_emergency_stop()
+
+    # 2) DB 상태 일괄 취소
     r = await session.execute(text(
         "UPDATE samba_jobs SET status = 'cancelled', completed_at = now() "
         "WHERE status IN ('pending', 'running')"
     ))
     await session.commit()
+
+    # 3) 비상정지 해제 (다음 작업을 위해)
+    clear_emergency_stop()
+    from backend.domain.samba.shipment.service import clear_cancel_transmit
+    clear_cancel_transmit()
+
     return {"ok": True, "cancelled": r.rowcount}
