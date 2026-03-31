@@ -565,7 +565,11 @@ class SambaShipmentService:
       except Exception as ref_e:
         refresh_status = f"최신화예외:{str(ref_e)[:30]}"
         logger.warning(f"[전송] 소싱처 최신화 예외: {ref_e}")
-    # refresh_status는 최종 shipment 업데이트에서 기록
+    # 최신화를 안 했어도 현재 원가 표시
+    if not refresh_status:
+      _cur_cost = int(product_row.cost or product_row.sale_price or 0)
+      _opt_count = len(product_row.options or [])
+      refresh_status = f"원가 {_cur_cost:,}, 옵션 {_opt_count}건"
 
     # 조기 스킵: 이미 등록된 상품 + 가격재고 업데이트 모드 + 변동 없음 → 나머지 로직 전부 건너뜀
     _is_registered = product_row.status == "registered" and bool(product_row.registered_accounts)

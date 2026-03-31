@@ -868,7 +868,7 @@ export default function ShipmentsPage() {
           })}
         </div>
         {/* 프로그레스바 */}
-        {transmitting && progress.total > 0 && progress.current > 0 && (
+        {transmitting && progress.total > 0 && (
           <div style={{ padding: '6px 14px 8px', borderTop: '1px solid #1C1E2A' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
               <span style={{ fontSize: '0.75rem', color: '#7B8DB0' }}>{progress.current}/{progress.total} 처리 중...</span>
