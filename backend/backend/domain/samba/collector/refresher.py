@@ -456,6 +456,7 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
 
     # detail이 None이면 예기치 않은 경로 — 안전하게 에러 반환
     if detail is None:
+        _log_refresh("MUSINSA", product.id, getattr(product, "name", ""), "상세 조회 결과 없음", level="warning", idx=_idx, total=_total)
         return RefreshResult(product_id=product.id, error="상품 상세 조회 결과 없음")
 
     new_sale_price = detail.get("salePrice", 0) or 0
