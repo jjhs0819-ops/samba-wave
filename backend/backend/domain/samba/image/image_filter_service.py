@@ -55,10 +55,16 @@ class ImageFilterService:
     Returns:
       (base64_data, media_type, width, height) 튜플
     """
+    _headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Referer": url,
+    }
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
       # 10MB 초과 이미지는 스킵 (HEAD 실패 시 무시하고 GET 진행)
       try:
-        head_resp = await client.head(url, headers={"User-Agent": "Mozilla/5.0", "Referer": url})
+        head_resp = await client.head(url, headers=_headers)
         content_length = int(head_resp.headers.get("content-length", 0))
         if content_length > 10_000_000:
           raise ValueError(f"이미지 크기 초과: {content_length // 1_000_000}MB")
@@ -66,10 +72,7 @@ class ImageFilterService:
         raise
       except Exception:
         pass  # HEAD 실패 시 GET으로 진행
-      resp = await client.get(url, headers={
-        "User-Agent": "Mozilla/5.0",
-        "Referer": url,
-      })
+      resp = await client.get(url, headers=_headers)
       resp.raise_for_status()
       img_bytes = resp.content
       content_type = resp.headers.get("content-type", "image/jpeg")
@@ -126,8 +129,8 @@ class ImageFilterService:
 
     # 이미지 다운로드 + base64 인코딩
     encoded: list[tuple[int, str, str, str]] = []  # (index, url, b64, media_type)
-    # 비율 기반 사전 필터링 또는 다운로드 실패 → 제거 대상
-    tall_indices: dict[int, str] = {}  # idx -> 사유
+    tall_indices: dict[int, str] = {}   # 비율 제거 대상 (idx -> 사유)
+    failed_indices: dict[int, str] = {}  # 다운로드 실패 → 유지 (idx -> 에러)
 
     for idx, url in enumerate(urls):
       try:
@@ -139,9 +142,8 @@ class ImageFilterService:
           continue
         encoded.append((idx, url, b64, media_type))
       except Exception as e:
-        reason = f"download_fail:{e}"
-        logger.warning(f"[이미지필터] 다운로드 실패 → 제거 대상: {url[:80]} — {e}")
-        tall_indices[idx] = reason
+        logger.warning(f"[이미지필터] 다운로드 실패 (원본 유지): {url[:80]} — {e}")
+        failed_indices[idx] = str(e)
 
     if not encoded:
       # 모든 이미지 다운로드 실패 -> 전부 product로 분류 (원본 유지)
@@ -204,7 +206,11 @@ class ImageFilterService:
         for _, url, _, _ in chunk:
           results.append({"url": url, "type": "product"})
 
-    # 비율 필터링 또는 다운로드 실패 이미지 → other로 추가 (제거 대상)
+    # 다운로드 실패 이미지 → product로 유지
+    for idx, err in failed_indices.items():
+      results.append({"url": urls[idx], "type": "product", "reason": f"download_fail:{err}"})
+
+    # 비율 필터링 이미지 → other로 제거
     for idx, reason in tall_indices.items():
       results.append({"url": urls[idx], "type": "other", "reason": reason})
 
