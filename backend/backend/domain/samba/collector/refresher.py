@@ -32,7 +32,7 @@ SITE_CONCURRENCY: dict[str, int] = {
 }
 # 소싱처별 기본 인터벌 (초)
 SITE_BASE_INTERVAL: dict[str, float] = {
-    "MUSINSA": 0.0,
+    "MUSINSA": 0.5,
     "SSG": 1.0,
     "LOTTEON": 0.5,
 }
