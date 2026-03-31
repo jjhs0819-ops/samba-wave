@@ -430,14 +430,18 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         or new_sale_status != old_status
     )
 
-    # 옵션 재고 변동 건수
+    # 옵션 재고 변동 건수 — 품절↔리스탁 전환만 카운트 (수량 변동은 무시)
     old_options = getattr(product, "options", None) or []
     _stock_changes = 0
     if new_options and old_options:
         old_stock_map = {(o.get("name", "") or o.get("size", "")): o.get("stock", 0) for o in old_options}
         for o in new_options:
             key = o.get("name", "") or o.get("size", "")
-            if o.get("stock", 0) != old_stock_map.get(key, 0):
+            old_stock = old_stock_map.get(key, 0) or 0
+            new_stock = o.get("stock", 0) or 0
+            was_soldout = old_stock <= 0
+            is_soldout = new_stock <= 0 or o.get("isSoldOut", False)
+            if was_soldout != is_soldout:
                 _stock_changes += 1
 
     # 상품명 (품번) 형태 + 마켓/계정 정보
