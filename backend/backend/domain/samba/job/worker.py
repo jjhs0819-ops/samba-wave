@@ -973,6 +973,7 @@ class JobWorker:
         requested_count = sf.requested_count or 100
 
         # URL에서 키워드/필터 추출
+        original_url = keyword  # URL 원본 보존 (add_search_job에 전달용)
         _search_kwargs: dict = {}
         try:
             from urllib.parse import urlparse, parse_qs
@@ -980,7 +981,9 @@ class JobWorker:
             parsed = urlparse(keyword)
             if parsed.scheme:
                 qs = parse_qs(parsed.query)
-                keyword = qs.get("searchWord", [keyword])[0]
+                _param_keys = {"GSShop": "tq", "LOTTEON": "q", "ElandMall": "kwd", "ABCmart": "searchWord", "GrandStage": "searchWord"}
+                param_key = _param_keys.get(site, "keyword")
+                keyword = qs.get(param_key, qs.get("keyword", [keyword]))[0]
                 # 패션플러스 필터 파라미터
                 for k in (
                     "category1Id",
@@ -1042,7 +1045,7 @@ class JobWorker:
                 await repo.fail_job(job.id, f"미지원 소싱처: {site}")
                 return
             try:
-                _req_id, _future = SourcingQueue.add_search_job(site, keyword)
+                _req_id, _future = SourcingQueue.add_search_job(site, keyword, url=original_url, max_count=remaining)
                 ext_result = await asyncio.wait_for(_future, timeout=60)
                 items_list = ext_result.get("products", [])
                 logger.info(

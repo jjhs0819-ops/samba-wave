@@ -765,7 +765,7 @@ async function runFocusPoll() {
 
 // alarm 트리거 시 1회 폴링 — job 있으면 집중 모드 진입, 없으면 카운트 증가
 let emptyPollCount = 0
-const MAX_EMPTY_POLLS = 10
+const MAX_EMPTY_POLLS = 30 // 10초 × 30 = 5분간 빈 결과 → 중지
 
 async function runPollCycle() {
   const hadCollect = await pollCollectOnce()
@@ -784,19 +784,32 @@ async function runPollCycle() {
 }
 
 // 수집 폴링 — job 없으면 5분 후 자동 중지
+let quickPollTimer = null
+
 function startCollectPolling() {
   emptyPollCount = 0
   chrome.alarms.get('collectPoll', (alarm) => {
     if (!alarm) {
       chrome.alarms.create('collectPoll', { periodInMinutes: 0.5 })
-      console.log('[수집] 폴링 시작 (30초 주기)')
+      console.log('[수집] alarm 등록 (30초/실제 1분 백업)')
     }
   })
+  // setInterval 10초 보조 폴링 — 서비스 워커 활성 중 빠른 응답
+  if (!quickPollTimer) {
+    quickPollTimer = setInterval(() => {
+      if (!focusPollActive) runPollCycle()
+    }, 10_000)
+    console.log('[수집] 폴링 시작 (10초 주기 + alarm 백업)')
+  }
   runPollCycle()
 }
 
 function stopCollectPolling() {
   chrome.alarms.clear('collectPoll')
+  if (quickPollTimer) {
+    clearInterval(quickPollTimer)
+    quickPollTimer = null
+  }
   console.log('[수집] 폴링 중지 (빈 결과 5분 연속)')
 }
 
@@ -869,9 +882,16 @@ chrome.alarms.get('balanceCheckPoll', (alarm) => {
 })
 
 // 설치/업데이트 시
-chrome.runtime.onInstalled.addListener(() => { setupCookieSyncAlarm() })
-chrome.runtime.onStartup.addListener(() => { setupCookieSyncAlarm() })
+chrome.runtime.onInstalled.addListener(() => {
+  setupCookieSyncAlarm()
+  startCollectPolling()
+})
+chrome.runtime.onStartup.addListener(() => {
+  setupCookieSyncAlarm()
+  startCollectPolling()
+})
 setupCookieSyncAlarm()
+startCollectPolling()
 
 // ==================== AI소싱 큐 폴링 ====================
 
@@ -1180,17 +1200,24 @@ async function extractSearchResults(tabId, site) {
         'GrandStage': /\/product\?prdtNo=(\d+)/,
         'OKmall': /\/products\/detail\/(\d+)/,
         'LOTTEON': /\/product\/productDetail[^"]*spdNo=(\d+)/,
-        'GSShop': /\/prd\/prd\.gs\?prdid=(\d+)/,
+        'GSShop': /\/(?:prd\/prd\.gs\?prdid|deal\/deal\.gs\?dealNo)=(\d+)/,
         'ElandMall': /\/goods\/goods\.action\?goodsNo=(\d+)/,
         'SSF': /\/goods\/([A-Z0-9]+)/,
       }
       const pattern = linkPatterns[siteName]
       if (!pattern) return { success: false, products: [], total: 0 }
 
-      // 모든 a 태그에서 상품 링크 찾기
-      document.querySelectorAll('a[href]').forEach(link => {
+      // 모든 a 태그에서 상품 링크 찾기 (GSShop: 컨테이너 스코핑)
+      let allLinks
+      if (siteName === 'GSShop') {
+        const container = document.querySelector('#searchPrdList .prd-list') || document.querySelector('.prd-list') || document
+        allLinks = container.querySelectorAll('a[href]')
+      } else {
+        allLinks = document.querySelectorAll('a[href]')
+      }
+      for (const link of allLinks) {
         const match = link.href.match(pattern)
-        if (!match || seen.has(match[1])) return
+        if (!match || seen.has(match[1])) continue
         seen.add(match[1])
 
         // 가장 가까운 상품 카드 컨테이너
@@ -1205,6 +1232,10 @@ async function extractSearchResults(tabId, site) {
           const name = nameEl?.textContent?.trim() || ''
           let image = imgEl?.src || imgEl?.getAttribute('data-src') || imgEl?.getAttribute('data-original') || ''
           if (image.startsWith('//')) image = 'https:' + image
+          // GS샵 이미지 고해상도 변환 (250px → 800px)
+          if (image.includes('asset.m-gs.kr') && image.includes('/250')) {
+            image = image.replace('/250', '/800')
+          }
 
           let salePrice = 0
           let originalPrice = 0
@@ -1275,7 +1306,7 @@ async function extractSearchResults(tabId, site) {
             source_site: siteName,
           })
         }
-      })
+      }
 
       return { success: true, products, total: products.length }
     },

@@ -791,21 +791,33 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // 수집 폴링 — job 없으면 5분 후 자동 중지, job 있으면 자동 재시작
 let emptyPollCount = 0
-const MAX_EMPTY_POLLS = 10 // 30초 × 10 = 5분간 빈 결과 → 중지
+let quickPollTimer = null
+const MAX_EMPTY_POLLS = 30 // 10초 × 30 = 5분간 빈 결과 → 중지
 
 function startCollectPolling() {
   emptyPollCount = 0
   chrome.alarms.get('collectPoll', (alarm) => {
     if (!alarm) {
       chrome.alarms.create('collectPoll', { periodInMinutes: 0.5 })
-      console.log('[수집] 폴링 시작 (30초 주기)')
+      console.log('[수집] alarm 등록 (30초/실제 1분 백업)')
     }
   })
+  // setInterval 10초 보조 폴링 — 서비스 워커 활성 중 빠른 응답
+  if (!quickPollTimer) {
+    quickPollTimer = setInterval(() => {
+      if (!focusPollActive) runPollCycle()
+    }, 10_000)
+    console.log('[수집] 폴링 시작 (10초 주기 + alarm 백업)')
+  }
   runPollCycle()
 }
 
 function stopCollectPolling() {
   chrome.alarms.clear('collectPoll')
+  if (quickPollTimer) {
+    clearInterval(quickPollTimer)
+    quickPollTimer = null
+  }
   console.log('[수집] 폴링 중지 (빈 결과 5분 연속)')
 }
 
@@ -854,9 +866,10 @@ chrome.alarms.get('balanceCheckPoll', (alarm) => {
   }
 })
 
-// 설치/업데이트/시작 시 — 수집 폴링은 시작하지 않음 (서버에서 수집 요청 시에만 시작)
-chrome.runtime.onInstalled.addListener(() => {})
-chrome.runtime.onStartup.addListener(() => {})
+// 설치/업데이트/시작 시 — 수집 폴링 자동 시작
+chrome.runtime.onInstalled.addListener(() => { startCollectPolling() })
+chrome.runtime.onStartup.addListener(() => { startCollectPolling() })
+startCollectPolling()
 
 // ==================== AI소싱 큐 폴링 ====================
 
@@ -1172,8 +1185,14 @@ async function extractSearchResults(tabId, site, maxCount = 999) {
       const pattern = linkPatterns[siteName]
       if (!pattern) return { success: false, products: [], total: 0 }
 
-      // 모든 a 태그에서 상품 링크 찾기
-      const allLinks = document.querySelectorAll('a[href]')
+      // 모든 a 태그에서 상품 링크 찾기 (GSShop: 컨테이너 스코핑)
+      let allLinks
+      if (siteName === 'GSShop') {
+        const container = document.querySelector('#searchPrdList .prd-list') || document.querySelector('.prd-list') || document
+        allLinks = container.querySelectorAll('a[href]')
+      } else {
+        allLinks = document.querySelectorAll('a[href]')
+      }
       for (const link of allLinks) {
         if (products.length >= maxItems) break  // 수량 제한
         const match = link.href.match(pattern)
@@ -1192,6 +1211,10 @@ async function extractSearchResults(tabId, site, maxCount = 999) {
           const name = nameEl?.textContent?.trim() || ''
           let image = imgEl?.src || imgEl?.getAttribute('data-src') || imgEl?.getAttribute('data-original') || ''
           if (image.startsWith('//')) image = 'https:' + image
+          // GS샵 이미지 고해상도 변환 (250px → 800px)
+          if (image.includes('asset.m-gs.kr') && image.includes('/250')) {
+            image = image.replace('/250', '/800')
+          }
 
           let salePrice = 0
           let originalPrice = 0
