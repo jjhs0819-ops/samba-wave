@@ -1024,13 +1024,18 @@ async def _split_single_image(
   if h <= w * 2:
     return [url]
 
+  # 상단 텍스트 영역 감지 → 텍스트 끝나는 지점부터 분할 시작
+  crop_y = _find_content_start(img, w, h)
+  if crop_y > 0:
+    logger.info(f"[이미지분할] 상단 텍스트 {crop_y}px 제거: {url}")
+
   # 가로 크기 기준 정사각형 단위로 분할
   segment_h = w
   segments: list[Image.Image] = []
-  y = 0
+  y = crop_y
   while y < h:
     bottom = min(y + segment_h, h)
-    # 마지막 세그먼트가 가로의 1/3 미만이면 이전에 합침
+    # 마지막 세그먼트가 가로의 1/3 미만이면 버림
     if bottom - y < w // 3 and segments:
       break
     segments.append(img.crop((0, y, w, bottom)))
@@ -1058,6 +1063,36 @@ async def _split_single_image(
 
   logger.info(f"[이미지분할] {url} → {len(uploaded)}장 ({w}x{h})")
   return uploaded
+
+
+def _find_content_start(img: Any, w: int, h: int) -> int:
+  """상단 텍스트/공지 영역의 끝(상품 사진 시작) y좌표를 반환.
+
+  위에서부터 가로 스트립(높이 = 가로의 1/10)을 스캔하여
+  컬러 픽셀이 10% 이상인 첫 스트립의 시작 y를 반환한다.
+  """
+  from PIL import Image
+
+  strip_h = max(w // 10, 20)
+  # 성능을 위해 가로를 200px로 리사이즈
+  scale = min(1.0, 200 / w)
+  sw = int(w * scale)
+
+  y = 0
+  while y < h:
+    bottom = min(y + strip_h, h)
+    strip = img.crop((0, y, w, bottom))
+    if sw < w:
+      strip = strip.resize((sw, int((bottom - y) * scale)), Image.LANCZOS)
+    hsv = strip.convert("HSV")
+    hist = hsv.split()[1].histogram()
+    total = sum(hist)
+    color_pixels = sum(hist[30:])
+    if total > 0 and color_pixels / total >= 0.10:
+      return y  # 상품 사진 시작 지점
+    y = bottom
+
+  return 0  # 전체가 텍스트면 처음부터 분할
 
 
 def _is_text_image(img: Any) -> bool:
