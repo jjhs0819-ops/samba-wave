@@ -49,11 +49,11 @@ class ImageFilterService:
   # 이미지 다운로드 + 인코딩
   # ------------------------------------------------------------------
 
-  async def _download_and_encode(self, url: str) -> tuple[str, str]:
+  async def _download_and_encode(self, url: str) -> tuple[str, str, int, int]:
     """이미지 URL -> 바이트 다운로드 -> 5MB 초과 시 리사이즈 -> base64 인코딩.
 
     Returns:
-      (base64_data, media_type) 튜플
+      (base64_data, media_type, width, height) 튜플
     """
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
       # 10MB 초과 이미지는 스킵 (메모리 보호)
@@ -87,7 +87,7 @@ class ImageFilterService:
         media_type = "image/jpeg"
 
       b64 = base64.b64encode(img_bytes).decode("ascii")
-    return b64, media_type
+    return b64, media_type, w, h
 
   # ------------------------------------------------------------------
   # Claude Vision 분류
@@ -122,10 +122,16 @@ class ImageFilterService:
     # 이미지 다운로드 + base64 인코딩
     encoded: list[tuple[int, str, str, str]] = []  # (index, url, b64, media_type)
     failed_indices: set[int] = set()
+    # 비율 기반 사전 필터링 — 세로가 가로의 2배 이상이면 상세페이지 이미지로 판단
+    tall_indices: set[int] = set()
 
     for idx, url in enumerate(urls):
       try:
-        b64, media_type = await self._download_and_encode(url)
+        b64, media_type, w, h = await self._download_and_encode(url)
+        if w > 0 and h > w * 2:
+          logger.info(f"[이미지필터] 상세페이지 이미지 제외 ({w}x{h}, 비율 {w/h:.2f}): {url[:80]}")
+          tall_indices.add(idx)
+          continue
         encoded.append((idx, url, b64, media_type))
       except Exception as e:
         logger.warning(f"[이미지필터] 다운로드 실패 (원본 유지): {url[:80]} — {e}")
@@ -192,9 +198,13 @@ class ImageFilterService:
         for _, url, _, _ in chunk:
           results.append({"url": url, "type": "product"})
 
-    # 다운로드 실패한 이미지도 product로 추가
+    # 다운로드 실패한 이미지도 product로 추가 (원본 유지)
     for idx in failed_indices:
       results.append({"url": urls[idx], "type": "product"})
+
+    # 비율 필터링된 이미지는 other로 추가 (상세페이지 이미지)
+    for idx in tall_indices:
+      results.append({"url": urls[idx], "type": "other"})
 
     # 원본 순서대로 정렬
     url_order = {u: i for i, u in enumerate(urls)}
