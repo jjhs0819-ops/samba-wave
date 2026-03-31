@@ -480,8 +480,12 @@ async def _autotune_loop():
                 _autotune_cycle_count += 1
 
         except asyncio.CancelledError:
-            log.info("[오토튠] 루프 취소됨")
-            break
+            if not _autotune_running_event.is_set():
+                log.info("[오토튠] 루프 취소됨 (정상 종료)")
+                break
+            # running 상태인데 CancelledError → 일시적 취소, 루프 계속
+            log.warning("[오토튠] CancelledError 발생했으나 running 상태 — 사이클 재시작")
+            await asyncio.sleep(2)
         except Exception as e:
             log.error("[오토튠] tick 오류: %s", e, exc_info=True)
             # 오토튠 실시간 로그에도 에러 표시 (이모지 제거 — cp949 에러 방지)
