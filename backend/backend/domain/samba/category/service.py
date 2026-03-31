@@ -2268,7 +2268,10 @@ class SambaCategoryService:
                 tag_str = ", ".join(item.get("tags", [])[:5])
                 seo_str = ", ".join(item.get("seo", [])[:5])
                 group_str = ", ".join(item.get("groups", [])[:3])
+                ss_hint = item.get("ss_mapped", "")
                 entry = f'{idx + 1}. [{item["site"]}] {item["leaf_path"]}'
+                if ss_hint:
+                    entry += f' | 스마트스토어매핑: {ss_hint}'
                 if seo_str:
                     entry += f' | SEO: {seo_str}'
                 if tag_str:
@@ -2304,9 +2307,37 @@ class SambaCategoryService:
                 leaf_kw = _expand_synonyms(leaf_kw)
                 parent_kw = _expand_synonyms(parent_kw)
 
+                # 배치 내 소싱 카테고리 원문 (특수 대분류 제외 판별용)
+                batch_source_text = " ".join(item["leaf_path"].lower() for item in batch)
+
+                # 소싱에 없는 특수 대분류 제외 (2단계와 동일 로직)
+                _AI_RESTRICTED_TOPS = [
+                    (["유아동", "유아", "아동", "키즈"], ["유아", "아동", "키즈", "주니어", "베이비"]),
+                    (["자동차", "모터바이크"], ["자동차", "차량", "모터바이크", "바이크", "오토바이"]),
+                    (["반려동물", "강아지", "고양이"], ["반려", "강아지", "고양이", "펫"]),
+                    (["수입명품"], ["명품", "럭셔리", "수입명품"]),
+                    (["브랜드 "], ["브랜드"]),
+                    (["노트북", "데스크탑", "PC주변"], ["노트북", "데스크탑", "PC", "컴퓨터"]),
+                    (["모니터", "프린터"], ["모니터", "프린터"]),
+                    (["저장장치"], ["저장장치", "SSD", "HDD"]),
+                    (["영상가전", "계절가전"], ["가전", "TV", "에어컨"]),
+                    (["음향기기"], ["스피커", "이어폰", "헤드폰", "음향"]),
+                ]
+
+                def _ai_filter_restricted(top_seg: str) -> bool:
+                    top_lower = top_seg.lower()
+                    for top_kws, require_kws in _AI_RESTRICTED_TOPS:
+                        if any(tk in top_lower for tk in top_kws):
+                            if not any(rk in batch_source_text for rk in require_kws):
+                                return True
+                    return False
+
                 lines = []
                 has_enough_matches = True
                 for m, cats in market_cat_lists.items():
+                    # ESM 마켓은 특수 대분류 제외 적용
+                    if m in ("gmarket", "auction"):
+                        cats = [c for c in cats if not _ai_filter_restricted(c.split(" > ")[0])]
                     leaf_matches = [c for c in cats if any(kw in c for kw in leaf_kw)]
                     if len(leaf_matches) >= 5:
                         relevant = leaf_matches[:30]
@@ -2748,11 +2779,20 @@ JSON만:
                     logger.info(f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})")
 
             # ── 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만) ──
+            # ESM(지마켓/옥션): SS 매핑이 있으면 SS 결과를 브릿지로 사용
+            ss_mapped = current_targets.get("smartstore") or resolved.get("smartstore", "")
             for mk in list(missing_markets):
                 if mk in resolved:
                     continue
                 mk_cats = ss_cats if mk == "smartstore" else await self._get_market_categories(mk)
                 if mk_cats:
+                    # ESM 마켓은 SS 매핑 결과를 브릿지로 사용 (SS 카테고리 이름이 ESM과 더 유사)
+                    if mk in ("gmarket", "auction") and ss_mapped:
+                        sim_result = _similarity_match_smartstore(ss_mapped, mk_cats)
+                        if sim_result:
+                            resolved[mk] = sim_result
+                            logger.info(f"[매핑-SS브릿지] {leaf_path} → SS:{ss_mapped[:30]} → {mk}: {sim_result}")
+                            continue
                     sim_result = _similarity_match_smartstore(leaf_path, mk_cats)
                     if sim_result:
                         resolved[mk] = sim_result
@@ -2793,6 +2833,8 @@ JSON만:
 
             # ── 3단계: 나머지 마켓은 AI에 위임 ──
             if missing_markets:
+                # AI에 SS 매핑 결과 전달 (ESM 정확도 향상용)
+                ss_hint = current_targets.get("smartstore") or resolved.get("smartstore", "")
                 batch_items.append({
                     "site": site,
                     "leaf_path": leaf_path,
@@ -2800,6 +2842,7 @@ JSON만:
                     "tags": cat_tags.get((site, leaf_path), []),
                     "seo": cat_seo.get((site, leaf_path), []),
                     "groups": list(cat_groups.get((site, leaf_path), set())),
+                    "ss_mapped": ss_hint,
                     "target_markets": list(missing_markets),
                     "existing": existing,
                     "mode": "update" if existing else "create",
