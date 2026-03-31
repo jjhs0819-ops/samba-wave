@@ -109,21 +109,23 @@ def _get_rotated_proxy() -> str | None:
             _ip_rotate_idx = (_ip_rotate_idx + 1) % len(pool)
         selected = pool[_ip_rotate_idx]
         label = "main" if selected is None else (selected.split("@")[-1] if "@" in selected else f"proxy-{_ip_rotate_idx}")
-        if label != _ip_rotate_label:
-            _ip_rotate_label = label
-            logger.info(f"[autotune] IP -> {label}")
-            now = datetime.now(timezone.utc)
-            kst = now + timedelta(hours=9)
-            _refresh_log_buffer.append({
-                "ts": now.isoformat(),
-                "site": "MUSINSA",
-                "product_id": "",
-                "name": "",
-                "msg": f"[{kst.strftime('%H:%M:%S')}] IP -> {label}",
-                "level": "info",
-                "source": "autotune",
-            })
-            _refresh_log_total += 1
+        _from = _ip_rotate_idx * IP_ROTATE_EVERY + 1
+        _to = _from + IP_ROTATE_EVERY - 1
+        _ip_rotate_label = label
+        _msg = f"IP -> {label} ({_from}~{_to}건)"
+        logger.info(f"[autotune] {_msg}")
+        now = datetime.now(timezone.utc)
+        kst = now + timedelta(hours=9)
+        _refresh_log_buffer.append({
+            "ts": now.isoformat(),
+            "site": "MUSINSA",
+            "product_id": "",
+            "name": "",
+            "msg": f"[{kst.strftime('%H:%M:%S')}] {_msg}",
+            "level": "info",
+            "source": "autotune",
+        })
+        _refresh_log_total += 1
     return pool[_ip_rotate_idx]
 
 
