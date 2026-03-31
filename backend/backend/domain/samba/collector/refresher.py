@@ -32,13 +32,13 @@ SITE_CONCURRENCY: dict[str, int] = {
 }
 # 소싱처별 기본 인터벌 (초)
 SITE_BASE_INTERVAL: dict[str, float] = {
-    "MUSINSA": 1.0,
+    "MUSINSA": 0.5,
     "SSG": 1.0,
     "LOTTEON": 0.5,
 }
 # 소싱처별 최소 인터벌 (초)
 SITE_MIN_INTERVAL: dict[str, float] = {
-    "MUSINSA": 1.0,
+    "MUSINSA": 0.5,
     "SSG": 0.5,
     "LOTTEON": 0.3,
 }
@@ -82,6 +82,35 @@ async def _prepare_musinsa_cache() -> None:
     _bulk_musinsa_cache["cookie"] = cookies[_bulk_musinsa_cache["cookie_idx"] % len(cookies)] if cookies else ""
     _bulk_musinsa_cache["grade_rate"] = 0
     logger.info(f"[쿠키 캐싱] 쿠키 {len(cookies)}개 로드, 현재 인덱스 {_bulk_musinsa_cache.get('cookie_idx', 0)}, 사용량 {_bulk_musinsa_cache.get('cookie_usage', 0)}")
+
+
+# IP 로테이션: 메인 IP ↔ 프록시 교대 사용
+_ip_rotate_counter = 0
+_ip_rotate_last: str | None = "__init__"  # 마지막 사용 IP 추적 (로그용)
+
+def _get_rotated_proxy() -> str | None:
+    """메인 IP(None)과 프록시를 교대로 반환. PROXY_URLS 미설정 시 항상 None."""
+    global _ip_rotate_counter, _ip_rotate_last
+    proxy_urls = os.getenv("PROXY_URLS", "")
+    if not proxy_urls:
+        return None
+    proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
+    if not proxies:
+        return None
+    # [None, proxy1, None, proxy2, ...] 식으로 메인과 프록시 교대
+    pool = []
+    for p in proxies:
+        pool.append(None)  # 메인 IP
+        pool.append(p)     # 프록시
+    idx = _ip_rotate_counter % len(pool)
+    _ip_rotate_counter += 1
+    selected = pool[idx]
+    # IP 전환 시 로그
+    label = "메인" if selected is None else selected.split("@")[-1] if "@" in selected else "프록시"
+    if _ip_rotate_last != label:
+        _ip_rotate_last = label
+        _log_refresh("MUSINSA", "", "", f"🔀 IP 전환 → {label}")
+    return selected
 
 
 # 쿠키 로테이션: 100건마다 다음 쿠키로 전환
@@ -355,7 +384,9 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         cookie = _rotate_musinsa_cookie()
     else:
         cookie = _bulk_musinsa_cache.get("cookie") or await _get_musinsa_cookie()
-    client = MusinsaClient(cookie)  # 프록시는 traffic.py에서 자동 감지
+    # 오토튠이면 메인↔프록시 IP 로테이션
+    _proxy = _get_rotated_proxy() if _current_refresh_source.get("") == "autotune" else None
+    client = MusinsaClient(cookie, proxy_url=_proxy)
     cached_grade_rate = _bulk_musinsa_cache.get("grade_rate")
     warnings: list[str] = []
     # 방어적 초기화: RateLimitError 재시도 경로에서 UnboundLocalError 방지
