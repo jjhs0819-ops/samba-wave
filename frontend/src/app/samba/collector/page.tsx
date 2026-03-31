@@ -529,7 +529,26 @@ export default function CollectorPage() {
     }
     setCollecting(false)
     collectAbortRef.current = null
+    // 수집 완료 후 요청수를 수집수에 자동 동기화
+    await syncRequestedCounts()
     load(); loadTree()
+  }
+
+  // 요청수 ↔ 수집수 자동 동기화 (수집 완료 후 호출)
+  const syncRequestedCounts = async () => {
+    try {
+      const latestFilters = await collectorApi.listFilters()
+      const mismatch = latestFilters.filter(
+        (f: SambaSearchFilter) => !f.is_folder && (f.requested_count || 0) !== ((f as unknown as Record<string, number>).collected_count || 0)
+      )
+      for (const f of mismatch) {
+        const cc = (f as unknown as Record<string, number>).collected_count || 0
+        if (cc > 0) {
+          await collectorApi.updateFilter(f.id, { requested_count: cc })
+        }
+      }
+      if (mismatch.length > 0) addLog(`[동기화] ${mismatch.length}개 그룹 요청수 → 수집수 자동 동기화`)
+    } catch { /* 동기화 실패해도 수집 흐름은 유지 */ }
   }
 
   const handleStopCollect = () => {
@@ -1309,6 +1328,7 @@ export default function CollectorPage() {
                           } catch (e) { addLog(`[${f.name}] 수집 오류: ${(e as Error).message}`) }
                         }
                         setCollecting(false)
+                        await syncRequestedCounts()
                         load(); loadTree()
                       }
                     }
