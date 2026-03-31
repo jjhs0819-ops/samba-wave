@@ -503,7 +503,12 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
     _name = getattr(product, "name", "") or ""
     _prod_label = f"{_brand} {_name} ({site_product_id})" if site_product_id else f"{_brand} {_name}"
     _prod_label = _prod_label.strip()
-    _status = "전송" if (changed or _stock_changes > 0) else "스킵"
+    _status_parts = []
+    if changed:
+        _status_parts.append("가격전송")
+    if _stock_changes > 0:
+        _status_parts.append("재고전송")
+    _status = "/".join(_status_parts) if _status_parts else "스킵"
     # 마켓상품번호 + 계정 정보 조합
     _market_info = ""
     _reg_accounts = getattr(product, "registered_accounts", None) or []
