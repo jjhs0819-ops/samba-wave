@@ -484,9 +484,19 @@ async def _autotune_loop():
             break
         except Exception as e:
             log.error("[오토튠] tick 오류: %s", e, exc_info=True)
-            # 오토튠 실시간 로그에도 에러 표시
-            from backend.domain.samba.collector.refresher import _log_refresh
-            _log_refresh("MUSINSA", "", "", f"❌ tick 오류 — {type(e).__name__}: {str(e)[:100]}", level="error")
+            # 오토튠 실시간 로그에도 에러 표시 (이모지 제거 — cp949 에러 방지)
+            try:
+                import backend.domain.samba.collector.refresher as _ref_err
+                _now_err = datetime.now(timezone.utc)
+                _kst_err = _now_err + timedelta(hours=9)
+                _ref_err._refresh_log_buffer.append({
+                    "ts": _now_err.isoformat(), "site": "MUSINSA", "product_id": "", "name": "",
+                    "msg": f"[{_kst_err.strftime('%H:%M:%S')}] tick 오류: {type(e).__name__}: {str(e)[:100]}",
+                    "level": "error", "source": "autotune",
+                })
+                _ref_err._refresh_log_total += 1
+            except Exception:
+                pass  # 로그 실패가 루프를 죽이면 안 됨
             # 에러 후 즉시 다음 사이클 시작 (새 세션으로)
             await asyncio.sleep(2)
 
