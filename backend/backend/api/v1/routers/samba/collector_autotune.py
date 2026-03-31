@@ -185,6 +185,22 @@ async def _autotune_loop():
                     # ③ 소싱처별 병렬 갱신
                     results, summary = await refresh_products_bulk(products, max_concurrency=2)
 
+                    # 사이클 완료 로그
+                    _err_count = sum(1 for r in results if r.error)
+                    _ok_count = len(results) - _err_count
+                    _timeout_count = sum(1 for r in results if r.error and "Timeout" in r.error)
+                    from backend.domain.samba.collector.refresher import _refresh_log_buffer, _refresh_log_total as _rlt
+                    import backend.domain.samba.collector.refresher as _ref_mod
+                    _now = datetime.now(timezone.utc)
+                    _kst = _now + timedelta(hours=9)
+                    _ref_mod._refresh_log_buffer.append({
+                        "ts": _now.isoformat(), "site": "MUSINSA", "product_id": "", "name": "",
+                        "msg": f"[{_kst.strftime('%H:%M:%S')}] -- 사이클 완료: {_ok_count}건 성공, {_err_count}건 실패 (타임아웃 {_timeout_count}건) / 총 {len(results)}건 --",
+                        "level": "info", "source": "autotune",
+                    })
+                    _ref_mod._refresh_log_total += 1
+                    log.info("[오토튠] 사이클 완료: %d성공, %d실패 (타임아웃 %d) / %d건", _ok_count, _err_count, _timeout_count, len(results))
+
                     # 상품 딕셔너리 사전 구축 (N+1 쿼리 방지)
                     product_map: dict[str, object] = {p.id: p for p in products}
 
