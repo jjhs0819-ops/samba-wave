@@ -160,7 +160,7 @@ async def _autotune_loop():
                         # sale_status 기준 품절 제외
                         _CP.sale_status != "sold_out",
                     )
-                    .order_by(priority_order)
+                    .order_by(priority_order, _CP.last_refreshed_at.asc().nullsfirst())
                 )
                 result = await session.exec(stmt)
                 # ID 기준 중복 제거 (동일 상품 2회 이상 처리 방지)
