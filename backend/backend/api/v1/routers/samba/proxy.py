@@ -1759,14 +1759,20 @@ async def apply_ai_tags(
                 if len(seo_kws) >= 2:
                     break
 
-        # 그룹 내 모든 상품에 적용
+        # 그룹 내 모든 상품에 적용 (개별 커밋 없이 일괄 처리)
+        from sqlalchemy.orm.attributes import flag_modified as _fm
+        from datetime import datetime as _dt, UTC as _utc
         for p in products:
             existing = p.tags or []
             merged = list(set(existing + tags + ["__ai_tagged__"]))
-            update_data: dict = {"tags": merged}
+            p.tags = merged
+            _fm(p, "tags")
             if seo_kws:
-                update_data["seo_keywords"] = seo_kws
-            await repo.update_async(p.id, **update_data)
+                p.seo_keywords = seo_kws
+                _fm(p, "seo_keywords")
+            if hasattr(p, "updated_at"):
+                p.updated_at = _dt.now(_utc)
+            session.add(p)
             total_tagged += 1
 
     await session.commit()
