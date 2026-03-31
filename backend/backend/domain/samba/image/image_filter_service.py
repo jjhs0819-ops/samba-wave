@@ -94,6 +94,22 @@ class ImageFilterService:
       b64 = base64.b64encode(img_bytes).decode("ascii")
     return b64, media_type, w, h
 
+  async def _check_dimensions_partial(self, url: str) -> tuple[int, int] | None:
+    """부분 다운로드(64KB)로 이미지 크기만 확인. 실패 시 None 반환."""
+    try:
+      from io import BytesIO
+      from PIL import Image
+      async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        resp = await client.get(url, headers={
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Referer": url,
+        })
+        data = resp.content[:65536]  # 첫 64KB만 사용
+        img = Image.open(BytesIO(data))
+        return img.size
+    except Exception:
+      return None
+
   # ------------------------------------------------------------------
   # Claude Vision 분류
   # ------------------------------------------------------------------
@@ -139,8 +155,14 @@ class ImageFilterService:
           continue
         encoded.append((idx, url, b64, media_type))
       except Exception as e:
-        logger.warning(f"[이미지필터] 다운로드 실패 (원본 유지): {url[:80]} — {e}")
-        failed_indices.add(idx)
+        logger.warning(f"[이미지필터] 다운로드 실패: {url[:80]} — {e}")
+        # 다운로드 실패 시 부분 다운로드로 비율만 체크
+        dims = await self._check_dimensions_partial(url)
+        if dims and dims[1] > dims[0] * 2:
+          logger.info(f"[이미지필터] 다운로드 실패했지만 비율 체크로 제외 ({dims[0]}x{dims[1]}): {url[:80]}")
+          tall_indices.add(idx)
+        else:
+          failed_indices.add(idx)
 
     if not encoded:
       # 모든 이미지 다운로드 실패 -> 전부 product로 분류 (원본 유지)
