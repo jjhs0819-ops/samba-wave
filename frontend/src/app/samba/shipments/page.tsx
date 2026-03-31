@@ -868,16 +868,7 @@ export default function ShipmentsPage() {
           })}
         </div>
         {/* 프로그레스바 */}
-        {transmitting && progress.total > 0 && (
-          <div style={{ padding: '6px 14px 8px', borderTop: '1px solid #1C1E2A' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-              <span style={{ fontSize: '0.75rem', color: '#7B8DB0' }}>{progress.current}/{progress.total} 처리 중...</span>
-            </div>
-            <div style={{ background: '#111520', borderRadius: '4px', height: '5px', overflow: 'hidden' }}>
-              <div style={{ background: 'linear-gradient(90deg,#FF8C00,#FFB84D)', height: '100%', width: `${(progress.current / progress.total) * 100}%`, transition: 'width 0.3s' }} />
-            </div>
-          </div>
-        )}
+        {/* 진행률 바 제거 — 멀티 잡 시 왔다갔다 문제 */}
       </div>
 
       {/* 상품 목록 테이블 */}
