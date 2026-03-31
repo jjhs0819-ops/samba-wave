@@ -103,8 +103,10 @@ def _get_rotated_proxy() -> str | None:
     _ip_rotate_counter += 1
     if _ip_rotate_counter >= IP_ROTATE_EVERY or _ip_rotate_label == "":
         _ip_rotate_counter = 0
-        # 현재 메인이면 → 프록시, 프록시면 → 메인
-        if _ip_rotate_current is None:
+        if _ip_rotate_label == "":
+            # 최초 시작 → 메인 IP부터
+            _ip_rotate_current = None
+        elif _ip_rotate_current is None:
             _ip_rotate_current = proxies[0]
         else:
             _ip_rotate_current = None
