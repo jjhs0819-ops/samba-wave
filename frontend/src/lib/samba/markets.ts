@@ -18,8 +18,8 @@ export const MARKETS: MarketDef[] = [
   // 국내 오픈마켓
   { id: 'gmarket', label: 'G마켓', group: 'domestic', hasCategory: true },
   { id: 'auction', label: '옥션', group: 'domestic', hasCategory: true },
-  { id: 'coupang', label: '쿠팡', group: 'domestic', hasCategory: true },
   { id: 'smartstore', label: '스마트스토어', group: 'domestic', hasCategory: true },
+  { id: 'coupang', label: '쿠팡', group: 'domestic', hasCategory: true },
   { id: '11st', label: '11번가', group: 'domestic', hasCategory: true },
   { id: 'ssg', label: '신세계몰', group: 'domestic', hasCategory: true },
   { id: 'lotteon', label: '롯데ON', group: 'domestic', hasCategory: true },
