@@ -245,7 +245,7 @@ class ImageFilterService:
   ) -> dict[str, Any]:
     """단일 상품 이미지 필터링.
 
-    scope: "images" (대표+추가), "detail" (상세페이지), "all" (전체)
+    scope: "images" (대표+추가), "detail_images" (추가만), "detail" (상세페이지), "all" (전체)
 
     대표+추가이미지 필터링 규칙:
     - 이미지컷이 있으면 나머지 제거
@@ -287,6 +287,28 @@ class ImageFilterService:
           removed = len(images) - len(product_cuts)
           update_data["images"] = product_cuts
           result_info["images"] = {"kept": len(product_cuts), "removed": removed, "classifications": cls_detail}
+
+    # 추가이미지만 필터링 (대표이미지 유지)
+    if scope == "detail_images":
+      images = product.images or []
+      if len(images) > 1:
+        main_image = images[0]
+        additional = images[1:]
+        classifications = await self.classify_images(additional)
+        product_cuts = [c["url"] for c in classifications if c["type"] == "product"]
+        other_cuts = [c["url"] for c in classifications if c["type"] == "other"]
+
+        logger.info(
+          f"[이미지필터] 상품 {product_id} 추가이미지 — "
+          f"총 {len(additional)}장: product {len(product_cuts)}장, other {len(other_cuts)}장"
+        )
+        for c in classifications:
+          logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
+
+        cls_detail = [{"url": c["url"][-60:], "type": c["type"]} for c in classifications]
+        removed = len(additional) - len(product_cuts)
+        update_data["images"] = [main_image] + product_cuts
+        result_info["images"] = {"kept": len(product_cuts), "removed": removed, "classifications": cls_detail}
 
     # 상세페이지 이미지 필터링
     if scope in ("detail", "all"):
