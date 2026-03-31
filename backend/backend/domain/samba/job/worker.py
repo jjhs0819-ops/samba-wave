@@ -300,8 +300,12 @@ class JobWorker:
         from backend.domain.samba.account.repository import SambaMarketAccountRepository
         acc_repo = SambaMarketAccountRepository(session)
 
-        # 상품별 전송 루프
-        for i, pid in enumerate(product_ids):
+        # 상품별 전송 루프 (이어하기: 이전 진행 위치부터 재개)
+        start_from = job.current or 0
+        if start_from > 0:
+            _add_job_log(job.id, f"이전 진행 {start_from}/{total}건 이후부터 재개")
+            logger.info(f"[잡워커] 전송 재개: {job.id} — {start_from}/{total}건부터")
+        for i, pid in enumerate(product_ids[start_from:], start=start_from):
             # 비상정지 + Job 취소 체크 (건별)
             from backend.domain.samba.emergency import is_emergency_stopped
             if is_emergency_stopped() or await repo.is_cancelled(job.id):
