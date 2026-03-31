@@ -46,8 +46,9 @@ class MusinsaClient:
         "Origin": "https://www.musinsa.com",
     }
 
-    def __init__(self, cookie: str = "") -> None:
+    def __init__(self, cookie: str = "", *, proxy_url: str | None = None) -> None:
         self.cookie = cookie
+        self.proxy_url = proxy_url
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -98,7 +99,10 @@ class MusinsaClient:
         if _shared_client:
             client = _shared_client
         else:
-            _own_client = httpx.AsyncClient(timeout=timeout)
+            _client_kwargs: dict[str, Any] = {"timeout": timeout}
+            if self.proxy_url:
+                _client_kwargs["proxy"] = self.proxy_url
+            _own_client = httpx.AsyncClient(**_client_kwargs)
             client = _own_client
         try:
             # 방어적 초기화 — 모든 코드 경로에서 UnboundLocalError 방지

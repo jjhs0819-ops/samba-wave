@@ -228,6 +228,13 @@ class BulkRefreshResult:
 # async 컨텍스트별 격리 (전역 변수 레이스 컨디션 방지)
 _current_refresh_source: contextvars.ContextVar[str] = contextvars.ContextVar("_current_refresh_source", default="autotune")
 
+
+def get_autotune_proxy() -> str | None:
+    """오토튠 소스일 때만 프록시 URL 반환 (AUTOTUNE_PROXY_URL 환경변수)."""
+    if _current_refresh_source.get("") == "autotune":
+        return os.getenv("AUTOTUNE_PROXY_URL") or None
+    return None
+
 async def refresh_product(product: Any, idx: int = 0, total: int = 0, source: str = "autotune") -> RefreshResult:
     """소싱처에서 최신 가격/재고 재수집. source: autotune | transmit | manual"""
     token = _current_refresh_source.set(source)
@@ -349,7 +356,7 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         cookie = _rotate_musinsa_cookie()
     else:
         cookie = _bulk_musinsa_cache.get("cookie") or await _get_musinsa_cookie()
-    client = MusinsaClient(cookie)
+    client = MusinsaClient(cookie, proxy_url=get_autotune_proxy())
     cached_grade_rate = _bulk_musinsa_cache.get("grade_rate")
     warnings: list[str] = []
     # 방어적 초기화: RateLimitError 재시도 경로에서 UnboundLocalError 방지
