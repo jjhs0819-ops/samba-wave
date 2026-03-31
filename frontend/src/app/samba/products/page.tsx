@@ -1031,6 +1031,28 @@ export default function ProductsPage() {
               const label = prod?.name?.slice(0, 30) || ids[i].slice(-8)
               setAiJobTitle(`이미지 필터링 [${i + 1}/${ids.length}] ${label}`)
               try {
+                // 1) 프론트에서 추가이미지 비율 체크 (세로 2배 이상 → 제거)
+                if (prod && (scope === 'detail_images' || scope === 'images' || scope === 'all')) {
+                  const imgs = prod.images || []
+                  if (imgs.length > 1) {
+                    const tallCheck = await Promise.all(imgs.slice(1).map(url =>
+                      new Promise<boolean>(resolve => {
+                        const img = new window.Image()
+                        img.onload = () => resolve(img.naturalHeight > img.naturalWidth * 2)
+                        img.onerror = () => resolve(false)
+                        img.src = url
+                        setTimeout(() => resolve(false), 10000)
+                      })
+                    ))
+                    const tallUrls = imgs.slice(1).filter((_, i) => tallCheck[i])
+                    if (tallUrls.length > 0) {
+                      const kept = imgs.filter(u => !tallUrls.includes(u))
+                      await collectorApi.updateProduct(ids[i], { images: kept })
+                      addLog(`[${i + 1}/${ids.length}] ${label} — 긴이미지 ${tallUrls.length}장 제거`)
+                    }
+                  }
+                }
+                // 2) 백엔드 Claude Vision 필터링
                 const r = await proxyApi.filterProductImages([ids[i]], '', scope)
                 if (r.success) { success++; addLog(`[${i + 1}/${ids.length}] ${label} — 완료`) }
                 else { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 실패`) }
