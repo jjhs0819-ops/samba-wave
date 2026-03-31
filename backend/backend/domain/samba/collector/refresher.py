@@ -129,37 +129,6 @@ def _get_rotated_proxy() -> str | None:
     return pool[_ip_rotate_idx]
 
 
-def force_rotate_proxy():
-    """ConnectTimeout 발생 시 즉시 다음 프록시로 전환."""
-    global _ip_rotate_counter, _ip_rotate_idx, _ip_rotate_label, _refresh_log_total
-    from backend.core.config import settings
-    proxy_urls = settings.proxy_urls
-    if not proxy_urls:
-        return
-    proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
-    if not proxies:
-        return
-    pool = proxies
-    _ip_rotate_counter = 0
-    _ip_rotate_idx = (_ip_rotate_idx + 1) % len(pool)
-    selected = pool[_ip_rotate_idx]
-    label = "main" if selected is None else (selected.split("@")[-1] if "@" in selected else f"proxy-{_ip_rotate_idx}")
-    _ip_rotate_label = label
-    logger.info(f"[autotune] ConnectTimeout -> IP force switch: {label}")
-    now = datetime.now(timezone.utc)
-    kst = now + timedelta(hours=9)
-    _refresh_log_buffer.append({
-        "ts": now.isoformat(),
-        "site": "MUSINSA",
-        "product_id": "",
-        "name": "",
-        "msg": f"[{kst.strftime('%H:%M:%S')}] ConnectTimeout -> {label}",
-        "level": "warning",
-        "source": "autotune",
-    })
-    _refresh_log_total += 1
-
-
 # 쿠키 로테이션: 100건마다 다음 쿠키로 전환
 COOKIE_ROTATE_EVERY = 100
 
@@ -523,9 +492,6 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         _err_spid = getattr(product, "site_product_id", "") or ""
         _err_label = f"{_err_brand} {_err_name} ({_err_spid})".strip() if _err_spid else f"{_err_brand} {_err_name}".strip()
         _err_msg = str(e).strip() or type(e).__name__
-        # ConnectTimeout 발생 시 즉시 다음 프록시로 전환
-        if "ConnectTimeout" in _err_msg or "ConnectError" in _err_msg:
-            force_rotate_proxy()
         _log_refresh(
             "MUSINSA", product.id,
             _err_label,
