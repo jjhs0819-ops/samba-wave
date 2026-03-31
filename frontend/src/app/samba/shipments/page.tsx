@@ -892,7 +892,7 @@ export default function ShipmentsPage() {
             <option value={50}>50개</option>
             <option value={100}>100개</option>
             <option value={200}>200개</option>
-            <option value={99999}>전체</option>
+            <option value={10000}>전체</option>
           </select>
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
