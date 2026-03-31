@@ -235,7 +235,7 @@ export default function WarroomPage() {
     // 사이클 완료 시 이벤트 타임라인 갱신
     if (cycles > prevCyclesRef.current) {
       prevCyclesRef.current = cycles
-      monitorApi.recentEvents(3).then(ev => setEvents(ev)).catch(() => {})
+      monitorApi.recentEvents(10).then(ev => setEvents(ev)).catch(() => {})
     }
   }, [])
 
@@ -252,7 +252,7 @@ export default function WarroomPage() {
     try {
       const [dashboard, recentEvents, probeStatus, atStatus, scores] = await Promise.all([
         monitorApi.dashboard().catch(() => null),
-        monitorApi.recentEvents(3).catch(() => []),
+        monitorApi.recentEvents(10).catch(() => []),
         collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>,
         collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number> })),
         monitorApi.storeScores().catch(() => ({})),
@@ -294,18 +294,18 @@ export default function WarroomPage() {
     return timeAgo(new Date(iso))
   }
 
-  // 이벤트 필터링 — scheduler_tick은 최신 1건만 표시 (해당 사이클만)
+  // 이벤트 필터링 — scheduler_tick 최신 3건 표시
   const filteredEvents = (() => {
     const mapped = events.map(e => ({
       ...e,
       summary: e.summary?.replace(/오토튠\(registered\)\s*—\s*/, '') ?? e.summary,
     }))
-    // scheduler_tick 최신 1건만 유지
-    let tickSeen = false
+    // scheduler_tick 최신 3건만 유지
+    let tickCount = 0
     const deduped = mapped.filter(e => {
       if (e.event_type === 'scheduler_tick') {
-        if (tickSeen) return false
-        tickSeen = true
+        tickCount++
+        if (tickCount > 3) return false
       }
       return true
     })
