@@ -1557,6 +1557,8 @@ class SambaCategoryService:
             "11st": self._sync_elevenst,
             "lottehome": self._sync_lottehome,
             "cafe24": self._sync_cafe24,
+            "gmarket": self._sync_esm_market,
+            "auction": self._sync_esm_market,
         }
         method = sync_methods.get(market_type)
         if not method:
@@ -1956,6 +1958,50 @@ class SambaCategoryService:
             self.tree_repo.session.add(account)
 
         return categories, code_map if code_map else None
+
+    async def _sync_esm_market(self, account) -> tuple:
+        """ESM Plus(지마켓/옥션) 카테고리 동기화. (카테고리목록, 코드맵) 반환.
+
+        사전 수집된 JSON 파일이 있으면 즉시 로드, 없으면 API로 수집.
+        """
+        import json as _json
+        from pathlib import Path as _Path
+
+        market_type = account.market_type  # "gmarket" or "auction"
+        file_name = "esm_gmarket_cats.json" if market_type == "gmarket" else "esm_auction_cats.json"
+        json_path = _Path(__file__).resolve().parent / file_name
+
+        if json_path.exists():
+            # 사전 수집된 JSON 로드
+            with open(json_path, encoding="utf-8") as f:
+                tree = _json.load(f)  # {경로: 코드}
+            categories = list(tree.keys())
+            code_map = tree
+            logger.info(f"[{market_type}] 카테고리 JSON 로드: {len(categories)}개")
+            return categories, code_map
+
+        # JSON 없으면 API로 수집
+        from backend.domain.samba.proxy.esmplus import ESMPlusClient
+
+        extra = account.additional_fields or {}
+        seller_id = extra.get("apiKey") or extra.get("sellerId") or ""
+        if not seller_id:
+            raise ValueError(f"{market_type} 판매자 ID가 없습니다")
+
+        hosting_id = extra.get("hostingId") or "hlccorp"
+        secret_key = extra.get("secretKey") or "M2U0NWFhMmYtZGY0MS00Yjdk"
+
+        client = ESMPlusClient(hosting_id, secret_key, seller_id, site=market_type)
+        tree = await client.fetch_category_tree(delay=0.5)
+
+        # JSON 파일로 저장 (다음 동기화 시 빠른 로드용)
+        with open(json_path, "w", encoding="utf-8") as f:
+            _json.dump(tree, f, ensure_ascii=False, indent=2)
+        logger.info(f"[{market_type}] 카테고리 API 수집 + JSON 저장: {len(tree)}개")
+
+        categories = list(tree.keys())
+        code_map = tree
+        return categories, code_map
 
     async def _sync_lottehome(self, account) -> tuple:
         """롯데홈쇼핑 카테고리 동기화. (카테고리목록, 코드맵) 반환."""
