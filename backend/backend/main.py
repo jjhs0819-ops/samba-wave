@@ -98,31 +98,7 @@ async def lifespan(app: FastAPI):
     _log = logging.getLogger("backend.shutdown")
     _log.info("[shutdown] SIGTERM 수신 — graceful shutdown 시작")
 
-    # 1) 오토튠 정지 (새 사이클 진입 차단 + 현재 벌크 갱신 중단)
-    from backend.api.v1.routers.samba.collector_autotune import (
-        _autotune_running_event,
-        _autotune_task,
-    )
-    from backend.domain.samba.collector.refresher import request_bulk_cancel
-    _autotune_running_event.clear()
-    request_bulk_cancel()
-    if _autotune_task and not _autotune_task.done():
-        _log.info("[shutdown] 오토튠 작업 완료 대기 (최대 60초)")
-        try:
-            await asyncio.wait_for(asyncio.shield(_autotune_task), timeout=60)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            _autotune_task.cancel()
-            _log.info("[shutdown] 오토튠 타임아웃 — 강제 종료")
-
-    # 2) 잡 워커 즉시 정지 — Cloud Run SIGTERM 후 10초 이내에 종료해야 함
-    worker.stop()
-    worker_task.cancel()
-    try:
-        await worker_task
-    except (asyncio.CancelledError, Exception):
-        pass
-
-    # 3) running 잡 → pending 복구 (재시작 후 이어서 처리)
+    # 1) running 잡 → pending 복구 (최우선 — 10초 안에 완료해야 함)
     try:
         from backend.db.orm import get_write_session
         from sqlalchemy import text
@@ -132,10 +108,23 @@ async def lifespan(app: FastAPI):
                 "WHERE status = 'running'"
             ))
             if r.rowcount > 0:
-                _log.info(f"[shutdown] running Job {r.rowcount}건 → pending 복구 (재시작 후 재처리)")
+                _log.info(f"[shutdown] running Job {r.rowcount}건 → pending 복구")
             await session.commit()
     except Exception as e:
         _log.warning(f"[shutdown] Job 복구 실패: {e}")
+
+    # 2) 오토튠 + 잡 워커 즉시 정지 (대기 없음)
+    from backend.api.v1.routers.samba.collector_autotune import (
+        _autotune_running_event,
+        _autotune_task,
+    )
+    from backend.domain.samba.collector.refresher import request_bulk_cancel
+    _autotune_running_event.clear()
+    request_bulk_cancel()
+    if _autotune_task and not _autotune_task.done():
+        _autotune_task.cancel()
+    worker.stop()
+    worker_task.cancel()
 
     _log.info("[shutdown] graceful shutdown 완료")
 
