@@ -75,10 +75,13 @@ async def _prepare_musinsa_cache() -> None:
     """
     cookies = await _get_musinsa_cookies()
     _bulk_musinsa_cache["cookies"] = cookies
-    _bulk_musinsa_cache["cookie_idx"] = 0
-    _bulk_musinsa_cache["cookie_usage"] = 0
-    _bulk_musinsa_cache["cookie"] = cookies[0] if cookies else ""
+    # 사이클 간 로테이션 상태 유지 (첫 호출 시만 초기화)
+    if "cookie_idx" not in _bulk_musinsa_cache:
+        _bulk_musinsa_cache["cookie_idx"] = 0
+        _bulk_musinsa_cache["cookie_usage"] = 0
+    _bulk_musinsa_cache["cookie"] = cookies[_bulk_musinsa_cache["cookie_idx"] % len(cookies)] if cookies else ""
     _bulk_musinsa_cache["grade_rate"] = 0
+    logger.info(f"[쿠키 캐싱] 쿠키 {len(cookies)}개 로드, 현재 인덱스 {_bulk_musinsa_cache.get('cookie_idx', 0)}, 사용량 {_bulk_musinsa_cache.get('cookie_usage', 0)}")
 
 
 # 쿠키 로테이션: 100건마다 다음 쿠키로 전환
