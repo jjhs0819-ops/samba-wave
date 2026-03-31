@@ -366,9 +366,9 @@ class JobWorker:
         sf.last_collected_at = datetime.now(UTC)
         session.add(sf)
 
-        # 정책 자동 적용
+        # 정책 자동 적용 (신규/기존 상품 모두 — total_saved 무관)
         policy_msg = ""
-        if sf.applied_policy_id and total_saved > 0:
+        if sf.applied_policy_id:
             try:
                 from backend.domain.samba.policy.repository import SambaPolicyRepository
                 from backend.api.v1.routers.samba.collector_common import _get_services
@@ -603,9 +603,9 @@ class JobWorker:
         sf.last_collected_at = datetime.now(UTC)
         session.add(sf)
 
-        # 정책 자동 적용
+        # 정책 자동 적용 (신규/기존 상품 모두 — total_saved 무관)
         policy_msg = ""
-        if sf.applied_policy_id and total_saved > 0:
+        if sf.applied_policy_id:
             try:
                 from backend.domain.samba.policy.repository import SambaPolicyRepository
                 policy_repo = SambaPolicyRepository(session)
