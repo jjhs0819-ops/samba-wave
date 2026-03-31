@@ -679,6 +679,18 @@ class ElevenstClient:
     images = product.get("images") or []
     brand = product.get("brand", "")
 
+    # 아동 의류 여부 판별 (KC인증 분기용)
+    _kids_keywords = {"키즈", "kids", "kid", "아동", "유아", "베이비", "baby", "주니어", "junior", "jr", "어린이", "infant", "toddler"}
+    _check_text = " ".join(filter(None, [
+        brand,
+        product.get("category", ""),
+        product.get("category1", ""),
+        product.get("category2", ""),
+        product.get("name", ""),
+    ])).lower()
+    is_kids = any(kw in _check_text for kw in _kids_keywords)
+    kc_kids_code = "01" if is_kids else "03"
+
     # 계정 설정값 (없으면 기본값)
     tax_type = cfg.get("taxType", "01")
     # 배송비 종류 코드 변환 (구 문자열 → 11번가 공식 숫자 코드)
@@ -821,10 +833,10 @@ class ElevenstClient:
   {f'<pluDscCd>{mnp_buy_basis_type}</pluDscCd><pluDscMthdCd>{mnp_buy_dsc_method}</pluDscMthdCd><pluDscBasis>{mnp_buy_qty}</pluDscBasis><pluDscAmtPercnt>{mnp_buy_amt}</pluDscAmtPercnt>' if mnp_buy_yn == 'Y' else ''}
   {f'<pluUseLmtDyYn>Y</pluUseLmtDyYn><pluIssStartDy>{mnp_start_dy}</pluIssStartDy><pluIssEndDy>{mnp_end_dy}</pluIssEndDy>' if mnp_buy_yn == 'Y' and mnp_period_yn == 'Y' and mnp_start_dy and mnp_end_dy else ''}
   {f'<cuponcheck>Y</cuponcheck><dscAmtPercnt>{_discount_rate}</dscAmtPercnt><cupnDscMthdCd>02</cupnDscMthdCd>' if instant_dsc_yn == 'Y' else ''}
-  <crtfGrpObjClfCd01>03</crtfGrpObjClfCd01>
+  <crtfGrpObjClfCd01>{kc_kids_code}</crtfGrpObjClfCd01>
   <crtfGrpObjClfCd02>03</crtfGrpObjClfCd02>
   <crtfGrpObjClfCd03>03</crtfGrpObjClfCd03>
-  <crtfGrpObjClfCd04>05</crtfGrpObjClfCd04>
+  <crtfGrpObjClfCd04>03</crtfGrpObjClfCd04>
   {image_xml}
   <htmlDetail><![CDATA[{detail_html.replace("]]>", "]]]]><![CDATA[>")}]]></htmlDetail>
   {option_xml}
@@ -1064,6 +1076,22 @@ _PROMO_GROUP_TEMPLATES: dict[str, list[str]] = {
   "etc":         ["프리미엄 품질 보장", "시즌 트렌드 아이템", "데일리 추천 상품"],
 }
 
+def _resolve_model_nm(product: dict) -> str:
+  """상품정보 제공고시용 모델명 반환.
+
+  우선순위: style_code → 상품명에서 '/ 모델코드' 패턴 추출 → '없음'
+  """
+  style_code = (product.get("style_code", "") or "").strip()
+  if style_code:
+    return style_code
+  # 상품명 패턴: "... / IF0217-010 6088997" → "IF0217-010"
+  raw_name = product.get("name", "") or ""
+  m = re.search(r'/\s*([A-Z0-9]+-[A-Z0-9]+)', raw_name)
+  if m:
+    return m.group(1)
+  return "없음"
+
+
 # 상품명 금지 패턴 (배송/이벤트/할인 관련)
 _NAME_REMOVE_PATTERNS = [
   r'무료\s*배송', r'배송\s*무료', r'당일\s*발송', r'오늘\s*발송',
@@ -1292,7 +1320,7 @@ def _build_elevenst_notice_xml(product: dict[str, Any]) -> str:
   return f"""<ProductNotification>
   <type>{type_code}</type>{items_xml}
   <company>{_escape_xml(company)}</company>
-  <modelNm>{_escape_xml(product.get("style_code", "") or "없음")}</modelNm>
+  <modelNm>{_escape_xml(_resolve_model_nm(product))}</modelNm>
 </ProductNotification>"""
 
 
