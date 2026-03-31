@@ -85,7 +85,7 @@ async def _prepare_musinsa_cache() -> None:
 
 
 # IP 로테이션: 프록시 목록 순환 (100건마다 다음 프록시)
-IP_ROTATE_EVERY = 100
+IP_ROTATE_EVERY = 40
 _ip_rotate_counter = 0
 _ip_rotate_idx = 0
 _ip_rotate_label: str = ""
