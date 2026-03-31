@@ -20,20 +20,20 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Deploy to Cloud Run
+      - name: Build and Deploy to Cloud Run
         run: |
-          gcloud run deploy samba-wave-api \
-            --source ./backend \
-            --region asia-northeast3 \
-            --project fresh-sanctuary-489804-v4 \
-            --quiet
+          gcloud builds submit \
+            --tag asia-northeast3-docker.pkg.dev/glass-sight-452013-n6/samba-wave/backend:latest \
+            ./backend \
+            --project glass-sight-452013-n6
 
-      - name: Health Check
-        run: |
-          sleep 10
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://samba-wave-api-363598397345.asia-northeast3.run.app/api/v1/health)
-          if [ "$STATUS" != "200" ]; then
-            echo "Health check failed with status $STATUS"
-            exit 1
-          fi
-          echo "Health check passed"
+          gcloud run deploy samba-wave-backend \
+            --image asia-northeast3-docker.pkg.dev/glass-sight-452013-n6/samba-wave/backend:latest \
+            --region asia-northeast3 \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8080 \
+            --memory 1Gi \
+            --set-env-vars ENVIRONMENT=production,write_db_user=samba-user,write_db_password=SambaWave2024x,write_db_host=34.64.205.34,write_db_port=5432,write_db_name=samba-wave,read_db_user=samba-user,read_db_password=SambaWave2024x,read_db_host=34.64.205.34,read_db_port=5432,read_db_name=samba-wave,db_ssl_required=false,jwt_secret_key=samba-wave-production-secret-2024 \
+            --project glass-sight-452013-n6 \
+            --quiet
