@@ -806,6 +806,23 @@ class SambaShipmentService:
           _new_stocks = {o.get("name", ""): o.get("stock", 0) for o in _sold_refresh.new_options}
           _stock_changes = [k for k in set(list(_old_stocks.keys()) + list(_new_stocks.keys())) if _old_stocks.get(k) != _new_stocks.get(k)]
           _stock_change_count = len(_stock_changes)
+          # 가격/재고 이력 스냅샷 기록
+          _snap = {
+            "date": datetime.now(UTC).isoformat(),
+            "source": "transmit_soldout_refresh",
+            "sale_price": _sold_refresh.new_sale_price if _sold_refresh.new_sale_price is not None else product_row.sale_price,
+            "original_price": _sold_refresh.new_original_price if _sold_refresh.new_original_price is not None else product_row.original_price,
+            "cost": _sold_refresh.new_cost if _sold_refresh.new_cost is not None else product_row.cost,
+            "sale_status": _sold_refresh.new_sale_status or "in_stock",
+            "changed": _sold_refresh.changed,
+            "options": _sold_refresh.new_options,
+          }
+          _history = list(product_row.price_history or [])
+          _history.insert(0, _snap)
+          if len(_history) <= 5:
+            pending_refresh_updates["price_history"] = _history
+          else:
+            pending_refresh_updates["price_history"] = _history[:4] + [_history[-1]]
           logger.info(f"[전송] 품절 최신화 완료 — 원가 {int(_old_cost):,}>{int(_new_cost):,}, 재고변동 {_stock_change_count}건")
           if not refresh_status:
             refresh_status = f"원가 {int(_old_cost):,}>{int(_new_cost):,}, 재고변동 {_stock_change_count}건"
