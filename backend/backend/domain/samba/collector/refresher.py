@@ -84,15 +84,15 @@ async def _prepare_musinsa_cache() -> None:
     logger.info(f"[쿠키 캐싱] 쿠키 {len(cookies)}개 로드, 현재 인덱스 {_bulk_musinsa_cache.get('cookie_idx', 0)}, 사용량 {_bulk_musinsa_cache.get('cookie_usage', 0)}")
 
 
-# IP 로테이션: 메인 IP ↔ 프록시 100건 단위 교대
+# IP 로테이션: 프록시 목록 순환 (100건마다 다음 프록시)
 IP_ROTATE_EVERY = 100
 _ip_rotate_counter = 0
-_ip_rotate_current: str | None = None  # 현재 사용 중인 프록시 (None=메인)
+_ip_rotate_idx = 0
 _ip_rotate_label: str = ""
 
 def _get_rotated_proxy() -> str | None:
-    """100건 단위로 메인↔프록시 교대. PROXY_URLS 미설정 시 항상 None."""
-    global _ip_rotate_counter, _ip_rotate_current, _ip_rotate_label, _refresh_log_total
+    """프록시 목록을 100건 단위로 순환. PROXY_URLS 미설정 시 None."""
+    global _ip_rotate_counter, _ip_rotate_idx, _ip_rotate_label, _refresh_log_total
     from backend.core.config import settings
     proxy_urls = settings.proxy_urls
     if not proxy_urls:
@@ -103,30 +103,25 @@ def _get_rotated_proxy() -> str | None:
     _ip_rotate_counter += 1
     if _ip_rotate_counter >= IP_ROTATE_EVERY or _ip_rotate_label == "":
         _ip_rotate_counter = 0
-        if _ip_rotate_label == "":
-            # 최초 시작 → 메인 IP부터
-            _ip_rotate_current = None
-        elif _ip_rotate_current is None:
-            _ip_rotate_current = proxies[0]
-        else:
-            _ip_rotate_current = None
-        label = "메인" if _ip_rotate_current is None else _ip_rotate_current.split("@")[-1]
-        _ip_rotate_label = label
-        logger.info(f"[오토튠] IP 전환 -> {label}")
-        # _log_refresh 우회 — context 무관하게 직접 버퍼에 추가
-        now = datetime.now(timezone.utc)
-        kst = now + timedelta(hours=9)
-        _refresh_log_buffer.append({
-            "ts": now.isoformat(),
-            "site": "MUSINSA",
-            "product_id": "",
-            "name": "",
-            "msg": f"[{kst.strftime('%H:%M:%S')}] IP 전환 -> {label}",
-            "level": "info",
-            "source": "autotune",
-        })
-        _refresh_log_total += 1
-    return _ip_rotate_current
+        if _ip_rotate_label != "":
+            _ip_rotate_idx = (_ip_rotate_idx + 1) % len(proxies)
+        label = proxies[_ip_rotate_idx].split("@")[-1] if "@" in proxies[_ip_rotate_idx] else f"proxy-{_ip_rotate_idx}"
+        if label != _ip_rotate_label:
+            _ip_rotate_label = label
+            logger.info(f"[오토튠] IP -> {label}")
+            now = datetime.now(timezone.utc)
+            kst = now + timedelta(hours=9)
+            _refresh_log_buffer.append({
+                "ts": now.isoformat(),
+                "site": "MUSINSA",
+                "product_id": "",
+                "name": "",
+                "msg": f"[{kst.strftime('%H:%M:%S')}] IP -> {label}",
+                "level": "info",
+                "source": "autotune",
+            })
+            _refresh_log_total += 1
+    return proxies[_ip_rotate_idx]
 
 
 # 쿠키 로테이션: 100건마다 다음 쿠키로 전환
