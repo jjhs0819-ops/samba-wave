@@ -1034,17 +1034,23 @@ export default function ProductsPage() {
                 // 1) 프론트에서 추가이미지 비율 체크 (세로 2배 이상 → 제거)
                 if (prod && (scope === 'detail_images' || scope === 'images' || scope === 'all')) {
                   const imgs = prod.images || []
+                  console.log(`[긴이미지체크] scope=${scope} images=${imgs.length}장`, imgs)
                   if (imgs.length > 1) {
                     const tallCheck = await Promise.all(imgs.slice(1).map(url =>
                       new Promise<boolean>(resolve => {
                         const img = new window.Image()
-                        img.onload = () => resolve(img.naturalHeight > img.naturalWidth * 2)
-                        img.onerror = () => resolve(false)
+                        img.onload = () => {
+                          const isTall = img.naturalHeight > img.naturalWidth * 2
+                          console.log(`[긴이미지체크] ${url.slice(-40)} → ${img.naturalWidth}x${img.naturalHeight} tall=${isTall}`)
+                          resolve(isTall)
+                        }
+                        img.onerror = (e) => { console.log(`[긴이미지체크] 로드실패: ${url.slice(-40)}`, e); resolve(false) }
                         img.src = url
-                        setTimeout(() => resolve(false), 10000)
+                        setTimeout(() => { console.log(`[긴이미지체크] 타임아웃: ${url.slice(-40)}`); resolve(false) }, 10000)
                       })
                     ))
                     const tallUrls = imgs.slice(1).filter((_, i) => tallCheck[i])
+                    console.log(`[긴이미지체크] 결과: ${tallUrls.length}장 제거 대상`, tallUrls)
                     if (tallUrls.length > 0) {
                       const kept = imgs.filter(u => !tallUrls.includes(u))
                       await collectorApi.updateProduct(ids[i], { images: kept })
