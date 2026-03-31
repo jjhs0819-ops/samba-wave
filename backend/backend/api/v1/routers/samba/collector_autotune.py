@@ -211,8 +211,9 @@ async def _autotune_loop():
                         for _acc in _acc_result.all():
                             _account_cache[_acc.id] = _acc
 
-                    # 재전송 대상: {account_id: [product_id, ...]}
-                    retransmit_by_account: dict[str, list[str]] = {}
+                    # 재전송 대상: 가격/재고 분리
+                    price_retransmit_by_account: dict[str, list[str]] = {}
+                    stock_retransmit_by_account: dict[str, list[str]] = {}
                     soldout_ids: list[str] = []
                     price_changed_count = 0
 
@@ -329,13 +330,13 @@ async def _autotune_loop():
                             acc_last = last_sent.get(acc_id, {})
                             last_price = int(acc_last.get("sale_price", 0)) if acc_last else 0
 
-                            # 재고 변동도 체크
-                            needs_retransmit = (expected_price != last_price) or r.stock_changed
-
-                            if needs_retransmit:
-                                retransmit_by_account.setdefault(acc_id, []).append(r.product_id)
-                                if expected_price != last_price:
-                                    price_changed_count += 1
+                            # 가격 변동 → 가격 전송 대상
+                            if expected_price != last_price:
+                                price_retransmit_by_account.setdefault(acc_id, []).append(r.product_id)
+                                price_changed_count += 1
+                            # 재고 변동(품절↔리스탁) → 재고 전송 대상
+                            if r.stock_changed:
+                                stock_retransmit_by_account.setdefault(acc_id, []).append(r.product_id)
 
                         await repo.update_async(r.product_id, **updates)
 
@@ -354,14 +355,16 @@ async def _autotune_loop():
 
                     await session.commit()
 
-                    # ④ 마켓 반영: 판매가 변동 → 재전송, 품절 → 마켓삭제 → DB삭제
+                    # ④ 마켓 반영: 가격전송 / 재고전송 / 품절 마켓삭제
                     retransmitted = 0
                     deleted_count = 0
-                    # 재전송 대상 집계
-                    _all_retransmit_pids = set()
-                    for pids in retransmit_by_account.values():
-                        _all_retransmit_pids.update(pids)
-                    has_work = bool(_all_retransmit_pids) or bool(soldout_ids)
+                    _all_price_pids = set()
+                    for pids in price_retransmit_by_account.values():
+                        _all_price_pids.update(pids)
+                    _all_stock_pids = set()
+                    for pids in stock_retransmit_by_account.values():
+                        _all_stock_pids.update(pids)
+                    has_work = bool(_all_price_pids) or bool(_all_stock_pids) or bool(soldout_ids)
                     if has_work:
                         from backend.domain.samba.shipment.repository import SambaShipmentRepository
                         from backend.domain.samba.shipment.service import SambaShipmentService
@@ -369,14 +372,21 @@ async def _autotune_loop():
                         ship_repo = SambaShipmentRepository(session)
                         ship_svc = SambaShipmentService(ship_repo, session)
 
-                        # 마켓별 최종 판매가 변동 → 계정별 재전송
-                        for acc_id, pids in retransmit_by_account.items():
+                        # 가격 변동 → 가격만 전송
+                        for acc_id, pids in price_retransmit_by_account.items():
                             try:
-                                # 가격/재고만 재전송 (이미지 업로드 불필요)
-                                await ship_svc.start_update(pids, ["price", "stock"], [acc_id], skip_unchanged=False)
+                                await ship_svc.start_update(pids, ["price"], [acc_id], skip_unchanged=False)
                                 retransmitted += len(pids)
                             except Exception as e:
-                                log.error("[오토튠] 재전송 실패 (%s, %d건): %s", acc_id, len(pids), e)
+                                log.error("[오토튠] 가격전송 실패 (%s, %d건): %s", acc_id, len(pids), e)
+
+                        # 재고 변동(품절↔리스탁) → 재고만 전송
+                        for acc_id, pids in stock_retransmit_by_account.items():
+                            try:
+                                await ship_svc.start_update(pids, ["stock"], [acc_id], skip_unchanged=False)
+                                retransmitted += len(pids)
+                            except Exception as e:
+                                log.error("[오토튠] 재고전송 실패 (%s, %d건): %s", acc_id, len(pids), e)
 
                         # 품절 → 마켓 삭제(DELETE) + DB 삭제
                         import asyncio as _aio
@@ -434,18 +444,19 @@ async def _autotune_loop():
                     monitor = SambaMonitorService(session)
                     await monitor.emit(
                         "scheduler_tick", "info",
-                        summary=f"오토튠 — 대상 {filtered_count}건, 갱신 {summary.refreshed}건, 가격변동 {price_changed_count}건, 재전송 {retransmitted}건, 삭제 {deleted_count}건",
+                        summary=f"오토튠 — 대상 {filtered_count}건, 갱신 {summary.refreshed}건, 가격전송 {len(_all_price_pids)}건, 재고전송 {len(_all_stock_pids)}건, 삭제 {deleted_count}건",
                         detail={
                             "total": filtered_count,
                             "refreshed": summary.refreshed,
-                            "changed": price_changed_count,
+                            "price_transmit": len(_all_price_pids),
+                            "stock_transmit": len(_all_stock_pids),
                             "sold_out": summary.sold_out,
                             "retransmitted": retransmitted,
                             "deleted": deleted_count,
                         },
                     )
                     await session.commit()
-                    log.info("[오토튠] tick 완료: 대상 %d, 갱신 %d, 가격변동 %d, 재전송 %d, 삭제 %d", filtered_count, summary.refreshed, price_changed_count, retransmitted, deleted_count)
+                    log.info("[오토튠] tick 완료: 대상 %d, 갱신 %d, 가격전송 %d, 재고전송 %d, 삭제 %d", filtered_count, summary.refreshed, len(_all_price_pids), len(_all_stock_pids), deleted_count)
                 else:
                     await asyncio.sleep(5)
 
