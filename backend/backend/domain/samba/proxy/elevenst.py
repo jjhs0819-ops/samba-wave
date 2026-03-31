@@ -671,6 +671,7 @@ class ElevenstClient:
 
     settings: 계정의 additional_fields (배송비, 출고지, 반품지 등)
     """
+    from datetime import datetime
     cfg = settings or {}
     name = _clean_product_name(product.get("name", ""))
     sale_price = math.ceil(int(product.get("sale_price", 0)) / 10) * 10
