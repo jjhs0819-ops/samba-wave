@@ -92,7 +92,7 @@ _ip_rotate_label: str = ""
 
 def _get_rotated_proxy() -> str | None:
     """100건 단위로 메인↔프록시 교대. PROXY_URLS 미설정 시 항상 None."""
-    global _ip_rotate_counter, _ip_rotate_current, _ip_rotate_label
+    global _ip_rotate_counter, _ip_rotate_current, _ip_rotate_label, _refresh_log_total
     from backend.core.config import settings
     proxy_urls = settings.proxy_urls
     if not proxy_urls:
@@ -114,7 +114,6 @@ def _get_rotated_proxy() -> str | None:
         _ip_rotate_label = label
         logger.info(f"[오토튠] IP 전환 -> {label}")
         # _log_refresh 우회 — context 무관하게 직접 버퍼에 추가
-        global _refresh_log_total
         now = datetime.now(timezone.utc)
         kst = now + timedelta(hours=9)
         _refresh_log_buffer.append({
