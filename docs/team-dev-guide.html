@@ -1260,8 +1260,8 @@ p.desc {
             <div class="code-body"><span class="keyword">cd</span> backend
 <span class="keyword">uv</span> venv
 <span class="keyword">source</span> .venv/Scripts/activate   <span class="comment"># 터미널 맨 앞에 (.venv)가 보이면 성공</span>
-<span class="keyword">uv</span> pip install -e .
-<span class="keyword">uv</span> pip install -e .[dev]</div>
+<span class="keyword">uv</span> sync                        <span class="comment"># uv.lock 기반으로 패키지 설치</span>
+<span class="keyword">uv</span> sync --group dev             <span class="comment"># 개발 도구 (black, ruff 등)</span></div>
           </div>
         </div>
       </div>
@@ -1273,13 +1273,21 @@ p.desc {
           <div class="step-connector"></div>
         </div>
         <div class="step-content">
-          <h4>로컬 DB + 환경 설정</h4>
+          <h4>로컬 DB + 환경 설정 + 마이그레이션</h4>
           <div class="code-block">
             <div class="code-header">
               <div class="code-header-left"><div class="code-dots"><span></span><span></span><span></span></div><span class="code-filename">터미널 (backend 폴더에서)</span></div>
             </div>
             <div class="code-body"><span class="keyword">docker</span> compose up -d              <span class="comment"># Docker Desktop이 실행 중이어야 함</span>
-<span class="keyword">cp</span> .env.example .env               <span class="comment"># 수정할 것 없음, 그대로 사용</span></div>
+<span class="keyword">cp</span> .env.example .env               <span class="comment"># 수정할 것 없음, 그대로 사용</span>
+<span class="keyword">alembic</span> upgrade head               <span class="comment"># DB 테이블 생성 (필수!)</span></div>
+          </div>
+          <div class="alert alert-warning">
+            <div class="alert-icon">⚠️</div>
+            <div class="alert-content">
+              <strong>git pull 후에도 alembic upgrade head를 실행하세요.</strong>
+              다른 팀원이 DB 컬럼을 추가했을 수 있습니다. 안 하면 "column does not exist" 에러가 납니다.
+            </div>
           </div>
         </div>
       </div>
@@ -1318,6 +1326,15 @@ p.desc {
         <div class="step-content">
           <h4>백엔드 실행해서 확인</h4>
 
+          <div class="code-block">
+            <div class="code-header">
+              <div class="code-header-left"><div class="code-dots"><span></span><span></span><span></span></div><span class="code-filename">터미널 (backend 폴더에서)</span></div>
+            </div>
+            <div class="code-body"><span class="keyword">cd</span> backend
+<span class="keyword">.venv/Scripts/python.exe</span> run.py   <span class="comment"># http://127.0.0.1:28080</span></div>
+          </div>
+
+          <p style="margin:0.5rem 0; color:var(--text-muted); font-size:0.85rem;">또는 Claude Code에 말하기:</p>
           <div class="claude-prompt">
             <div class="claude-prompt-label">💬 Claude Code에 말하기</div>
             <div class="claude-prompt-text">"백엔드 서버 실행해줘"</div>
@@ -1327,7 +1344,7 @@ p.desc {
             <div class="alert-icon">✅</div>
             <div class="alert-content">
               <strong>성공 확인</strong>
-              로그에 <code>[플러그인] 마켓 18개, 소싱 3개 등록 완료</code>가 보이면 성공!
+              로그에 <code>[플러그인] 마켓 18개, 소싱 15개 등록 완료</code>가 보이면 성공!
               에러가 나면 팀장에게 스크린샷 보내주세요.
             </div>
           </div>
