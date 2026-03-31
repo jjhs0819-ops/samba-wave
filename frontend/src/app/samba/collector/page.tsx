@@ -1150,7 +1150,14 @@ export default function CollectorPage() {
                 for (const gid of [...selectedIds]) {
                   try {
                     const r = await proxyApi.filterProductImages([], gid, scope)
-                    if (r.success) { totalProcessed += r.total || 0; totalErrors += Object.keys(r.errors || {}).length }
+                    if (r.success) {
+                      totalProcessed += r.total || 0; totalErrors += Object.keys(r.errors || {}).length
+                      Object.entries(r.results || {}).forEach(([pid, info]) => {
+                        const ri = info as Record<string, unknown>
+                        const imgs = ri.images as Record<string, unknown> | undefined
+                        if (imgs?.classifications) console.log(`[이미지필터] ${pid}`, imgs.classifications)
+                      })
+                    }
                   } catch { totalErrors++ }
                 }
                 if (totalErrors > 0) showAlert(`필터링: ${totalProcessed}개 완료, ${totalErrors}개 실패`, 'info')

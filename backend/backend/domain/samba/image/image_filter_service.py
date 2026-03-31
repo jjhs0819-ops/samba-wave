@@ -266,14 +266,15 @@ class ImageFilterService:
         for c in classifications:
           logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
 
+        cls_detail = [{"url": c["url"][-60:], "type": c["type"]} for c in classifications]
         if not product_cuts:
           # 이미지컷 없음 → 작업하지 않음 (AI 변환용 소스 보존)
           logger.warning(f"[이미지필터] 상품 {product_id} — 이미지컷 0장, 필터링 스킵")
-          result_info["images"] = {"action": "skipped", "reason": "no_product_cuts"}
+          result_info["images"] = {"action": "skipped", "reason": "no_product_cuts", "classifications": cls_detail}
         else:
           removed = len(images) - len(product_cuts)
           update_data["images"] = product_cuts
-          result_info["images"] = {"kept": len(product_cuts), "removed": removed}
+          result_info["images"] = {"kept": len(product_cuts), "removed": removed, "classifications": cls_detail}
 
     # 상세페이지 이미지 필터링
     if scope in ("detail", "all"):
@@ -291,13 +292,14 @@ class ImageFilterService:
         for c in classifications:
           logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
 
+        cls_detail = [{"url": c["url"][-60:], "type": c["type"]} for c in classifications]
         if not product_cuts:
           logger.warning(f"[이미지필터] 상품 {product_id} detail — 이미지컷 0장, 필터링 스킵")
-          result_info["detail"] = {"action": "skipped", "reason": "no_product_cuts"}
+          result_info["detail"] = {"action": "skipped", "reason": "no_product_cuts", "classifications": cls_detail}
         else:
           removed = len(detail_images) - len(product_cuts)
           update_data["detail_images"] = product_cuts
-          result_info["detail"] = {"kept": len(product_cuts), "removed": removed}
+          result_info["detail"] = {"kept": len(product_cuts), "removed": removed, "classifications": cls_detail}
 
     if update_data:
       # __img_filtered__ 태그 추가
