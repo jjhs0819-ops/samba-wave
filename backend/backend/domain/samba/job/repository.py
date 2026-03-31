@@ -99,6 +99,19 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         job = await self.get_async(job_id)
         return job.status == "cancelled" if job else True
 
+    async def recover_stuck_running(self) -> int:
+        """재시작 시 stuck된 running 잡을 pending으로 복구."""
+        stmt = select(SambaJob).where(SambaJob.status == "running")
+        result = await self.session.execute(stmt)
+        stuck = result.scalars().all()
+        for job in stuck:
+            job.status = "pending"
+            job.progress = 0
+            self.session.add(job)
+        if stuck:
+            await self.session.flush()
+        return len(stuck)
+
     async def list_by_status(self, status: str | None = None, tenant_id: str | None = None, skip: int = 0, limit: int = 50):
         """상태별 잡 목록."""
         stmt = select(SambaJob)

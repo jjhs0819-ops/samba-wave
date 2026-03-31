@@ -62,6 +62,17 @@ class JobWorker:
     async def start(self):
         """무한 루프: pending 잡 조회 → 타입별 병렬 실행."""
         logger.info("[잡워커] 시작 (병렬 모드: collect/transmit 동시 실행)")
+        # 배포/재시작으로 stuck된 running 잡 자동 복구
+        try:
+            from backend.db.orm import get_write_session
+            from backend.domain.samba.job.repository import SambaJobRepository
+            async with get_write_session() as session:
+                repo = SambaJobRepository(session)
+                recovered = await repo.recover_stuck_running()
+                if recovered:
+                    logger.info(f"[잡워커] stuck running 잡 {recovered}건 → pending 복구")
+        except Exception as e:
+            logger.warning(f"[잡워커] stuck 잡 복구 실패: {e}")
         while self._running:
             try:
                 executed = await self._poll_once()
