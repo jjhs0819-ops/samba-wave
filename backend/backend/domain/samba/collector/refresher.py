@@ -459,6 +459,18 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
         _log_refresh("MUSINSA", product.id, getattr(product, "name", ""), "상세 조회 결과 없음", level="warning", idx=_idx, total=_total)
         return RefreshResult(product_id=product.id, error="상품 상세 조회 결과 없음")
 
+    # 결과 처리 전체를 보호 — 예외 발생 시에도 로그 출력
+    try:
+        return _process_musinsa_detail(product, detail, site_product_id, warnings, _idx, _total)
+    except Exception as _proc_e:
+        _log_refresh("MUSINSA", product.id, getattr(product, "name", ""), f"처리 오류: {_proc_e}", level="error", idx=_idx, total=_total)
+        logger.error(f"[refresher] {product.id} 결과 처리 실패: {_proc_e}")
+        return RefreshResult(product_id=product.id, error=f"결과 처리 오류: {_proc_e}")
+
+
+def _process_musinsa_detail(product, detail, site_product_id, warnings, _idx, _total) -> RefreshResult:
+    """무신사 상세 결과 처리 — 변동 판정 + 로그."""
+
     new_sale_price = detail.get("salePrice", 0) or 0
     new_original_price = detail.get("originalPrice", 0) or 0
     new_cost = detail.get("bestBenefitPrice")
@@ -530,9 +542,15 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
                 _parts.append(str(_mno))
         if _parts:
             _market_info = f" → {','.join(_parts)}"
+    try:
+        _cost_display = int(old_cost) if old_cost is not None else int(old_sale)
+        _new_cost_display = int(new_cost) if new_cost is not None else int(new_sale_price)
+    except (ValueError, TypeError):
+        _cost_display = 0
+        _new_cost_display = 0
     _log_refresh(
         "MUSINSA", product.id, _prod_label,
-        f"{_status}{_market_info} [원가 {int(old_sale):,}>{int(new_sale_price):,}, 판매가 {int(old_cost or old_sale):,}>{int(new_cost or new_sale_price):,}, 재고변동 {_stock_changes}건]",
+        f"{_status}{_market_info} [원가 {int(old_sale):,}>{int(new_sale_price):,}, 판매가 {_cost_display:,}>{_new_cost_display:,}, 재고변동 {_stock_changes}건]",
         idx=_idx, total=_total,
     )
 
