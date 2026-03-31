@@ -256,9 +256,19 @@ class ImageFilterService:
       if images:
         classifications = await self.classify_images(images)
         product_cuts = [c["url"] for c in classifications if c["type"] == "product"]
+        other_cuts = [c["url"] for c in classifications if c["type"] == "other"]
+
+        # 분류 결과 로그
+        logger.info(
+          f"[이미지필터] 상품 {product_id} images — "
+          f"총 {len(images)}장: product {len(product_cuts)}장, other {len(other_cuts)}장"
+        )
+        for c in classifications:
+          logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
 
         if not product_cuts:
           # 이미지컷 없음 → 작업하지 않음 (AI 변환용 소스 보존)
+          logger.warning(f"[이미지필터] 상품 {product_id} — 이미지컷 0장, 필터링 스킵")
           result_info["images"] = {"action": "skipped", "reason": "no_product_cuts"}
         else:
           removed = len(images) - len(product_cuts)
@@ -271,8 +281,18 @@ class ImageFilterService:
       if detail_images:
         classifications = await self.classify_images(detail_images)
         product_cuts = [c["url"] for c in classifications if c["type"] == "product"]
+        other_cuts = [c["url"] for c in classifications if c["type"] == "other"]
+
+        # 분류 결과 로그
+        logger.info(
+          f"[이미지필터] 상품 {product_id} detail — "
+          f"총 {len(detail_images)}장: product {len(product_cuts)}장, other {len(other_cuts)}장"
+        )
+        for c in classifications:
+          logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
 
         if not product_cuts:
+          logger.warning(f"[이미지필터] 상품 {product_id} detail — 이미지컷 0장, 필터링 스킵")
           result_info["detail"] = {"action": "skipped", "reason": "no_product_cuts"}
         else:
           removed = len(detail_images) - len(product_cuts)
