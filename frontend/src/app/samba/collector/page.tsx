@@ -187,7 +187,7 @@ export default function CollectorPage() {
 
   // 이미지 필터링 (모델컷/연출컷/배너 제거)
   const [imgFiltering, setImgFiltering] = useState(false)
-  const [imgFilterScope, setImgFilterScope] = useState<'images' | 'detail' | 'all'>('images')
+  const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['images']))
 
   // 카테고리 매핑 모달
   const [showMappingModal, setShowMappingModal] = useState(false)
@@ -1124,28 +1124,32 @@ export default function CollectorPage() {
         {/* 이미지 필터링 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.8125rem', color: '#818CF8', fontWeight: 600 }}>이미지 필터링</span>
-          {(['images', 'detail', 'all'] as const).map(s => (
-            <label key={s} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-              <input type="radio" name="collectorImgFilterScope" checked={imgFilterScope === s}
-                onChange={() => setImgFilterScope(s)}
+          {([['images', '대표'], ['detail_images', '추가'], ['detail', '상세']] as const).map(([key, label]) => (
+            <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={imgFilterScopes.has(key)}
+                onChange={() => setImgFilterScopes(prev => {
+                  const next = new Set(prev)
+                  if (next.has(key)) next.delete(key); else next.add(key)
+                  return next
+                })}
                 style={{ accentColor: '#818CF8', width: '13px', height: '13px' }} />
-              <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>
-                {s === 'images' ? '대표+추가' : s === 'detail' ? '상세이미지' : '전체'}
-              </span>
+              <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{label}</span>
             </label>
           ))}
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
-              const scopeLabel = imgFilterScope === 'images' ? '대표+추가이미지' : imgFilterScope === 'detail' ? '상세이미지' : '전체 이미지'
-              const ok = await showConfirm(`선택된 ${selectedIds.size}개 그룹의 ${scopeLabel}를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
+              if (imgFilterScopes.size === 0) { showAlert('필터링 대상을 선택해주세요'); return }
+              const scopeLabel = [...imgFilterScopes].map(s => s === 'images' ? '대표' : s === 'detail_images' ? '추가' : '상세').join('+')
+              const ok = await showConfirm(`선택된 ${selectedIds.size}개 그룹의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
               if (!ok) return
               setImgFiltering(true)
               try {
                 let totalProcessed = 0, totalErrors = 0
+                const scope = imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') && imgFilterScopes.has('detail') ? 'all' : imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') ? 'images' : imgFilterScopes.has('detail') ? 'detail' : [...imgFilterScopes][0] || 'images'
                 for (const gid of [...selectedIds]) {
                   try {
-                    const r = await proxyApi.filterProductImages([], gid, imgFilterScope)
+                    const r = await proxyApi.filterProductImages([], gid, scope)
                     if (r.success) { totalProcessed += r.total || 0; totalErrors += Object.keys(r.errors || {}).length }
                   } catch { totalErrors++ }
                 }
