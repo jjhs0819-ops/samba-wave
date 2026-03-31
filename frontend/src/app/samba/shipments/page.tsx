@@ -48,7 +48,7 @@ export default function ShipmentsPage() {
   const getAccountIdsByMarkets = useCallback((marketTypes: string[]) =>
     accounts.filter(a => marketTypes.includes(a.market_type)).map(a => a.id),
   [accounts])
-  const [updateItems, setUpdateItems] = useState({ all: false, price: true, thumb: false, detail: false })
+  const [updateItems, setUpdateItems] = useState({ all: false, price: false, thumb: false, detail: false })
   const [skipEnabled, setSkipEnabled] = useState(false)
   const [loopEnabled, setLoopEnabled] = useState(false)
   const [selectedSites, setSelectedSites] = useState<string[]>([])
