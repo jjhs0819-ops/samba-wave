@@ -99,6 +99,7 @@ def _rotate_musinsa_cookie() -> str:
         _bulk_musinsa_cache["cookie_idx"] = idx
         _bulk_musinsa_cache["cookie"] = cookies[idx]
         logger.info(f"[쿠키 로테이션] 쿠키 {idx + 1}/{len(cookies)}로 전환")
+        _log_refresh("MUSINSA", "", "", f"🔄 쿠키 로테이션 — {idx + 1}/{len(cookies)}번 쿠키로 전환 (누적 {COOKIE_ROTATE_EVERY}건)")
     return _bulk_musinsa_cache.get("cookie", "")
 
 
