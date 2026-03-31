@@ -344,6 +344,9 @@ def _similarity_match_smartstore(
     for seg in segs:
         all_keywords |= _expand_synonyms({seg})
 
+    # 마켓 대분류 목록 수집 (세그먼트가 대분류에 직접 일치하면 후보 보존용)
+    market_top_set = {c.split(" > ")[0] for c in candidates}
+
     # ── 대분류부터 순차 필터링 ──
     for i, seg in enumerate(segs):
         seg_keywords = _expand_synonyms({seg})
@@ -361,6 +364,16 @@ def _similarity_match_smartstore(
                     narrowed.append(c)
         if narrowed:
             candidates = narrowed
+
+    # ── 소싱 하위 세그먼트가 마켓 대분류와 직접 일치하면 해당 대분류도 후보에 추가 ──
+    # 예: "패션잡화 > 신발 > 스니커즈" → "신발"이 G마켓 대분류에 있으면 "신발 > ..." 카테고리도 포함
+    for seg in segs[1:]:
+        seg_kws = _expand_synonyms({seg})
+        for top in market_top_set:
+            if any(kw == top or (len(kw) >= 2 and kw in top and len(kw) / len(top) > 0.5) for kw in seg_kws):
+                extra = [c for c in market_cats if c.split(" > ")[0] == top and c not in candidates and not _is_restricted_top(top)]
+                if extra:
+                    candidates.extend(extra)
 
     if not candidates:
         return None
