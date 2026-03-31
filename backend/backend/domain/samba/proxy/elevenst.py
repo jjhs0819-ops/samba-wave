@@ -675,6 +675,9 @@ class ElevenstClient:
     cfg = settings or {}
     name = _clean_product_name(product.get("name", ""))
     sale_price = math.ceil(int(product.get("sale_price", 0)) / 10) * 10
+    _orig = int(product.get("original_price", 0) or 0)
+    # maktPrc(정가)는 판매가 이상이어야 함
+    makt_prc = math.ceil(_orig / 10) * 10 if _orig > sale_price else sale_price
     detail_html = product.get("detail_html", "") or f"<p>{name}</p>"
     images = product.get("images") or []
     brand = product.get("brand", "")
@@ -812,6 +815,7 @@ class ElevenstClient:
   <dispCtgrNo>{category_code}</dispCtgrNo>
   <brand>{_escape_xml(brand)}</brand>
   <modelCd>{_escape_xml(_resolve_model_nm(product))}</modelCd>
+  <maktPrc>{makt_prc}</maktPrc>
   <selPrc>{sale_price}</selPrc>
   <selMthdCd>01</selMthdCd>
   <aplBgnDy>{datetime.now().strftime('%Y%m%d')}</aplBgnDy>
