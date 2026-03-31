@@ -46,9 +46,16 @@ class MusinsaClient:
         "Origin": "https://www.musinsa.com",
     }
 
-    def __init__(self, cookie: str = "", *, proxy_url: str | None = None) -> None:
+    _PROXY_AUTO = object()  # 센티널: 자동 감지 모드
+
+    def __init__(self, cookie: str = "", *, proxy_url: str | None | object = _PROXY_AUTO) -> None:
         self.cookie = cookie
-        self.proxy_url = proxy_url
+        if proxy_url is self._PROXY_AUTO:
+            # 자동 감지: 수집/오토튠이면 프록시, 전송이면 직접 연결
+            from backend.domain.samba.traffic import get_proxy_if_needed
+            self.proxy_url = get_proxy_if_needed()
+        else:
+            self.proxy_url = proxy_url
 
     # ------------------------------------------------------------------
     # Internal helpers
