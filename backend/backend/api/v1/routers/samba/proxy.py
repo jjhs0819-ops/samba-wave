@@ -62,6 +62,32 @@ async def _get_musinsa_client(session: AsyncSession) -> MusinsaClient:
     return MusinsaClient(cookie=str(cookie))
 
 
+@router.get("/musinsa/ip-check")
+async def musinsa_ip_check():
+    """무신사 CDN 차단 여부 테스트 — 서버 IP 기준."""
+    import httpx
+    test_url = "https://image.msscdn.net/images/goods_img/20260309/6099644/6099644_17736397410885_500.jpg"
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=5)) as client:
+            resp = await client.get(test_url, headers={
+                "Referer": "https://www.musinsa.com/",
+                "User-Agent": "Mozilla/5.0",
+            })
+            size = len(resp.content)
+            return {
+                "status": resp.status_code,
+                "size": size,
+                "blocked": resp.status_code != 200 or size < 1000,
+                "message": "정상" if resp.status_code == 200 and size >= 1000 else f"차단 의심 (HTTP {resp.status_code}, {size}B)",
+            }
+    except httpx.ConnectTimeout:
+        return {"status": 0, "blocked": True, "message": "연결 타임아웃 — IP 차단"}
+    except httpx.ReadTimeout:
+        return {"status": 0, "blocked": True, "message": "읽기 타임아웃 — IP 차단"}
+    except Exception as e:
+        return {"status": 0, "blocked": True, "message": f"오류: {type(e).__name__}"}
+
+
 async def _get_kream_client(session: AsyncSession) -> KreamClient:
     token = await _get_setting(session, "kream_token") or ""
     cookie = await _get_setting(session, "kream_cookie") or ""
