@@ -2150,6 +2150,10 @@ class SambaCategoryService:
             try:
                 cats = await self._get_market_categories(m)
                 if cats:
+                    # 11번가는 국내 배송 전용 — 제외 키워드로 시작하는 카테고리 필터링
+                    if m == "11st":
+                        _exclude_prefixes = ("해외직구", "브랜드", "명품", "디자이너")
+                        cats = [c for c in cats if not any(c.startswith(p) for p in _exclude_prefixes)]
                     market_cat_lists[m] = cats
             except Exception:
                 pass
@@ -2180,16 +2184,26 @@ class SambaCategoryService:
             # 마켓별 카테고리 필터 — leaf 키워드 우선 + 동의어 확장
             cat_list_section = ""
             if has_cat_list:
-                # leaf 키워드: 각 아이템의 마지막 세그먼트 + 태그
+                import re as _re
+
+                def _split_kw(text: str) -> list[str]:
+                    """슬래시/공백/괄호 등으로 분리해 개별 키워드 추출 (2자 이상)."""
+                    parts = _re.split(r"[/\s,()·\-]+", text)
+                    return [p.strip() for p in parts if len(p.strip()) >= 2]
+
+                # leaf 키워드: 각 아이템의 마지막 세그먼트를 단어 단위로 분리
                 leaf_kw: set[str] = set()
                 parent_kw: set[str] = set()
                 for item in batch:
                     segs = [s.strip() for s in item["leaf_path"].split(">") if s.strip()]
                     if segs:
+                        # 마지막 세그먼트를 통째로 + 단어 분리 모두 추가
                         leaf_kw.add(segs[-1])
+                        leaf_kw.update(_split_kw(segs[-1]))
                         for s in segs[:-1]:
                             if len(s) >= 2:
                                 parent_kw.add(s)
+                                parent_kw.update(_split_kw(s))
                     for t in (item.get("tags") or [])[:3]:
                         if t and len(t) >= 2:
                             leaf_kw.add(t)
