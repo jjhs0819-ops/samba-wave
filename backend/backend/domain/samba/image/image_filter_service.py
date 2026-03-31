@@ -72,13 +72,15 @@ class ImageFilterService:
       if not media_type.startswith("image/"):
         media_type = "image/jpeg"
 
-      # Claude Vision base64 제한 5MB → 원본 3.5MB 이상이면 리사이즈
-      if len(img_bytes) > 3_500_000:
-        from io import BytesIO
-        from PIL import Image
-        img = Image.open(BytesIO(img_bytes))
-        # 장축 1500px로 축소
+      # Claude Vision 제한: base64 5MB + 해상도 8000px → 초과 시 리사이즈
+      from io import BytesIO
+      from PIL import Image
+      img = Image.open(BytesIO(img_bytes))
+      w, h = img.size
+      if len(img_bytes) > 3_500_000 or w > 7999 or h > 7999:
         img.thumbnail((1500, 1500), Image.LANCZOS)
+        if img.mode == "RGBA":
+          img = img.convert("RGB")
         buf = BytesIO()
         img.save(buf, format="JPEG", quality=85)
         img_bytes = buf.getvalue()
