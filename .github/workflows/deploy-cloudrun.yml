@@ -29,6 +29,28 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Run DB Migrations
+        run: |
+          pip install uv
+          cd backend
+          uv venv
+          source .venv/bin/activate
+          uv pip install -e . --quiet
+          export write_db_user=${{ secrets.DB_WRITE_USER }}
+          export write_db_password=${{ secrets.DB_WRITE_PASSWORD }}
+          export write_db_host=${{ secrets.DB_WRITE_HOST }}
+          export write_db_port=5432
+          export write_db_name=samba-wave
+          export read_db_user=${{ secrets.DB_READ_USER }}
+          export read_db_password=${{ secrets.DB_READ_PASSWORD }}
+          export read_db_host=${{ secrets.DB_READ_HOST }}
+          export read_db_port=5432
+          export read_db_name=samba-wave
+          export db_ssl_required=false
+          export jwt_secret_key=${{ secrets.JWT_SECRET_KEY }}
+          export environment=production
+          alembic upgrade head
+
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy samba-wave-backend \
@@ -38,6 +60,6 @@ jobs:
             --allow-unauthenticated \
             --port 8080 \
             --memory 1Gi \
-            --set-env-vars ENVIRONMENT=production,write_db_user=samba-user,write_db_password=SambaWave2024x,write_db_host=34.64.205.34,write_db_port=5432,write_db_name=samba-wave,read_db_user=samba-user,read_db_password=SambaWave2024x,read_db_host=34.64.205.34,read_db_port=5432,read_db_name=samba-wave,db_ssl_required=false,jwt_secret_key=samba-wave-production-secret-2024 \
+            --set-env-vars ENVIRONMENT=production,write_db_user=${{ secrets.DB_WRITE_USER }},write_db_password=${{ secrets.DB_WRITE_PASSWORD }},write_db_host=${{ secrets.DB_WRITE_HOST }},write_db_port=5432,write_db_name=samba-wave,read_db_user=${{ secrets.DB_READ_USER }},read_db_password=${{ secrets.DB_READ_PASSWORD }},read_db_host=${{ secrets.DB_READ_HOST }},read_db_port=5432,read_db_name=samba-wave,db_ssl_required=false,jwt_secret_key=${{ secrets.JWT_SECRET_KEY }},AWS_EC2_METADATA_DISABLED=true \
             --project glass-sight-452013-n6 \
             --quiet
