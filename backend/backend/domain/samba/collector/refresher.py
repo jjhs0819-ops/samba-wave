@@ -507,14 +507,14 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
 
     # 결과 처리 전체를 보호 — 예외 발생 시에도 로그 출력
     try:
-        return _process_musinsa_detail(product, detail, site_product_id, warnings, _idx, _total)
+        return _process_musinsa_detail(product, detail, site_product_id, warnings, _idx, _total, _proxy)
     except Exception as _proc_e:
         _log_refresh("MUSINSA", product.id, getattr(product, "name", ""), f"처리 오류: {_proc_e}", level="error", idx=_idx, total=_total)
         logger.error(f"[refresher] {product.id} 결과 처리 실패: {_proc_e}")
         return RefreshResult(product_id=product.id, error=f"결과 처리 오류: {_proc_e}")
 
 
-def _process_musinsa_detail(product, detail, site_product_id, warnings, _idx, _total) -> RefreshResult:
+def _process_musinsa_detail(product, detail, site_product_id, warnings, _idx, _total, _proxy=None) -> RefreshResult:
     """무신사 상세 결과 처리 — 변동 판정 + 로그."""
 
     new_sale_price = detail.get("salePrice", 0) or 0
