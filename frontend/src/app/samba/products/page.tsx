@@ -64,7 +64,11 @@ export default function ProductsPage() {
   const _initSearchType = searchParams.get("search_type") || "name";
   const _initSearch = searchParams.get("search") || "";
   // ID 검색은 내부 필터용 — 검색창에 표시하지 않음
-  const [_idFilter] = useState(_initSearchType === "id" ? _initSearch : "");
+  // highlight 파라미터가 있으면 해당 상품 ID로 검색
+  const _highlightInit = searchParams.get("highlight") || ""
+  const [_idFilter] = useState(
+    _initSearchType === "id" ? _initSearch : (_highlightInit || "")
+  );
   const [searchType, setSearchType] = useState(_initSearchType === "id" ? "name" : _initSearchType);
   const [searchQ, setSearchQ] = useState(_initSearchType === "id" ? "" : _initSearch);
   const [siteFilter, setSiteFilter] = useState("");
@@ -382,7 +386,7 @@ export default function ProductsPage() {
     const productName = (product?.name || productId).slice(0, 25)
     setActiveLog({ productId, message: `[업데이트 중] ${productName}...` })
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'production' ? 'https://samba-wave-production.up.railway.app' : 'http://localhost:28080')
+      const { API_BASE_URL: apiBase } = await import('@/config/api')
       const res = await fetch(`${apiBase}/api/v1/samba/collector/enrich/${productId}`, { method: "POST" });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -1177,7 +1181,8 @@ export default function ProductsPage() {
                   totalFail++
                   logsRef.push(`[${ts()}] [${i + 1}/${targets.length}] ${name} → ✗`)
                 }
-                if ((i + 1) % 10 === 0 || i === targets.length - 1) flushLogs()
+                flushLogs()
+                await new Promise(r => setTimeout(r, 50))
               }
               // 상품 상태 한번에 갱신
               if (successMap.size > 0) {

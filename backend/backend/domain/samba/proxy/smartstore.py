@@ -1364,7 +1364,7 @@ class SmartStoreClient:
           "productInfoProvidedNotice": _build_ss_notice(
             product, color_text=color_text,
             size_text=f"발길이(mm): {size_text}" if sizes else "FREE (상세 이미지 참조)",
-            mfr=mfr, brand=brand,
+            mfr=mfr, brand=brand, ss_category_id=category_id,
           ),
           **({"optionInfo": _build_combination_options(
             options, sale_price,

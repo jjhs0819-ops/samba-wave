@@ -737,12 +737,19 @@ async def sync_orders_from_markets(
             ))
             _mpn_cache: dict[str, dict] = {}
             _sourcing_urls = {
-                "MUSINSA": "https://www.musinsa.com/app/goods/{}",
+                "MUSINSA": "https://www.musinsa.com/products/{}",
                 "KREAM": "https://kream.co.kr/products/{}",
-                "LOTTEON": "https://www.lotteon.com/product/{}",
+                "FashionPlus": "https://www.fashionplus.co.kr/goods/detail/{}",
+                "ABCmart": "https://www.a-rt.com/product?prdtNo={}",
+                "GrandStage": "https://www.a-rt.com/product?prdtNo={}",
+                "OKmall": "https://www.okmall.com/products/detail/{}",
+                "LOTTEON": "https://www.lotteon.com/product/productDetail.lotte?spdNo={}",
+                "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={}",
+                "ElandMall": "https://www.elandmall.com/goods/goods.action?goodsNo={}",
+                "SSF": "https://www.ssfshop.com/goods/{}",
                 "SSG": "https://www.ssg.com/item/itemView.ssg?itemId={}",
-                "ABCmart": "https://abcmart.a-rt.com/product/{}",
                 "Nike": "https://www.nike.com/kr/t/{}",
+                "Adidas": "https://www.adidas.co.kr/{}.html",
             }
             for _row in _cp_result.fetchall():
                 _site, _spid, _imgs, _mpnos = _row
@@ -750,7 +757,14 @@ async def sync_orders_from_markets(
                     _thumb = _imgs[0] if _imgs and isinstance(_imgs, list) and _imgs else ""
                     _olink = _sourcing_urls.get(_site, "").format(_spid) if _site in _sourcing_urls and _spid else ""
                     for _k, _v in _mpnos.items():
-                        if _v:
+                        if not _v:
+                            continue
+                        if isinstance(_v, dict):
+                            # 중첩 구조: {"originProductNo": "...", "smartstoreChannelProductNo": "..."}
+                            for _sub_v in [_v.get("smartstoreChannelProductNo"), _v.get("originProductNo"), _v.get("channelProductNo")]:
+                                if _sub_v:
+                                    _mpn_cache[str(_sub_v)] = {"source_site": _site, "product_image": _thumb, "original_link": _olink}
+                        else:
                             _mpn_cache[str(_v)] = {"source_site": _site, "product_image": _thumb, "original_link": _olink}
 
             # 미등록 입력 캐시: 동일 product_id+channel_name에 대해 수동 등록된 source_url/product_image 재활용
@@ -768,7 +782,7 @@ async def sync_orders_from_markets(
             # 중복 확인 후 저장 (기존 주문은 금액/상태 업데이트)
             synced = 0
             for order_data in orders_data:
-                # 수집상품 매칭 — product_image, source_site 보충
+                # 수집상품 매칭 — product_image, source_site, source_url 보충
                 _pid = str(order_data.get("product_id", ""))
                 _matched = _mpn_cache.get(_pid)
                 if _matched:
@@ -776,6 +790,8 @@ async def sync_orders_from_markets(
                         order_data["product_image"] = _matched["product_image"]
                     if not order_data.get("source_site"):
                         order_data["source_site"] = _matched["source_site"]
+                    if not order_data.get("source_url") and _matched.get("original_link"):
+                        order_data["source_url"] = _matched["original_link"]
                 # 미등록 입력 자동 적용: 동일 상품의 기존 source_url/product_image 복사
                 _ukey = f"{_pid}|{order_data.get('channel_name', '')}"
                 _unreg_matched = _unreg_cache.get(_ukey)
@@ -784,8 +800,45 @@ async def sync_orders_from_markets(
                         order_data["source_url"] = _unreg_matched["source_url"]
                     if not order_data.get("product_image") and _unreg_matched["product_image"]:
                         order_data["product_image"] = _unreg_matched["product_image"]
-                # order_number 기준 중복 체크
+                # 상품명에서 소싱처 상품번호 추출 → source_site/source_url 보충
+                if not order_data.get("source_url"):
+                    import re as _re
+                    _pname = order_data.get("product_name", "")
+                    _id_match = _re.search(r'\b(\d{6,})\s*$', _pname)
+                    if _id_match:
+                        _sid = _id_match.group(1)
+                        # 1차: DB에서 수집상품 조회
+                        _cp_check = await session.execute(_sa_text(
+                            "SELECT source_site, images FROM samba_collected_product WHERE site_product_id = :sid LIMIT 1"
+                        ), {"sid": _sid})
+                        _cp_row = _cp_check.fetchone()
+                        if _cp_row:
+                            order_data["source_site"] = _cp_row[0]
+                            order_data["source_url"] = _sourcing_urls.get(_cp_row[0], "").format(_sid)
+                            if not order_data.get("product_image") and _cp_row[1] and isinstance(_cp_row[1], list):
+                                order_data["product_image"] = _cp_row[1][0]
+                        else:
+                            # 2차: DB에 없어도 상품명 패턴으로 소싱처 추론
+                            if len(_sid) >= 9:  # 패션플러스 상품번호는 9자리 이상
+                                order_data["source_site"] = "FashionPlus"
+                                order_data["source_url"] = f"https://www.fashionplus.co.kr/goods/detail/{_sid}"
+                            elif len(_sid) >= 7:  # 무신사 상품번호는 7자리
+                                order_data["source_site"] = "MUSINSA"
+                                order_data["source_url"] = f"https://www.musinsa.com/products/{_sid}"
+                # order_number 기준 중복 체크 + shipment_id 기반 2차 체크 (발주확인 후 productOrderId 변경 대응)
                 existing = await svc.repo.find_by_async(order_number=order_data["order_number"])
+                if not existing and order_data.get("shipment_id") and order_data.get("product_id"):
+                    # 같은 orderId + 상품번호로 이미 있는 주문 검색
+                    _dup_candidates = await svc.repo.filter_by_async(
+                        shipment_id=order_data["shipment_id"], limit=10
+                    )
+                    existing = next(
+                        (d for d in _dup_candidates if d.product_id == order_data["product_id"]),
+                        None,
+                    )
+                    if existing:
+                        # order_number 갱신 (발주확인 후 변경된 productOrderId)
+                        await svc.repo.update_async(existing.id, order_number=order_data["order_number"])
                 if existing:
                     # 기존 주문: sale_price, 이미지, 상태, 마켓주문상태 업데이트
                     update_fields: dict[str, Any] = {}
@@ -795,6 +848,8 @@ async def sync_orders_from_markets(
                         update_fields["product_image"] = order_data["product_image"]
                     if order_data.get("source_site") and not existing.source_site:
                         update_fields["source_site"] = order_data["source_site"]
+                    if order_data.get("source_url") and not existing.source_url:
+                        update_fields["source_url"] = order_data["source_url"]
                     if order_data.get("shipment_id") and not existing.shipment_id:
                         update_fields["shipment_id"] = order_data["shipment_id"]
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)

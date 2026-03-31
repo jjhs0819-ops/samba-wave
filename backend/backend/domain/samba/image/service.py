@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -285,6 +286,8 @@ class ImageTransformService:
     referer = f"{parsed.scheme}://{parsed.netloc}/"
     if "msscdn.net" in (parsed.netloc or ""):
       referer = "https://www.musinsa.com/"
+    elif "fashionplus" in (parsed.netloc or ""):
+      referer = "https://www.fashionplus.co.kr/"
 
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
       resp = await client.get(url, headers={
@@ -571,7 +574,7 @@ class ImageTransformService:
     local_path.write_bytes(image_bytes)
     # 절대 URL 반환 (프론트에서 직접 접근 가능하도록)
     from backend.core.config import settings
-    base_url = getattr(settings, "backend_url", "") or "http://localhost:28080"
+    base_url = getattr(settings, "backend_url", "") or os.environ.get("BACKEND_URL", "http://localhost:28080")
     return f"{base_url}/static/images/{filename}"
 
   async def transform_single_image(

@@ -211,6 +211,21 @@ async def reply_cs_inquiry(
                             answer_no = new_answer_no
                         market_sent = True
                         market_msg = "고객문의 답변 전송 완료"
+            elif inquiry.market == "11번가":
+                from backend.domain.samba.account.model import SambaMarketAccount
+                from backend.domain.samba.proxy.elevenst import ElevenstClient
+                account_result = await session.execute(
+                    select(SambaMarketAccount).where(
+                        SambaMarketAccount.market_type == "11st",
+                        SambaMarketAccount.is_active == True,
+                    )
+                )
+                e_account = account_result.scalars().first()
+                if e_account and e_account.api_key:
+                    e_client = ElevenstClient(e_account.api_key)
+                    await e_client.reply_qna(inquiry.market_inquiry_no, body.reply)
+                    market_sent = True
+                    market_msg = "11번가 Q&A 답변 전송 완료"
         except Exception as e:
             logger.warning(f"[CS답변] 마켓 전송 실패 (DB 저장은 진행): {e}")
             market_msg = f"마켓 전송 실패: {e}"
@@ -534,6 +549,97 @@ async def sync_cs_from_markets(
             logger.error(f"[CS동기화] 스마트스토어 동기화 실패: {e}")
             errors.append(str(e))
 
+    # ── 11번가 Q&A 동기화 ──
+    try:
+        from backend.domain.samba.account.model import SambaMarketAccount
+        from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+
+        elevenst_result = await session.execute(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.market_type == "11st",
+                SambaMarketAccount.is_active == True,
+            )
+        )
+        elevenst_accounts = elevenst_result.scalars().all()
+
+        for account in elevenst_accounts:
+            api_key = account.api_key or ""
+            if not api_key:
+                continue
+
+            account_name = account.account_label or account.business_name or ""
+
+            try:
+                client = ElevenstClient(api_key)
+                qna_items = await client.get_qna_list(page=1, page_size=100)
+
+                for item in qna_items:
+                    qna_no = item.get("qnaNo", "")
+                    if not qna_no:
+                        continue
+
+                    # 중복 체크
+                    existing_qna = await session.execute(
+                        select(SambaCSInquiry).where(
+                            SambaCSInquiry.market == "11번가",
+                            SambaCSInquiry.market_inquiry_no == qna_no,
+                        )
+                    )
+                    if existing_qna.scalar_one_or_none():
+                        continue
+
+                    qna_stat = item.get("qnaStatCd", "")
+                    is_answered = qna_stat == "02"
+
+                    raw_date = item.get("regDt", item.get("qnaDate", ""))
+                    parsed_date = None
+                    if raw_date:
+                        try:
+                            from dateutil.parser import parse as parse_dt
+                            parsed_date = parse_dt(raw_date)
+                        except Exception:
+                            pass
+
+                    prd_no = item.get("prdNo", "")
+                    matched = await _find_collected_product_by_market_product_no(session, prd_no)
+                    product_link = _build_market_product_url("11번가", prd_no) if prd_no else ""
+
+                    inquiry_data = {
+                        "market": "11번가",
+                        "market_inquiry_no": qna_no,
+                        "market_answer_no": None,
+                        "market_order_id": None,
+                        "market_product_no": prd_no or None,
+                        "account_name": account_name,
+                        "inquiry_type": "product_question",
+                        "questioner": item.get("buyerId", item.get("writerId", "")),
+                        "product_name": item.get("prdNm", ""),
+                        "product_image": matched["product_image"] if matched else "",
+                        "product_link": product_link,
+                        "original_link": matched["original_link"] if matched else "",
+                        "collected_product_id": matched["id"] if matched else None,
+                        "content": item.get("qnaContent", ""),
+                        "reply": item.get("answerContent", "") if is_answered else None,
+                        "reply_status": "replied" if is_answered else "pending",
+                        "inquiry_date": parsed_date,
+                        "replied_at": None,
+                    }
+
+                    await svc.create_inquiry(inquiry_data)
+                    synced += 1
+
+                logger.info(f"[CS동기화] 11번가({account_name}) Q&A: {len(qna_items)}건 조회")
+            except ElevenstApiError as e:
+                logger.error(f"[CS동기화] 11번가({account_name}) API 실패: {e}")
+                errors.append(f"11번가 {account_name}: {str(e)}")
+            except Exception as e:
+                logger.error(f"[CS동기화] 11번가({account_name}) 오류: {e}")
+                errors.append(f"11번가 {account_name}: {str(e)}")
+
+    except Exception as e:
+        logger.error(f"[CS동기화] 11번가 계정 조회 실패: {e}")
+        errors.append(str(e))
+
     # 미연결 CS 문의 일괄 매칭 (market_product_no → market_product_nos)
     linked = 0
     try:
@@ -673,6 +779,33 @@ async def send_reply_to_market(
 
         msg = "상품문의 답변 전송 완료" if inquiry.inquiry_type == "product_question" else "고객문의 답변 전송 완료"
         return {"success": True, "message": f"스마트스토어 {msg}", "data": result.get("data") if isinstance(result, dict) else {}}
+
+    if inquiry.market == "11번가":
+        from backend.domain.samba.account.model import SambaMarketAccount
+        from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+
+        account_result = await session.execute(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.market_type == "11st",
+                SambaMarketAccount.is_active == True,
+            )
+        )
+        account = account_result.scalars().first()
+        if not account or not account.api_key:
+            raise HTTPException(400, "11번가 계정 설정이 없습니다")
+
+        client = ElevenstClient(account.api_key)
+        result = await client.reply_qna(inquiry.market_inquiry_no, body.reply)
+
+        from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
+        repo = SambaCSInquiryRepository(session)
+        await repo.update_async(
+            inquiry_id,
+            reply=body.reply,
+            reply_status="replied",
+            replied_at=datetime.now(timezone.utc),
+        )
+        return {"success": True, "message": "11번가 Q&A 답변 전송 완료", "data": result}
 
     raise HTTPException(400, f"'{inquiry.market}' 마켓은 아직 답변 전송을 지원하지 않습니다")
 

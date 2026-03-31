@@ -417,44 +417,70 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 
 ---
 
-## 소싱처 인벤토리 (12개 등록)
+## 소싱처 인벤토리 (16개 등록)
 
 소싱처별 상세 수집 패턴은 `references/` 디렉토리를 참고한다.
 
-### 활성 파서 (2개)
+### 수집 아키텍처
 
-| 사이트 | 코드 | 수집 방식 | 갱신 | 레퍼런스 |
-|--------|------|----------|------|---------|
-| 무신사 | `MUSINSA` | 서버 HTTP API | `_parse_musinsa` | → `references/musinsa.md` |
-| KREAM | `KREAM` | 확장앱 큐 + DOM | `_parse_kream` | → `references/kream.md` |
+```
+[Job 워커] ─┬─ MUSINSA          → _run_collect (쿠키 기반, 전용 로직)
+            ├─ DIRECT_API_SITES → _collect_direct_api (서버 HTTP)
+            │   ├─ FashionPlus  → FashionPlusClient.search() + get_detail()
+            │   ├─ Nike         → NikeClient.search() + get_detail()
+            │   └─ Adidas       → AdidasClient.search() + get_detail()
+            └─ EXTENSION_SITES  → _collect_direct_api (확장앱 소싱큐)
+                ├─ ABCmart, GrandStage, OKmall
+                ├─ LOTTEON, GSShop, ElandMall, SSF
+                └─ SSG
+```
 
-### 소싱큐 기반 (7개, 확장앱 DOM 파싱)
+### 기능별 속도 격리
 
-| 사이트 | 코드 | 갱신 | 레퍼런스 |
-|--------|------|------|---------|
-| ABC마트 | `ABCmart` | 스텁 | → `references/generic-sourcing.md` |
-| 그랜드스테이지 | `GrandStage` | 스텁 | → `references/generic-sourcing.md` |
-| OKmall | `OKmall` | 스텁 | → `references/generic-sourcing.md` |
-| 롯데ON | `LOTTEON` | 스텁 | → `references/generic-sourcing.md` |
-| GSShop | `GSShop` | 스텁 | → `references/generic-sourcing.md` |
-| 이랜드몰 | `ElandMall` | 스텁 | → `references/generic-sourcing.md` |
-| SSF샵 | `SSF` | 스텁 | → `references/generic-sourcing.md` |
+수집/전송/워룸이 동시에 같은 소싱처 API를 호출할 때 간섭 방지:
+- 수집: `_site_intervals["MUSINSA_collect"]` — 전용 인터벌
+- 갱신/워룸: `_site_intervals["MUSINSA"]` — 공유 인터벌
+- `get_interval_key(site, feature)` 함수로 키 생성
 
-### 직접 API (3개, 서버 HTTP)
+### Job 워커 병렬화
 
-| 사이트 | 코드 | 수집 방식 | 상태 | 참조 |
-|--------|------|----------|------|------|
-| 패션플러스 | `FashionPlus` | 서버 HTTP (검색API+상세HTML) | 활성 — 검색수집+이미지+고시정보+가격갱신 완료, 옵션 서버수집 불가(JS동적) | 아래 패턴 참조 |
-| Nike | `Nike` | 서버 HTTP | refresher 스텁 |  |
-| Adidas | `Adidas` | 서버 HTTP | refresher 스텁 |  |
+- collect + transmit 타입별 동시 실행 (독립 DB 세션)
+- 같은 타입은 순차, 다른 타입은 병렬
+
+### 소싱처 구현 현황
+
+| 사이트 | 코드 | 워커 분류 | 프록시 | 플러그인 | style_code | 옵션/재고 | 이미지 중복제거 | 갱신 |
+|--------|------|----------|--------|---------|-----------|---------|-------------|------|
+| 무신사 | `MUSINSA` | 전용 | ✓ | ✓ | ✓ styleNo | ✓ | ✓ set+9장 | ✓ |
+| KREAM | `KREAM` | 확장앱 큐 | ✓ | ✓ | ✓ model_no | ✓ | - | ✓ |
+| 패션플러스 | `FashionPlus` | DIRECT_API | ✓ | 스텁 | ✓ SKU | ✓ 옵션API | ✓ plg중복+9장 | ✓ |
+| Nike | `Nike` | DIRECT_API | ✓ | ✓ | ✓ styleCode | ✓ | - | ✓ |
+| Adidas | `Adidas` | DIRECT_API | ✓ | 스텁 | ✗ | ✗ | ✗ | 스텁 |
+| 롯데ON | `LOTTEON` | EXTENSION | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ |
+| SSG | `SSG` | EXTENSION | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ |
+| 스마트스토어(소싱) | `SmartStore` | EXTENSION | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ |
+| G마켓(소싱) | `GMarket` | - | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ |
+| ABC마트 | `ABCmart` | EXTENSION | - | 스텁 | ✗ | ✗ | ✗ | - |
+| 그랜드스테이지 | `GrandStage` | EXTENSION | - | - | ✗ | ✗ | ✗ | - |
+| OKmall | `OKmall` | EXTENSION | - | - | ✗ | ✗ | ✗ | - |
+| GSShop | `GSShop` | EXTENSION | - | 스텁 | ✗ | ✗ | ✗ | - |
+| 이랜드몰 | `ElandMall` | EXTENSION | - | - | ✗ | ✗ | ✗ | - |
+| SSF샵 | `SSF` | EXTENSION | - | - | ✗ | ✗ | ✗ | - |
+| 올리브영 | `OliveYoung` | - | - | 스텁 | ✗ | ✗ | ✗ | - |
+
+### 추가수집 시 그룹 속성 상속
+
+`create_collected_product()` 서비스 레이어에서 자동 처리 (모든 소싱처 공통):
+- 기존 그룹 상품의 태그/SEO/정책/마켓가격을 신규 상품에 복사
+- `_inherit_group_attributes()` — `search_filter_id`로 기존 상품 조회 → 태그/SEO/정책/가격 복사
 
 ### 수집 방식 결정 기준
 
 | 조건 | 방식 | 예시 |
 |------|------|------|
-| 공개 API 존재 | 서버 직접 HTTP | 무신사 |
+| 공개 API 존재 | DIRECT_API (서버 HTTP) | 무신사, 패션플러스, Nike |
 | 로그인/JS렌더링 필수 | 확장앱 큐 + DOM | KREAM |
-| 공개 페이지 + 정적 HTML | 확장앱 소싱 큐 (범용) | ABCmart, GrandStage 등 |
+| 공개 페이지 + 정적 HTML | EXTENSION (확장앱 소싱 큐) | ABCmart, LOTTEON 등 |
 
 **원칙: 확장앱은 얇은 클라이언트 — DOM 읽기 + 서버 전송만. 로직은 서버에.**
 
@@ -464,10 +490,16 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 |------|------|
 | `backend/.../proxy/musinsa.py` | 무신사 API 클라이언트 |
 | `backend/.../proxy/kream.py` | KREAM 클라이언트 + 큐 |
-| `backend/.../proxy/sourcing_queue.py` | 통합 소싱 큐 (7개 사이트) |
-| `backend/.../collector/refresher.py` | SITE_PARSERS 매핑 + 갱신 로직 |
+| `backend/.../proxy/fashionplus.py` | 패션플러스 클라이언트 (검색+상세+옵션) |
+| `backend/.../proxy/nike.py` | Nike 클라이언트 |
+| `backend/.../proxy/adidas.py` | Adidas 클라이언트 |
+| `backend/.../proxy/sourcing_queue.py` | 통합 소싱 큐 (EXTENSION 사이트) |
+| `backend/.../collector/refresher.py` | SITE_PARSERS 매핑 + 갱신 + 기능별 인터벌 격리 |
+| `backend/.../collector/service.py` | 그룹 속성 상속 (_inherit_group_attributes) |
+| `backend/.../job/worker.py` | Job 워커 (병렬 실행, 수집/전송 동시) |
+| `backend/.../job/repository.py` | list_pending (타입별 병렬 선택) |
 | `extension/background.js` | 확장앱 수집 핸들러 |
-| `frontend/.../collector/page.tsx` | 프론트엔드 UI (12개 사이트 드롭다운) |
+| `frontend/.../collector/page.tsx` | 프론트엔드 UI |
 
 ---
 
@@ -514,17 +546,20 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 
 ## 새 소싱처 추가 체크리스트
 
-1. **수집 방식 결정** — API 직접 호출 vs 확장앱 DOM
-2. **프록시 클라이언트 생성** — `backend/backend/domain/samba/proxy/{site}.py`
-3. **이미지 URL 변환 함수** — `_to_image_url()` 구현
-4. **옵션/재고 파싱** — 사이트별 옵션 구조 분석
-5. **고시정보 추출** — 사이트의 고시정보 API 또는 HTML 파싱
-6. **가격 계산** — 할인/쿠폰/혜택가 로직
-7. **refresher 등록** — `refresher.py`의 SITE_PARSERS에 추가
-8. **확장앱 연동** (필요 시) — `background.js`에 사이트별 핸들러
-9. **CollectedProduct 모델 호환** — 모든 필수 필드 매핑 확인
-10. **eval 추가** — `evals/` 디렉토리에 입력+기대출력 추가
-11. **autoresearch 루프 실행** — 95% 이상 달성 확인
+1. **수집 방식 결정** — DIRECT_API (서버 HTTP) vs EXTENSION (확장앱 큐)
+2. **프록시 클라이언트 생성** — `proxy/{site}.py` — `search()` + `get_detail()` 필수
+3. **플러그인 생성** — `plugins/sourcing/{site}.py` — proxy 호출 위임
+4. **style_code 추출** — SKU/품번/모델코드 → `style_code` 필드 (상품명 조합에 사용)
+5. **옵션/재고 파싱** — `options: [{no, name, price, stock, isSoldOut}]`
+6. **이미지 중복제거** — set 기반 + 최대 9장 제한
+7. **고시정보 추출** — 소재/색상/제조사/원산지/세탁 → notice_utils.py 연동
+8. **가격 계산** — 할인/쿠폰/혜택가 → `cost` (원가), `sale_price` (판매가)
+9. **워커 등록** — `worker.py`의 `DIRECT_API_SITES` 또는 `EXTENSION_SITES`에 추가
+10. **refresher 등록** — `refresher.py`의 SITE_PARSERS에 `_parse_{site}` 추가
+11. **소싱 URL 등록** — `order.py`의 `_sourcing_urls`에 URL 템플릿 추가
+12. **인터벌 격리 확인** — 수집은 `get_interval_key(site, "collect")` 사용
+13. **CollectedProduct 호환** — flat 스키마 (brand=string, images=string[])
+14. **이 스킬 업데이트** — 소싱처 인벤토리 테이블에 추가
 
 ---
 
@@ -562,7 +597,8 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 - **이미지 CDN**: `img.fashionplus.co.kr` — 썸네일 URL에 `?RS=400x536&AR=0` 리사이즈 파라미터 → 제거하면 원본 이미지
 - **가격**: consumerPrice(정가), salePrice(판매가), displayPrice(쿠폰적용 최저가)
 - **상세 페이지 파싱**: SSR HTML + JSON-LD에서 이미지(plg/plgk/plgr/plgl), 고시정보(소재/색상/제조사/원산지), 배송비 추출 가능
-- **옵션**: 서버 HTTP로 수집 불가 (JS 동적 렌더링, 옵션 API 미발견). 단일상품(options=[])으로 처리
+- **옵션 API**: `GET /goods/detail/{id}/fetch-option-data` — 옵션명, 가격, 재고, 옵션ID 반환. `X-Requested-With: XMLHttpRequest` 헤더 필요
+- **옵션 응답**: `[{_name, _price, options: [{_name, _price, _stock, _id}]}]` — _stock=실재고 수량(0=품절)
 - **가격재고갱신**: `_parse_fashionplus` — 가격/원가(배송비 포함)만 갱신. 이미지/고시정보는 갱신하지 않음 (초기 수집 시에만)
 - **상세이미지**: 상품 이미지 4장을 상세이미지로 활용. 실제 판매자 등록 상세 컨텐츠는 JS lazy loading으로 서버 수집 불가
 - **Job 워커**: `worker.py`의 `_collect_direct_api()`에서 처리 (MUSINSA와 별도 분기)
@@ -660,3 +696,4 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 | 2026-03-28 | 검색 수집 시 URL 필터(brand, minPrice, maxPrice, gf) 무시 버그 수정 — search_products()에 필터 파라미터 추가, collector에서 URL 파싱 후 전달 | - |
 | 2026-03-28 | **최대혜택가 대규모 검증 (83개 상품 × 크롬캡쳐 비교)** — 4가지 수정: (1) 등급할인 조건 `isLimitedDc=False` 발견, (2) 선할인 `memberSavePointRate+savePoint`, (3) isSale 무관 확인, (4) 쿠폰 API에 `specialtyCodes` 파라미터 추가 (beauty/sneaker 등 카테고리 쿠폰 누락 해결) | - |
 | 2026-03-28 | **패션플러스 소싱처 활성화** — proxy/fashionplus.py에 max_count 페이지네이션 추가, _map_item을 CollectedProduct flat 스키마로 보강(sourceUrl/cost/saleStatus/manufacturer), job/worker.py에 _collect_direct_api() 분기 추가, SKILL.md에 패션플러스 수집 패턴 섹션 추가. 검색 API만 지원 (상세/옵션/고시정보 미지원) | - |
+| 2026-03-29 | **브랜드 소싱 모드** — 무신사 필터 API로 브랜드별 최하위 카테고리 자동 스캔 + 카테고리별 그룹 일괄 생성. `scan_brand_categories()` 메서드, `/brand-scan` + `/brand-create-groups` API, 프론트 탭 UI (브랜드 소싱 / 브랜드+키워드 소싱) | - |

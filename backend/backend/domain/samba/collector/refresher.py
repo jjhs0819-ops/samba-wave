@@ -45,11 +45,19 @@ SITE_INTERVAL_STEP: dict[str, float] = {
 }
 # KREAM 확장앱 대기 타임아웃 (초)
 KREAM_TIMEOUT = 90
-# 소싱처별 적응형 인터벌 관리
+# 소싱처별 적응형 인터벌 관리 (기능별 격리)
+# 키 형식: "MUSINSA" (워룸/갱신), "MUSINSA_collect" (수집)
 _site_intervals: dict[str, float] = {}
 _site_consecutive_errors: dict[str, int] = {}
 # 소싱처별 안전 인터벌 기록 (차단 안 당하는 최소값)
 _site_safe_intervals: dict[str, float] = {}
+
+
+def get_interval_key(site: str, feature: str = "refresh") -> str:
+    """기능별 인터벌 키 생성. 수집/갱신/워룸이 서로 간섭하지 않도록 격리."""
+    if feature == "refresh":
+        return site  # 기존 호환
+    return f"{site}_{feature}"
 # 벌크 갱신용 캐시 (배치 시작 시 1회 조회)
 _bulk_musinsa_cache: dict[str, Any] = {}
 

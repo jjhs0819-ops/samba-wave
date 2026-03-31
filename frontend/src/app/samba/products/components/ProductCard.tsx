@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useMemo, useCallback } from 'react'
+import { API_BASE_URL as API_BASE } from '@/config/api'
 import {
   collectorApi,
   shipmentApi,
@@ -113,17 +114,30 @@ export function calcPrice(
   return { price, marginAmt, usedMin, feeAmt, calcStr: `₩${fmt(price)} = ${parts.join(' + ')}` }
 }
 
+// 소싱처별 원문링크 URL 템플릿 (통합 관리)
+const SOURCE_URL_MAP: Record<string, string> = {
+  MUSINSA: 'https://www.musinsa.com/products/{id}',
+  KREAM: 'https://kream.co.kr/products/{id}',
+  FASHIONPLUS: 'https://www.fashionplus.co.kr/goods/detail/{id}',
+  ABCMART: 'https://www.a-rt.com/product?prdtNo={id}',
+  GRANDSTAGE: 'https://www.a-rt.com/product?prdtNo={id}&tChnnlNo=10002',
+  OKMALL: 'https://www.okmall.com/products/detail/{id}',
+  LOTTEON: 'https://www.lotteon.com/product/productDetail.lotte?spdNo={id}',
+  GSSHOP: 'https://www.gsshop.com/prd/prd.gs?prdid={id}',
+  ELANDMALL: 'https://www.elandmall.com/goods/goods.action?goodsNo={id}',
+  SSF: 'https://www.ssfshop.com/goods/{id}',
+  SSG: 'https://www.ssg.com/item/itemView.ssg?itemId={id}',
+  NIKE: 'https://www.nike.com/kr/t/{id}',
+  ADIDAS: 'https://www.adidas.co.kr/{id}.html',
+}
+
 function getSourceUrl(p: { source_url?: string; source_site: string; site_product_id?: string; video_url?: string | null }): string {
-  // DB에 저장된 source_url 우선 사용
   if (p.source_url) return p.source_url
-  // fallback: 기존 데이터용 (source_url이 아직 없는 경우)
   if (!p.site_product_id) return ''
   const site = (p.source_site || '').toUpperCase()
-  if (site === 'MUSINSA') return `https://www.musinsa.com/products/${p.site_product_id}`
-  if (site === 'KREAM') return `https://kream.co.kr/products/${p.site_product_id}`
-  if (site === 'NIKE') return p.video_url || `https://www.nike.com/kr/w?q=${p.site_product_id}`
-  if (site === 'FASHIONPLUS') return `https://www.fashionplus.co.kr/goods/detail/${p.site_product_id}`
-  return ''
+  if (site === 'NIKE' && p.video_url) return p.video_url
+  const tpl = SOURCE_URL_MAP[site]
+  return tpl ? tpl.replace('{id}', p.site_product_id) : ''
 }
 
 // 모듈 레벨 캐시: 삭제어 정규식
@@ -611,7 +625,7 @@ const ProductCard = React.memo(function ProductCard({
                   // 프록시 재시도 (1회)
                   if (!el.dataset.retried) {
                     el.dataset.retried = '1'
-                    el.src = `${process.env.NEXT_PUBLIC_API_ENDPOINT || 'http://localhost:28080'}/api/v1/samba/proxy/image-proxy?url=${encodeURIComponent(img)}`
+                    el.src = `${API_BASE}/api/v1/samba/proxy/image-proxy?url=${encodeURIComponent(img)}`
                   } else {
                     el.style.display = 'none'
                   }
@@ -1286,6 +1300,65 @@ const ProductCard = React.memo(function ProductCard({
                   </td>
                 </tr>
               )}
+              {/* 스토어별 상품명 — 마켓가격 행에 없는 등록 스토어도 상품명 편집 가능 */}
+              {(() => {
+                const _mktNames = (p.market_names || {}) as Record<string, string>
+                const _composed = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))
+                // 마켓가격 행에 이미 표시된 마켓명 목록
+                const priceMarketNames = new Set(marketPriceList.map(m => m.marketName))
+                // 등록된 스토어 중 마켓가격 행이 없는 것만 추출
+                const extraStores = registeredMarkets.filter(rm => {
+                  const mkt = MARKETS.find(m => m.id === rm.marketId)
+                  return mkt && !priceMarketNames.has(mkt.name)
+                })
+                if (extraStores.length === 0) return null
+                return extraStores.map(rm => {
+                  const mkt = MARKETS.find(m => m.id === rm.marketId)
+                  const mktName = mkt?.name || rm.marketId
+                  const nameLimit = MARKET_NAME_LIMITS[mktName] || 100
+                  const curName = _mktNames[mktName] || ''
+                  const dispName = curName || (_composed.length > nameLimit ? _composed.slice(0, nameLimit) : _composed)
+                  const isOver = (curName || _composed).length > nameLimit
+                  return (
+                    <tr key={`store-name-${rm.accId}`} style={{ borderBottom: '1px solid #1E1E1E' }}>
+                      <td style={tdLabel}>{mktName}</td>
+                      <td style={tdVal}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <input
+                            type="text"
+                            defaultValue={curName}
+                            placeholder={_composed.slice(0, nameLimit)}
+                            style={{
+                              width: '100%', padding: '2px 6px', fontSize: '0.72rem',
+                              background: '#1A1A1A', border: `1px solid ${isOver ? '#FF6B6B' : '#2D2D2D'}`,
+                              color: isOver ? '#FF6B6B' : '#C5C5C5', borderRadius: '3px', outline: 'none',
+                            }}
+                            onBlur={(e) => {
+                              const val = e.target.value.trim()
+                              if (val === curName) return
+                              const updated = { ..._mktNames, [mktName]: val || undefined }
+                              if (!val) delete updated[mktName]
+                              const clean = Object.fromEntries(Object.entries(updated).filter(([, v]) => v))
+                              collectorApi.updateProduct(p.id, { market_names: Object.keys(clean).length > 0 ? clean : undefined } as Partial<SambaCollectedProduct>).then(() => {
+                                onProductUpdate(p.id, { market_names: Object.keys(clean).length > 0 ? clean : undefined } as Partial<SambaCollectedProduct>)
+                                e.target.style.borderColor = '#51CF66'
+                                setTimeout(() => { e.target.style.borderColor = '#2D2D2D' }, 1500)
+                              }).catch(() => {
+                                e.target.style.borderColor = '#FF6B6B'
+                                setTimeout(() => { e.target.style.borderColor = '#2D2D2D' }, 1500)
+                              })
+                            }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                          />
+                          <span style={{ fontSize: '0.65rem', color: isOver ? '#FF6B6B' : '#555', whiteSpace: 'nowrap' }}>
+                            {dispName.length}/{nameLimit}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })
+              })()}
               {/* 카테고리 */}
               <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
                 <td style={tdLabel}>카테고리</td>

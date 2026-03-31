@@ -1449,9 +1449,11 @@ export default function SettingsPage() {
 
   const handleFetchAllBalances = async () => {
     try {
-      await loadSourcingAccounts()
-      showAlert('잔액 갱신 완료 (확장앱에서 수집된 데이터)', 'success')
-    } catch (err) { showAlert(err instanceof Error ? err.message : '전체 잔액 조회 실패', 'error') }
+      await sourcingAccountApi.requestBalanceCheck()
+      showAlert('잔액 체크 요청 완료 — 확장앱이 30초 내 자동 수집합니다', 'success')
+      // 15초 후 자동 새로고침
+      setTimeout(() => loadSourcingAccounts(), 15000)
+    } catch (err) { showAlert(err instanceof Error ? err.message : '잔액 체크 요청 실패', 'error') }
   }
 
   return (
@@ -1782,7 +1784,7 @@ export default function SettingsPage() {
               <button
                 onClick={handleFetchAllBalances}
                 style={{ padding: '0.625rem 1.25rem', background: 'rgba(76,154,255,0.15)', border: '1px solid rgba(76,154,255,0.3)', color: '#4C9AFF', borderRadius: '6px', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer' }}
-              >전체 잔액 조회</button>
+              >잔액 새로고침</button>
             </div>
           </div>
 
