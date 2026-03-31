@@ -361,8 +361,16 @@ def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str,
       "manufacturer": mfr,
       "afterServiceDirector": common_fields["afterServiceDirector"],
     }
+  elif notice_type == "FASHION_ITEMS":
+    # 패션잡화 — type 필드 필수 (모자/벨트/지갑 등 세부 분류)
+    _cat_parts = [p.strip() for p in (product.get("category") or "").split(">") if p.strip()]
+    _fashion_type = _cat_parts[1] if len(_cat_parts) > 1 else (_cat_parts[0] if _cat_parts else "패션잡화")
+    notice_data = {
+      **common_fields,
+      "type": _clean_special(_fashion_type),
+    }
   else:
-    # WEAR, SHOES, BAG, FASHION_ITEMS — 공통 필드 사용
+    # WEAR, SHOES, BAG — 공통 필드 사용
     notice_data = common_fields
 
   # 화장품/식품/ETC에도 가이드 필드 추가
