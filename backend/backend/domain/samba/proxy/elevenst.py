@@ -789,9 +789,7 @@ class ElevenstClient:
   <dispCtgrNo>{category_code}</dispCtgrNo>
   <brand>{_escape_xml(brand)}</brand>
   <selPrc>{sale_price}</selPrc>
-  <selMthdCd>01</selMthdCd>
-  <aplBgnDy>{datetime.now().strftime('%Y%m%d')}</aplBgnDy>
-  <selTermUseYn>N</selTermUseYn>
+  <selMthdCd>02</selMthdCd>
   <prdWeight>0</prdWeight>
   <rmaterialTypCd>04</rmaterialTypCd>
   <orgnTypCd>{orgn_typ_cd}</orgnTypCd>
