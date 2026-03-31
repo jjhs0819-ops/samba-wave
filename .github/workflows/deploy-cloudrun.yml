@@ -26,6 +26,7 @@ jobs:
             --source ./backend \
             --region asia-northeast3 \
             --project fresh-sanctuary-489804-v4 \
+            --clear-base-image \
             --quiet
 
       - name: Health Check
