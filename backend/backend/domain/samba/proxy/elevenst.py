@@ -725,6 +725,14 @@ class ElevenstClient:
     mnp_buy_dsc_method = str(cfg.get("multiPurchaseDiscountMethod", "02") or "02")
     mnp_buy_qty = int(cfg.get("multiPurchaseQty", 2) or 2)
     mnp_buy_amt = int(cfg.get("multiPurchaseAmt", 1000) or 1000)
+    mnp_period_yn = "Y" if cfg.get("multiPurchasePeriodEnabled") and str(cfg.get("multiPurchasePeriodEnabled")) not in ("", "false", "0") else "N"
+    mnp_start_dy = str(cfg.get("multiPurchaseStartDate", "") or "")
+    mnp_end_dy = str(cfg.get("multiPurchaseEndDate", "") or "")
+
+    # 즉시할인 (쿠폰) 설정 — discountRate(%) 값이 있으면 정률 쿠폰 적용
+    # 11번가 API 필드: cuponcheck, dscAmtPercnt, cupnDscMthdCd(02=정률)
+    _discount_rate = int(cfg.get("discountRate", 0) or 0)
+    instant_dsc_yn = "Y" if _discount_rate > 0 else "N"
 
     # 이미지 XML — 공식 필드명: prdImage01~04 (imageUrl 아님)
     image_xml = ""
@@ -811,6 +819,8 @@ class ElevenstClient:
   {f'<pay11Value>{llpay_pnt_value}</pay11Value><pay11WyCd>{llpay_pnt_type}</pay11WyCd>' if llpay_pnt_yn == 'Y' else ''}
   <pluYN>{mnp_buy_yn}</pluYN>
   {f'<pluDscCd>{mnp_buy_basis_type}</pluDscCd><pluDscMthdCd>{mnp_buy_dsc_method}</pluDscMthdCd><pluDscBasis>{mnp_buy_qty}</pluDscBasis><pluDscAmtPercnt>{mnp_buy_amt}</pluDscAmtPercnt>' if mnp_buy_yn == 'Y' else ''}
+  {f'<pluUseLmtDyYn>Y</pluUseLmtDyYn><pluIssStartDy>{mnp_start_dy}</pluIssStartDy><pluIssEndDy>{mnp_end_dy}</pluIssEndDy>' if mnp_buy_yn == 'Y' and mnp_period_yn == 'Y' and mnp_start_dy and mnp_end_dy else ''}
+  {f'<cuponcheck>Y</cuponcheck><dscAmtPercnt>{_discount_rate}</dscAmtPercnt><cupnDscMthdCd>02</cupnDscMthdCd>' if instant_dsc_yn == 'Y' else ''}
   <crtfGrpObjClfCd01>03</crtfGrpObjClfCd01>
   <crtfGrpObjClfCd02>03</crtfGrpObjClfCd02>
   <crtfGrpObjClfCd03>03</crtfGrpObjClfCd03>

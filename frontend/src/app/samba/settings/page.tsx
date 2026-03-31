@@ -257,17 +257,20 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
     { name: '_divider_purchase', label: '복수구매 할인', type: 'divider' },
-    { name: 'multiPurchaseDiscount', label: '복수구매 할인 사용', type: 'select', options: [
+    { name: 'multiPurchaseDiscount', label: '복수구매 할인', type: 'select', options: [
       { value: '', label: '설정안함' }, { value: 'true', label: '설정함' },
     ]},
-    { name: 'multiPurchaseBasisType', label: '기준 유형', type: 'select', options: [
-      { value: '01', label: '수량 기준' }, { value: '02', label: '금액 기준' },
+    { name: 'multiPurchaseBasisType', label: '기준', type: 'select', options: [
+      { value: '01', label: '수량기준' }, { value: '02', label: '금액기준' },
     ]},
-    { name: 'multiPurchaseDiscountMethod', label: '할인 방식', type: 'select', options: [
-      { value: '02', label: '정액 (원)' }, { value: '01', label: '정률 (%)' },
+    { name: 'multiPurchaseDiscountMethod', label: '할인', type: 'select', options: [
+      { value: '02', label: '원 할인' }, { value: '01', label: '% 할인' },
     ]},
-    { name: 'multiPurchaseQty', label: '기준값 (N개 또는 N원)', type: 'number', placeholder: '2' },
-    { name: 'multiPurchaseAmt', label: '할인값 (N원 또는 N%)', type: 'number', placeholder: '1000' },
+    { name: 'multiPurchaseQty', label: 'N개 이상 구매시', type: 'number', placeholder: '2' },
+    { name: 'multiPurchaseAmt', label: '개당 할인값 (원 또는 %)', type: 'number', placeholder: '1000' },
+    { name: 'multiPurchasePeriodEnabled', label: '할인 적용기간 설정', type: 'checkbox' },
+    { name: 'multiPurchaseStartDate', label: '할인 시작일 (YYYYMMDD)', type: 'text', placeholder: '20260101' },
+    { name: 'multiPurchaseEndDate', label: '할인 종료일 (YYYYMMDD)', type: 'text', placeholder: '20261231' },
     { name: '_divider_point', label: '11Pay 포인트', type: 'divider' },
     { name: 'llpayPointEnabled', label: '11Pay 포인트 적립', type: 'checkbox' },
     { name: 'llpayPointType', label: '적립 방식', type: 'select', options: [
