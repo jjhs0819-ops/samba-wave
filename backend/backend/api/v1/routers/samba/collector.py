@@ -587,16 +587,11 @@ async def scroll_products(
             ~cast(_CP.tags, String).like('%"__img_filtered__"%'),
         ))
     elif ai_filter == "img_edit_yes":
-        conditions.append(or_(
-            cast(_CP.tags, String).like('%"__ai_image__"%'),
-            cast(_CP.tags, String).like('%"__img_filtered__"%'),
-            cast(_CP.tags, String).like('%"__img_edited__"%'),
-        ))
+        conditions.append(cast(_CP.tags, String).like('%"__img_edited__"%'))
     elif ai_filter == "img_edit_no":
-        conditions.append(~or_(
-            cast(_CP.tags, String).like('%"__ai_image__"%'),
-            cast(_CP.tags, String).like('%"__img_filtered__"%'),
-            cast(_CP.tags, String).like('%"__img_edited__"%'),
+        conditions.append(or_(
+            _CP.tags.is_(None),
+            ~cast(_CP.tags, String).like('%"__img_edited__"%'),
         ))
     elif ai_filter == "video_yes":
         conditions.append(_CP.video_url.isnot(None))

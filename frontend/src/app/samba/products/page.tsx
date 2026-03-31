@@ -1330,7 +1330,6 @@ export default function ProductsPage() {
             style={{ background: '#1A1A1A', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '6px', padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
           >
             <option value="">전체</option>
-            <option value="sold_out">품절상품</option>
             <option value="ai_tag_yes">AI태그 적용</option>
             <option value="ai_tag_no">AI태그 미적용</option>
             <option value="ai_img_yes">AI이미지 적용</option>
