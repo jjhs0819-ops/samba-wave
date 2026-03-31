@@ -365,6 +365,15 @@ def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str,
     # 패션잡화 — type 필드 필수 (모자/벨트/지갑 등 세부 분류)
     _cat_parts = [p.strip() for p in (product.get("category") or "").split(">") if p.strip()]
     _fashion_type = _cat_parts[1] if len(_cat_parts) > 1 else (_cat_parts[0] if _cat_parts else "패션잡화")
+    if not _fashion_type:
+      _fashion_type = "패션잡화"
+    from backend.utils.logger import logger as _notice_logger
+    _notice_logger.info(
+      f"[고시정보] FASHION_ITEMS type={_fashion_type!r}, "
+      f"category={product.get('category')!r}, "
+      f"category1={product.get('category1')!r}, "
+      f"category_levels={product.get('category_levels')!r}"
+    )
     notice_data = {
       **common_fields,
       "type": _clean_special(_fashion_type),
