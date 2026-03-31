@@ -114,7 +114,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
             setLogs([]); sinceIdxRef.current = 0
             try {
               const { API_BASE_URL: apiBase } = await import('@/config/api')
-              await fetch(`${apiBase}/api/v1/samba/monitor/refresh-logs/clear`, { method: 'POST' })
+              await fetch(`${apiBase}/api/v1/samba/monitor/refresh-logs/clear`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
             } catch { /* ignore */ }
           }} style={{ padding: '2px 8px', fontSize: '0.65rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
         </div>
