@@ -602,6 +602,7 @@ const ProductCard = React.memo(function ProductCard({
       {showImageModal && (() => {
         // 대표이미지: 첫번째, 추가이미지: 나머지
         const mainImg = productImages[0] || ''
+        const coupangMainImg = p.coupang_main_image || ''
         const extraImgs = productImages.slice(1)
         // 상세페이지 이미지: detail_images 필드 우선, 없으면 detail_html에서 추출
         const detailImgs = detailImgList
@@ -695,80 +696,136 @@ const ProductCard = React.memo(function ProductCard({
               <div style={{ overflowY: 'auto', padding: '16px 20px', flex: 1 }}>
                 {imageTab === 'main' && (
                   <div>
-                    <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '12px' }}>
-                      ※ 대표이미지를 변경하시면 모든 마켓의 대표이미지가 변경됩니다.
-                    </p>
-                    {mainImg ? (
-                      <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
-                        <div>
-                          <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 대표이미지]</p>
-                          <img src={mainImg} alt="대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                            onClick={() => openZoom(mainImg)}
-                            style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #2D2D2D', cursor: 'pointer' }} />
-                          <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{mainImg}</p>
+                    {/* ── 공통 대표이미지 ── */}
+                    <div style={{ marginBottom: '20px' }}>
+                      <p style={{ fontSize: '0.78rem', color: '#FF8C00', fontWeight: 600, marginBottom: '8px' }}>공통 대표이미지</p>
+                      <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '12px' }}>
+                        ※ 쿠팡을 제외한 모든 마켓에 적용됩니다. 쿠팡 대표이미지가 미설정이면 공통이 사용됩니다.
+                      </p>
+                      {mainImg ? (
+                        <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
+                          <div>
+                            <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 대표이미지]</p>
+                            <img src={mainImg} alt="대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                              onClick={() => openZoom(mainImg)}
+                              style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #2D2D2D', cursor: 'pointer' }} />
+                            <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{mainImg}</p>
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>이미지 URL 변경</p>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <input type="text" placeholder="http:// 를 포함한 이미지 경로" defaultValue=""
+                                id="main-image-url-input"
+                                style={{ flex: 1, fontSize: '0.78rem', padding: '6px 10px', background: '#1E1E1E', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '6px' }} />
+                              <button onClick={() => {
+                                const input = document.getElementById('main-image-url-input') as HTMLInputElement
+                                if (input?.value.trim()) {
+                                  const newImgs = [input.value.trim(), ...productImages.slice(1)]
+                                  setProductImages(newImgs)
+                                  const ud: Partial<SambaCollectedProduct> = { images: newImgs }
+                                  if (!(p.tags || []).includes('__img_edited__')) {
+                                    ud.tags = [...(p.tags || []), '__img_edited__']
+                                  }
+                                  collectorApi.updateProduct(p.id, ud).then(() => {
+                                    onProductUpdate(p.id, ud)
+                                  }).catch(() => {})
+                                  input.value = ''
+                                }
+                              }} style={{ padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid #FF8C00', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>변경완료</button>
+                            </div>
+                            <button onClick={() => {
+                              const remaining = productImages.slice(1)
+                              const newImgs = remaining.length > 0 ? remaining : []
+                              setProductImages(newImgs)
+                              const updateData: Partial<SambaCollectedProduct> = { images: newImgs }
+                              if (!(p.tags || []).includes('__img_edited__')) {
+                                updateData.tags = [...(p.tags || []), '__img_edited__']
+                              }
+                              collectorApi.updateProduct(p.id, updateData).then(() => {
+                                onProductUpdate(p.id, updateData)
+                              }).catch(() => {})
+                            }} style={{
+                              marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
+                              border: '1px solid rgba(255,107,107,0.4)', background: 'rgba(255,107,107,0.08)',
+                              color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}>대표이미지 삭제</button>
+                            <button onClick={() => {
+                              setCardConfirm({
+                                msg: '이 대표이미지를 동일 이미지를 가진 모든 상품에서 삭제하시겠습니까?',
+                                onOk: async () => {
+                                  setCardConfirm(null)
+                                  try {
+                                    const res = await collectorApi.bulkRemoveImage(mainImg, 'images')
+                                    const remaining = productImages.slice(1)
+                                    setProductImages(remaining)
+                                    setCardAlert({ msg: `${res.removed}개 상품에서 대표이미지 추적삭제 완료`, type: 'success' })
+                                  } catch (e) { setCardAlert({ msg: '추적삭제 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' }) }
+                                },
+                              })
+                            }} style={{
+                              marginTop: '4px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
+                              border: '1px solid rgba(168,85,247,0.4)', background: 'rgba(168,85,247,0.08)',
+                              color: '#A855F7', cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}>추적삭제</button>
+                          </div>
                         </div>
+                      ) : (
+                        <div style={{ padding: '2rem', textAlign: 'center', color: '#555' }}>대표이미지 없음</div>
+                      )}
+                    </div>
+
+                    {/* ── 쿠팡 대표이미지 ── */}
+                    <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '16px' }}>
+                      <p style={{ fontSize: '0.78rem', color: '#00B4D8', fontWeight: 600, marginBottom: '8px' }}>쿠팡 대표이미지</p>
+                      <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '12px' }}>
+                        ※ 쿠팡은 상품컷(누끼)이 필요합니다. 미설정 시 공통 대표이미지가 사용됩니다.
+                      </p>
+                      <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
+                        {coupangMainImg && (
+                          <div>
+                            <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 쿠팡 대표이미지]</p>
+                            <img src={coupangMainImg} alt="쿠팡 대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                              onClick={() => openZoom(coupangMainImg)}
+                              style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #00B4D8', cursor: 'pointer' }} />
+                            <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{coupangMainImg}</p>
+                          </div>
+                        )}
                         <div style={{ flex: 1 }}>
-                          <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>이미지 URL 변경</p>
+                          <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>쿠팡 대표이미지 URL</p>
                           <div style={{ display: 'flex', gap: '6px' }}>
-                            <input type="text" placeholder="http:// 를 포함한 이미지 경로" defaultValue=""
-                              id="main-image-url-input"
+                            <input type="text" placeholder="http:// 를 포함한 상품컷 이미지 경로" defaultValue=""
+                              id="coupang-main-image-url-input"
                               style={{ flex: 1, fontSize: '0.78rem', padding: '6px 10px', background: '#1E1E1E', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '6px' }} />
                             <button onClick={() => {
-                              const input = document.getElementById('main-image-url-input') as HTMLInputElement
-                              if (input?.value.trim()) {
-                                const newImgs = [input.value.trim(), ...productImages.slice(1)]
-                                setProductImages(newImgs)
-                                const ud: Partial<SambaCollectedProduct> = { images: newImgs }
-                                if (!(p.tags || []).includes('__img_edited__')) {
-                                  ud.tags = [...(p.tags || []), '__img_edited__']
-                                }
-                                collectorApi.updateProduct(p.id, ud).then(() => {
-                                  onProductUpdate(p.id, ud)
-                                }).catch(() => {})
-                                input.value = ''
-                              }
-                            }} style={{ padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid #FF8C00', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>변경완료</button>
+                              const input = document.getElementById('coupang-main-image-url-input') as HTMLInputElement
+                              const val = input?.value.trim() || ''
+                              const ud: Partial<SambaCollectedProduct> = { coupang_main_image: val || undefined }
+                              collectorApi.updateProduct(p.id, ud).then(() => {
+                                onProductUpdate(p.id, ud)
+                              }).catch(() => {})
+                              if (input) input.value = ''
+                            }} style={{ padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid #00B4D8', background: 'rgba(0,180,216,0.15)', color: '#00B4D8', cursor: 'pointer', whiteSpace: 'nowrap' }}>변경완료</button>
                           </div>
-                          <button onClick={() => {
-                            // 대표이미지 삭제 → 추가이미지[0]이 대표로 승격
-                            const remaining = productImages.slice(1)
-                            const newImgs = remaining.length > 0 ? remaining : []
-                            setProductImages(newImgs)
-                            const updateData: Partial<SambaCollectedProduct> = { images: newImgs }
-                            if (!(p.tags || []).includes('__img_edited__')) {
-                              updateData.tags = [...(p.tags || []), '__img_edited__']
-                            }
-                            collectorApi.updateProduct(p.id, updateData).then(() => {
-                              onProductUpdate(p.id, updateData)
-                            }).catch(() => {})
-                          }} style={{
-                            marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
-                            border: '1px solid rgba(255,107,107,0.4)', background: 'rgba(255,107,107,0.08)',
-                            color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap',
-                          }}>대표이미지 삭제</button>
-                          <button onClick={() => {
-                            setCardConfirm({
-                              msg: '이 대표이미지를 동일 이미지를 가진 모든 상품에서 삭제하시겠습니까?',
-                              onOk: async () => {
-                                setCardConfirm(null)
-                                try {
-                                  const res = await collectorApi.bulkRemoveImage(mainImg, 'images')
-                                  const remaining = productImages.slice(1)
-                                  setProductImages(remaining)
-                                  setCardAlert({ msg: `${res.removed}개 상품에서 대표이미지 추적삭제 완료`, type: 'success' })
-                                } catch (e) { setCardAlert({ msg: '추적삭제 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' }) }
-                              },
-                            })
-                          }} style={{
-                            marginTop: '4px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
-                            border: '1px solid rgba(168,85,247,0.4)', background: 'rgba(168,85,247,0.08)',
-                            color: '#A855F7', cursor: 'pointer', whiteSpace: 'nowrap',
-                          }}>추적삭제</button>
+                          {coupangMainImg && (
+                            <button onClick={() => {
+                              const ud: Partial<SambaCollectedProduct> = { coupang_main_image: '' }
+                              collectorApi.updateProduct(p.id, ud).then(() => {
+                                onProductUpdate(p.id, ud)
+                              }).catch(() => {})
+                            }} style={{
+                              marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
+                              border: '1px solid rgba(255,107,107,0.4)', background: 'rgba(255,107,107,0.08)',
+                              color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}>쿠팡 대표이미지 삭제</button>
+                          )}
+                          {!coupangMainImg && (
+                            <p style={{ marginTop: '8px', fontSize: '0.72rem', color: '#666' }}>
+                              미설정 → 공통 대표이미지 사용 중
+                            </p>
+                          )}
                         </div>
                       </div>
-                    ) : (
-                      <div style={{ padding: '2rem', textAlign: 'center', color: '#555' }}>대표이미지 없음</div>
-                    )}
+                    </div>
                   </div>
                 )}
 

@@ -140,6 +140,7 @@ class SambaCollectedProduct(SQLModel, table=True):
 
     # 이미지/옵션 (JSON)
     images: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    coupang_main_image: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     detail_images: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
     video_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     options: Optional[List[Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))

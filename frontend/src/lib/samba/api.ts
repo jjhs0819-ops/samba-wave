@@ -238,6 +238,7 @@ export interface SambaCollectedProduct {
   sale_price: number;
   cost?: number;
   images?: string[];
+  coupang_main_image?: string;
   options?: unknown[];
   category?: string;
   category1?: string;
