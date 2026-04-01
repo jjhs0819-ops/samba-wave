@@ -809,7 +809,7 @@ async def sync_returns_from_markets(
             logger.warning("[반품동기화][진단] 롯데ON 교환 레코드 없음 (type=exchange AND market ILIKE '%롯데%')")
 
         # 1단계: 연결된 원주문 shipping_status를 교환 상태에서 반품요청으로 수정
-        # reason이 NULL이거나 3으로 시작하는 경우 모두 처리 (보수적으로 확장)
+        # reason이 NULL이거나 2xx/3xx(반품 사유코드)인 경우 처리
         await session.execute(_sa_text("""
             UPDATE samba_order o
             SET shipping_status = '반품요청'
@@ -817,7 +817,7 @@ async def sync_returns_from_markets(
             WHERE r.order_id = o.id
               AND r.type = 'exchange'
               AND r.market ILIKE '%롯데%'
-              AND (r.reason ~ '^3[0-9]+' OR r.reason IS NULL OR r.reason = '301' OR r.reason = '302' OR r.reason = '303')
+              AND (r.reason ~ '^[23][0-9]+' OR r.reason IS NULL)
               AND o.shipping_status IN (
                   '교환요청', '교환회수완료', '교환재배송', '교환완료'
               )
@@ -829,7 +829,7 @@ async def sync_returns_from_markets(
                 market_order_status = '반품요청'
             WHERE type = 'exchange'
               AND market ILIKE '%롯데%'
-              AND (reason ~ '^3[0-9]+' OR reason IS NULL OR reason IN ('301', '302', '303'))
+              AND (reason ~ '^[23][0-9]+' OR reason IS NULL)
             RETURNING id, order_id, reason
         """))
         repaired_rows = result_repair.fetchall()
