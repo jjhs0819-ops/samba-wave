@@ -1012,6 +1012,12 @@ async def sync_orders_from_markets(
                         update_fields["product_id"] = order_data["product_id"]
                     if order_data.get("shipping_status"):
                         update_fields["shipping_status"] = order_data["shipping_status"]
+                    # 내부 status도 갱신 (취소/반품 등 상태 변화 반영)
+                    if (
+                        order_data.get("status")
+                        and order_data["status"] != existing.status
+                    ):
+                        update_fields["status"] = order_data["status"]
                     # 정산금액(revenue) / 수수료율 갱신
                     new_revenue = order_data.get("revenue")
                     new_fee_rate = order_data.get("fee_rate")
