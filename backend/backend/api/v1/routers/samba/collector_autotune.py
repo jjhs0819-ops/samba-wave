@@ -188,6 +188,9 @@ async def _autotune_loop():
                             _CP.applied_policy_id != None,
                             # sale_status 기준 품절 제외
                             _CP.sale_status != "sold_out",
+                            # site_product_id 없는 상품 제외 (소싱처 조회 불가)
+                            _CP.site_product_id != None,
+                            _CP.site_product_id != "",
                         )
                         .order_by(
                             priority_order, _CP.last_refreshed_at.asc().nullsfirst()
@@ -651,31 +654,58 @@ async def _autotune_loop():
                                     except Exception:
                                         pass
 
-                        # 사이클 완료 로그
+                        # 사이클 완료 로그 — 에러 유형별 분류
                         _err_count = sum(1 for r in results if r.error)
                         _ok_count = len(results) - _err_count
+                        _no_pid_count = sum(
+                            1
+                            for r in results
+                            if r.error and "site_product_id" in r.error
+                        )
+                        _blocked_count = sum(
+                            1 for r in results if r.error and "차단" in r.error
+                        )
                         _timeout_count = sum(
-                            1 for r in results if r.error and "Timeout" in r.error
+                            1
+                            for r in results
+                            if r.error
+                            and ("타임아웃" in r.error or "Timeout" in r.error)
+                        )
+                        _other_err = (
+                            _err_count - _no_pid_count - _blocked_count - _timeout_count
                         )
                         _now = datetime.now(timezone.utc)
                         _kst = _now + timedelta(hours=9)
+                        # 에러 상세 문자열 구성
+                        _err_parts = []
+                        if _no_pid_count:
+                            _err_parts.append(f"ID없음 {_no_pid_count:,}")
+                        if _blocked_count:
+                            _err_parts.append(f"차단 {_blocked_count:,}")
+                        if _timeout_count:
+                            _err_parts.append(f"타임아웃 {_timeout_count:,}")
+                        if _other_err > 0:
+                            _err_parts.append(f"기타 {_other_err:,}")
+                        _err_detail = (
+                            f" ({', '.join(_err_parts)})" if _err_parts else ""
+                        )
                         _ref_mod._refresh_log_buffer.append(
                             {
                                 "ts": _now.isoformat(),
                                 "site": "MUSINSA",
                                 "product_id": "",
                                 "name": "",
-                                "msg": f"[{_kst.strftime('%H:%M:%S')}] -- 사이클 완료: {_ok_count:,}건 성공, {_err_count:,}건 실패 (타임아웃 {_timeout_count:,}건) / 총 {len(results):,}건, 가격전송 {len(_all_price_pids):,}건, 재고전송 {len(_all_stock_pids):,}건, 삭제 {deleted_count:,}건 --",
+                                "msg": f"[{_kst.strftime('%H:%M:%S')}] -- 사이클 완료: {_ok_count:,}건 성공, {_err_count:,}건 실패{_err_detail} / 총 {len(results):,}건, 가격전송 {len(_all_price_pids):,}건, 재고전송 {len(_all_stock_pids):,}건, 삭제 {deleted_count:,}건 --",
                                 "level": "info",
                                 "source": "autotune",
                             }
                         )
                         _ref_mod._refresh_log_total += 1
                         log.info(
-                            "[오토튠] 사이클 완료: %d성공, %d실패 (타임아웃 %d) / %d건",
+                            "[오토튠] 사이클 완료: %d성공, %d실패%s / %d건",
                             _ok_count,
                             _err_count,
-                            _timeout_count,
+                            _err_detail,
                             len(results),
                         )
 
@@ -693,13 +723,16 @@ async def _autotune_loop():
                                 await monitor.emit(
                                     "scheduler_tick",
                                     "info",
-                                    summary=f"오토튠 — 대상 {filtered_count:,}건, 갱신 {summary.refreshed:,}건 (성공 {_ok_count:,}, 실패 {_err_count:,}) | {_duration_sec:,}초, {_rate:,}건/초",
+                                    summary=f"오토튠 — 대상 {filtered_count:,}건, 갱신 {summary.refreshed:,}건 (성공 {_ok_count:,}, 실패 {_err_count:,}{_err_detail}) | {_duration_sec:,}초, {_rate:,}건/초",
                                     detail={
                                         "total": filtered_count,
                                         "refreshed": summary.refreshed,
                                         "ok": _ok_count,
                                         "errors": _err_count,
+                                        "no_pid": _no_pid_count,
+                                        "blocked": _blocked_count,
                                         "timeouts": _timeout_count,
+                                        "other_errors": _other_err,
                                         "started_at": now.isoformat(),
                                         "ended_at": _ended.isoformat(),
                                         "duration_sec": _duration_sec,
