@@ -717,7 +717,7 @@ export default function CollectorPage() {
     if (tagRegFilter) {
       result = result.filter((f) => {
         const r = f as unknown as Record<string, number>
-        const cnt = r.ai_tagged_count ?? 0
+        const cnt = r.tag_applied_count ?? 0
         const total = r.collected_count ?? 0
         if (tagRegFilter === 'registered') return cnt > 0 && cnt >= total
         if (tagRegFilter === 'partial') return cnt > 0 && cnt < total
@@ -1535,7 +1535,7 @@ export default function CollectorPage() {
           if (tagRegFilter) {
             allLeafInfos = allLeafInfos.filter(l => {
               const r = l as unknown as Record<string, number>
-              const cnt = r.ai_tagged_count ?? 0
+              const cnt = r.tag_applied_count ?? 0
               const total = r.collected_count ?? 0
               if (tagRegFilter === 'registered') return cnt > 0 && cnt >= total
               if (tagRegFilter === 'partial') return cnt > 0 && cnt < total

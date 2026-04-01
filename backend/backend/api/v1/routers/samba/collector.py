@@ -403,7 +403,8 @@ async def get_filter_tree(session: AsyncSession = Depends(get_read_session_depen
 
     leaf_ids = [f.id for f in all_filters if not f.is_folder]
     count_map: dict[str, int] = {}
-    tag_count_map: dict[str, int] = {}
+    ai_tag_map: dict[str, int] = {}
+    tag_applied_map: dict[str, int] = {}
     if leaf_ids:
         from sqlalchemy import case, and_, cast, String, literal
 
@@ -419,6 +420,18 @@ async def get_filter_tree(session: AsyncSession = Depends(get_read_session_depen
                         )
                     )
                 ).label("ai_tagged"),
+                _func.count(
+                    case(
+                        (
+                            and_(
+                                _CP.tags != None,
+                                _func.length(cast(_CP.tags, String)) > 20,
+                                ~cast(_CP.tags, String).like("%[]%"),
+                            ),
+                            literal(1),
+                        )
+                    )
+                ).label("tag_applied"),
             )
             .where(_CP.search_filter_id.in_(leaf_ids))
             .group_by(_CP.search_filter_id)
@@ -426,13 +439,17 @@ async def get_filter_tree(session: AsyncSession = Depends(get_read_session_depen
         count_result = await session.execute(count_stmt)
         for row in count_result.all():
             count_map[row[0]] = row[1]
-            tag_count_map[row[0]] = row[2]
+            ai_tag_map[row[0]] = row[2]
+            tag_applied_map[row[0]] = row[3]
 
     filter_data = []
     for f in all_filters:
         data = {c.key: getattr(f, c.key) for c in f.__table__.columns}
         data["collected_count"] = count_map.get(f.id, 0) if not f.is_folder else 0
-        data["ai_tagged_count"] = tag_count_map.get(f.id, 0) if not f.is_folder else 0
+        data["ai_tagged_count"] = ai_tag_map.get(f.id, 0) if not f.is_folder else 0
+        data["tag_applied_count"] = (
+            tag_applied_map.get(f.id, 0) if not f.is_folder else 0
+        )
         filter_data.append(data)
 
     # 트리 빌드: parent_id 기반 + 고아 노드 source_site별 자동 그룹핑
