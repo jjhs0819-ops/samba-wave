@@ -279,22 +279,15 @@ async def _autotune_loop():
                         _all_stock_pids: set[str] = set()
                         _session_lock = asyncio.Lock()
 
-                        def _log_transmit(site, pid, msg, level="info"):
-                            """전송 결과 로그를 즉시 버퍼에 추가."""
-                            _kst_now = (
-                                datetime.now(timezone.utc) + timedelta(hours=9)
-                            ).strftime("%H:%M:%S")
-                            _ref_mod._refresh_log_buffer.append(
-                                {
-                                    "ts": datetime.now(timezone.utc).isoformat(),
-                                    "site": site,
-                                    "product_id": pid,
-                                    "name": "",
-                                    "msg": f"[{_kst_now}]   -> {msg}",
-                                    "level": level,
-                                    "source": "autotune",
-                                }
-                            )
+                        def _log_line(site, pid, msg, level="info"):
+                            """오토튠 통합 로그 (한 줄)."""
+                            _kst_now = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%H:%M:%S")
+                            _ref_mod._refresh_log_buffer.append({
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                                "site": site, "product_id": pid, "name": "",
+                                "msg": f"[{_kst_now}] {msg}",
+                                "level": level, "source": "autotune",
+                            })
                             _ref_mod._refresh_log_total += 1
 
                         async def _on_result(product, r, idx=0, total=0):
@@ -316,17 +309,22 @@ async def _autotune_loop():
                                     if _site_pid
                                     else _prod_name
                                 )
-                                _idx_prefix = (
-                                    f"[{idx}/{total}] " if idx and total else ""
-                                )
-                                # 마켓상품번호 조합
-                                _m_nos = product.market_product_nos or {}
-                                _m_no_parts = [str(v) for v in _m_nos.values() if v]
-                                _m_no_label = (
-                                    f" → {','.join(_m_no_parts[:2])}"
-                                    if _m_no_parts
-                                    else ""
-                                )
+                                _idx_prefix = f"[{idx}/{total}] " if idx and total else ""
+
+                                # 원가 표시용
+                                _cur_cost = r.new_cost if r.new_cost is not None else (product.cost or product.sale_price or 0)
+                                _cost_int = int(_cur_cost) if _cur_cost else 0
+                                # 재고변동 건수
+                                _stock_changes = 0
+                                if r.stock_changed and r.new_options:
+                                    _old_opts = product.options or []
+                                    _old_stock_map = {(o.get("name", "") or o.get("size", "")): o.get("stock", 0) for o in _old_opts}
+                                    for _o in r.new_options:
+                                        _k = _o.get("name", "") or _o.get("size", "")
+                                        _os = _old_stock_map.get(_k, 0) or 0
+                                        _ns = _o.get("stock", 0) or 0
+                                        if (_os <= 0) != (_ns <= 0):
+                                            _stock_changes += 1
 
                                 # DB 업데이트 준비
                                 updates: dict = {
@@ -418,10 +416,10 @@ async def _autotune_loop():
                                                 )
                                                 if dr.get("success"):
                                                     deleted_count += 1
-                                                    _log_transmit(
+                                                    _log_line(
                                                         site,
                                                         r.product_id,
-                                                        f"{_idx_prefix}{_prod_label} 품절{_m_no_label} → {_del_label} 마켓삭제 완료",
+                                                        f"{_idx_prefix}{_prod_label}: 품절 → {_del_label} 마켓삭제 완료 [원가 {_cost_int:,}]",
                                                     )
                                                 else:
                                                     log.warning(
@@ -446,120 +444,73 @@ async def _autotune_loop():
                                 await repo.update_async(r.product_id, **updates)
 
                                 # ★ 마켓별 최종 판매가 비교 → 즉시 전송
-                                new_cost = (
-                                    r.new_cost
-                                    if r.new_cost is not None
-                                    else (product.cost or product.sale_price or 0)
-                                )
+                                new_cost = _cur_cost
                                 reg_accounts = product.registered_accounts or []
                                 last_sent = product.last_sent_data or {}
 
                                 if product.applied_policy_id:
                                     if product.applied_policy_id not in _policy_cache:
-                                        _policy_cache[
-                                            product.applied_policy_id
-                                        ] = await policy_repo.get_async(
-                                            product.applied_policy_id
-                                        )
+                                        _policy_cache[product.applied_policy_id] = await policy_repo.get_async(product.applied_policy_id)
                                     policy = _policy_cache[product.applied_policy_id]
                                 else:
                                     policy = None
 
+                                _actions: list[str] = []  # 전송 결과 수집
+                                _has_error = False
+
                                 for acc_id in reg_accounts:
                                     if acc_id not in _account_cache:
-                                        _account_cache[
-                                            acc_id
-                                        ] = await account_repo.get_async(acc_id)
+                                        _account_cache[acc_id] = await account_repo.get_async(acc_id)
                                     acc = _account_cache[acc_id]
                                     if not acc:
                                         continue
-                                    acc_label = (
-                                        f"{acc.market_name}({acc.seller_id or '-'})"
-                                    )
+                                    acc_label = f"{acc.market_name}({acc.seller_id or '-'})"
                                     market_type = acc.market_type or ""
 
                                     if policy and policy.pricing:
-                                        expected_price = calc_market_price(
-                                            new_cost,
-                                            policy.pricing,
-                                            market_type,
-                                            policy.market_policies,
-                                        )
+                                        expected_price = calc_market_price(new_cost, policy.pricing, market_type, policy.market_policies)
                                     else:
                                         expected_price = int(new_cost)
 
                                     acc_last = last_sent.get(acc_id, {})
-                                    last_price = (
-                                        int(acc_last.get("sale_price", 0))
-                                        if acc_last
-                                        else 0
-                                    )
+                                    last_price = int(acc_last.get("sale_price", 0)) if acc_last else 0
 
                                     # 가격 변동 → 즉시 가격 전송
                                     if expected_price != last_price:
                                         price_changed_count += 1
                                         _all_price_pids.add(r.product_id)
                                         try:
-                                            await ship_svc.start_update(
-                                                [r.product_id],
-                                                ["price"],
-                                                [acc_id],
-                                                skip_unchanged=False,
-                                                skip_refresh=True,
-                                            )
+                                            await ship_svc.start_update([r.product_id], ["price"], [acc_id], skip_unchanged=False, skip_refresh=True)
                                             retransmitted += 1
-                                            _log_transmit(
-                                                site,
-                                                r.product_id,
-                                                f"{_idx_prefix}{_prod_label} 가격전송 {last_price:,}→{expected_price:,}{_m_no_label} → {acc_label} 완료",
-                                            )
+                                            _actions.append(f"가격전송 {last_price:,}→{expected_price:,} → {acc_label}")
                                         except Exception as e:
-                                            _log_transmit(
-                                                site,
-                                                r.product_id,
-                                                f"{_idx_prefix}{_prod_label} 가격전송 실패{_m_no_label} → {acc_label}: {str(e)[:50]}",
-                                                "error",
-                                            )
-                                            log.error(
-                                                "[오토튠] 가격전송 실패 (%s, %s): %s",
-                                                r.product_id,
-                                                acc_id,
-                                                e,
-                                            )
+                                            _actions.append(f"가격전송 실패 → {acc_label}: {str(e)[:50]}")
+                                            _has_error = True
+                                            log.error("[오토튠] 가격전송 실패 (%s, %s): %s", r.product_id, acc_id, e)
 
                                     # 재고 변동 → 즉시 재고 전송
                                     if r.stock_changed:
                                         _all_stock_pids.add(r.product_id)
                                         try:
-                                            await ship_svc.start_update(
-                                                [r.product_id],
-                                                ["stock"],
-                                                [acc_id],
-                                                skip_unchanged=False,
-                                                skip_refresh=True,
-                                            )
+                                            await ship_svc.start_update([r.product_id], ["stock"], [acc_id], skip_unchanged=False, skip_refresh=True)
                                             retransmitted += 1
-                                            _log_transmit(
-                                                site,
-                                                r.product_id,
-                                                f"{_idx_prefix}{_prod_label} 재고전송{_m_no_label} → {acc_label} 완료",
-                                            )
+                                            _actions.append(f"재고전송 → {acc_label}")
                                         except Exception as e:
-                                            _log_transmit(
-                                                site,
-                                                r.product_id,
-                                                f"{_idx_prefix}{_prod_label} 재고전송 실패{_m_no_label} → {acc_label}: {str(e)[:50]}",
-                                                "error",
-                                            )
-                                            log.error(
-                                                "[오토튠] 재고전송 실패 (%s, %s): %s",
-                                                r.product_id,
-                                                acc_id,
-                                                e,
-                                            )
+                                            _actions.append(f"재고전송 실패 → {acc_label}: {str(e)[:50]}")
+                                            _has_error = True
+                                            log.error("[오토튠] 재고전송 실패 (%s, %s): %s", r.product_id, acc_id, e)
 
-                                # 연속 무변동 카운터
-                                if r.changed or r.stock_changed:
+                                # 통합 한 줄 로그
+                                _tail = f" [원가 {_cost_int:,}, 재고변동 {_stock_changes}건]"
+                                if _actions:
+                                    _status_str = " | ".join(_actions)
+                                    _log_line(site, r.product_id, f"{_idx_prefix}{_prod_label}: {_status_str}{_tail}", "error" if _has_error else "info")
+                                else:
+                                    _log_line(site, r.product_id, f"{_idx_prefix}{_prod_label}: 스킵{_tail}")
+
+                                # 연속 무변동 카운터 — 마켓 전송 기준
+                                _any_transmitted = len(_actions) > 0
+                                if _any_transmitted or r.stock_changed:
                                     _no_change_count.pop(r.product_id, None)
                                     _skip_remaining.pop(r.product_id, None)
                                 else:

@@ -668,41 +668,7 @@ def _process_musinsa_detail(
         else f"{_brand} {_name}"
     )
     _prod_label = _prod_label.strip()
-    _status_parts = []
-    if changed:
-        _status_parts.append("가격전송")
-    if _stock_changes > 0:
-        _status_parts.append("재고전송")
-    _status = "/".join(_status_parts) if _status_parts else "스킵"
-    # 마켓상품번호 + 계정 정보 조합
-    _market_info = ""
-    _reg_accounts = getattr(product, "registered_accounts", None) or []
-    _market_nos = getattr(product, "market_product_nos", None) or {}
-    if _reg_accounts and _market_nos:
-        _parts = []
-        for _acc_id in _reg_accounts:
-            _mno = _market_nos.get(_acc_id, "")
-            if _mno:
-                _parts.append(str(_mno))
-        if _parts:
-            _market_info = f" → {','.join(_parts)}"
-    try:
-        _cost_display = int(old_cost) if old_cost is not None else int(old_sale)
-        _new_cost_display = (
-            int(new_cost) if new_cost is not None else int(new_sale_price)
-        )
-    except (ValueError, TypeError):
-        _cost_display = 0
-        _new_cost_display = 0
-    _ip_tag = "[P]" if _proxy else ""
-    _log_refresh(
-        "MUSINSA",
-        product.id,
-        _prod_label,
-        f"{_status}{_market_info}{_ip_tag} [원가 {int(old_sale):,}>{int(new_sale_price):,}, 판매가 {_cost_display:,}>{_new_cost_display:,}, 재고변동 {_stock_changes}건]",
-        idx=_idx,
-        total=_total,
-    )
+    # 로그는 콜백(_on_result)에서 통합 출력 — refresher에서는 생략
 
     # 이미지/소재/색상 (빈 값이 아닌 경우만 업데이트)
     new_images = detail.get("images") or None
