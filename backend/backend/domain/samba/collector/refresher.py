@@ -996,7 +996,11 @@ async def refresh_products_bulk(
                             _rb = getattr(p, "brand", "") or ""
                             _rn = getattr(p, "name", "") or ""
                             _rs = getattr(p, "site_product_id", "") or ""
-                            _rl = f"{_rb} {_rn} ({_rs})".strip() if _rs else f"{_rb} {_rn}".strip()
+                            _rl = (
+                                f"{_rb} {_rn} ({_rs})".strip()
+                                if _rs
+                                else f"{_rb} {_rn}".strip()
+                            )
                             _log_refresh(
                                 site,
                                 getattr(p, "id", "unknown"),
