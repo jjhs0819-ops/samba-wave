@@ -109,7 +109,8 @@ def clear_account_semaphores():
 
 def _get_account_semaphore(account_id: str) -> asyncio.Semaphore:
     if account_id not in _account_semaphores:
-        _account_semaphores[account_id] = asyncio.Semaphore(1)
+        # 2: 오토튠(1) + 수동전송(1) 동시 허용
+        _account_semaphores[account_id] = asyncio.Semaphore(2)
     return _account_semaphores[account_id]
 
 
@@ -1271,10 +1272,10 @@ class SambaShipmentService:
                 # 마켓 API 호출 (계정별 세마포어 — 30초 타임아웃)
                 account_sem = _get_account_semaphore(account_id)
                 try:
-                    await asyncio.wait_for(account_sem.acquire(), timeout=30)
+                    await asyncio.wait_for(account_sem.acquire(), timeout=120)
                 except asyncio.TimeoutError:
-                    res["error"] = f"계정 사용 중 (30초 타임아웃, {market_type})"
-                    logger.warning(f"[전송] 계정 {account_id} 세마포어 30초 타임아웃")
+                    res["error"] = f"계정 사용 중 (120초 타임아웃, {market_type})"
+                    logger.warning(f"[전송] 계정 {account_id} 세마포어 120초 타임아웃")
                     return res
                 try:
                     logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
