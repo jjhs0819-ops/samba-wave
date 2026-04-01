@@ -1249,11 +1249,20 @@ class LotteonClient:
     return result
 
   async def get_returns(self, days: int = 7) -> list[dict]:
-    """최근 N일 반품 클레임 조회 (getCancellationRequestAndComplateList, clmTpCd=RETN).
+    """최근 N일 반품 클레임 조회.
 
-    응답: data[].itemList[] 중첩 구조 → odNo/clmNo 포함 flat list로 변환.
+    1차: getCancellationRequestAndComplateList(clmTpCd=RETN)
+    2차: getCancellationRequestAndComplateList(clmTpCd=EXCH)에서 clmRsnCd=300번대 건 보완 수집.
+
+    롯데ON API 버그 대응: 반품 사유코드(300번대) 클레임이 EXCH API에는 나타나지만
+    RETN API에는 누락되는 경우가 있어 EXCH API에서도 보완 수집한다.
+    get_exchanges()에서는 이 건들을 이미 제외하므로 중복 처리 없음.
     """
     start_dt, end_dt = self._datetime_range(days)
+    result: list[dict] = []
+    seen_keys: set[str] = set()
+
+    # 1차: RETN API
     data = await self._call_api(
       "POST",
       "/v1/openapi/claim/v1/cancellationOpenApi/getCancellationRequestAndComplateList",
@@ -1266,14 +1275,51 @@ class LotteonClient:
     raw_list = data.get("data") or []
     if not isinstance(raw_list, list):
       raw_list = []
-    result = []
     for claim in raw_list:
       od_no = claim.get("odNo", "")
       clm_no = claim.get("clmNo", "")
       for item in (claim.get("itemList") or []):
         item["odNo"] = od_no
         item["clmNo"] = clm_no
+        key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
+        seen_keys.add(key)
         result.append(item)
+
+    # 2차: EXCH API에서 clmRsnCd=300번대(반품 사유코드) 건 보완 수집
+    # (롯데ON API 버그: 반품 사유 클레임이 EXCH 타입으로 잘못 분류되는 케이스 대응)
+    try:
+      data2 = await self._call_api(
+        "POST",
+        "/v1/openapi/claim/v1/cancellationOpenApi/getCancellationRequestAndComplateList",
+        body={
+          "srchStrtDttm": start_dt,
+          "srchEndDttm": end_dt,
+          "clmTpCd": "EXCH",
+        },
+      )
+      raw_list2 = data2.get("data") or []
+      if not isinstance(raw_list2, list):
+        raw_list2 = []
+      for claim in raw_list2:
+        od_no = claim.get("odNo", "")
+        clm_no = claim.get("clmNo", "")
+        for item in (claim.get("itemList") or []):
+          clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
+          if not clm_rsn_cd.startswith("3"):
+            continue  # 반품 사유코드(300번대)만 보완 대상
+          item["odNo"] = od_no
+          item["clmNo"] = clm_no
+          key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
+          if key not in seen_keys:
+            seen_keys.add(key)
+            logger.warning(
+              f"[롯데ON][반품보완] EXCH API 반품 사유코드({clm_rsn_cd}) → 반품으로 재수집: "
+              f"odNo={od_no} clmNo={clm_no}"
+            )
+            result.append(item)
+    except Exception as e:
+      logger.warning(f"[롯데ON][get_returns] EXCH API 반품 보완 조회 실패 (무시): {e}")
+
     return result
 
   async def get_exchanges(self, days: int = 7) -> list[dict]:
