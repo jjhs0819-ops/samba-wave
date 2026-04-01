@@ -240,7 +240,10 @@ class JobWorker:
                     # 잡 상태를 failed로 갱신
                     try:
                         async with get_write_session() as timeout_session:
-                            from backend.domain.samba.job.repository import SambaJobRepository
+                            from backend.domain.samba.job.repository import (
+                                SambaJobRepository,
+                            )
+
                             timeout_repo = SambaJobRepository(timeout_session)
                             await timeout_repo.fail_job(_job_id, "수집 타임아웃 (10분)")
                             await timeout_session.commit()
@@ -279,7 +282,9 @@ class JobWorker:
                         await repo.fail_job(_job_id, str(e))
                         await session.commit()
                     except Exception as fail_exc:
-                        logger.error(f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {_job_id} — {fail_exc}")
+                        logger.error(
+                            f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {_job_id} — {fail_exc}"
+                        )
         finally:
             self._active_types.discard(_job_type)
             # 프론트 폴링이 로그를 읽을 시간 확보 후 삭제 (60초)
@@ -310,7 +315,9 @@ class JobWorker:
                         await repo.fail_job(job_id, str(e))
                         await session.commit()
                     except Exception as fail_exc:
-                        logger.error(f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {job_id} — {fail_exc}")
+                        logger.error(
+                            f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {job_id} — {fail_exc}"
+                        )
         except Exception as e:
             logger.error(f"[잡워커] 수집 세션 에러: {job_id} — {e}")
 
@@ -341,7 +348,9 @@ class JobWorker:
                         await repo.fail_job(job_id, str(e))
                         await session.commit()
                     except Exception as fail_exc:
-                        logger.error(f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {job_id} — {fail_exc}")
+                        logger.error(
+                            f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {job_id} — {fail_exc}"
+                        )
         except Exception as e:
             logger.error(f"[잡워커] 전송 세션 에러: {job_id} — {e}")
 
