@@ -109,8 +109,7 @@ def clear_account_semaphores():
 
 def _get_account_semaphore(account_id: str) -> asyncio.Semaphore:
     if account_id not in _account_semaphores:
-        # 2: 오토튠(1) + 수동전송(1) 동시 허용
-        _account_semaphores[account_id] = asyncio.Semaphore(2)
+        _account_semaphores[account_id] = asyncio.Semaphore(1)
     return _account_semaphores[account_id]
 
 
