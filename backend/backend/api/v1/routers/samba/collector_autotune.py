@@ -297,7 +297,7 @@ async def _autotune_loop():
                             )
                             _ref_mod._refresh_log_total += 1
 
-                        async def _on_result(product, r):
+                        async def _on_result(product, r, idx=0, total=0):
                             """리프레시 직후 호출 — DB 업데이트 + 즉시 마켓 전송."""
                             nonlocal retransmitted, deleted_count, price_changed_count
 
@@ -309,15 +309,18 @@ async def _autotune_loop():
                                     return
 
                                 site = product.source_site or "UNKNOWN"
-                                _brand = (product.brand or "")[:10]
                                 _prod_name = (product.name or "")[:30]
                                 _site_pid = product.site_product_id or ""
-                                _name_part = f"{_brand} {_prod_name}".strip()
                                 _prod_label = (
-                                    f"{_name_part} ({_site_pid})"
+                                    f"{_prod_name} ({_site_pid})"
                                     if _site_pid
-                                    else _name_part
+                                    else _prod_name
                                 )
+                                _idx_prefix = f"[{idx}/{total}] " if idx and total else ""
+                                # 마켓상품번호 조합
+                                _m_nos = product.market_product_nos or {}
+                                _m_no_parts = [str(v) for v in _m_nos.values() if v]
+                                _m_no_label = f" → {','.join(_m_no_parts[:2])}" if _m_no_parts else ""
 
                                 # DB 업데이트 준비
                                 updates: dict = {
@@ -412,7 +415,7 @@ async def _autotune_loop():
                                                     _log_transmit(
                                                         site,
                                                         r.product_id,
-                                                        f"{_prod_label} 품절 → {_del_label} 마켓삭제 완료",
+                                                        f"{_idx_prefix}{_prod_label} 품절{_m_no_label} → {_del_label} 마켓삭제 완료",
                                                     )
                                                 else:
                                                     log.warning(
@@ -502,13 +505,13 @@ async def _autotune_loop():
                                             _log_transmit(
                                                 site,
                                                 r.product_id,
-                                                f"{_prod_label} 가격전송 {last_price:,}→{expected_price:,} → {acc_label} 완료",
+                                                f"{_idx_prefix}{_prod_label} 가격전송 {last_price:,}→{expected_price:,}{_m_no_label} → {acc_label} 완료",
                                             )
                                         except Exception as e:
                                             _log_transmit(
                                                 site,
                                                 r.product_id,
-                                                f"{_prod_label} 가격전송 실패 → {acc_label}: {str(e)[:50]}",
+                                                f"{_idx_prefix}{_prod_label} 가격전송 실패{_m_no_label} → {acc_label}: {str(e)[:50]}",
                                                 "error",
                                             )
                                             log.error(
@@ -533,13 +536,13 @@ async def _autotune_loop():
                                             _log_transmit(
                                                 site,
                                                 r.product_id,
-                                                f"{_prod_label} 재고전송 → {acc_label} 완료",
+                                                f"{_idx_prefix}{_prod_label} 재고전송{_m_no_label} → {acc_label} 완료",
                                             )
                                         except Exception as e:
                                             _log_transmit(
                                                 site,
                                                 r.product_id,
-                                                f"{_prod_label} 재고전송 실패 → {acc_label}: {str(e)[:50]}",
+                                                f"{_idx_prefix}{_prod_label} 재고전송 실패{_m_no_label} → {acc_label}: {str(e)[:50]}",
                                                 "error",
                                             )
                                             log.error(

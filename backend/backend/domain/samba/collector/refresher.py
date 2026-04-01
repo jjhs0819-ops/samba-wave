@@ -1040,7 +1040,7 @@ async def refresh_products_bulk(
                 # 콜백 호출 (리프레시 직후 즉시 전송 등)
                 if on_result and not r.error:
                     try:
-                        await on_result(p, r)
+                        await on_result(p, r, _idx, _site_total)
                     except Exception as cb_err:
                         logger.warning("[오토튠] on_result 콜백 오류: %s", cb_err)
                 # 소싱처별 적응형 인터벌 (기본값은 소싱처별 base_interval)
