@@ -278,7 +278,6 @@ async def _autotune_loop():
                         _all_price_pids: set[str] = set()
                         _all_stock_pids: set[str] = set()
                         _session_lock = asyncio.Lock()
-                        _pending_transmits: list[asyncio.Task] = []
 
                         async def _fire_transmit(pid, items, acc_id, label):
                             """별도 세션으로 마켓 전송 (fire-and-forget)."""
@@ -606,11 +605,9 @@ async def _autotune_loop():
                                         _skip_remaining[r.product_id] = SKIP_CYCLES
                                         _no_change_count[r.product_id] = 0
 
-                            # lock 밖: fire-and-forget 전송 (별도 세션)
+                            # lock 밖: fire-and-forget 전송 (별도 세션, 완료 대기 안 함)
                             for _tx_args in _transmit_queue:
-                                _pending_transmits.append(
-                                    asyncio.create_task(_fire_transmit(*_tx_args))
-                                )
+                                asyncio.create_task(_fire_transmit(*_tx_args))
 
                         # DB 세션 복구 — 갱신 전 연결 확인
                         try:
@@ -628,13 +625,6 @@ async def _autotune_loop():
                         results, summary = await refresh_products_bulk(
                             products, max_concurrency=2, on_result=_on_result
                         )
-
-                        # 대기 중인 전송 태스크 완료 대기
-                        if _pending_transmits:
-                            await asyncio.gather(
-                                *_pending_transmits, return_exceptions=True
-                            )
-                            _pending_transmits.clear()
 
                         # 에러 결과 후처리 (콜백에서 처리 안 된 에러 건)
                         for r in results:
