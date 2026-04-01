@@ -188,9 +188,6 @@ async def _autotune_loop():
                             _CP.applied_policy_id != None,
                             # sale_status 기준 품절 제외
                             _CP.sale_status != "sold_out",
-                            # site_product_id 없는 상품 제외 (소싱처 조회 불가)
-                            _CP.site_product_id != None,
-                            _CP.site_product_id != "",
                         )
                         .order_by(
                             priority_order, _CP.last_refreshed_at.asc().nullsfirst()
