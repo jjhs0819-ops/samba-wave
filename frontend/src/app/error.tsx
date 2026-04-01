@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,7 +43,7 @@ export default function Error({ error, reset }: ErrorProps) {
               다시 시도
             </Button>
             <Button variant="outline" asChild className="w-full">
-              <a href="/">홈으로 돌아가기</a>
+              <Link href="/">홈으로 돌아가기</Link>
             </Button>
           </div>
         </CardContent>

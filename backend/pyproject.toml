@@ -92,6 +92,9 @@ exclude_lines = [
     "raise NotImplementedError",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"alembic/env.py" = ["E402"]
+
 [dependency-groups]
 dev = [
     "alembic>=1.17.0",
