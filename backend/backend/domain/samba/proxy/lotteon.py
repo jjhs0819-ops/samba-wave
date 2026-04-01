@@ -1312,6 +1312,40 @@ class LotteonClient:
     except Exception as e:
       logger.warning(f"[롯데ON][get_returns] EXCH API 반품 보완 조회 실패 (무시): {e}")
 
+    # 3차: exchangeSearch API에서 clmRsnCd=300번대 건 보완 수집
+    # (롯데ON API 버그: 반품 사유 클레임이 exchangeSearch에 포함되는 케이스 대응)
+    try:
+      data3 = await self._call_api(
+        "POST",
+        "/v1/openapi/claim/v1/exchangeOpenApi/exchangeSearch",
+        body={
+          "srchStrtDttm": start_dt,
+          "srchEndDttm": end_dt,
+        },
+      )
+      raw_list3 = data3.get("data") or []
+      if not isinstance(raw_list3, list):
+        raw_list3 = []
+      for claim in raw_list3:
+        od_no = claim.get("odNo", "")
+        clm_no = claim.get("clmNo", "")
+        for item in (claim.get("itemList") or []):
+          clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
+          if not clm_rsn_cd.startswith("3"):
+            continue  # 반품 사유코드(300번대)만 보완 대상
+          item["odNo"] = od_no
+          item["clmNo"] = clm_no
+          key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
+          if key not in seen_keys:
+            seen_keys.add(key)
+            logger.warning(
+              f"[롯데ON][반품보완-exchangeSearch] 반품 사유코드({clm_rsn_cd}) → 반품으로 재수집: "
+              f"odNo={od_no} clmNo={clm_no}"
+            )
+            result.append(item)
+    except Exception as e:
+      logger.warning(f"[롯데ON][get_returns] exchangeSearch 반품 보완 조회 실패 (무시): {e}")
+
     return result
 
   async def get_exchanges(self, days: int = 7) -> list[dict]:
@@ -1346,9 +1380,17 @@ class LotteonClient:
           item["clmNo"] = clm_no
           step_cd = str(item.get("odPrgsStepCd", "") or "")
           dv_rtrv = item.get("dvRtrvDvsCd", "")
+          clm_rsn_cd_es = str(item.get("clmRsnCd", "") or "")
+          # 반품 사유 코드(300번대)가 exchangeSearch에 잘못 포함된 경우 제외
+          if clm_rsn_cd_es.startswith("3"):
+            logger.warning(
+              f"[롯데ON][교환-exchangeSearch] 반품 사유코드({clm_rsn_cd_es}) 교환 목록에서 제외: "
+              f"odNo={od_no} clmNo={clm_no}"
+            )
+            continue
           logger.info(
             f"[롯데ON][교환-exchangeSearch] odNo={od_no} clmNo={clm_no} stepCd={step_cd} "
-            f"dvRtrvDvsCd={dv_rtrv} clmRsnCd={item.get('clmRsnCd','')}"
+            f"dvRtrvDvsCd={dv_rtrv} clmRsnCd={clm_rsn_cd_es}"
           )
           key = f"{od_no}_{clm_no}_{item.get('odSeq','')}"
           if key not in seen_clm_keys:
