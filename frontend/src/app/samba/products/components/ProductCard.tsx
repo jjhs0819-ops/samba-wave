@@ -1315,7 +1315,7 @@ const ProductCard = React.memo(function ProductCard({
                           const rm = registeredMarkets.find(r => r.marketId === marketKey)
                           const mappedCat = productCatMapping[marketKey] || ''
                           return (<>
-                            {rm && (
+                            {rm && (<>
                               <button
                                 onClick={() => window.open(rm.url, '_blank')}
                                 style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
@@ -1323,7 +1323,17 @@ const ProductCard = React.memo(function ProductCard({
                                 onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
                                 title={`${rm.label} 구매페이지`}
                               >구매페이지</button>
-                            )}
+                              {(() => {
+                                const sentAt = p.last_sent_data?.[rm.accId]?.sent_at
+                                if (!sentAt) return null
+                                const d = new Date(sentAt)
+                                const mm = String(d.getMonth() + 1).padStart(2, '0')
+                                const dd = String(d.getDate()).padStart(2, '0')
+                                const hh = String(d.getHours()).padStart(2, '0')
+                                const mi = String(d.getMinutes()).padStart(2, '0')
+                                return <span style={{ fontSize: '0.6rem', color: '#666', whiteSpace: 'nowrap' }}>{mm}-{dd} {hh}:{mi}</span>
+                              })()}
+                            </>)}
                             {mappedCat ? (
                               <span style={{ fontSize: '0.68rem', color: '#888', background: 'rgba(255,255,255,0.04)', padding: '1px 6px', borderRadius: '3px', border: '1px solid #2D2D2D' }}>{mappedCat}</span>
                             ) : (
