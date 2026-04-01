@@ -604,7 +604,8 @@ async def sync_returns_from_markets(
                     parsed = _parse_lotteon_return(item, "return")
                     parsed["sitmNo"] = item.get("sitmNo", "")
                     claims_data_lo.append(parsed)
-                logger.info(f"[롯데ON] 반품 API 조회된 odNo 목록: {[c['order_number'] for c in claims_data_lo]}")
+                _lo_od_nos = [c['order_number'] for c in claims_data_lo]
+                logger.warning(f"[롯데ON] 반품 API 조회된 odNo 목록({len(_lo_od_nos)}건): {_lo_od_nos}")
 
                 synced = 0
                 for claim in claims_data_lo:
@@ -622,7 +623,7 @@ async def sync_returns_from_markets(
                         continue
 
                     order_id = existing_order.id
-                    logger.info(f"[롯데ON] 반품 주문 매칭 성공: {order_number} → DB order_id={order_id}")
+                    logger.warning(f"[롯데ON] 반품 주문 매칭 성공: {order_number} → DB order_id={order_id}")
                     existing_returns = await svc.repo.filter_by_async(order_id=order_id)
                     if existing_returns:
                         # 기존 레코드에 누락/오류 필드 보충
@@ -643,7 +644,9 @@ async def sync_returns_from_markets(
                             patch_lo["type"] = correct_type
                         if patch_lo:
                             await svc.repo.update_async(er.id, **patch_lo)
-                            logger.info(f"[롯데ON] 반품 레코드 업데이트: {order_number} type={correct_type} patch={list(patch_lo.keys())}")
+                            logger.warning(f"[롯데ON] 반품 레코드 패치: {order_number} type={correct_type} patch={list(patch_lo.keys())} er.type={er.type} er.market_order_status={er.market_order_status}")
+                        else:
+                            logger.warning(f"[롯데ON] 반품 레코드 패치 불필요: {order_number} er.type={er.type} er.market_order_status={er.market_order_status}")
                         # 원주문 shipping_status 동기화 (교환/반품 진행 중이면 주문 페이지에서 제외)
                         new_order_ss = "교환요청" if correct_type == "exchange" else "반품요청"
                         if existing_order.shipping_status != new_order_ss:
