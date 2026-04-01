@@ -711,15 +711,15 @@ class LotteonPlugin(MarketPlugin):
     if account:
       extras = getattr(account, "additional_fields", None) or {}
 
-    # Settings 폴백 (계정에 출고지/배송비정책/회수지 없을 때)
-    if not extras.get("owhpNo"):
-      from backend.domain.samba.forbidden.model import SambaSettings
-      from sqlmodel import select
-      stmt = select(SambaSettings).where(SambaSettings.key == "store_lotteon")
-      result = await session.execute(stmt)
-      row = result.scalars().first()
-      if row and isinstance(row.value, dict):
-        extras = {**row.value, **extras}
+    # 글로벌 설정을 항상 base로 읽고, 계정 설정으로 오버라이드
+    # (owhpNo 유무와 무관하게 shippingType 등 발송 설정도 반영되어야 함)
+    from backend.domain.samba.forbidden.model import SambaSettings
+    from sqlmodel import select
+    stmt = select(SambaSettings).where(SambaSettings.key == "store_lotteon")
+    result = await session.execute(stmt)
+    row = result.scalars().first()
+    if row and isinstance(row.value, dict):
+      extras = {**row.value, **extras}
 
     product_copy["owhp_no"] = extras.get("owhpNo", "")
     product_copy["dv_cst_pol_no"] = extras.get("dvCstPolNo", "")
@@ -742,11 +742,7 @@ class LotteonPlugin(MarketPlugin):
       product_copy["_jeju_fee"] = int(extras["jejuFee"])
     if extras.get("stockQuantity"):
       product_copy["_stock_quantity"] = int(extras["stockQuantity"])
-    # 발송 설정 주입
-    if extras.get("shippingType"):
-      product_copy["_shipping_type"] = extras["shippingType"]
-    if extras.get("orderCutoffHour") is not None and str(extras["orderCutoffHour"]).strip():
-      product_copy["_order_cutoff_hour"] = int(extras["orderCutoffHour"])
+    # 발송완료일 주입
     if extras.get("dispatchDays"):
       product_copy["_dispatch_days"] = int(extras["dispatchDays"])
 
@@ -859,6 +855,13 @@ class LotteonPlugin(MarketPlugin):
       product_copy["_scat_attr_lst"] = scat_attr_lst
       logger.info(f"[롯데ON] scatAttrLst 생성: {len(scat_attr_lst)}개 — {[a['optVal'] for a in scat_attr_lst]}")
 
+    logger.info(
+      f"[롯데ON] 발송 설정 진단 — "
+      f"_shipping_type={product_copy.get('_shipping_type')!r} "
+      f"_dispatch_days={product_copy.get('_dispatch_days')!r} "
+      f"_order_cutoff_hour={product_copy.get('_order_cutoff_hour')!r} "
+      f"extras.shippingType={extras.get('shippingType')!r}"
+    )
     data = LotteonClient.transform_product(
       product_copy, category_id, client.tr_grp_cd or "SR", client.tr_no, disp_cat_id
     )
@@ -897,7 +900,13 @@ class LotteonPlugin(MarketPlugin):
           # 상품 헤더(이름/이미지/카테고리/가격)만 업데이트하고 itmLst는 제거
           data["spdLst"][0].pop("itmLst", None)
           data["spdLst"][0].pop("sitmYn", None)
-        logger.info(f"[롯데ON] 수정 모드 — 기존 spdNo={existing_no!r}")
+        _spd0 = data["spdLst"][0] if data.get("spdLst") else {}
+        logger.info(
+          f"[롯데ON] 수정 모드 — 기존 spdNo={existing_no!r} "
+          f"dvRsvDvsCd={_spd0.get('dvRsvDvsCd')!r} "
+          f"sndBgtNday={_spd0.get('sndBgtNday')!r} "
+          f"ordCutHh={_spd0.get('ordCutHh')!r}"
+        )
         # impDvsCd fallback: 직수입 불허 카테고리 대응 (등록과 동일 전략)
         _upd_imp_fallbacks = [
           ("DRC_IMP", "OVRS"),

@@ -963,16 +963,8 @@ class LotteonClient:
       "impDvsCd": "DRC_IMP",   # 공식수입 (직수입)
       "dvProcTypCd": "LO_ENTP",
       "dvPdTypCd": "GNRL",
-      "dvRsvDvsCd": product.get("_shipping_type", "GNRL_DV"),
+      "dvRsvDvsCd": "GNRL_DV",
       "sndBgtNday": product.get("_dispatch_days", 2),
-      **(
-        {
-          "ordCutHh": str(product.get("_order_cutoff_hour", 11)).zfill(2),
-          "ordCutMm": "00",
-        }
-        if product.get("_shipping_type") == "TODAY_DV"
-        else {}
-      ),
       "dvMnsCd": "DPCL",
       "cmbnDvPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
       "cmbnRtngPsbYn": product.get("cmbn_dv_psb_yn", "Y"),

@@ -166,10 +166,6 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'bundleDelivery', label: '묶음배송', type: 'select', options: [
       { value: 'N', label: '불가능' }, { value: 'Y', label: '가능' },
     ]},
-    { name: 'shippingType', label: '발송유형', type: 'select', options: [
-      { value: 'GNRL_DV', label: '일반발송' }, { value: 'TODAY_DV', label: '오늘발송' },
-    ]},
-    { name: 'orderCutoffHour', label: '주문마감시간(시, 0~23)', type: 'number', placeholder: '11 (기본값)' },
     { name: 'dispatchDays', label: '발송완료 N일 이내', type: 'select', options: [
       { value: '1', label: '1일' }, { value: '2', label: '2일' }, { value: '3', label: '3일' },
     ]},
