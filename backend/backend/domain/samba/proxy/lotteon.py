@@ -1297,7 +1297,7 @@ class LotteonClient:
         clm_no = claim.get("clmNo", "")
         for item in (claim.get("itemList") or []):
           clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
-          if not clm_rsn_cd.startswith("3"):
+          if not clm_rsn_cd.startswith(("2", "3")):
             continue  # 반품 사유코드(300번대)만 보완 대상
           item["odNo"] = od_no
           item["clmNo"] = clm_no
@@ -1331,7 +1331,7 @@ class LotteonClient:
         clm_no = claim.get("clmNo", "")
         for item in (claim.get("itemList") or []):
           clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
-          if not clm_rsn_cd.startswith("3"):
+          if not clm_rsn_cd.startswith(("2", "3")):
             continue  # 반품 사유코드(300번대)만 보완 대상
           item["odNo"] = od_no
           item["clmNo"] = clm_no
@@ -1382,7 +1382,7 @@ class LotteonClient:
           dv_rtrv = item.get("dvRtrvDvsCd", "")
           clm_rsn_cd_es = str(item.get("clmRsnCd", "") or "")
           # 반품 사유 코드(300번대)가 exchangeSearch에 잘못 포함된 경우 제외
-          if clm_rsn_cd_es.startswith("3"):
+          if clm_rsn_cd_es.startswith(("2", "3")):
             logger.warning(
               f"[롯데ON][교환-exchangeSearch] 반품 사유코드({clm_rsn_cd_es}) 교환 목록에서 제외: "
               f"odNo={od_no} clmNo={clm_no}"
@@ -1422,7 +1422,7 @@ class LotteonClient:
           step_cd = str(item.get("odPrgsStepCd", "") or "")
           clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
           # 반품 사유 코드(300번대)가 교환 API에 잘못 포함된 경우 제외
-          if clm_rsn_cd.startswith("3"):
+          if clm_rsn_cd.startswith(("2", "3")):
             logger.warning(
               f"[롯데ON][교환-EXCH] 반품 사유코드({clm_rsn_cd}) 교환 목록에서 제외: "
               f"odNo={od_no} clmNo={clm_no}"
