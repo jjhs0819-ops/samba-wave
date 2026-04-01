@@ -360,8 +360,12 @@ class JobWorker:
             SambaShipmentService,
             is_cancel_requested,
             clear_cancel_transmit,
+            clear_account_semaphores,
         )
         from backend.domain.samba.shipment.repository import SambaShipmentRepository
+
+        # 이전 전송의 잔류 세마포어/상품 락 강제 해제
+        clear_account_semaphores()
         from backend.domain.samba.emergency import clear_emergency_stop
 
         # 이전 취소/비상정지 잔존 플래그 해제 (새 전송은 항상 정상 시작)

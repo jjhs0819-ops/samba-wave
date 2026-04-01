@@ -53,6 +53,48 @@ async def create_job(
                     f"{source_site} 수집이 이미 진행 중입니다 (Job: {running.id}). 완료 후 다시 시도해주세요.",
                 )
 
+    # 전송 잡: 최근 실패/취소 잡이 있으면 이어하기 (current 위치부터 재개)
+    if body.job_type == "transmit":
+        from backend.domain.samba.job.model import SambaJob
+        from sqlmodel import select, col
+
+        prev = (
+            (
+                await session.execute(
+                    select(SambaJob)
+                    .where(
+                        SambaJob.job_type == "transmit",
+                        col(SambaJob.status).in_(["failed", "cancelled"]),
+                        SambaJob.total > 0,
+                        SambaJob.current > 0,
+                    )
+                    .order_by(SambaJob.created_at.desc())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if (
+            prev
+            and prev.payload
+            and prev.payload.get("product_ids") == body.payload.get("product_ids")
+        ):
+            # 같은 상품 목록 → 기존 잡을 pending으로 리셋하여 이어하기
+            prev.status = "pending"
+            prev.started_at = None
+            prev.error = None
+            prev.completed_at = None
+            # current는 유지 → 워커가 이어서 처리
+            session.add(prev)
+            await session.commit()
+            return {
+                "id": prev.id,
+                "status": "pending",
+                "job_type": "transmit",
+                "resumed_from": prev.current,
+            }
+
     job = await svc.create_job(
         {
             "job_type": body.job_type,
