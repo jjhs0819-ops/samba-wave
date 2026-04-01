@@ -316,11 +316,17 @@ async def _autotune_loop():
                                     if _site_pid
                                     else _prod_name
                                 )
-                                _idx_prefix = f"[{idx}/{total}] " if idx and total else ""
+                                _idx_prefix = (
+                                    f"[{idx}/{total}] " if idx and total else ""
+                                )
                                 # 마켓상품번호 조합
                                 _m_nos = product.market_product_nos or {}
                                 _m_no_parts = [str(v) for v in _m_nos.values() if v]
-                                _m_no_label = f" → {','.join(_m_no_parts[:2])}" if _m_no_parts else ""
+                                _m_no_label = (
+                                    f" → {','.join(_m_no_parts[:2])}"
+                                    if _m_no_parts
+                                    else ""
+                                )
 
                                 # DB 업데이트 준비
                                 updates: dict = {
