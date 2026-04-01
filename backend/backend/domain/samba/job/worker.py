@@ -357,26 +357,19 @@ class JobWorker:
             await repo.fail_job(job.id, "product_ids 없음")
             return
 
-        svc = SambaShipmentService(SambaShipmentRepository(session), session)
-        total = len(product_ids)
-        await repo.update_progress(job.id, 0, total)
-
-        # 상품명 조회 캐시
         from backend.domain.samba.collector.repository import (
             SambaCollectedProductRepository,
         )
+        from backend.domain.samba.account.repository import SambaMarketAccountRepository
+        from backend.db.orm import get_write_session
 
-        cp_repo = SambaCollectedProductRepository(session)
+        total = len(product_ids)
+        await repo.update_progress(job.id, 0, total)
 
         results = []
         success_count = 0
         fail_count = 0
         failed_pids: list[str] = []  # 재시도 대상
-
-        # 계정명 조회용
-        from backend.domain.samba.account.repository import SambaMarketAccountRepository
-
-        acc_repo = SambaMarketAccountRepository(session)
 
         # 상품별 전송 루프 (이어하기: 이전 진행 위치부터 재개)
         start_from = job.current or 0
@@ -400,100 +393,108 @@ class JobWorker:
                 )
                 await repo.fail_job(job.id, f"{reason}: {i}건 완료, {cancelled}건 중단")
                 return
-            prod = await cp_repo.get_async(pid)
-            site_pid = prod.site_product_id if prod else ""
-            # 등록상품명 조합: [브랜드] 상품명 스타일코드
-            _brand = (prod.brand or "") if prod else ""
-            _style = (prod.style_code or "") if prod else ""
-            _raw_name = (prod.name or "") if prod else pid[-8:]
-            prod_name = f"{_brand} {_raw_name}".strip()[:35]
-            if _style:
-                prod_name = f"{prod_name} {_style}"
-            if site_pid:
-                prod_name = f"{prod_name} ({site_pid})"
+
+            # 건별 독립 세션 — greenlet_spawn 방지 (세션 상태 누적 차단)
             try:
-                result = await svc.start_update(
-                    [pid],
-                    update_items,
-                    target_account_ids,
-                    skip_unchanged=skip_unchanged,
-                )
-                results_list = result.get("results", [])
-                r = results_list[0] if results_list else {}
-                status = r.get("status", "unknown")
-                tx_result = r.get("transmit_result", {})
-                tx_error = r.get("transmit_error", {})
-                any_success = False
-                for acc_id, acc_status in tx_result.items():
-                    acc = await acc_repo.get_async(acc_id)
-                    acc_label = (
-                        f"{acc.market_name}({acc.seller_id or acc.business_name or '-'})"
-                        if acc
-                        else acc_id
+                async with get_write_session() as item_session:
+                    cp_repo = SambaCollectedProductRepository(item_session)
+                    acc_repo = SambaMarketAccountRepository(item_session)
+                    prod = await cp_repo.get_async(pid)
+                    site_pid = prod.site_product_id if prod else ""
+                    _brand = (prod.brand or "") if prod else ""
+                    _style = (prod.style_code or "") if prod else ""
+                    _raw_name = (prod.name or "") if prod else pid[-8:]
+                    prod_name = f"{_brand} {_raw_name}".strip()[:35]
+                    if _style:
+                        prod_name = f"{prod_name} {_style}"
+                    if site_pid:
+                        prod_name = f"{prod_name} ({site_pid})"
+
+                    item_svc = SambaShipmentService(
+                        SambaShipmentRepository(item_session), item_session
                     )
-                    pno = r.get("product_nos", {}).get(acc_id, "")
-                    ur = r.get("update_result", {})
-                    rl = (
-                        f" [{ur.get('refresh', '')}]"
-                        if isinstance(ur, dict) and ur.get("refresh")
-                        else ""
+                    result = await item_svc.start_update(
+                        [pid],
+                        update_items,
+                        target_account_ids,
+                        skip_unchanged=skip_unchanged,
                     )
-                    if acc_status == "success":
-                        any_success = True
-                        success_count += 1
-                        _add_job_log(
-                            job.id,
-                            f"[{i + 1}/{total}] {prod_name} → {acc_label}: 전송{rl}",
+                    results_list = result.get("results", [])
+                    r = results_list[0] if results_list else {}
+                    status = r.get("status", "unknown")
+                    tx_result = r.get("transmit_result", {})
+                    tx_error = r.get("transmit_error", {})
+                    any_success = False
+                    for acc_id, acc_status in tx_result.items():
+                        acc = await acc_repo.get_async(acc_id)
+                        acc_label = (
+                            f"{acc.market_name}({acc.seller_id or acc.business_name or '-'})"
+                            if acc
+                            else acc_id
                         )
-                    elif acc_status == "skipped":
-                        _add_job_log(
-                            job.id,
-                            f"[{i + 1}/{total}] {prod_name} → {acc_label}: 스킵{rl}",
-                        )
-                    else:
-                        fail_count += 1
-                        err = str(tx_error.get(acc_id, "실패"))[:60]
-                        if "<asyncio" in err or "Semaphore" in err:
-                            err = "전송 동시성 오류"
-                        _add_job_log(
-                            job.id,
-                            f"[{i + 1}/{total}] {prod_name} → {acc_label}: {err}",
-                        )
-                if not tx_result:
-                    if status == "skipped":
-                        refresh_info = r.get("update_result", {})
+                        ur = r.get("update_result", {})
                         rl = (
-                            refresh_info.get("refresh", "")
-                            if isinstance(refresh_info, dict)
+                            f" [{ur.get('refresh', '')}]"
+                            if isinstance(ur, dict) and ur.get("refresh")
                             else ""
                         )
-                        _add_job_log(
-                            job.id, f"[{i + 1}/{total}] {prod_name}: 스킵 [{rl}]"
-                        )
-                    elif r.get("error") or tx_error.get("_all"):
-                        fail_count += 1
-                        err_msg = r.get("error") or tx_error.get("_all", "실패")
-                        _add_job_log(
-                            job.id,
-                            f"[{i + 1}/{total}] {prod_name}: {str(err_msg)[:60]}",
-                        )
-                    else:
-                        fail_count += 1
-                        _add_job_log(job.id, f"[{i + 1}/{total}] {prod_name}: 실패")
-                # 1차 실패 → 재시도 대상
-                if not any_success and status not in ("skipped", "completed"):
-                    failed_pids.append(pid)
-                results.append(result)
+                        if acc_status == "success":
+                            any_success = True
+                            success_count += 1
+                            _add_job_log(
+                                job.id,
+                                f"[{i + 1}/{total}] {prod_name} → {acc_label}: 전송{rl}",
+                            )
+                        elif acc_status == "skipped":
+                            _add_job_log(
+                                job.id,
+                                f"[{i + 1}/{total}] {prod_name} → {acc_label}: 스킵{rl}",
+                            )
+                        else:
+                            fail_count += 1
+                            err = str(tx_error.get(acc_id, "실패"))[:60]
+                            if "<asyncio" in err or "Semaphore" in err:
+                                err = "전송 동시성 오류"
+                            _add_job_log(
+                                job.id,
+                                f"[{i + 1}/{total}] {prod_name} → {acc_label}: {err}",
+                            )
+                    if not tx_result:
+                        if status == "skipped":
+                            refresh_info = r.get("update_result", {})
+                            rl = (
+                                refresh_info.get("refresh", "")
+                                if isinstance(refresh_info, dict)
+                                else ""
+                            )
+                            _add_job_log(
+                                job.id, f"[{i + 1}/{total}] {prod_name}: 스킵 [{rl}]"
+                            )
+                        elif r.get("error") or tx_error.get("_all"):
+                            fail_count += 1
+                            err_msg = r.get("error") or tx_error.get("_all", "실패")
+                            _add_job_log(
+                                job.id,
+                                f"[{i + 1}/{total}] {prod_name}: {str(err_msg)[:60]}",
+                            )
+                        else:
+                            fail_count += 1
+                            _add_job_log(job.id, f"[{i + 1}/{total}] {prod_name}: 실패")
+                    # 1차 실패 → 재시도 대상
+                    if not any_success and status not in ("skipped", "completed"):
+                        failed_pids.append(pid)
+                    results.append(result)
+                    await item_session.commit()
             except Exception as e:
                 fail_count += 1
                 _add_job_log(job.id, f"[{i + 1}/{total}] {prod_name}: {e}")
                 results.append({"error": str(e)})
                 failed_pids.append(pid)
+            # 잡 progress는 외부 세션으로 업데이트
             await repo.update_progress(job.id, i + 1, total)
-            # 건별 커밋 — 세션 점유 최소화 + 중간 결과 보존
             await session.commit()
 
-        # 2차 재시도 — 실패 상품만
+        # 2차 재시도 — 실패 상품만 (건별 독립 세션)
         retry_success = 0
         if failed_pids:
             _add_job_log(job.id, f"재시도 시작 — 실패 {len(failed_pids)}건")
@@ -503,39 +504,44 @@ class JobWorker:
 
                 if is_emergency_stopped() or await repo.is_cancelled(job.id):
                     break
-                prod = await cp_repo.get_async(pid)
-                site_pid = prod.site_product_id if prod else ""
-                prod_name = prod.name[:30] if prod and prod.name else pid[-8:]
-                if site_pid:
-                    prod_name = f"{prod_name} ({site_pid})"
                 try:
-                    prev_fail = fail_count
-                    result = await svc.start_update(
-                        [pid],
-                        update_items,
-                        target_account_ids,
-                        skip_unchanged=skip_unchanged,
-                    )
-                    r2 = (result.get("results", []) or [{}])[0]
-                    tx2 = r2.get("transmit_result", {})
-                    any_ok = any(s == "success" for s in tx2.values())
-                    if any_ok:
-                        retry_success += 1
-                        fail_count = prev_fail - 1
-                        _add_job_log(
-                            job.id,
-                            f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: 복구",
+                    async with get_write_session() as retry_session:
+                        retry_cp = SambaCollectedProductRepository(retry_session)
+                        prod = await retry_cp.get_async(pid)
+                        site_pid = prod.site_product_id if prod else ""
+                        prod_name = prod.name[:30] if prod and prod.name else pid[-8:]
+                        if site_pid:
+                            prod_name = f"{prod_name} ({site_pid})"
+                        retry_svc = SambaShipmentService(
+                            SambaShipmentRepository(retry_session), retry_session
                         )
-                    else:
-                        _add_job_log(
-                            job.id,
-                            f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: 재실패",
+                        prev_fail = fail_count
+                        result = await retry_svc.start_update(
+                            [pid],
+                            update_items,
+                            target_account_ids,
+                            skip_unchanged=skip_unchanged,
                         )
+                        r2 = (result.get("results", []) or [{}])[0]
+                        tx2 = r2.get("transmit_result", {})
+                        any_ok = any(s == "success" for s in tx2.values())
+                        if any_ok:
+                            retry_success += 1
+                            fail_count = prev_fail - 1
+                            _add_job_log(
+                                job.id,
+                                f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: 복구",
+                            )
+                        else:
+                            _add_job_log(
+                                job.id,
+                                f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: 재실패",
+                            )
+                        await retry_session.commit()
                 except Exception as e:
                     _add_job_log(
                         job.id, f"[재시도 {ri + 1}/{len(failed_pids)}] {prod_name}: {e}"
                     )
-                await session.commit()
             if retry_success > 0:
                 _add_job_log(
                     job.id, f"재시도 완료 — {retry_success}/{len(failed_pids)}건 복구"
