@@ -785,18 +785,36 @@ async def sync_returns_from_markets(
         logger.warning(f"[반품동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
 
     # 롯데ON API 버그 수정: clmRsnCd=300번대(반품 사유)가 교환으로 잘못 저장된 레코드 일괄 수정
-    # reason 필드에 clmRsnCd가 저장되며, 300번대(3으로 시작)는 반품 사유이므로 type=return으로 교정
     try:
         from sqlalchemy import text as _sa_text
+        # 진단: 실제 저장된 값 확인
+        _diag = await session.execute(_sa_text("""
+            SELECT r.id, r.type, r.market, r.reason, r.market_order_status, o.order_number
+            FROM samba_return r
+            LEFT JOIN samba_order o ON o.id = r.order_id
+            WHERE r.type = 'exchange'
+              AND r.market ILIKE '%롯데%'
+            LIMIT 20
+        """))
+        _diag_rows = _diag.fetchall()
+        if _diag_rows:
+            logger.warning(
+                f"[반품동기화][진단] 롯데ON 교환 레코드 샘플: "
+                + str([(str(r[0])[:8], r[1], repr(r[2]), repr(r[3]), r[4], r[5]) for r in _diag_rows])
+            )
+        else:
+            logger.warning("[반품동기화][진단] 롯데ON 교환 레코드 없음 (type=exchange AND market ILIKE '%롯데%')")
+
         # 1단계: 연결된 원주문 shipping_status를 교환 상태에서 반품요청으로 수정
+        # reason이 NULL이거나 3으로 시작하는 경우 모두 처리 (보수적으로 확장)
         await session.execute(_sa_text("""
             UPDATE samba_order o
             SET shipping_status = '반품요청'
             FROM samba_return r
             WHERE r.order_id = o.id
               AND r.type = 'exchange'
-              AND r.market = '롯데ON'
-              AND r.reason ~ '^3[0-9]+'
+              AND r.market ILIKE '%롯데%'
+              AND (r.reason ~ '^3[0-9]+' OR r.reason IS NULL OR r.reason = '301' OR r.reason = '302' OR r.reason = '303')
               AND o.shipping_status IN (
                   '교환요청', '교환회수완료', '교환재배송', '교환완료'
               )
@@ -807,16 +825,19 @@ async def sync_returns_from_markets(
             SET type = 'return',
                 market_order_status = '반품요청'
             WHERE type = 'exchange'
-              AND market = '롯데ON'
-              AND reason ~ '^3[0-9]+'
-            RETURNING id, order_id
+              AND market ILIKE '%롯데%'
+              AND (reason ~ '^3[0-9]+' OR reason IS NULL OR reason IN ('301', '302', '303'))
+            RETURNING id, order_id, reason
         """))
-        repaired = result_repair.rowcount
+        repaired_rows = result_repair.fetchall()
+        repaired = len(repaired_rows)
         if repaired > 0:
             logger.warning(
                 f"[반품동기화] 롯데ON 교환→반품 재분류 수정: {repaired}건 "
-                f"(clmRsnCd 300번대 오분류 레코드)"
+                f"IDs={[str(r[0])[:8] for r in repaired_rows]}"
             )
+        else:
+            logger.warning("[반품동기화] 롯데ON 교환→반품 재분류 수정 대상 없음")
     except Exception as _repair_err:
         logger.warning(f"[반품동기화] 롯데ON 반품 재분류 수정 실패: {_repair_err}")
 
