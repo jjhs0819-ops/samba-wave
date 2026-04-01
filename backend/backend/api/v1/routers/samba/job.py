@@ -33,24 +33,33 @@ async def create_job(
         if source_site:
             from backend.domain.samba.job.model import SambaJob
             from sqlmodel import select, col
-            running = (await session.execute(
-                select(SambaJob).where(
-                    SambaJob.job_type == "collect",
-                    col(SambaJob.status).in_(["pending", "running"]),
-                    SambaJob.payload["source_site"].as_string() == source_site,
+
+            running = (
+                (
+                    await session.execute(
+                        select(SambaJob).where(
+                            SambaJob.job_type == "collect",
+                            col(SambaJob.status).in_(["pending", "running"]),
+                            SambaJob.payload["source_site"].as_string() == source_site,
+                        )
+                    )
                 )
-            )).scalars().first()
+                .scalars()
+                .first()
+            )
             if running:
                 raise HTTPException(
                     409,
                     f"{source_site} 수집이 이미 진행 중입니다 (Job: {running.id}). 완료 후 다시 시도해주세요.",
                 )
 
-    job = await svc.create_job({
-        "job_type": body.job_type,
-        "payload": body.payload,
-        "tenant_id": body.tenant_id,
-    })
+    job = await svc.create_job(
+        {
+            "job_type": body.job_type,
+            "payload": body.payload,
+            "tenant_id": body.tenant_id,
+        }
+    )
     await session.commit()
     return {"id": job.id, "status": job.status, "job_type": job.job_type}
 
@@ -67,10 +76,16 @@ async def list_jobs(
     jobs = await svc.list_jobs(status=status, skip=skip, limit=limit)
     return [
         {
-            "id": j.id, "job_type": j.job_type, "status": j.status,
-            "progress": j.progress, "current": j.current, "total": j.total,
-            "error": j.error, "created_at": j.created_at,
-            "started_at": j.started_at, "completed_at": j.completed_at,
+            "id": j.id,
+            "job_type": j.job_type,
+            "status": j.status,
+            "progress": j.progress,
+            "current": j.current,
+            "total": j.total,
+            "error": j.error,
+            "created_at": j.created_at,
+            "started_at": j.started_at,
+            "completed_at": j.completed_at,
         }
         for j in jobs
     ]
@@ -89,6 +104,26 @@ async def get_job(
     return job
 
 
+@router.get("/shipment-logs")
+async def get_shipment_log_buffer(
+    since_idx: int = Query(0, ge=0),
+):
+    """전송 로그 링 버퍼 조회 — 창 닫아도 유지."""
+    from backend.domain.samba.job.worker import get_shipment_logs
+
+    logs, current_idx = get_shipment_logs(since_idx)
+    return {"logs": logs, "current_idx": current_idx}
+
+
+@router.post("/shipment-logs/clear")
+async def clear_shipment_log_buffer():
+    """전송 로그 링 버퍼 초기화."""
+    from backend.domain.samba.job.worker import clear_shipment_logs
+
+    clear_shipment_logs()
+    return {"ok": True}
+
+
 @router.get("/{job_id}/logs")
 async def get_job_logs(
     job_id: str,
@@ -96,6 +131,7 @@ async def get_job_logs(
 ):
     """Job 실시간 로그 조회."""
     from backend.domain.samba.job.worker import get_job_logs
+
     return {"logs": get_job_logs(job_id, since)}
 
 
@@ -108,7 +144,9 @@ async def cancel_job(
     repo = SambaJobRepository(session)
     ok = await repo.cancel_job(job_id)
     if not ok:
-        raise HTTPException(400, "취소할 수 없는 상태입니다 (pending/running만 취소 가능)")
+        raise HTTPException(
+            400, "취소할 수 없는 상태입니다 (pending/running만 취소 가능)"
+        )
     await session.commit()
     return {"ok": True}
 
@@ -119,7 +157,7 @@ async def cancel_all_jobs(
 ):
     """대기 중(pending) + 실행 중(running) 잡 전부 취소 — 전송도 즉시 중단."""
     from sqlalchemy import text
-    from backend.domain.samba.emergency import trigger_emergency_stop, clear_emergency_stop
+    from backend.domain.samba.emergency import trigger_emergency_stop
     from backend.domain.samba.shipment.service import request_cancel_transmit
 
     # 1) 인메모리 플래그로 즉시 중단 (진행 중 전송 포함)
@@ -127,15 +165,15 @@ async def cancel_all_jobs(
     trigger_emergency_stop()
 
     # 2) DB 상태 일괄 취소
-    r = await session.execute(text(
-        "UPDATE samba_jobs SET status = 'cancelled', completed_at = now() "
-        "WHERE status IN ('pending', 'running')"
-    ))
+    r = await session.execute(
+        text(
+            "UPDATE samba_jobs SET status = 'cancelled', completed_at = now() "
+            "WHERE status IN ('pending', 'running')"
+        )
+    )
     await session.commit()
 
-    # 3) 비상정지 해제 (다음 작업을 위해)
-    clear_emergency_stop()
-    from backend.domain.samba.shipment.service import clear_cancel_transmit
-    clear_cancel_transmit()
+    # 3) 플래그 즉시 해제하지 않음 — 워커가 감지할 시간 확보
+    # _run_transmit 시작 시 잔존 플래그를 자체 해제하므로 다음 전송에 영향 없음
 
     return {"ok": True, "cancelled": r.rowcount}

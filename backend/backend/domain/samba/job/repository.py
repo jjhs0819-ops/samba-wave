@@ -95,9 +95,16 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         return True
 
     async def is_cancelled(self, job_id: str) -> bool:
-        """잡이 취소 상태인지 확인 (워커에서 건별 체크용)."""
-        job = await self.get_async(job_id)
-        return job.status == "cancelled" if job else True
+        """잡이 취소 상태인지 확인 (워커에서 건별 체크용).
+        Identity Map 우회: ORM select는 캐시된 객체를 반환하므로
+        다른 세션(cancel-all)에서 변경한 status를 감지 못함 → raw SQL 사용."""
+        from sqlalchemy import text
+
+        result = await self.session.execute(
+            text("SELECT status FROM samba_jobs WHERE id = :id"), {"id": job_id}
+        )
+        row = result.first()
+        return row[0] == "cancelled" if row else True
 
     async def recover_stuck_running(self) -> int:
         """재시작 시 stuck된 running 잡을 pending으로 복구."""
@@ -112,7 +119,13 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             await self.session.flush()
         return len(stuck)
 
-    async def list_by_status(self, status: str | None = None, tenant_id: str | None = None, skip: int = 0, limit: int = 50):
+    async def list_by_status(
+        self,
+        status: str | None = None,
+        tenant_id: str | None = None,
+        skip: int = 0,
+        limit: int = 50,
+    ):
         """상태별 잡 목록."""
         stmt = select(SambaJob)
         if status:

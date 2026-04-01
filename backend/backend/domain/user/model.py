@@ -13,6 +13,7 @@ Table Structure:
 
 NOTE: No FK constraints - referential integrity managed at application level.
 """
+
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -73,6 +74,7 @@ class User(SQLModel, table=True):
     - Stores firebase_id for migration reference
     - Phone is unique identifier (normalized without hyphens)
     """
+
     __tablename__ = "user"
 
     id: str = Field(
@@ -156,6 +158,7 @@ class UserProfile(SQLModel, table=True):
 
     Contains job, education, location, and self-description fields.
     """
+
     __tablename__ = "user_profile"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -242,6 +245,7 @@ class UserLifestyle(SQLModel, table=True):
 
     Contains smoking, religion, tattoo, relationship history, etc.
     """
+
     __tablename__ = "user_lifestyle"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -310,6 +314,7 @@ class UserPreference(SQLModel, table=True):
 
     Contains preferred partner characteristics.
     """
+
     __tablename__ = "user_preference"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -388,6 +393,7 @@ class UserDocument(SQLModel, table=True):
 
     Stores ID cards and employment proof with S3 keys (not URLs).
     """
+
     __tablename__ = "user_document"
 
     id: str = Field(
@@ -462,6 +468,7 @@ class UserPhoto(SQLModel, table=True):
 
     Stores photos with S3 keys (not URLs).
     """
+
     __tablename__ = "user_photo"
 
     id: str = Field(
@@ -527,6 +534,7 @@ class UserSubscription(SQLModel, table=True):
     """
     User membership/subscription information (1:1 with User).
     """
+
     __tablename__ = "user_subscription"
 
     id: str = Field(
@@ -605,6 +613,7 @@ class UserAccessAudit(SQLModel, table=True):
 
     Records who accessed what user data and when.
     """
+
     __tablename__ = "user_access_audit"
 
     id: str = Field(

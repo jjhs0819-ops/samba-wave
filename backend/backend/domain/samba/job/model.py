@@ -16,6 +16,7 @@ def generate_job_id() -> str:
 
 class SambaJob(SQLModel, table=True):
     """비동기 작업 큐."""
+
     __tablename__ = "samba_jobs"
 
     id: str = Field(
@@ -30,20 +31,18 @@ class SambaJob(SQLModel, table=True):
     )  # transmit | collect | refresh | ai_tag
     status: str = Field(
         default="pending",
-        sa_column=Column(String(20), nullable=False, index=True, server_default="pending")
+        sa_column=Column(
+            String(20), nullable=False, index=True, server_default="pending"
+        ),
     )  # pending → running → completed | failed
     payload: Optional[dict] = Field(
         default_factory=dict, sa_column=Column(JSON, nullable=True)
     )
-    result: Optional[dict] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
-    )
+    result: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
     progress: int = Field(default=0, sa_column=Column(Integer, default=0))
     total: int = Field(default=0, sa_column=Column(Integer, default=0))
     current: int = Field(default=0, sa_column=Column(Integer, default=0))
-    error: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
+    error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), server_default=text("now()")),

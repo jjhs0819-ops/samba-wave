@@ -6,12 +6,14 @@ Each enum includes:
 - Korean to code mapping for migration
 - Display labels for API responses
 """
+
 from enum import Enum
 from typing import Optional
 
 
 class AuthTypeEnum(str, Enum):
     """Authentication provider type."""
+
     NAVER = "naver"
     KAKAO = "kakao"
     GMAIL = "gmail"
@@ -21,6 +23,7 @@ class AuthTypeEnum(str, Enum):
 
 class GenderEnum(str, Enum):
     """User gender."""
+
     MALE = "male"
     FEMALE = "female"
 
@@ -46,6 +49,7 @@ class GenderEnum(str, Enum):
 
 class SmokingEnum(str, Enum):
     """Smoking status."""
+
     NON_SMOKER = "non_smoker"
     SMOKER = "smoker"
     OCCASIONALLY = "occasionally"
@@ -72,6 +76,7 @@ class SmokingEnum(str, Enum):
 
 class ReligionEnum(str, Enum):
     """Religious affiliation."""
+
     NONE = "none"
     CHRISTIAN = "christian"
     BUDDHIST = "buddhist"
@@ -105,6 +110,7 @@ class ReligionEnum(str, Enum):
 
 class LongDistanceEnum(str, Enum):
     """Long distance relationship preference."""
+
     IMPOSSIBLE = "impossible"
     DEPENDS = "depends"
     POSSIBLE = "possible"
@@ -129,6 +135,7 @@ class LongDistanceEnum(str, Enum):
 
 class TattooEnum(str, Enum):
     """Tattoo status."""
+
     NONE = "none"
     SMALL = "small"
     VISIBLE = "visible"
@@ -158,6 +165,7 @@ class TattooEnum(str, Enum):
 
 class DivorceStatusEnum(str, Enum):
     """Divorce/marriage status."""
+
     NEVER_MARRIED = "never_married"
     DIVORCED = "divorced"
     DIVORCED_WITH_KIDS = "divorced_with_kids"
@@ -187,6 +195,7 @@ class DivorceStatusEnum(str, Enum):
 
 class EducationEnum(str, Enum):
     """Education level."""
+
     HIGH_SCHOOL = "high_school"
     ASSOCIATE_ENROLLED = "associate_enrolled"
     ASSOCIATE_GRADUATED = "associate_graduated"
@@ -244,6 +253,7 @@ class EducationEnum(str, Enum):
 
 class CarOwnershipEnum(str, Enum):
     """Car ownership status."""
+
     YES = "yes"
     NO = "no"
     PLANNING = "planning"
@@ -270,6 +280,7 @@ class CarOwnershipEnum(str, Enum):
 
 class DinkPreferenceEnum(str, Enum):
     """DINK (Double Income No Kids) preference."""
+
     YES = "yes"
     NO = "no"
     UNDECIDED = "undecided"
@@ -298,6 +309,7 @@ class DinkPreferenceEnum(str, Enum):
 
 class UserStatusEnum(str, Enum):
     """User account status."""
+
     DRAFT = "draft"  # Initial registration incomplete
     PENDING_REVIEW = "pending_review"  # Submitted for admin review
     ACTIVE = "active"  # Approved and active
@@ -322,6 +334,7 @@ class UserStatusEnum(str, Enum):
 
 class DocumentTypeEnum(str, Enum):
     """User document type."""
+
     ID_CARD = "id_card"
     EMPLOYMENT_PROOF = "employment_proof"
 
@@ -338,6 +351,7 @@ class DocumentTypeEnum(str, Enum):
 
 class PhotoTypeEnum(str, Enum):
     """User photo type."""
+
     FACE = "face"
     FULL = "full"
 
@@ -352,6 +366,7 @@ class PhotoTypeEnum(str, Enum):
 
 class DocumentVerificationStatusEnum(str, Enum):
     """Document verification status."""
+
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
@@ -359,6 +374,7 @@ class DocumentVerificationStatusEnum(str, Enum):
 
 class SalaryRangeEnum(str, Enum):
     """Salary range tier."""
+
     TIER_1 = "1"  # Lowest tier
     TIER_2 = "2"
     TIER_3 = "3"
@@ -379,6 +395,7 @@ class SalaryRangeEnum(str, Enum):
 
 class MatchCategoryEnum(str, Enum):
     """Match category type."""
+
     INTRO = "intro"
     EXTRA = "extra"
 

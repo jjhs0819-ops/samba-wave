@@ -44,7 +44,7 @@ async def get_reply_templates(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """CS 답변 템플릿 목록 (DB 저장분 + 기본 템플릿 병합)."""
-    from backend.domain.samba.cs_inquiry.service import SambaCSInquiryService, CS_REPLY_TEMPLATES
+    from backend.domain.samba.cs_inquiry.service import CS_REPLY_TEMPLATES
     from backend.domain.samba.forbidden.repository import SambaSettingsRepository
 
     repo = SambaSettingsRepository(session)
@@ -166,7 +166,6 @@ async def reply_cs_inquiry(
     """CS 문의 답변 등록 — DB 저장 + 마켓 전송 통합."""
     import json
     import logging
-    from datetime import datetime, timezone
     from sqlmodel import select
     from backend.domain.samba.forbidden.model import SambaSettings
     from backend.domain.samba.proxy.smartstore import SmartStoreClient
@@ -179,19 +178,31 @@ async def reply_cs_inquiry(
 
     market_sent = False
     market_msg = ""
-    answer_no = inquiry.market_answer_no if inquiry.market_answer_no and inquiry.market_answer_no != "None" else ""
+    answer_no = (
+        inquiry.market_answer_no
+        if inquiry.market_answer_no and inquiry.market_answer_no != "None"
+        else ""
+    )
 
     # 마켓 전송 시도 (market_inquiry_no가 있는 경우)
     if inquiry.market_inquiry_no:
         try:
             if inquiry.market == "스마트스토어":
                 settings_result = await session.execute(
-                    select(SambaSettings).where(SambaSettings.key.like("store_smartstore%"))
+                    select(SambaSettings).where(
+                        SambaSettings.key.like("store_smartstore%")
+                    )
                 )
                 ss_settings = settings_result.scalars().first()
                 if ss_settings:
-                    config = json.loads(ss_settings.value) if isinstance(ss_settings.value, str) else ss_settings.value
-                    client = SmartStoreClient(config["clientId"], config["clientSecret"])
+                    config = (
+                        json.loads(ss_settings.value)
+                        if isinstance(ss_settings.value, str)
+                        else ss_settings.value
+                    )
+                    client = SmartStoreClient(
+                        config["clientId"], config["clientSecret"]
+                    )
                     inq_no = int(inquiry.market_inquiry_no)
 
                     if inquiry.inquiry_type == "product_question":
@@ -201,11 +212,15 @@ async def reply_cs_inquiry(
                     else:
                         if inquiry.market_answer_no:
                             result = await client.update_inquiry_answer(
-                                inq_no, int(inquiry.market_answer_no), body.reply,
+                                inq_no,
+                                int(inquiry.market_answer_no),
+                                body.reply,
                             )
                         else:
                             result = await client.answer_inquiry(inq_no, body.reply)
-                        answer_data = result.get("data", {}) if isinstance(result, dict) else {}
+                        answer_data = (
+                            result.get("data", {}) if isinstance(result, dict) else {}
+                        )
                         new_answer_no = str(answer_data.get("inquiryCommentNo", ""))
                         if new_answer_no:
                             answer_no = new_answer_no
@@ -219,6 +234,7 @@ async def reply_cs_inquiry(
     updated = await svc.reply_inquiry(inquiry_id, body.reply)
     if answer_no and answer_no != (inquiry.market_answer_no or ""):
         from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
+
         repo = SambaCSInquiryRepository(session)
         await repo.update_async(inquiry_id, market_answer_no=answer_no)
 
@@ -243,7 +259,6 @@ async def _find_collected_product_by_market_product_no(
     if not market_product_no:
         return None
     from sqlalchemy import text as sa_text
-    from backend.domain.samba.collector.model import SambaCollectedProduct
 
     # market_product_nos JSON에서 값으로 검색 (PostgreSQL JSON 연산)
     sql = sa_text(
@@ -293,10 +308,14 @@ async def _find_collected_product_by_market_product_no(
     }
 
 
-def _build_market_product_url(market: str, product_no: str, store_slug: str = "") -> str:
+def _build_market_product_url(
+    market: str, product_no: str, store_slug: str = ""
+) -> str:
     """마켓별 상품 판매 페이지 URL 생성. 모든 마켓 공통."""
     urls = {
-        "스마트스토어": f"https://smartstore.naver.com/{store_slug}/products/{product_no}" if store_slug else f"https://search.shopping.naver.com/product/{product_no}",
+        "스마트스토어": f"https://smartstore.naver.com/{store_slug}/products/{product_no}"
+        if store_slug
+        else f"https://search.shopping.naver.com/product/{product_no}",
         "쿠팡": f"https://www.coupang.com/vp/products/{product_no}",
         "11번가": f"https://www.11st.co.kr/products/{product_no}",
         "롯데ON": f"https://www.lotteon.com/product/{product_no}",
@@ -315,7 +334,7 @@ async def sync_cs_from_markets(
 ):
     """마켓에서 CS 문의 동기화 (스마트스토어 고객문의 + 톡톡)."""
     import logging
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
     from sqlmodel import select
     from backend.domain.samba.forbidden.model import SambaSettings
     from backend.domain.samba.proxy.smartstore import SmartStoreClient
@@ -338,7 +357,12 @@ async def sync_cs_from_markets(
     for setting in ss_settings:
         try:
             import json
-            config = json.loads(setting.value) if isinstance(setting.value, str) else setting.value
+
+            config = (
+                json.loads(setting.value)
+                if isinstance(setting.value, str)
+                else setting.value
+            )
             client_id = config.get("clientId", "")
             client_secret = config.get("clientSecret", "")
             account_name = config.get("businessName", "") or config.get("storeId", "")
@@ -351,10 +375,15 @@ async def sync_cs_from_markets(
 
             # 최근 30일 문의 조회 (KST 기준 ISO 8601)
             from zoneinfo import ZoneInfo
+
             kst = ZoneInfo("Asia/Seoul")
             now_kst = datetime.now(kst)
-            end_date = (now_kst + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00.000+09:00")
-            start_date = (now_kst - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00.000+09:00")
+            end_date = (now_kst + timedelta(days=1)).strftime(
+                "%Y-%m-%dT00:00:00.000+09:00"
+            )
+            start_date = (now_kst - timedelta(days=30)).strftime(
+                "%Y-%m-%dT00:00:00.000+09:00"
+            )
 
             result = await client.get_inquiries(
                 from_date=start_date,
@@ -377,7 +406,9 @@ async def sync_cs_from_markets(
                 contents = data
 
             for item in contents:
-                inquiry_no = str(item.get("questionId", item.get("inquiryNo", item.get("id", ""))))
+                inquiry_no = str(
+                    item.get("questionId", item.get("inquiryNo", item.get("id", "")))
+                )
                 if not inquiry_no:
                     continue
 
@@ -401,15 +432,29 @@ async def sync_cs_from_markets(
                 if raw_date:
                     try:
                         from dateutil.parser import parse as parse_dt
+
                         parsed_date = parse_dt(raw_date)
                     except Exception:
                         parsed_date = None
 
                 # 마켓 상품번호로 수집상품 매칭 (스마트스토어: productId)
-                market_product_no = str(item.get("productId", item.get("productNo", item.get("originProductNo", ""))))
-                matched = await _find_collected_product_by_market_product_no(session, market_product_no)
+                market_product_no = str(
+                    item.get(
+                        "productId",
+                        item.get("productNo", item.get("originProductNo", "")),
+                    )
+                )
+                matched = await _find_collected_product_by_market_product_no(
+                    session, market_product_no
+                )
 
-                product_link = _build_market_product_url("스마트스토어", market_product_no, store_slug) if market_product_no else ""
+                product_link = (
+                    _build_market_product_url(
+                        "스마트스토어", market_product_no, store_slug
+                    )
+                    if market_product_no
+                    else ""
+                )
 
                 inquiry_data = {
                     "market": "스마트스토어",
@@ -435,7 +480,9 @@ async def sync_cs_from_markets(
                 await svc.create_inquiry(inquiry_data)
                 synced += 1
 
-            logger.info(f"[CS동기화] 스마트스토어({account_name}) 상품문의: {len(contents)}건 조회, {synced}건 동기화")
+            logger.info(
+                f"[CS동기화] 스마트스토어({account_name}) 상품문의: {len(contents)}건 조회, {synced}건 동기화"
+            )
 
             # ── 고객문의 (구매 후 1:1 문의, /v1/pay-user/inquiries) ──
             try:
@@ -476,7 +523,9 @@ async def sync_cs_from_markets(
                         continue
 
                     # 문의 유형 (category 필드: 배송, 교환/반품 등)
-                    category_raw = item.get("category", item.get("inquiryType", "general"))
+                    category_raw = item.get(
+                        "category", item.get("inquiryType", "general")
+                    )
                     type_map = {
                         "배송": "delivery",
                         "교환/반품": "exchange_return",
@@ -499,29 +548,45 @@ async def sync_cs_from_markets(
                     if raw_date:
                         try:
                             from dateutil.parser import parse as parse_dt
+
                             parsed_date = parse_dt(raw_date)
                         except Exception:
                             parsed_date = None
 
                     mpno = str(item.get("productNo", item.get("productId", "")))
-                    matched = await _find_collected_product_by_market_product_no(session, mpno)
-                    product_link = _build_market_product_url("스마트스토어", mpno, store_slug) if mpno else ""
+                    matched = await _find_collected_product_by_market_product_no(
+                        session, mpno
+                    )
+                    product_link = (
+                        _build_market_product_url("스마트스토어", mpno, store_slug)
+                        if mpno
+                        else ""
+                    )
 
                     inquiry_data = {
                         "market": "스마트스토어",
                         "market_inquiry_no": inq_no,
-                        "market_answer_no": str(item["answerContentId"]) if item.get("answerContentId") else None,
-                        "market_order_id": item.get("orderId", item.get("productOrderIdList", None)),
+                        "market_answer_no": str(item["answerContentId"])
+                        if item.get("answerContentId")
+                        else None,
+                        "market_order_id": item.get(
+                            "orderId", item.get("productOrderIdList", None)
+                        ),
                         "market_product_no": mpno or None,
                         "account_name": account_name,
                         "inquiry_type": mapped_type,
-                        "questioner": item.get("customerId", item.get("customerName", "")),
+                        "questioner": item.get(
+                            "customerId", item.get("customerName", "")
+                        ),
                         "product_name": item.get("productName", ""),
                         "product_image": matched["product_image"] if matched else "",
                         "product_link": product_link,
                         "original_link": matched["original_link"] if matched else "",
                         "collected_product_id": matched["id"] if matched else None,
-                        "content": item.get("inquiryContent", item.get("question", item.get("content", ""))),
+                        "content": item.get(
+                            "inquiryContent",
+                            item.get("question", item.get("content", "")),
+                        ),
                         "reply": reply_content if is_answered else None,
                         "reply_status": "replied" if is_answered else "pending",
                         "inquiry_date": parsed_date,
@@ -531,7 +596,9 @@ async def sync_cs_from_markets(
                     await svc.create_inquiry(inquiry_data)
                     synced += 1
 
-                logger.info(f"[CS동기화] 스마트스토어({account_name}) 구매문의: {len(p_contents)}건 조회")
+                logger.info(
+                    f"[CS동기화] 스마트스토어({account_name}) 구매문의: {len(p_contents)}건 조회"
+                )
             except Exception as e:
                 logger.warning(f"[CS동기화] 스마트스토어 구매문의 조회 실패: {e}")
 
@@ -543,6 +610,7 @@ async def sync_cs_from_markets(
     linked = 0
     try:
         from sqlmodel import select as sel
+
         unlinked = await session.execute(
             sel(SambaCSInquiry).where(
                 SambaCSInquiry.collected_product_id.is_(None),
@@ -551,11 +619,14 @@ async def sync_cs_from_markets(
         unlinked_items = unlinked.scalars().all()
         if unlinked_items:
             from sqlalchemy import text as sa_text
-            cp_result = await session.execute(sa_text(
-                "SELECT id, source_site, site_product_id, images, market_product_nos "
-                "FROM samba_collected_product "
-                "WHERE market_product_nos IS NOT NULL LIMIT 50000"
-            ))
+
+            cp_result = await session.execute(
+                sa_text(
+                    "SELECT id, source_site, site_product_id, images, market_product_nos "
+                    "FROM samba_collected_product "
+                    "WHERE market_product_nos IS NOT NULL LIMIT 50000"
+                )
+            )
             cp_rows = cp_result.fetchall()
 
             # 마켓상품번호 → 수집상품 매핑
@@ -596,13 +667,25 @@ async def sync_cs_from_markets(
                 inq.collected_product_id = pid
                 if not inq.original_link and site in sourcing_urls and spid:
                     inq.original_link = sourcing_urls[site].format(spid)
-                if (not inq.product_image or inq.product_image == "") and imgs and isinstance(imgs, list) and imgs:
+                if (
+                    (not inq.product_image or inq.product_image == "")
+                    and imgs
+                    and isinstance(imgs, list)
+                    and imgs
+                ):
                     inq.product_image = imgs[0]
                 # product_link: market_product_nos에서 마켓 상품번호 추출
-                if not inq.product_link and mpnos and isinstance(mpnos, dict) and inq.market:
+                if (
+                    not inq.product_link
+                    and mpnos
+                    and isinstance(mpnos, dict)
+                    and inq.market
+                ):
                     for mk, mv in mpnos.items():
                         if mv and not mk.endswith("_origin"):
-                            inq.product_link = _build_market_product_url(inq.market, str(mv))
+                            inq.product_link = _build_market_product_url(
+                                inq.market, str(mv)
+                            )
                             break
                 linked += 1
 
@@ -617,7 +700,9 @@ async def sync_cs_from_markets(
         "synced": synced,
         "linked": linked,
         "errors": errors,
-        "message": f"CS 문의 {synced}건 동기화 완료" + (f", {linked}건 상품연결" if linked else "") + (f" (에러 {len(errors)}건)" if errors else ""),
+        "message": f"CS 문의 {synced}건 동기화 완료"
+        + (f", {linked}건 상품연결" if linked else "")
+        + (f" (에러 {len(errors)}건)" if errors else ""),
     }
 
 
@@ -640,7 +725,9 @@ async def send_reply_to_market(
         raise HTTPException(404, "문의를 찾을 수 없습니다")
 
     if not inquiry.market_inquiry_no:
-        raise HTTPException(400, "마켓 문의 번호가 없습니다 (수동 등록 문의는 마켓 전송 불가)")
+        raise HTTPException(
+            400, "마켓 문의 번호가 없습니다 (수동 등록 문의는 마켓 전송 불가)"
+        )
 
     if inquiry.market == "스마트스토어":
         # 스마트스토어 계정 조회
@@ -651,7 +738,11 @@ async def send_reply_to_market(
         if not ss_settings:
             raise HTTPException(400, "스마트스토어 계정 설정이 없습니다")
 
-        config = json.loads(ss_settings.value) if isinstance(ss_settings.value, str) else ss_settings.value
+        config = (
+            json.loads(ss_settings.value)
+            if isinstance(ss_settings.value, str)
+            else ss_settings.value
+        )
         client = SmartStoreClient(config["clientId"], config["clientSecret"])
 
         inquiry_no = int(inquiry.market_inquiry_no)
@@ -664,7 +755,9 @@ async def send_reply_to_market(
             # 고객문의(1:1) → POST /v1/pay-merchant/inquiries/{inquiryNo}/answer
             if inquiry.market_answer_no:
                 result = await client.update_inquiry_answer(
-                    inquiry_no, int(inquiry.market_answer_no), body.reply,
+                    inquiry_no,
+                    int(inquiry.market_answer_no),
+                    body.reply,
                 )
             else:
                 result = await client.answer_inquiry(inquiry_no, body.reply)
@@ -672,6 +765,7 @@ async def send_reply_to_market(
             answer_no = str(answer_data.get("inquiryCommentNo", ""))
 
         from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
+
         repo = SambaCSInquiryRepository(session)
         await repo.update_async(
             inquiry_id,
@@ -681,10 +775,20 @@ async def send_reply_to_market(
             replied_at=datetime.now(timezone.utc),
         )
 
-        msg = "상품문의 답변 전송 완료" if inquiry.inquiry_type == "product_question" else "고객문의 답변 전송 완료"
-        return {"success": True, "message": f"스마트스토어 {msg}", "data": result.get("data") if isinstance(result, dict) else {}}
+        msg = (
+            "상품문의 답변 전송 완료"
+            if inquiry.inquiry_type == "product_question"
+            else "고객문의 답변 전송 완료"
+        )
+        return {
+            "success": True,
+            "message": f"스마트스토어 {msg}",
+            "data": result.get("data") if isinstance(result, dict) else {},
+        }
 
-    raise HTTPException(400, f"'{inquiry.market}' 마켓은 아직 답변 전송을 지원하지 않습니다")
+    raise HTTPException(
+        400, f"'{inquiry.market}' 마켓은 아직 답변 전송을 지원하지 않습니다"
+    )
 
 
 @router.post("/batch-delete")

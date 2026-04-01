@@ -13,7 +13,7 @@ AES256-CBC 토큰 생성, 상품 등록/수정, 기초정보 조회, 프로모�
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Optional
 from urllib.parse import urlencode
 
@@ -59,6 +59,7 @@ class GsShopClient:
         """
         # GS샵은 KST(UTC+9) 기준 시각을 요구
         from zoneinfo import ZoneInfo
+
         now = datetime.now(tz=ZoneInfo("Asia/Seoul"))
         sysdate = now.strftime("%Y%m%d%H%M%S")
         plain_text = sysdate + self.sup_cd
@@ -146,11 +147,7 @@ class GsShopClient:
             if not resp.is_success:
                 raise GsShopApiError(
                     code=resp.status_code,
-                    message=(
-                        data.get("message")
-                        or data.get("msg")
-                        or text[:120]
-                    ),
+                    message=(data.get("message") or data.get("msg") or text[:120]),
                     data=data,
                 )
 
@@ -169,9 +166,7 @@ class GsShopClient:
                 "message": "supCd와 aesKey가 필요합니다.",
             }
         try:
-            result = await self._call_api(
-                "/api/v3/products/getSupMdidList.gs", "GET"
-            )
+            result = await self._call_api("/api/v3/products/getSupMdidList.gs", "GET")
             # GS샵은 HTTP 200이지만 body에 fail 반환할 수 있음
             data = result.get("data", {})
             if isinstance(data, dict) and data.get("result") == "fail":
@@ -223,9 +218,7 @@ class GsShopClient:
             params["fromDtm"] = from_dtm
         if to_dtm:
             params["toDtm"] = to_dtm
-        return await self._call_api(
-            "/SupSendBrandInfo.gs", "GET", params=params
-        )
+        return await self._call_api("/SupSendBrandInfo.gs", "GET", params=params)
 
     async def get_categories(
         self, sect_sts: str = "A", shop_attr_cd: str = ""
@@ -269,17 +262,11 @@ class GsShopClient:
         self, addr_data: dict[str, Any]
     ) -> dict[str, Any]:
         """출고지/반송지 등록."""
-        return await self._call_api(
-            "/api/v3/supAddrReg.gs", "POST", body=addr_data
-        )
+        return await self._call_api("/api/v3/supAddrReg.gs", "POST", body=addr_data)
 
-    async def update_delivery_place(
-        self, addr_data: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def update_delivery_place(self, addr_data: dict[str, Any]) -> dict[str, Any]:
         """출고지/반송지 수정."""
-        return await self._call_api(
-            "/api/v3/supAddrMod.gs", "POST", body=addr_data
-        )
+        return await self._call_api("/api/v3/supAddrMod.gs", "POST", body=addr_data)
 
     async def get_md_list(
         self,
@@ -308,9 +295,7 @@ class GsShopClient:
 
     async def register_goods(self, product_data: dict[str, Any]) -> dict[str, Any]:
         """상품 등록."""
-        return await self._call_api(
-            "/api/v3/products", "POST", body=product_data
-        )
+        return await self._call_api("/api/v3/products", "POST", body=product_data)
 
     async def update_goods_base_info(
         self, sup_prd_cd: str, body_data: dict[str, Any]
@@ -436,9 +421,7 @@ class GsShopClient:
             params["prdNm"] = prd_nm
         if brand_cd:
             params["brandCd"] = brand_cd
-        return await self._call_api(
-            "/api/v3/getPromotionList.gs", "GET", params=params
-        )
+        return await self._call_api("/api/v3/getPromotionList.gs", "GET", params=params)
 
     async def approve_promotion(
         self,

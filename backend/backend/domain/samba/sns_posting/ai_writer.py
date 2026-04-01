@@ -86,9 +86,9 @@ class AiWriter:
 
         try:
             response = await self._client.messages.create(
-                model='claude-sonnet-4-6',
+                model="claude-sonnet-4-6",
                 max_tokens=4000,
-                messages=[{'role': 'user', 'content': prompt}],
+                messages=[{"role": "user", "content": prompt}],
             )
 
             raw_text = response.content[0].text.strip()
@@ -137,9 +137,9 @@ Respond with only the image prompt, nothing else."""
 
         try:
             response = await self._client.messages.create(
-                model='claude-haiku-4-5-20251001',
+                model="claude-haiku-4-5-20251001",
                 max_tokens=200,
-                messages=[{'role': 'user', 'content': prompt}],
+                messages=[{"role": "user", "content": prompt}],
             )
 
             image_prompt = response.content[0].text.strip()
@@ -159,16 +159,16 @@ Respond with only the image prompt, nothing else."""
     @staticmethod
     def _strip_markdown_codeblock(text: str) -> str:
         """마크다운 코드블록(```json ... ```) 감싸기를 제거합니다."""
-        if text.startswith('```'):
+        if text.startswith("```"):
             # 첫 줄(```json 또는 ```) 제거
             lines = text.splitlines()
             # 시작 fence 제거
-            start = 1 if lines and lines[0].startswith('```') else 0
+            start = 1 if lines and lines[0].startswith("```") else 0
             # 끝 fence 제거
             end = len(lines)
-            if lines and lines[-1].strip() == '```':
+            if lines and lines[-1].strip() == "```":
                 end = len(lines) - 1
-            text = '\n'.join(lines[start:end])
+            text = "\n".join(lines[start:end])
         return text.strip()
 
     @staticmethod
@@ -179,17 +179,17 @@ Respond with only the image prompt, nothing else."""
     ) -> dict[str, Any]:
         """AI 생성 실패 시 기본값을 반환합니다."""
         return {
-            'title': issue_title,
-            'content': f'<p>{issue_description}</p>',
-            'tags': [category],
-            'excerpt': issue_description[:150],
-            'category': category,
+            "title": issue_title,
+            "content": f"<p>{issue_description}</p>",
+            "tags": [category],
+            "excerpt": issue_description[:150],
+            "category": category,
         }
 
     @staticmethod
     def _default_image_prompt(category: str) -> str:
         """이미지 프롬프트 생성 실패 시 기본 프롬프트를 반환합니다."""
         return (
-            f'A clean, professional blog cover image related to {category}, '
-            'modern design, soft lighting, high quality photography'
+            f"A clean, professional blog cover image related to {category}, "
+            "modern design, soft lighting, high quality photography"
         )

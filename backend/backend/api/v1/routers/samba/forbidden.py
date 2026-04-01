@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -73,11 +73,13 @@ async def bulk_save_words(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     """기존 타입의 단어를 전부 삭제 후 새 단어 벌크 저장 (단일 트랜잭션)."""
-    from sqlmodel import delete, select
+    from sqlmodel import delete
     from backend.domain.samba.forbidden.model import SambaForbiddenWord
 
     # 해당 타입 전체 삭제 (단일 쿼리)
-    await session.exec(delete(SambaForbiddenWord).where(SambaForbiddenWord.type == body.type))
+    await session.exec(
+        delete(SambaForbiddenWord).where(SambaForbiddenWord.type == body.type)
+    )
 
     # 새 단어 일괄 추가 (중복 제거)
     created = 0
@@ -87,7 +89,9 @@ async def bulk_save_words(
         if not w or w.lower() in seen:
             continue
         seen.add(w.lower())
-        session.add(SambaForbiddenWord(word=w, type=body.type, scope="all", is_active=True))
+        session.add(
+            SambaForbiddenWord(word=w, type=body.type, scope="all", is_active=True)
+        )
         created += 1
 
     await session.commit()
@@ -100,7 +104,9 @@ async def update_word(
     body: WordUpdate,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    result = await _get_service(session).update_word(word_id, body.model_dump(exclude_unset=True))
+    result = await _get_service(session).update_word(
+        word_id, body.model_dump(exclude_unset=True)
+    )
     if not result:
         raise HTTPException(404, "단어를 찾을 수 없습니다")
     return result
@@ -147,6 +153,7 @@ async def clean_product_name(
 
 # ── Settings (generic key-value store) ──
 
+
 @router.get("/settings/{key}")
 async def get_setting(
     key: str,
@@ -173,7 +180,7 @@ async def get_tag_banned_words(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """태그 금지어 통합 조회: 소싱처 + 수집 브랜드 + API 거부 태그."""
-    from sqlmodel import select, func
+    from sqlmodel import select
     from backend.domain.samba.collector.model import SambaCollectedProduct
 
     svc = _get_service(session)
@@ -183,21 +190,51 @@ async def get_tag_banned_words(
     rejected_tags: list[str] = rejected if isinstance(rejected, list) else []
 
     # 2. 수집된 브랜드 (distinct)
-    stmt = select(SambaCollectedProduct.brand).where(
-        SambaCollectedProduct.brand.isnot(None),
-        SambaCollectedProduct.brand != "",
-    ).distinct().limit(500)
+    stmt = (
+        select(SambaCollectedProduct.brand)
+        .where(
+            SambaCollectedProduct.brand.isnot(None),
+            SambaCollectedProduct.brand != "",
+        )
+        .distinct()
+        .limit(500)
+    )
     result = await session.exec(stmt)
     brands = sorted(set(b for b in result.all() if b and len(b.strip()) >= 2))
 
     # 3. 소싱처 (고정)
     source_sites = [
-        "MUSINSA", "무신사", "KREAM", "크림", "ABCmart", "ABC마트",
-        "Nike", "나이키", "Adidas", "아디다스", "올리브영", "OliveYoung",
-        "SSG", "신세계", "롯데온", "LOTTEON", "GSShop", "GS샵",
-        "eBay", "이베이", "Zara", "자라", "FashionPlus", "패션플러스",
-        "GrandStage", "그랜드스테이지", "OKmall", "ElandMall", "이랜드몰",
-        "SSF", "SSF샵",
+        "MUSINSA",
+        "무신사",
+        "KREAM",
+        "크림",
+        "ABCmart",
+        "ABC마트",
+        "Nike",
+        "나이키",
+        "Adidas",
+        "아디다스",
+        "올리브영",
+        "OliveYoung",
+        "SSG",
+        "신세계",
+        "롯데온",
+        "LOTTEON",
+        "GSShop",
+        "GS샵",
+        "eBay",
+        "이베이",
+        "Zara",
+        "자라",
+        "FashionPlus",
+        "패션플러스",
+        "GrandStage",
+        "그랜드스테이지",
+        "OKmall",
+        "ElandMall",
+        "이랜드몰",
+        "SSF",
+        "SSF샵",
     ]
 
     return {

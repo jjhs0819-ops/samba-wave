@@ -52,7 +52,9 @@ class WholesaleService:
         """
         raw_list = await self._crawler.search_products(source, keyword, page=page)
         if not raw_list:
-            logger.info(f"[WholesaleService] 검색 결과 없음 — source={source}, keyword={keyword}")
+            logger.info(
+                f"[WholesaleService] 검색 결과 없음 — source={source}, keyword={keyword}"
+            )
             return []
 
         saved: List[SambaWholesaleProduct] = []

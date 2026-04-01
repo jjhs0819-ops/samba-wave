@@ -18,19 +18,19 @@ class WordPressClient:
 
     def __init__(self, site_url: str, username: str, app_password: str) -> None:
         # 후행 슬래시 제거 후 API 베이스 URL 구성
-        self.site_url = site_url.rstrip('/')
-        self.api_url = f'{self.site_url}/wp-json/wp/v2'
+        self.site_url = site_url.rstrip("/")
+        self.api_url = f"{self.site_url}/wp-json/wp/v2"
 
         # Basic Auth 헤더 — "username:app_password" 를 base64 인코딩
-        credentials = f'{username}:{app_password}'
+        credentials = f"{username}:{app_password}"
         encoded = base64.b64encode(credentials.encode()).decode()
-        self._auth_header = f'Basic {encoded}'
+        self._auth_header = f"Basic {encoded}"
 
         self._client = httpx.AsyncClient(
             timeout=30,
             headers={
-                'Authorization': self._auth_header,
-                'Accept': 'application/json',
+                "Authorization": self._auth_header,
+                "Accept": "application/json",
             },
         )
 
@@ -46,20 +46,22 @@ class WordPressClient:
             실패: {"ok": False, "error": 오류메시지}
         """
         try:
-            resp = await self._client.get(f'{self.site_url}/wp-json')
+            resp = await self._client.get(f"{self.site_url}/wp-json")
             resp.raise_for_status()
             data = resp.json()
             return {
-                'ok': True,
-                'name': data.get('name', ''),
-                'url': data.get('url', self.site_url),
+                "ok": True,
+                "name": data.get("name", ""),
+                "url": data.get("url", self.site_url),
             }
         except httpx.HTTPStatusError as e:
-            logger.warning('WordPress 연결 실패 (HTTP %s): %s', e.response.status_code, e)
-            return {'ok': False, 'error': f'HTTP {e.response.status_code}'}
+            logger.warning(
+                "WordPress 연결 실패 (HTTP %s): %s", e.response.status_code, e
+            )
+            return {"ok": False, "error": f"HTTP {e.response.status_code}"}
         except Exception as e:
-            logger.warning('WordPress 연결 오류: %s', e)
-            return {'ok': False, 'error': str(e)}
+            logger.warning("WordPress 연결 오류: %s", e)
+            return {"ok": False, "error": str(e)}
 
     # ------------------------------------------------------------------
     # 포스트 작성
@@ -69,7 +71,7 @@ class WordPressClient:
         self,
         title: str,
         content: str,
-        status: str = 'publish',
+        status: str = "publish",
         categories: Optional[list[int]] = None,
         tags: Optional[list[str]] = None,
         excerpt: Optional[str] = None,
@@ -95,27 +97,27 @@ class WordPressClient:
             tag_ids = await self._ensure_tags(tags)
 
         payload: dict = {
-            'title': title,
-            'content': content,
-            'status': status,
+            "title": title,
+            "content": content,
+            "status": status,
         }
         if categories:
-            payload['categories'] = categories
+            payload["categories"] = categories
         if tag_ids:
-            payload['tags'] = tag_ids
+            payload["tags"] = tag_ids
         if excerpt is not None:
-            payload['excerpt'] = excerpt
+            payload["excerpt"] = excerpt
         if featured_media is not None:
-            payload['featured_media'] = featured_media
+            payload["featured_media"] = featured_media
 
-        resp = await self._client.post(f'{self.api_url}/posts', json=payload)
+        resp = await self._client.post(f"{self.api_url}/posts", json=payload)
         resp.raise_for_status()
         data = resp.json()
 
         return {
-            'id': data['id'],
-            'link': data.get('link', ''),
-            'status': data.get('status', status),
+            "id": data["id"],
+            "link": data.get("link", ""),
+            "status": data.get("status", status),
         }
 
     # ------------------------------------------------------------------
@@ -133,24 +135,24 @@ class WordPressClient:
         """
         # 기존 카테고리 검색
         resp = await self._client.get(
-            f'{self.api_url}/categories',
-            params={'search': name, 'per_page': 10},
+            f"{self.api_url}/categories",
+            params={"search": name, "per_page": 10},
         )
         resp.raise_for_status()
         results = resp.json()
 
         # 이름이 정확히 일치하는 카테고리 탐색
         for cat in results:
-            if cat.get('name', '').lower() == name.lower():
-                return cat['id']
+            if cat.get("name", "").lower() == name.lower():
+                return cat["id"]
 
         # 없으면 신규 생성
         create_resp = await self._client.post(
-            f'{self.api_url}/categories',
-            json={'name': name},
+            f"{self.api_url}/categories",
+            json={"name": name},
         )
         create_resp.raise_for_status()
-        return create_resp.json()['id']
+        return create_resp.json()["id"]
 
     # ------------------------------------------------------------------
     # 태그 이름 → ID 변환 (내부 헬퍼)
@@ -176,26 +178,26 @@ class WordPressClient:
 
             # 기존 태그 검색
             resp = await self._client.get(
-                f'{self.api_url}/tags',
-                params={'search': name, 'per_page': 10},
+                f"{self.api_url}/tags",
+                params={"search": name, "per_page": 10},
             )
             resp.raise_for_status()
             results = resp.json()
 
             matched_id: Optional[int] = None
             for tag in results:
-                if tag.get('name', '').lower() == name.lower():
-                    matched_id = tag['id']
+                if tag.get("name", "").lower() == name.lower():
+                    matched_id = tag["id"]
                     break
 
             if matched_id is None:
                 # 태그 신규 생성
                 create_resp = await self._client.post(
-                    f'{self.api_url}/tags',
-                    json={'name': name},
+                    f"{self.api_url}/tags",
+                    json={"name": name},
                 )
                 create_resp.raise_for_status()
-                matched_id = create_resp.json()['id']
+                matched_id = create_resp.json()["id"]
 
             tag_ids.append(matched_id)
 
@@ -216,32 +218,34 @@ class WordPressClient:
             업로드된 미디어 ID, 실패 시 None
         """
         # MIME 타입 추론 (단순 확장자 기반)
-        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'jpg'
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
         mime_map: dict[str, str] = {
-            'jpg': 'image/jpeg',
-            'jpeg': 'image/jpeg',
-            'png': 'image/png',
-            'gif': 'image/gif',
-            'webp': 'image/webp',
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "png": "image/png",
+            "gif": "image/gif",
+            "webp": "image/webp",
         }
-        content_type = mime_map.get(ext, 'application/octet-stream')
+        content_type = mime_map.get(ext, "application/octet-stream")
 
         try:
             resp = await self._client.post(
-                f'{self.api_url}/media',
+                f"{self.api_url}/media",
                 content=image_bytes,
                 headers={
-                    'Content-Type': content_type,
-                    'Content-Disposition': f'attachment; filename="{filename}"',
+                    "Content-Type": content_type,
+                    "Content-Disposition": f'attachment; filename="{filename}"',
                 },
             )
             resp.raise_for_status()
-            return resp.json()['id']
+            return resp.json()["id"]
         except httpx.HTTPStatusError as e:
-            logger.warning('미디어 업로드 실패 (HTTP %s): %s', e.response.status_code, e)
+            logger.warning(
+                "미디어 업로드 실패 (HTTP %s): %s", e.response.status_code, e
+            )
             return None
         except Exception as e:
-            logger.warning('미디어 업로드 오류: %s', e)
+            logger.warning("미디어 업로드 오류: %s", e)
             return None
 
     # ------------------------------------------------------------------

@@ -61,9 +61,7 @@ class SambaSnsPostRepository(BaseRepository[SambaSnsPost]):
     def __init__(self, session):
         super().__init__(session, SambaSnsPost)
 
-    async def list_by_status(
-        self, status: str, limit: int = 50
-    ) -> List[SambaSnsPost]:
+    async def list_by_status(self, status: str, limit: int = 50) -> List[SambaSnsPost]:
         """상태별 포스트 목록 조회."""
         return await self.filter_by_async(
             status=status,
@@ -110,9 +108,7 @@ class SambaSnsAutoConfigRepository(BaseRepository[SambaSnsAutoConfig]):
     def __init__(self, session):
         super().__init__(session, SambaSnsAutoConfig)
 
-    async def find_by_site(
-        self, wp_site_id: str
-    ) -> Optional[SambaSnsAutoConfig]:
+    async def find_by_site(self, wp_site_id: str) -> Optional[SambaSnsAutoConfig]:
         """사이트별 자동 포스팅 설정 조회."""
         return await self.find_by_async(wp_site_id=wp_site_id)
 

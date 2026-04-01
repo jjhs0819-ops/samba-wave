@@ -15,9 +15,15 @@ from backend.api.v1.routers.samba.order import router as samba_order_router
 from backend.api.v1.routers.samba.channel import router as samba_channel_router
 from backend.api.v1.routers.samba.policy import router as samba_policy_router
 from backend.api.v1.routers.samba.collector import router as samba_collector_router
-from backend.api.v1.routers.samba.collector_collection import router as samba_collector_collection_router
-from backend.api.v1.routers.samba.collector_refresh import router as samba_collector_refresh_router
-from backend.api.v1.routers.samba.collector_autotune import router as samba_collector_autotune_router
+from backend.api.v1.routers.samba.collector_collection import (
+    router as samba_collector_collection_router,
+)
+from backend.api.v1.routers.samba.collector_refresh import (
+    router as samba_collector_refresh_router,
+)
+from backend.api.v1.routers.samba.collector_autotune import (
+    router as samba_collector_autotune_router,
+)
 from backend.api.v1.routers.samba.category import router as samba_category_router
 from backend.api.v1.routers.samba.account import router as samba_account_router
 from backend.api.v1.routers.samba.shipment import router as samba_shipment_router
@@ -35,7 +41,9 @@ from backend.api.v1.routers.samba.cs_inquiry import router as samba_cs_inquiry_r
 from backend.api.v1.routers.samba.store_care import router as samba_store_care_router
 from backend.api.v1.routers.samba.wholesale import router as samba_wholesale_router
 from backend.api.v1.routers.samba.sns_posting import router as samba_sns_posting_router
-from backend.api.v1.routers.samba.sourcing_account import router as samba_sourcing_account_router
+from backend.api.v1.routers.samba.sourcing_account import (
+    router as samba_sourcing_account_router,
+)
 
 from backend.middleware.error_handler import register_exception_handlers
 
@@ -48,19 +56,24 @@ async def lifespan(app: FastAPI):
 
     # 캐시 서비스 연결 (Redis 또는 인메모리 폴백)
     from backend.domain.samba.cache import cache
+
     await cache.connect()
 
     # 서버 시작 시 좀비 running Job → pending 복구 (배포 중 끊긴 Job 재처리)
     try:
         from backend.db.orm import get_write_session
         from sqlalchemy import text
+
         async with get_write_session() as session:
-            r = await session.execute(text(
-                "UPDATE samba_jobs SET status = 'pending', started_at = NULL, progress_current = 0 "
-                "WHERE status = 'running'"
-            ))
+            r = await session.execute(
+                text(
+                    "UPDATE samba_jobs SET status = 'pending', started_at = NULL, progress_current = 0 "
+                    "WHERE status = 'running'"
+                )
+            )
             if r.rowcount > 0:
                 import logging
+
                 logging.getLogger("backend.startup").info(
                     f"[startup] 좀비 running Job {r.rowcount}건 → pending 복구"
                 )
@@ -71,6 +84,7 @@ async def lifespan(app: FastAPI):
     # 백그라운드 잡 워커 시작 + watchdog (죽으면 자동 재시작)
     from backend.domain.samba.job.worker import JobWorker
     import logging as _logging
+
     _wd_log = _logging.getLogger("backend.watchdog")
     worker = JobWorker()
     worker_task = asyncio.create_task(worker.start())
@@ -82,8 +96,12 @@ async def lifespan(app: FastAPI):
             try:
                 await asyncio.sleep(10)
                 if worker_task.done():
-                    exc = worker_task.exception() if not worker_task.cancelled() else None
-                    _wd_log.error(f"[watchdog] 잡워커 죽음 감지 (exc={exc}) — 3초 후 재시작")
+                    exc = (
+                        worker_task.exception() if not worker_task.cancelled() else None
+                    )
+                    _wd_log.error(
+                        f"[watchdog] 잡워커 죽음 감지 (exc={exc}) — 3초 후 재시작"
+                    )
                     await asyncio.sleep(3)
                     worker = JobWorker()
                     worker_task = asyncio.create_task(worker.start())
@@ -98,6 +116,7 @@ async def lifespan(app: FastAPI):
 
     # 오토튠 자동 시작 (DB에 ON 상태면 자동 실행)
     from backend.api.v1.routers.samba.collector_autotune import auto_start_if_enabled
+
     await auto_start_if_enabled()
 
     # Startup validation
@@ -118,6 +137,7 @@ async def lifespan(app: FastAPI):
     yield
     # Graceful Shutdown — 진행 중인 작업 완료 대기 후 종료
     import logging
+
     _log = logging.getLogger("backend.shutdown")
     _log.info("[shutdown] SIGTERM 수신 — graceful shutdown 시작")
 
@@ -125,11 +145,13 @@ async def lifespan(app: FastAPI):
     try:
         from backend.db.orm import get_write_session
         from sqlalchemy import text
+
         async with get_write_session() as session:
-            r = await session.execute(text(
-                "UPDATE samba_jobs SET status = 'pending' "
-                "WHERE status = 'running'"
-            ))
+            r = await session.execute(
+                text(
+                    "UPDATE samba_jobs SET status = 'pending' WHERE status = 'running'"
+                )
+            )
             if r.rowcount > 0:
                 _log.info(f"[shutdown] running Job {r.rowcount}건 → pending 복구")
             await session.commit()
@@ -142,6 +164,7 @@ async def lifespan(app: FastAPI):
         _autotune_task,
     )
     from backend.domain.samba.collector.refresher import request_bulk_cancel
+
     _autotune_running_event.clear()
     request_bulk_cancel()
     if _autotune_task and not _autotune_task.done():
@@ -211,16 +234,21 @@ def create_application() -> FastAPI:
     app.include_router(samba_sns_posting_router, prefix="/api/v1/samba")
     app.include_router(samba_sourcing_account_router, prefix="/api/v1/samba")
 
-
     # 로컬 이미지 저장 디렉토리 서빙 (R2 미설정 시 사용)
     static_dir = Path(__file__).resolve().parent / "static" / "images"
     static_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/static/images", StaticFiles(directory=str(static_dir)), name="static-images")
+    app.mount(
+        "/static/images", StaticFiles(directory=str(static_dir)), name="static-images"
+    )
 
     # 모델 프리셋 이미지 서빙
     preset_dir = Path(__file__).resolve().parent / "static" / "model_presets"
     preset_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/static/model_presets", StaticFiles(directory=str(preset_dir)), name="static-presets")
+    app.mount(
+        "/static/model_presets",
+        StaticFiles(directory=str(preset_dir)),
+        name="static-presets",
+    )
 
     @app.get("/")
     async def root() -> dict[str, str]:
@@ -232,6 +260,7 @@ def create_application() -> FastAPI:
     @app.get("/api/v1/health")
     async def health() -> dict:
         from backend.domain.samba.job.worker import get_worker_status
+
         return {"status": "healthy", "worker": get_worker_status()}
 
     return app

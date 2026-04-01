@@ -62,7 +62,7 @@ def run_alembic_migrations() -> bool:
         )
 
         if result.returncode != 0:
-            print(f"Alembic migration failed:")
+            print("Alembic migration failed:")
             print(f"stdout: {result.stdout}")
             print(f"stderr: {result.stderr}")
             return False
@@ -108,7 +108,7 @@ def run_alembic_downgrade() -> bool:
         )
 
         if result.returncode != 0:
-            print(f"Alembic downgrade failed:")
+            print("Alembic downgrade failed:")
             print(f"stderr: {result.stderr}")
             return False
 
@@ -132,7 +132,9 @@ async def verify_database_connection() -> bool:
     from sqlalchemy import text
     from sqlmodel.ext.asyncio.session import AsyncSession
 
-    print(f"Connecting to database: {settings.write_db_host}:{settings.write_db_port}/{settings.write_db_name}")
+    print(
+        f"Connecting to database: {settings.write_db_host}:{settings.write_db_port}/{settings.write_db_name}"
+    )
 
     try:
         engine = get_write_engine()

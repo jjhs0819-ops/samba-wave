@@ -6,7 +6,11 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.domain.samba.policy.model import SambaDetailTemplate, SambaNameRule, SambaPolicy
+from backend.domain.samba.policy.model import (
+    SambaDetailTemplate,
+    SambaNameRule,
+    SambaPolicy,
+)
 from backend.domain.samba.policy.repository import SambaPolicyRepository
 from backend.domain.samba.policy.service import SambaPolicyService
 from backend.dtos.samba.policy import PolicyCreate, PolicyUpdate, PriceCalculateRequest
@@ -33,6 +37,7 @@ async def list_policies(
 # ── Detail Templates ──────────────────────────────────────────────────────────
 # 정적 경로를 /{policy_id} 파라미터 경로보다 먼저 등록해야 경로 충돌 방지
 
+
 @router.get("/detail-templates", response_model=list[SambaDetailTemplate])
 async def list_detail_templates(
     skip: int = Query(0, ge=0),
@@ -41,6 +46,7 @@ async def list_detail_templates(
 ):
     """상세페이지 템플릿 목록 조회."""
     from backend.domain.shared.base_repository import BaseRepository
+
     repo = BaseRepository(session, SambaDetailTemplate)
     return await repo.list_async(skip=skip, limit=limit, order_by="-created_at")
 
@@ -52,6 +58,7 @@ async def get_detail_template(
 ):
     """상세페이지 템플릿 단건 조회."""
     from backend.domain.shared.base_repository import BaseRepository
+
     repo = BaseRepository(session, SambaDetailTemplate)
     tpl = await repo.get_async(template_id)
     if not tpl:
@@ -66,6 +73,7 @@ async def create_detail_template(
 ):
     """상세페이지 템플릿 생성."""
     from backend.domain.shared.base_repository import BaseRepository
+
     repo = BaseRepository(session, SambaDetailTemplate)
     return await repo.create_async(**body)
 
@@ -78,6 +86,7 @@ async def update_detail_template(
 ):
     """상세페이지 템플릿 수정."""
     from backend.domain.shared.base_repository import BaseRepository
+
     repo = BaseRepository(session, SambaDetailTemplate)
     tpl = await repo.update_async(template_id, **body)
     if not tpl:
@@ -92,6 +101,7 @@ async def delete_detail_template(
 ):
     """상세페이지 템플릿 삭제."""
     from backend.domain.shared.base_repository import BaseRepository
+
     repo = BaseRepository(session, SambaDetailTemplate)
     deleted = await repo.delete_async(template_id)
     if not deleted:
@@ -101,6 +111,7 @@ async def delete_detail_template(
 
 # ── Name Rules ────────────────────────────────────────────────────────────────
 
+
 @router.get("/name-rules", response_model=list[SambaNameRule])
 async def list_name_rules(
     skip: int = Query(0, ge=0),
@@ -109,6 +120,7 @@ async def list_name_rules(
 ):
     """상품/옵션명 규칙 목록 조회."""
     from backend.domain.shared.base_repository import BaseRepository
+
     repo = BaseRepository(session, SambaNameRule)
     return await repo.list_async(skip=skip, limit=limit, order_by="-created_at")
 
@@ -120,6 +132,7 @@ async def get_name_rule(
 ):
     """상품/옵션명 규칙 단건 조회."""
     from backend.domain.shared.base_repository import BaseRepository
+
     repo = BaseRepository(session, SambaNameRule)
     rule = await repo.get_async(rule_id)
     if not rule:
@@ -134,6 +147,7 @@ async def create_name_rule(
 ):
     """상품/옵션명 규칙 생성."""
     from backend.domain.shared.base_repository import BaseRepository
+
     repo = BaseRepository(session, SambaNameRule)
     return await repo.create_async(**body)
 
@@ -146,6 +160,7 @@ async def update_name_rule(
 ):
     """상품/옵션명 규칙 수정."""
     from backend.domain.shared.base_repository import BaseRepository
+
     repo = BaseRepository(session, SambaNameRule)
     rule = await repo.update_async(rule_id, **body)
     if not rule:
@@ -160,6 +175,7 @@ async def delete_name_rule(
 ):
     """상품/옵션명 규칙 삭제."""
     from backend.domain.shared.base_repository import BaseRepository
+
     repo = BaseRepository(session, SambaNameRule)
     deleted = await repo.delete_async(rule_id)
     if not deleted:
@@ -169,8 +185,10 @@ async def delete_name_rule(
 
 # ── AI 정책 변경 (정적 경로 — /{policy_id} 보다 앞에 등록) ─────────────────────
 
+
 class AiPolicyCommandRequest(BaseModel):
     """AI 정책 일괄 변경 요청 — 자연어 명령."""
+
     command: str
 
 
@@ -181,6 +199,7 @@ async def ai_change_policy(
 ):
     """자연어 명령으로 관련 마켓의 모든 정책을 일괄 변경."""
     from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+
     settings_repo = SambaSettingsRepository(session)
     row = await settings_repo.find_by_async(key="claude")
     api_key = ""
@@ -188,6 +207,7 @@ async def ai_change_policy(
         api_key = row.value.get("apiKey", "")
     if not api_key:
         from backend.core.config import settings as app_settings
+
         api_key = app_settings.anthropic_api_key
     if not api_key:
         raise HTTPException(400, "Claude API Key가 설정되지 않았습니다")
@@ -202,24 +222,30 @@ async def ai_change_policy(
     for p in all_policies:
         mp = p.market_policies or {}
         pr = p.pricing or {}
-        policies_summary.append({
-            "id": p.id,
-            "name": p.name,
-            "pricing": {
-                "marginRate": pr.get("marginRate", 15),
-                "shippingCost": pr.get("shippingCost", 0),
-                "extraCharge": pr.get("extraCharge", 0),
-                "minMarginAmount": pr.get("minMarginAmount", 0),
-            },
-            "market_policies": {
-                mk: {
-                    "marginRate": mv.get("marginRate", 0) if isinstance(mv, dict) else 0,
-                    "feeRate": mv.get("feeRate", 0) if isinstance(mv, dict) else 0,
-                    "shippingCost": mv.get("shippingCost", 0) if isinstance(mv, dict) else 0,
-                }
-                for mk, mv in (mp.items() if isinstance(mp, dict) else [])
-            },
-        })
+        policies_summary.append(
+            {
+                "id": p.id,
+                "name": p.name,
+                "pricing": {
+                    "marginRate": pr.get("marginRate", 15),
+                    "shippingCost": pr.get("shippingCost", 0),
+                    "extraCharge": pr.get("extraCharge", 0),
+                    "minMarginAmount": pr.get("minMarginAmount", 0),
+                },
+                "market_policies": {
+                    mk: {
+                        "marginRate": mv.get("marginRate", 0)
+                        if isinstance(mv, dict)
+                        else 0,
+                        "feeRate": mv.get("feeRate", 0) if isinstance(mv, dict) else 0,
+                        "shippingCost": mv.get("shippingCost", 0)
+                        if isinstance(mv, dict)
+                        else 0,
+                    }
+                    for mk, mv in (mp.items() if isinstance(mp, dict) else [])
+                },
+            }
+        )
 
     prompt = f"""위탁판매 솔루션의 가격정책 관리자입니다.
 사용자의 명령을 분석하여 해당 마켓이 설정된 모든 정책을 일괄 변경해주세요.
@@ -276,6 +302,7 @@ JSON만 응답:
             except anthropic.RateLimitError:
                 if attempt < 2:
                     import asyncio
+
                     await asyncio.sleep(60 * (attempt + 1))
                 else:
                     raise
@@ -318,6 +345,7 @@ JSON만 응답:
 
 
 # ── Policy CRUD (파라미터 경로는 정적 경로 뒤에 등록) ─────────────────────────
+
 
 @router.get("/{policy_id}", response_model=SambaPolicy)
 async def get_policy(

@@ -12,8 +12,19 @@ class EbayPlugin(MarketPlugin):
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         return {}
 
-    async def execute(self, session, product: dict, creds: dict, category_id: str, account, existing_no: str) -> dict[str, Any]:
-        return {"success": False, "message": "eBay API 연동이 아직 구현되지 않았습니다."}
+    async def execute(
+        self,
+        session,
+        product: dict,
+        creds: dict,
+        category_id: str,
+        account,
+        existing_no: str,
+    ) -> dict[str, Any]:
+        return {
+            "success": False,
+            "message": "eBay API 연동이 아직 구현되지 않았습니다.",
+        }
 
 
 class LazadaPlugin(MarketPlugin):
@@ -24,8 +35,19 @@ class LazadaPlugin(MarketPlugin):
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         return {}
 
-    async def execute(self, session, product: dict, creds: dict, category_id: str, account, existing_no: str) -> dict[str, Any]:
-        return {"success": False, "message": "Lazada API 연동이 아직 구현되지 않았습니다."}
+    async def execute(
+        self,
+        session,
+        product: dict,
+        creds: dict,
+        category_id: str,
+        account,
+        existing_no: str,
+    ) -> dict[str, Any]:
+        return {
+            "success": False,
+            "message": "Lazada API 연동이 아직 구현되지 않았습니다.",
+        }
 
 
 class Qoo10Plugin(MarketPlugin):
@@ -36,8 +58,19 @@ class Qoo10Plugin(MarketPlugin):
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         return {}
 
-    async def execute(self, session, product: dict, creds: dict, category_id: str, account, existing_no: str) -> dict[str, Any]:
-        return {"success": False, "message": "Qoo10 API 연동이 아직 구현되지 않았습니다."}
+    async def execute(
+        self,
+        session,
+        product: dict,
+        creds: dict,
+        category_id: str,
+        account,
+        existing_no: str,
+    ) -> dict[str, Any]:
+        return {
+            "success": False,
+            "message": "Qoo10 API 연동이 아직 구현되지 않았습니다.",
+        }
 
 
 class ShopeePlugin(MarketPlugin):
@@ -48,8 +81,19 @@ class ShopeePlugin(MarketPlugin):
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         return {}
 
-    async def execute(self, session, product: dict, creds: dict, category_id: str, account, existing_no: str) -> dict[str, Any]:
-        return {"success": False, "message": "Shopee API 연동이 아직 구현되지 않았습니다."}
+    async def execute(
+        self,
+        session,
+        product: dict,
+        creds: dict,
+        category_id: str,
+        account,
+        existing_no: str,
+    ) -> dict[str, Any]:
+        return {
+            "success": False,
+            "message": "Shopee API 연동이 아직 구현되지 않았습니다.",
+        }
 
 
 class ShopifyPlugin(MarketPlugin):
@@ -60,8 +104,19 @@ class ShopifyPlugin(MarketPlugin):
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         return {}
 
-    async def execute(self, session, product: dict, creds: dict, category_id: str, account, existing_no: str) -> dict[str, Any]:
-        return {"success": False, "message": "Shopify API 연동이 아직 구현되지 않았습니다."}
+    async def execute(
+        self,
+        session,
+        product: dict,
+        creds: dict,
+        category_id: str,
+        account,
+        existing_no: str,
+    ) -> dict[str, Any]:
+        return {
+            "success": False,
+            "message": "Shopify API 연동이 아직 구현되지 않았습니다.",
+        }
 
 
 class ZoomPlugin(MarketPlugin):
@@ -72,5 +127,16 @@ class ZoomPlugin(MarketPlugin):
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         return {}
 
-    async def execute(self, session, product: dict, creds: dict, category_id: str, account, existing_no: str) -> dict[str, Any]:
-        return {"success": False, "message": "Zum(줌) API 연동이 아직 구현되지 않았습니다."}
+    async def execute(
+        self,
+        session,
+        product: dict,
+        creds: dict,
+        category_id: str,
+        account,
+        existing_no: str,
+    ) -> dict[str, Any]:
+        return {
+            "success": False,
+            "message": "Zum(줌) API 연동이 아직 구현되지 않았습니다.",
+        }

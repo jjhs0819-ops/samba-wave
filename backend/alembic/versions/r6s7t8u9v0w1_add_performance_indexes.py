@@ -11,14 +11,15 @@ Revises: q5r6s7t8u9v0
 Create Date: 2026-03-27 10:00:00.000000
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'r6s7t8u9v0w1'
-down_revision: Union[str, Sequence[str], None] = 'q5r6s7t8u9v0'
+revision: str = "r6s7t8u9v0w1"
+down_revision: Union[str, Sequence[str], None] = "q5r6s7t8u9v0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -30,27 +31,27 @@ def upgrade() -> None:
 
     # 정렬용 인덱스
     op.create_index(
-        'ix_scp_created_at_desc',
-        'samba_collected_product',
-        ['created_at'],
-        postgresql_using='btree',
-        postgresql_ops={'created_at': 'DESC'},
+        "ix_scp_created_at_desc",
+        "samba_collected_product",
+        ["created_at"],
+        postgresql_using="btree",
+        postgresql_ops={"created_at": "DESC"},
     )
     op.create_index(
-        'ix_scp_updated_at_desc',
-        'samba_collected_product',
-        ['updated_at'],
-        postgresql_using='btree',
-        postgresql_ops={'updated_at': 'DESC'},
+        "ix_scp_updated_at_desc",
+        "samba_collected_product",
+        ["updated_at"],
+        postgresql_using="btree",
+        postgresql_ops={"updated_at": "DESC"},
     )
 
     # 소싱처 + 생성일 복합 인덱스 (필터+정렬 커버링)
     op.create_index(
-        'ix_scp_source_site_created_at',
-        'samba_collected_product',
-        ['source_site', 'created_at'],
-        postgresql_using='btree',
-        postgresql_ops={'created_at': 'DESC'},
+        "ix_scp_source_site_created_at",
+        "samba_collected_product",
+        ["source_site", "created_at"],
+        postgresql_using="btree",
+        postgresql_ops={"created_at": "DESC"},
     )
 
     # 상품명 trigram GIN 인덱스 (ILIKE 검색 최적화)
@@ -73,9 +74,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """성능 인덱스 제거."""
-    op.drop_index('ix_samba_order_product_id', table_name='samba_order')
+    op.drop_index("ix_samba_order_product_id", table_name="samba_order")
     op.execute("DROP INDEX IF EXISTS ix_scp_brand_trgm")
     op.execute("DROP INDEX IF EXISTS ix_scp_name_trgm")
-    op.drop_index('ix_scp_source_site_created_at', table_name='samba_collected_product')
-    op.drop_index('ix_scp_updated_at_desc', table_name='samba_collected_product')
-    op.drop_index('ix_scp_created_at_desc', table_name='samba_collected_product')
+    op.drop_index("ix_scp_source_site_created_at", table_name="samba_collected_product")
+    op.drop_index("ix_scp_updated_at_desc", table_name="samba_collected_product")
+    op.drop_index("ix_scp_created_at_desc", table_name="samba_collected_product")

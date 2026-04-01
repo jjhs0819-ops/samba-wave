@@ -100,7 +100,11 @@ class KreamClient:
                 or s.get("price")
                 or 0
             )
-            bid = s.get("sell_now_price") or s.get("immediate_sell_price") or s.get("bid", 0)
+            bid = (
+                s.get("sell_now_price")
+                or s.get("immediate_sell_price")
+                or s.get("bid", 0)
+            )
             last_sale = s.get("last_sale_price") or s.get("last_price", 0)
 
             if name:
@@ -123,9 +127,11 @@ class KreamClient:
         min_ask = min(ask_prices) if ask_prices else 0
         sale_price = min_ask if min_ask > 0 else (item.get("retail_price", 0) or 0)
 
-        brand_name = (item.get("brand") or {}).get("name", "") if isinstance(
-            item.get("brand"), dict
-        ) else (item.get("brand_name", ""))
+        brand_name = (
+            (item.get("brand") or {}).get("name", "")
+            if isinstance(item.get("brand"), dict)
+            else (item.get("brand_name", ""))
+        )
 
         product_name = item.get("name") or item.get("translated_name", "")
         if brand_name and product_name.startswith(f"{brand_name} "):
@@ -133,9 +139,11 @@ class KreamClient:
 
         raw_img = item.get("thumbnail_url") or item.get("image_url", "")
         category_str = item.get("category", "")
-        category_parts = [
-            c.strip() for c in category_str.split(">") if c.strip()
-        ] if category_str else []
+        category_parts = (
+            [c.strip() for c in category_str.split(">") if c.strip()]
+            if category_str
+            else []
+        )
 
         now_iso = datetime.now(tz=timezone.utc).isoformat()
         today_str = now_iso[:10]
@@ -161,7 +169,9 @@ class KreamClient:
             "discountRate": 0,
             # 공통 컬럼 (소싱처 공통)
             "style_code": item.get("style_code") or item.get("model_no", ""),
-            "sex": (lambda s: "남녀공용" if len(s) > 1 else (s[0] if s else ""))(item.get("sex") or []),
+            "sex": (lambda s: "남녀공용" if len(s) > 1 else (s[0] if s else ""))(
+                item.get("sex") or []
+            ),
             "season": item.get("season", ""),
             "origin": "",
             "material": "",
@@ -187,9 +197,7 @@ class KreamClient:
                     }
                     for o in options
                 },
-                "bidPrices": {
-                    o["name"]: {"general": o["kreamBid"]} for o in options
-                },
+                "bidPrices": {o["name"]: {"general": o["kreamBid"]} for o in options},
                 "lastSalePrices": {
                     o["name"]: {"price": o["kreamLastSale"], "date": today_str}
                     for o in options
@@ -231,10 +239,9 @@ class KreamClient:
                     )
                     if token:
                         self.token = token
-                        user_id = (
-                            (data.get("user") or {}).get("id")
-                            or (data.get("data") or {}).get("user_id", "")
-                        )
+                        user_id = (data.get("user") or {}).get("id") or (
+                            data.get("data") or {}
+                        ).get("user_id", "")
                         return {
                             "success": True,
                             "isLoggedIn": True,
@@ -269,10 +276,9 @@ class KreamClient:
                 return {"success": False, "message": "KREAM 토큰 획득 실패"}
 
             self.token = token2
-            user_id2 = (
-                (data2.get("user") or {}).get("id")
-                or (data2.get("data") or {}).get("user_id", "")
-            )
+            user_id2 = (data2.get("user") or {}).get("id") or (
+                data2.get("data") or {}
+            ).get("user_id", "")
             return {
                 "success": True,
                 "isLoggedIn": True,
@@ -297,7 +303,11 @@ class KreamClient:
                     return {"isLoggedIn": False}
                 me_data = resp.json()
                 user_id = me_data.get("id") or (me_data.get("data") or {}).get("id", "")
-                return {"isLoggedIn": True, "userId": str(user_id), "message": "로그인 상태"}
+                return {
+                    "isLoggedIn": True,
+                    "userId": str(user_id),
+                    "message": "로그인 상태",
+                }
         except Exception:
             return {"isLoggedIn": bool(self.token)}
 
@@ -362,18 +372,20 @@ class KreamClient:
                     price = int(_re.sub(r"[^\d]", "", t))
                     break
 
-            products.append({
-                "id": pid,
-                "siteProductId": pid,
-                "name": name,
-                "brand": brand,
-                "salePrice": price,
-                "originalPrice": 0,
-                "retailPrice": 0,
-                "images": [raw_img] if raw_img else [],
-                "imageUrl": raw_img,
-                "sourceUrl": f"https://kream.co.kr/products/{pid}",
-            })
+            products.append(
+                {
+                    "id": pid,
+                    "siteProductId": pid,
+                    "name": name,
+                    "brand": brand,
+                    "salePrice": price,
+                    "originalPrice": 0,
+                    "retailPrice": 0,
+                    "images": [raw_img] if raw_img else [],
+                    "imageUrl": raw_img,
+                    "sourceUrl": f"https://kream.co.kr/products/{pid}",
+                }
+            )
 
         logger.info(f'[KREAM] 검색 완료: "{keyword}" → {len(products)}개')
         return products
@@ -571,14 +583,11 @@ class KreamClient:
                 return {
                     "success": False,
                     "message": (
-                        err_data.get("message")
-                        or f"매도 입찰 실패: {resp.status_code}"
+                        err_data.get("message") or f"매도 입찰 실패: {resp.status_code}"
                     ),
                 }
             bid_data = resp.json()
-            logger.info(
-                f"[KREAM] 매도 입찰 등록: {product_id} / {size} / {price:,}원"
-            )
+            logger.info(f"[KREAM] 매도 입찰 등록: {product_id} / {size} / {price:,}원")
             return {
                 "success": True,
                 "data": bid_data.get("data") or bid_data,
@@ -619,7 +628,9 @@ class KreamClient:
             )
             return {
                 "success": resp.status_code in (200, 204),
-                "message": "매도 입찰 취소 완료" if resp.status_code in (200, 204) else "취소 실패",
+                "message": "매도 입찰 취소 완료"
+                if resp.status_code in (200, 204)
+                else "취소 실패",
             }
 
     async def get_my_asks(self) -> dict[str, Any]:

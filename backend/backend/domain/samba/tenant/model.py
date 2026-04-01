@@ -13,6 +13,7 @@ UTC = timezone.utc
 
 class SambaTenant(SQLModel, table=True):
     """테넌트(고객사) — 각 고객의 데이터 격리 단위."""
+
     __tablename__ = "samba_tenants"
 
     id: str = Field(
@@ -20,8 +21,12 @@ class SambaTenant(SQLModel, table=True):
         sa_column=Column(String, primary_key=True),
     )
     name: str = Field(sa_column=Column(String, nullable=False))  # 사업자명
-    owner_user_id: str = Field(default="", sa_column=Column(String, nullable=False))  # 최초 생성 User ID
-    plan: str = Field(default="free", sa_column=Column(String, nullable=False))  # free / basic / pro / enterprise
+    owner_user_id: str = Field(
+        default="", sa_column=Column(String, nullable=False)
+    )  # 최초 생성 User ID
+    plan: str = Field(
+        default="free", sa_column=Column(String, nullable=False)
+    )  # free / basic / pro / enterprise
     limits: Optional[dict] = Field(
         default_factory=lambda: {
             "max_products": 1000,

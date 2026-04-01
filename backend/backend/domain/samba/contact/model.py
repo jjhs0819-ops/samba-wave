@@ -37,9 +37,7 @@ class SambaContactLog(SQLModel, table=True):
     )
 
     # 템플릿 이름
-    template: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
+    template: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 사용자 커스텀 메시지
     custom_message: Optional[str] = Field(
@@ -47,9 +45,7 @@ class SambaContactLog(SQLModel, table=True):
     )
 
     # 최종 발송 메시지
-    message: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
+    message: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 상태: pending, sent, failed
     status: str = Field(

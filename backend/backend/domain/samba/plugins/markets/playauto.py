@@ -18,5 +18,16 @@ class PlayAutoPlugin(MarketPlugin):
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         return {}
 
-    async def execute(self, session, product: dict, creds: dict, category_id: str, account, existing_no: str) -> dict[str, Any]:
-        return {"success": False, "message": "플레이오토 API 연동이 아직 구현되지 않았습니다."}
+    async def execute(
+        self,
+        session,
+        product: dict,
+        creds: dict,
+        category_id: str,
+        account,
+        existing_no: str,
+    ) -> dict[str, Any]:
+        return {
+            "success": False,
+            "message": "플레이오토 API 연동이 아직 구현되지 않았습니다.",
+        }

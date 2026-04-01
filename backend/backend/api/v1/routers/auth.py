@@ -44,9 +44,7 @@ async def refresh_token(
 ) -> RefreshTokenResponseDto:
     """Refresh access token using refresh token."""
     auth_service = AuthService(session=session)
-    return await auth_service.refresh_access_token(
-        refresh_token=request.refresh_token
-    )
+    return await auth_service.refresh_access_token(refresh_token=request.refresh_token)
 
 
 @router.get("/me", response_model=UserInfoDto)

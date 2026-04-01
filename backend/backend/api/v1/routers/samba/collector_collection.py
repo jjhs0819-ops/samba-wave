@@ -2,9 +2,8 @@
 
 import asyncio
 import logging
-import re
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -12,13 +11,14 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.domain.samba.cache import cache
 from backend.domain.samba.proxy.musinsa import RateLimitError
-from backend.domain.samba.collector.grouping import generate_group_key, parse_color_from_name
-from backend.domain.samba.collector.refresher import _site_intervals, _site_consecutive_errors
+from backend.domain.samba.collector.grouping import (
+    generate_group_key,
+    parse_color_from_name,
+)
+from backend.domain.samba.collector.refresher import _site_intervals
 
 from backend.api.v1.routers.samba.collector_common import (
-    _load_blacklist,
     _invalidate_blacklist_cache,
     _is_blacklisted,
     _clean_text,
@@ -34,6 +34,7 @@ router = APIRouter(prefix="/collector", tags=["samba-collector"])
 
 
 # ── Inline DTOs ──
+
 
 class CollectByUrlRequest(BaseModel):
     url: str
@@ -53,12 +54,14 @@ class BlockProductRequest(BaseModel):
 
 # ── 블랙리스트 ──
 
+
 @router.get("/blacklist")
 async def get_collection_blacklist(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """수집 블랙리스트 조회."""
     from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+
     repo = SambaSettingsRepository(session)
     row = await repo.find_by_async(key="collection_blacklist")
     return row.value if row and isinstance(row.value, list) else []
@@ -71,6 +74,7 @@ async def unblock_products(
 ):
     """블랙리스트에서 해제."""
     from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+
     repo = SambaSettingsRepository(session)
     row = await repo.find_by_async(key="collection_blacklist")
     if not row or not isinstance(row.value, list):
@@ -85,6 +89,7 @@ async def unblock_products(
 
 
 # ── 실제 수집 (프록시 통합) ──
+
 
 @router.post("/collect-by-url", status_code=201)
 async def collect_by_url(
@@ -109,7 +114,9 @@ async def collect_by_url(
         elif "lotteon.com" in url:
             site = "LOTTEON"
         else:
-            raise HTTPException(400, "지원하지 않는 URL입니다. source_site를 지정해주세요.")
+            raise HTTPException(
+                400, "지원하지 않는 URL입니다. source_site를 지정해주세요."
+            )
 
     svc = _get_services(session)
 
@@ -156,20 +163,25 @@ async def collect_by_url(
 
             # 검색그룹(SearchFilter) 자동 생성
             requested_count = 100  # 기본값
-            search_filter = await svc.create_filter({
-                "source_site": "MUSINSA",
-                "name": keyword,
-                "keyword": url,
-                "category_filter": category_filter or None,
-                "requested_count": requested_count,
-            })
+            search_filter = await svc.create_filter(
+                {
+                    "source_site": "MUSINSA",
+                    "name": keyword,
+                    "keyword": url,
+                    "category_filter": category_filter or None,
+                    "requested_count": requested_count,
+                }
+            )
             filter_id = search_filter.id
 
             cookie = await get_musinsa_cookie(session)
             client = MusinsaClient(cookie=cookie)
 
             # 기존 수집 상품 수 확인
-            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            from backend.domain.samba.collector.model import (
+                SambaCollectedProduct as CPModel,
+            )
+
             existing_count = await svc.product_repo.count_async(
                 filters={"search_filter_id": filter_id}
             )
@@ -187,7 +199,9 @@ async def collect_by_url(
             for page in range(1, min(max_pages + 1, 11)):  # 최대 10페이지
                 try:
                     data = await client.search_products(
-                        keyword=keyword, page=page, size=100,
+                        keyword=keyword,
+                        page=page,
+                        size=100,
                         category=category_filter,
                         brand=brand_filter,
                         min_price=min_price,
@@ -198,7 +212,9 @@ async def collect_by_url(
                     if not items:
                         break
                     all_items.extend(items)
-                    await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))  # 적응형 인터벌
+                    await asyncio.sleep(
+                        _site_intervals.get("MUSINSA", 1.0)
+                    )  # 적응형 인터벌
                 except Exception:
                     break
 
@@ -206,7 +222,10 @@ async def collect_by_url(
                 raise HTTPException(502, f"'{keyword}' 검색 결과가 없습니다")
 
             # 기존 상품 ID 일괄 조회 (중복 체크 — 단일 쿼리)
-            candidate_ids = [str(item.get("siteProductId", item.get("goodsNo", ""))) for item in all_items]
+            candidate_ids = [
+                str(item.get("siteProductId", item.get("goodsNo", "")))
+                for item in all_items
+            ]
             existing_stmt = select(CPModel.site_product_id).where(
                 CPModel.source_site == "MUSINSA",
                 CPModel.site_product_id.in_(candidate_ids),  # type: ignore[union-attr]
@@ -255,10 +274,15 @@ async def collect_by_url(
                         await asyncio.sleep(_site_intervals.get("MUSINSA", 1.0))
                         continue
                     # 긴 상세이미지 분할 (추가이미지 보충분)
-                    orig_cnt = detail.get("originalImageCount", len(detail.get("images", [])))
+                    orig_cnt = detail.get(
+                        "originalImageCount", len(detail.get("images", []))
+                    )
                     if orig_cnt < len(detail.get("images", [])):
                         from backend.domain.samba.image.service import split_long_images
-                        detail["images"] = await split_long_images(detail["images"], orig_cnt, session)
+
+                        detail["images"] = await split_long_images(
+                            detail["images"], orig_cnt, session
+                        )
 
                     if exclude_preorder and detail.get("saleStatus") == "preorder":
                         skipped_preorder += 1
@@ -272,12 +296,20 @@ async def collect_by_url(
                     # 최대혜택가 체크 시 bestBenefitPrice, 미체크 시 salePrice
                     if use_max_discount:
                         _raw_cost = detail.get("bestBenefitPrice")
-                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                        new_cost = (
+                            _raw_cost
+                            if (_raw_cost is not None and _raw_cost > 0)
+                            else (detail.get("salePrice") or 0)
+                        )
                     else:
                         new_cost = detail.get("salePrice") or 0
 
                     raw_cat = detail.get("category", "") or ""
-                    cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
+                    cat_parts = (
+                        [c.strip() for c in raw_cat.split(">") if c.strip()]
+                        if raw_cat
+                        else []
+                    )
                     _sale_price = detail.get("salePrice", 0)
                     _original_price = detail.get("originalPrice", 0)
 
@@ -291,16 +323,25 @@ async def collect_by_url(
                             )
 
                     product_data = _build_product_data(
-                        detail, goods_no, filter_id, "MUSINSA",
-                        new_cost, _sale_price, _original_price,
-                        raw_cat, cat_parts, raw_detail_html,
+                        detail,
+                        goods_no,
+                        filter_id,
+                        "MUSINSA",
+                        new_cost,
+                        _sale_price,
+                        _original_price,
+                        raw_cat,
+                        cat_parts,
+                        raw_detail_html,
                     )
                     _batch_buf.append(svc.prepare_product_data(product_data))
                     saved += 1
                     if len(_batch_buf) >= _BATCH_SIZE:
                         await _flush_batch()
                 except RateLimitError:
-                    logger.warning(f"[무신사] 요청 제한 감지 — 수집 중단 (수집완료: {saved}/{len(targets)})")
+                    logger.warning(
+                        f"[무신사] 요청 제한 감지 — 수집 중단 (수집완료: {saved}/{len(targets)})"
+                    )
                     rate_limited = True
                     break
                 except Exception as e:
@@ -311,9 +352,12 @@ async def collect_by_url(
             await _flush_batch()
 
             # 검색그룹에 최근수집일 업데이트
-            await svc.update_filter(filter_id, {
-                "last_collected_at": datetime.now(timezone.utc),
-            })
+            await svc.update_filter(
+                filter_id,
+                {
+                    "last_collected_at": datetime.now(timezone.utc),
+                },
+            )
 
             return {
                 "type": "search",
@@ -331,9 +375,15 @@ async def collect_by_url(
 
         else:
             # ── 단일 상품 URL → 상품번호 추출 → 상세 API ──
-            match = re.search(r'/products/(\d+)', url) or re.search(r'goodsNo=(\d+)', url) or re.search(r'/(\d+)', url)
+            match = (
+                re.search(r"/products/(\d+)", url)
+                or re.search(r"goodsNo=(\d+)", url)
+                or re.search(r"/(\d+)", url)
+            )
             if not match:
-                raise HTTPException(400, "무신사 상품 URL에서 상품번호를 찾을 수 없습니다")
+                raise HTTPException(
+                    400, "무신사 상품 URL에서 상품번호를 찾을 수 없습니다"
+                )
             goods_no = match.group(1)
 
             # 블랙리스트 체크 — 수집차단된 상품 스킵
@@ -349,9 +399,13 @@ async def collect_by_url(
             orig_cnt = data.get("originalImageCount", len(data.get("images", [])))
             if orig_cnt < len(data.get("images", [])):
                 from backend.domain.samba.image.service import split_long_images
-                data["images"] = await split_long_images(data["images"], orig_cnt, session)
+
+                data["images"] = await split_long_images(
+                    data["images"], orig_cnt, session
+                )
 
             from datetime import datetime, timezone
+
             # 가격이력 초기 스냅샷
             initial_snapshot = {
                 "date": datetime.now(timezone.utc).isoformat(),
@@ -372,7 +426,10 @@ async def collect_by_url(
                     )
 
             # 중복 체크: 기존 상품이 있으면 업데이트 (upsert)
-            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            from backend.domain.samba.collector.model import (
+                SambaCollectedProduct as CPModel,
+            )
+
             existing_stmt = select(CPModel).where(
                 CPModel.source_site == "MUSINSA",
                 CPModel.site_product_id == goods_no,
@@ -401,7 +458,8 @@ async def collect_by_url(
                 "manufacturer": data.get("manufacturer", ""),
                 "origin": data.get("origin", ""),
                 "material": data.get("material", ""),
-                "color": data.get("color", "") or parse_color_from_name(data.get("name", "")),
+                "color": data.get("color", "")
+                or parse_color_from_name(data.get("name", "")),
                 "similar_no": similar_no,
                 "style_code": data.get("styleNo", ""),
                 "group_key": generate_group_key(
@@ -426,8 +484,15 @@ async def collect_by_url(
                 # 재수집 시 기존 태그 보존 (확장앱은 tags를 보내지 않음)
                 if "tags" not in product_data or not product_data.get("tags"):
                     product_data.pop("tags", None)
-                collected = await svc.update_collected_product(existing_row.id, product_data)
-                return {"type": "single", "saved": 1, "updated": True, "product": collected}
+                collected = await svc.update_collected_product(
+                    existing_row.id, product_data
+                )
+                return {
+                    "type": "single",
+                    "saved": 1,
+                    "updated": True,
+                    "product": collected,
+                }
             else:
                 collected = await svc.create_collected_product(product_data)
                 return {"type": "single", "saved": 1, "product": collected}
@@ -446,11 +511,13 @@ async def collect_by_url(
                 raise HTTPException(400, "KREAM 검색 URL에서 키워드를 찾을 수 없습니다")
 
             # 검색그룹(SearchFilter) 자동 생성
-            search_filter = await svc.create_filter({
-                "source_site": "KREAM",
-                "name": keyword,
-                "keyword": url,
-            })
+            search_filter = await svc.create_filter(
+                {
+                    "source_site": "KREAM",
+                    "name": keyword,
+                    "keyword": url,
+                }
+            )
             filter_id = search_filter.id
 
             client = KreamClient()
@@ -469,7 +536,10 @@ async def collect_by_url(
             items_list = items if isinstance(items, list) else []
 
             # 기존 상품 ID 일괄 조회
-            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            from backend.domain.samba.collector.model import (
+                SambaCollectedProduct as CPModel,
+            )
+
             candidate_ids = [
                 str(item.get("siteProductId") or item.get("id") or "")
                 for item in items_list
@@ -484,31 +554,33 @@ async def collect_by_url(
             bulk_items = []
             for item in items_list:
                 # 확장앱 검색결과: siteProductId / id 둘 다 지원
-                site_pid = str(
-                    item.get("siteProductId")
-                    or item.get("id")
-                    or ""
-                )
+                site_pid = str(item.get("siteProductId") or item.get("id") or "")
                 if not site_pid or site_pid in existing_ids:
                     continue
-                bulk_items.append({
-                    "source_site": "KREAM",
-                    "site_product_id": site_pid,
-                    "search_filter_id": filter_id,
-                    "name": item.get("name", ""),
-                    "brand": item.get("brand", ""),
-                    "original_price": item.get("originalPrice", item.get("retailPrice", 0)),
-                    "sale_price": item.get("salePrice", item.get("retailPrice", 0)),
-                    "images": item.get("images", [item.get("imageUrl", "")]) if (item.get("images") or item.get("imageUrl")) else [],
-                    "similar_no": None,
-                    "group_key": generate_group_key(
-                        brand=item.get("brand", ""),
-                        similar_no=None,
-                        style_code=item.get("styleCode", ""),
-                        name=item.get("name", ""),
-                    ),
-                    "status": "collected",
-                })
+                bulk_items.append(
+                    {
+                        "source_site": "KREAM",
+                        "site_product_id": site_pid,
+                        "search_filter_id": filter_id,
+                        "name": item.get("name", ""),
+                        "brand": item.get("brand", ""),
+                        "original_price": item.get(
+                            "originalPrice", item.get("retailPrice", 0)
+                        ),
+                        "sale_price": item.get("salePrice", item.get("retailPrice", 0)),
+                        "images": item.get("images", [item.get("imageUrl", "")])
+                        if (item.get("images") or item.get("imageUrl"))
+                        else [],
+                        "similar_no": None,
+                        "group_key": generate_group_key(
+                            brand=item.get("brand", ""),
+                            similar_no=None,
+                            style_code=item.get("styleCode", ""),
+                            name=item.get("name", ""),
+                        ),
+                        "status": "collected",
+                    }
+                )
 
             created = []
             if bulk_items:
@@ -516,9 +588,13 @@ async def collect_by_url(
 
             # 검색그룹에 최근수집일 업데이트
             from datetime import datetime, timezone
-            await svc.update_filter(filter_id, {
-                "last_collected_at": datetime.now(timezone.utc),
-            })
+
+            await svc.update_filter(
+                filter_id,
+                {
+                    "last_collected_at": datetime.now(timezone.utc),
+                },
+            )
 
             return {
                 "type": "search",
@@ -531,9 +607,11 @@ async def collect_by_url(
             }
 
         else:
-            match = re.search(r'/products/(\d+)', url)
+            match = re.search(r"/products/(\d+)", url)
             if not match:
-                raise HTTPException(400, "KREAM 상품 URL에서 상품번호를 찾을 수 없습니다")
+                raise HTTPException(
+                    400, "KREAM 상품 URL에서 상품번호를 찾을 수 없습니다"
+                )
             product_id = match.group(1)
 
             client = KreamClient()
@@ -558,7 +636,10 @@ async def collect_by_url(
             _snapshot = _build_kream_price_snapshot(_sp, _op, _sp, _opts)
 
             # 중복 체크: 기존 상품이 있으면 업데이트 (upsert)
-            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            from backend.domain.samba.collector.model import (
+                SambaCollectedProduct as CPModel,
+            )
+
             existing_stmt = select(CPModel).where(
                 CPModel.source_site == "KREAM",
                 CPModel.site_product_id == product_id,
@@ -596,10 +677,19 @@ async def collect_by_url(
                 history.insert(0, _snapshot)
                 kream_product_data["price_history"] = _trim_history(history)
                 # 재수집 시 기존 태그 보존
-                if "tags" not in kream_product_data or not kream_product_data.get("tags"):
+                if "tags" not in kream_product_data or not kream_product_data.get(
+                    "tags"
+                ):
                     kream_product_data.pop("tags", None)
-                collected = await svc.update_collected_product(existing_row.id, kream_product_data)
-                return {"type": "single", "saved": 1, "updated": True, "product": collected}
+                collected = await svc.update_collected_product(
+                    existing_row.id, kream_product_data
+                )
+                return {
+                    "type": "single",
+                    "saved": 1,
+                    "updated": True,
+                    "product": collected,
+                }
             else:
                 collected = await svc.create_collected_product(kream_product_data)
                 return {"type": "single", "saved": 1, "product": collected}
@@ -622,23 +712,36 @@ async def collect_by_url(
             use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
 
             # 검색그룹 자동 생성
-            search_filter = await svc.create_filter({
-                "source_site": "SSG",
-                "name": keyword,
-                "keyword": url,
-                "requested_count": 100,
-            })
+            search_filter = await svc.create_filter(
+                {
+                    "source_site": "SSG",
+                    "name": keyword,
+                    "keyword": url,
+                    "requested_count": 100,
+                }
+            )
             filter_id = search_filter.id
 
             client = SSGSourcingClient()
 
             # 기존 수집 수 확인
-            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
-            existing_count = await svc.product_repo.count_async(filters={"search_filter_id": filter_id})
+            from backend.domain.samba.collector.model import (
+                SambaCollectedProduct as CPModel,
+            )
+
+            existing_count = await svc.product_repo.count_async(
+                filters={"search_filter_id": filter_id}
+            )
             remaining = max(0, 100 - existing_count)
             if remaining <= 0:
-                return {"type": "search", "keyword": keyword, "filter_id": filter_id,
-                        "message": f"이미 {existing_count}개 수집됨", "saved": 0, "enriched": 0}
+                return {
+                    "type": "search",
+                    "keyword": keyword,
+                    "filter_id": filter_id,
+                    "message": f"이미 {existing_count}개 수집됨",
+                    "saved": 0,
+                    "enriched": 0,
+                }
 
             # 검색
 
@@ -646,7 +749,9 @@ async def collect_by_url(
             max_pages = max(1, (remaining // 40) + 1)
             for page in range(1, min(max_pages + 1, 11)):
                 try:
-                    items = await client.search_products(keyword=keyword, page=page, size=40)
+                    items = await client.search_products(
+                        keyword=keyword, page=page, size=40
+                    )
                     if not items:
                         break
                     all_items.extend(items)
@@ -658,7 +763,10 @@ async def collect_by_url(
                 raise HTTPException(502, f"'{keyword}' 검색 결과가 없습니다")
 
             # 중복 필터
-            candidate_ids = [str(item.get("siteProductId", item.get("goodsNo", ""))) for item in all_items]
+            candidate_ids = [
+                str(item.get("siteProductId", item.get("goodsNo", "")))
+                for item in all_items
+            ]
             existing_stmt = select(CPModel.site_product_id).where(
                 CPModel.source_site == "SSG",
                 CPModel.site_product_id.in_(candidate_ids),
@@ -700,12 +808,20 @@ async def collect_by_url(
 
                     if use_max_discount:
                         _raw_cost = detail.get("bestBenefitPrice")
-                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                        new_cost = (
+                            _raw_cost
+                            if (_raw_cost is not None and _raw_cost > 0)
+                            else (detail.get("salePrice") or 0)
+                        )
                     else:
                         new_cost = detail.get("salePrice") or 0
 
                     raw_cat = detail.get("category", "") or ""
-                    cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
+                    cat_parts = (
+                        [c.strip() for c in raw_cat.split(">") if c.strip()]
+                        if raw_cat
+                        else []
+                    )
                     _sale_price = detail.get("salePrice", 0)
                     _original_price = detail.get("originalPrice", 0)
 
@@ -718,9 +834,16 @@ async def collect_by_url(
                         )
 
                     product_data = _build_product_data(
-                        detail, item_id, filter_id, "SSG",
-                        new_cost, _sale_price, _original_price,
-                        raw_cat, cat_parts, raw_detail_html,
+                        detail,
+                        item_id,
+                        filter_id,
+                        "SSG",
+                        new_cost,
+                        _sale_price,
+                        _original_price,
+                        raw_cat,
+                        cat_parts,
+                        raw_detail_html,
                     )
                     _batch_buf.append(svc.prepare_product_data(product_data))
                     saved += 1
@@ -731,17 +854,23 @@ async def collect_by_url(
                 await asyncio.sleep(_site_intervals.get("SSG", 1.0))
 
             await _flush_batch()
-            await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
+            await svc.update_filter(
+                filter_id, {"last_collected_at": datetime.now(timezone.utc)}
+            )
 
             return {
-                "type": "search", "keyword": keyword, "filter_id": filter_id,
-                "total_found": len(all_items), "saved": saved, "enriched": saved,
+                "type": "search",
+                "keyword": keyword,
+                "filter_id": filter_id,
+                "total_found": len(all_items),
+                "saved": saved,
+                "enriched": saved,
                 "skipped_sold_out": skipped_sold_out,
             }
 
         else:
             # 단일 상품 URL
-            match = re.search(r'itemId=(\d+)', url) or re.search(r'/item/(\d+)', url)
+            match = re.search(r"itemId=(\d+)", url) or re.search(r"/item/(\d+)", url)
             if not match:
                 raise HTTPException(400, "SSG 상품 URL에서 상품번호를 찾을 수 없습니다")
             item_id = match.group(1)
@@ -766,9 +895,13 @@ async def collect_by_url(
                     for img in detail_imgs
                 )
 
-            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            from backend.domain.samba.collector.model import (
+                SambaCollectedProduct as CPModel,
+            )
+
             existing_stmt = select(CPModel).where(
-                CPModel.source_site == "SSG", CPModel.site_product_id == item_id,
+                CPModel.source_site == "SSG",
+                CPModel.site_product_id == item_id,
             )
             existing_row = (await session.execute(existing_stmt)).scalar_one_or_none()
 
@@ -802,8 +935,15 @@ async def collect_by_url(
                 product_data["price_history"] = _trim_history(history)
                 if "tags" not in product_data or not product_data.get("tags"):
                     product_data.pop("tags", None)
-                collected = await svc.update_collected_product(existing_row.id, product_data)
-                return {"type": "single", "saved": 1, "updated": True, "product": collected}
+                collected = await svc.update_collected_product(
+                    existing_row.id, product_data
+                )
+                return {
+                    "type": "single",
+                    "saved": 1,
+                    "updated": True,
+                    "product": collected,
+                }
             else:
                 collected = await svc.create_collected_product(product_data)
                 return {"type": "single", "saved": 1, "product": collected}
@@ -826,23 +966,36 @@ async def collect_by_url(
             use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
 
             # 검색그룹 자동 생성
-            search_filter = await svc.create_filter({
-                "source_site": "LOTTEON",
-                "name": keyword,
-                "keyword": url,
-                "requested_count": 100,
-            })
+            search_filter = await svc.create_filter(
+                {
+                    "source_site": "LOTTEON",
+                    "name": keyword,
+                    "keyword": url,
+                    "requested_count": 100,
+                }
+            )
             filter_id = search_filter.id
 
             client = LotteonSourcingClient()
 
             # 기존 수집 수 확인
-            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
-            existing_count = await svc.product_repo.count_async(filters={"search_filter_id": filter_id})
+            from backend.domain.samba.collector.model import (
+                SambaCollectedProduct as CPModel,
+            )
+
+            existing_count = await svc.product_repo.count_async(
+                filters={"search_filter_id": filter_id}
+            )
             remaining = max(0, 100 - existing_count)
             if remaining <= 0:
-                return {"type": "search", "keyword": keyword, "filter_id": filter_id,
-                        "message": f"이미 {existing_count}개 수집됨", "saved": 0, "enriched": 0}
+                return {
+                    "type": "search",
+                    "keyword": keyword,
+                    "filter_id": filter_id,
+                    "message": f"이미 {existing_count}개 수집됨",
+                    "saved": 0,
+                    "enriched": 0,
+                }
 
             # 검색
 
@@ -850,7 +1003,9 @@ async def collect_by_url(
             max_pages = max(1, (remaining // 40) + 1)
             for page in range(1, min(max_pages + 1, 11)):
                 try:
-                    items = await client.search_products(keyword=keyword, page=page, size=40)
+                    items = await client.search_products(
+                        keyword=keyword, page=page, size=40
+                    )
                     if not items:
                         break
                     all_items.extend(items)
@@ -862,7 +1017,10 @@ async def collect_by_url(
                 raise HTTPException(502, f"'{keyword}' 검색 결과가 없습니다")
 
             # 중복 필터
-            candidate_ids = [str(item.get("siteProductId", item.get("goodsNo", ""))) for item in all_items]
+            candidate_ids = [
+                str(item.get("siteProductId", item.get("goodsNo", "")))
+                for item in all_items
+            ]
             existing_stmt = select(CPModel.site_product_id).where(
                 CPModel.source_site == "LOTTEON",
                 CPModel.site_product_id.in_(candidate_ids),
@@ -904,12 +1062,20 @@ async def collect_by_url(
 
                     if use_max_discount:
                         _raw_cost = detail.get("bestBenefitPrice")
-                        new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else (detail.get("salePrice") or 0)
+                        new_cost = (
+                            _raw_cost
+                            if (_raw_cost is not None and _raw_cost > 0)
+                            else (detail.get("salePrice") or 0)
+                        )
                     else:
                         new_cost = detail.get("salePrice") or 0
 
                     raw_cat = detail.get("category", "") or ""
-                    cat_parts = [c.strip() for c in raw_cat.split(">") if c.strip()] if raw_cat else []
+                    cat_parts = (
+                        [c.strip() for c in raw_cat.split(">") if c.strip()]
+                        if raw_cat
+                        else []
+                    )
                     _sale_price = detail.get("salePrice", 0)
                     _original_price = detail.get("originalPrice", 0)
 
@@ -922,9 +1088,16 @@ async def collect_by_url(
                         )
 
                     product_data = _build_product_data(
-                        detail, item_id, filter_id, "LOTTEON",
-                        new_cost, _sale_price, _original_price,
-                        raw_cat, cat_parts, raw_detail_html,
+                        detail,
+                        item_id,
+                        filter_id,
+                        "LOTTEON",
+                        new_cost,
+                        _sale_price,
+                        _original_price,
+                        raw_cat,
+                        cat_parts,
+                        raw_detail_html,
                     )
                     _batch_buf.append(svc.prepare_product_data(product_data))
                     saved += 1
@@ -935,19 +1108,29 @@ async def collect_by_url(
                 await asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
 
             await _flush_batch()
-            await svc.update_filter(filter_id, {"last_collected_at": datetime.now(timezone.utc)})
+            await svc.update_filter(
+                filter_id, {"last_collected_at": datetime.now(timezone.utc)}
+            )
 
             return {
-                "type": "search", "keyword": keyword, "filter_id": filter_id,
-                "total_found": len(all_items), "saved": saved, "enriched": saved,
+                "type": "search",
+                "keyword": keyword,
+                "filter_id": filter_id,
+                "total_found": len(all_items),
+                "saved": saved,
+                "enriched": saved,
                 "skipped_sold_out": skipped_sold_out,
             }
 
         else:
             # 단일 상품 URL
-            match = re.search(r'/product/(LO\d+)', url) or re.search(r'/product/(\d+)', url)
+            match = re.search(r"/product/(LO\d+)", url) or re.search(
+                r"/product/(\d+)", url
+            )
             if not match:
-                raise HTTPException(400, "롯데ON 상품 URL에서 상품번호를 찾을 수 없습니다")
+                raise HTTPException(
+                    400, "롯데ON 상품 URL에서 상품번호를 찾을 수 없습니다"
+                )
             item_id = match.group(1)
 
             client = LotteonSourcingClient()
@@ -970,9 +1153,13 @@ async def collect_by_url(
                     for img in detail_imgs
                 )
 
-            from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+            from backend.domain.samba.collector.model import (
+                SambaCollectedProduct as CPModel,
+            )
+
             existing_stmt = select(CPModel).where(
-                CPModel.source_site == "LOTTEON", CPModel.site_product_id == item_id,
+                CPModel.source_site == "LOTTEON",
+                CPModel.site_product_id == item_id,
             )
             existing_row = (await session.execute(existing_stmt)).scalar_one_or_none()
 
@@ -1006,8 +1193,15 @@ async def collect_by_url(
                 product_data["price_history"] = _trim_history(history)
                 if "tags" not in product_data or not product_data.get("tags"):
                     product_data.pop("tags", None)
-                collected = await svc.update_collected_product(existing_row.id, product_data)
-                return {"type": "single", "saved": 1, "updated": True, "product": collected}
+                collected = await svc.update_collected_product(
+                    existing_row.id, product_data
+                )
+                return {
+                    "type": "single",
+                    "saved": 1,
+                    "updated": True,
+                    "product": collected,
+                }
             else:
                 collected = await svc.create_collected_product(product_data)
                 return {"type": "single", "saved": 1, "product": collected}
@@ -1018,6 +1212,7 @@ async def collect_by_url(
 # ═══════════════════════════════════════
 # 브랜드 소싱 — 카테고리 스캔 + 그룹 일괄 생성
 # ═══════════════════════════════════════
+
 
 class BrandScanRequest(BaseModel):
     brand: str
@@ -1036,27 +1231,52 @@ async def brand_scan(
     client = MusinsaClient()
     try:
         categories = await client.scan_brand_categories(
-            brand=req.brand, gf=req.gf, keyword=req.keyword or req.brand,
+            brand=req.brand,
+            gf=req.gf,
+            keyword=req.keyword or req.brand,
         )
         # 실제 총 상품 수 조회 (카테고리 합산은 중복 포함)
         import httpx
+
         async with httpx.AsyncClient(timeout=15) as http:
-            r = await http.get("https://api.musinsa.com/api2/dp/v1/plp/goods", params={
-                "caller": "SEARCH", "keyword": req.keyword or req.brand,
-                "brand": req.brand, "gf": req.gf, "page": "1", "size": "1",
-            }, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://www.musinsa.com/"})
-            real_total = r.json().get("data", {}).get("pagination", {}).get("totalCount", 0) if r.status_code == 200 else 0
+            r = await http.get(
+                "https://api.musinsa.com/api2/dp/v1/plp/goods",
+                params={
+                    "caller": "SEARCH",
+                    "keyword": req.keyword or req.brand,
+                    "brand": req.brand,
+                    "gf": req.gf,
+                    "page": "1",
+                    "size": "1",
+                },
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json",
+                    "Referer": "https://www.musinsa.com/",
+                },
+            )
+            real_total = (
+                r.json().get("data", {}).get("pagination", {}).get("totalCount", 0)
+                if r.status_code == 200
+                else 0
+            )
     except Exception as e:
         raise HTTPException(500, f"브랜드 스캔 실패: {e}")
 
-    return {"categories": categories, "total": real_total, "groupCount": len(categories)}
+    return {
+        "categories": categories,
+        "total": real_total,
+        "groupCount": len(categories),
+    }
 
 
 class BrandCreateGroupsRequest(BaseModel):
     brand: str
     brand_name: str = ""
     gf: str = "A"
-    categories: list[dict]  # [{categoryCode, path, count, category1, category2, category3}]
+    categories: list[
+        dict
+    ]  # [{categoryCode, path, count, category1, category2, category3}]
     requested_count_per_group: int = 100
     real_total: int = 0  # 실제 총 상품수 (중복 제거 기준)
     applied_policy_id: str | None = None
@@ -1083,6 +1303,7 @@ async def brand_create_groups(
 
         # 검색 URL 구성
         from urllib.parse import urlencode
+
         params = {
             "keyword": req.brand_name or req.brand,
             "brand": req.brand,
@@ -1097,7 +1318,11 @@ async def brand_create_groups(
             params["maxDiscount"] = "1"
 
         keyword_url = f"https://www.musinsa.com/search/goods?{urlencode(params)}"
-        req_count = min(count, req.requested_count_per_group) if req.requested_count_per_group > 0 else count
+        req_count = (
+            min(count, req.requested_count_per_group)
+            if req.requested_count_per_group > 0
+            else count
+        )
 
         filter_data = {
             "source_site": "MUSINSA",
@@ -1108,7 +1333,9 @@ async def brand_create_groups(
         }
         try:
             sf = await svc.create_filter(filter_data)
-            created.append({"id": sf.id, "name": group_name, "count": req_count, "path": path})
+            created.append(
+                {"id": sf.id, "name": group_name, "count": req_count, "path": path}
+            )
         except Exception as e:
             logger.warning(f"[브랜드소싱] 그룹 생성 실패 {group_name}: {e}")
 
@@ -1139,7 +1366,9 @@ async def brand_refresh(
     # 1) 카테고리 스캔
     try:
         categories = await client.scan_brand_categories(
-            brand=req.brand, gf=req.gf, keyword=req.brand_name or req.brand,
+            brand=req.brand,
+            gf=req.gf,
+            keyword=req.brand_name or req.brand,
         )
     except Exception as e:
         raise HTTPException(500, f"카테고리 스캔 실패: {e}")
@@ -1192,18 +1421,22 @@ async def brand_refresh(
                 params["maxDiscount"] = "1"
             keyword_url = f"https://www.musinsa.com/search/goods?{urlencode(params)}"
             try:
-                await svc.create_filter({
-                    "source_site": "MUSINSA",
-                    "keyword": keyword_url,
-                    "name": group_name,
-                    "requested_count": count,
-                })
+                await svc.create_filter(
+                    {
+                        "source_site": "MUSINSA",
+                        "keyword": keyword_url,
+                        "name": group_name,
+                        "requested_count": count,
+                    }
+                )
                 new_groups += 1
             except Exception as e:
                 logger.warning(f"[추가수집] 그룹 생성 실패 {group_name}: {e}")
 
     total_cats = len(categories)
-    logger.info(f"[추가수집] {req.brand}: 스캔 {total_cats}개, 신규 {new_groups}개, 갱신 {updated_groups}개")
+    logger.info(
+        f"[추가수집] {req.brand}: 스캔 {total_cats}개, 신규 {new_groups}개, 갱신 {updated_groups}개"
+    )
     return {
         "scanned": total_cats,
         "new_groups": new_groups,
@@ -1227,13 +1460,15 @@ async def collect_by_filter(
         raise HTTPException(404, "필터를 찾을 수 없습니다")
 
     job_svc = SambaJobService(SambaJobRepository(session))
-    job = await job_svc.create_job({
-        "job_type": "collect",
-        "payload": {
-            "filter_id": filter_id,
-            "source_site": search_filter.source_site,
-        },
-    })
+    job = await job_svc.create_job(
+        {
+            "job_type": "collect",
+            "payload": {
+                "filter_id": filter_id,
+                "source_site": search_filter.source_site,
+            },
+        }
+    )
     await session.commit()
     return {"job_id": job.id, "status": job.status, "filter_id": filter_id}
 
@@ -1249,9 +1484,14 @@ async def collect_by_keyword(
 
     if body.source_site == "MUSINSA":
         from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+
         settings_repo = SambaSettingsRepository(session)
         cookie_setting = await settings_repo.get_async("musinsa_cookie")
-        cookie = cookie_setting.value if cookie_setting and hasattr(cookie_setting, 'value') else ""
+        cookie = (
+            cookie_setting.value
+            if cookie_setting and hasattr(cookie_setting, "value")
+            else ""
+        )
 
         if not cookie:
             raise HTTPException(
@@ -1271,7 +1511,9 @@ async def collect_by_keyword(
         data = await client.search(body.keyword, body.size)
         return {"success": True, "data": data}
 
-    raise HTTPException(400, f"'{body.source_site}' 키워드 검색은 아직 지원하지 않습니다")
+    raise HTTPException(
+        400, f"'{body.source_site}' 키워드 검색은 아직 지원하지 않습니다"
+    )
 
 
 @router.post("/enrich/{product_id}")
@@ -1281,8 +1523,6 @@ async def enrich_product(
 ):
     """수집 상품의 상세 정보를 소싱사이트 API에서 보강 (카테고리, 옵션, 상세이미지 등)."""
     from backend.domain.samba.proxy.musinsa import MusinsaClient
-    from backend.domain.samba.forbidden.model import SambaSettings
-    from sqlmodel import select
 
     svc = _get_services(session)
     product = await svc.get_collected_product(product_id)
@@ -1291,6 +1531,7 @@ async def enrich_product(
 
     if product.source_site == "MUSINSA" and product.site_product_id:
         from backend.api.v1.routers.samba.collector_common import get_musinsa_cookie
+
         cookie = await get_musinsa_cookie(session)
 
         client = MusinsaClient(cookie=cookie)
@@ -1305,7 +1546,10 @@ async def enrich_product(
         orig_cnt = detail.get("originalImageCount", len(detail.get("images", [])))
         if orig_cnt < len(detail.get("images", [])):
             from backend.domain.samba.image.service import split_long_images
-            detail["images"] = await split_long_images(detail["images"], orig_cnt, session)
+
+            detail["images"] = await split_long_images(
+                detail["images"], orig_cnt, session
+            )
 
         # get_goods_detail은 { category: "키즈 > ...", category1: "키즈", ... } 형태로 반환
         from datetime import datetime, timezone
@@ -1314,7 +1558,9 @@ async def enrich_product(
         api_sale = detail.get("salePrice")
         api_original = detail.get("originalPrice")
         new_sale_price = api_sale if api_sale is not None else product.sale_price
-        new_original_price = api_original if api_original is not None else product.original_price
+        new_original_price = (
+            api_original if api_original is not None else product.original_price
+        )
 
         new_sale_status = detail.get("saleStatus", "in_stock")
         # 최대혜택가: best_benefit_price → cost 컬럼에 저장 (0은 None으로 처리)
@@ -1364,7 +1610,11 @@ async def enrich_product(
             updates["images"] = detail["images"]
 
         updated = await svc.update_collected_product(product_id, updates)
-        return {"success": True, "enriched_fields": list(updates.keys()), "product": updated}
+        return {
+            "success": True,
+            "enriched_fields": list(updates.keys()),
+            "product": updated,
+        }
 
     if product.source_site == "KREAM" and product.site_product_id:
         from backend.domain.samba.proxy.kream import KreamClient
@@ -1385,11 +1635,23 @@ async def enrich_product(
 
         opts = pd.get("options", [])
         cat_str = pd.get("category", "")
-        cat_parts = [c.strip() for c in cat_str.split(">") if c.strip()] if cat_str else []
+        cat_parts = (
+            [c.strip() for c in cat_str.split(">") if c.strip()] if cat_str else []
+        )
 
-        fast_prices = [o.get("kreamFastPrice", 0) for o in opts if o.get("kreamFastPrice", 0) > 0]
-        general_prices = [o.get("kreamGeneralPrice", 0) for o in opts if o.get("kreamGeneralPrice", 0) > 0]
-        sale_p = min(fast_prices) if fast_prices else (pd.get("salePrice") or product.sale_price)
+        fast_prices = [
+            o.get("kreamFastPrice", 0) for o in opts if o.get("kreamFastPrice", 0) > 0
+        ]
+        general_prices = [
+            o.get("kreamGeneralPrice", 0)
+            for o in opts
+            if o.get("kreamGeneralPrice", 0) > 0
+        ]
+        sale_p = (
+            min(fast_prices)
+            if fast_prices
+            else (pd.get("salePrice") or product.sale_price)
+        )
         cost_p = min(general_prices) if general_prices else sale_p
 
         # 가격재고업데이트: 가격/재고(옵션)만 갱신, 상품명/브랜드/이미지/카테고리 스킵
@@ -1409,11 +1671,16 @@ async def enrich_product(
         updates["price_history"] = _trim_history(history)
 
         updated = await svc.update_collected_product(product_id, updates)
-        return {"success": True, "enriched_fields": list(updates.keys()), "product": updated}
+        return {
+            "success": True,
+            "enriched_fields": list(updates.keys()),
+            "product": updated,
+        }
 
     if product.source_site == "Nike" and product.site_product_id:
         from backend.domain.samba.proxy.nike import NikeClient
         from datetime import datetime, timezone
+
         try:
             detail = await NikeClient().get_detail(product.site_product_id)
         except Exception as e:
@@ -1422,9 +1689,20 @@ async def enrich_product(
             raise HTTPException(502, detail["error"])
 
         updates = {}
-        for field in ("style_code", "sex", "manufacturer", "origin", "material",
-                      "care_instructions", "quality_guarantee", "color", "video_url",
-                      "detail_html", "images", "options"):
+        for field in (
+            "style_code",
+            "sex",
+            "manufacturer",
+            "origin",
+            "material",
+            "care_instructions",
+            "quality_guarantee",
+            "color",
+            "video_url",
+            "detail_html",
+            "images",
+            "options",
+        ):
             val = detail.get(field)
             if val is not None and val != "" and val != []:
                 updates[field] = val
@@ -1447,7 +1725,11 @@ async def enrich_product(
         updates["price_history"] = _trim_history(history)
 
         updated = await svc.update_collected_product(product_id, updates)
-        return {"success": True, "enriched_fields": list(updates.keys()), "product": updated}
+        return {
+            "success": True,
+            "enriched_fields": list(updates.keys()),
+            "product": updated,
+        }
 
     if product.source_site == "FashionPlus" and product.site_product_id:
         from backend.domain.samba.proxy.fashionplus import FashionPlusClient
@@ -1487,15 +1769,21 @@ async def enrich_product(
         updates["price_history"] = _trim_history(history)
 
         updated = await svc.update_collected_product(product_id, updates)
-        return {"success": True, "enriched_fields": list(updates.keys()), "product": updated}
+        return {
+            "success": True,
+            "enriched_fields": list(updates.keys()),
+            "product": updated,
+        }
 
     # 플러그인 기반 소싱처 (FashionPlus, Nike, Adidas 등)
     from backend.domain.samba.plugins import SOURCING_PLUGINS
+
     _src = product.source_site or ""
     plugin = SOURCING_PLUGINS.get(_src) or SOURCING_PLUGINS.get(_src.upper())
     if plugin and product.site_product_id:
         try:
             from datetime import datetime, timezone
+
             result = await plugin.refresh(product)
             updates: dict[str, Any] = {}
             if result.new_sale_price is not None:
@@ -1523,11 +1811,17 @@ async def enrich_product(
             history.insert(0, snapshot)
             updates["price_history"] = _trim_history(history)
             updated = await svc.update_collected_product(product_id, updates)
-            return {"success": True, "enriched_fields": list(updates.keys()), "product": updated}
+            return {
+                "success": True,
+                "enriched_fields": list(updates.keys()),
+                "product": updated,
+            }
         except Exception as e:
             raise HTTPException(502, f"{product.source_site} 갱신 실패: {e}")
 
-    raise HTTPException(400, f"'{product.source_site}' 상세 보강은 아직 지원하지 않습니다")
+    raise HTTPException(
+        400, f"'{product.source_site}' 상세 보강은 아직 지원하지 않습니다"
+    )
 
 
 @router.post("/enrich-all")
@@ -1536,22 +1830,24 @@ async def enrich_all_products(
 ):
     """카테고리가 비어있는 모든 MUSINSA 수집 상품의 상세 정보를 일괄 보강."""
     from backend.domain.samba.proxy.musinsa import MusinsaClient
-    from backend.domain.samba.forbidden.model import SambaSettings
-    from sqlmodel import select
     import asyncio
 
     svc = _get_services(session)
     all_products = await svc.list_collected_products(skip=0, limit=1000)
 
     # 카테고리 없는 MUSINSA 상품만
-    targets = [p for p in all_products
-               if p.source_site == "MUSINSA" and p.site_product_id and not p.category1]
+    targets = [
+        p
+        for p in all_products
+        if p.source_site == "MUSINSA" and p.site_product_id and not p.category1
+    ]
 
     if not targets:
         return {"enriched": 0, "message": "보강할 상품이 없습니다"}
 
     # 쿠키 로드
     from backend.api.v1.routers.samba.collector_common import get_musinsa_cookie
+
     cookie = await get_musinsa_cookie(session)
 
     client = MusinsaClient(cookie=cookie)
@@ -1566,13 +1862,18 @@ async def enrich_all_products(
             orig_cnt = detail.get("originalImageCount", len(detail.get("images", [])))
             if orig_cnt < len(detail.get("images", [])):
                 from backend.domain.samba.image.service import split_long_images
-                detail["images"] = await split_long_images(detail["images"], orig_cnt, session)
+
+                detail["images"] = await split_long_images(
+                    detail["images"], orig_cnt, session
+                )
 
             new_sale_status = detail.get("saleStatus", "in_stock")
             api_sale = detail.get("salePrice")
             api_original = detail.get("originalPrice")
             new_sale_price = api_sale if api_sale is not None else product.sale_price
-            new_original_price = api_original if api_original is not None else product.original_price
+            new_original_price = (
+                api_original if api_original is not None else product.original_price
+            )
             _raw_cost = detail.get("bestBenefitPrice")
             new_cost = _raw_cost if (_raw_cost is not None and _raw_cost > 0) else None
 
@@ -1592,11 +1893,13 @@ async def enrich_all_products(
             # 가격 변동 추적
             if new_sale_price != product.sale_price:
                 from datetime import datetime, timezone as tz
+
                 updates["price_before_change"] = product.sale_price
                 updates["price_changed_at"] = datetime.now(tz.utc)
 
             # 가격/옵션 이력 스냅샷 추가 (최신순, 최대 200건)
             from datetime import datetime, timezone as tz
+
             snapshot = {
                 "date": datetime.now(tz.utc).isoformat(),
                 "sale_price": new_sale_price,

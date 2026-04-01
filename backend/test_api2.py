@@ -1,4 +1,5 @@
 """무신사 JS에서 api2 경로 추출."""
+
 import httpx
 import re
 import sys

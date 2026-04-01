@@ -40,7 +40,9 @@ class SambaOrderRepository(BaseRepository[SambaOrder]):
             channel_id=channel_id, order_by="created_at", order_by_desc=True
         )
 
-    async def list_by_date_range(self, start_date: str, end_date: str) -> List[SambaOrder]:
+    async def list_by_date_range(
+        self, start_date: str, end_date: str
+    ) -> List[SambaOrder]:
         stmt = (
             select(SambaOrder)
             .where(

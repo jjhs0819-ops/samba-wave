@@ -2,13 +2,12 @@
 
 import asyncio
 import logging
-import re
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlmodel import select
@@ -16,14 +15,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.cache import cache
-from backend.domain.samba.collector.grouping import generate_group_key, parse_color_from_name
 
 from backend.api.v1.routers.samba.collector_common import (
     _HEAVY_FIELDS,
-    _clean_text,
-    _build_product_data,
-    _trim_history,
-    _build_kream_price_snapshot,
     _get_services,
     _invalidate_blacklist_cache,
 )
@@ -32,6 +26,7 @@ router = APIRouter(prefix="/collector", tags=["samba-collector"])
 
 
 # ── Inline DTOs (will be replaced by dtos/samba/collector.py when ready) ──
+
 
 class SearchFilterCreate(BaseModel):
     source_site: str
@@ -141,6 +136,7 @@ class BulkTagUpdateRequest(BaseModel):
 
 # ── Status / Health ──
 
+
 @router.get("/proxy-status")
 async def proxy_status():
     """프록시 서버 연결 상태 확인 — 백엔드 통합으로 항상 정상."""
@@ -170,6 +166,7 @@ async def musinsa_auth_status(
 
 # ── Search Filters ──
 
+
 @router.get("/filters")
 async def list_filters(session: AsyncSession = Depends(get_read_session_dependency)):
     svc = _get_services(session)
@@ -187,22 +184,45 @@ async def list_filters(session: AsyncSession = Depends(get_read_session_dependen
 
     # 한 번의 GROUP BY 쿼리로 모든 카운트 산출
     from sqlalchemy import cast, String
+
     count_stmt = (
         select(
             _CP.search_filter_id,
             func.count().label("collected_count"),
-            func.count(case((and_(
-                _CP.registered_accounts != None,
-                func.length(cast(_CP.registered_accounts, String)) > 2,  # [] = 2글자, 실제 데이터 있으면 > 2
-            ), literal(1)))).label("market_registered_count"),
-            func.count(case((and_(_CP.applied_policy_id != None), literal(1)))).label("policy_applied_count"),
-            func.count(case((and_(cast(_CP.tags, String).like('%__ai_tagged__%')), literal(1)))).label("ai_tagged_count"),
-            func.count(case((and_(cast(_CP.tags, String).like('%__ai_image__%')), literal(1)))).label("ai_image_count"),
-            func.count(case((and_(
-                _CP.tags != None,
-                func.length(cast(_CP.tags, String)) > 20,  # 시스템태그만 있으면 짧음, 실제 태그 있으면 > 20
-                ~cast(_CP.tags, String).like('%[]%'),
-            ), literal(1)))).label("tag_applied_count"),
+            func.count(
+                case(
+                    (
+                        and_(
+                            _CP.registered_accounts != None,
+                            func.length(cast(_CP.registered_accounts, String))
+                            > 2,  # [] = 2글자, 실제 데이터 있으면 > 2
+                        ),
+                        literal(1),
+                    )
+                )
+            ).label("market_registered_count"),
+            func.count(case((and_(_CP.applied_policy_id != None), literal(1)))).label(
+                "policy_applied_count"
+            ),
+            func.count(
+                case((and_(cast(_CP.tags, String).like("%__ai_tagged__%")), literal(1)))
+            ).label("ai_tagged_count"),
+            func.count(
+                case((and_(cast(_CP.tags, String).like("%__ai_image__%")), literal(1)))
+            ).label("ai_image_count"),
+            func.count(
+                case(
+                    (
+                        and_(
+                            _CP.tags != None,
+                            func.length(cast(_CP.tags, String))
+                            > 20,  # 시스템태그만 있으면 짧음, 실제 태그 있으면 > 20
+                            ~cast(_CP.tags, String).like("%[]%"),
+                        ),
+                        literal(1),
+                    )
+                )
+            ).label("tag_applied_count"),
         )
         .where(_CP.search_filter_id.in_(filter_ids))
         .group_by(_CP.search_filter_id)
@@ -261,8 +281,12 @@ async def update_filter(
         async def _propagate():
             try:
                 from backend.db.orm import get_write_session
+
                 async with get_write_session() as bg_session:
-                    from backend.domain.samba.policy.repository import SambaPolicyRepository
+                    from backend.domain.samba.policy.repository import (
+                        SambaPolicyRepository,
+                    )
+
                     policy_repo = SambaPolicyRepository(bg_session)
                     policy = await policy_repo.get_async(policy_id)
                     policy_data = None
@@ -302,9 +326,13 @@ async def delete_filter(
 
     # 마켓등록 상품 체크
     products = await svc.product_repo.list_by_filter(filter_id, limit=100000)
-    registered = [p for p in products if p.registered_accounts and len(p.registered_accounts) > 0]
+    registered = [
+        p for p in products if p.registered_accounts and len(p.registered_accounts) > 0
+    ]
     if registered:
-        raise HTTPException(400, f"마켓등록 상품이 {len(registered)}건 있어서 삭제할 수 없습니다")
+        raise HTTPException(
+            400, f"마켓등록 상품이 {len(registered)}건 있어서 삭제할 수 없습니다"
+        )
 
     # 상품 벌크 삭제 → 그룹 삭제
     deleted_count = len(products)
@@ -322,7 +350,10 @@ async def delete_orphan_products(
 ):
     """그룹이 삭제되었지만 상품이 남은 고아 상품을 정리."""
     from sqlalchemy import select, delete as sa_delete, and_
-    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP, SambaSearchFilter as _SF
+    from backend.domain.samba.collector.model import (
+        SambaCollectedProduct as _CP,
+        SambaSearchFilter as _SF,
+    )
 
     # search_filter_id가 있지만 해당 필터가 존재하지 않는 상품 조회
     existing_filter_ids = select(_SF.id)
@@ -335,14 +366,22 @@ async def delete_orphan_products(
     orphans = (await session.execute(orphan_stmt)).all()
 
     # 마켓등록 상품은 제외
-    registered = [o for o in orphans if o.registered_accounts and len(o.registered_accounts) > 0]
-    deletable = [o for o in orphans if not o.registered_accounts or len(o.registered_accounts) == 0]
+    registered = [
+        o for o in orphans if o.registered_accounts and len(o.registered_accounts) > 0
+    ]
+    deletable = [
+        o
+        for o in orphans
+        if not o.registered_accounts or len(o.registered_accounts) == 0
+    ]
 
     if deletable:
         del_ids = [o.id for o in deletable]
         await session.execute(sa_delete(_CP).where(_CP.id.in_(del_ids)))
         await session.commit()
-        logger.info(f"고아 상품 정리: {len(deletable)}건 삭제 (마켓등록 {len(registered)}건 보존)")
+        logger.info(
+            f"고아 상품 정리: {len(deletable)}건 삭제 (마켓등록 {len(registered)}건 보존)"
+        )
 
     return {
         "ok": True,
@@ -367,11 +406,19 @@ async def get_filter_tree(session: AsyncSession = Depends(get_read_session_depen
     tag_count_map: dict[str, int] = {}
     if leaf_ids:
         from sqlalchemy import case, and_, cast, String, literal
+
         count_stmt = (
             select(
                 _CP.search_filter_id,
                 _func.count().label("cnt"),
-                _func.count(case((and_(cast(_CP.tags, String).like('%__ai_tagged__%')), literal(1)))).label("ai_tagged"),
+                _func.count(
+                    case(
+                        (
+                            and_(cast(_CP.tags, String).like("%__ai_tagged__%")),
+                            literal(1),
+                        )
+                    )
+                ).label("ai_tagged"),
             )
             .where(_CP.search_filter_id.in_(leaf_ids))
             .group_by(_CP.search_filter_id)
@@ -460,6 +507,7 @@ async def move_filter(
 
 # ── Collected Products ──
 
+
 @router.get("/products/scroll")
 async def scroll_products(
     skip: int = Query(0, ge=0),
@@ -478,7 +526,7 @@ async def scroll_products(
     Returns: {items: [...], total: int, sites: [str]}
     """
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import inspect as _sa_inspect, func, cast, String, text
+    from sqlalchemy import inspect as _sa_inspect, func, cast, String
 
     mapper = _sa_inspect(_CP)
     light_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]
@@ -492,26 +540,35 @@ async def scroll_products(
         if search_type == "name":
             # 원상품명 + 등록상품명 통합 부분 일치 (공백 무시)
             q_no_space = q.replace(" ", "")
-            conditions.append(or_(
-                _CP.name.ilike(f"%{q}%"),
-                func.replace(_CP.name, " ", "").ilike(f"%{q_no_space}%"),
-                _CP.name_en.ilike(f"%{q}%"),
-                func.replace(func.coalesce(_CP.name_en, ""), " ", "").ilike(f"%{q_no_space}%"),
-            ))
+            conditions.append(
+                or_(
+                    _CP.name.ilike(f"%{q}%"),
+                    func.replace(_CP.name, " ", "").ilike(f"%{q_no_space}%"),
+                    _CP.name_en.ilike(f"%{q}%"),
+                    func.replace(func.coalesce(_CP.name_en, ""), " ", "").ilike(
+                        f"%{q_no_space}%"
+                    ),
+                )
+            )
         elif search_type == "name_all":
             # 상품명 + 등록상품명(name_en) 동시 검색 (공백 무시)
             q_no_space = q.replace(" ", "")
-            conditions.append(or_(
-                _CP.name.ilike(f"%{q}%"),
-                func.replace(_CP.name, " ", "").ilike(f"%{q_no_space}%"),
-                _CP.name_en.ilike(f"%{q}%"),
-                func.replace(func.coalesce(_CP.name_en, ""), " ", "").ilike(f"%{q_no_space}%"),
-            ))
+            conditions.append(
+                or_(
+                    _CP.name.ilike(f"%{q}%"),
+                    func.replace(_CP.name, " ", "").ilike(f"%{q_no_space}%"),
+                    _CP.name_en.ilike(f"%{q}%"),
+                    func.replace(func.coalesce(_CP.name_en, ""), " ", "").ilike(
+                        f"%{q_no_space}%"
+                    ),
+                )
+            )
         elif search_type == "no":
             conditions.append(_CP.site_product_id.ilike(f"%{q}%"))
         elif search_type == "filter":
             # 검색필터 이름으로 검색 → search_filter_id 서브쿼리
             from backend.domain.samba.collector.model import SambaSearchFilter as _SF
+
             sf_ids = select(_SF.id).where(_SF.name.ilike(f"%{q}%"))
             conditions.append(_CP.search_filter_id.in_(sf_ids))
         elif search_type == "brand":
@@ -520,6 +577,7 @@ async def scroll_products(
             conditions.append(_CP.id == q)
         elif search_type == "policy":
             from backend.domain.samba.policy.model import SambaPolicy as _POL
+
             pol_ids = select(_POL.id).where(_POL.name.ilike(f"%{q}%"))
             conditions.append(_CP.applied_policy_id.in_(pol_ids))
 
@@ -537,7 +595,12 @@ async def scroll_products(
     _KNOWN_STATUS_VALUES = {"collected", "saved", "registered"}
     if status == "has_orders":
         from backend.domain.samba.order.model import SambaOrder
-        order_pids = select(SambaOrder.product_id).where(SambaOrder.product_id.isnot(None)).distinct()
+
+        order_pids = (
+            select(SambaOrder.product_id)
+            .where(SambaOrder.product_id.isnot(None))
+            .distinct()
+        )
         conditions.append(_CP.id.in_(order_pids))
     elif status == "free_ship":
         conditions.append(_CP.free_shipping == True)
@@ -548,15 +611,20 @@ async def scroll_products(
         conditions.append(_CP.same_day_delivery == True)
     elif status == "market_registered":
         # 마켓등록상품 공통 조건 (registered_accounts + market_product_nos)
-        from backend.api.v1.routers.samba.collector_common import build_market_registered_conditions
+        from backend.api.v1.routers.samba.collector_common import (
+            build_market_registered_conditions,
+        )
+
         conditions.extend(build_market_registered_conditions(_CP))
     elif status == "market_unregistered":
         # 마켓 미등록 상품: registered_accounts가 null이거나 빈 배열
-        conditions.append(or_(
-            _CP.registered_accounts.is_(None),
-            cast(_CP.registered_accounts, String) == 'null',
-            cast(_CP.registered_accounts, String) == '[]',
-        ))
+        conditions.append(
+            or_(
+                _CP.registered_accounts.is_(None),
+                cast(_CP.registered_accounts, String) == "null",
+                cast(_CP.registered_accounts, String) == "[]",
+            )
+        )
     elif status == "sold_out":
         conditions.append(_CP.sale_status == "sold_out")
     elif status and status in _KNOWN_STATUS_VALUES:
@@ -568,31 +636,39 @@ async def scroll_products(
     elif ai_filter == "ai_tag_yes":
         conditions.append(cast(_CP.tags, String).like('%"__ai_tagged__"%'))
     elif ai_filter == "ai_tag_no":
-        conditions.append(or_(
-            _CP.tags.is_(None),
-            ~cast(_CP.tags, String).like('%"__ai_tagged__"%'),
-        ))
+        conditions.append(
+            or_(
+                _CP.tags.is_(None),
+                ~cast(_CP.tags, String).like('%"__ai_tagged__"%'),
+            )
+        )
     elif ai_filter == "ai_img_yes":
         conditions.append(cast(_CP.tags, String).like('%"__ai_image__"%'))
     elif ai_filter == "ai_img_no":
-        conditions.append(or_(
-            _CP.tags.is_(None),
-            ~cast(_CP.tags, String).like('%"__ai_image__"%'),
-        ))
+        conditions.append(
+            or_(
+                _CP.tags.is_(None),
+                ~cast(_CP.tags, String).like('%"__ai_image__"%'),
+            )
+        )
     elif ai_filter == "filter_yes":
         conditions.append(cast(_CP.tags, String).like('%"__img_filtered__"%'))
     elif ai_filter == "filter_no":
-        conditions.append(or_(
-            _CP.tags.is_(None),
-            ~cast(_CP.tags, String).like('%"__img_filtered__"%'),
-        ))
+        conditions.append(
+            or_(
+                _CP.tags.is_(None),
+                ~cast(_CP.tags, String).like('%"__img_filtered__"%'),
+            )
+        )
     elif ai_filter == "img_edit_yes":
         conditions.append(cast(_CP.tags, String).like('%"__img_edited__"%'))
     elif ai_filter == "img_edit_no":
-        conditions.append(or_(
-            _CP.tags.is_(None),
-            ~cast(_CP.tags, String).like('%"__img_edited__"%'),
-        ))
+        conditions.append(
+            or_(
+                _CP.tags.is_(None),
+                ~cast(_CP.tags, String).like('%"__img_edited__"%'),
+            )
+        )
     elif ai_filter == "video_yes":
         conditions.append(_CP.video_url.isnot(None))
         conditions.append(_CP.video_url != "")
@@ -600,7 +676,12 @@ async def scroll_products(
         conditions.append(or_(_CP.video_url.is_(None), _CP.video_url == ""))
     elif ai_filter == "has_orders":
         from backend.domain.samba.order.model import SambaOrder
-        order_pids = select(SambaOrder.product_id).where(SambaOrder.product_id.isnot(None)).distinct()
+
+        order_pids = (
+            select(SambaOrder.product_id)
+            .where(SambaOrder.product_id.isnot(None))
+            .distinct()
+        )
         conditions.append(_CP.id.in_(order_pids))
 
     # 목록에 필요한 컬럼 선택 (heavy 필드만 제외)
@@ -615,7 +696,9 @@ async def scroll_products(
     sites = await cache.get("products:sites")
     sites_task = None
     if not sites:
-        sites_stmt = select(_CP.source_site).distinct().where(_CP.source_site.isnot(None))
+        sites_stmt = (
+            select(_CP.source_site).distinct().where(_CP.source_site.isnot(None))
+        )
         sites_task = session.execute(sites_stmt)
 
     # KPI 카운트 (캐시 TTL 30초)
@@ -623,11 +706,18 @@ async def scroll_products(
     counts_task = None
     if not counts:
         from sqlalchemy import case, literal
+
         counts_stmt = select(
             func.count().label("total"),
-            func.count(case((_CP.status == "registered", literal(1)))).label("registered"),
-            func.count(case((_CP.applied_policy_id != None, literal(1)))).label("policy_applied"),
-            func.count(case((_CP.sale_status == "sold_out", literal(1)))).label("sold_out"),
+            func.count(case((_CP.status == "registered", literal(1)))).label(
+                "registered"
+            ),
+            func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
+                "policy_applied"
+            ),
+            func.count(case((_CP.sale_status == "sold_out", literal(1)))).label(
+                "sold_out"
+            ),
         ).select_from(_CP)
         counts_task = session.execute(counts_stmt)
 
@@ -640,9 +730,13 @@ async def scroll_products(
     if sort_by == "collect-asc":
         data_stmt = data_stmt.order_by(_CP.created_at.asc())
     elif sort_by == "update-desc":
-        data_stmt = data_stmt.order_by(_CP.updated_at.desc().nullslast(), _CP.created_at.desc())
+        data_stmt = data_stmt.order_by(
+            _CP.updated_at.desc().nullslast(), _CP.created_at.desc()
+        )
     elif sort_by == "update-asc":
-        data_stmt = data_stmt.order_by(_CP.updated_at.asc().nullsfirst(), _CP.created_at.asc())
+        data_stmt = data_stmt.order_by(
+            _CP.updated_at.asc().nullsfirst(), _CP.created_at.asc()
+        )
     else:
         data_stmt = data_stmt.order_by(_CP.created_at.desc())
 
@@ -674,7 +768,8 @@ async def scroll_products(
         "items": [dict(r) for r in rows],
         "total": total,
         "sites": sites,
-        "counts": counts or {"total": 0, "registered": 0, "policy_applied": 0, "sold_out": 0},
+        "counts": counts
+        or {"total": 0, "registered": 0, "policy_applied": 0, "sold_out": 0},
     }
 
 
@@ -689,15 +784,16 @@ async def products_init_data(
     """
     from backend.domain.samba.policy.model import SambaPolicy
     from backend.domain.samba.collector.model import SambaSearchFilter as _SF
-    from backend.domain.samba.forbidden.model import SambaForbiddenWord, SambaSettings
+    from backend.domain.samba.forbidden.model import SambaForbiddenWord
     from backend.domain.samba.account.model import SambaMarketAccount
     from backend.domain.samba.order.model import SambaOrder
     from backend.domain.samba.category.model import SambaCategoryMapping
-    from sqlalchemy import func
 
     # 모든 쿼리 병렬 실행
     pol_task = session.execute(select(SambaPolicy).limit(50))
-    filter_task = session.execute(select(_SF).where(_SF.is_folder == False).limit(10000))
+    filter_task = session.execute(
+        select(_SF).where(_SF.is_folder == False).limit(10000)
+    )
     words_task = session.execute(
         select(SambaForbiddenWord).where(
             SambaForbiddenWord.type == "deletion",
@@ -708,38 +804,61 @@ async def products_init_data(
         select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)
     )
     order_pids_task = session.execute(
-        select(SambaOrder.product_id).where(SambaOrder.product_id.isnot(None)).distinct()
+        select(SambaOrder.product_id)
+        .where(SambaOrder.product_id.isnot(None))
+        .distinct()
     )
     mappings_task = session.execute(select(SambaCategoryMapping))
 
     pol_r, filter_r, words_r, accs_r, order_r, map_r = await asyncio.gather(
-        pol_task, filter_task, words_task, accs_task, order_pids_task, mappings_task,
+        pol_task,
+        filter_task,
+        words_task,
+        accs_task,
+        order_pids_task,
+        mappings_task,
     )
 
     # name_rules + detail_templates (policy 도메인에 정의됨)
     from backend.domain.samba.policy.model import SambaNameRule, SambaDetailTemplate
+
     rules_r, tpl_r = await asyncio.gather(
         session.execute(select(SambaNameRule)),
         session.execute(select(SambaDetailTemplate)),
     )
 
-    policies = [dict(r._mapping) if hasattr(r, '_mapping') else r for r in pol_r.scalars().all()]
-    filters = [dict(r._mapping) if hasattr(r, '_mapping') else r for r in filter_r.scalars().all()]
+    policies = [
+        dict(r._mapping) if hasattr(r, "_mapping") else r for r in pol_r.scalars().all()
+    ]
+    filters = [
+        dict(r._mapping) if hasattr(r, "_mapping") else r
+        for r in filter_r.scalars().all()
+    ]
     words = [r.word for r in words_r.scalars().all()]
-    accounts = [dict(r._mapping) if hasattr(r, '_mapping') else r for r in accs_r.scalars().all()]
+    accounts = [
+        dict(r._mapping) if hasattr(r, "_mapping") else r
+        for r in accs_r.scalars().all()
+    ]
     order_pids = [r[0] for r in order_r.all()]
-    mappings = [dict(r._mapping) if hasattr(r, '_mapping') else r for r in map_r.scalars().all()]
-    rules = [dict(r._mapping) if hasattr(r, '_mapping') else r for r in rules_r.scalars().all()]
-    templates = [dict(r._mapping) if hasattr(r, '_mapping') else r for r in tpl_r.scalars().all()]
+    mappings = [
+        dict(r._mapping) if hasattr(r, "_mapping") else r for r in map_r.scalars().all()
+    ]
+    rules = [
+        dict(r._mapping) if hasattr(r, "_mapping") else r
+        for r in rules_r.scalars().all()
+    ]
+    templates = [
+        dict(r._mapping) if hasattr(r, "_mapping") else r for r in tpl_r.scalars().all()
+    ]
 
     # SQLModel 인스턴스를 dict로 변환
     def to_dict(obj):
         if isinstance(obj, dict):
             return obj
-        if hasattr(obj, 'model_dump'):
+        if hasattr(obj, "model_dump"):
             return obj.model_dump()
-        if hasattr(obj, '__dict__'):
-            d = {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
+        if hasattr(obj, "__dict__"):
+            d = {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
             return d
         return obj
 
@@ -770,8 +889,12 @@ async def product_counts(
 
     stmt = select(
         func.count().label("total"),
-        func.count(case((_CP.registered_accounts != None, literal(1)))).label("registered"),
-        func.count(case((_CP.applied_policy_id != None, literal(1)))).label("policy_applied"),
+        func.count(case((_CP.registered_accounts != None, literal(1)))).label(
+            "registered"
+        ),
+        func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
+            "policy_applied"
+        ),
         func.count(case((_CP.sale_status == "sold_out", literal(1)))).label("sold_out"),
     ).select_from(_CP)
     row = (await session.execute(stmt)).one()
@@ -852,6 +975,7 @@ async def get_products_by_ids(
         return []
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from sqlalchemy import inspect as _sa_inspect
+
     mapper = _sa_inspect(_CP)
     light_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]
     stmt = select(*light_cols).where(_CP.id.in_(ids))
@@ -866,9 +990,10 @@ async def get_product_ids_with_orders(
 ):
     """주문 이력이 있는 상품 ID 목록 조회."""
     from sqlmodel import text
-    result = await session.execute(text(
-        "SELECT DISTINCT product_id FROM samba_order WHERE product_id IS NOT NULL"
-    ))
+
+    result = await session.execute(
+        text("SELECT DISTINCT product_id FROM samba_order WHERE product_id IS NOT NULL")
+    )
     return [row[0] for row in result.all()]
 
 
@@ -902,6 +1027,7 @@ async def get_price_history(
     """가격변경이력만 경량 조회 (price_history 컬럼만 SELECT)."""
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from sqlalchemy import select as _sel
+
     stmt = _sel(_CP.price_history).where(_CP.id == product_id)
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
@@ -929,6 +1055,7 @@ async def lookup_by_market_product_no(
 ):
     """마켓 상품번호로 수집상품 조회 (원문링크/이미지 등 반환)."""
     from sqlalchemy import text as sa_text
+
     sql = sa_text(
         "SELECT id, source_site, site_product_id, name, images, source_url "
         "FROM samba_collected_product "
@@ -1011,7 +1138,9 @@ async def update_collected_product(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     svc = _get_services(session)
-    result = await svc.update_collected_product(product_id, body.model_dump(exclude_unset=True))
+    result = await svc.update_collected_product(
+        product_id, body.model_dump(exclude_unset=True)
+    )
     if not result:
         raise HTTPException(404, "상품을 찾을 수 없습니다")
     return result
@@ -1024,11 +1153,14 @@ async def reset_product_registration(
 ):
     """상품의 마켓 등록 정보(registered_accounts, market_product_nos) 초기화."""
     svc = _get_services(session)
-    result = await svc.update_collected_product(product_id, {
-        "registered_accounts": None,
-        "market_product_nos": None,
-        "status": "collected",
-    })
+    result = await svc.update_collected_product(
+        product_id,
+        {
+            "registered_accounts": None,
+            "market_product_nos": None,
+            "status": "collected",
+        },
+    )
     if not result:
         raise HTTPException(404, "상품을 찾을 수 없습니다")
     return {"ok": True}
@@ -1054,6 +1186,7 @@ async def bulk_delete_products(
     from sqlalchemy import delete as sa_delete
     from sqlmodel import col
     from backend.domain.samba.collector.model import SambaCollectedProduct
+
     stmt = sa_delete(SambaCollectedProduct).where(
         col(SambaCollectedProduct.id).in_(body.ids)
     )
@@ -1076,7 +1209,9 @@ async def block_and_delete_products(
     from backend.domain.samba.forbidden.repository import SambaSettingsRepository
 
     # 삭제 대상 상품 정보 조회
-    stmt = select(SambaCollectedProduct).where(col(SambaCollectedProduct.id).in_(body.product_ids))
+    stmt = select(SambaCollectedProduct).where(
+        col(SambaCollectedProduct.id).in_(body.product_ids)
+    )
     result = await session.execute(stmt)
     products = result.scalars().all()
 
@@ -1096,12 +1231,14 @@ async def block_and_delete_products(
     for p in products:
         key = f"{p.source_site}:{p.site_product_id}"
         if key not in existing_keys and p.source_site and p.site_product_id:
-            blacklist.append({
-                "source_site": p.source_site,
-                "site_product_id": p.site_product_id,
-                "name": (p.name or "")[:50],
-                "blocked_at": datetime.now(timezone.utc).isoformat(),
-            })
+            blacklist.append(
+                {
+                    "source_site": p.source_site,
+                    "site_product_id": p.site_product_id,
+                    "name": (p.name or "")[:50],
+                    "blocked_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
             existing_keys.add(key)
             added += 1
 
@@ -1111,11 +1248,14 @@ async def block_and_delete_products(
         session.add(row)
     else:
         from backend.domain.samba.forbidden.model import SambaSettings
+
         new_row = SambaSettings(key="collection_blacklist", value=blacklist)
         session.add(new_row)
 
     # 상품 삭제
-    del_stmt = sa_delete(SambaCollectedProduct).where(col(SambaCollectedProduct.id).in_(body.product_ids))
+    del_stmt = sa_delete(SambaCollectedProduct).where(
+        col(SambaCollectedProduct.id).in_(body.product_ids)
+    )
     del_result = await session.exec(del_stmt)  # type: ignore[arg-type]
     await session.commit()
     await cache.clear_pattern("products:*")
@@ -1133,6 +1273,7 @@ async def bulk_reset_registration(
     from sqlalchemy import update as sa_update
     from sqlmodel import col
     from backend.domain.samba.collector.model import SambaCollectedProduct
+
     stmt = (
         sa_update(SambaCollectedProduct)
         .where(col(SambaCollectedProduct.id).in_(body.ids))
@@ -1151,6 +1292,7 @@ async def bulk_update_tags(
     """상품 태그/SEO키워드 일괄 업데이트."""
     from backend.domain.samba.collector.model import SambaCollectedProduct
     from sqlmodel import col
+
     stmt = select(SambaCollectedProduct).where(
         col(SambaCollectedProduct.id).in_(body.ids)
     )

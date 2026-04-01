@@ -210,7 +210,9 @@ class WholesaleCrawler:
                     price = _safe_int(price_el.get_text() if price_el else "0")
 
                     # 소비자가
-                    retail_el = item.select_one(".goods_price .normal_price, .price_normal")
+                    retail_el = item.select_one(
+                        ".goods_price .normal_price, .price_normal"
+                    )
                     retail_price = _safe_int(retail_el.get_text() if retail_el else "0")
 
                     # 카테고리
@@ -219,24 +221,32 @@ class WholesaleCrawler:
 
                     # 이미지
                     img_el = item.select_one("img.goods_img, .thumb img")
-                    image_url = img_el.get("src") or img_el.get("data-src") if img_el else None
+                    image_url = (
+                        img_el.get("src") or img_el.get("data-src") if img_el else None
+                    )
 
                     # 상세 URL
                     base = SOURCES["domeme"]["base_url"]
-                    detail_url = f"{base}{href}" if href and not str(href).startswith("http") else str(href)
+                    detail_url = (
+                        f"{base}{href}"
+                        if href and not str(href).startswith("http")
+                        else str(href)
+                    )
 
                     if not name:
                         continue
 
-                    products.append({
-                        "product_id": str(product_id),
-                        "name": name,
-                        "price": price,
-                        "retail_price": retail_price if retail_price else price,
-                        "category": category,
-                        "image_url": image_url,
-                        "detail_url": detail_url,
-                    })
+                    products.append(
+                        {
+                            "product_id": str(product_id),
+                            "name": name,
+                            "price": price,
+                            "retail_price": retail_price if retail_price else price,
+                            "category": category,
+                            "image_url": image_url,
+                            "detail_url": detail_url,
+                        }
+                    )
                 except Exception as e:
                     logger.debug(f"[WholesaleCrawler] 도매매 상품 파싱 스킵: {e}")
                     continue
@@ -257,11 +267,15 @@ class WholesaleCrawler:
                     name = name_el.get_text(strip=True) if name_el else ""
 
                     # 도매가
-                    price_el = item.select_one(".sale_price, .prd_price .price, .selling_price")
+                    price_el = item.select_one(
+                        ".sale_price, .prd_price .price, .selling_price"
+                    )
                     price = _safe_int(price_el.get_text() if price_el else "0")
 
                     # 소비자가
-                    retail_el = item.select_one(".consumer_price, .origin_price, .prd_price del")
+                    retail_el = item.select_one(
+                        ".consumer_price, .origin_price, .prd_price del"
+                    )
                     retail_price = _safe_int(retail_el.get_text() if retail_el else "0")
 
                     # 카테고리
@@ -270,24 +284,32 @@ class WholesaleCrawler:
 
                     # 이미지
                     img_el = item.select_one("img.prd_img, .thumb_wrap img")
-                    image_url = img_el.get("src") or img_el.get("data-src") if img_el else None
+                    image_url = (
+                        img_el.get("src") or img_el.get("data-src") if img_el else None
+                    )
 
                     # 상세 URL
                     base = SOURCES["ownerclan"]["base_url"]
-                    detail_url = f"{base}{href}" if href and not str(href).startswith("http") else str(href)
+                    detail_url = (
+                        f"{base}{href}"
+                        if href and not str(href).startswith("http")
+                        else str(href)
+                    )
 
                     if not name:
                         continue
 
-                    products.append({
-                        "product_id": str(product_id),
-                        "name": name,
-                        "price": price,
-                        "retail_price": retail_price if retail_price else price,
-                        "category": category,
-                        "image_url": image_url,
-                        "detail_url": detail_url,
-                    })
+                    products.append(
+                        {
+                            "product_id": str(product_id),
+                            "name": name,
+                            "price": price,
+                            "retail_price": retail_price if retail_price else price,
+                            "category": category,
+                            "image_url": image_url,
+                            "detail_url": detail_url,
+                        }
+                    )
                 except Exception as e:
                     logger.debug(f"[WholesaleCrawler] 오너클랜 상품 파싱 스킵: {e}")
                     continue

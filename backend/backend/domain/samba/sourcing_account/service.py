@@ -7,8 +7,9 @@ from backend.domain.samba.sourcing_account.model import (
     SambaSourcingAccount,
     SUPPORTED_SOURCING_SITES,
 )
-from backend.domain.samba.sourcing_account.repository import SambaSourcingAccountRepository
-from backend.utils.logger import logger
+from backend.domain.samba.sourcing_account.repository import (
+    SambaSourcingAccountRepository,
+)
 
 
 class SambaSourcingAccountService:
@@ -16,13 +17,20 @@ class SambaSourcingAccountService:
         self.repo = repo
 
     async def list_accounts(
-        self, site_name: Optional[str] = None, skip: int = 0, limit: int = 100,
+        self,
+        site_name: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100,
     ) -> List[SambaSourcingAccount]:
         if site_name:
             return await self.repo.filter_by_async(
-                site_name=site_name, order_by="created_at", order_by_desc=True,
+                site_name=site_name,
+                order_by="created_at",
+                order_by_desc=True,
             )
-        return await self.repo.list_async(skip=skip, limit=limit, order_by="-created_at")
+        return await self.repo.list_async(
+            skip=skip, limit=limit, order_by="-created_at"
+        )
 
     async def get_account(self, account_id: str) -> Optional[SambaSourcingAccount]:
         return await self.repo.get_async(account_id)
@@ -31,7 +39,9 @@ class SambaSourcingAccountService:
         return await self.repo.create_async(**data)
 
     async def update_account(
-        self, account_id: str, data: Dict[str, Any],
+        self,
+        account_id: str,
+        data: Dict[str, Any],
     ) -> Optional[SambaSourcingAccount]:
         data["updated_at"] = datetime.now(timezone.utc)
         return await self.repo.update_async(account_id, **data)
@@ -46,7 +56,9 @@ class SambaSourcingAccountService:
         return await self.repo.update_async(account_id, is_active=not account.is_active)
 
     async def update_balance(
-        self, account_id: str, balance: float,
+        self,
+        account_id: str,
+        balance: float,
     ) -> Optional[SambaSourcingAccount]:
         """잔액 업데이트."""
         return await self.repo.update_async(

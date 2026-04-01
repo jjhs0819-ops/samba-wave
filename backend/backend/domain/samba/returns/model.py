@@ -54,9 +54,7 @@ class SambaReturn(SQLModel, table=True):
     )
 
     # 판매 마켓
-    market: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
+    market: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 고객 전화번호
     customer_phone: Optional[str] = Field(
@@ -83,9 +81,7 @@ class SambaReturn(SQLModel, table=True):
     recovery_amount: Optional[float] = Field(default=None)
 
     # 메모
-    memo: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
+    memo: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 상품위치 (배송지 시/군)
     product_location: Optional[str] = Field(
@@ -108,9 +104,7 @@ class SambaReturn(SQLModel, table=True):
     )
 
     # 지역
-    region: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
+    region: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 반품요청일
     return_request_date: Optional[datetime] = Field(
@@ -131,9 +125,7 @@ class SambaReturn(SQLModel, table=True):
     type: str = Field(sa_column=Column(Text, nullable=False))
 
     # 사유
-    reason: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
+    reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 상세 설명
     description: Optional[str] = Field(

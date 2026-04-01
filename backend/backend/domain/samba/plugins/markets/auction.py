@@ -20,230 +20,243 @@ _ESM_SECRET_KEY = "M2U0NWFhMmYtZGY0MS00Yjdk"
 
 
 class AuctionPlugin(MarketPlugin):
-  """옥션 마켓 플러그인 — ESM Plus siteType=1."""
+    """옥션 마켓 플러그인 — ESM Plus siteType=1."""
 
-  market_type = "auction"
-  policy_key = "옥션"
-  required_fields = ["name", "sale_price"]
+    market_type = "auction"
+    policy_key = "옥션"
+    required_fields = ["name", "sale_price"]
 
-  def transform(self, product: dict, category_id: str, **kwargs) -> dict:
-    from backend.domain.samba.proxy.esmplus import ESMPlusClient
-    return ESMPlusClient.transform_product(product, category_id, site="auction")
+    def transform(self, product: dict, category_id: str, **kwargs) -> dict:
+        from backend.domain.samba.proxy.esmplus import ESMPlusClient
 
-  async def execute(
-    self,
-    session,
-    product: dict,
-    creds: dict,
-    category_id: str,
-    account,
-    existing_no: str,
-  ) -> dict[str, Any]:
-    """옥션 상품 등록/수정."""
-    from backend.domain.samba.proxy.esmplus import ESMPlusClient
+        return ESMPlusClient.transform_product(product, category_id, site="auction")
 
-    # 판매자 ID
-    seller_id = creds.get("apiKey", "") or creds.get("sellerId", "")
-    if not seller_id:
-      return {"success": False, "message": "옥션 판매자 ID(apiKey)가 없습니다. 계정 설정에서 입력해주세요."}
+    async def execute(
+        self,
+        session,
+        product: dict,
+        creds: dict,
+        category_id: str,
+        account,
+        existing_no: str,
+    ) -> dict[str, Any]:
+        """옥션 상품 등록/수정."""
+        from backend.domain.samba.proxy.esmplus import ESMPlusClient
 
-    hosting_id = creds.get("hostingId", "") or _ESM_HOSTING_ID
-    secret_key = creds.get("secretKey", "") or _ESM_SECRET_KEY
+        # 판매자 ID
+        seller_id = creds.get("apiKey", "") or creds.get("sellerId", "")
+        if not seller_id:
+            return {
+                "success": False,
+                "message": "옥션 판매자 ID(apiKey)가 없습니다. 계정 설정에서 입력해주세요.",
+            }
 
-    client = ESMPlusClient(hosting_id, secret_key, seller_id, site="auction")
+        hosting_id = creds.get("hostingId", "") or _ESM_HOSTING_ID
+        secret_key = creds.get("secretKey", "") or _ESM_SECRET_KEY
 
-    # 상품 데이터 복사 + 계정 설정 주입
-    product_copy = dict(product)
-    product_copy = await self._inject_account_settings(session, product_copy, account)
+        client = ESMPlusClient(hosting_id, secret_key, seller_id, site="auction")
 
-    # 상세 HTML 프로토콜 보정
-    detail_html = product_copy.get("detail_html", "")
-    if detail_html:
-      product_copy["detail_html"] = re.sub(r'(src=["\'])\/\/', r'\1https://', detail_html)
+        # 상품 데이터 복사 + 계정 설정 주입
+        product_copy = dict(product)
+        product_copy = await self._inject_account_settings(
+            session, product_copy, account
+        )
 
-    # transform
-    data = ESMPlusClient.transform_product(product_copy, category_id, site="auction")
+        # 상세 HTML 프로토콜 보정
+        detail_html = product_copy.get("detail_html", "")
+        if detail_html:
+            product_copy["detail_html"] = re.sub(
+                r'(src=["\'])\/\/', r"\1https://", detail_html
+            )
 
-    # 이미지 모델 (등록 후 별도 API 호출용)
-    pending_images = data.pop("_pending_images", None)
+        # transform
+        data = ESMPlusClient.transform_product(
+            product_copy, category_id, site="auction"
+        )
 
-    # 가격/재고만 업데이트 모드
-    skip_image = product.get("_skip_image_upload", False) and bool(existing_no)
-    price_only = product.get("_price_stock_only", False)
+        # 이미지 모델 (등록 후 별도 API 호출용)
+        pending_images = data.pop("_pending_images", None)
 
-    if skip_image or price_only:
-      return await self._update_price_stock(client, existing_no, product_copy, data)
+        # 가격/재고만 업데이트 모드
+        skip_image = product.get("_skip_image_upload", False) and bool(existing_no)
+        price_only = product.get("_price_stock_only", False)
 
-    # 등록/수정 분기
-    if existing_no:
-      return await self._update_product(client, existing_no, data, pending_images)
-    else:
-      return await self._register_product(client, data, pending_images)
+        if skip_image or price_only:
+            return await self._update_price_stock(
+                client, existing_no, product_copy, data
+            )
 
-  async def _register_product(
-    self,
-    client: Any,
-    data: dict[str, Any],
-    pending_images: dict | None,
-  ) -> dict[str, Any]:
-    """신규 상품 등록."""
-    result = await client.register_product(data)
-    goods_no = result.get("goodsNo", "")
-    site_goods_no = result.get("siteGoodsNo", "")
+        # 등록/수정 분기
+        if existing_no:
+            return await self._update_product(client, existing_no, data, pending_images)
+        else:
+            return await self._register_product(client, data, pending_images)
 
-    if pending_images and goods_no:
-      try:
-        await asyncio.sleep(3)
-        await client.update_images(goods_no, {"imageModel": pending_images})
-        logger.info(f"[옥션] 추가 이미지 설정 완료: goodsNo={goods_no}")
-      except Exception as img_e:
-        logger.warning(f"[옥션] 추가 이미지 설정 실패: {img_e}")
-
-    return {
-      "success": True,
-      "message": "옥션 등록 성공",
-      "data": {
-        "sellerProductId": str(goods_no),
-        "siteGoodsNo": site_goods_no,
-      },
-    }
-
-  async def _update_product(
-    self,
-    client: Any,
-    goods_no: str,
-    data: dict[str, Any],
-    pending_images: dict | None,
-  ) -> dict[str, Any]:
-    """기존 상품 수정."""
-    try:
-      await client.update_product(goods_no, data)
-    except RuntimeError as e:
-      err_msg = str(e)
-      if "상품이 없습니다" in err_msg or "not exist" in err_msg.lower():
-        logger.warning(f"[옥션] 상품 {goods_no} 없음 → 신규등록 전환")
+    async def _register_product(
+        self,
+        client: Any,
+        data: dict[str, Any],
+        pending_images: dict | None,
+    ) -> dict[str, Any]:
+        """신규 상품 등록."""
         result = await client.register_product(data)
-        new_goods_no = result.get("goodsNo", "")
+        goods_no = result.get("goodsNo", "")
+        site_goods_no = result.get("siteGoodsNo", "")
+
+        if pending_images and goods_no:
+            try:
+                await asyncio.sleep(3)
+                await client.update_images(goods_no, {"imageModel": pending_images})
+                logger.info(f"[옥션] 추가 이미지 설정 완료: goodsNo={goods_no}")
+            except Exception as img_e:
+                logger.warning(f"[옥션] 추가 이미지 설정 실패: {img_e}")
+
         return {
-          "success": True,
-          "message": "옥션 등록 성공 (기존 상품 없음 → 신규)",
-          "data": {"sellerProductId": str(new_goods_no)},
-          "_clear_product_no": True,
+            "success": True,
+            "message": "옥션 등록 성공",
+            "data": {
+                "sellerProductId": str(goods_no),
+                "siteGoodsNo": site_goods_no,
+            },
         }
-      raise
 
-    if pending_images:
-      try:
-        await client.update_images(goods_no, {"imageModel": pending_images})
-      except Exception as img_e:
-        logger.warning(f"[옥션] 이미지 수정 실패: {img_e}")
+    async def _update_product(
+        self,
+        client: Any,
+        goods_no: str,
+        data: dict[str, Any],
+        pending_images: dict | None,
+    ) -> dict[str, Any]:
+        """기존 상품 수정."""
+        try:
+            await client.update_product(goods_no, data)
+        except RuntimeError as e:
+            err_msg = str(e)
+            if "상품이 없습니다" in err_msg or "not exist" in err_msg.lower():
+                logger.warning(f"[옥션] 상품 {goods_no} 없음 → 신규등록 전환")
+                result = await client.register_product(data)
+                new_goods_no = result.get("goodsNo", "")
+                return {
+                    "success": True,
+                    "message": "옥션 등록 성공 (기존 상품 없음 → 신규)",
+                    "data": {"sellerProductId": str(new_goods_no)},
+                    "_clear_product_no": True,
+                }
+            raise
 
-    return {
-      "success": True,
-      "message": "옥션 수정 성공",
-      "data": {"sellerProductId": goods_no},
-    }
+        if pending_images:
+            try:
+                await client.update_images(goods_no, {"imageModel": pending_images})
+            except Exception as img_e:
+                logger.warning(f"[옥션] 이미지 수정 실패: {img_e}")
 
-  async def _update_price_stock(
-    self,
-    client: Any,
-    goods_no: str,
-    product: dict,
-    data: dict[str, Any],
-  ) -> dict[str, Any]:
-    """가격/재고만 수정 — sell-status API 활용."""
-    if not goods_no:
-      return {"success": False, "message": "상품번호가 없어 가격/재고 수정 불가"}
-
-    # 등록 API는 PascalCase(Iac), sell-status API는 camelCase(iac) — ESM Plus 스펙
-    price = data.get("itemAddtionalInfo", {}).get("price", {}).get("Iac", 0)
-    stock = data.get("itemAddtionalInfo", {}).get("stock", {}).get("Iac", 0)
-
-    sell_data: dict[str, Any] = {
-      "isSell": {"iac": True},
-      "itemBasicInfo": {
-        "price": {"iac": price},
-        "stock": {"iac": stock},
-        "sellingPeriod": {"iac": 0},
-      },
-    }
-
-    try:
-      await client.update_sell_status(goods_no, sell_data)
-      logger.info(f"[옥션] 가격/재고 수정 성공: goodsNo={goods_no}, price={price}, stock={stock}")
-      return {
-        "success": True,
-        "message": "옥션 가격/재고 수정 성공",
-        "data": {"sellerProductId": goods_no},
-      }
-    except RuntimeError as e:
-      if "상품이 없습니다" in str(e):
         return {
-          "success": False,
-          "error_type": "product_not_found",
-          "message": f"상품 #{goods_no}이 옥션에 없습니다.",
-          "_clear_product_no": True,
+            "success": True,
+            "message": "옥션 수정 성공",
+            "data": {"sellerProductId": goods_no},
         }
-      raise
 
-  async def delete(self, session, product_no: str, account) -> dict[str, Any]:
-    """옥션 상품 판매중지."""
-    from backend.domain.samba.proxy.esmplus import ESMPlusClient
+    async def _update_price_stock(
+        self,
+        client: Any,
+        goods_no: str,
+        product: dict,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """가격/재고만 수정 — sell-status API 활용."""
+        if not goods_no:
+            return {"success": False, "message": "상품번호가 없어 가격/재고 수정 불가"}
 
-    creds = await self._load_auth(session, account)
-    if not creds:
-      return {"success": False, "message": "인증정보 없음"}
+        # 등록 API는 PascalCase(Iac), sell-status API는 camelCase(iac) — ESM Plus 스펙
+        price = data.get("itemAddtionalInfo", {}).get("price", {}).get("Iac", 0)
+        stock = data.get("itemAddtionalInfo", {}).get("stock", {}).get("Iac", 0)
 
-    seller_id = creds.get("apiKey", "") or creds.get("sellerId", "")
-    if not seller_id:
-      return {"success": False, "message": "옥션 판매자 ID 없음"}
+        sell_data: dict[str, Any] = {
+            "isSell": {"iac": True},
+            "itemBasicInfo": {
+                "price": {"iac": price},
+                "stock": {"iac": stock},
+                "sellingPeriod": {"iac": 0},
+            },
+        }
 
-    hosting_id = creds.get("hostingId", "") or _ESM_HOSTING_ID
-    secret_key = creds.get("secretKey", "") or _ESM_SECRET_KEY
-    client = ESMPlusClient(hosting_id, secret_key, seller_id, site="auction")
+        try:
+            await client.update_sell_status(goods_no, sell_data)
+            logger.info(
+                f"[옥션] 가격/재고 수정 성공: goodsNo={goods_no}, price={price}, stock={stock}"
+            )
+            return {
+                "success": True,
+                "message": "옥션 가격/재고 수정 성공",
+                "data": {"sellerProductId": goods_no},
+            }
+        except RuntimeError as e:
+            if "상품이 없습니다" in str(e):
+                return {
+                    "success": False,
+                    "error_type": "product_not_found",
+                    "message": f"상품 #{goods_no}이 옥션에 없습니다.",
+                    "_clear_product_no": True,
+                }
+            raise
 
-    suspend_data = {
-      "isSell": {"iac": False},
-      "itemBasicInfo": {
-        "price": {"iac": 0},
-        "stock": {"iac": 0},
-        "sellingPeriod": {"iac": 0},
-      },
-    }
-    await client.update_sell_status(product_no, suspend_data)
-    logger.info(f"[옥션] 판매중지 완료: goodsNo={product_no}")
-    return {"success": True, "message": "옥션 판매중지 완료"}
+    async def delete(self, session, product_no: str, account) -> dict[str, Any]:
+        """옥션 상품 판매중지."""
+        from backend.domain.samba.proxy.esmplus import ESMPlusClient
 
-  async def _inject_account_settings(
-    self, session, product: dict, account
-  ) -> dict:
-    """계정/정책에서 마켓별 설정 주입."""
-    if account:
-      extras = account.additional_fields or {}
-      if extras.get("asPhone"):
-        product["_as_phone"] = extras["asPhone"]
-      if extras.get("stockQuantity"):
-        product["_stock_quantity"] = int(extras["stockQuantity"])
-      if extras.get("shippingCompanyNo"):
-        product["_shipping_company_no"] = int(extras["shippingCompanyNo"])
-      if extras.get("dispatchPolicyNo"):
-        product["_dispatch_policy_no"] = int(extras["dispatchPolicyNo"])
-      if extras.get("shippingPlaceNo"):
-        product["_shipping_place_no"] = int(extras["shippingPlaceNo"])
+        creds = await self._load_auth(session, account)
+        if not creds:
+            return {"success": False, "message": "인증정보 없음"}
 
-    policy_id = product.get("applied_policy_id")
-    if policy_id:
-      from backend.domain.samba.policy.repository import SambaPolicyRepository
-      policy_repo = SambaPolicyRepository(session)
-      policy = await policy_repo.get_async(policy_id)
-      if policy:
-        pr = policy.pricing or {}
-        mp = (policy.market_policies or {}).get("옥션", {})
-        shipping = int(mp.get("shippingCost") or pr.get("shippingCost") or 0)
-        if shipping > 0:
-          product["_delivery_fee_type"] = "PAID"
-          product["_delivery_base_fee"] = shipping
-        if mp.get("maxStock"):
-          product["_max_stock"] = mp["maxStock"]
+        seller_id = creds.get("apiKey", "") or creds.get("sellerId", "")
+        if not seller_id:
+            return {"success": False, "message": "옥션 판매자 ID 없음"}
 
-    return product
+        hosting_id = creds.get("hostingId", "") or _ESM_HOSTING_ID
+        secret_key = creds.get("secretKey", "") or _ESM_SECRET_KEY
+        client = ESMPlusClient(hosting_id, secret_key, seller_id, site="auction")
+
+        suspend_data = {
+            "isSell": {"iac": False},
+            "itemBasicInfo": {
+                "price": {"iac": 0},
+                "stock": {"iac": 0},
+                "sellingPeriod": {"iac": 0},
+            },
+        }
+        await client.update_sell_status(product_no, suspend_data)
+        logger.info(f"[옥션] 판매중지 완료: goodsNo={product_no}")
+        return {"success": True, "message": "옥션 판매중지 완료"}
+
+    async def _inject_account_settings(self, session, product: dict, account) -> dict:
+        """계정/정책에서 마켓별 설정 주입."""
+        if account:
+            extras = account.additional_fields or {}
+            if extras.get("asPhone"):
+                product["_as_phone"] = extras["asPhone"]
+            if extras.get("stockQuantity"):
+                product["_stock_quantity"] = int(extras["stockQuantity"])
+            if extras.get("shippingCompanyNo"):
+                product["_shipping_company_no"] = int(extras["shippingCompanyNo"])
+            if extras.get("dispatchPolicyNo"):
+                product["_dispatch_policy_no"] = int(extras["dispatchPolicyNo"])
+            if extras.get("shippingPlaceNo"):
+                product["_shipping_place_no"] = int(extras["shippingPlaceNo"])
+
+        policy_id = product.get("applied_policy_id")
+        if policy_id:
+            from backend.domain.samba.policy.repository import SambaPolicyRepository
+
+            policy_repo = SambaPolicyRepository(session)
+            policy = await policy_repo.get_async(policy_id)
+            if policy:
+                pr = policy.pricing or {}
+                mp = (policy.market_policies or {}).get("옥션", {})
+                shipping = int(mp.get("shippingCost") or pr.get("shippingCost") or 0)
+                if shipping > 0:
+                    product["_delivery_fee_type"] = "PAID"
+                    product["_delivery_base_fee"] = shipping
+                if mp.get("maxStock"):
+                    product["_max_stock"] = mp["maxStock"]
+
+        return product

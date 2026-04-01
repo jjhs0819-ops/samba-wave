@@ -25,7 +25,9 @@ class SambaWholesaleProduct(SQLModel, table=True):
     )
 
     # 테넌트 격리
-    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
 
     # 도매몰 구분: domeme, ownerclan
     source_mall: str = Field(
@@ -56,10 +58,14 @@ class SambaWholesaleProduct(SQLModel, table=True):
     )
 
     # 대표 이미지 URL
-    image_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    image_url: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 상품 상세 페이지 URL
-    detail_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    detail_url: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 옵션 데이터 (색상/사이즈 등)
     options: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))

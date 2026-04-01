@@ -20,250 +20,256 @@ from backend.utils.logger import logger
 
 
 class ElevenstClient:
-  """11번가 셀러 API 클라이언트."""
+    """11번가 셀러 API 클라이언트."""
 
-  BASE_URL = "https://api.11st.co.kr/rest/prodservices"
-  # 상품 등록: POST /rest/prodservices/product
-  # 상품 조회: GET /rest/prodservices/product/{productCode}
-  # 상품 수정: PUT /rest/prodservices/product/{productCode}
+    BASE_URL = "https://api.11st.co.kr/rest/prodservices"
+    # 상품 등록: POST /rest/prodservices/product
+    # 상품 조회: GET /rest/prodservices/product/{productCode}
+    # 상품 수정: PUT /rest/prodservices/product/{productCode}
 
-  def __init__(self, api_key: str) -> None:
-    self.api_key = api_key
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
 
-  def _headers(self) -> dict[str, str]:
-    return {
-      "openapikey": self.api_key,
-      "Content-Type": "text/xml; charset=UTF-8",
-      "Accept": "application/xml",
-    }
+    def _headers(self) -> dict[str, str]:
+        return {
+            "openapikey": self.api_key,
+            "Content-Type": "text/xml; charset=UTF-8",
+            "Accept": "application/xml",
+        }
 
-  @staticmethod
-  def _parse_xml(text: str) -> dict[str, Any]:
-    """XML 응답 파싱."""
-    try:
-      root = ET.fromstring(text)
-      result: dict[str, Any] = {}
-      for child in root:
-        tag = child.tag
-        if list(child):
-          inner: dict[str, Any] = {}
-          for sub in child:
-            inner[sub.tag] = (sub.text or "").strip()
-          result[tag] = inner
-        else:
-          result[tag] = (child.text or "").strip()
-      return result
-    except ET.ParseError:
-      return {"raw": text}
+    @staticmethod
+    def _parse_xml(text: str) -> dict[str, Any]:
+        """XML 응답 파싱."""
+        try:
+            root = ET.fromstring(text)
+            result: dict[str, Any] = {}
+            for child in root:
+                tag = child.tag
+                if list(child):
+                    inner: dict[str, Any] = {}
+                    for sub in child:
+                        inner[sub.tag] = (sub.text or "").strip()
+                    result[tag] = inner
+                else:
+                    result[tag] = (child.text or "").strip()
+            return result
+        except ET.ParseError:
+            return {"raw": text}
 
-  async def _call_api(
-    self,
-    method: str,
-    path: str,
-    body: Optional[str] = None,
-  ) -> dict[str, Any]:
-    """공통 API 호출 (XML 기반)."""
-    url = f"{self.BASE_URL}{path}"
-    headers = self._headers()
+    async def _call_api(
+        self,
+        method: str,
+        path: str,
+        body: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """공통 API 호출 (XML 기반)."""
+        url = f"{self.BASE_URL}{path}"
+        headers = self._headers()
 
-    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-      if method == "GET":
-        resp = await client.get(url, headers=headers)
-      elif method == "POST":
-        resp = await client.post(url, headers=headers, content=body)
-      elif method == "PUT":
-        resp = await client.put(url, headers=headers, content=body)
-      elif method == "DELETE":
-        resp = await client.delete(url, headers=headers)
-      else:
-        raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
+        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+            if method == "GET":
+                resp = await client.get(url, headers=headers)
+            elif method == "POST":
+                resp = await client.post(url, headers=headers, content=body)
+            elif method == "PUT":
+                resp = await client.put(url, headers=headers, content=body)
+            elif method == "DELETE":
+                resp = await client.delete(url, headers=headers)
+            else:
+                raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
 
-      logger.info(f"[11번가] {method} {path} → {resp.status_code}")
-      if body:
-        logger.info(f"[11번가] 요청 XML: {body[:800]}")
-      logger.info(f"[11번가] 응답 본문: {resp.text[:800]}")
+            logger.info(f"[11번가] {method} {path} → {resp.status_code}")
+            if body:
+                logger.info(f"[11번가] 요청 XML: {body[:800]}")
+            logger.info(f"[11번가] 응답 본문: {resp.text[:800]}")
 
-      data = self._parse_xml(resp.text)
+            data = self._parse_xml(resp.text)
 
-      if not resp.is_success:
-        msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
-        raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
+            if not resp.is_success:
+                msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
+                raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
 
-      # 에러코드 체크
-      result_code = data.get("resultCode", "") or data.get("ResultCode", "")
-      if result_code and str(result_code) != "200" and str(result_code) != "0":
-        msg = data.get("resultMessage", "") or data.get("message", "")
-        raise ElevenstApiError(f"API 에러 ({result_code}): {msg}")
+            # 에러코드 체크
+            result_code = data.get("resultCode", "") or data.get("ResultCode", "")
+            if result_code and str(result_code) != "200" and str(result_code) != "0":
+                msg = data.get("resultMessage", "") or data.get("message", "")
+                raise ElevenstApiError(f"API 에러 ({result_code}): {msg}")
 
-      return data
+            return data
 
-  # ------------------------------------------------------------------
-  # 카테고리 조회
-  # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 카테고리 조회
+    # ------------------------------------------------------------------
 
-  async def get_categories(self) -> dict[str, Any]:
-    """전체 카테고리 조회. (cateservice 엔드포인트 사용)"""
-    url = "https://api.11st.co.kr/rest/cateservice/category"
-    headers = self._headers()
-    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-      resp = await client.get(url, headers=headers)
-      logger.info(f"[11번가] GET /cateservice/category → {resp.status_code}")
-      logger.debug(f"[11번가] 카테고리 응답: {resp.text[:500]}")
-      data = self._parse_xml(resp.text)
-      if not resp.is_success:
-        msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
-        raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
-      return data
+    async def get_categories(self) -> dict[str, Any]:
+        """전체 카테고리 조회. (cateservice 엔드포인트 사용)"""
+        url = "https://api.11st.co.kr/rest/cateservice/category"
+        headers = self._headers()
+        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+            resp = await client.get(url, headers=headers)
+            logger.info(f"[11번가] GET /cateservice/category → {resp.status_code}")
+            logger.debug(f"[11번가] 카테고리 응답: {resp.text[:500]}")
+            data = self._parse_xml(resp.text)
+            if not resp.is_success:
+                msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
+                raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
+            return data
 
-  async def get_category_by_id(self, category_id: str) -> dict[str, Any]:
-    """특정 카테고리 하위 조회. (cateservice 엔드포인트 사용)"""
-    url = f"https://api.11st.co.kr/rest/cateservice/category/{category_id}"
-    headers = self._headers()
-    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-      resp = await client.get(url, headers=headers)
-      logger.info(f"[11번가] GET /cateservice/category/{category_id} → {resp.status_code}")
-      data = self._parse_xml(resp.text)
-      if not resp.is_success:
-        msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
-        raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
-      return data
+    async def get_category_by_id(self, category_id: str) -> dict[str, Any]:
+        """특정 카테고리 하위 조회. (cateservice 엔드포인트 사용)"""
+        url = f"https://api.11st.co.kr/rest/cateservice/category/{category_id}"
+        headers = self._headers()
+        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+            resp = await client.get(url, headers=headers)
+            logger.info(
+                f"[11번가] GET /cateservice/category/{category_id} → {resp.status_code}"
+            )
+            data = self._parse_xml(resp.text)
+            if not resp.is_success:
+                msg = data.get("message", "") or data.get("raw", "") or resp.text[:300]
+                raise ElevenstApiError(f"HTTP {resp.status_code}: {msg}")
+            return data
 
-  # ------------------------------------------------------------------
-  # 상품 등록/수정
-  # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 상품 등록/수정
+    # ------------------------------------------------------------------
 
-  async def register_product(self, xml_data: str) -> dict[str, Any]:
-    """상품 등록.
+    async def register_product(self, xml_data: str) -> dict[str, Any]:
+        """상품 등록.
 
-    11번가 셀러 API: POST /rest/prodservices/product
-    """
-    result = await self._call_api("POST", "/product", body=xml_data)
-    return {"success": True, "data": result}
+        11번가 셀러 API: POST /rest/prodservices/product
+        """
+        result = await self._call_api("POST", "/product", body=xml_data)
+        return {"success": True, "data": result}
 
-  async def update_product(self, prd_no: str, xml_data: str) -> dict[str, Any]:
-    """상품 수정."""
-    result = await self._call_api("PUT", f"/product/{prd_no}", body=xml_data)
-    return {"success": True, "data": result}
+    async def update_product(self, prd_no: str, xml_data: str) -> dict[str, Any]:
+        """상품 수정."""
+        result = await self._call_api("PUT", f"/product/{prd_no}", body=xml_data)
+        return {"success": True, "data": result}
 
-  async def delete_product(self, prd_no: str) -> dict[str, Any]:
-    """상품 삭제 (리스트에서 완전 제거)."""
-    result = await self._call_api("DELETE", f"/product/{prd_no}")
-    return {"success": True, "data": result}
+    async def delete_product(self, prd_no: str) -> dict[str, Any]:
+        """상품 삭제 (리스트에서 완전 제거)."""
+        result = await self._call_api("DELETE", f"/product/{prd_no}")
+        return {"success": True, "data": result}
 
-  async def get_product(self, prd_no: str) -> dict[str, Any]:
-    """상품 조회."""
-    return await self._call_api("GET", f"/product/{prd_no}")
+    async def get_product(self, prd_no: str) -> dict[str, Any]:
+        """상품 조회."""
+        return await self._call_api("GET", f"/product/{prd_no}")
 
-  async def get_outbound_addresses(self) -> list[dict[str, str]]:
-    """출고지 주소 목록 조회. GET /rest/areaservice/outboundarea"""
-    return await self._get_area_addresses("outboundarea")
+    async def get_outbound_addresses(self) -> list[dict[str, str]]:
+        """출고지 주소 목록 조회. GET /rest/areaservice/outboundarea"""
+        return await self._get_area_addresses("outboundarea")
 
-  async def get_inbound_addresses(self) -> list[dict[str, str]]:
-    """반품/교환지 주소 목록 조회. GET /rest/areaservice/inboundarea"""
-    return await self._get_area_addresses("inboundarea")
+    async def get_inbound_addresses(self) -> list[dict[str, str]]:
+        """반품/교환지 주소 목록 조회. GET /rest/areaservice/inboundarea"""
+        return await self._get_area_addresses("inboundarea")
 
-  async def _get_area_addresses(self, area_type: str) -> list[dict[str, str]]:
-    """출고지/반품지 주소 조회 공통 메서드."""
-    from xml.etree import ElementTree as ET
+    async def _get_area_addresses(self, area_type: str) -> list[dict[str, str]]:
+        """출고지/반품지 주소 조회 공통 메서드."""
+        from xml.etree import ElementTree as ET
 
-    url = f"https://api.11st.co.kr/rest/areaservice/{area_type}"
-    headers = self._headers()
-    async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
-      resp = await client.get(url, headers=headers)
-      logger.info("[11번가] GET /areaservice/%s → %s", area_type, resp.status_code)
+        url = f"https://api.11st.co.kr/rest/areaservice/{area_type}"
+        headers = self._headers()
+        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+            resp = await client.get(url, headers=headers)
+            logger.info(
+                "[11번가] GET /areaservice/%s → %s", area_type, resp.status_code
+            )
 
-    if not resp.is_success:
-      logger.warning("[11번가] %s 조회 실패: HTTP %s", area_type, resp.status_code)
-      return []
+        if not resp.is_success:
+            logger.warning(
+                "[11번가] %s 조회 실패: HTTP %s", area_type, resp.status_code
+            )
+            return []
 
-    # XML 파싱 (네임스페이스 제거)
-    xml_text = resp.text.replace("ns2:", "")
-    try:
-      root = ET.fromstring(xml_text)
-    except ET.ParseError:
-      logger.error("[11번가] %s XML 파싱 실패", area_type)
-      return []
+        # XML 파싱 (네임스페이스 제거)
+        xml_text = resp.text.replace("ns2:", "")
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError:
+            logger.error("[11번가] %s XML 파싱 실패", area_type)
+            return []
 
-    # result_message 확인
-    result_msg = root.findtext("result_message", "")
-    if result_msg and result_msg != "SUCCESS":
-      logger.warning("[11번가] %s 결과: %s", area_type, result_msg)
-      return []
+        # result_message 확인
+        result_msg = root.findtext("result_message", "")
+        if result_msg and result_msg != "SUCCESS":
+            logger.warning("[11번가] %s 결과: %s", area_type, result_msg)
+            return []
 
-    addresses = []
-    for addr_el in root.findall("inOutAddress"):
-      addr = {
-        "addr": (addr_el.findtext("addr") or "").strip(),
-        "addrNm": (addr_el.findtext("addrNm") or "").strip(),
-        "addrSeq": (addr_el.findtext("addrSeq") or "").strip(),
-        "rcvrNm": (addr_el.findtext("rcvrNm") or "").strip(),
-        "gnrlTlphnNo": (addr_el.findtext("gnrlTlphnNo") or "").strip(),
-        "prtblTlphnNo": (addr_el.findtext("prtblTlphnNo") or "").strip(),
-      }
-      if addr["addr"]:
-        addresses.append(addr)
+        addresses = []
+        for addr_el in root.findall("inOutAddress"):
+            addr = {
+                "addr": (addr_el.findtext("addr") or "").strip(),
+                "addrNm": (addr_el.findtext("addrNm") or "").strip(),
+                "addrSeq": (addr_el.findtext("addrSeq") or "").strip(),
+                "rcvrNm": (addr_el.findtext("rcvrNm") or "").strip(),
+                "gnrlTlphnNo": (addr_el.findtext("gnrlTlphnNo") or "").strip(),
+                "prtblTlphnNo": (addr_el.findtext("prtblTlphnNo") or "").strip(),
+            }
+            if addr["addr"]:
+                addresses.append(addr)
 
-    logger.info("[11번가] %s 조회 완료: %d건", area_type, len(addresses))
-    return addresses
+        logger.info("[11번가] %s 조회 완료: %d건", area_type, len(addresses))
+        return addresses
 
-  # ------------------------------------------------------------------
-  # 상품 데이터 변환 (수집 상품 → 11번가 XML 형식)
-  # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 상품 데이터 변환 (수집 상품 → 11번가 XML 형식)
+    # ------------------------------------------------------------------
 
-  @staticmethod
-  def transform_product(
-    product: dict[str, Any],
-    category_code: str = "",
-    settings: Optional[dict[str, Any]] = None,
-  ) -> str:
-    """SambaCollectedProduct → 11번가 상품 등록 XML 변환.
+    @staticmethod
+    def transform_product(
+        product: dict[str, Any],
+        category_code: str = "",
+        settings: Optional[dict[str, Any]] = None,
+    ) -> str:
+        """SambaCollectedProduct → 11번가 상품 등록 XML 변환.
 
-    settings: 계정의 additional_fields (배송비, 출고지, 반품지 등)
-    """
-    cfg = settings or {}
-    name = product.get("name", "")
-    sale_price = int(product.get("sale_price", 0))
-    detail_html = product.get("detail_html", "") or f"<p>{name}</p>"
-    images = product.get("images") or []
-    brand = product.get("brand", "")
+        settings: 계정의 additional_fields (배송비, 출고지, 반품지 등)
+        """
+        cfg = settings or {}
+        name = product.get("name", "")
+        sale_price = int(product.get("sale_price", 0))
+        detail_html = product.get("detail_html", "") or f"<p>{name}</p>"
+        images = product.get("images") or []
+        brand = product.get("brand", "")
 
-    # 계정 설정값 (없으면 기본값)
-    tax_type = cfg.get("taxType", "01")
-    delivery_type = cfg.get("deliveryType", "DV_FREE")
-    delivery_fee = int(cfg.get("deliveryFee", 0) or 0)
-    return_fee = int(cfg.get("returnFee", 4000) or 4000)
-    exchange_fee = int(cfg.get("exchangeFee", 8000) or 8000)
-    ship_from = cfg.get("shipFromAddress", "")
-    return_addr = cfg.get("returnAddress", "")
-    origin = cfg.get("origin", "") or product.get("origin", "") or "기타"
-    as_message = cfg.get("asMessage", "") or "상세페이지 참조"
-    return_exchange = cfg.get("returnExchangeGuide", "") or "상세페이지 참조"
-    minor_restrict = cfg.get("minorRestrict", "N")
+        # 계정 설정값 (없으면 기본값)
+        tax_type = cfg.get("taxType", "01")
+        delivery_type = cfg.get("deliveryType", "DV_FREE")
+        delivery_fee = int(cfg.get("deliveryFee", 0) or 0)
+        return_fee = int(cfg.get("returnFee", 4000) or 4000)
+        exchange_fee = int(cfg.get("exchangeFee", 8000) or 8000)
+        ship_from = cfg.get("shipFromAddress", "")
+        return_addr = cfg.get("returnAddress", "")
+        origin = cfg.get("origin", "") or product.get("origin", "") or "기타"
+        as_message = cfg.get("asMessage", "") or "상세페이지 참조"
+        return_exchange = cfg.get("returnExchangeGuide", "") or "상세페이지 참조"
+        minor_restrict = cfg.get("minorRestrict", "N")
 
-    # 이미지 XML
-    image_xml = ""
-    if images:
-      image_xml += f"<imageUrl>{_escape_xml(images[0])}</imageUrl>"
-      for i, url in enumerate(images[1:4], start=1):
-        image_xml += f"<addImageUrl{i}>{_escape_xml(url)}</addImageUrl{i}>"
+        # 이미지 XML
+        image_xml = ""
+        if images:
+            image_xml += f"<imageUrl>{_escape_xml(images[0])}</imageUrl>"
+            for i, url in enumerate(images[1:4], start=1):
+                image_xml += f"<addImageUrl{i}>{_escape_xml(url)}</addImageUrl{i}>"
 
-    # 옵션 처리
-    options = product.get("options") or []
-    option_xml = ""
-    if options:
-      option_xml = "<sellerOptions>"
-      for opt in options:
-        opt_name = opt.get("name", "") or opt.get("size", "") or "기본"
-        opt_stock = opt.get("stock", 999)
-        option_xml += f"""<sellerOption>
+        # 옵션 처리
+        options = product.get("options") or []
+        option_xml = ""
+        if options:
+            option_xml = "<sellerOptions>"
+            for opt in options:
+                opt_name = opt.get("name", "") or opt.get("size", "") or "기본"
+                opt_stock = opt.get("stock", 999)
+                option_xml += f"""<sellerOption>
           <optionName>옵션</optionName>
           <optionValue>{_escape_xml(opt_name)}</optionValue>
           <stockQty>{opt_stock}</stockQty>
           <sellerOptionPrice>0</sellerOptionPrice>
         </sellerOption>"""
-      option_xml += "</sellerOptions>"
+            option_xml += "</sellerOptions>"
 
-    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+        xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Product>
   <sellerPrdCd></sellerPrdCd>
   <prdNm>{_escape_xml(name)}</prdNm>
@@ -272,8 +278,8 @@ class ElevenstClient:
   <brand>{_escape_xml(brand)}</brand>
   <selPrc>{sale_price}</selPrc>
   <selMthdCd>01</selMthdCd>
-  <aplBgnDy>{datetime.now().strftime('%Y%m%d')}</aplBgnDy>
-  <aplEndDy>{(datetime.now().replace(year=datetime.now().year + 1)).strftime('%Y%m%d')}</aplEndDy>
+  <aplBgnDy>{datetime.now().strftime("%Y%m%d")}</aplBgnDy>
+  <aplEndDy>{(datetime.now().replace(year=datetime.now().year + 1)).strftime("%Y%m%d")}</aplEndDy>
   <prdWeight>0</prdWeight>
   <dlvCnFee>{delivery_fee}</dlvCnFee>
   <dlvGrntYn>Y</dlvGrntYn>
@@ -291,20 +297,21 @@ class ElevenstClient:
   <asDetail>{_escape_xml(as_message)}</asDetail>
   <rtngExchDetail>{_escape_xml(return_exchange)}</rtngExchDetail>
 </Product>"""
-    return xml
+        return xml
 
 
 def _escape_xml(text: str) -> str:
-  """XML 특수문자 이스케이프."""
-  return (
-    text.replace("&", "&amp;")
-    .replace("<", "&lt;")
-    .replace(">", "&gt;")
-    .replace('"', "&quot;")
-    .replace("'", "&apos;")
-  )
+    """XML 특수문자 이스케이프."""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
 
 
 class ElevenstApiError(Exception):
-  """11번가 API 에러."""
-  pass
+    """11번가 API 에러."""
+
+    pass

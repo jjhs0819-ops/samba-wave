@@ -29,7 +29,9 @@ class SambaSearchFilter(SQLModel, table=True):
     )
 
     # 테넌트 격리
-    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
 
     source_site: str = Field(
         sa_column=Column(Text, nullable=False, index=True),
@@ -45,7 +47,9 @@ class SambaSearchFilter(SQLModel, table=True):
     )
 
     keyword: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    category_filter: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    category_filter: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 가격 범위
     min_price: Optional[float] = Field(default=None)
@@ -71,14 +75,24 @@ class SambaSearchFilter(SQLModel, table=True):
     )
 
     # 스마트스토어 브랜드/제조사 ID 매핑
-    ss_brand_id: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
-    ss_brand_name: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    ss_manufacturer_id: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
-    ss_manufacturer_name: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    ss_brand_id: Optional[int] = Field(
+        default=None, sa_column=Column(Integer, nullable=True)
+    )
+    ss_brand_name: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    ss_manufacturer_id: Optional[int] = Field(
+        default=None, sa_column=Column(Integer, nullable=True)
+    )
+    ss_manufacturer_name: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 그룹별 카테고리 매핑 (카테고리매핑 페이지보다 우선 적용)
     # 예: {"smartstore": "패션의류>남성의류>티셔츠", "coupang": "남성패션/상의/티셔츠"}
-    target_mappings: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    target_mappings: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # 마지막 수집 시각
     last_collected_at: Optional[datetime] = Field(
@@ -112,7 +126,9 @@ class SambaCollectedProduct(SQLModel, table=True):
     )
 
     # 테넌트 격리
-    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
 
     # 소싱 정보
     source_site: str = Field(
@@ -125,7 +141,9 @@ class SambaCollectedProduct(SQLModel, table=True):
         default=None, sa_column=Column(Text, nullable=True, index=True)
     )
     # 원문링크 (소싱처 상품 페이지 URL)
-    source_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    source_url: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 기본 정보
     name: str = Field(sa_column=Column(Text, nullable=False))
@@ -139,21 +157,41 @@ class SambaCollectedProduct(SQLModel, table=True):
     cost: Optional[float] = Field(default=None)
 
     # 이미지/옵션 (JSON)
-    images: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
-    coupang_main_image: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    detail_images: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
-    video_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    options: Optional[List[Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    images: Optional[List[str]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    coupang_main_image: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    detail_images: Optional[List[str]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    video_url: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    options: Optional[List[Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # 상세 설명
-    detail_html: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    detail_html: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 카테고리 계층
     category: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    category1: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    category2: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    category3: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    category4: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    category1: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    category2: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    category3: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    category4: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 상태: collected -> saved -> registered
     status: str = Field(
@@ -162,9 +200,15 @@ class SambaCollectedProduct(SQLModel, table=True):
     )
 
     # 정책/마켓 연동
-    applied_policy_id: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True, index=True))
-    market_prices: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
-    market_enabled: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    applied_policy_id: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True, index=True)
+    )
+    market_prices: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    market_enabled: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     registered_accounts: Optional[List[str]] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
@@ -188,12 +232,14 @@ class SambaCollectedProduct(SQLModel, table=True):
 
     # 판매 상태: in_stock / sold_out / preorder
     sale_status: str = Field(
-        default='in_stock',
-        sa_column=Column(Text, nullable=False, server_default='in_stock'),
+        default="in_stock",
+        sa_column=Column(Text, nullable=False, server_default="in_stock"),
     )
 
     # 가격/재고 이력 (최신순 배열, 최대 200건)
-    price_history: Optional[List[Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    price_history: Optional[List[Any]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # 잠금 플래그
     lock_delete: bool = Field(
@@ -204,14 +250,18 @@ class SambaCollectedProduct(SQLModel, table=True):
     )
 
     # 태그
-    tags: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    tags: Optional[List[str]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     # SEO 검색키워드 (상품명 조합용, 2-3개)
-    seo_keywords: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    seo_keywords: Optional[List[str]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # 모니터링 우선순위: hot / warm / cold
     monitor_priority: str = Field(
-        default='cold',
-        sa_column=Column(Text, nullable=False, server_default='cold'),
+        default="cold",
+        sa_column=Column(Text, nullable=False, server_default="cold"),
     )
     # 마지막 갱신 시각
     last_refreshed_at: Optional[datetime] = Field(
@@ -219,24 +269,34 @@ class SambaCollectedProduct(SQLModel, table=True):
     )
     # 갱신 실패 횟수 (3회 초과 시 스케줄러 제외)
     refresh_error_count: int = Field(
-        default=0, sa_column=Column(Integer, nullable=False, server_default='0')
+        default=0, sa_column=Column(Integer, nullable=False, server_default="0")
     )
 
     # KREAM 특화 데이터
-    kream_data: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    kream_data: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # 제조사/원산지/소재/색상
-    manufacturer: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    manufacturer: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     origin: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     material: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     color: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     # 품번/성별/시즌
-    style_code: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    style_code: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     sex: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     season: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     # 취급주의사항/품질보증기준
-    care_instructions: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    quality_guarantee: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    care_instructions: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    quality_guarantee: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 배송 정보: 무료배송 / 당일발송 / 소싱 배송비
     free_shipping: bool = Field(
@@ -251,15 +311,25 @@ class SambaCollectedProduct(SQLModel, table=True):
 
     # 마켓별 마지막 전송 스냅샷 (스킵 판단용)
     # { "계정ID": { "sale_price": 24469, "cost": 20000, "options": [...], "sent_at": "..." } }
-    last_sent_data: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    last_sent_data: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # 소싱처별 추가 데이터 (매핑 안 된 필드 자동 저장)
-    extra_data: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    extra_data: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # 그룹상품 관련
-    group_key: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True, index=True))
-    similar_no: Optional[str] = Field(default=None, sa_column=Column(String(50), nullable=True))
-    group_product_no: Optional[int] = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+    group_key: Optional[str] = Field(
+        default=None, sa_column=Column(String(255), nullable=True, index=True)
+    )
+    similar_no: Optional[str] = Field(
+        default=None, sa_column=Column(String(50), nullable=True)
+    )
+    group_product_no: Optional[int] = Field(
+        default=None, sa_column=Column(BigInteger, nullable=True)
+    )
 
     # Timestamps
     created_at: datetime = Field(

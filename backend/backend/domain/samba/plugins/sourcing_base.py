@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 import logging
 
 if TYPE_CHECKING:
@@ -12,6 +12,7 @@ class SourcingPlugin(ABC):
     """소싱처 플러그인 기본 클래스.
     새 소싱처 추가 시 search(), get_detail(), refresh() 3개 구현.
     """
+
     site_name: str
     concurrency: int = 5
     request_interval: float = 0
@@ -19,6 +20,7 @@ class SourcingPlugin(ABC):
     def _get_semaphore(self):
         """동시성 제어용 세마포어 반환."""
         import asyncio
+
         if not hasattr(self, "_sem"):
             self._sem = asyncio.Semaphore(self.concurrency)
         return self._sem
@@ -26,6 +28,7 @@ class SourcingPlugin(ABC):
     async def safe_call(self, coro):
         """동시성 제어 + 요청 간 딜레이."""
         import asyncio
+
         async with self._get_semaphore():
             if self.request_interval > 0:
                 await asyncio.sleep(self.request_interval)

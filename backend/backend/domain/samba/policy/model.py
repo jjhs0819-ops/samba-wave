@@ -24,13 +24,17 @@ class SambaPolicy(SQLModel, table=True):
         max_length=30,
     )
     # 테넌트 격리
-    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
 
     name: str = Field(
         default="새 정책",
         sa_column=Column(Text, nullable=False),
     )
-    site_name: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    site_name: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 가격 계산 설정 (JSON)
     # {
@@ -41,7 +45,9 @@ class SambaPolicy(SQLModel, table=True):
     pricing: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # 마켓별 정책 오버라이드 (JSON)
-    market_policies: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    market_policies: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # 부가 설정 (상세페이지 템플릿, 상품명 규칙, 금지어/삭제어 등)
     extras: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
@@ -76,7 +82,9 @@ class SambaDetailTemplate(SQLModel, table=True):
         max_length=30,
     )
     # 테넌트 격리
-    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
 
     name: str = Field(
         default="새 템플릿",
@@ -86,14 +94,24 @@ class SambaDetailTemplate(SQLModel, table=True):
     main_image_index: int = Field(default=0)
     # 상세페이지 상단/하단 HTML
     top_html: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    bottom_html: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    bottom_html: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     # 상단/하단 이미지 S3 키
-    top_image_s3_key: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    bottom_image_s3_key: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    top_image_s3_key: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    bottom_image_s3_key: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     # 상세페이지 이미지 체크 설정 (어떤 항목을 포함할지)
-    img_checks: Optional[dict] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    img_checks: Optional[dict] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     # 상세페이지 이미지 순서 설정
-    img_order: Optional[list] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    img_order: Optional[list] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # Timestamps
     created_at: datetime = Field(
@@ -117,7 +135,9 @@ class SambaNameRule(SQLModel, table=True):
         max_length=30,
     )
     # 테넌트 격리
-    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
 
     name: str = Field(
         default="새 규칙",
@@ -127,19 +147,35 @@ class SambaNameRule(SQLModel, table=True):
     prefix: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     suffix: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     # 치환 규칙 목록 (JSON): [{from: str, to: str, caseInsensitive?: bool}]
-    replacements: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    replacements: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     # 치환 방식: simultaneous(동시) / sequential(순차)
-    replace_mode: str = Field(default="simultaneous", sa_column=Column(Text, nullable=False, server_default="simultaneous"))
+    replace_mode: str = Field(
+        default="simultaneous",
+        sa_column=Column(Text, nullable=False, server_default="simultaneous"),
+    )
     # 옵션명 변환 규칙 (JSON): [{from: str, to: str}]
-    option_rules: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    option_rules: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     # 상품명 조합 (JSON): ["{상품명}", "{브랜드명}", ...] 순서 배열
-    name_composition: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    name_composition: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     # 브랜드명 위치 처리: show_at_position(조합위치에표시) / show_once(중복제거)
-    brand_display: str = Field(default="show_at_position", sa_column=Column(Text, nullable=False, server_default="show_at_position"))
+    brand_display: str = Field(
+        default="show_at_position",
+        sa_column=Column(Text, nullable=False, server_default="show_at_position"),
+    )
     # 마켓별 상품명 조합 (JSON): { "smartstore": ["{상품명}", ...], "coupang": [...] }
-    market_name_compositions: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    market_name_compositions: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     # 중복단어 필터링 활성화
-    dedup_enabled: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
+    dedup_enabled: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default="false")
+    )
 
     # Timestamps
     created_at: datetime = Field(

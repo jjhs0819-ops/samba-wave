@@ -5,6 +5,7 @@ Revises: 45f742d91792
 Create Date: 2026-03-26 09:14:12.595177
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -12,14 +13,16 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '0b6587eabb44'
-down_revision: Union[str, Sequence[str], None] = '45f742d91792'
+revision: str = "0b6587eabb44"
+down_revision: Union[str, Sequence[str], None] = "45f742d91792"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('samba_return', sa.Column('customer_address', sa.Text(), nullable=True))
+    op.add_column(
+        "samba_return", sa.Column("customer_address", sa.Text(), nullable=True)
+    )
 
     # 기존 반품 레코드에 주문의 customer_address 복사 + product_location 재계산
     op.execute("""
@@ -53,4 +56,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column('samba_return', 'customer_address')
+    op.drop_column("samba_return", "customer_address")

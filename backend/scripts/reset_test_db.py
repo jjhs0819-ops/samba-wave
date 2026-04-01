@@ -70,9 +70,7 @@ async def reset_database(seed: bool = False) -> dict:
 
             for table_name in TABLES_TO_TRUNCATE:
                 try:
-                    await session.execute(
-                        text(f"TRUNCATE TABLE {table_name} CASCADE;")
-                    )
+                    await session.execute(text(f"TRUNCATE TABLE {table_name} CASCADE;"))
                     result["truncated_tables"].append(table_name)
                 except Exception as e:
                     # Table might not exist

@@ -22,6 +22,7 @@ async def _get_claude_api_key(session: AsyncSession) -> str:
         if key:
             return key
     from backend.core.config import settings
+
     return settings.anthropic_api_key
 
 
@@ -46,11 +47,16 @@ class TreeSave(BaseModel):
 
 class AiSuggestRequest(BaseModel):
     """AI 카테고리 매핑 요청."""
+
     source_site: str = Field(..., description="소싱사이트 (예: MUSINSA)")
     source_category: str = Field(..., description="소싱 카테고리 경로")
-    sample_products: List[str] = Field(default_factory=list, description="등록 상품명 목록 (최대 5개)")
+    sample_products: List[str] = Field(
+        default_factory=list, description="등록 상품명 목록 (최대 5개)"
+    )
     sample_tags: List[str] = Field(default_factory=list, description="상품 태그 목록")
-    target_markets: Optional[List[str]] = Field(default=None, description="매핑할 마켓 목록 (미지정 시 전체)")
+    target_markets: Optional[List[str]] = Field(
+        default=None, description="매핑할 마켓 목록 (미지정 시 전체)"
+    )
 
 
 def _get_service(session: AsyncSession):
@@ -68,6 +74,7 @@ def _get_service(session: AsyncSession):
 
 # ── Mappings ──
 
+
 @router.get("/mappings")
 async def list_mappings(session: AsyncSession = Depends(get_read_session_dependency)):
     return await _get_service(session).list_mappings()
@@ -78,7 +85,9 @@ async def create_mapping(
     body: MappingCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    return await _get_service(session).create_mapping(body.model_dump(exclude_unset=True))
+    return await _get_service(session).create_mapping(
+        body.model_dump(exclude_unset=True)
+    )
 
 
 @router.put("/mappings/{mapping_id}")
@@ -87,7 +96,9 @@ async def update_mapping(
     body: MappingUpdate,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    result = await _get_service(session).update_mapping(mapping_id, body.model_dump(exclude_unset=True))
+    result = await _get_service(session).update_mapping(
+        mapping_id, body.model_dump(exclude_unset=True)
+    )
     if not result:
         raise HTTPException(404, "매핑을 찾을 수 없습니다")
     return result
@@ -145,6 +156,7 @@ async def ai_suggest_category(
 
 class BulkAiMappingRequest(BaseModel):
     """벌크 AI 매핑 요청 — 대상 마켓 선택 + 범위 필터."""
+
     target_markets: Optional[List[str]] = None
     source_site: Optional[str] = None
     category_prefix: Optional[str] = None
@@ -165,7 +177,8 @@ async def ai_suggest_bulk(
     category_prefix = body.category_prefix if body else None
     try:
         return await svc.bulk_ai_mapping(
-            api_key, session,
+            api_key,
+            session,
             target_markets=target_markets,
             source_site=source_site,
             category_prefix=category_prefix,
@@ -188,23 +201,27 @@ async def sync_smartstore_categories(
 
 class MarketCheckRequest(BaseModel):
     """마켓 등록 상품 확인 요청."""
+
     market: str
     mapping_ids: List[str]
 
 
 class BulkMarketCheckRequest(BaseModel):
     """전체 마켓 등록 상품 일괄 확인."""
+
     mapping_ids: List[str]
 
 
 class MarketColumnDeleteRequest(BaseModel):
     """특정 마켓 카테고리 일괄 삭제 요청."""
+
     market: str
     mapping_ids: List[str]
 
 
 class BulkDeleteRequest(BaseModel):
     """매핑 일괄 삭제 요청."""
+
     mapping_ids: List[str]
 
 
@@ -244,6 +261,7 @@ async def check_registered_per_mapping(
     """매핑별로 등록 상품이 있는지 개별 확인. registered_ids에 등록 상품이 있는 매핑 ID 반환."""
     svc = _get_service(session)
     from backend.domain.samba.category.service import MARKET_CATEGORIES
+
     registered_ids: list[str] = []
     for mid in body.mapping_ids:
         has_product = False
@@ -281,8 +299,14 @@ async def clear_market_column(
     cleared = 0
     for mid in body.mapping_ids:
         mapping = await svc.mapping_repo.get_async(mid)
-        if mapping and mapping.target_mappings and body.market in mapping.target_mappings:
-            updated = {k: v for k, v in mapping.target_mappings.items() if k != body.market}
+        if (
+            mapping
+            and mapping.target_mappings
+            and body.market in mapping.target_mappings
+        ):
+            updated = {
+                k: v for k, v in mapping.target_mappings.items() if k != body.market
+            }
             await svc.update_mapping(mid, {"target_mappings": updated})
             cleared += 1
     return {"ok": True, "cleared": cleared}
@@ -290,9 +314,12 @@ async def clear_market_column(
 
 class EsmCrossCopyRequest(BaseModel):
     """ESM 크로스매핑 복사 요청 (지마켓↔옥션)."""
+
     from_market: str = Field(default="gmarket", description="원본 마켓")
     to_market: str = Field(default="auction", description="대상 마켓")
-    mapping_ids: Optional[List[str]] = Field(default=None, description="대상 매핑 ID (미지정 시 전체)")
+    mapping_ids: Optional[List[str]] = Field(
+        default=None, description="대상 매핑 ID (미지정 시 전체)"
+    )
 
 
 @router.post("/mappings/copy-esm")
@@ -319,6 +346,7 @@ async def copy_esm_cross_mapping(
 
 # ── Market Category Seed ──
 
+
 @router.get("/markets/counts")
 async def get_market_category_counts(
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -326,6 +354,7 @@ async def get_market_category_counts(
     """마켓별 DB 카테고리 수 반환."""
     from sqlmodel import select
     from backend.domain.samba.category.model import SambaCategoryTree
+
     result = await session.execute(select(SambaCategoryTree))
     counts: dict[str, int] = {}
     for tree in result.scalars().all():
@@ -400,6 +429,7 @@ async def ai_seed_all_market_categories(
 
 
 # ── Category Tree ──
+
 
 @router.get("/tree/{site_name}")
 async def get_tree(

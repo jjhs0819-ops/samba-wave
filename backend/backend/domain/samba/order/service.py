@@ -16,7 +16,9 @@ class SambaOrderService:
     ) -> List[SambaOrder]:
         if status:
             return await self.repo.list_by_status(status)
-        return await self.repo.list_async(skip=skip, limit=limit, order_by="-created_at")
+        return await self.repo.list_async(
+            skip=skip, limit=limit, order_by="-created_at"
+        )
 
     async def get_order(self, order_id: str) -> Optional[SambaOrder]:
         return await self.repo.get_async(order_id)
@@ -36,10 +38,14 @@ class SambaOrderService:
 
         return await self.repo.create_async(**data)
 
-    async def update_order(self, order_id: str, data: Dict[str, Any]) -> Optional[SambaOrder]:
+    async def update_order(
+        self, order_id: str, data: Dict[str, Any]
+    ) -> Optional[SambaOrder]:
         return await self.repo.update_async(order_id, **data)
 
-    async def update_order_status(self, order_id: str, new_status: str) -> Optional[SambaOrder]:
+    async def update_order_status(
+        self, order_id: str, new_status: str
+    ) -> Optional[SambaOrder]:
         updates: Dict[str, Any] = {"status": new_status}
         now = datetime.now(UTC)
 

@@ -21,12 +21,20 @@ from typing import Any, Optional
 
 import bcrypt
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, File, Form
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    File,
+    Form,
+)
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.domain.samba.forbidden.model import SambaSettings
 from backend.domain.samba.forbidden.repository import SambaSettingsRepository
 from backend.domain.samba.proxy.gsshop import GsShopApiError, GsShopClient
 from backend.domain.samba.proxy.kream import KreamClient
@@ -53,7 +61,10 @@ async def _set_setting(session: AsyncSession, key: str, value: Any) -> None:
     """samba_settings 테이블에 설정값 저장 (forbidden service 위임)."""
     from backend.domain.samba.forbidden.service import SambaForbiddenService
     from backend.domain.samba.forbidden.repository import SambaForbiddenWordRepository
-    svc = SambaForbiddenService(SambaForbiddenWordRepository(session), SambaSettingsRepository(session))
+
+    svc = SambaForbiddenService(
+        SambaForbiddenWordRepository(session), SambaSettingsRepository(session)
+    )
     await svc.save_setting(key, value)
 
 
@@ -66,19 +77,25 @@ async def _get_musinsa_client(session: AsyncSession) -> MusinsaClient:
 async def musinsa_ip_check():
     """무신사 CDN 차단 여부 테스트 — 서버 IP 기준."""
     import httpx
+
     test_url = "https://image.msscdn.net/images/goods_img/20260309/6099644/6099644_17736397410885_500.jpg"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=5)) as client:
-            resp = await client.get(test_url, headers={
-                "Referer": "https://www.musinsa.com/",
-                "User-Agent": "Mozilla/5.0",
-            })
+            resp = await client.get(
+                test_url,
+                headers={
+                    "Referer": "https://www.musinsa.com/",
+                    "User-Agent": "Mozilla/5.0",
+                },
+            )
             size = len(resp.content)
             return {
                 "status": resp.status_code,
                 "size": size,
                 "blocked": resp.status_code != 200 or size < 1000,
-                "message": "정상" if resp.status_code == 200 and size >= 1000 else f"차단 의심 (HTTP {resp.status_code}, {size}B)",
+                "message": "정상"
+                if resp.status_code == 200 and size >= 1000
+                else f"차단 의심 (HTTP {resp.status_code}, {size}B)",
             }
     except httpx.ConnectTimeout:
         return {"status": 0, "blocked": True, "message": "연결 타임아웃 — IP 차단"}
@@ -171,7 +188,7 @@ async def aligo_remain(
 
 class SmsRequest(BaseModel):
     receiver: str  # 수신 번호
-    message: str   # 메시지 내용
+    message: str  # 메시지 내용
     title: str = ""  # LMS 제목 (길면 자동 LMS)
 
 
@@ -189,7 +206,10 @@ async def aligo_send_sms(
     user_id = creds.get("userId", "")
     sender = creds.get("sender", "")
     if not api_key or not user_id or not sender:
-        return {"success": False, "message": "SMS 설정이 불완전합니다 (apiKey/userId/sender 필요)."}
+        return {
+            "success": False,
+            "message": "SMS 설정이 불완전합니다 (apiKey/userId/sender 필요).",
+        }
 
     # 90바이트 초과 시 LMS
     msg_bytes = len(body.message.encode("euc-kr", errors="replace"))
@@ -238,8 +258,8 @@ async def aligo_send_sms(
 
 
 class KakaoRequest(BaseModel):
-    receiver: str    # 수신 번호
-    message: str     # 메시지 내용
+    receiver: str  # 수신 번호
+    message: str  # 메시지 내용
     template_code: str = ""  # 카카오 템플릿 코드 (비어있으면 친구톡)
     subject: str = ""  # 제목
 
@@ -259,12 +279,19 @@ async def aligo_send_kakao(
     api_key = creds.get("apiKey", "")
     user_id = creds.get("userId", "")
     sender = creds.get("sender", "")
-    sender_key = (kakao_creds or {}).get("senderKey", "") if isinstance(kakao_creds, dict) else ""
+    sender_key = (
+        (kakao_creds or {}).get("senderKey", "")
+        if isinstance(kakao_creds, dict)
+        else ""
+    )
 
     if not api_key or not user_id:
         return {"success": False, "message": "SMS 설정이 불완전합니다."}
     if not sender_key:
-        return {"success": False, "message": "카카오 발신프로필 키(senderKey)가 설정되지 않았습니다. 설정 페이지에서 등록해주세요."}
+        return {
+            "success": False,
+            "message": "카카오 발신프로필 키(senderKey)가 설정되지 않았습니다. 설정 페이지에서 등록해주세요.",
+        }
 
     data = {
         "key": api_key,
@@ -279,7 +306,11 @@ async def aligo_send_kakao(
         data["subject_1"] = body.subject
 
     # 템플릿 코드가 있으면 알림톡, 없으면 친구톡
-    url = "https://kakaoapi.aligo.in/akv10/alimtalk/send/" if body.template_code else "https://kakaoapi.aligo.in/akv10/friendtalk/send/"
+    url = (
+        "https://kakaoapi.aligo.in/akv10/alimtalk/send/"
+        if body.template_code
+        else "https://kakaoapi.aligo.in/akv10/friendtalk/send/"
+    )
 
     try:
         async with httpx.AsyncClient(timeout=15, verify=True) as client:
@@ -318,7 +349,7 @@ async def smartstore_search_brand(
     """스마트스토어 브랜드 검색."""
     client = await _get_ss_client(session)
     if not client:
-      return []
+        return []
     result = await client._call_api("GET", "/v1/product-brands", params={"name": name})
     return result if isinstance(result, list) else []
 
@@ -331,8 +362,10 @@ async def smartstore_search_manufacturer(
     """스마트스토어 제조사 검색."""
     client = await _get_ss_client(session)
     if not client:
-      return []
-    result = await client._call_api("GET", "/v1/product-manufacturers", params={"name": name})
+        return []
+    result = await client._call_api(
+        "GET", "/v1/product-manufacturers", params={"name": name}
+    )
     return result if isinstance(result, list) else []
 
 
@@ -340,15 +373,20 @@ async def _get_ss_client(session: AsyncSession):
     """스마트스토어 클라이언트 생성 헬퍼."""
     from backend.domain.samba.proxy.smartstore import SmartStoreClient
     from sqlalchemy import text
-    result = await session.exec(text("SELECT additional_fields FROM samba_market_account WHERE market_type='smartstore' LIMIT 1"))
+
+    result = await session.exec(
+        text(
+            "SELECT additional_fields FROM samba_market_account WHERE market_type='smartstore' LIMIT 1"
+        )
+    )
     row = result.first()
     if not row or not row[0]:
-      return None
+        return None
     extras = row[0] if isinstance(row[0], dict) else {}
     cid = extras.get("clientId", "")
     csec = extras.get("clientSecret", "")
     if not cid or not csec:
-      return None
+        return None
     return SmartStoreClient(cid, csec)
 
 
@@ -364,7 +402,10 @@ async def smartstore_auth_test(
     client_id = creds.get("clientId", "")
     client_secret = creds.get("clientSecret", "")
     if not client_id or not client_secret:
-        return {"success": False, "message": "Client ID 또는 Client Secret이 비어있습니다."}
+        return {
+            "success": False,
+            "message": "Client ID 또는 Client Secret이 비어있습니다.",
+        }
 
     try:
         # bcrypt 서명 생성 (네이버 Commerce API 인증 방식)
@@ -398,10 +439,18 @@ async def smartstore_auth_test(
                     "token_preview": f"{token[:12]}..." if len(token) > 12 else token,
                 }
             else:
-                err = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                err = (
+                    resp.json()
+                    if resp.headers.get("content-type", "").startswith(
+                        "application/json"
+                    )
+                    else {}
+                )
                 return {
                     "success": False,
-                    "message": err.get("message") or err.get("error_description") or f"HTTP {resp.status_code}",
+                    "message": err.get("message")
+                    or err.get("error_description")
+                    or f"HTTP {resp.status_code}",
                 }
     except Exception as exc:
         logger.error(f"[스마트스토어] 인증 테스트 실패: {exc}")
@@ -442,7 +491,10 @@ async def elevenst_auth_test(
             if "003" in body and "미등록" in body:
                 return {"success": False, "message": "등록되지 않은 API Key입니다."}
             if "004" in body and "트래픽" in body:
-                return {"success": False, "message": "트래픽 초과입니다. 잠시 후 다시 시도해주세요."}
+                return {
+                    "success": False,
+                    "message": "트래픽 초과입니다. 잠시 후 다시 시도해주세요.",
+                }
             if resp.status_code == 200 and "<ProductSearchResponse>" in body:
                 return {"success": True, "message": "인증 성공 — API Key가 유효합니다."}
             if resp.status_code == 200:
@@ -482,7 +534,10 @@ async def elevenst_seller_info(
         inbound = await client.get_inbound_addresses()
 
         if not outbound and not inbound:
-            return {"success": False, "message": "출고지/반품지 정보가 없습니다. 11번가 셀러오피스에서 먼저 등록해주세요."}
+            return {
+                "success": False,
+                "message": "출고지/반품지 정보가 없습니다. 11번가 셀러오피스에서 먼저 등록해주세요.",
+            }
 
         result: dict[str, Any] = {}
         # 첫 번째 출고지 주소 사용
@@ -525,7 +580,10 @@ async def coupang_auth_test(
     access_key = creds.get("accessKey", "")
     secret_key = creds.get("secretKey", "")
     if not access_key or not secret_key:
-        return {"success": False, "message": "Access Key 또는 Secret Key가 비어있습니다."}
+        return {
+            "success": False,
+            "message": "Access Key 또는 Secret Key가 비어있습니다.",
+        }
 
     vendor_id = creds.get("vendorId", "")
     if not vendor_id:
@@ -533,6 +591,7 @@ async def coupang_auth_test(
 
     try:
         from backend.domain.samba.proxy.coupang import CoupangClient
+
         client = CoupangClient(access_key, secret_key, vendor_id)
         # 카테고리 조회 API로 인증 테스트 (유효한 엔드포인트)
         await client.get_categories()
@@ -562,10 +621,15 @@ async def lotteon_auth_test(
 
     try:
         from backend.domain.samba.proxy.lotteon import LotteonClient
+
         client = LotteonClient(api_key)
         result = await client.test_auth()
         data = result.get("data", {})
-        tr_info = f" (거래처: {data.get('trGrpCd', '')}-{data.get('trNo', '')})" if data else ""
+        tr_info = (
+            f" (거래처: {data.get('trGrpCd', '')}-{data.get('trNo', '')})"
+            if data
+            else ""
+        )
 
         # 배송인프라 입력 여부 확인
         dv_cst_pol = creds.get("dvCstPolNo", "")
@@ -618,6 +682,7 @@ async def ssg_auth_test(
 
     try:
         from backend.domain.samba.proxy.ssg import SSGClient
+
         client = SSGClient(api_key)
         await client.test_auth()
         return {"success": True, "message": "인증 성공 — API Key가 유효합니다."}
@@ -647,7 +712,10 @@ async def gsshop_auth_test(
     if not sup_cd:
         return {"success": False, "message": "스토어 ID(협력사코드)가 비어있습니다."}
     if not api_key_dev and not api_key_prod:
-        return {"success": False, "message": "개발 또는 운영 AES256 인증키를 입력해주세요."}
+        return {
+            "success": False,
+            "message": "개발 또는 운영 AES256 인증키를 입력해주세요.",
+        }
 
     results: list[str] = []
     any_ok = False
@@ -695,7 +763,10 @@ async def market_auth_test(
     """범용 마켓 인증 테스트 — 설정값 존재 여부 확인."""
     creds = await _get_setting(session, f"store_{market_key}")
     if not creds or not isinstance(creds, dict):
-        return {"success": False, "message": f"{market_key} 설정이 저장되지 않았습니다."}
+        return {
+            "success": False,
+            "message": f"{market_key} 설정이 저장되지 않았습니다.",
+        }
 
     # 빈 값 체크
     has_value = any(v for v in creds.values() if v and str(v).strip())
@@ -747,8 +818,18 @@ async def claude_api_test(
                     "message": f"인증 성공 (모델: {used_model})",
                 }
             else:
-                err = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-                err_msg = err.get("error", {}).get("message", "") if isinstance(err.get("error"), dict) else str(err.get("error", ""))
+                err = (
+                    resp.json()
+                    if resp.headers.get("content-type", "").startswith(
+                        "application/json"
+                    )
+                    else {}
+                )
+                err_msg = (
+                    err.get("error", {}).get("message", "")
+                    if isinstance(err.get("error"), dict)
+                    else str(err.get("error", ""))
+                )
                 return {
                     "success": False,
                     "message": err_msg or f"HTTP {resp.status_code}",
@@ -784,14 +865,25 @@ async def gemini_api_test(
             if resp.status_code == 200:
                 return {"success": True, "message": f"인증 성공 (모델: {model})"}
             else:
-                err = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-                err_msg = err.get("error", {}).get("message", "") if isinstance(err.get("error"), dict) else str(err.get("error", ""))
-                return {"success": False, "message": err_msg or f"HTTP {resp.status_code}"}
+                err = (
+                    resp.json()
+                    if resp.headers.get("content-type", "").startswith(
+                        "application/json"
+                    )
+                    else {}
+                )
+                err_msg = (
+                    err.get("error", {}).get("message", "")
+                    if isinstance(err.get("error"), dict)
+                    else str(err.get("error", ""))
+                )
+                return {
+                    "success": False,
+                    "message": err_msg or f"HTTP {resp.status_code}",
+                }
     except Exception as exc:
         logger.error(f"[Gemini] API 테스트 실패: {exc}")
         return {"success": False, "message": f"API 호출 실패: {exc}"}
-
-
 
 
 @router.post("/r2/test")
@@ -809,10 +901,14 @@ async def r2_test(
     bucket_name = str(creds.get("bucketName", "")).strip()
 
     if not access_key or not secret_key or not bucket_name:
-        return {"success": False, "message": "Access Key, Secret Key, Bucket Name required"}
+        return {
+            "success": False,
+            "message": "Access Key, Secret Key, Bucket Name required",
+        }
 
     try:
         import boto3
+
         s3 = boto3.client(
             "s3",
             endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
@@ -841,13 +937,20 @@ async def fal_ai_status(
         return {"status": "no_key", "message": "API 키 비어있음"}
 
     import os
+
     os.environ["FAL_KEY"] = api_key
     try:
         import fal_client
+
         # 최소 비용 호출로 계정 상태 확인 (실제 이미지 생성 없이 큐 제출만)
-        handle = await fal_client.submit_async("fal-ai/flux/dev", arguments={
-            "prompt": "test", "num_inference_steps": 1, "image_size": "square_hd",
-        })
+        handle = await fal_client.submit_async(
+            "fal-ai/flux/dev",
+            arguments={
+                "prompt": "test",
+                "num_inference_steps": 1,
+                "image_size": "square_hd",
+            },
+        )
         # 큐 제출 성공 → 잔액 있음. 즉시 취소
         await fal_client.cancel_async("fal-ai/flux/dev", handle.request_id)
         return {"status": "ok", "message": "사용 가능"}
@@ -871,13 +974,18 @@ async def transform_images(
     svc = ImageTransformService(session)
     product_ids = request.get("product_ids", [])
     group_ids = request.get("group_ids", [])
-    scope = request.get("scope", {"thumbnail": True, "additional": False, "detail": False})
+    scope = request.get(
+        "scope", {"thumbnail": True, "additional": False, "detail": False}
+    )
     mode = request.get("mode", "background")  # background | scene | model
     model_preset = request.get("model_preset", "female_v1")
 
     # 그룹 ID로 요청 시 해당 그룹의 상품 ID 조회
     if group_ids and not product_ids:
-        from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+        from backend.domain.samba.collector.repository import (
+            SambaCollectedProductRepository,
+        )
+
         repo = SambaCollectedProductRepository(session)
         for gid in group_ids:
             products = await repo.list_by_filter(gid, skip=0, limit=10000)
@@ -906,12 +1014,16 @@ async def list_preset_images() -> dict[str, Any]:
     for key, p in MODEL_PRESETS.items():
         filename = p.get("image", "")
         local_path = PRESET_IMAGE_DIR / filename if filename else None
-        presets.append({
-            "key": key,
-            "label": p["label"],
-            "desc": p["desc"],
-            "image": f"/static/model_presets/{filename}" if local_path and local_path.exists() else None,
-        })
+        presets.append(
+            {
+                "key": key,
+                "label": p["label"],
+                "desc": p["desc"],
+                "image": f"/static/model_presets/{filename}"
+                if local_path and local_path.exists()
+                else None,
+            }
+        )
     return {"success": True, "presets": presets}
 
 
@@ -946,8 +1058,12 @@ async def regenerate_preset_image(
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """프리셋 이미지를 FLUX로 재생성."""
-    from backend.domain.samba.image.service import ImageTransformService, MODEL_PRESETS, PRESET_IMAGE_DIR
-    import base64, httpx
+    from backend.domain.samba.image.service import (
+        ImageTransformService,
+        MODEL_PRESETS,
+        PRESET_IMAGE_DIR,
+    )
+    import httpx
 
     preset_key = request.get("preset_key", "")
     custom_desc = request.get("desc", "")
@@ -978,7 +1094,9 @@ async def regenerate_preset_image(
         "Light gray studio background. Paris haute couture editorial style, photorealistic."
     )
 
-    import os, fal_client
+    import os
+    import fal_client
+
     os.environ["FAL_KEY"] = fal_key
 
     result = await fal_client.run_async(
@@ -1032,37 +1150,148 @@ async def sync_preset_images_to_r2(
 # AI 태그 공통 상수 및 헬퍼
 # ═══════════════════════════════════════════════
 
-_SOURCING_SITE_BANNED: frozenset[str] = frozenset({
-    "musinsa", "무신사", "kream", "크림", "abcmart", "abc마트",
-    "올리브영", "oliveyoung", "ssg", "신세계", "롯데온", "lotteon",
-    "gsshop", "gs샵", "ebay", "이베이", "zara", "자라",
-    "fashionplus", "패션플러스", "grandstage", "그랜드스테이지",
-    "okmall", "elandmall", "이랜드몰", "ssf", "ssf샵",
-})
+_SOURCING_SITE_BANNED: frozenset[str] = frozenset(
+    {
+        "musinsa",
+        "무신사",
+        "kream",
+        "크림",
+        "abcmart",
+        "abc마트",
+        "올리브영",
+        "oliveyoung",
+        "ssg",
+        "신세계",
+        "롯데온",
+        "lotteon",
+        "gsshop",
+        "gs샵",
+        "ebay",
+        "이베이",
+        "zara",
+        "자라",
+        "fashionplus",
+        "패션플러스",
+        "grandstage",
+        "그랜드스테이지",
+        "okmall",
+        "elandmall",
+        "이랜드몰",
+        "ssf",
+        "ssf샵",
+    }
+)
 
-_BRAND_BANNED: frozenset[str] = frozenset({
-    "nike", "나이키", "adidas", "아디다스", "뉴발란스", "new balance",
-    "푸마", "puma", "리복", "reebok", "아식스", "asics",
-    "컨버스", "converse", "반스", "vans", "휠라", "fila",
-    "스케쳐스", "skechers", "노스페이스", "the north face",
-    "코오롱", "kolon", "아이더", "eider", "블랙야크", "blackyak",
-    "k2", "네파", "nepa", "밀레", "millet", "살로몬", "salomon",
-    "메렐", "merrell", "콜롬비아", "columbia", "호카", "hoka",
-    "온러닝", "on running", "라코스테", "lacoste", "폴로", "polo",
-    "구찌", "gucci", "프라다", "prada", "버버리", "burberry",
-    "발렌시아가", "balenciaga", "디올", "dior",
-})
+_BRAND_BANNED: frozenset[str] = frozenset(
+    {
+        "nike",
+        "나이키",
+        "adidas",
+        "아디다스",
+        "뉴발란스",
+        "new balance",
+        "푸마",
+        "puma",
+        "리복",
+        "reebok",
+        "아식스",
+        "asics",
+        "컨버스",
+        "converse",
+        "반스",
+        "vans",
+        "휠라",
+        "fila",
+        "스케쳐스",
+        "skechers",
+        "노스페이스",
+        "the north face",
+        "코오롱",
+        "kolon",
+        "아이더",
+        "eider",
+        "블랙야크",
+        "blackyak",
+        "k2",
+        "네파",
+        "nepa",
+        "밀레",
+        "millet",
+        "살로몬",
+        "salomon",
+        "메렐",
+        "merrell",
+        "콜롬비아",
+        "columbia",
+        "호카",
+        "hoka",
+        "온러닝",
+        "on running",
+        "라코스테",
+        "lacoste",
+        "폴로",
+        "polo",
+        "구찌",
+        "gucci",
+        "프라다",
+        "prada",
+        "버버리",
+        "burberry",
+        "발렌시아가",
+        "balenciaga",
+        "디올",
+        "dior",
+    }
+)
 
-_BRAND_PARTIAL_MATCH: frozenset[str] = frozenset({
-    "나이키", "아디다스", "뉴발란스", "푸마", "리복", "아식스",
-    "컨버스", "반스", "휠라", "스케쳐스", "노스페이스",
-    "코오롱", "아이더", "블랙야크", "네파", "밀레", "살로몬",
-    "메렐", "콜롬비아", "호카", "라코스테", "폴로",
-    "구찌", "프라다", "버버리", "발렌시아가", "디올",
-    "nike", "adidas", "puma", "reebok", "asics", "converse",
-    "vans", "fila", "skechers", "salomon", "merrell",
-    "columbia", "hoka", "lacoste", "gucci", "prada", "burberry",
-})
+_BRAND_PARTIAL_MATCH: frozenset[str] = frozenset(
+    {
+        "나이키",
+        "아디다스",
+        "뉴발란스",
+        "푸마",
+        "리복",
+        "아식스",
+        "컨버스",
+        "반스",
+        "휠라",
+        "스케쳐스",
+        "노스페이스",
+        "코오롱",
+        "아이더",
+        "블랙야크",
+        "네파",
+        "밀레",
+        "살로몬",
+        "메렐",
+        "콜롬비아",
+        "호카",
+        "라코스테",
+        "폴로",
+        "구찌",
+        "프라다",
+        "버버리",
+        "발렌시아가",
+        "디올",
+        "nike",
+        "adidas",
+        "puma",
+        "reebok",
+        "asics",
+        "converse",
+        "vans",
+        "fila",
+        "skechers",
+        "salomon",
+        "merrell",
+        "columbia",
+        "hoka",
+        "lacoste",
+        "gucci",
+        "prada",
+        "burberry",
+    }
+)
 
 
 async def _load_tag_filter_data(session) -> tuple[set[str], set[str]]:
@@ -1071,6 +1300,7 @@ async def _load_tag_filter_data(session) -> tuple[set[str], set[str]]:
     db_brands: set[str] = set()
     try:
         from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+
         repo = SambaSettingsRepository(session)
         for key in ("smartstore_banned_tags", "smartstore_unregistered_tags"):
             row = await repo.find_by_async(key=key)
@@ -1081,6 +1311,7 @@ async def _load_tag_filter_data(session) -> tuple[set[str], set[str]]:
     try:
         from sqlmodel import select as _sel
         from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+
         result = await session.exec(_sel(_CP.brand).distinct())
         for b in result.all():
             if b and len(b) >= 2:
@@ -1104,7 +1335,7 @@ def _build_banned_set(
         _banned.add(source_site.lower())
     for cat_part in cats:
         if cat_part:
-            for w in re.split(r'[\s>/\-]+', cat_part):
+            for w in re.split(r"[\s>/\-]+", cat_part):
                 clean = w.strip().lower()
                 if len(clean) >= 2:
                     _banned.add(clean)
@@ -1115,8 +1346,8 @@ def _build_banned_set(
                 _banned.add(w.lower())
 
     _name_words: set[str] = set()
-    for w in re.split(r'[\s/\-_()]+', rep_name):
-        clean = re.sub(r'[^가-힣a-zA-Z0-9]', '', w).lower()
+    for w in re.split(r"[\s/\-_()]+", rep_name):
+        clean = re.sub(r"[^가-힣a-zA-Z0-9]", "", w).lower()
         if len(clean) >= 2:
             _name_words.add(clean)
 
@@ -1127,7 +1358,13 @@ def _build_banned_set(
     return _banned, _name_words, _brand_words, ss_banned
 
 
-def _is_valid_tag(tag: str, banned: set[str], name_words: set[str], ss_banned: set[str], brand_words: set[str]) -> bool:
+def _is_valid_tag(
+    tag: str,
+    banned: set[str],
+    name_words: set[str],
+    ss_banned: set[str],
+    brand_words: set[str],
+) -> bool:
     """태그 유효성 검사."""
     t = tag.strip().lower()
     if not t:
@@ -1163,8 +1400,12 @@ def _has_overlap_suffix(word: str, existing: list[str], min_suffix: int = 2) -> 
 
 
 def _extract_seo_keywords(
-    candidates: list[str], cats: list, banned: set[str], name_words: set[str],
-    final_tags: list[str] | None = None, max_count: int = 3,
+    candidates: list[str],
+    cats: list,
+    banned: set[str],
+    name_words: set[str],
+    final_tags: list[str] | None = None,
+    max_count: int = 3,
 ) -> list[str]:
     """최종 검증 태그와 겹치지 않는 SEO 키워드 3개 추출.
 
@@ -1175,7 +1416,9 @@ def _extract_seo_keywords(
     # 최종 태그 집합 (소문자, 공백 제거)
     tag_set = {t.lower().replace(" ", "") for t in (final_tags or [])}
     # 태그에 포함되지 않은 후보 우선, 그 다음 전체 후보
-    non_tag_candidates = [c for c in candidates if c.lower().replace(" ", "") not in tag_set]
+    non_tag_candidates = [
+        c for c in candidates if c.lower().replace(" ", "") not in tag_set
+    ]
     pool = non_tag_candidates + [c for c in candidates if c not in non_tag_candidates]
     for kw in pool:
         cleaned = kw
@@ -1206,8 +1449,11 @@ async def _get_smartstore_tag_client(session: AsyncSession):
     try:
         from backend.domain.samba.account.repository import SambaMarketAccountRepository
         from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
         account_repo = SambaMarketAccountRepository(session)
-        ss_accounts = await account_repo.filter_by_async(market_type="smartstore", is_active=True)
+        ss_accounts = await account_repo.filter_by_async(
+            market_type="smartstore", is_active=True
+        )
         if ss_accounts:
             acc = ss_accounts[0]
             additional = acc.additional_fields or {}
@@ -1217,7 +1463,9 @@ async def _get_smartstore_tag_client(session: AsyncSession):
                 logger.info("[AI태그] 스마트스토어 태그사전 검증 활성화")
                 return SmartStoreClient(_cid, _csec)
     except Exception as e:
-        logger.warning(f"[AI태그] 스마트스토어 클라이언트 초기화 실패 (태그사전 검증 비활성): {e}")
+        logger.warning(
+            f"[AI태그] 스마트스토어 클라이언트 초기화 실패 (태그사전 검증 비활성): {e}"
+        )
     return None
 
 
@@ -1227,11 +1475,15 @@ async def generate_ai_tags(
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """선택 상품을 그룹별로 묶어 대표 1개로 Claude 태그 생성 후 태그사전 검증 → 그룹 전체에 적용."""
-    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+    from backend.domain.samba.collector.repository import (
+        SambaCollectedProductRepository,
+    )
 
     product_ids = request.get("product_ids", [])
     req_group_ids = request.get("group_ids", [])
-    logger.info(f"[AI태그] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}")
+    logger.info(
+        f"[AI태그] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}"
+    )
 
     if not product_ids and not req_group_ids:
         return {"success": False, "message": "상품 또는 그룹을 선택해주세요"}
@@ -1273,6 +1525,7 @@ async def generate_ai_tags(
 
     total_tagged = 0
     total_groups = len(group_products)
+    failed_groups = 0
     api_calls = 0
     total_input_tokens = 0
     total_output_tokens = 0
@@ -1334,22 +1587,37 @@ async def generate_ai_tags(
             )
 
             try:
-                resp = await http_client.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": api_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "max_tokens": 400,
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
-                )
-                api_calls += 1
-                if resp.status_code != 200:
-                    logger.warning(f"[AI태그] Claude 호출 실패: {resp.status_code}")
+                # Claude API 호출 (429 rate limit 대비 최대 3회 재시도)
+                resp = None
+                for _attempt in range(3):
+                    resp = await http_client.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "x-api-key": api_key,
+                            "anthropic-version": "2023-06-01",
+                            "content-type": "application/json",
+                        },
+                        json={
+                            "model": model,
+                            "max_tokens": 400,
+                            "messages": [{"role": "user", "content": prompt}],
+                        },
+                    )
+                    api_calls += 1
+                    if resp.status_code == 429 and _attempt < 2:
+                        import asyncio as _aio_tag
+
+                        logger.warning(
+                            f"[AI태그] Claude 429 rate limit — {30 * (_attempt + 1)}초 대기"
+                        )
+                        await _aio_tag.sleep(30 * (_attempt + 1))
+                        continue
+                    break
+                if not resp or resp.status_code != 200:
+                    logger.warning(
+                        f"[AI태그] Claude 호출 실패: {resp.status_code if resp else 'no response'}"
+                    )
+                    failed_groups += 1
                     continue
 
                 data = resp.json()
@@ -1360,12 +1628,18 @@ async def generate_ai_tags(
 
                 # 금지어 집합 생성
                 banned, name_words, brand_words, ss_banned = _build_banned_set(
-                    source_site, brand, cats, rep_name, ss_banned_cache, db_brands_cache,
+                    source_site,
+                    brand,
+                    cats,
+                    rep_name,
+                    ss_banned_cache,
+                    db_brands_cache,
                 )
 
                 # 쉼표 구분 태그 파싱 + 금지어 필터링
                 ai_tags = [
-                    t.strip() for t in text.split(",")
+                    t.strip()
+                    for t in text.split(",")
                     if _is_valid_tag(t, banned, name_words, ss_banned, brand_words)
                 ]
 
@@ -1385,7 +1659,9 @@ async def generate_ai_tags(
                 top12: list[str] = []
                 if ss_client and candidate_tags:
                     try:
-                        validated = await ss_client.validate_tags(candidate_tags, max_count=15)
+                        validated = await ss_client.validate_tags(
+                            candidate_tags, max_count=15
+                        )
                         top12 = [v["text"] for v in validated][:12]
                         if len(top12) < 12:
                             tag_set = set(top12)
@@ -1397,9 +1673,13 @@ async def generate_ai_tags(
                                         break
                         total_tag_dict_validated += len(top12)
                         total_tag_dict_rejected += len(candidate_tags) - len(top12)
-                        logger.info(f"[AI태그] 그룹 {gid}: 후보 {len(candidate_tags)}개 → 검증 {len(top12)}개")
+                        logger.info(
+                            f"[AI태그] 그룹 {gid}: 후보 {len(candidate_tags)}개 → 검증 {len(top12)}개"
+                        )
                     except Exception as ve:
-                        logger.error(f"[AI태그] 태그사전 검증 예외 — 후보 태그 사용: {ve}")
+                        logger.error(
+                            f"[AI태그] 태그사전 검증 예외 — 후보 태그 사용: {ve}"
+                        )
                         top12 = candidate_tags[:12]
                 else:
                     top12 = candidate_tags[:12]
@@ -1425,7 +1705,9 @@ async def generate_ai_tags(
                 tags = top12[2:12]
 
                 # 태그 생성 후 그룹 전체 상품 조회 → 벌크 적용
-                all_in_group = await repo.filter_by_async(search_filter_id=gid, limit=10000)
+                all_in_group = await repo.filter_by_async(
+                    search_filter_id=gid, limit=10000
+                )
                 for p in all_in_group:
                     existing = p.tags or []
                     merged = list(set(existing + tags + ["__ai_tagged__"]))
@@ -1437,6 +1719,7 @@ async def generate_ai_tags(
 
             except Exception as e:
                 logger.error(f"[AI태그] 그룹 {gid} 실패: {e}")
+                failed_groups += 1
                 continue
 
     await session.commit()
@@ -1444,11 +1727,17 @@ async def generate_ai_tags(
     input_cost = total_input_tokens * 3 / 1_000_000 * 1400
     output_cost = total_output_tokens * 15 / 1_000_000 * 1400
     total_cost = round(input_cost + output_cost, 1)
-    validated_msg = f", 태그사전 통과 {total_tag_dict_validated}개/제외 {total_tag_dict_rejected}개" if ss_client else ""
+    validated_msg = (
+        f", 태그사전 통과 {total_tag_dict_validated}개/제외 {total_tag_dict_rejected}개"
+        if ss_client
+        else ""
+    )
+    fail_msg = f", 실패 {failed_groups}개 그룹" if failed_groups else ""
     return {
         "success": True,
-        "message": f"태그 생성 완료 — {total_groups}개 그룹, {total_tagged}개 상품에 복사 (₩{total_cost}{validated_msg})",
+        "message": f"태그 생성 완료 — {total_groups}개 그룹, {total_tagged}개 상품에 복사{fail_msg} (₩{total_cost}{validated_msg})",
         "total_tagged": total_tagged,
+        "failed_groups": failed_groups,
         "api_calls": api_calls,
         "input_tokens": total_input_tokens,
         "output_tokens": total_output_tokens,
@@ -1464,11 +1753,15 @@ async def preview_ai_tags(
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """선택 상품의 그룹별 대표 1개로 Claude 태그 20개 생성 → 적용하지 않고 미리보기 반환."""
-    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+    from backend.domain.samba.collector.repository import (
+        SambaCollectedProductRepository,
+    )
 
     product_ids = request.get("product_ids", [])
     req_group_ids = request.get("group_ids", [])
-    logger.info(f"[AI태그 미리보기] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}")
+    logger.info(
+        f"[AI태그 미리보기] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}"
+    )
 
     if not product_ids and not req_group_ids:
         return {"success": False, "message": "상품 또는 그룹을 선택해주세요"}
@@ -1508,6 +1801,7 @@ async def preview_ai_tags(
 
     # 그룹명 조회
     from backend.domain.samba.collector.model import SambaSearchFilter as _SF_tag
+
     _filter_names: dict[str, str] = {}
     for gid in group_ids:
         sf = await session.get(_SF_tag, gid)
@@ -1516,6 +1810,7 @@ async def preview_ai_tags(
 
     # 그룹별 태그 미리보기 결과
     preview_results: list[dict[str, Any]] = []
+    failed_groups = 0
     api_calls = 0
     total_input_tokens = 0
     total_output_tokens = 0
@@ -1575,22 +1870,37 @@ async def preview_ai_tags(
             )
 
             try:
-                resp = await http_client.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": api_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "max_tokens": 400,
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
-                )
-                api_calls += 1
-                if resp.status_code != 200:
-                    logger.warning(f"[AI태그 미리보기] Claude 호출 실패: {resp.status_code}")
+                # Claude API 호출 (429 rate limit 대비 최대 3회 재시도)
+                resp = None
+                for _attempt in range(3):
+                    resp = await http_client.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "x-api-key": api_key,
+                            "anthropic-version": "2023-06-01",
+                            "content-type": "application/json",
+                        },
+                        json={
+                            "model": model,
+                            "max_tokens": 400,
+                            "messages": [{"role": "user", "content": prompt}],
+                        },
+                    )
+                    api_calls += 1
+                    if resp.status_code == 429 and _attempt < 2:
+                        import asyncio as _aio_tag
+
+                        logger.warning(
+                            f"[AI태그 미리보기] Claude 429 rate limit — {30 * (_attempt + 1)}초 대기"
+                        )
+                        await _aio_tag.sleep(30 * (_attempt + 1))
+                        continue
+                    break
+                if not resp or resp.status_code != 200:
+                    logger.warning(
+                        f"[AI태그 미리보기] Claude 호출 실패: {resp.status_code if resp else 'no response'}"
+                    )
+                    failed_groups += 1
                     continue
 
                 data = resp.json()
@@ -1601,7 +1911,12 @@ async def preview_ai_tags(
 
                 # 금지어 집합 생성
                 banned, name_words, brand_words, ss_banned = _build_banned_set(
-                    source_site, brand, cats, rep_name, ss_banned_cache, db_brands_cache,
+                    source_site,
+                    brand,
+                    cats,
+                    rep_name,
+                    ss_banned_cache,
+                    db_brands_cache,
                 )
 
                 # 중복 제거 후 후보 전체 보존
@@ -1623,7 +1938,9 @@ async def preview_ai_tags(
                 tag_validation_error = ""
                 if ss_client_preview and candidate_tags:
                     try:
-                        validated = await ss_client_preview.validate_tags(candidate_tags, max_count=15)
+                        validated = await ss_client_preview.validate_tags(
+                            candidate_tags, max_count=15
+                        )
                         top12_preview = [v["text"] for v in validated][:12]
                         if len(top12_preview) < 12:
                             vt_set = set(top12_preview)
@@ -1633,10 +1950,14 @@ async def preview_ai_tags(
                                     vt_set.add(ct)
                                     if len(top12_preview) >= 12:
                                         break
-                        rejected_tags = [t for t in candidate_tags if t not in set(top12_preview)]
+                        rejected_tags = [
+                            t for t in candidate_tags if t not in set(top12_preview)
+                        ]
                     except Exception as ve:
                         tag_validation_error = str(ve)
-                        logger.error(f"[AI태그] 태그사전 검증 예외 — 후보 태그 사용: {ve}")
+                        logger.error(
+                            f"[AI태그] 태그사전 검증 예외 — 후보 태그 사용: {ve}"
+                        )
                         top12_preview = candidate_tags[:12]
                 else:
                     top12_preview = candidate_tags[:12]
@@ -1657,21 +1978,24 @@ async def preview_ai_tags(
                             seo_preview[0] = _prefix
                 validated_tags = top12_preview[2:12]
 
-                preview_results.append({
-                    "group_id": gid,
-                    "group_name": _filter_names.get(gid, rep_name),
-                    "product_count": len(products),
-                    "rep_name": rep_name,
-                    "tags": validated_tags,
-                    "rejected_tags": rejected_tags,
-                    "seo_keywords": seo_preview,
-                    "candidate_count": len(candidate_tags),
-                    "candidates": candidate_tags[:15],
-                    "validation_error": tag_validation_error,
-                })
+                preview_results.append(
+                    {
+                        "group_id": gid,
+                        "group_name": _filter_names.get(gid, rep_name),
+                        "product_count": len(products),
+                        "rep_name": rep_name,
+                        "tags": validated_tags,
+                        "rejected_tags": rejected_tags,
+                        "seo_keywords": seo_preview,
+                        "candidate_count": len(candidate_tags),
+                        "candidates": candidate_tags[:15],
+                        "validation_error": tag_validation_error,
+                    }
+                )
 
             except Exception as e:
                 logger.error(f"[AI태그 미리보기] 그룹 {gid} 실패: {e}")
+                failed_groups += 1
                 continue
 
     # 비용 계산
@@ -1679,10 +2003,12 @@ async def preview_ai_tags(
     output_cost = total_output_tokens * 15 / 1_000_000 * 1400
     total_cost = round(input_cost + output_cost, 1)
 
+    fail_msg = f", 실패 {failed_groups}개 그룹" if failed_groups else ""
     return {
         "success": True,
-        "message": f"{len(preview_results)}개 그룹 태그 미리보기 생성 완료 (₩{total_cost})",
+        "message": f"{len(preview_results)}개 그룹 태그 미리보기 생성 완료{fail_msg} (₩{total_cost})",
         "previews": preview_results,
+        "failed_groups": failed_groups,
         "api_calls": api_calls,
         "input_tokens": total_input_tokens,
         "output_tokens": total_output_tokens,
@@ -1696,7 +2022,9 @@ async def apply_ai_tags(
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
     """사용자가 확정한 태그를 그룹 전체 상품에 적용."""
-    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+    from backend.domain.samba.collector.repository import (
+        SambaCollectedProductRepository,
+    )
 
     # groups: [{ group_id, tags: [...] }]
     groups_data = request.get("groups", [])
@@ -1708,10 +2036,15 @@ async def apply_ai_tags(
     banned_added = 0
     if removed_tags:
         try:
-            from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+            from backend.domain.samba.forbidden.repository import (
+                SambaSettingsRepository,
+            )
+
             settings_repo = SambaSettingsRepository(session)
             row = await settings_repo.find_by_async(key="smartstore_banned_tags")
-            existing_banned: list[str] = row.value if row and isinstance(row.value, list) else []
+            existing_banned: list[str] = (
+                row.value if row and isinstance(row.value, list) else []
+            )
             existing_lower = {w.lower() for w in existing_banned}
             for tag in removed_tags:
                 if tag.lower() not in existing_lower:
@@ -1719,8 +2052,12 @@ async def apply_ai_tags(
                     existing_lower.add(tag.lower())
                     banned_added += 1
             if banned_added > 0:
-                await settings_repo.upsert_async(key="smartstore_banned_tags", value=existing_banned)
-                logger.info(f"[AI태그] 금지태그 {banned_added}개 추가: {removed_tags[:5]}")
+                await settings_repo.upsert_async(
+                    key="smartstore_banned_tags", value=existing_banned
+                )
+                logger.info(
+                    f"[AI태그] 금지태그 {banned_added}개 추가: {removed_tags[:5]}"
+                )
         except Exception as e:
             logger.warning(f"[AI태그] 금지태그 저장 실패: {e}")
 
@@ -1762,6 +2099,7 @@ async def apply_ai_tags(
         # 그룹 내 모든 상품에 적용 (개별 커밋 없이 일괄 처리)
         from sqlalchemy.orm.attributes import flag_modified as _fm
         from datetime import datetime as _dt, UTC as _utc
+
         for p in products:
             existing = p.tags or []
             merged = list(set(existing + tags + ["__ai_tagged__"]))
@@ -1778,7 +2116,8 @@ async def apply_ai_tags(
     await session.commit()
     return {
         "success": True,
-        "message": f"{len(groups_data)}개 그룹, {total_tagged}개 상품에 태그 적용 완료" + (f" (금지태그 {banned_added}개 추가)" if banned_added else ""),
+        "message": f"{len(groups_data)}개 그룹, {total_tagged}개 상품에 태그 적용 완료"
+        + (f" (금지태그 {banned_added}개 추가)" if banned_added else ""),
         "total_tagged": total_tagged,
         "banned_added": banned_added,
     }
@@ -1804,22 +2143,22 @@ async def filter_product_images(
 
     # filter_id로 요청 시 해당 그룹의 상품 ID 조회 (product_ids 우선)
     if filter_id and not product_ids:
-      try:
-        result = await svc.filter_by_group(filter_id)
-        return result
-      except Exception as exc:
-        logger.error(f"[이미지필터] 그룹 필터링 실패: {exc}")
-        return {"success": False, "message": str(exc)[:300]}
+        try:
+            result = await svc.filter_by_group(filter_id, scope=scope)
+            return result
+        except Exception as exc:
+            logger.error(f"[이미지필터] 그룹 필터링 실패: {exc}")
+            return {"success": False, "message": str(exc)[:300]}
 
     if not product_ids:
-      return {"success": False, "message": "product_ids 또는 filter_id를 입력하세요."}
+        return {"success": False, "message": "product_ids 또는 filter_id를 입력하세요."}
 
     try:
-      result = await svc.batch_filter(product_ids, scope=scope)
-      return result
+        result = await svc.batch_filter(product_ids, scope=scope)
+        return result
     except Exception as exc:
-      logger.error(f"[이미지필터] 배치 필터링 실패: {exc}")
-      return {"success": False, "message": str(exc)[:300]}
+        logger.error(f"[이미지필터] 배치 필터링 실패: {exc}")
+        return {"success": False, "message": str(exc)[:300]}
 
 
 # ═══════════════════════════════════════════════
@@ -1827,7 +2166,15 @@ async def filter_product_images(
 # 통합 소싱 (패션플러스: 직접 API / 나머지 5개: 확장앱 큐)
 # ═══════════════════════════════════════════════
 
-EXTENSION_SITES = {"ABCmart", "GrandStage", "OKmall", "LOTTEON", "GSShop", "ElandMall", "SSF"}
+EXTENSION_SITES = {
+    "ABCmart",
+    "GrandStage",
+    "OKmall",
+    "LOTTEON",
+    "GSShop",
+    "ElandMall",
+    "SSF",
+}
 
 
 def _get_sourcing_client(site: str):
@@ -1835,12 +2182,15 @@ def _get_sourcing_client(site: str):
     s = site.lower()
     if s in ("fashionplus", "fp"):
         from backend.domain.samba.proxy.fashionplus import FashionPlusClient
+
         return FashionPlusClient()
     if s == "nike":
         from backend.domain.samba.proxy.nike import NikeClient
+
         return NikeClient()
     if s == "adidas":
         from backend.domain.samba.proxy.adidas import AdidasClient
+
         return AdidasClient()
     return None
 
@@ -1849,6 +2199,7 @@ def _get_sourcing_client(site: str):
 async def sourcing_collect_queue() -> dict[str, Any]:
     """확장앱이 폴링하는 소싱 수집 큐."""
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
     return SourcingQueue.get_next_job()
 
 
@@ -1856,6 +2207,7 @@ async def sourcing_collect_queue() -> dict[str, Any]:
 async def sourcing_collect_result(body: dict[str, Any]) -> dict[str, Any]:
     """확장앱이 수집 결과를 전달."""
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
     request_id = body.get("requestId", "")
     data = body.get("data", {})
     ok = SourcingQueue.resolve_job(request_id, data)
@@ -1877,6 +2229,7 @@ async def sourcing_search(
     # 확장앱 기반 사이트
     if site in EXTENSION_SITES:
         from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
         try:
             request_id, future = SourcingQueue.add_search_job(site, keyword)
             result = await asyncio.wait_for(future, timeout=60)
@@ -1904,6 +2257,7 @@ async def sourcing_detail(
     # 확장앱 기반 사이트
     if site in EXTENSION_SITES:
         from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
         try:
             request_id, future = SourcingQueue.add_detail_job(site, product_id)
             result = await asyncio.wait_for(future, timeout=60)
@@ -1954,13 +2308,20 @@ async def search_count(
             params: dict[str, Any] = {"keyword": keyword, "size": 1}
             if url:
                 from urllib.parse import urlparse, parse_qs
+
                 parsed = parse_qs(urlparse(url).query)
-                if "brand" in parsed: params["brand"] = parsed["brand"][0]
-                if "category" in parsed: params["category"] = parsed["category"][0]
-                if "gf" in parsed: params["gf"] = parsed["gf"][0]
-                if "minPrice" in parsed: params["min_price"] = int(parsed["minPrice"][0])
-                if "maxPrice" in parsed: params["max_price"] = int(parsed["maxPrice"][0])
-                if not keyword and "keyword" in parsed: params["keyword"] = parsed["keyword"][0]
+                if "brand" in parsed:
+                    params["brand"] = parsed["brand"][0]
+                if "category" in parsed:
+                    params["category"] = parsed["category"][0]
+                if "gf" in parsed:
+                    params["gf"] = parsed["gf"][0]
+                if "minPrice" in parsed:
+                    params["min_price"] = int(parsed["minPrice"][0])
+                if "maxPrice" in parsed:
+                    params["max_price"] = int(parsed["maxPrice"][0])
+                if not keyword and "keyword" in parsed:
+                    params["keyword"] = parsed["keyword"][0]
             result = await client.search_products(**params)
             return {"totalCount": result.get("totalCount", 0)}
 
@@ -1968,6 +2329,7 @@ async def search_count(
             search_word = keyword
             if not search_word and url:
                 from urllib.parse import urlparse, parse_qs
+
                 parsed = parse_qs(urlparse(url).query)
                 search_word = parsed.get("searchWord", [""])[0]
             if not search_word:
@@ -1975,11 +2337,18 @@ async def search_count(
             async with httpx.AsyncClient(timeout=10) as http:
                 r = await http.get(
                     "https://www.fashionplus.co.kr/search/goods/fetch",
-                    params={"searchWord": search_word, "page": 1, "pageSize": 1, "sort": "recommend"},
+                    params={
+                        "searchWord": search_word,
+                        "page": 1,
+                        "pageSize": 1,
+                        "sort": "recommend",
+                    },
                     headers={"User-Agent": "Mozilla/5.0"},
                 )
                 data = r.json()
-                return {"totalCount": data.get("goodsPaginator", {}).get("totalCount", 0)}
+                return {
+                    "totalCount": data.get("goodsPaginator", {}).get("totalCount", 0)
+                }
 
         elif source_site == "KREAM":
             # KREAM은 확장앱 기반 수집 — 카운트 조회 불가
@@ -2017,9 +2386,15 @@ async def musinsa_search_api(
     client = await _get_musinsa_client(session)
     try:
         return await client.search_products(
-            keyword=keyword, page=page, size=size, sort=sort,
-            category=category, brand=brand,
-            min_price=min_price, max_price=max_price, gf=gf,
+            keyword=keyword,
+            page=page,
+            size=size,
+            sort=sort,
+            category=category,
+            brand=brand,
+            min_price=min_price,
+            max_price=max_price,
+            gf=gf,
         )
     except Exception as exc:
         logger.error(f"[무신사] 검색 실패: {exc}")
@@ -2102,6 +2477,7 @@ async def set_musinsa_cookies(
 ) -> dict[str, Any]:
     """무신사 쿠키 로테이션 목록 저장."""
     import json
+
     await _set_setting(write_session, "musinsa_cookies", json.dumps(body.cookies))
     return {"ok": True, "count": len(body.cookies)}
 
@@ -2112,6 +2488,7 @@ async def get_musinsa_cookies(
 ) -> dict[str, Any]:
     """무신사 쿠키 로테이션 목록 조회."""
     import json
+
     raw = await _get_setting(session, "musinsa_cookies")
     if raw:
         cookies = json.loads(raw) if isinstance(raw, str) else raw
@@ -2986,7 +3363,12 @@ async def gsshop_approve_promotion(
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict[str, Any]:
     """GS샵 프로모션 승인/반려 처리."""
-    if not body.saleproAgreeDocNo or not body.pmoReqNo or not body.prdCd or not body.aprvStCd:
+    if (
+        not body.saleproAgreeDocNo
+        or not body.pmoReqNo
+        or not body.prdCd
+        or not body.aprvStCd
+    ):
         return {
             "success": False,
             "message": "saleproAgreeDocNo, pmoReqNo, prdCd, aprvStCd 필수",
@@ -3018,6 +3400,7 @@ async def get_extension_config(
 # 범용 이미지 프록시
 # ═══════════════════════════════════════════════
 
+
 @router.get("/image-proxy")
 async def image_proxy(
     url: str = Query("", description="이미지 URL"),
@@ -3031,7 +3414,9 @@ async def image_proxy(
     target = unquote(url)
     try:
         async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-            resp = await client.get(target, headers={"Referer": target, "User-Agent": "Mozilla/5.0"})
+            resp = await client.get(
+                target, headers={"Referer": target, "User-Agent": "Mozilla/5.0"}
+            )
             resp.raise_for_status()
             content_type = resp.headers.get("content-type", "image/jpeg")
             return Response(

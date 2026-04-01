@@ -12,17 +12,17 @@ _emergency_event = threading.Event()
 
 
 def trigger_emergency_stop():
-  """비상정지 작동 — 모든 백그라운드 작업 즉시 중단."""
-  _emergency_event.set()
-  logger.warning("[비상정지] 작동! 모든 전송/오토튠 즉시 중단")
+    """비상정지 작동 — 모든 백그라운드 작업 즉시 중단."""
+    _emergency_event.set()
+    logger.warning("[비상정지] 작동! 모든 전송/오토튠 즉시 중단")
 
 
 def clear_emergency_stop():
-  """비상정지 해제."""
-  _emergency_event.clear()
-  logger.info("[비상정지] 해제")
+    """비상정지 해제."""
+    _emergency_event.clear()
+    logger.info("[비상정지] 해제")
 
 
 def is_emergency_stopped() -> bool:
-  """비상정지 상태 확인 (스레드 안전)."""
-  return _emergency_event.is_set()
+    """비상정지 상태 확인 (스레드 안전)."""
+    return _emergency_event.is_set()

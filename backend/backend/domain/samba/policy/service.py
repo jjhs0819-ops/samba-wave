@@ -12,7 +12,9 @@ class SambaPolicyService:
         self.repo = repo
 
     async def list_policies(self, skip: int = 0, limit: int = 50) -> List[SambaPolicy]:
-        return await self.repo.list_async(skip=skip, limit=limit, order_by="-created_at")
+        return await self.repo.list_async(
+            skip=skip, limit=limit, order_by="-created_at"
+        )
 
     async def get_policy(self, policy_id: str) -> Optional[SambaPolicy]:
         return await self.repo.get_async(policy_id)
@@ -36,7 +38,9 @@ class SambaPolicyService:
             }
         return await self.repo.create_async(**data)
 
-    async def update_policy(self, policy_id: str, data: Dict[str, Any]) -> Optional[SambaPolicy]:
+    async def update_policy(
+        self, policy_id: str, data: Dict[str, Any]
+    ) -> Optional[SambaPolicy]:
         return await self.repo.update_async(policy_id, **data)
 
     async def delete_policy(self, policy_id: str) -> bool:
@@ -80,7 +84,7 @@ class SambaPolicyService:
 
         # 할인
         if pricing.get("discountRate", 0) > 0:
-            price *= (1 - pricing["discountRate"] / 100)
+            price *= 1 - pricing["discountRate"] / 100
         if pricing.get("discountAmount", 0) > 0:
             price -= pricing["discountAmount"]
 

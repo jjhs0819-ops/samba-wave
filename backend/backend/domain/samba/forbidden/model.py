@@ -24,7 +24,9 @@ class SambaForbiddenWord(SQLModel, table=True):
         max_length=30,
     )
     # 테넌트 격리
-    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
 
     word: str = Field(sa_column=Column(Text, nullable=False))
 
@@ -63,7 +65,9 @@ class SambaSettings(SQLModel, table=True):
 
     key: str = Field(primary_key=True)
     # 테넌트 격리
-    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
 
     # 설정 값 (JSON)
     value: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))

@@ -24,7 +24,9 @@ class SambaShipment(SQLModel, table=True):
         max_length=30,
     )
     # 테넌트 격리
-    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
 
     # 대상 상품
     product_id: str = Field(
@@ -48,17 +50,27 @@ class SambaShipment(SQLModel, table=True):
     )
 
     # 업데이트 결과 (JSON)
-    update_result: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    update_result: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # 전송 결과: { accountId: 'success' | 'failed' }
-    transmit_result: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
-    transmit_error: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    transmit_result: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    transmit_error: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # 카테고리 매핑 (JSON)
-    mapped_categories: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    mapped_categories: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # 롯데ON 전용 상세 (JSON)
-    lotte_details: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    lotte_details: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     # 에러 메시지
     error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))

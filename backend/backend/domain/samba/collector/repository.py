@@ -6,7 +6,10 @@ from sqlalchemy import or_
 from sqlmodel import select
 
 from backend.domain.shared.base_repository import BaseRepository
-from backend.domain.samba.collector.model import SambaCollectedProduct, SambaSearchFilter
+from backend.domain.samba.collector.model import (
+    SambaCollectedProduct,
+    SambaSearchFilter,
+)
 
 
 class SambaSearchFilterRepository(BaseRepository[SambaSearchFilter]):
@@ -69,11 +72,10 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
             order_by_desc=True,
         )
 
-    async def bulk_update_by_filter(
-        self, search_filter_id: str, **kwargs
-    ) -> int:
+    async def bulk_update_by_filter(self, search_filter_id: str, **kwargs) -> int:
         """search_filter_id에 해당하는 모든 상품을 한 번의 쿼리로 업데이트."""
         from sqlalchemy import update
+
         stmt = (
             update(SambaCollectedProduct)
             .where(SambaCollectedProduct.search_filter_id == search_filter_id)
