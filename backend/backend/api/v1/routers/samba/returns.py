@@ -783,6 +783,7 @@ async def sync_returns_from_markets(
                   '반품요청', '반품완료', '반품거부'
               )
         """))
+        await session.commit()
         logger.info("[반품동기화] 원주문 shipping_status 일괄 업데이트 완료")
     except Exception as _upd_err:
         logger.warning(f"[반품동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
@@ -841,6 +842,7 @@ async def sync_returns_from_markets(
             )
         else:
             logger.warning("[반품동기화] 롯데ON 교환→반품 재분류 수정 대상 없음")
+        await session.commit()
     except Exception as _repair_err:
         logger.warning(f"[반품동기화] 롯데ON 반품 재분류 수정 실패: {_repair_err}")
 
