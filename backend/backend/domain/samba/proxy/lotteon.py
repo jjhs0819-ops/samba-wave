@@ -963,7 +963,16 @@ class LotteonClient:
       "impDvsCd": "DRC_IMP",   # 공식수입 (직수입)
       "dvProcTypCd": "LO_ENTP",
       "dvPdTypCd": "GNRL",
-      "sndBgtNday": 2,
+      "dvRsvDvsCd": product.get("_shipping_type", "GNRL_DV"),
+      "sndBgtNday": product.get("_dispatch_days", 2),
+      **(
+        {
+          "ordCutHh": str(product.get("_order_cutoff_hour", 11)).zfill(2),
+          "ordCutMm": "00",
+        }
+        if product.get("_shipping_type") == "TODAY_DV"
+        else {}
+      ),
       "dvMnsCd": "DPCL",
       "cmbnDvPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
       "cmbnRtngPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
@@ -1331,9 +1340,17 @@ class LotteonClient:
           item["odNo"] = od_no
           item["clmNo"] = clm_no
           step_cd = str(item.get("odPrgsStepCd", "") or "")
+          clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
+          # 반품 사유 코드(300번대)가 교환 API에 잘못 포함된 경우 제외
+          if clm_rsn_cd.startswith("3"):
+            logger.warning(
+              f"[롯데ON][교환-EXCH] 반품 사유코드({clm_rsn_cd}) 교환 목록에서 제외: "
+              f"odNo={od_no} clmNo={clm_no}"
+            )
+            continue
           logger.info(
             f"[롯데ON][교환-EXCH] odNo={od_no} clmNo={clm_no} stepCd={step_cd} "
-            f"clmRsnCd={item.get('clmRsnCd','')}"
+            f"clmRsnCd={clm_rsn_cd}"
           )
           key = f"{od_no}_{clm_no}_{item.get('odSeq','')}"
           if key not in seen_clm_keys:

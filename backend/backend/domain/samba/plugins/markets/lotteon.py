@@ -742,6 +742,13 @@ class LotteonPlugin(MarketPlugin):
       product_copy["_jeju_fee"] = int(extras["jejuFee"])
     if extras.get("stockQuantity"):
       product_copy["_stock_quantity"] = int(extras["stockQuantity"])
+    # 발송 설정 주입
+    if extras.get("shippingType"):
+      product_copy["_shipping_type"] = extras["shippingType"]
+    if extras.get("orderCutoffHour") is not None and str(extras["orderCutoffHour"]).strip():
+      product_copy["_order_cutoff_hour"] = int(extras["orderCutoffHour"])
+    if extras.get("dispatchDays"):
+      product_copy["_dispatch_days"] = int(extras["dispatchDays"])
 
     # ── 2. 정책 설정 주입 ────────────────────────────────────────────
     policy_id = product.get("applied_policy_id")
@@ -891,7 +898,38 @@ class LotteonPlugin(MarketPlugin):
           data["spdLst"][0].pop("itmLst", None)
           data["spdLst"][0].pop("sitmYn", None)
         logger.info(f"[롯데ON] 수정 모드 — 기존 spdNo={existing_no!r}")
-        result = await client.update_product(data)
+        # impDvsCd fallback: 직수입 불허 카테고리 대응 (등록과 동일 전략)
+        _upd_imp_fallbacks = [
+          ("DRC_IMP", "OVRS"),
+          (None, "DMST"),
+          (None, "OVRS"),
+        ]
+        _upd_exception: Exception | None = None
+        result = None
+        try:
+          result = await client.update_product(data)
+        except Exception as _ue:
+          if "수입구분코드" in str(_ue):
+            _upd_exception = _ue
+            for _imp_code, _dmst_code in _upd_imp_fallbacks:
+              if data.get("spdLst") and isinstance(data["spdLst"], list):
+                _spd = data["spdLst"][0]
+                if _imp_code is None:
+                  _spd.pop("impDvsCd", None)
+                else:
+                  _spd["impDvsCd"] = _imp_code
+                _spd["dmstOvsDvDvsCd"] = _dmst_code
+              logger.info(f"[롯데ON] 수정 impDvsCd fallback: impDvsCd={_imp_code!r} dmst={_dmst_code}")
+              try:
+                result = await client.update_product(data)
+                _upd_exception = None
+                break
+              except Exception as _ue2:
+                logger.warning(f"[롯데ON] 수정 fallback 실패: impDvsCd={_imp_code!r} dmst={_dmst_code} — {_ue2}")
+          else:
+            raise
+        if _upd_exception is not None:
+          raise _upd_exception
         # 수정 API가 새 spdNo를 반환하는 경우 (수정본 별도 상품번호 발급)
         new_spd_no = result.get("spdNo", "") or ""
         effective_no = new_spd_no if new_spd_no and new_spd_no != existing_no else existing_no
