@@ -290,8 +290,36 @@ _MUSINSA_LOTTEON_RULES: dict[str, str] = {
     "스포츠/레저 > 하의 > 숏팬츠": "스포츠의류/운동화 > 남성스포츠의류 > 반바지",
     "스포츠/레저 > 아우터 > 기타 점퍼/재킷": "스포츠의류/운동화 > 남성스포츠의류 > 점퍼",
     "스포츠/레저 > 아우터 > 트레이닝 재킷": "스포츠의류/운동화 > 남성스포츠의류 > 바람막이/재킷",
+    "스포츠/레저 > 아우터 > 패딩": "스포츠의류/운동화 > 남성스포츠의류 > 다운/패딩",
+    "스포츠/레저 > 아우터 > 다운재킷": "스포츠의류/운동화 > 남성스포츠의류 > 다운/패딩",
+    "스포츠/레저 > 아우터 > 경량패딩": "스포츠의류/운동화 > 남성스포츠의류 > 다운/패딩",
+    "스포츠/레저 > 아우터 > 플리스": "스포츠의류/운동화 > 남성스포츠의류 > 집업",
+    "스포츠/레저 > 아우터 > 바람막이": "스포츠의류/운동화 > 남성스포츠의류 > 바람막이/재킷",
+    "스포츠/레저 > 아우터 > 후드재킷": "스포츠의류/운동화 > 남성스포츠의류 > 후드",
+    "스포츠/레저 > 아우터 > 베스트": "스포츠의류/운동화 > 남성스포츠의류 > 조끼/베스트",
+    # ── 스포츠/레저 > 상의/하의 추가 ──
+    "스포츠/레저 > 상의 > 긴소매 티셔츠": "스포츠의류/운동화 > 남성스포츠의류 > 긴팔티셔츠",
+    "스포츠/레저 > 상의 > 맨투맨": "스포츠의류/운동화 > 남성스포츠의류 > 맨투맨",
+    "스포츠/레저 > 상의 > 후드": "스포츠의류/운동화 > 남성스포츠의류 > 후드",
+    "스포츠/레저 > 상의 > 민소매": "스포츠의류/운동화 > 남성스포츠의류 > 민소매/탑",
+    "스포츠/레저 > 하의 > 긴바지": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
+    "스포츠/레저 > 하의 > 레깅스": "스포츠의류/운동화 > 여성스포츠의류 > 레깅스",
     "스포츠/레저 > 신발 > 라이프스타일화": "패션잡화 > 남성화 > 스니커즈",
     "스포츠/레저 > 신발 > 런닝화": "패션잡화 > 남성화 > 운동화",
+    # ── 소품 > 모자류 — FC08 권한에 모자 카테고리 없음 → 등록 불가(스킵) ──
+    "소품 > 모자": "__SKIP__",
+    "소품 > 모자 > 기타 모자": "__SKIP__",
+    "소품 > 모자 > 버킷/사파리햇": "__SKIP__",
+    "소품 > 모자 > 캡/야구모자": "__SKIP__",
+    "소품 > 모자 > 비니": "__SKIP__",
+    # ── 상의 > 기타 상의 — 분류 불명확한 상의는 긴팔티셔츠 폴백 ──
+    "상의 > 기타 상의": "스포츠의류/운동화 > 남성스포츠의류 > 긴팔티셔츠",
+    # ── 스포츠/레저 비의류 — 등록 불가(스킵), 계단식 매칭으로 하위 전체 커버 ──
+    "스포츠/레저 > 기구/용품/장비": "__SKIP__",
+    "스포츠/레저 > 소품": "__SKIP__",
+    "스포츠/레저 > 용품": "__SKIP__",
+    # ── 스포츠/레저 > 상하의세트 — 트레이닝복으로 매핑 ──
+    "스포츠/레저 > 상하의세트": "스포츠의류/운동화 > 남성스포츠의류 > 트레이닝복",
 }
 
 # 마켓별 룰 테이블 레지스트리
@@ -323,6 +351,18 @@ def _rule_match(
         normalized = re.sub(r'\s*\([^)]+\)', '', source_category).strip()
         if normalized != source_category:
             result = rules.get(normalized)
+    # 상위 카테고리 계단식 매칭 — "A > B > C"가 없으면 "A > B", "A" 순으로 탐색
+    if not result:
+        parts = [p.strip() for p in source_category.split(">")]
+        for i in range(len(parts) - 1, 0, -1):
+            parent = " > ".join(parts[:i])
+            result = rules.get(parent)
+            if result:
+                break
+    # __SKIP__ = 해당 마켓에 등록 불가 → 빈 문자열 반환 (AI 폴백 방지)
+    if result == "__SKIP__":
+        logger.info(f"[매핑-스킵] {source_category} → {market}: 등록 불가 카테고리")
+        return ""
     if result and gender == "female":
         result = _apply_gender(result, market, gender)
     return result
@@ -2639,9 +2679,10 @@ JSON만 응답:
         # 1단계: 룰 기반 매핑 (모든 마켓)
         for m in markets:
             rule = _rule_match(source_site, source_category, m, gender)
-            if rule:
+            if rule is not None:
                 result[m] = rule
-                logger.info(f"[매핑-룰] {source_site} > {source_category} → {m}: {rule} (성별:{gender})")
+                if rule:
+                    logger.info(f"[매핑-룰] {source_site} > {source_category} → {m}: {rule} (성별:{gender})")
 
         # 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만)
         for m in markets:
@@ -2966,9 +3007,10 @@ JSON만:
             resolved: Dict[str, str] = {}
             for mk in list(missing_markets):
                 rule_result = _rule_match(site, leaf_path, mk, gender)
-                if rule_result:
+                if rule_result is not None:
                     resolved[mk] = rule_result
-                    logger.info(f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})")
+                    if rule_result:
+                        logger.info(f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})")
 
             # ── 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만, 롯데ON 제외) ──
             # ESM(지마켓/옥션): SS 매핑이 있으면 SS 결과를 브릿지로 사용

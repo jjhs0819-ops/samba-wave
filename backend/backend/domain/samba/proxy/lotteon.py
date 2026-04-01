@@ -10,9 +10,8 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from urllib.parse import urlparse
 
 from backend.domain.samba.proxy.notice_utils import build_lotteon_notice as _build_lot_notice
 
@@ -150,96 +149,6 @@ def _build_lotteon_intro(product: dict[str, Any]) -> str:
 # ──────────────────────────────────────────────────────────────────────
 # 상품홍보문구 자동 생성
 # ──────────────────────────────────────────────────────────────────────
-
-_PROMO_PHRASE: dict[str, str] = {
-  # 하의
-  "바지": "편한바지", "팬츠": "편한바지", "청바지": "편한청바지", "반바지": "편한반바지",
-  "레깅스": "슬림레깅스", "스커트": "예쁜스커트", "치마": "예쁜치마",
-  # 상의
-  "티셔츠": "편한티셔츠", "티": "편한티", "셔츠": "스타일리시셔츠",
-  "맨투맨": "편한맨투맨", "후드": "편한후드", "니트": "포근한니트", "스웨터": "포근한스웨터",
-  # 아우터
-  "자켓": "트렌디자켓", "재킷": "트렌디재킷", "코트": "세련된코트",
-  "패딩": "따뜻한패딩", "점퍼": "스타일점퍼", "집업": "편한집업",
-  # 신발
-  "스니커즈": "편한스니커즈", "운동화": "편한운동화", "신발": "편한신발",
-  "슬리퍼": "편한슬리퍼", "샌들": "시원한샌들", "구두": "세련된구두",
-  # 가방
-  "가방": "세련된가방", "백팩": "실용적백팩", "숄더백": "예쁜숄더백", "크로스백": "편한크로스백",
-  # 기타
-  "원피스": "우아한원피스", "수영복": "멋진수영복", "언더웨어": "편한언더웨어",
-}
-
-
-def _build_lotteon_promo(product: dict[str, Any]) -> str:
-  """상품홍보문구 자동 생성 — '{브랜드} {카테고리문구}' 형식, 75바이트 이내.
-
-  예: '아디다스 편한바지', '나이키 편한스니커즈'
-  """
-  brand = product.get("brand", "") or ""
-  # category2(소분류) 우선, 없으면 category1(대분류)
-  cat_raw = (product.get("category2") or product.get("category1") or "").strip()
-
-  # 카테고리 키워드로 문구 매핑 (부분 일치)
-  phrase = ""
-  for keyword, mapped in _PROMO_PHRASE.items():
-    if keyword in cat_raw:
-      phrase = mapped
-      break
-  if not phrase:
-    phrase = cat_raw  # 매핑 없으면 카테고리명 그대로
-
-  parts = [p for p in [brand, phrase] if p]
-  text = " ".join(parts)
-
-  # 75바이트 이내로 자르기
-  encoded = text.encode('utf-8')
-  if len(encoded) > 75:
-    text = encoded[:75].decode('utf-8', errors='ignore').rstrip()
-
-  return text
-
-
-# ──────────────────────────────────────────────────────────────────────
-# 배송/반품 안내 HTML (epnLst NOTI 항목)
-# ──────────────────────────────────────────────────────────────────────
-
-def _build_delivery_notice_html(return_fee: int = 0, exchange_fee: int = 0) -> str:
-  """배송·반품·교환 안내 HTML."""
-  ret_txt = f"{return_fee:,}원" if return_fee else "정책에 따름"
-  exc_txt = f"{exchange_fee:,}원" if exchange_fee else "정책에 따름"
-  return (
-    "<div style='font-family:sans-serif;font-size:14px;line-height:1.8;'>"
-    "<p><b>■ 배송 안내</b></p>"
-    "<p>· 주문일 기준 2~3 영업일 이내 발송 (주말·공휴일 제외)</p>"
-    "<p>· 배송사: CJ대한통운 (도서산간 지역은 추가 배송비 발생)</p>"
-    "<p><b>■ 반품·교환 안내</b></p>"
-    "<p>· 상품 수령 후 7일 이내 신청 가능</p>"
-    f"<p>· 단순 변심 반품 배송비: {ret_txt} / 교환 배송비: {exc_txt}</p>"
-    "<p>· 상품 불량·오배송은 판매자 부담으로 무료 반품</p>"
-    "<p>· 착용·세탁·훼손·태그 제거 후에는 반품·교환 불가</p>"
-    "</div>"
-  )
-
-
-# ──────────────────────────────────────────────────────────────────────
-# SEO 이미지 파일명 생성
-# ──────────────────────────────────────────────────────────────────────
-
-def _make_lotteon_img_filename(brand: str, name: str, idx: int, url: str) -> str:
-  """브랜드·상품명 기반 SEO 파일명 생성. 확장자는 원본 URL에서 추출."""
-  # 확장자 추출
-  path = urlparse(url).path
-  ext = path.rsplit(".", 1)[-1].lower() if "." in path else "jpg"
-  if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
-    ext = "jpg"
-
-  # 슬러그 생성: 브랜드+상품명, 특수문자 → 하이픈
-  slug_base = f"{brand}-{name}" if brand else name
-  slug = re.sub(r"[^\w가-힣a-zA-Z0-9]", "-", slug_base)
-  slug = re.sub(r"-{2,}", "-", slug).strip("-")[:80]
-  return f"{slug}-{idx + 1:02d}.{ext}"
-
 
 class LotteonClient:
   """롯데ON Open API 클라이언트."""
@@ -480,8 +389,8 @@ class LotteonClient:
     ts_suffix = str(int(now.timestamp()))[-8:]       # timestamp 끝 8자리
     affil_pr_no = f"{spd_num}{ts_suffix}"            # 최대 20자
     start_dt = now.strftime("%Y%m%d%H%M%S")
-    # 1년 후 종료 (포맷: yyyymmddhhmiss)
-    end_dt = (now.replace(year=now.year + 1)).strftime("%Y%m%d235959")
+    # 1년 후 종료 (포맷: yyyymmddhhmiss) — timedelta 사용 (윤년 2/29 안전)
+    end_dt = (now + timedelta(days=365)).strftime("%Y%m%d235959")
     body = {
       "saveDvsCd": "C",                            # 항상 신규 등록 (U=수정은 awyDcPdRegNo 필요)
       "awyDcPdRegNo": "",                          # 신규 등록 시 빈값
@@ -521,7 +430,7 @@ class LotteonClient:
     ts_suffix = str(int(now.timestamp()))[-8:]
     affil_pr_no = f"{spd_num}{ts_suffix}"
     start_dt = now.strftime("%Y%m%d%H%M%S")
-    end_dt = (now.replace(year=now.year + 1)).strftime("%Y%m%d235959")
+    end_dt = (now + timedelta(days=365)).strftime("%Y%m%d235959")
     body = {
       "saveDvsCd": "C",
       "accmPdRegNo": "",
@@ -580,7 +489,7 @@ class LotteonClient:
     ts_suffix = str(int(now.timestamp()))[-8:]
     affil_pr_no = f"{spd_num}{ts_suffix}"  # 최대 20자
     start_dt = now.strftime("%Y%m%d%H%M%S")
-    end_dt = (now.replace(year=now.year + 1)).strftime("%Y%m%d235959")
+    end_dt = (now + timedelta(days=365)).strftime("%Y%m%d235959")
     save_dvs_cd = "U" if pr_no else "C"
     body = {
       "saveDvsCd": save_dvs_cd,                 # C=신규, U=수정
@@ -697,13 +606,6 @@ class LotteonClient:
       _shared_client=_shared_client,
     )
 
-  async def get_delivery_zones(self) -> dict[str, Any]:
-    """배송권역 그룹 목록 조회."""
-    return await self._call_api(
-      "GET",
-      "/v1/openapi/delivery/v1/zone/group/list",
-    )
-
   async def get_category_attributes(self, scat_no: str) -> dict[str, Any]:
     """표준카테고리 속성목록 조회 (onpick-api 도메인).
 
@@ -713,15 +615,6 @@ class LotteonClient:
       "GET",
       "/cheetah/econCheetah.ecn",
       params={"job": "cheetahScatAttr", "mf_1": scat_no},
-      base_url=self.ONPICK_URL,
-    )
-
-  async def get_category_attributes_by_job(self, job: str, scat_no: str, param_key: str = "mf_1") -> dict[str, Any]:
-    """표준카테고리 속성목록 조회 — job명/param키 탐색용."""
-    return await self._call_api(
-      "GET",
-      "/cheetah/econCheetah.ecn",
-      params={"job": job, param_key: scat_no},
       base_url=self.ONPICK_URL,
     )
 
@@ -831,7 +724,7 @@ class LotteonClient:
         "origFileNm": url,
         "origImgFileNm": url,
       }
-      for idx, url in enumerate(images)
+      for url in images
     ]
 
     # ── 단품 이미지 목록 ────────────────────────────────────────
@@ -1031,7 +924,6 @@ class LotteonClient:
 
   def _datetime_range(self, days: int) -> tuple[str, str]:
     """최근 N일 범위를 yyyymmddHHmmss 형식으로 반환 (최대 30일)."""
-    from datetime import datetime, timedelta, timezone
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=min(days, 30))
     fmt = "%Y%m%d%H%M%S"
@@ -1044,50 +936,58 @@ class LotteonClient:
   async def get_orders(self, days: int = 7) -> list[dict]:
     """최근 N일 배송 주문 조회 (SellerDeliveryOrdersSearch).
 
-    API 제약: 조회 기간 1일 초과 불가 → 하루씩 반복 조회.
+    API 제약: 조회 기간 1일 초과 불가 → 하루씩 병렬 조회 (동시 5건 제한).
     """
-    from datetime import datetime, timedelta, timezone
+    import asyncio
+
     now = datetime.now(timezone.utc)
     actual_days = min(days, 30)
-    result = []
-    for i in range(actual_days):
-      # 하루 단위로 역순 조회 (최신 → 과거)
-      day_end = now - timedelta(days=i)
+    sem = asyncio.Semaphore(5)
+
+    async def _fetch_day(offset: int) -> list[dict]:
+      day_end = now - timedelta(days=offset)
       day_start = day_end - timedelta(days=1)
       srch_strt = day_start.strftime("%Y%m%d%H%M%S")
       srch_end = day_end.strftime("%Y%m%d%H%M%S")
-      try:
-        data = await self._call_api(
-          "POST",
-          "/v1/openapi/delivery/v1/SellerDeliveryOrdersSearch",
-          body={
-            "srchStrtDt": srch_strt,
-            "srchEndDt": srch_end,
-          },
-        )
-        inner = data.get("data") or {}
-        items = inner.get("deliveryOrderList") or []
-        logger.info(
-          f"[롯데ON][주문] {srch_strt}~{srch_end} "
-          f"deliveryOrderList={len(items) if isinstance(items, list) else repr(items)}"
-        )
-        if isinstance(items, list) and items:
-          s = items[0]
-          logger.info(
-            f"[롯데ON][주문] 샘플 키값: odNo={s.get('odNo')} spdNo={s.get('spdNo')} "
-            f"sitmNo={s.get('sitmNo')} odSeq={s.get('odSeq')} procSeq={s.get('procSeq')} "
-            f"odPrgsStepCd={s.get('odPrgsStepCd')}"
+      async with sem:
+        try:
+          data = await self._call_api(
+            "POST",
+            "/v1/openapi/delivery/v1/SellerDeliveryOrdersSearch",
+            body={
+              "srchStrtDt": srch_strt,
+              "srchEndDt": srch_end,
+            },
           )
-          logger.info(f"[롯데ON][주문] 샘플 전체 필드: {list(s.keys())}")
-          logger.info(f"[롯데ON][주문] 샘플 전체 데이터: {s}")
-          result.extend(items)
-      except Exception as e:
-        logger.warning(f"[롯데ON] 주문 조회 실패 ({srch_strt}~{srch_end}): {e}")
+          inner = data.get("data") or {}
+          items = inner.get("deliveryOrderList") or []
+          logger.info(
+            f"[롯데ON][주문] {srch_strt}~{srch_end} "
+            f"deliveryOrderList={len(items) if isinstance(items, list) else repr(items)}"
+          )
+          if isinstance(items, list) and items:
+            s = items[0]
+            logger.info(
+              f"[롯데ON][주문] 샘플 키값: odNo={s.get('odNo')} spdNo={s.get('spdNo')} "
+              f"sitmNo={s.get('sitmNo')} odSeq={s.get('odSeq')} procSeq={s.get('procSeq')} "
+              f"odPrgsStepCd={s.get('odPrgsStepCd')}"
+            )
+            logger.info(f"[롯데ON][주문] 샘플 전체 필드: {list(s.keys())}")
+            logger.info(f"[롯데ON][주문] 샘플 전체 데이터: {s}")
+            return items
+          return []
+        except Exception as e:
+          logger.warning(f"[롯데ON] 주문 조회 실패 ({srch_strt}~{srch_end}): {e}")
+          return []
+
+    day_results = await asyncio.gather(*[_fetch_day(i) for i in range(actual_days)])
+    result: list[dict] = []
+    for items in day_results:
+      result.extend(items)
     return result
 
   async def confirm_orders(self, order_items: list[dict]) -> bool:
     """발주 확인 처리 (SellerDeliveryProgressStateInform, odPrgsStepCd=11)."""
-    from datetime import datetime, timezone, timedelta
     KST = timezone(timedelta(hours=9))
     dttm = datetime.now(KST).strftime("%Y%m%d%H%M%S")
     items = [
@@ -1150,7 +1050,6 @@ class LotteonClient:
     tracking_number: str,
   ) -> bool:
     """발송처리 + 송장번호 등록 (SellerDeliveryProgressStateInform, odPrgsStepCd=13)."""
-    from datetime import datetime, timezone, timedelta
     KST = timezone(timedelta(hours=9))
     dv_co_cd = self.DELIVERY_COMPANY_MAP.get(shipping_company, shipping_company)
     dv_trc_stat_dttm = datetime.now(KST).strftime("%Y%m%d%H%M%S")
@@ -1298,7 +1197,7 @@ class LotteonClient:
         for item in (claim.get("itemList") or []):
           clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
           if not clm_rsn_cd.startswith(("2", "3")):
-            continue  # 반품 사유코드(300번대)만 보완 대상
+            continue  # 반품 사유코드(200/300번대)만 보완 대상
           item["odNo"] = od_no
           item["clmNo"] = clm_no
           key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
@@ -1332,7 +1231,7 @@ class LotteonClient:
         for item in (claim.get("itemList") or []):
           clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
           if not clm_rsn_cd.startswith(("2", "3")):
-            continue  # 반품 사유코드(300번대)만 보완 대상
+            continue  # 반품 사유코드(200/300번대)만 보완 대상
           item["odNo"] = od_no
           item["clmNo"] = clm_no
           key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
@@ -1441,8 +1340,7 @@ class LotteonClient:
 
     # 3차: SellerDeliveryOrdersSearch(odTypCd=30) — 배송 모듈로 이동한 교환 회수 주문
     try:
-      from datetime import datetime, timedelta, timezone as _tz
-      now = datetime.now(_tz.utc)
+      now = datetime.now(timezone.utc)
       actual_days = min(days, 30)
       for i in range(actual_days):
         day_end = now - timedelta(days=i)
@@ -1530,7 +1428,6 @@ class LotteonClient:
     tracking_number: str,
   ) -> bool:
     """교환 재배송 처리 (SellerDeliveryProgressStateInform, odPrgsStepCd=13, clmNo 포함)."""
-    from datetime import datetime, timezone, timedelta
     KST = timezone(timedelta(hours=9))
     dv_co_cd = self.DELIVERY_COMPANY_MAP.get(shipping_company, shipping_company)
     dv_trc_stat_dttm = datetime.now(KST).strftime("%Y%m%d%H%M%S")
@@ -1567,7 +1464,7 @@ class LotteonClient:
     try:
       resp = await self._call_api(
         "POST",
-        "/v1/openapi/order/v1/SellerDeliveryProgressStateInform",
+        "/v1/openapi/delivery/v1/SellerDeliveryProgressStateInform",
         body=payload,
       )
       result_list = resp.get("deliveryProgressStateList") or resp.get("data") or []
@@ -1611,14 +1508,30 @@ class LotteonClient:
       raise Exception(f"롯데ON 반품 승인 오류: {msg}")
     return True
 
-  async def reject_return(self, order_no: str, reason: str = "") -> bool:
-    """반품 거부 처리."""
+  async def reject_return(self, order_no: str, reason: str = "", clm_no: str = "") -> bool:
+    """반품 거부 처리 (returnRequestReject).
+
+    Args:
+      order_no: 주문번호 (odNo)
+      reason: 거부 사유
+      clm_no: 클레임번호 (선택 — 전달 시 더 정확한 처리)
+    """
+    payload: dict[str, Any] = {
+      "odNo": order_no,
+      "clmRsnCnts": reason or "판매자 반품 거부",
+    }
+    if clm_no:
+      payload["clmNo"] = clm_no
     try:
-      await self._call_api("PUT", f"/api/order/{order_no}/return/reject",
-                           body={"reason": reason})
+      await self._call_api(
+        "POST",
+        "/v1/openapi/claim/v1/returningOpenApi/returnRequestReject",
+        body=payload,
+      )
+      logger.info(f"[롯데ON] 반품 거부 완료: odNo={order_no} clmNo={clm_no}")
       return True
     except Exception as e:
-      logger.warning(f"[롯데ON] 반품 거부 실패: {e}")
+      logger.warning(f"[롯데ON] 반품 거부 실패: odNo={order_no} / {e}")
       return False
 
   # ------------------------------------------------------------------
@@ -1648,7 +1561,7 @@ class LotteonClient:
         accpDttm        — 접수일시 (yyyyMMddHHmmss)
         procDttm        — 처리일시
     """
-    from datetime import datetime, timedelta
+
 
     now = datetime.now()
     end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
@@ -1733,7 +1646,7 @@ class LotteonClient:
         buyerId         — 구매자 ID
         regDttm         — 등록일시 (yyyyMMddHHmmss)
     """
-    from datetime import datetime, timedelta
+
 
     now = datetime.now()
     end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
@@ -1808,7 +1721,7 @@ class LotteonClient:
         accpDttm        — 접수일시 (yyyyMMddHHmmss)
         vocLcsfCd       — 문의유형코드
     """
-    from datetime import datetime, timedelta
+
 
     now = datetime.now()
     end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
@@ -1832,21 +1745,6 @@ class LotteonClient:
     except LotteonApiError as e:
       logger.warning(f"[롯데ON][CS] 판매자연락 목록 조회 실패: {e}")
       return []
-
-  async def confirm_contact(self, contact_no: str) -> bool:
-    """판매자 연락 수신 확인.
-
-    POST /v1/openapi/customer/v1/updateSellerContactConfirm
-    """
-    try:
-      await self._call_api(
-        "POST",
-        "/v1/openapi/customer/v1/updateSellerContactConfirm",
-        body={"cntcNo": contact_no},
-      )
-      return True
-    except LotteonApiError:
-      return False
 
   async def answer_contact(self, contact_no: str, content: str) -> dict[str, Any]:
     """판매자 연락 답변 등록.
@@ -1887,7 +1785,7 @@ class LotteonClient:
         pdNm            — 상품명
         accpDttm        — 접수일시
     """
-    from datetime import datetime, timedelta
+
 
     now = datetime.now()
     end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")

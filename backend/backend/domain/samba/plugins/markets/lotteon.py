@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
@@ -153,6 +153,10 @@ _PANTS_FIT_MAP: dict[str, str] = {
   "테이퍼드": "547916208", "tapered": "547916208",
   "조거": "610443195", "jogger": "610443195",
   "핀턱": "773234579", "pintuck": "773234579",
+  "루즈": "112028", "loose": "112028",       # 루즈핏 → 와이드 계열
+  "카고": "112029", "cargo": "112029",        # 카고 → 스트레이트 계열
+  "레귤러": "112029", "regular": "112029",    # 레귤러 → 스트레이트 계열
+  "릴랙스": "112028", "relaxed": "112028",    # 릴랙스 → 와이드 계열
 }
 
 # 하의기장 매핑 (상품명/카테고리 키워드 → attr_val_id, 기본: 긴바지)
@@ -188,24 +192,6 @@ _SHOES_MATERIAL_MAP: dict[str, str] = {
   "코르크": "835832335", "cork": "835832335",
 }
 
-# 룩/스타일 매핑 (브랜드/상품명 키워드 → attr_val_id, 기본: 캐주얼)
-_LOOK_STYLE_MAP: dict[str, str] = {
-  # 스포츠/아웃도어 브랜드 → 아웃도어
-  "아디다스": "547698710", "나이키": "547698710", "퓨마": "547698710",
-  "리복": "547698710", "뉴발란스": "547698710", "언더아머": "547698710",
-  "컬럼비아": "547698710", "노스페이스": "547698710", "파타고니아": "547698710",
-  "살로몬": "547698710", "아식스": "547698710", "스포츠": "547698710",
-  "아웃도어": "547698710", "sport": "547698710", "outdoor": "547698710",
-  # 힙합/스트릿
-  "스트릿": "111345", "힙합": "111345", "street": "111345",
-  # 빈티지/히피
-  "빈티지": "111344", "vintage": "111344", "히피": "111344",
-  # 레트로
-  "레트로": "547919177", "retro": "547919177",
-  # 밀리터리
-  "밀리터리": "629485501", "military": "629485501",
-}
-
 # 스커트 스타일 매핑 (category/상품명 키워드 → attr_val_id) — optCd "11810"
 _SKIRT_STYLE_MAP: dict[str, str] = {
   "A라인": "111349", "에이라인": "111349", "a-line": "111349",
@@ -226,6 +212,38 @@ _CLOTH_LENGTH_MAP: dict[str, str] = {
   "맥시": "110633", "maxi": "110633",   # 추정값 — 캡처로 확인 필요
   "롱": "110633", "long": "110633",
 }
+
+# 의류핏 매핑 (상품명/카테고리 키워드 → attr_val_id) — attr_id는 카테고리 API에서 동적 조회
+_CLOTH_FIT_MAP: dict[str, str] = {
+  "오버핏": "112024", "오버사이즈": "112024", "oversize": "112024", "oversized": "112024",
+  "루즈핏": "112024", "루즈": "112024",
+  "슬림핏": "112025", "슬림": "112025", "slim": "112025", "skinny": "112025",
+  "레귤러핏": "112023", "레귤러": "112023", "regular": "112023",
+  # 스탠다드는 기본값으로 처리 (아래 로직에서)
+}
+_CLOTH_FIT_DEFAULT = "112022"  # 스탠다드
+
+# 네크라인 매핑 (소싱처 데이터 키워드 → attr_val_id) — attr_id는 카테고리 API에서 동적 조회
+_NECKLINE_MAP: dict[str, str] = {
+  "라운드": "111311", "라운드넥": "111311", "round": "111311", "크루넥": "111311",
+  "브이넥": "111312", "v넥": "111312", "v-neck": "111312",
+  "터틀넥": "111313", "목폴라": "111313", "turtle": "111313", "폴라": "111313",
+  "하이넥": "111314", "하프넥": "111314", "반폴라": "111314", "mock": "111314",
+  "후드": "111315", "hood": "111315", "hooded": "111315",
+  "카라": "111316", "폴로": "111316", "collar": "111316", "polo": "111316",
+  "오프숄더": "111317", "off shoulder": "111317",
+  "스퀘어넥": "111318", "square": "111318",
+  "보트넥": "111319", "boat": "111319",
+}
+
+# 소매기장 매핑 — attr_id는 카테고리 API에서 동적 조회
+_SLEEVE_LENGTH_MAP: dict[str, str] = {
+  "민소매": "111257", "나시": "111257", "sleeveless": "111257", "탱크탑": "111257",
+  "반팔": "111258", "short sleeve": "111258", "숏슬리브": "111258",
+  "7부소매": "111259", "칠부": "111259",
+  # 긴소매는 기본값으로 처리
+}
+_SLEEVE_LENGTH_DEFAULT = "111260"  # 긴소매
 
 # optValCd → 롯데ON 표시명 (scatAttrLst의 optVal 필드 — 필수, null 불가)
 _OPT_VAL_LABELS: dict[str, str] = {
@@ -300,33 +318,96 @@ _OPT_VAL_LABELS: dict[str, str] = {
   "111355": "벌룬", "111356": "티어드/캉캉", "856854512": "플레어",
   # 의류 기장 (optCd 11606)
   "110631": "미니", "110632": "미디", "110633": "맥시",
+  # 의류핏
+  "112022": "스탠다드", "112023": "레귤러", "112024": "오버사이즈", "112025": "슬림",
+  # 네크라인
+  "111311": "라운드넥", "111312": "브이넥", "111313": "터틀넥", "111314": "하이넥",
+  "111315": "후드", "111316": "카라", "111317": "오프숄더", "111318": "스퀘어넥", "111319": "보트넥",
+  # 소매기장
+  "111257": "민소매", "111258": "반팔", "111259": "7부소매", "111260": "긴소매",
   # 신발 부가기능 (optCd 725056)
   "609276717": "키높이", "609276718": "통풍", "609276719": "충격흡수",
   "609276720": "경량", "609276721": "에어",
 }
 
 
+_BOTTOM_KW = frozenset({
+  "바지", "팬츠", "청바지", "레깅스", "스커트", "치마", "반바지", "쇼츠",
+  "shorts", "pants", "skirt", "leggings", "trousers",
+})
+
+# 사용계절 기본값 판별용 키워드 (자켓/코트 → 봄가을, 패딩/점퍼 → 겨울)
+_JACKET_KW = frozenset({"자켓", "코트", "jacket", "coat", "블레이저", "blazer", "트렌치", "trench"})
+_PADDING_KW = frozenset({"패딩", "점퍼", "다운", "padding", "jumper", "puffer", "down"})
+
+# 남성 BC4104 → 여성 BC4110 카테고리 매핑
+_BC_M_TO_F: dict[str, str] = {
+  "BC41040100": "BC41100100",  # 긴바지
+  "BC41040200": "BC41100200",  # 긴팔티셔츠
+  "BC41040300": "BC41100300",  # 반팔티셔츠
+  "BC41040900": "BC41100900",  # 반바지
+  "BC41041000": "BC41101000",  # 맨투맨
+  "BC41041200": "BC41101200",  # 후드
+  "BC41041300": "BC41101400",  # 집업 (불규칙 오프셋)
+  "BC41041400": "BC41101500",  # 트레이닝복 (불규칙 오프셋)
+  "BC41041500": "BC41101600",  # 바람막이/재킷
+  "BC41041600": "BC41101700",  # 점퍼
+  "BC41041800": "BC41101900",  # 니트
+}
+
+# FC05 패션의류 → FC08 스포츠의류 경로 변환
+_FASHION_TO_SPORTS: dict[str, str] = {
+  "패션의류 > 여성의류 > 스커트": "스포츠의류/운동화 > 여성스포츠의류 > 스커트",
+  "패션의류 > 여성의류 > 원피스": "스포츠의류/운동화 > 여성스포츠의류 > 원피스",
+  "패션의류 > 여성의류 > 바지": "스포츠의류/운동화 > 여성스포츠의류 > 긴바지",
+  "패션의류 > 여성의류 > 청바지": "스포츠의류/운동화 > 여성스포츠의류 > 긴바지",
+  "패션의류 > 여성의류 > 티셔츠": "스포츠의류/운동화 > 여성스포츠의류 > 반팔티셔츠",
+  "패션의류 > 여성의류 > 맨투맨": "스포츠의류/운동화 > 여성스포츠의류 > 맨투맨",
+  "패션의류 > 여성의류 > 후드": "스포츠의류/운동화 > 여성스포츠의류 > 후드",
+  "패션의류 > 여성의류 > 트레이닝복": "스포츠의류/운동화 > 여성스포츠의류 > 트레이닝복",
+  "패션의류 > 남성의류 > 티셔츠": "스포츠의류/운동화 > 남성스포츠의류 > 반팔티셔츠",
+  "패션의류 > 남성의류 > 바지": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
+  "패션의류 > 남성의류 > 청바지": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
+  "패션의류 > 남성의류 > 맨투맨": "스포츠의류/운동화 > 남성스포츠의류 > 맨투맨",
+  "패션의류 > 남성의류 > 후드": "스포츠의류/운동화 > 남성스포츠의류 > 후드",
+  "패션의류 > 남성의류 > 트레이닝복": "스포츠의류/운동화 > 남성스포츠의류 > 트레이닝복",
+  "패션의류 > 남성의류 > 아우터": "스포츠의류/운동화 > 남성스포츠의류 > 점퍼",
+}
+
+# BC23 패션의류 → BC41 스포츠의류 BC코드 변환
+_BC23_TO_BC41: dict[str, str] = {
+  "BC23110400": "BC41101800",  # 여성의류>스커트 → 여성스포츠의류>스커트
+  "BC23110100": "BC41100100",  # 여성의류>긴바지 → 여성스포츠의류>긴바지
+  "BC23110200": "BC41101000",  # 여성의류>티셔츠 → 여성스포츠의류>반팔티셔츠
+  "BC23110300": "BC41101100",  # 여성의류>원피스 → 여성스포츠의류>원피스
+  "BC23110500": "BC41101500",  # 여성의류>트레이닝복 → 여성스포츠의류>트레이닝복
+}
+
+# 소싱 원본 BC코드 허용 범위 (스포츠의류/신발/패션잡화)
+_ALLOWED_BC_PREFIXES = ("BC4103", "BC4104", "BC4109", "BC4110", "BC47")
+
+# 등록 후 API 안정화 대기 시간 (초)
+_POST_REGISTER_DELAY = 5
+
+
 def _is_bottom_product(product: dict[str, Any]) -> bool:
   """상품이 하의(바지/스커트류)인지 판별."""
-  BOTTOM_KW = {
-    "바지", "팬츠", "청바지", "레깅스", "스커트", "치마", "반바지", "쇼츠",
-    "shorts", "pants", "skirt", "leggings", "trousers",
-  }
   text = " ".join(filter(None, [
     product.get("name", ""),
     product.get("category2", ""),
     product.get("category3", ""),
     product.get("category4", ""),
   ])).lower()
-  return any(kw in text for kw in BOTTOM_KW)
+  return any(kw in text for kw in _BOTTOM_KW)
 
 
-def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[dict[str, str]]:
+def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str], attr_raw: list[dict] | None = None) -> list[dict[str, str]]:
   """무신사 소싱 데이터 → 롯데ON scatAttrLst 변환.
 
   Args:
     product: CollectedProduct dict (product_copy)
     attr_ids: 카테고리에서 지원하는 attr_id 목록
+    attr_raw: 카테고리 attr_list 원시 데이터 (attr_id + attr_nm 포함)
 
   Returns:
     [{"optCd": attr_id, "optValCd": attr_val_id}, ...]
@@ -334,6 +415,15 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
   result: list[dict[str, str]] = []
   attr_id_set = set(attr_ids)
   is_bottom = _is_bottom_product(product)
+
+  # attr_nm → attr_id 동적 매핑 (의류핏/네크라인 등 하드코딩 불가한 속성용)
+  attr_nm_to_id: dict[str, str] = {}
+  if attr_raw:
+    for a in attr_raw:
+      nm = (a.get("attr_nm") or "").strip()
+      aid = str(a.get("attr_id", ""))
+      if nm and aid:
+        attr_nm_to_id[nm] = aid
 
   def _add(attr_id: str, val_id: str) -> None:
     if not (attr_id in attr_id_set and val_id):
@@ -352,6 +442,14 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
         return val
     return ""
 
+  # ── 카테고리 텍스트 (여러 속성에서 공통 사용) ────────────────────
+  cat_text = " ".join(filter(None, [
+    product.get("category1") or "",
+    product.get("category2") or "",
+    product.get("category3") or "",
+    product.get("category4") or "",
+  ]))
+
   # ── 사용계절 ──────────────────────────────────────────────────────
   # "2026 SS", "FW", "AW" 등 패션 시즌 코드 지원
   season_raw = product.get("season") or []
@@ -368,9 +466,15 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
       _add(_ATTR_SEASON_ID, "102422")  # 봄/가을용 (SS)
     elif re.search(r'\b(summer|여름)\b', combined):
       _add(_ATTR_SEASON_ID, "102423")  # 여름용
-  # 사용계절 매핑 없으면 사계절용 기본값
+  # 사용계절 매핑 없으면 카테고리별 기본값 적용
   if _ATTR_SEASON_ID in attr_id_set and not any(r.get("optCd") == _ATTR_SEASON_ID for r in result):
-    _add(_ATTR_SEASON_ID, "102421")
+    cat_and_name = (cat_text + " " + (product.get("name") or "")).lower()
+    if any(kw in cat_and_name for kw in _PADDING_KW):
+      _add(_ATTR_SEASON_ID, "102424")  # 겨울용
+    elif any(kw in cat_and_name for kw in _JACKET_KW):
+      _add(_ATTR_SEASON_ID, "102422")  # 봄/가을용
+    else:
+      _add(_ATTR_SEASON_ID, "102421")  # 사계절용
 
   # ── 성별 ─────────────────────────────────────────────────────────
   sex = (product.get("sex") or "").lower()
@@ -390,14 +494,11 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
   if val:
     _add(_ATTR_COLOR_ID, val)
 
-  # ── 의류 종류 (category1~4 텍스트에서 추출) ──────────────────────
-  cat_text = " ".join(filter(None, [
-    product.get("category1") or "",
-    product.get("category2") or "",
-    product.get("category3") or "",
-    product.get("category4") or "",
-  ]))
+  # ── 의류 종류 (category + 상품명에서 추출) ──────────────────────
   val = _keyword_match(cat_text, _CLOTHES_TYPE_MAP)
+  if not val:
+    # 카테고리에서 못 찾으면 상품명에서 재시도
+    val = _keyword_match(product.get("name") or "", _CLOTHES_TYPE_MAP)
   if val:
     _add(_ATTR_CLOTHES_TYPE_ID, val)
 
@@ -421,15 +522,8 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
 
   # ── 의류 전용 속성 ─────────────────────────────────────────────────
   if not _is_shoes_cat:
-    # 프린트: 스포츠 브랜드 의류는 로고 고정
-    brand_text = (product.get("brand") or "").lower()
-    name_text = (product.get("name") or "").lower()
-    _sports_brands = {
-      "아디다스", "나이키", "퓨마", "리복", "뉴발란스", "언더아머",
-      "아식스", "살로몬", "컬럼비아", "노스페이스", "파타고니아",
-    }
-    if any(b in brand_text or b in name_text for b in _sports_brands):
-      _add(_ATTR_PRINT_ID, "605647945")
+    # 프린트: 의류는 항상 로고 고정
+    _add(_ATTR_PRINT_ID, "605647945")
     # 스커트 스타일: category/상품명 키워드에서 추출
     style_text = (product.get("name") or "") + " " + cat_text
     skirt_style_val = _keyword_match(style_text, _SKIRT_STYLE_MAP)
@@ -439,6 +533,32 @@ def _build_scat_attr_lst(product: dict[str, Any], attr_ids: list[str]) -> list[d
     cloth_len_val = _keyword_match(style_text, _CLOTH_LENGTH_MAP)
     if cloth_len_val:
       _add(_ATTR_CLOTH_LENGTH_ID, cloth_len_val)
+
+  # ── 의류핏 (동적 attr_id — 상품명/카테고리에서 추출, 없으면 스탠다드) ──
+  _fit_attr_id = attr_nm_to_id.get("의류핏", "")
+  if _fit_attr_id and _fit_attr_id in attr_id_set:
+    name_and_cat = (product.get("name") or "") + " " + cat_text
+    fit_val = _keyword_match(name_and_cat, _CLOTH_FIT_MAP)
+    _add(_fit_attr_id, fit_val or _CLOTH_FIT_DEFAULT)
+
+  # ── 네크라인 (동적 attr_id — 소싱처 정보 있으면 입력, 없으면 생략) ──
+  _neck_attr_id = attr_nm_to_id.get("네크라인", "")
+  if _neck_attr_id and _neck_attr_id in attr_id_set:
+    neck_src = " ".join(filter(None, [
+      product.get("name") or "",
+      product.get("neckline") or "",
+      " ".join(product.get("tags") or []),
+    ]))
+    neck_val = _keyword_match(neck_src, _NECKLINE_MAP)
+    if neck_val:
+      _add(_neck_attr_id, neck_val)
+
+  # ── 소매기장 (동적 attr_id — 상품명에서 추출, 없으면 긴소매) ──────
+  _sleeve_attr_id = attr_nm_to_id.get("소매기장", "")
+  if _sleeve_attr_id and _sleeve_attr_id in attr_id_set:
+    sleeve_src = (product.get("name") or "") + " " + cat_text
+    sleeve_val = _keyword_match(sleeve_src, _SLEEVE_LENGTH_MAP)
+    _add(_sleeve_attr_id, sleeve_val or _SLEEVE_LENGTH_DEFAULT)
 
   # ── 성인 하의 사이즈 (하의 상품만, options 에서 추출) ──────────
   if is_bottom and _ATTR_SIZE_BOTTOM_ID in attr_id_set:
@@ -568,19 +688,6 @@ class LotteonPlugin(MarketPlugin):
           category_id = female_cat
       elif category_id.startswith("BC4104"):
         # BC코드 레벨 변환 — 명시적 매핑 우선, 알 수 없는 코드는 BC4104→BC4110 치환
-        _BC_M_TO_F: dict[str, str] = {
-          "BC41040100": "BC41100100",  # 긴바지
-          "BC41040200": "BC41100200",  # 긴팔티셔츠
-          "BC41040300": "BC41100300",  # 반팔티셔츠
-          "BC41040900": "BC41100900",  # 반바지
-          "BC41041000": "BC41101000",  # 맨투맨
-          "BC41041200": "BC41101200",  # 후드
-          "BC41041300": "BC41101400",  # 집업 (불규칙 오프셋)
-          "BC41041400": "BC41101500",  # 트레이닝복 (불규칙 오프셋)
-          "BC41041500": "BC41101600",  # 바람막이/재킷
-          "BC41041600": "BC41101700",  # 점퍼
-          "BC41041800": "BC41101900",  # 니트
-        }
         female_bc = _BC_M_TO_F.get(category_id)
         if female_bc:
           logger.info(f"[롯데ON] 성별 보정(BC): {category_id} → {female_bc}")
@@ -592,36 +699,11 @@ class LotteonPlugin(MarketPlugin):
           category_id = candidate
 
     # ── FC05 권한없음 방지: 패션의류 경로/BC23코드 → 스포츠의류 강제 변환 ──────────
-    # category_id가 경로 문자열일 때: 패션의류 경로 → 스포츠의류 경로 변환
-    _FASHION_TO_SPORTS: dict[str, str] = {
-      "패션의류 > 여성의류 > 스커트": "스포츠의류/운동화 > 여성스포츠의류 > 스커트",
-      "패션의류 > 여성의류 > 원피스": "스포츠의류/운동화 > 여성스포츠의류 > 원피스",
-      "패션의류 > 여성의류 > 바지": "스포츠의류/운동화 > 여성스포츠의류 > 긴바지",
-      "패션의류 > 여성의류 > 청바지": "스포츠의류/운동화 > 여성스포츠의류 > 긴바지",
-      "패션의류 > 여성의류 > 티셔츠": "스포츠의류/운동화 > 여성스포츠의류 > 반팔티셔츠",
-      "패션의류 > 여성의류 > 맨투맨": "스포츠의류/운동화 > 여성스포츠의류 > 맨투맨",
-      "패션의류 > 여성의류 > 후드": "스포츠의류/운동화 > 여성스포츠의류 > 후드",
-      "패션의류 > 여성의류 > 트레이닝복": "스포츠의류/운동화 > 여성스포츠의류 > 트레이닝복",
-      "패션의류 > 남성의류 > 티셔츠": "스포츠의류/운동화 > 남성스포츠의류 > 반팔티셔츠",
-      "패션의류 > 남성의류 > 바지": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
-      "패션의류 > 남성의류 > 청바지": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
-      "패션의류 > 남성의류 > 맨투맨": "스포츠의류/운동화 > 남성스포츠의류 > 맨투맨",
-      "패션의류 > 남성의류 > 후드": "스포츠의류/운동화 > 남성스포츠의류 > 후드",
-      "패션의류 > 남성의류 > 트레이닝복": "스포츠의류/운동화 > 남성스포츠의류 > 트레이닝복",
-      "패션의류 > 남성의류 > 아우터": "스포츠의류/운동화 > 남성스포츠의류 > 점퍼",
-    }
     if category_id and category_id in _FASHION_TO_SPORTS:
       mapped = _FASHION_TO_SPORTS[category_id]
       logger.info(f"[롯데ON] FC05→FC08 경로변환: {category_id!r} → {mapped!r}")
       category_id = mapped
     # category_id가 이미 BC코드로 변환된 경우: BC23xxx → BC41xxx 강제 변환
-    _BC23_TO_BC41: dict[str, str] = {
-      "BC23110400": "BC41101800",  # 여성의류>스커트 → 여성스포츠의류>스커트
-      "BC23110100": "BC41100100",  # 여성의류>긴바지 → 여성스포츠의류>긴바지
-      "BC23110200": "BC41101000",  # 여성의류>티셔츠 → 여성스포츠의류>반팔티셔츠
-      "BC23110300": "BC41101100",  # 여성의류>원피스 → 여성스포츠의류>원피스
-      "BC23110500": "BC41101500",  # 여성의류>트레이닝복 → 여성스포츠의류>트레이닝복
-    }
     if category_id and category_id in _BC23_TO_BC41:
       mapped = _BC23_TO_BC41[category_id]
       logger.info(f"[롯데ON] FC05→FC08 BC코드변환: {category_id} → {mapped}")
@@ -634,14 +716,6 @@ class LotteonPlugin(MarketPlugin):
       category_id = fallback
 
     # ── 소싱된 롯데ON 상품: _lotteonScatNo 원본 BC코드 직접 사용 ──────────
-    # 허용 범위를 스포츠의류/신발/패션잡화로 세밀하게 제한:
-    #   BC4103x: 남성스포츠신발 (BC41030xxx~BC41039xxx)
-    #   BC4104x: 남성스포츠의류 (BC41040xxx~BC41049xxx)
-    #   BC4109x: 여성스포츠신발 (BC41090xxx~BC41099xxx)
-    #   BC4110x: 여성스포츠의류 (BC41100xxx~BC41109xxx)
-    #   BC47: 패션잡화
-    # 골프의류(BC41050xxx 추정), 구기/기타스포츠 등은 제외
-    _ALLOWED_BC_PREFIXES = ("BC4103", "BC4104", "BC4109", "BC4110", "BC47")
     _scat_no = str(product.get("_lotteonScatNo", "") or "").strip()
     if _scat_no and _scat_no.startswith(_ALLOWED_BC_PREFIXES) and category_id and ">" in category_id:
       logger.info(f"[롯데ON] 소싱 원본 BC코드 사용 (fuzzy match 스킵): {_scat_no}")
@@ -851,7 +925,7 @@ class LotteonPlugin(MarketPlugin):
         f"category1={product_copy.get('category1')!r} "
         f"name={product_copy.get('name', '')[:40]!r}"
       )
-      scat_attr_lst = _build_scat_attr_lst(product_copy, category_attr_ids)
+      scat_attr_lst = _build_scat_attr_lst(product_copy, category_attr_ids, attr_raw=_attr_raw)
       product_copy["_scat_attr_lst"] = scat_attr_lst
       logger.info(f"[롯데ON] scatAttrLst 생성: {len(scat_attr_lst)}개 — {[a['optVal'] for a in scat_attr_lst]}")
 
@@ -914,9 +988,9 @@ class LotteonPlugin(MarketPlugin):
           (None, "OVRS"),
         ]
         _upd_exception: Exception | None = None
-        result = None
+        api_result = None
         try:
-          result = await client.update_product(data)
+          api_result = await client.update_product(data)
         except Exception as _ue:
           if "수입구분코드" in str(_ue):
             _upd_exception = _ue
@@ -930,7 +1004,7 @@ class LotteonPlugin(MarketPlugin):
                 _spd["dmstOvsDvDvsCd"] = _dmst_code
               logger.info(f"[롯데ON] 수정 impDvsCd fallback: impDvsCd={_imp_code!r} dmst={_dmst_code}")
               try:
-                result = await client.update_product(data)
+                api_result = await client.update_product(data)
                 _upd_exception = None
                 break
               except Exception as _ue2:
@@ -940,7 +1014,7 @@ class LotteonPlugin(MarketPlugin):
         if _upd_exception is not None:
           raise _upd_exception
         # 수정 API가 새 spdNo를 반환하는 경우 (수정본 별도 상품번호 발급)
-        new_spd_no = result.get("spdNo", "") or ""
+        new_spd_no = api_result.get("spdNo", "") or ""
         effective_no = new_spd_no if new_spd_no and new_spd_no != existing_no else existing_no
         if new_spd_no and new_spd_no != existing_no:
           logger.info(f"[롯데ON] 수정 후 새 spdNo 발급: {existing_no} → {new_spd_no}")
@@ -953,7 +1027,7 @@ class LotteonPlugin(MarketPlugin):
             await client.register_publicity_sentence(effective_no, publicity_phrase)
           except Exception as e:
             logger.warning(f"[롯데ON] 홍보문구 갱신 실패 (무시): {e}")
-        ret: dict[str, Any] = {"success": True, "message": "롯데ON 수정 성공", "data": result}
+        ret: dict[str, Any] = {"success": True, "message": "롯데ON 수정 성공", "data": api_result}
         if effective_no != existing_no:
           # service.py가 market_product_nos를 새 번호로 갱신하도록 반환
           ret["spdNo"] = effective_no
@@ -970,9 +1044,9 @@ class LotteonPlugin(MarketPlugin):
           (None, "OVRS"),       # impDvsCd 제거 + OVRS 조합
         ]
         _reg_exception: Exception | None = None
-        result = None
+        api_result = None
         try:
-          result = await client.register_product(data)
+          api_result = await client.register_product(data)
         except Exception as _e:
           if "수입구분코드" in str(_e):
             _reg_exception = _e
@@ -986,7 +1060,7 @@ class LotteonPlugin(MarketPlugin):
                 _spd["dmstOvsDvDvsCd"] = _dmst_code
               logger.info(f"[롯데ON] impDvsCd fallback: impDvsCd={_imp_code!r} dmst={_dmst_code} (원인: {_e})")
               try:
-                result = await client.register_product(data)
+                api_result = await client.register_product(data)
                 _reg_exception = None
                 break
               except Exception as _e2:
@@ -995,15 +1069,15 @@ class LotteonPlugin(MarketPlugin):
             raise
         if _reg_exception is not None:
           raise _reg_exception
-        # proxy.register_product 가 spdNo를 최상위로 반환 (service.py가 result.get("spdNo")로 읽음)
-        spd_no = result.get("spdNo", "") or result.get("epdNo", "")
+        # proxy.register_product 가 spdNo를 최상위로 반환 (service.py가 api_result.get("spdNo")로 읽음)
+        spd_no = api_result.get("spdNo", "") or api_result.get("epdNo", "")
         logger.info(f"[롯데ON] 등록 완료 — spdNo={spd_no!r}")
 
         # ── 등록 후 프로모션 설정: sitmNo 조회 후 전달 ────────────
         if spd_no:
           # 롯데ON 상품 처리 대기 — 즉시 호출 시 9000/9999 에러 발생
           import asyncio
-          await asyncio.sleep(5)
+          await asyncio.sleep(_POST_REGISTER_DELAY)
           new_sitm_nos: list[str] = []
           try:
             prod_resp = await client.get_product(spd_no)
@@ -1032,7 +1106,7 @@ class LotteonPlugin(MarketPlugin):
           else:
             logger.debug(f"[롯데ON] 홍보문구 미설정 (설정 > 롯데ON > 상품 홍보문구 입력 필요)")
 
-        return {"success": True, "message": "롯데ON 등록 성공", "data": result, "spdNo": spd_no}
+        return {"success": True, "message": "롯데ON 등록 성공", "data": api_result, "spdNo": spd_no}
     except Exception as e:
       action = "수정" if existing_no else "등록"
       logger.error(f"[롯데ON] {action} 실패: {e}")
@@ -1145,7 +1219,7 @@ class LotteonPlugin(MarketPlugin):
     try:
       client = LotteonClient(api_key)
       await client.test_auth()
-      # END = 판매 종료 (롯데ON은 완전 삭제 API 없음, END가 가장 강한 종료 처리)
+      # SOUT = 품절 처리 (롯데ON은 완전 삭제 API 없음, 품절 상태로 변경)
       await client.change_status([{"spdNo": product_no, "slStatCd": "SOUT"}])
       return {"success": True, "message": "롯데ON 판매종료 완료"}
     except Exception as e:
