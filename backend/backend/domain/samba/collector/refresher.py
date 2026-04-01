@@ -993,10 +993,14 @@ async def refresh_products_bulk(
                             timeout=60,
                         )
                         if not r.error:
+                            _rb = getattr(p, "brand", "") or ""
+                            _rn = getattr(p, "name", "") or ""
+                            _rs = getattr(p, "site_product_id", "") or ""
+                            _rl = f"{_rb} {_rn} ({_rs})".strip() if _rs else f"{_rb} {_rn}".strip()
                             _log_refresh(
                                 site,
                                 getattr(p, "id", "unknown"),
-                                getattr(p, "name", "")[:40],
+                                _rl,
                                 "재시도 성공",
                                 idx=_idx,
                                 total=_site_total,
