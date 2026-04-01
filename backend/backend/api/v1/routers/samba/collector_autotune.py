@@ -309,12 +309,14 @@ async def _autotune_loop():
                                     return
 
                                 site = product.source_site or "UNKNOWN"
+                                _brand = (product.brand or "")[:10]
                                 _prod_name = (product.name or "")[:30]
                                 _site_pid = product.site_product_id or ""
+                                _name_part = f"{_brand} {_prod_name}".strip()
                                 _prod_label = (
-                                    f"{_prod_name} ({_site_pid})"
+                                    f"{_name_part} ({_site_pid})"
                                     if _site_pid
-                                    else _prod_name
+                                    else _name_part
                                 )
 
                                 # DB 업데이트 준비
