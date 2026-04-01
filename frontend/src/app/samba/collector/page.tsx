@@ -268,6 +268,14 @@ export default function CollectorPage() {
     if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
   }, [aiJobLogs])
 
+  // 드롭다운 필터 변경 시 drillBrand 활성 상태면 selectedIds를 displayedFilters 기준으로 재동기화
+  useEffect(() => {
+    if (drillBrand) {
+      setSelectedIds(new Set(displayedFilters.map(f => f.id)))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tagRegFilter, collectFilter, marketRegFilter, policyRegFilter, aiFilter])
+
   // 프록시 & 무신사 인증 상태 확인
   useEffect(() => {
     fetch(`${API_BASE}/api/v1/samba/collector/proxy-status`)
@@ -709,7 +717,7 @@ export default function CollectorPage() {
     if (tagRegFilter) {
       result = result.filter((f) => {
         const r = f as unknown as Record<string, number>
-        const cnt = r.tag_applied_count ?? 0
+        const cnt = r.ai_tagged_count ?? 0
         const total = r.collected_count ?? 0
         if (tagRegFilter === 'registered') return cnt > 0 && cnt >= total
         if (tagRegFilter === 'partial') return cnt > 0 && cnt < total
@@ -1527,7 +1535,7 @@ export default function CollectorPage() {
           if (tagRegFilter) {
             allLeafInfos = allLeafInfos.filter(l => {
               const r = l as unknown as Record<string, number>
-              const cnt = r.tag_applied_count ?? 0
+              const cnt = r.ai_tagged_count ?? 0
               const total = r.collected_count ?? 0
               if (tagRegFilter === 'registered') return cnt > 0 && cnt >= total
               if (tagRegFilter === 'partial') return cnt > 0 && cnt < total
