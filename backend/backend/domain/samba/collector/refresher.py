@@ -735,7 +735,7 @@ async def _parse_kream(product: Any) -> RefreshResult:
     )
 
     # Future 생성 — 확장앱이 결과를 전달하면 resolve됨
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     future: asyncio.Future[Any] = loop.create_future()
     KreamClient.collect_resolvers[request_id] = future
 

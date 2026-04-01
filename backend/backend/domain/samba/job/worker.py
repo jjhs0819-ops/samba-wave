@@ -237,6 +237,15 @@ class JobWorker:
                 if thread.is_alive():
                     logger.error(f"[잡워커] 수집 스레드 10분 타임아웃: {_job_id}")
                     _add_job_log(_job_id, "수집 타임아웃 (10분)")
+                    # 잡 상태를 failed로 갱신
+                    try:
+                        async with get_write_session() as timeout_session:
+                            from backend.domain.samba.job.repository import SambaJobRepository
+                            timeout_repo = SambaJobRepository(timeout_session)
+                            await timeout_repo.fail_job(_job_id, "수집 타임아웃 (10분)")
+                            await timeout_session.commit()
+                    except Exception as te:
+                        logger.error(f"[잡워커] 타임아웃 잡 상태 갱신 실패: {te}")
                 return
 
             # 전송 + 기타: 메인 루프 직접 실행 (인메모리 로그 공유)
@@ -269,12 +278,15 @@ class JobWorker:
                     try:
                         await repo.fail_job(_job_id, str(e))
                         await session.commit()
-                    except Exception:
-                        pass
+                    except Exception as fail_exc:
+                        logger.error(f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {_job_id} — {fail_exc}")
         finally:
             self._active_types.discard(_job_type)
             # 프론트 폴링이 로그를 읽을 시간 확보 후 삭제 (60초)
-            asyncio.get_event_loop().call_later(60, clear_job_logs, _job_id)
+            try:
+                asyncio.get_running_loop().call_later(60, clear_job_logs, _job_id)
+            except RuntimeError:
+                pass  # 루프 종료 중이면 로그 정리 스킵
 
     async def _execute_collect_isolated(self, job_id: str, payload: dict):
         """격리된 이벤트 루프에서 수집 잡 실행 — 자체 DB 세션 관리."""
@@ -297,8 +309,8 @@ class JobWorker:
                     try:
                         await repo.fail_job(job_id, str(e))
                         await session.commit()
-                    except Exception:
-                        pass
+                    except Exception as fail_exc:
+                        logger.error(f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {job_id} — {fail_exc}")
         except Exception as e:
             logger.error(f"[잡워커] 수집 세션 에러: {job_id} — {e}")
 
@@ -328,8 +340,8 @@ class JobWorker:
                     try:
                         await repo.fail_job(job_id, str(e))
                         await session.commit()
-                    except Exception:
-                        pass
+                    except Exception as fail_exc:
+                        logger.error(f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {job_id} — {fail_exc}")
         except Exception as e:
             logger.error(f"[잡워커] 전송 세션 에러: {job_id} — {e}")
 
@@ -395,6 +407,7 @@ class JobWorker:
                 return
 
             # 건별 독립 세션 — greenlet_spawn 방지 (세션 상태 누적 차단)
+            prod_name = pid[-8:]  # 기본값 — 세션 실패 시 폴백
             try:
                 async with get_write_session() as item_session:
                     cp_repo = SambaCollectedProductRepository(item_session)
@@ -686,6 +699,7 @@ class JobWorker:
         total_saved = 0
         total_skipped = 0
         search_page = 1
+        empty_pages = 0  # 연속 신규 0건 페이지 카운터 (잡 간 오염 방지용 로컬 변수)
 
         while total_saved < remaining and search_page <= 20:
             # 취소 확인 (DB에서 상태 재조회)
@@ -747,16 +761,15 @@ class JobWorker:
             )
             if not targets:
                 # 연속 3페이지 신규 0건이면 조기 종료 (나머지도 중복일 가능성 높음)
-                _empty_pages = getattr(self, "_empty_pages", 0) + 1
-                self._empty_pages = _empty_pages
-                if _empty_pages >= 3:
+                empty_pages += 1
+                if empty_pages >= 3:
                     logger.info(
-                        f"[잡워커] 연속 {_empty_pages}페이지 신규 0건 → 조기 종료"
+                        f"[잡워커] 연속 {empty_pages}페이지 신규 0건 → 조기 종료"
                     )
                     break
                 search_page += 1
                 continue
-            self._empty_pages = 0  # 신규 상품 발견 시 카운터 리셋
+            empty_pages = 0  # 신규 상품 발견 시 카운터 리셋
 
             # 상세 수집 (병렬 — SITE_CONCURRENCY + 공유 HTTP 클라이언트)
             from backend.domain.samba.collector.refresher import SITE_CONCURRENCY

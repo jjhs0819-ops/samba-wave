@@ -104,6 +104,7 @@ def _get_group_lock(account_id: str) -> asyncio.Lock:
 def clear_account_semaphores():
     """별도 스레드 실행 시 이전 이벤트 루프 세마포어 정리."""
     _account_semaphores.clear()
+    _transmitting_products.clear()  # 재시작 시 잔류 상품 정리
 
 
 def _get_account_semaphore(account_id: str) -> asyncio.Semaphore:
@@ -1064,6 +1065,8 @@ class SambaShipmentService:
 
         async def _dispatch_one(account_id: str) -> dict[str, Any]:
             """단일 계정 전송 — 결과 dict 반환."""
+            from backend.db.orm import get_write_sessionmaker
+
             res: dict[str, Any] = {
                 "account_id": account_id,
                 "status": "failed",
@@ -1073,6 +1076,8 @@ class SambaShipmentService:
                 "is_update": False,
                 "clear_nos": [],
             }
+            # 병렬 실행 시 AsyncSession 공유 방지 — 계정별 독립 세션 사용
+            acct_session = get_write_sessionmaker()()
             try:
                 account = _dispatch_account_map.get(account_id)
                 if not account:
@@ -1109,6 +1114,15 @@ class SambaShipmentService:
                     )
                     return res
 
+                # 기존 상품번호 확인 (품절 삭제 판단에도 필요)
+                existing_nos = product_row.market_product_nos or {}
+                if market_type == "smartstore":
+                    existing_product_no = existing_nos.get(
+                        f"{account_id}_origin", ""
+                    ) or existing_nos.get(account_id, "")
+                else:
+                    existing_product_no = existing_nos.get(account_id, "")
+
                 # 전 옵션 품절 체크 — 마켓 등록 상품이면 마켓 삭제, 미등록이면 스킵
                 _opts = product_dict.get("options") or []
                 if _opts and all(
@@ -1118,19 +1132,19 @@ class SambaShipmentService:
                 ):
                     # 이미 마켓 등록된 상품이면 삭제 처리
                     _reg_accs = product_dict.get("registered_accounts") or []
-                    if account_id in _reg_accs and existing_product_no:  # noqa: F821
+                    if account_id in _reg_accs and existing_product_no:
                         try:
                             from backend.domain.samba.shipment.dispatcher import (
                                 delete_from_market,
                             )
 
                             del_result = await delete_from_market(
-                                self.session, market_type, product_dict, account_id
+                                acct_session, market_type, product_dict, account_id
                             )
                             if del_result.get("success"):
                                 # registered_accounts에서 제거 + DB 반영
                                 _prod = await SambaCollectedProductRepository(
-                                    self.session
+                                    acct_session
                                 ).get_async(product_id)
                                 if _prod:
                                     new_reg = [
@@ -1141,7 +1155,8 @@ class SambaShipmentService:
                                     _prod.registered_accounts = (
                                         new_reg if new_reg else None
                                     )
-                                    await self.session.commit()
+                                    # 순차 실행이므로 세션 커밋 안전 (병렬 시 충돌 위험)
+                                    await acct_session.commit()
                                 res["status"] = "completed"
                                 res["results"] = {account_id: "deleted"}
                                 logger.info(
@@ -1264,7 +1279,7 @@ class SambaShipmentService:
                 try:
                     logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
                     result = await dispatch_to_market(
-                        self.session,
+                        acct_session,
                         market_type,
                         acct_product,
                         category_id,
@@ -1354,13 +1369,18 @@ class SambaShipmentService:
                 else:
                     logger.error(f"[전송] 계정 {account_id} 예외: {exc}")
                 res["error"] = _err
+            finally:
+                await acct_session.close()
             return res
 
-        # 모든 계정 병렬 전송
-        account_results = await asyncio.gather(
-            *[_dispatch_one(aid) for aid in target_account_ids],
-            return_exceptions=True,
-        )
+        # 계정별 순차 전송 — AsyncSession 동시 접근 방지
+        account_results = []
+        for aid in target_account_ids:
+            try:
+                r = await _dispatch_one(aid)
+                account_results.append(r)
+            except Exception as e:
+                account_results.append(e)
 
         # 결과 병합 + DB 일괄 업데이트
         merged_nos = dict(product_row.market_product_nos or {})
