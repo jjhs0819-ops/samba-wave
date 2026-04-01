@@ -1139,9 +1139,23 @@ async def sync_orders_from_markets(
                         advanced = {"발송완료", "배송중", "배송완료", "구매확정"}
                         if new_ship_status in exchange_statuses:
                             # 교환 상태는 항상 갱신 (배송완료 → 교환요청 등 역행 허용)
-                            update_fields["shipping_status"] = new_ship_status
+                            # 단, 이미 반품 상태인 주문은 교환으로 되돌리지 않음
+                            if existing.shipping_status in ("반품요청", "반품완료", "반품거부"):
+                                logger.info(
+                                    f"[주문동기화] 반품 상태 보호: {order_data.get('order_number')} "
+                                    f"{existing.shipping_status} → {new_ship_status} 차단"
+                                )
+                            else:
+                                update_fields["shipping_status"] = new_ship_status
                         elif existing.shipping_status == "송장전송완료" and new_ship_status in advanced:
                             update_fields["shipping_status"] = new_ship_status
+                        elif new_ship_status in ("반품요청", "반품완료", "반품거부") and existing.shipping_status in exchange_statuses:
+                            # 반품 상태는 교환 상태를 덮어씀 (교환→반품 재접수 케이스)
+                            update_fields["shipping_status"] = new_ship_status
+                            logger.info(
+                                f"[주문동기화] 교환→반품 상태 전환: {order_data.get('order_number')} "
+                                f"{existing.shipping_status} → {new_ship_status}"
+                            )
                         elif existing.shipping_status not in (
                             "송장전송완료", "배송중", "배송완료", "교환재배송",
                             "교환요청", "교환회수완료", "교환완료", "교환거부",
@@ -1213,6 +1227,7 @@ async def sync_orders_from_markets(
                   '반품요청', '반품완료', '반품거부'
               )
         """))
+        await session.commit()
         logger.info("[주문동기화] 반품/교환 진행 중 원주문 shipping_status 일괄 업데이트 완료")
     except Exception as _upd_err:
         logger.warning(f"[주문동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
@@ -1377,6 +1392,17 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     }
     status = status_map.get(step_cd, "pending")
     shipping_status = shipping_map.get(step_cd, "출고지시")
+
+    # 롯데ON 반품 사유코드(200/300번대)인데 교환 stepCd(21~25)로 들어온 경우
+    # → 실제로는 반품이므로 반품 상태로 재매핑
+    clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
+    if clm_rsn_cd.startswith(("2", "3")) and step_cd in ("21", "22", "23", "24", "25"):
+        status = "return_requested"
+        shipping_status = "반품요청"
+        logger.info(
+            f"[롯데ON][주문파싱] 반품 사유코드({clm_rsn_cd}) 교환 stepCd({step_cd}) "
+            f"→ 반품요청으로 재매핑: odNo={item.get('odNo')}"
+        )
 
     # 주문 생성일 파싱 (yyyymmddHHmmss)
     created_str = item.get("odDttm", "") or ""
