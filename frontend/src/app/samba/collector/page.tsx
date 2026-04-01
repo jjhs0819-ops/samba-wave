@@ -398,9 +398,11 @@ export default function CollectorPage() {
 
   const handleDeleteSelectedGroups = async () => {
     // 체크된 그룹이 없으면 현재 보이는 그룹 전체를 대상으로
+    // displayedFilters와 교집합으로 실제 대상 결정
+    const displayedIds = new Set(displayedFilters.map(f => f.id))
     const baseIds = selectedIds.size > 0
-      ? selectedIds
-      : new Set(displayedFilters.map(f => f.id))
+      ? new Set([...selectedIds].filter(id => displayedIds.has(id)))
+      : displayedIds
     if (baseIds.size === 0) {
       showAlert(`삭제 대상이 없습니다. (selectedIds=${selectedIds.size}, displayed=${displayedFilters.length}, drillBrand=${drillBrand || '없음'})`)
       return
@@ -447,12 +449,16 @@ export default function CollectorPage() {
 
   const handleCollectGroups = async () => {
     // 체크된 그룹이 없으면 현재 보이는 그룹 전체 수집
-    const targetIds = selectedIds.size > 0 ? [...selectedIds] : displayedFilters.map(f => f.id)
+    // displayedFilters와 교집합으로 실제 대상 결정
+    const targetFilters = selectedIds.size > 0
+      ? displayedFilters.filter(f => selectedIds.has(f.id))
+      : displayedFilters
+    const targetIds = targetFilters.map(f => f.id)
     if (targetIds.length === 0) {
       addLog("수집할 그룹이 없습니다.")
       return
     }
-    const totalReq = displayedFilters.filter(f => targetIds.includes(f.id)).reduce((s, f) => s + (f.requested_count || 0), 0)
+    const totalReq = targetFilters.reduce((s, f) => s + (f.requested_count || 0), 0)
     const ok = await showConfirm(`${selectedIds.size > 0 ? '선택된' : '표시된'} ${targetIds.length}개 그룹 상품수집을 시작하시겠습니까?\n(요청 ${totalReq.toLocaleString()}건, 중복 상품은 자동 스킵)`)
     if (!ok) return
     const abort = new AbortController()
@@ -1088,10 +1094,13 @@ export default function CollectorPage() {
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
+              // displayedFilters와 교집합으로 실제 대상 결정
+              const activeIds = [...selectedIds].filter(id => displayedFilters.some(f => f.id === id))
+              if (activeIds.length === 0) { showAlert('현재 필터에 해당하는 그룹이 없습니다'); return }
               // 그룹에 속한 상품 조회 → AI 미변환 상품만 추출
               const productIds: string[] = []
               let skippedAi = 0
-              for (const gid of selectedIds) {
+              for (const gid of activeIds) {
                 try {
                   const products = await collectorApi.listProducts(0, 10000, gid)
                   if (Array.isArray(products)) {
@@ -1104,7 +1113,7 @@ export default function CollectorPage() {
               }
               if (productIds.length === 0) { showAlert(skippedAi > 0 ? `모든 상품이 이미 AI 변환 완료 (${skippedAi}건 스킵)` : '선택된 그룹에 상품이 없습니다'); return }
               const skipMsg = skippedAi > 0 ? `\n(AI 변환 완료 ${skippedAi}건 스킵)` : ''
-              const ok = await showConfirm(`${selectedIds.size}개 그룹 (${productIds.length}개 상품)의 이미지를 변환하시겠습니까?${skipMsg}`)
+              const ok = await showConfirm(`${activeIds.length}개 그룹 (${productIds.length}개 상품)의 이미지를 변환하시겠습니까?${skipMsg}`)
               if (!ok) return
               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
               setAiImgTransforming(true)
@@ -1160,12 +1169,15 @@ export default function CollectorPage() {
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
               if (imgFilterScopes.size === 0) { showAlert('필터링 대상을 선택해주세요'); return }
+              // displayedFilters와 교집합으로 실제 대상 결정
+              const activeGroupIds = [...selectedIds].filter(id => displayedFilters.some(f => f.id === id))
+              if (activeGroupIds.length === 0) { showAlert('현재 필터에 해당하는 그룹이 없습니다'); return }
               const scopeLabel = [...imgFilterScopes].map(s => s === 'images' ? '대표' : s === 'detail_images' ? '추가' : '상세').join('+')
-              const ok = await showConfirm(`선택된 ${selectedIds.size}개 그룹의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
+              const ok = await showConfirm(`선택된 ${activeGroupIds.length}개 그룹의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
               if (!ok) return
               const scope = imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') && imgFilterScopes.has('detail') ? 'all' : imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') ? 'images' : imgFilterScopes.has('detail') ? 'detail' : [...imgFilterScopes][0] || 'images'
               setImgFiltering(true)
-              setAiJobTitle(`이미지 필터링 (${selectedIds.size}개 그룹)`)
+              setAiJobTitle(`이미지 필터링 (${activeGroupIds.length}개 그룹)`)
               setAiJobLogs([])
               setAiJobDone(false)
               setAiJobModal(true)
@@ -1176,7 +1188,7 @@ export default function CollectorPage() {
               let totalVisionRemoved = 0
               try {
                 // 그룹별로 상품 목록을 가져와 상품관리와 동일하게 개별 처리
-                const groupIds = [...selectedIds]
+                const groupIds = activeGroupIds
                 let totalProducts = 0
                 let processedProducts = 0
                 for (let gi = 0; gi < groupIds.length; gi++) {
@@ -1412,14 +1424,15 @@ export default function CollectorPage() {
                 // 체크박스로 선택된 그룹만 (드릴다운 단독 선택은 무시 — 전체 처리)
                 const isDrillOnly = drillGroup && selectedIds.size === 1 && selectedIds.has(drillGroup)
                 const checkedIds = selectAll ? displayedFilters.map(f => f.id) : isDrillOnly ? [] : [...selectedIds]
-                const targetIds = checkedIds.length > 0 ? checkedIds : displayedFilters.map(f => f.id)
-                if (targetIds.length === 0) { showAlert('검색그룹이 없습니다'); return }
-                const ok = await showConfirm(`${checkedIds.length > 0 ? '선택된' : '전체'} ${targetIds.length}개 그룹의 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
+                // displayedFilters와 교집합으로 실제 대상 결정
+                const targetFilters = checkedIds.length > 0
+                  ? displayedFilters.filter(f => checkedIds.includes(f.id))
+                  : [...displayedFilters]
+                if (targetFilters.length === 0) { showAlert('검색그룹이 없습니다'); return }
+                const ok = await showConfirm(`${checkedIds.length > 0 ? '선택된' : '전체'} ${targetFilters.length}개 그룹의 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
                 if (!ok) return
                 setTagPreviewLoading(true)
                 try {
-                  const targetFilters = displayedFilters.filter(f => targetIds.includes(f.id))
-                  if (targetFilters.length === 0) { showAlert('그룹이 없습니다'); return }
                   addLog(`[AI태그] ${targetFilters.length}개 그룹 태그 생성 시작...`)
                   const allPreviews: typeof tagPreviews = []
                   let totalCalls = 0, totalInput = 0, totalOutput = 0, totalCost = 0
@@ -1514,7 +1527,7 @@ export default function CollectorPage() {
           if (tagRegFilter) {
             allLeafInfos = allLeafInfos.filter(l => {
               const r = l as unknown as Record<string, number>
-              const cnt = r.ai_tagged_count ?? 0
+              const cnt = r.tag_applied_count ?? 0
               const total = r.collected_count ?? 0
               if (tagRegFilter === 'registered') return cnt > 0 && cnt >= total
               if (tagRegFilter === 'partial') return cnt > 0 && cnt < total
