@@ -1621,18 +1621,9 @@ export default function CollectorPage() {
                     brands.length > 0 ? brands.map(([brand, count]) => (
                       <div key={brand} style={itemSt(drillBrand === brand)}
                         onClick={() => {
-                          const toggling = drillBrand === brand
-                          setDrillBrand(toggling ? null : brand)
+                          setDrillBrand(drillBrand === brand ? null : brand)
                           setDrillGroup(null)
-                          if (!toggling) {
-                            // 브랜드 선택 시 해당 브랜드의 모든 카테고리 그룹 자동 선택
-                            let leaves = allLeafInfos
-                            if (drillSite) leaves = leaves.filter(l => l._siteId === drillSite)
-                            leaves = leaves.filter(l => l._brand === brand)
-                            setSelectedIds(new Set(leaves.map(l => l.id)))
-                          } else {
-                            setSelectedIds(new Set())
-                          }
+                          setSelectedIds(new Set())
                         }}
                         onMouseEnter={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                         onMouseLeave={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'transparent' }}
