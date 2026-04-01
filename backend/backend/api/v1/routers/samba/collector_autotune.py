@@ -226,12 +226,24 @@ async def _autotune_loop():
 
                         # 결과 처리에 필요한 서비스 사전 초기화
                         import backend.domain.samba.collector.refresher as _ref_mod
-                        from backend.domain.samba.shipment.service import calc_market_price
-                        from backend.domain.samba.policy.repository import SambaPolicyRepository
-                        from backend.domain.samba.account.repository import SambaMarketAccountRepository
-                        from backend.domain.samba.shipment.repository import SambaShipmentRepository
-                        from backend.domain.samba.shipment.service import SambaShipmentService
-                        from backend.domain.samba.shipment.dispatcher import delete_from_market
+                        from backend.domain.samba.shipment.service import (
+                            calc_market_price,
+                        )
+                        from backend.domain.samba.policy.repository import (
+                            SambaPolicyRepository,
+                        )
+                        from backend.domain.samba.account.repository import (
+                            SambaMarketAccountRepository,
+                        )
+                        from backend.domain.samba.shipment.repository import (
+                            SambaShipmentRepository,
+                        )
+                        from backend.domain.samba.shipment.service import (
+                            SambaShipmentService,
+                        )
+                        from backend.domain.samba.shipment.dispatcher import (
+                            delete_from_market,
+                        )
                         from backend.domain.samba.emergency import is_emergency_stopped
 
                         product_map: dict[str, object] = {p.id: p for p in products}
@@ -246,7 +258,10 @@ async def _autotune_loop():
                             if _p.registered_accounts:
                                 _all_account_ids.update(_p.registered_accounts)
                         if _all_account_ids:
-                            from backend.domain.samba.account.model import SambaMarketAccount
+                            from backend.domain.samba.account.model import (
+                                SambaMarketAccount,
+                            )
+
                             _acc_stmt = select(SambaMarketAccount).where(
                                 SambaMarketAccount.id.in_(list(_all_account_ids))
                             )
@@ -266,13 +281,20 @@ async def _autotune_loop():
 
                         def _log_transmit(site, pid, msg, level="info"):
                             """전송 결과 로그를 즉시 버퍼에 추가."""
-                            _kst_now = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%H:%M:%S")
-                            _ref_mod._refresh_log_buffer.append({
-                                "ts": datetime.now(timezone.utc).isoformat(),
-                                "site": site, "product_id": pid, "name": "",
-                                "msg": f"[{_kst_now}]   -> {msg}",
-                                "level": level, "source": "autotune",
-                            })
+                            _kst_now = (
+                                datetime.now(timezone.utc) + timedelta(hours=9)
+                            ).strftime("%H:%M:%S")
+                            _ref_mod._refresh_log_buffer.append(
+                                {
+                                    "ts": datetime.now(timezone.utc).isoformat(),
+                                    "site": site,
+                                    "product_id": pid,
+                                    "name": "",
+                                    "msg": f"[{_kst_now}]   -> {msg}",
+                                    "level": level,
+                                    "source": "autotune",
+                                }
+                            )
                             _ref_mod._refresh_log_total += 1
 
                         async def _on_result(product, r):
@@ -280,22 +302,40 @@ async def _autotune_loop():
                             nonlocal retransmitted, deleted_count, price_changed_count
 
                             async with _session_lock:
-                                if not _autotune_running_event.is_set() or is_emergency_stopped():
+                                if (
+                                    not _autotune_running_event.is_set()
+                                    or is_emergency_stopped()
+                                ):
                                     return
 
                                 site = product.source_site or "UNKNOWN"
                                 _prod_name = (product.name or "")[:30]
                                 _site_pid = product.site_product_id or ""
-                                _prod_label = f"{_prod_name} ({_site_pid})" if _site_pid else _prod_name
+                                _prod_label = (
+                                    f"{_prod_name} ({_site_pid})"
+                                    if _site_pid
+                                    else _prod_name
+                                )
 
                                 # DB 업데이트 준비
-                                updates: dict = {"last_refreshed_at": now, "refresh_error_count": 0}
+                                updates: dict = {
+                                    "last_refreshed_at": now,
+                                    "refresh_error_count": 0,
+                                }
                                 snapshot: dict = {
-                                    "date": now.isoformat(), "source": "autotune",
-                                    "sale_price": r.new_sale_price if r.new_sale_price is not None else product.sale_price,
-                                    "original_price": r.new_original_price if r.new_original_price is not None else product.original_price,
-                                    "cost": r.new_cost if r.new_cost is not None else product.cost,
-                                    "sale_status": r.new_sale_status, "changed": r.changed,
+                                    "date": now.isoformat(),
+                                    "source": "autotune",
+                                    "sale_price": r.new_sale_price
+                                    if r.new_sale_price is not None
+                                    else product.sale_price,
+                                    "original_price": r.new_original_price
+                                    if r.new_original_price is not None
+                                    else product.original_price,
+                                    "cost": r.new_cost
+                                    if r.new_cost is not None
+                                    else product.cost,
+                                    "sale_status": r.new_sale_status,
+                                    "changed": r.changed,
                                 }
                                 if r.new_options:
                                     snapshot["options"] = r.new_options
@@ -321,34 +361,70 @@ async def _autotune_loop():
 
                                 # 품절 → 서킷브레이커 + 즉시 마켓삭제
                                 if r.new_sale_status == "sold_out":
-                                    _site_consecutive_soldout[site] = _site_consecutive_soldout.get(site, 0) + 1
-                                    if _site_consecutive_soldout[site] >= SOLDOUT_BREAK_THRESHOLD:
+                                    _site_consecutive_soldout[site] = (
+                                        _site_consecutive_soldout.get(site, 0) + 1
+                                    )
+                                    if (
+                                        _site_consecutive_soldout[site]
+                                        >= SOLDOUT_BREAK_THRESHOLD
+                                    ):
                                         _site_breaker_tripped[site] = True
-                                        log.error("[오토튠] 서킷브레이커 작동! %s 연속 %d개 품절", site, _site_consecutive_soldout[site])
+                                        log.error(
+                                            "[오토튠] 서킷브레이커 작동! %s 연속 %d개 품절",
+                                            site,
+                                            _site_consecutive_soldout[site],
+                                        )
                                         await repo.update_async(r.product_id, **updates)
                                         return
                                     if not getattr(product, "lock_delete", False):
                                         product_dict = product.model_dump()
-                                        for _del_acc_id in (product.registered_accounts or []):
+                                        for _del_acc_id in (
+                                            product.registered_accounts or []
+                                        ):
                                             _del_acc = _account_cache.get(_del_acc_id)
                                             if not _del_acc:
                                                 continue
                                             m_nos = product.market_product_nos or {}
                                             if _del_acc.market_type == "smartstore":
-                                                pno = m_nos.get(f"{_del_acc_id}_origin", "") or m_nos.get(_del_acc_id, "")
+                                                pno = m_nos.get(
+                                                    f"{_del_acc_id}_origin", ""
+                                                ) or m_nos.get(_del_acc_id, "")
                                             else:
                                                 pno = m_nos.get(_del_acc_id, "")
-                                            pd = {**product_dict, "market_product_no": {_del_acc.market_type: pno}}
+                                            pd = {
+                                                **product_dict,
+                                                "market_product_no": {
+                                                    _del_acc.market_type: pno
+                                                },
+                                            }
                                             _del_label = f"{_del_acc.market_name}({_del_acc.seller_id or '-'})"
                                             try:
-                                                dr = await delete_from_market(session, _del_acc.market_type, pd, account=_del_acc)
+                                                dr = await delete_from_market(
+                                                    session,
+                                                    _del_acc.market_type,
+                                                    pd,
+                                                    account=_del_acc,
+                                                )
                                                 if dr.get("success"):
                                                     deleted_count += 1
-                                                    _log_transmit(site, r.product_id, f"{_prod_label} 품절 → {_del_label} 마켓삭제 완료")
+                                                    _log_transmit(
+                                                        site,
+                                                        r.product_id,
+                                                        f"{_prod_label} 품절 → {_del_label} 마켓삭제 완료",
+                                                    )
                                                 else:
-                                                    log.warning("[오토튠] %s → %s 마켓삭제 실패: %s", r.product_id, _del_acc.market_type, dr.get("message"))
+                                                    log.warning(
+                                                        "[오토튠] %s → %s 마켓삭제 실패: %s",
+                                                        r.product_id,
+                                                        _del_acc.market_type,
+                                                        dr.get("message"),
+                                                    )
                                             except Exception as e:
-                                                log.error("[오토튠] %s → 마켓삭제 오류: %s", r.product_id, e)
+                                                log.error(
+                                                    "[오토튠] %s → 마켓삭제 오류: %s",
+                                                    r.product_id,
+                                                    e,
+                                                )
                                     await repo.update_async(r.product_id, **updates)
                                     _site_consecutive_soldout[site] = 0
                                     return
@@ -359,56 +435,117 @@ async def _autotune_loop():
                                 await repo.update_async(r.product_id, **updates)
 
                                 # ★ 마켓별 최종 판매가 비교 → 즉시 전송
-                                new_cost = r.new_cost if r.new_cost is not None else (product.cost or product.sale_price or 0)
+                                new_cost = (
+                                    r.new_cost
+                                    if r.new_cost is not None
+                                    else (product.cost or product.sale_price or 0)
+                                )
                                 reg_accounts = product.registered_accounts or []
                                 last_sent = product.last_sent_data or {}
 
                                 if product.applied_policy_id:
                                     if product.applied_policy_id not in _policy_cache:
-                                        _policy_cache[product.applied_policy_id] = await policy_repo.get_async(product.applied_policy_id)
+                                        _policy_cache[
+                                            product.applied_policy_id
+                                        ] = await policy_repo.get_async(
+                                            product.applied_policy_id
+                                        )
                                     policy = _policy_cache[product.applied_policy_id]
                                 else:
                                     policy = None
 
                                 for acc_id in reg_accounts:
                                     if acc_id not in _account_cache:
-                                        _account_cache[acc_id] = await account_repo.get_async(acc_id)
+                                        _account_cache[
+                                            acc_id
+                                        ] = await account_repo.get_async(acc_id)
                                     acc = _account_cache[acc_id]
                                     if not acc:
                                         continue
-                                    acc_label = f"{acc.market_name}({acc.seller_id or '-'})"
+                                    acc_label = (
+                                        f"{acc.market_name}({acc.seller_id or '-'})"
+                                    )
                                     market_type = acc.market_type or ""
 
                                     if policy and policy.pricing:
-                                        expected_price = calc_market_price(new_cost, policy.pricing, market_type, policy.market_policies)
+                                        expected_price = calc_market_price(
+                                            new_cost,
+                                            policy.pricing,
+                                            market_type,
+                                            policy.market_policies,
+                                        )
                                     else:
                                         expected_price = int(new_cost)
 
                                     acc_last = last_sent.get(acc_id, {})
-                                    last_price = int(acc_last.get("sale_price", 0)) if acc_last else 0
+                                    last_price = (
+                                        int(acc_last.get("sale_price", 0))
+                                        if acc_last
+                                        else 0
+                                    )
 
                                     # 가격 변동 → 즉시 가격 전송
                                     if expected_price != last_price:
                                         price_changed_count += 1
                                         _all_price_pids.add(r.product_id)
                                         try:
-                                            await ship_svc.start_update([r.product_id], ["price"], [acc_id], skip_unchanged=False, skip_refresh=True)
+                                            await ship_svc.start_update(
+                                                [r.product_id],
+                                                ["price"],
+                                                [acc_id],
+                                                skip_unchanged=False,
+                                                skip_refresh=True,
+                                            )
                                             retransmitted += 1
-                                            _log_transmit(site, r.product_id, f"{_prod_label} 가격전송 {last_price:,}→{expected_price:,} → {acc_label} 완료")
+                                            _log_transmit(
+                                                site,
+                                                r.product_id,
+                                                f"{_prod_label} 가격전송 {last_price:,}→{expected_price:,} → {acc_label} 완료",
+                                            )
                                         except Exception as e:
-                                            _log_transmit(site, r.product_id, f"{_prod_label} 가격전송 실패 → {acc_label}: {str(e)[:50]}", "error")
-                                            log.error("[오토튠] 가격전송 실패 (%s, %s): %s", r.product_id, acc_id, e)
+                                            _log_transmit(
+                                                site,
+                                                r.product_id,
+                                                f"{_prod_label} 가격전송 실패 → {acc_label}: {str(e)[:50]}",
+                                                "error",
+                                            )
+                                            log.error(
+                                                "[오토튠] 가격전송 실패 (%s, %s): %s",
+                                                r.product_id,
+                                                acc_id,
+                                                e,
+                                            )
 
                                     # 재고 변동 → 즉시 재고 전송
                                     if r.stock_changed:
                                         _all_stock_pids.add(r.product_id)
                                         try:
-                                            await ship_svc.start_update([r.product_id], ["stock"], [acc_id], skip_unchanged=False, skip_refresh=True)
+                                            await ship_svc.start_update(
+                                                [r.product_id],
+                                                ["stock"],
+                                                [acc_id],
+                                                skip_unchanged=False,
+                                                skip_refresh=True,
+                                            )
                                             retransmitted += 1
-                                            _log_transmit(site, r.product_id, f"{_prod_label} 재고전송 → {acc_label} 완료")
+                                            _log_transmit(
+                                                site,
+                                                r.product_id,
+                                                f"{_prod_label} 재고전송 → {acc_label} 완료",
+                                            )
                                         except Exception as e:
-                                            _log_transmit(site, r.product_id, f"{_prod_label} 재고전송 실패 → {acc_label}: {str(e)[:50]}", "error")
-                                            log.error("[오토튠] 재고전송 실패 (%s, %s): %s", r.product_id, acc_id, e)
+                                            _log_transmit(
+                                                site,
+                                                r.product_id,
+                                                f"{_prod_label} 재고전송 실패 → {acc_label}: {str(e)[:50]}",
+                                                "error",
+                                            )
+                                            log.error(
+                                                "[오토튠] 재고전송 실패 (%s, %s): %s",
+                                                r.product_id,
+                                                acc_id,
+                                                e,
+                                            )
 
                                 # 연속 무변동 카운터
                                 if r.changed or r.stock_changed:
@@ -424,6 +561,7 @@ async def _autotune_loop():
                         # DB 세션 복구 — 갱신 전 연결 확인
                         try:
                             from sqlmodel import text as _txt
+
                             await session.execute(_txt("SELECT 1"))
                         except Exception:
                             log.warning("[오토튠] 세션 만료 — rollback 후 재연결")
@@ -445,7 +583,10 @@ async def _autotune_loop():
                                     try:
                                         await repo.update_async(
                                             r.product_id,
-                                            refresh_error_count=(_ep.refresh_error_count or 0) + 1,
+                                            refresh_error_count=(
+                                                _ep.refresh_error_count or 0
+                                            )
+                                            + 1,
                                             last_refreshed_at=now,
                                         )
                                     except Exception:
@@ -454,31 +595,64 @@ async def _autotune_loop():
                         # 사이클 완료 로그
                         _err_count = sum(1 for r in results if r.error)
                         _ok_count = len(results) - _err_count
-                        _timeout_count = sum(1 for r in results if r.error and "Timeout" in r.error)
+                        _timeout_count = sum(
+                            1 for r in results if r.error and "Timeout" in r.error
+                        )
                         _now = datetime.now(timezone.utc)
                         _kst = _now + timedelta(hours=9)
-                        _ref_mod._refresh_log_buffer.append({
-                            "ts": _now.isoformat(), "site": "MUSINSA", "product_id": "", "name": "",
-                            "msg": f"[{_kst.strftime('%H:%M:%S')}] -- 사이클 완료: {_ok_count:,}건 성공, {_err_count:,}건 실패 (타임아웃 {_timeout_count:,}건) / 총 {len(results):,}건, 가격전송 {len(_all_price_pids):,}건, 재고전송 {len(_all_stock_pids):,}건, 삭제 {deleted_count:,}건 --",
-                            "level": "info", "source": "autotune",
-                        })
+                        _ref_mod._refresh_log_buffer.append(
+                            {
+                                "ts": _now.isoformat(),
+                                "site": "MUSINSA",
+                                "product_id": "",
+                                "name": "",
+                                "msg": f"[{_kst.strftime('%H:%M:%S')}] -- 사이클 완료: {_ok_count:,}건 성공, {_err_count:,}건 실패 (타임아웃 {_timeout_count:,}건) / 총 {len(results):,}건, 가격전송 {len(_all_price_pids):,}건, 재고전송 {len(_all_stock_pids):,}건, 삭제 {deleted_count:,}건 --",
+                                "level": "info",
+                                "source": "autotune",
+                            }
+                        )
                         _ref_mod._refresh_log_total += 1
-                        log.info("[오토튠] 사이클 완료: %d성공, %d실패 (타임아웃 %d) / %d건", _ok_count, _err_count, _timeout_count, len(results))
+                        log.info(
+                            "[오토튠] 사이클 완료: %d성공, %d실패 (타임아웃 %d) / %d건",
+                            _ok_count,
+                            _err_count,
+                            _timeout_count,
+                            len(results),
+                        )
 
                         # 이벤트 발행 (별도 세션)
                         _ended = datetime.now(timezone.utc)
                         _duration_sec = round((_ended - now).total_seconds(), 1)
-                        _rate = round(filtered_count / _duration_sec, 1) if _duration_sec > 0 else 0
+                        _rate = (
+                            round(filtered_count / _duration_sec, 1)
+                            if _duration_sec > 0
+                            else 0
+                        )
                         try:
                             async with get_write_session() as ev_session:
                                 monitor = SambaMonitorService(ev_session)
                                 await monitor.emit(
-                                    "scheduler_tick", "info",
+                                    "scheduler_tick",
+                                    "info",
                                     summary=f"오토튠 — 대상 {filtered_count:,}건, 갱신 {summary.refreshed:,}건 (성공 {_ok_count:,}, 실패 {_err_count:,}) | {_duration_sec:,}초, {_rate:,}건/초",
-                                    detail={"total": filtered_count, "refreshed": summary.refreshed, "ok": _ok_count, "errors": _err_count, "timeouts": _timeout_count, "started_at": now.isoformat(), "ended_at": _ended.isoformat(), "duration_sec": _duration_sec, "rate": _rate},
+                                    detail={
+                                        "total": filtered_count,
+                                        "refreshed": summary.refreshed,
+                                        "ok": _ok_count,
+                                        "errors": _err_count,
+                                        "timeouts": _timeout_count,
+                                        "started_at": now.isoformat(),
+                                        "ended_at": _ended.isoformat(),
+                                        "duration_sec": _duration_sec,
+                                        "rate": _rate,
+                                    },
                                 )
                                 await ev_session.commit()
-                            log.info("[오토튠] 이벤트 발행 완료 (%s초, %s건/초)", _duration_sec, _rate)
+                            log.info(
+                                "[오토튠] 이벤트 발행 완료 (%s초, %s건/초)",
+                                _duration_sec,
+                                _rate,
+                            )
                         except Exception as ev_err:
                             log.error("[오토튠] 이벤트 발행 실패: %s", ev_err)
 
@@ -486,19 +660,35 @@ async def _autotune_loop():
                         try:
                             await asyncio.wait_for(session.commit(), timeout=30)
                         except (asyncio.TimeoutError, Exception) as commit_err:
-                            log.error("[오토튠] 결과 commit 실패 (무시하고 진행): %s", commit_err)
-                            _ref_mod._refresh_log_buffer.append({
-                                "ts": datetime.now(timezone.utc).isoformat(), "site": "", "product_id": "", "name": "",
-                                "msg": f"[{(datetime.now(timezone.utc) + timedelta(hours=9)).strftime('%H:%M:%S')}] 결과 commit 실패: {type(commit_err).__name__}: {str(commit_err)[:100]}",
-                                "level": "error", "source": "autotune",
-                            })
+                            log.error(
+                                "[오토튠] 결과 commit 실패 (무시하고 진행): %s",
+                                commit_err,
+                            )
+                            _ref_mod._refresh_log_buffer.append(
+                                {
+                                    "ts": datetime.now(timezone.utc).isoformat(),
+                                    "site": "",
+                                    "product_id": "",
+                                    "name": "",
+                                    "msg": f"[{(datetime.now(timezone.utc) + timedelta(hours=9)).strftime('%H:%M:%S')}] 결과 commit 실패: {type(commit_err).__name__}: {str(commit_err)[:100]}",
+                                    "level": "error",
+                                    "source": "autotune",
+                                }
+                            )
                             _ref_mod._refresh_log_total += 1
                             try:
                                 await asyncio.wait_for(session.rollback(), timeout=10)
                             except Exception:
                                 pass
 
-                        log.info("[오토튠] tick 완료: 대상 %d, 갱신 %d, 가격전송 %d, 재고전송 %d, 삭제 %d", filtered_count, summary.refreshed, len(_all_price_pids), len(_all_stock_pids), deleted_count)
+                        log.info(
+                            "[오토튠] tick 완료: 대상 %d, 갱신 %d, 가격전송 %d, 재고전송 %d, 삭제 %d",
+                            filtered_count,
+                            summary.refreshed,
+                            len(_all_price_pids),
+                            len(_all_stock_pids),
+                            deleted_count,
+                        )
                     else:
                         await asyncio.sleep(5)
 

@@ -82,9 +82,7 @@ async def lifespan(app: FastAPI):
                 await session.commit()
             break
         except Exception as e:
-            _startup_log.warning(
-                f"[startup] Job 복구 실패 ({_attempt + 1}/3): {e}"
-            )
+            _startup_log.warning(f"[startup] Job 복구 실패 ({_attempt + 1}/3): {e}")
             if _attempt < 2:
                 await asyncio.sleep(2)
 

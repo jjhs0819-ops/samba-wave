@@ -122,7 +122,9 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         if exclude_types:
             conditions.append(SambaJob.job_type.notin_(list(exclude_types)))
         if threshold_sec > 0:
-            cutoff = datetime.now(UTC) - __import__("datetime").timedelta(seconds=threshold_sec)
+            cutoff = datetime.now(UTC) - __import__("datetime").timedelta(
+                seconds=threshold_sec
+            )
             conditions.append(SambaJob.started_at < cutoff)
         stmt = select(SambaJob).where(and_(*conditions))
         result = await self.session.execute(stmt)

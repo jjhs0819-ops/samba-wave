@@ -68,7 +68,10 @@ async def list_recent_events(
     """최근 이벤트 — scheduler_tick 최신 3건 보장."""
     repo = SambaMonitorEventRepository(session)
     # 일반 최신 이벤트 + scheduler_tick 최신 3건 별도 조회 후 병합
-    recent, ticks = await repo.list_recent(limit), await repo.list_by_type("scheduler_tick", 3)
+    recent, ticks = (
+        await repo.list_recent(limit),
+        await repo.list_by_type("scheduler_tick", 3),
+    )
     seen = {e.id for e in recent}
     merged = list(recent) + [t for t in ticks if t.id not in seen]
     merged.sort(key=lambda e: e.created_at, reverse=True)

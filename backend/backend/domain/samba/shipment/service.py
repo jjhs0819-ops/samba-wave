@@ -564,7 +564,12 @@ class SambaShipmentService:
         has_update = bool(update_items) and len(update_items) > 0
         refresh_status = ""  # 프론트 로그용
         pending_refresh_updates: dict[str, Any] = {}  # 최종 업데이트에 통합
-        if has_update and not skip_refresh and product_row.source_site and product_row.site_product_id:
+        if (
+            has_update
+            and not skip_refresh
+            and product_row.source_site
+            and product_row.site_product_id
+        ):
             try:
                 from backend.domain.samba.collector.refresher import refresh_product
 
