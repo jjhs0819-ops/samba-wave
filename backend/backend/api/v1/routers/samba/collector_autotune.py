@@ -440,6 +440,7 @@ async def _autotune_loop():
                                         return
                                     if not getattr(product, "lock_delete", False):
                                         product_dict = product.model_dump()
+                                        _ok_del_ids: list[str] = []
                                         for _del_acc_id in (
                                             product.registered_accounts or []
                                         ):
@@ -469,6 +470,7 @@ async def _autotune_loop():
                                                 )
                                                 if dr.get("success"):
                                                     deleted_count += 1
+                                                    _ok_del_ids.append(_del_acc_id)
                                                     _log_line(
                                                         site,
                                                         r.product_id,
@@ -487,6 +489,33 @@ async def _autotune_loop():
                                                     r.product_id,
                                                     e,
                                                 )
+                                        # 삭제 성공한 계정 → registered_accounts/market_product_nos 정리
+                                        if _ok_del_ids:
+                                            _orig_reg = list(
+                                                product.registered_accounts or []
+                                            )
+                                            _orig_mnos = dict(
+                                                product.market_product_nos or {}
+                                            )
+                                            _new_reg = [
+                                                a
+                                                for a in _orig_reg
+                                                if a not in _ok_del_ids
+                                            ]
+                                            _new_mnos = {
+                                                k: v
+                                                for k, v in _orig_mnos.items()
+                                                if not any(
+                                                    k == d or k.startswith(f"{d}_")
+                                                    for d in _ok_del_ids
+                                                )
+                                            }
+                                            updates["registered_accounts"] = (
+                                                _new_reg if _new_reg else []
+                                            )
+                                            updates["market_product_nos"] = (
+                                                _new_mnos if _new_mnos else {}
+                                            )
                                     await repo.update_async(r.product_id, **updates)
                                     _site_consecutive_soldout[site] = 0
                                     return
@@ -697,6 +726,148 @@ async def _autotune_loop():
                             _err_detail,
                             len(results),
                         )
+
+                        # ★ 품절 잔존 상품 마켓삭제 재시도
+                        # sale_status="sold_out"인데 registered_accounts가 남아있는 상품
+                        try:
+                            _soldout_retry_stmt = (
+                                select(_CP)
+                                .where(
+                                    *market_cond,
+                                    _CP.sale_status == "sold_out",
+                                    _CP.lock_delete != True,
+                                )
+                                .limit(50)
+                            )
+                            _soldout_result = await session.exec(_soldout_retry_stmt)
+                            _soldout_products = _soldout_result.all()
+
+                            if _soldout_products:
+                                log.info(
+                                    "[오토튠] 품절 잔존 마켓삭제 재시도: %d건",
+                                    len(_soldout_products),
+                                )
+                                # 재시도용 계정 캐시 보충
+                                _retry_acc_ids: set[str] = set()
+                                for _sp in _soldout_products:
+                                    if _sp.registered_accounts:
+                                        _retry_acc_ids.update(_sp.registered_accounts)
+                                _missing_acc_ids = _retry_acc_ids - set(
+                                    _account_cache.keys()
+                                )
+                                if _missing_acc_ids:
+                                    from backend.domain.samba.account.model import (
+                                        SambaMarketAccount,
+                                    )
+
+                                    _retry_acc_stmt = select(SambaMarketAccount).where(
+                                        SambaMarketAccount.id.in_(
+                                            list(_missing_acc_ids)
+                                        )
+                                    )
+                                    _retry_acc_result = await session.exec(
+                                        _retry_acc_stmt
+                                    )
+                                    for _ra in _retry_acc_result.all():
+                                        _account_cache[_ra.id] = _ra
+
+                                for _sp in _soldout_products:
+                                    _sp_dict = _sp.model_dump()
+                                    _sp_reg = list(_sp.registered_accounts or [])
+                                    _sp_mnos = dict(_sp.market_product_nos or {})
+                                    _sp_deleted_ids: list[str] = []
+
+                                    for _del_acc_id in _sp_reg:
+                                        _del_acc = _account_cache.get(_del_acc_id)
+                                        if not _del_acc:
+                                            continue
+                                        _m_nos = _sp.market_product_nos or {}
+                                        if _del_acc.market_type == "smartstore":
+                                            _pno = _m_nos.get(
+                                                f"{_del_acc_id}_origin", ""
+                                            ) or _m_nos.get(_del_acc_id, "")
+                                        else:
+                                            _pno = _m_nos.get(_del_acc_id, "")
+                                        _pd = {
+                                            **_sp_dict,
+                                            "market_product_no": {
+                                                _del_acc.market_type: _pno
+                                            },
+                                        }
+                                        _del_label = f"{_del_acc.market_name}({_del_acc.seller_id or '-'})"
+                                        try:
+                                            _dr = await delete_from_market(
+                                                session,
+                                                _del_acc.market_type,
+                                                _pd,
+                                                account=_del_acc,
+                                            )
+                                            if _dr.get("success"):
+                                                deleted_count += 1
+                                                _sp_deleted_ids.append(_del_acc_id)
+                                                _log_line(
+                                                    _sp.source_site or "",
+                                                    _sp.id,
+                                                    f"{_sp.name or _sp.id}: 품절잔존 → {_del_label} 마켓삭제 완료",
+                                                )
+                                            else:
+                                                log.warning(
+                                                    "[오토튠] 품절잔존 %s → %s 마켓삭제 실패: %s",
+                                                    _sp.id,
+                                                    _del_acc.market_type,
+                                                    _dr.get("message"),
+                                                )
+                                        except Exception as _del_err:
+                                            log.error(
+                                                "[오토튠] 품절잔존 %s → 마켓삭제 오류: %s",
+                                                _sp.id,
+                                                _del_err,
+                                            )
+
+                                    # 삭제 성공한 계정 정리
+                                    if _sp_deleted_ids:
+                                        _new_reg = [
+                                            a
+                                            for a in _sp_reg
+                                            if a not in _sp_deleted_ids
+                                        ]
+                                        _new_mnos = {
+                                            k: v
+                                            for k, v in _sp_mnos.items()
+                                            if not any(
+                                                k == did or k.startswith(f"{did}_")
+                                                for did in _sp_deleted_ids
+                                            )
+                                        }
+                                        _cleanup: dict = {
+                                            "registered_accounts": _new_reg
+                                            if _new_reg
+                                            else [],
+                                            "market_product_nos": _new_mnos
+                                            if _new_mnos
+                                            else {},
+                                        }
+                                        await repo.update_async(_sp.id, **_cleanup)
+
+                                try:
+                                    await asyncio.wait_for(session.commit(), timeout=30)
+                                except Exception as _retry_commit_err:
+                                    log.error(
+                                        "[오토튠] 품절잔존 commit 실패: %s",
+                                        _retry_commit_err,
+                                    )
+                                    try:
+                                        await asyncio.wait_for(
+                                            session.rollback(), timeout=10
+                                        )
+                                    except Exception:
+                                        pass
+                        except Exception as _retry_err:
+                            log.error(
+                                "[오토튠] 품절잔존 재시도 오류: %s",
+                                _retry_err,
+                                exc_info=True,
+                            )
 
                         # 이벤트 발행 (별도 세션)
                         _ended = datetime.now(timezone.utc)
