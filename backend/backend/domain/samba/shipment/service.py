@@ -166,6 +166,7 @@ class SambaShipmentService:
         update_items: list[str],
         target_account_ids: list[str],
         skip_unchanged: bool = False,
+        skip_refresh: bool = False,
     ) -> dict[str, Any]:
         """여러 상품을 대상 마켓 계정으로 실제 전송. 마켓별 결과 반환."""
         # 이전 취소 플래그 잔존 방지
@@ -190,6 +191,7 @@ class SambaShipmentService:
                     target_account_ids,
                     update_items,
                     skip_unchanged=skip_unchanged,
+                    skip_refresh=skip_refresh,
                 )
                 results.append(
                     {
@@ -459,6 +461,7 @@ class SambaShipmentService:
         target_account_ids: list[str],
         update_items: list[str],
         skip_unchanged: bool = False,
+        skip_refresh: bool = False,
     ) -> SambaShipment:
         """단일 상품에 대한 실제 마켓 전송."""
 
@@ -483,6 +486,7 @@ class SambaShipmentService:
                     target_account_ids,
                     update_items,
                     skip_unchanged,
+                    skip_refresh=skip_refresh,
                 ),
                 timeout=180,  # 상품 1건당 최대 180초 (최신화+이미지업로드 포함)
             )
@@ -507,6 +511,7 @@ class SambaShipmentService:
         target_account_ids: list[str],
         update_items: list[str],
         skip_unchanged: bool = False,
+        skip_refresh: bool = False,
     ) -> SambaShipment:
         """상품 전송 실제 구현 (락 획득 후 호출)."""
 
@@ -555,10 +560,11 @@ class SambaShipmentService:
         product_dict = product_row.model_dump()
 
         # 업데이트 항목이 체크되어 있으면 소싱처 최신화 먼저 실행
+        # skip_refresh=True이면 오토튠에서 이미 리프레시 완료 → 이중 호출 방지
         has_update = bool(update_items) and len(update_items) > 0
         refresh_status = ""  # 프론트 로그용
         pending_refresh_updates: dict[str, Any] = {}  # 최종 업데이트에 통합
-        if has_update and product_row.source_site and product_row.site_product_id:
+        if has_update and not skip_refresh and product_row.source_site and product_row.site_product_id:
             try:
                 from backend.domain.samba.collector.refresher import refresh_product
 

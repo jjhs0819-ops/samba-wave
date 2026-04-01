@@ -450,7 +450,7 @@ export default function WarroomPage() {
               let rateStr = ''
               let durationStr = ''
               if (e.event_type === 'scheduler_tick' && _d) {
-                if (_d.rate) rateStr = `${_d.rate}건/초`
+                if (_d.rate) rateStr = `${Number(_d.rate).toLocaleString()}건/초`
                 if (_d.duration_sec) durationStr = `${Math.round(Number(_d.duration_sec))}초`
                 if (_d.started_at && _d.ended_at) {
                   const s = new Date(String(_d.started_at))
@@ -473,17 +473,17 @@ export default function WarroomPage() {
                   })
                 }
                 if (typeof d.refreshed === 'number' && d.refreshed > 0)
-                  detailTags.push({ label: '갱신', value: `${d.refreshed}건`, color: '#4C9AFF' })
+                  detailTags.push({ label: '갱신', value: `${d.refreshed.toLocaleString()}건`, color: '#4C9AFF' })
                 if (typeof d.changed === 'number' && d.changed > 0)
-                  detailTags.push({ label: '변동', value: `${d.changed}건`, color: '#FFD93D' })
+                  detailTags.push({ label: '변동', value: `${d.changed.toLocaleString()}건`, color: '#FFD93D' })
                 if (typeof d.sold_out === 'number' && d.sold_out > 0)
-                  detailTags.push({ label: '품절', value: `${d.sold_out}건`, color: '#FF6B6B' })
+                  detailTags.push({ label: '품절', value: `${d.sold_out.toLocaleString()}건`, color: '#FF6B6B' })
                 if (typeof d.retransmitted === 'number' && d.retransmitted > 0)
-                  detailTags.push({ label: '재전송', value: `${d.retransmitted}건`, color: '#A78BFA' })
+                  detailTags.push({ label: '재전송', value: `${d.retransmitted.toLocaleString()}건`, color: '#A78BFA' })
                 if (typeof d.deleted === 'number' && d.deleted > 0)
-                  detailTags.push({ label: '삭제', value: `${d.deleted}건`, color: '#FF6B6B' })
+                  detailTags.push({ label: '삭제', value: `${d.deleted.toLocaleString()}건`, color: '#FF6B6B' })
                 if (typeof d.count === 'number' && d.count > 0 && detailTags.length === 0)
-                  detailTags.push({ label: '건수', value: `${d.count}건`, color: '#4C9AFF' })
+                  detailTags.push({ label: '건수', value: `${d.count.toLocaleString()}건`, color: '#4C9AFF' })
                 if (d.error && typeof d.error === 'string')
                   detailTags.push({ label: '에러', value: String(d.error).slice(0, 60), color: '#FF6B6B' })
                 if (Array.isArray(d.missing_fields) && d.missing_fields.length > 0)

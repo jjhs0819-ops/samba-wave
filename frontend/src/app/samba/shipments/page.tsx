@@ -64,29 +64,37 @@ export default function ShipmentsPage() {
   const activeJobIdRef = useRef('')
   const jobPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [loopRestart, setLoopRestart] = useState(false)
+  const sinceIdxRef = useRef(0)  // 링 버퍼 폴링용
 
   // 컴포넌트 언마운트 시 잡 폴링 정리
   useEffect(() => {
     return () => { if (jobPollRef.current) clearInterval(jobPollRef.current) }
   }, [])
 
-  // 페이지 로드 시 실행 중인 Job 자동 연결
+  // 페이지 로드 시 링 버퍼에서 기존 로그 복원 + 실행 중인 Job 자동 연결
   useEffect(() => {
     (async () => {
       try {
         const { API_BASE_URL: apiBase } = await import('@/config/api')
+        // 1) 링 버퍼에서 기존 로그 복원
+        const bufRes = await fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=0`)
+        const bufData = await bufRes.json()
+        const prevLogs = (bufData.logs || []) as string[]
+        sinceIdxRef.current = bufData.current_idx || 0
+        if (prevLogs.length > 0) {
+          setLogMessages(prevLogs.map(l => `[이전] ${l}`).slice(-30))
+        }
+        // 2) 실행 중인 Job 확인
         const res = await fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`)
         const jobs = await res.json()
         const job = Array.isArray(jobs) ? jobs.find((j: Record<string, unknown>) => j.job_type === 'transmit') : null
         if (!job) return
-        // 이미 폴링 중이면 스킵
         if (jobPollRef.current || activeJobIdRef.current) return
         const jobId = job.id as string
         activeJobIdRef.current = jobId
         setTransmitting(true)
         setProgress({ current: (job.current || 0) as number, total: (job.total || 0) as number })
-        setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] 진행 중인 전송 Job 감지 — 로그 연결`].slice(-30))
-        let logSince = 0
+        // 3) 링 버퍼 기반 증분 폴링 시작
         let polling = false
         jobPollRef.current = setInterval(async () => {
           if (polling) return
@@ -94,15 +102,15 @@ export default function ShipmentsPage() {
           try {
             const [jr, lr] = await Promise.all([
               fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
-              fetch(`${apiBase}/api/v1/samba/jobs/${jobId}/logs?since=${logSince}`),
+              fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
             ])
             const j = await jr.json()
             const logData = await lr.json()
             setProgress({ current: j.current || 0, total: j.total || 0 })
             const newLogs = (logData.logs || []) as string[]
+            sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
             if (newLogs.length > 0) {
               for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
-              logSince += newLogs.length
             }
             if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
               if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
@@ -497,8 +505,7 @@ export default function ShipmentsPage() {
       const jobId = jobData.id || ''
       activeJobIdRef.current = jobId
       setProgress({ current: 0, total: tasks.length })
-      // 전송 진행 폴링 + 실시간 로그 (동시 요청 방지)
-      let logSince = 0
+      // 전송 진행 폴링 + 링 버퍼 기반 실시간 로그
       let polling = false
       if (jobPollRef.current) clearInterval(jobPollRef.current)
       jobPollRef.current = setInterval(async () => {
@@ -507,19 +514,19 @@ export default function ShipmentsPage() {
         try {
           const [jr, lr] = await Promise.all([
             fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
-            fetch(`${apiBase}/api/v1/samba/jobs/${jobId}/logs?since=${logSince}`),
+            fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
           ])
           const j = await jr.json()
           const logData = await lr.json()
           const cur = j.current || 0
           const tot = j.total || tasks.length
           setProgress({ current: cur, total: tot })
-          const newLogs = logData.logs || []
+          const newLogs = (logData.logs || []) as string[]
+          sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
           if (newLogs.length > 0) {
             for (const log of newLogs) {
-              setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`])
+              setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
             }
-            logSince += newLogs.length
           }
           if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
             if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
@@ -703,7 +710,14 @@ export default function ShipmentsPage() {
           <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>전송 로그</span>
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>복사</button>
-            <button onClick={() => setLogMessages(['로그가 초기화되었습니다.'])} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
+            <button onClick={async () => {
+              setLogMessages(['로그가 초기화되었습니다.'])
+              sinceIdxRef.current = 0
+              try {
+                const { API_BASE_URL: apiBase } = await import('@/config/api')
+                await fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' })
+              } catch { /* ignore */ }
+            }} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
             <button onClick={handleMarketDelete} disabled={transmitting}
               style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: transmitting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
             <button disabled={!!stopping} onClick={async () => {
@@ -821,26 +835,26 @@ export default function ShipmentsPage() {
                   const jobId = jobData.id || ''
                   activeJobIdRef.current = jobId
                   setProgress({ current: 0, total: allIds.length })
-                  let logSince = 0
                   let polling = false
-                  const poll = setInterval(async () => {
+                  if (jobPollRef.current) clearInterval(jobPollRef.current)
+                  jobPollRef.current = setInterval(async () => {
                     if (polling) return
                     polling = true
                     try {
                       const [jr, lr] = await Promise.all([
                         fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
-                        fetch(`${apiBase}/api/v1/samba/jobs/${jobId}/logs?since=${logSince}`),
+                        fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
                       ])
                       const j = await jr.json()
                       const logData = await lr.json()
                       setProgress({ current: j.current || 0, total: j.total || allIds.length })
-                      const newLogs = logData.logs || []
+                      const newLogs = (logData.logs || []) as string[]
+                      sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
                       if (newLogs.length > 0) {
                         for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
-                        logSince += newLogs.length
                       }
                       if (j.status === 'completed' || j.status === 'failed') {
-                        clearInterval(poll)
+                        if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                         setTransmitting(false)
                         activeJobIdRef.current = ''
                         load()

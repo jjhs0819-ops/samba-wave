@@ -118,9 +118,13 @@ class JobWorker:
 
     POLL_INTERVAL = 5  # 초
 
+    STUCK_CHECK_INTERVAL = 6  # 6회 폴링마다 stuck 체크 (≒30초)
+    STUCK_THRESHOLD_SEC = 300  # 5분 이상 progress 변화 없으면 stuck 판정
+
     def __init__(self):
         self._running = True
         self._active_types: set[str] = set()  # 현재 실행 중인 잡 타입
+        self._poll_count = 0
 
     async def start(self):
         """무한 루프: pending 잡 조회 → 타입별 병렬 실행."""
@@ -129,21 +133,13 @@ class JobWorker:
         _worker_status["started_at"] = datetime.now(UTC).isoformat()
         _worker_status["restarts"] = str(int(_worker_status.get("restarts") or 0) + 1)
         # 배포/재시작으로 stuck된 running 잡 자동 복구
-        try:
-            from backend.db.orm import get_write_session
-            from backend.domain.samba.job.repository import SambaJobRepository
-
-            async with get_write_session() as session:
-                repo = SambaJobRepository(session)
-                recovered = await repo.recover_stuck_running()
-                if recovered:
-                    logger.info(
-                        f"[잡워커] stuck running 잡 {recovered}건 → pending 복구"
-                    )
-        except Exception as e:
-            logger.warning(f"[잡워커] stuck 잡 복구 실패: {e}")
+        await self._recover_stuck_jobs()
         while self._running:
             try:
+                # 주기적 stuck 잡 복구 (배포/DB 끊김 후 running 상태로 남은 잡)
+                self._poll_count += 1
+                if self._poll_count % self.STUCK_CHECK_INTERVAL == 0:
+                    await self._recover_stuck_jobs()
                 executed = await self._poll_once()
                 if not executed:
                     await asyncio.sleep(self.POLL_INTERVAL)
@@ -154,6 +150,25 @@ class JobWorker:
                 await asyncio.sleep(self.POLL_INTERVAL)
         _worker_status["alive"] = "false"
         logger.info("[잡워커] 종료")
+
+    async def _recover_stuck_jobs(self):
+        """stuck running 잡을 pending으로 복구 — 현재 워커가 실행 중인 타입은 제외."""
+        try:
+            from backend.db.orm import get_write_session
+            from backend.domain.samba.job.repository import SambaJobRepository
+
+            async with get_write_session() as session:
+                repo = SambaJobRepository(session)
+                recovered = await repo.recover_stuck_running(
+                    exclude_types=self._active_types,
+                    threshold_sec=self.STUCK_THRESHOLD_SEC,
+                )
+                if recovered:
+                    logger.info(
+                        f"[잡워커] stuck running 잡 {recovered}건 → pending 복구"
+                    )
+        except Exception as e:
+            logger.warning(f"[잡워커] stuck 잡 복구 실패: {e}")
 
     def stop(self):
         self._running = False

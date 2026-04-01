@@ -1163,27 +1163,92 @@ export default function CollectorPage() {
               const scopeLabel = [...imgFilterScopes].map(s => s === 'images' ? '대표' : s === 'detail_images' ? '추가' : '상세').join('+')
               const ok = await showConfirm(`선택된 ${selectedIds.size}개 그룹의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
               if (!ok) return
+              const scope = imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') && imgFilterScopes.has('detail') ? 'all' : imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') ? 'images' : imgFilterScopes.has('detail') ? 'detail' : [...imgFilterScopes][0] || 'images'
               setImgFiltering(true)
+              setAiJobTitle(`이미지 필터링 (${selectedIds.size}개 그룹)`)
+              setAiJobLogs([])
+              setAiJobDone(false)
+              setAiJobModal(true)
+              const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
+              let success = 0
+              let fail = 0
+              let totalTall = 0
+              let totalVisionRemoved = 0
               try {
-                let totalProcessed = 0, totalErrors = 0
-                const scope = imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') && imgFilterScopes.has('detail') ? 'all' : imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') ? 'images' : imgFilterScopes.has('detail') ? 'detail' : [...imgFilterScopes][0] || 'images'
-                for (const gid of [...selectedIds]) {
+                // 그룹별로 상품 목록을 가져와 상품관리와 동일하게 개별 처리
+                const groupIds = [...selectedIds]
+                let totalProducts = 0
+                let processedProducts = 0
+                for (let gi = 0; gi < groupIds.length; gi++) {
+                  const gid = groupIds[gi]
+                  const groupLabel = tree.find(t => t.id === gid)?.keyword?.slice(0, 20) || gid.slice(-8)
+                  addLog(`\n[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — 상품 조회중...`)
                   try {
-                    const r = await proxyApi.filterProductImages([], gid, scope)
-                    if (r.success) {
-                      totalProcessed += r.total || 0; totalErrors += Object.keys(r.errors || {}).length
-                      Object.entries(r.results || {}).forEach(([pid, info]) => {
-                        const ri = info as Record<string, unknown>
-                        const imgs = ri.images as Record<string, unknown> | undefined
-                        if (imgs?.classifications) console.log(`[이미지필터] ${pid}`, imgs.classifications)
-                      })
+                    const { items: products } = await collectorApi.scrollProducts({ search_filter_id: gid, limit: 10000 })
+                    totalProducts += products.length
+                    addLog(`[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — ${products.length}개 상품`)
+                    for (let i = 0; i < products.length; i++) {
+                      const prod = products[i]
+                      const label = prod.name?.slice(0, 30) || prod.id.slice(-8)
+                      processedProducts++
+                      setAiJobTitle(`이미지 필터링 [${processedProducts}/${totalProducts}] ${label}`)
+                      try {
+                        const steps: string[] = []
+                        // 1) 프론트에서 추가이미지 비율 체크 (세로 2배 이상 → 제거)
+                        if (scope === 'detail_images' || scope === 'images' || scope === 'all') {
+                          const imgs = prod.images || []
+                          if (imgs.length > 1) {
+                            const tallCheck = await Promise.all(imgs.slice(1).map(url =>
+                              new Promise<boolean>(resolve => {
+                                const img = new window.Image()
+                                img.onload = () => {
+                                  const isTall = img.naturalHeight > img.naturalWidth * 2
+                                  resolve(isTall)
+                                }
+                                img.onerror = () => resolve(false)
+                                img.src = url
+                                setTimeout(() => resolve(false), 10000)
+                              })
+                            ))
+                            const tallUrls = imgs.slice(1).filter((_, idx) => tallCheck[idx])
+                            if (tallUrls.length > 0) {
+                              const kept = imgs.filter(u => !tallUrls.includes(u))
+                              await collectorApi.updateProduct(prod.id, { images: kept })
+                              totalTall += tallUrls.length
+                              steps.push(`긴이미지 ${tallUrls.length}장 제거`)
+                            }
+                          }
+                        }
+                        // 2) 백엔드 Claude Vision 필터링
+                        const r = await proxyApi.filterProductImages([prod.id], '', scope)
+                        if (r.success) {
+                          success++
+                          const removed = r.total_removed || 0
+                          totalVisionRemoved += removed
+                          if (removed > 0) steps.push(`Vision ${removed}장 제거`)
+                          else steps.push('Vision 변동없음')
+                          addLog(`[${processedProducts}/${totalProducts}] ${label} — ${steps.join(' → ')}`)
+                        } else { fail++; addLog(`[${processedProducts}/${totalProducts}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
+                      } catch (e) { fail++; addLog(`[${processedProducts}/${totalProducts}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
                     }
-                  } catch { totalErrors++ }
+                  } catch (e) {
+                    addLog(`[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — 상품 조회 실패: ${e instanceof Error ? e.message : ''}`)
+                  }
                 }
-                if (totalErrors > 0) showAlert(`필터링: ${totalProcessed}개 완료, ${totalErrors}개 실패`, 'info')
-                else showAlert(`필터링 완료 — ${totalProcessed}개 처리`, 'success')
-              } catch (e) { showAlert(`필터링 오류: ${e instanceof Error ? e.message : '오류'}`, 'error') }
-              finally { setImgFiltering(false); setSelectedIds(new Set()); setSelectAll(false) }
+                const summary = [`성공 ${success}개`, `실패 ${fail}개`]
+                if (totalTall > 0) summary.push(`긴이미지 ${totalTall}장 제거`)
+                if (totalVisionRemoved > 0) summary.push(`Vision ${totalVisionRemoved}장 제거`)
+                setAiJobTitle(`이미지 필터링 완료 (${success}/${totalProducts})`)
+                addLog(`\n완료: ${summary.join(' / ')}`)
+              } catch (e) { addLog(`오류: ${e instanceof Error ? e.message : '오류'}`) }
+              finally {
+                setAiJobDone(true)
+                setImgFiltering(false)
+                const apiCalls = success + fail
+                setLastAiUsage({ calls: apiCalls, tokens: apiCalls * 1000, cost: apiCalls * 15, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
+                setSelectedIds(new Set()); setSelectAll(false)
+                load(); loadTree()
+              }
             }}
             disabled={imgFiltering || selectedIds.size === 0}
             style={{ marginLeft: 'auto', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}

@@ -1026,46 +1026,56 @@ export default function ProductsPage() {
             const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
             let success = 0
             let fail = 0
+            let totalTall = 0
+            let totalVisionRemoved = 0
             for (let i = 0; i < ids.length; i++) {
               const prod = allProducts.find(p => p.id === ids[i])
               const label = prod?.name?.slice(0, 30) || ids[i].slice(-8)
               setAiJobTitle(`이미지 필터링 [${i + 1}/${ids.length}] ${label}`)
               try {
+                const steps: string[] = []
                 // 1) 프론트에서 추가이미지 비율 체크 (세로 2배 이상 → 제거)
                 if (prod && (scope === 'detail_images' || scope === 'images' || scope === 'all')) {
                   const imgs = prod.images || []
-                  console.log(`[긴이미지체크] scope=${scope} images=${imgs.length}장`, imgs)
                   if (imgs.length > 1) {
                     const tallCheck = await Promise.all(imgs.slice(1).map(url =>
                       new Promise<boolean>(resolve => {
                         const img = new window.Image()
                         img.onload = () => {
                           const isTall = img.naturalHeight > img.naturalWidth * 2
-                          console.log(`[긴이미지체크] ${url.slice(-40)} → ${img.naturalWidth}x${img.naturalHeight} tall=${isTall}`)
                           resolve(isTall)
                         }
-                        img.onerror = (e) => { console.log(`[긴이미지체크] 로드실패: ${url.slice(-40)}`, e); resolve(false) }
+                        img.onerror = () => resolve(false)
                         img.src = url
-                        setTimeout(() => { console.log(`[긴이미지체크] 타임아웃: ${url.slice(-40)}`); resolve(false) }, 10000)
+                        setTimeout(() => resolve(false), 10000)
                       })
                     ))
                     const tallUrls = imgs.slice(1).filter((_, i) => tallCheck[i])
-                    console.log(`[긴이미지체크] 결과: ${tallUrls.length}장 제거 대상`, tallUrls)
                     if (tallUrls.length > 0) {
                       const kept = imgs.filter(u => !tallUrls.includes(u))
                       await collectorApi.updateProduct(ids[i], { images: kept })
-                      addLog(`[${i + 1}/${ids.length}] ${label} — 긴이미지 ${tallUrls.length}장 제거`)
+                      totalTall += tallUrls.length
+                      steps.push(`긴이미지 ${tallUrls.length}장 제거`)
                     }
                   }
                 }
                 // 2) 백엔드 Claude Vision 필터링
                 const r = await proxyApi.filterProductImages([ids[i]], '', scope)
-                if (r.success) { success++; addLog(`[${i + 1}/${ids.length}] ${label} — 완료`) }
-                else { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 실패`) }
+                if (r.success) {
+                  success++
+                  const removed = r.total_removed || 0
+                  totalVisionRemoved += removed
+                  if (removed > 0) steps.push(`Vision ${removed}장 제거`)
+                  else steps.push('Vision 변동없음')
+                  addLog(`[${i + 1}/${ids.length}] ${label} — ${steps.join(' → ')}`)
+                } else { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
               } catch (e) { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
             }
+            const summary = [`성공 ${success}개`, `실패 ${fail}개`]
+            if (totalTall > 0) summary.push(`긴이미지 ${totalTall}장 제거`)
+            if (totalVisionRemoved > 0) summary.push(`Vision ${totalVisionRemoved}장 제거`)
             setAiJobTitle(`이미지 필터링 완료 (${success}/${ids.length})`)
-            addLog(`\n완료: 성공 ${success}개 / 실패 ${fail}개`)
+            addLog(`\n완료: ${summary.join(' / ')}`)
             setAiJobDone(true)
             setImgFiltering(false)
             const apiCalls = success + fail

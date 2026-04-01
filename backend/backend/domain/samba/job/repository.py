@@ -106,13 +106,30 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         row = result.first()
         return row[0] == "cancelled" if row else True
 
-    async def recover_stuck_running(self) -> int:
-        """재시작 시 stuck된 running 잡을 pending으로 복구."""
-        stmt = select(SambaJob).where(SambaJob.status == "running")
+    async def recover_stuck_running(
+        self,
+        exclude_types: set[str] | None = None,
+        threshold_sec: int = 0,
+    ) -> int:
+        """stuck된 running 잡을 pending으로 복구.
+
+        exclude_types: 현재 워커가 실행 중인 타입은 제외
+        threshold_sec: >0이면 started_at 기준 N초 이상 경과한 잡만 복구
+        """
+        from sqlalchemy import and_
+
+        conditions = [SambaJob.status == "running"]
+        if exclude_types:
+            conditions.append(SambaJob.job_type.notin_(list(exclude_types)))
+        if threshold_sec > 0:
+            cutoff = datetime.now(UTC) - __import__("datetime").timedelta(seconds=threshold_sec)
+            conditions.append(SambaJob.started_at < cutoff)
+        stmt = select(SambaJob).where(and_(*conditions))
         result = await self.session.execute(stmt)
-        stuck = result.scalars().all()
+        stuck = list(result.scalars().all())
         for job in stuck:
             job.status = "pending"
+            job.started_at = None
             job.progress = 0
             self.session.add(job)
         if stuck:

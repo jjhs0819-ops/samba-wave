@@ -730,7 +730,7 @@ export const proxyApi = {
       }),
   // 이미지 필터링 (모델컷/연출컷/배너 자동 제거)
   filterProductImages: (productIds: string[], filterId?: string, scope?: string) =>
-    request<{ success: boolean; results: Record<string, { action: string; removed?: number; kept?: number; count?: number }>; total: number; errors: Record<string, string> }>(
+    request<{ success: boolean; results: Record<string, { action: string; removed?: number; kept?: number; count?: number }>; total: number; total_removed?: number; errors: Record<string, string> }>(
       `${SAMBA_PREFIX}/proxy/image-filter/filter`, {
         method: 'POST',
         body: JSON.stringify({ product_ids: productIds, filter_id: filterId || '', scope: scope || 'images' }),

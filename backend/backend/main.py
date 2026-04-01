@@ -60,26 +60,33 @@ async def lifespan(app: FastAPI):
     await cache.connect()
 
     # 서버 시작 시 좀비 running Job → pending 복구 (배포 중 끊긴 Job 재처리)
-    try:
-        from backend.db.orm import get_write_session
-        from sqlalchemy import text
+    import logging as _startup_logging
 
-        async with get_write_session() as session:
-            r = await session.execute(
-                text(
-                    "UPDATE samba_jobs SET status = 'pending', started_at = NULL, progress_current = 0 "
-                    "WHERE status = 'running'"
+    _startup_log = _startup_logging.getLogger("backend.startup")
+    for _attempt in range(3):
+        try:
+            from backend.db.orm import get_write_session
+            from sqlalchemy import text
+
+            async with get_write_session() as session:
+                r = await session.execute(
+                    text(
+                        "UPDATE samba_jobs SET status = 'pending', started_at = NULL "
+                        "WHERE status = 'running'"
+                    )
                 )
+                if r.rowcount > 0:
+                    _startup_log.info(
+                        f"[startup] 좀비 running Job {r.rowcount}건 → pending 복구"
+                    )
+                await session.commit()
+            break
+        except Exception as e:
+            _startup_log.warning(
+                f"[startup] Job 복구 실패 ({_attempt + 1}/3): {e}"
             )
-            if r.rowcount > 0:
-                import logging
-
-                logging.getLogger("backend.startup").info(
-                    f"[startup] 좀비 running Job {r.rowcount}건 → pending 복구"
-                )
-            await session.commit()
-    except Exception:
-        pass
+            if _attempt < 2:
+                await asyncio.sleep(2)
 
     # 백그라운드 잡 워커 시작 + watchdog (죽으면 자동 재시작)
     from backend.domain.samba.job.worker import JobWorker

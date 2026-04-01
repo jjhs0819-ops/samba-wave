@@ -91,17 +91,7 @@ async def list_jobs(
     ]
 
 
-@router.get("/{job_id}")
-async def get_job(
-    job_id: str,
-    session: AsyncSession = Depends(get_read_session_dependency),
-):
-    """잡 상태 + 진행률 조회."""
-    svc = SambaJobService(SambaJobRepository(session))
-    job = await svc.get_job(job_id)
-    if not job:
-        raise HTTPException(404, "작업을 찾을 수 없습니다")
-    return job
+# ── 정적 경로 라우트 (/{job_id}보다 먼저 등록해야 라우트 충돌 방지) ──
 
 
 @router.get("/shipment-logs")
@@ -121,33 +111,6 @@ async def clear_shipment_log_buffer():
     from backend.domain.samba.job.worker import clear_shipment_logs
 
     clear_shipment_logs()
-    return {"ok": True}
-
-
-@router.get("/{job_id}/logs")
-async def get_job_logs(
-    job_id: str,
-    since: int = Query(0, ge=0),
-):
-    """Job 실시간 로그 조회."""
-    from backend.domain.samba.job.worker import get_job_logs
-
-    return {"logs": get_job_logs(job_id, since)}
-
-
-@router.delete("/{job_id}")
-async def cancel_job(
-    job_id: str,
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """잡 취소 (pending/running 모두 가능)."""
-    repo = SambaJobRepository(session)
-    ok = await repo.cancel_job(job_id)
-    if not ok:
-        raise HTTPException(
-            400, "취소할 수 없는 상태입니다 (pending/running만 취소 가능)"
-        )
-    await session.commit()
     return {"ok": True}
 
 
@@ -177,3 +140,46 @@ async def cancel_all_jobs(
     # _run_transmit 시작 시 잔존 플래그를 자체 해제하므로 다음 전송에 영향 없음
 
     return {"ok": True, "cancelled": r.rowcount}
+
+
+# ── 경로 파라미터 라우트 (정적 경로 뒤에 배치) ──
+
+
+@router.get("/{job_id}")
+async def get_job(
+    job_id: str,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """잡 상태 + 진행률 조회."""
+    svc = SambaJobService(SambaJobRepository(session))
+    job = await svc.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "작업을 찾을 수 없습니다")
+    return job
+
+
+@router.get("/{job_id}/logs")
+async def get_job_logs(
+    job_id: str,
+    since: int = Query(0, ge=0),
+):
+    """Job 실시간 로그 조회."""
+    from backend.domain.samba.job.worker import get_job_logs
+
+    return {"logs": get_job_logs(job_id, since)}
+
+
+@router.delete("/{job_id}")
+async def cancel_job(
+    job_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """잡 취소 (pending/running 모두 가능)."""
+    repo = SambaJobRepository(session)
+    ok = await repo.cancel_job(job_id)
+    if not ok:
+        raise HTTPException(
+            400, "취소할 수 없는 상태입니다 (pending/running만 취소 가능)"
+        )
+    await session.commit()
+    return {"ok": True}

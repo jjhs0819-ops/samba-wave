@@ -952,12 +952,14 @@ async def refresh_products_bulk(
     products: List[Any],
     source: str = "autotune",
     max_concurrency: int | None = None,
+    on_result: Any = None,
 ) -> tuple[List[RefreshResult], BulkRefreshResult]:
     """여러 상품을 소싱처별로 그룹핑 후 병렬 갱신.
 
     소싱처당 동시 요청 수를 CONCURRENCY_PER_SITE로 제한한다.
     max_concurrency: 지정 시 SITE_CONCURRENCY 대신 이 값 사용
     source: autotune | manual | transmit — 로그 출처 태그
+    on_result: 각 상품 갱신 완료 시 호출되는 콜백 (product, result) → 즉시 전송 등
     """
     if not products:
         return [], BulkRefreshResult()
@@ -1035,6 +1037,12 @@ async def refresh_products_bulk(
                             )
                     except asyncio.TimeoutError:
                         pass  # 재시도도 실패 → 원래 에러 유지
+                # 콜백 호출 (리프레시 직후 즉시 전송 등)
+                if on_result and not r.error:
+                    try:
+                        await on_result(p, r)
+                    except Exception as cb_err:
+                        logger.warning("[오토튠] on_result 콜백 오류: %s", cb_err)
                 # 소싱처별 적응형 인터벌 (기본값은 소싱처별 base_interval)
                 interval = _site_intervals.get(site, base_interval)
                 await asyncio.sleep(interval)
