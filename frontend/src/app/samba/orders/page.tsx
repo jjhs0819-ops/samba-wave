@@ -768,7 +768,7 @@ export default function OrdersPage() {
         <input style={{ ...inputStyle, width: '140px' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
         <button style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>검색</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
-          <select style={{ ...inputStyle, width: '200px' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체마켓보기</option>
             {(() => {
               const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
@@ -785,16 +785,16 @@ export default function OrdersPage() {
               ))
             })()}
           </select>
-          <select style={{ ...inputStyle, width: '110px' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체사이트보기</option>{['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','GrandStage','OKmall','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}</select>
-          <select style={{ ...inputStyle, width: '130px' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '110px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체사이트보기</option>{['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','GrandStage','OKmall','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}</select>
+          <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
             <option value="">주문계정</option>
             {accounts.map(a => <option key={a.id} value={a.id}>{a.market_name || a.market_type}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '112px' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
+          <select style={{ ...inputStyle, width: '112px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
             <option value="">마켓상태 보기</option>
             {MARKET_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '118px' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '118px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
             <option value="">입력값</option>
             <option value="has_order">주문번호입력</option>
             <option value="no_order">주문번호 미입력</option>
@@ -802,14 +802,14 @@ export default function OrdersPage() {
             <option value="kkadaegi">까대기</option>
             <option value="gift">선물</option>
           </select>
-          <select style={{ ...inputStyle, width: '130px' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="active">접수/대기/사무실</option>
             <option value="">전체 주문상태</option>
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
           </select>
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
-          <select style={{ ...inputStyle, width: '88px' }}><option>-- 정렬 --</option><option>주문일자▲</option><option>주문일자▼</option></select>
-          <select style={{ ...inputStyle, width: '92px' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
+          <select style={{ ...inputStyle, width: '88px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}><option>-- 정렬 --</option><option>주문일자▲</option><option>주문일자▼</option></select>
+          <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
             <option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
           </select>
         </div>
