@@ -66,9 +66,38 @@ export default function ShipmentsPage() {
   const [loopRestart, setLoopRestart] = useState(false)
   const sinceIdxRef = useRef(0)  // 링 버퍼 폴링용
 
+  // 실시간 Job 큐 상태
+  const [jobQueueStatus, setJobQueueStatus] = useState<{ running: number, pending: number }>({ running: 0, pending: 0 })
+  const jobQueuePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   // 컴포넌트 언마운트 시 잡 폴링 정리
   useEffect(() => {
-    return () => { if (jobPollRef.current) clearInterval(jobPollRef.current) }
+    return () => {
+      if (jobPollRef.current) clearInterval(jobPollRef.current)
+      if (jobQueuePollRef.current) clearInterval(jobQueuePollRef.current)
+    }
+  }, [])
+
+  // Job 큐 상태 폴링 (5초 간격)
+  useEffect(() => {
+    const fetchJobQueue = async () => {
+      try {
+        const { API_BASE_URL: apiBase } = await import('@/config/api')
+        const [runRes, penRes] = await Promise.all([
+          fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=100`),
+          fetch(`${apiBase}/api/v1/samba/jobs?status=pending&limit=100`),
+        ])
+        const runJobs = await runRes.json()
+        const penJobs = await penRes.json()
+        setJobQueueStatus({
+          running: Array.isArray(runJobs) ? runJobs.length : 0,
+          pending: Array.isArray(penJobs) ? penJobs.length : 0,
+        })
+      } catch { /* ignore */ }
+    }
+    fetchJobQueue()
+    jobQueuePollRef.current = setInterval(fetchJobQueue, 5000)
+    return () => { if (jobQueuePollRef.current) clearInterval(jobQueuePollRef.current) }
   }, [])
 
   // 페이지 로드 시 링 버퍼에서 기존 로그 복원 + 실행 중인 Job 자동 연결
@@ -707,7 +736,20 @@ export default function ShipmentsPage() {
       {/* 전송 로그 */}
       <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
-          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>전송 로그</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>전송 로그</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem' }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0,
+                background: jobQueueStatus.running > 0 ? '#51CF66' : jobQueueStatus.pending > 0 ? '#FAB005' : '#444',
+              }} />
+              <span style={{ color: jobQueueStatus.running > 0 ? '#51CF66' : jobQueueStatus.pending > 0 ? '#FAB005' : '#555' }}>
+                {jobQueueStatus.running > 0 ? `전송 중 ${jobQueueStatus.running}건` : jobQueueStatus.pending > 0 ? `대기 ${jobQueueStatus.pending}건` : '대기 잡 없음'}
+              </span>
+              {jobQueueStatus.pending > 0 && jobQueueStatus.running > 0 && (
+                <span style={{ color: '#FAB005' }}>+ 대기 {jobQueueStatus.pending}건</span>
+              )}
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>복사</button>
             <button onClick={async () => {
