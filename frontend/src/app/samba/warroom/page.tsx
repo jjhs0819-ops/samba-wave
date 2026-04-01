@@ -220,6 +220,42 @@ export default function WarroomPage() {
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
   const prevCyclesRef = useRef(0)
   const falseCountRef = useRef(0)
+
+  // 소싱처별 인터벌 설정
+  const INTERVAL_SITES = [
+    { key: 'MUSINSA', label: '무신사' },
+    { key: 'SSG', label: 'SSG' },
+    { key: 'LOTTEON', label: '롯데ON' },
+    { key: 'FashionPlus', label: '패션플러스' },
+  ]
+  const [siteIntervals, setSiteIntervals] = useState<Record<string, string>>({})
+  const intervalTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+
+  // 마운트 시 서버에서 현재 인터벌 로드
+  useEffect(() => {
+    collectorApi.autotuneStatus().then(res => {
+      if (res.site_intervals) {
+        const init: Record<string, string> = {}
+        for (const [site, val] of Object.entries(res.site_intervals)) {
+          init[site] = String(val)
+        }
+        setSiteIntervals(init)
+      }
+    }).catch(() => {})
+  }, [])
+
+  const handleIntervalChange = useCallback((site: string, value: string) => {
+    setSiteIntervals(prev => ({ ...prev, [site]: value }))
+    // 디바운스 — 0.5초 후 자동 저장
+    if (intervalTimerRef.current[site]) clearTimeout(intervalTimerRef.current[site])
+    intervalTimerRef.current[site] = setTimeout(async () => {
+      const num = parseFloat(value)
+      if (isNaN(num) || num < 0.1 || num > 60) return
+      try {
+        await collectorApi.autotuneUpdateInterval(site, num)
+      } catch { /* ignore */ }
+    }, 500)
+  }, [])
   const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number) => {
     // 별도 스레드 타이밍 차이 대응 — 3회 연속 false일 때만 정지 표시
     if (!running) {
@@ -395,6 +431,32 @@ export default function WarroomPage() {
               cursor: 'pointer',
             }}
           >강제중단</button>
+          <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.1)', margin: '0 0.25rem' }} />
+          {INTERVAL_SITES.map(({ key, label }) => (
+            <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+              <span style={{ fontSize: '0.7rem', color: '#aaa', whiteSpace: 'nowrap' }}>{label}</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={siteIntervals[key] ?? ''}
+                onChange={e => handleIntervalChange(key, e.target.value)}
+                style={{
+                  width: '2.5rem',
+                  padding: '0.1rem 0.25rem',
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  borderRadius: '4px',
+                  color: '#FF8C00',
+                  fontSize: '0.75rem',
+                  textAlign: 'center',
+                  outline: 'none',
+                }}
+                onFocus={e => { e.target.style.borderColor = '#FF8C00' }}
+                onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.15)' }}
+              />
+            </span>
+          ))}
+          <span style={{ fontSize: '0.65rem', color: '#666' }}>초</span>
         </div>
       </div>
 

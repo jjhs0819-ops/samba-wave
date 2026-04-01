@@ -269,6 +269,13 @@ def get_site_intervals_info() -> Dict[str, Any]:
     }
 
 
+def set_site_base_interval(site: str, interval: float) -> None:
+    """소싱처 기본 인터벌 동적 변경 (초)."""
+    SITE_BASE_INTERVAL[site] = interval
+    # 현재 적응형 인터벌도 함께 갱신
+    _site_intervals[site] = interval
+
+
 @dataclass
 class RefreshResult:
     """단일 상품 갱신 결과."""

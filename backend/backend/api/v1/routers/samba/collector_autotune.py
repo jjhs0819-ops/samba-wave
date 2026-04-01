@@ -1088,6 +1088,11 @@ async def autotune_status():
     except Exception:
         refreshed_24h = 0
 
+    # 소싱처별 인터벌 정보
+    from backend.domain.samba.collector.refresher import get_site_intervals_info
+
+    intervals_info = get_site_intervals_info()
+
     return {
         "running": _autotune_running_event.is_set()
         and _autotune_task is not None
@@ -1097,7 +1102,25 @@ async def autotune_status():
         "refreshed_count": refreshed_24h,
         "target": "registered",
         "breaker_tripped": tripped,
+        "site_intervals": intervals_info.get("base_intervals", {}),
     }
+
+
+class AutotuneIntervalRequest(BaseModel):
+    site: str
+    interval: float  # 초
+
+
+@router.post("/autotune/interval")
+async def autotune_update_interval(body: AutotuneIntervalRequest):
+    """소싱처별 오토튠 인터벌 동적 변경 (초 단위)."""
+    from backend.domain.samba.collector.refresher import set_site_base_interval
+
+    if body.interval < 0.1 or body.interval > 60:
+        return {"ok": False, "error": "인터벌은 0.1~60초 범위만 가능합니다"}
+    set_site_base_interval(body.site, body.interval)
+    logger.info("[오토튠] 인터벌 변경: %s → %.1f초", body.site, body.interval)
+    return {"ok": True, "site": body.site, "interval": body.interval}
 
 
 @router.post("/autotune/breaker-reset")
