@@ -178,10 +178,30 @@ export default function ShipmentsPage() {
   // 카테고리 매핑 데이터
   const [categoryMappings, setCategoryMappings] = useState<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>([])
 
+  // 검색 필터가 사용자에 의해 변경되었는지 추적
+  const userFilterChangedRef = useRef(false)
+
+  // 필터 변경 시 URL selected 파라미터 무시 + 선택 초기화
+  const onFilterChange = useCallback(() => {
+    userFilterChangedRef.current = true
+    setSelectedProducts([])
+    // URL에서 selected 파라미터 제거
+    const url = new URL(window.location.href)
+    if (url.searchParams.has('selected')) {
+      url.searchParams.delete('selected')
+      url.searchParams.delete('sites')
+      url.searchParams.delete('autoAll')
+      url.searchParams.delete('priceOnly')
+      window.history.replaceState({}, '', url.toString())
+    }
+  }, [])
+
   const load = useCallback(async () => {
     setLoading(true)
-    // URL에서 선택된 상품 ID 먼저 확인
-    const preIds = new URLSearchParams(window.location.search).get('selected')?.split(',').filter(Boolean) || []
+    // URL에서 선택된 상품 ID 먼저 확인 (단, 사용자가 필터를 변경했으면 무시)
+    const preIds = userFilterChangedRef.current
+      ? []
+      : new URLSearchParams(window.location.search).get('selected')?.split(',').filter(Boolean) || []
 
     // 검색 조건에 따라 서버 API 파라미터 구성
     const scrollParams: Record<string, string | number> = { skip: (currentPage - 1) * pageSize, limit: pageSize }
@@ -571,7 +591,7 @@ export default function ShipmentsPage() {
         {/* 검색항목 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>검색항목</span>
-          <select value={searchField} onChange={e => setSearchField(e.target.value)} style={{ ...inputStyle, width: '100px' }}>
+          <select value={searchField} onChange={e => { onFilterChange(); setSearchField(e.target.value) }} style={{ ...inputStyle, width: '100px' }}>
             <option value="name">검색항목</option>
             <option value="brand">브랜드</option>
             <option value="name_all">상품명+등록명</option>
@@ -579,19 +599,19 @@ export default function ShipmentsPage() {
             <option value="no">상품번호</option>
             <option value="policy">정책</option>
           </select>
-          <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)} placeholder={searchField === 'name' ? '상품명 검색' : searchField === 'no' ? '상품번호 검색' : '그룹명 검색'} style={{ ...inputStyle, width: '200px' }} />
+          <input type="text" value={searchText} onChange={e => { onFilterChange(); setSearchText(e.target.value) }} placeholder={searchField === 'name' ? '상품명 검색' : searchField === 'no' ? '상품번호 검색' : '그룹명 검색'} style={{ ...inputStyle, width: '200px' }} />
         </div>
         {/* 소싱사이트 필터 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>소싱사이트</span>
-          <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ ...inputStyle, width: '140px' }}>
+          <select value={siteFilter} onChange={e => { onFilterChange(); setSiteFilter(e.target.value) }} style={{ ...inputStyle, width: '140px' }}>
             {SOURCE_SITES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
         {/* 마켓등록 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>마켓등록</span>
-          <select value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)} style={{ ...inputStyle, width: '100px' }}>
+          <select value={registrationFilter} onChange={e => { onFilterChange(); setRegistrationFilter(e.target.value) }} style={{ ...inputStyle, width: '100px' }}>
             <option>전체</option><option>등록</option><option>미등록</option><option>품절</option>
           </select>
         </div>
@@ -608,7 +628,7 @@ export default function ShipmentsPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '2px solid #181C28', flexWrap: 'wrap', gap: '8px' }}>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={load} style={{ padding: '6px 40px', fontSize: '0.875rem', fontWeight: 700, background: '#2A2F3E', border: '1px solid #3D4560', color: '#E5E5E5', borderRadius: '6px', cursor: 'pointer' }}>검색하기</button>
-            <button onClick={() => { setSearchText(''); setSiteFilter('전체'); setRegistrationFilter('전체'); setSearchField('name') }} style={{ padding: '6px 24px', fontSize: '0.875rem', background: 'transparent', border: '1px solid #2A3040', color: '#9AA5C0', borderRadius: '6px', cursor: 'pointer' }}>초기화</button>
+            <button onClick={() => { onFilterChange(); setSearchText(''); setSiteFilter('전체'); setRegistrationFilter('전체'); setSearchField('name') }} style={{ padding: '6px 24px', fontSize: '0.875rem', background: 'transparent', border: '1px solid #2A3040', color: '#9AA5C0', borderRadius: '6px', cursor: 'pointer' }}>초기화</button>
           </div>
         </div>
 
@@ -914,7 +934,7 @@ export default function ShipmentsPage() {
         {/* 상단 탭 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid #2D2D2D', gap: '8px' }}>
           <span style={{ fontSize: '0.8rem', color: '#888' }}>총 <span style={{ color: '#FF8C00', fontWeight: 600 }}>{totalCount.toLocaleString()}</span> 개의 상품이 검색되었습니다.</span>
-          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '250px', marginLeft: 'auto' }}>
+          <select value={sortBy} onChange={e => { onFilterChange(); setSortBy(e.target.value) }} style={{ ...inputStyle, width: '250px', marginLeft: 'auto' }}>
             <option value="updated_at_desc">상품업데이트 날짜순 ▼</option>
             <option value="updated_at_asc">상품업데이트 날짜순 ▲</option>
             <option value="collected_at_desc">상품수집 날짜순 ▼</option>
