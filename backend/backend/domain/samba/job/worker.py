@@ -389,15 +389,18 @@ class JobWorker:
         from backend.db.orm import get_write_session
 
         total = len(product_ids)
-        await repo.update_progress(job.id, 0, total)
+
+        # 이어하기: 이전 진행 위치를 먼저 읽은 후 진행률 갱신
+        # (update_progress가 identity map으로 job.current를 덮어쓰기 때문)
+        start_from = job.current or 0
+        await repo.update_progress(job.id, start_from, total)
 
         results = []
         success_count = 0
         fail_count = 0
         failed_pids: list[str] = []  # 재시도 대상
 
-        # 상품별 전송 루프 (이어하기: 이전 진행 위치부터 재개)
-        start_from = job.current or 0
+        # 상품별 전송 루프
         if start_from > 0:
             _add_job_log(job.id, f"이전 진행 {start_from}/{total}건 이후부터 재개")
             logger.info(f"[잡워커] 전송 재개: {job.id} — {start_from}/{total}건부터")
