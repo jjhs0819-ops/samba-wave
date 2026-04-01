@@ -784,4 +784,40 @@ async def sync_returns_from_markets(
     except Exception as _upd_err:
         logger.warning(f"[반품동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
 
+    # 롯데ON API 버그 수정: clmRsnCd=300번대(반품 사유)가 교환으로 잘못 저장된 레코드 일괄 수정
+    # reason 필드에 clmRsnCd가 저장되며, 300번대(3으로 시작)는 반품 사유이므로 type=return으로 교정
+    try:
+        from sqlalchemy import text as _sa_text
+        # 1단계: 연결된 원주문 shipping_status를 교환 상태에서 반품요청으로 수정
+        await session.execute(_sa_text("""
+            UPDATE samba_order o
+            SET shipping_status = '반품요청'
+            FROM samba_return r
+            WHERE r.order_id = o.id
+              AND r.type = 'exchange'
+              AND r.market = '롯데ON'
+              AND r.reason ~ '^3[0-9]+'
+              AND o.shipping_status IN (
+                  '교환요청', '교환회수완료', '교환재배송', '교환완료'
+              )
+        """))
+        # 2단계: samba_return 타입 교환→반품 수정
+        result_repair = await session.execute(_sa_text("""
+            UPDATE samba_return
+            SET type = 'return',
+                market_order_status = '반품요청'
+            WHERE type = 'exchange'
+              AND market = '롯데ON'
+              AND reason ~ '^3[0-9]+'
+            RETURNING id, order_id
+        """))
+        repaired = result_repair.rowcount
+        if repaired > 0:
+            logger.warning(
+                f"[반품동기화] 롯데ON 교환→반품 재분류 수정: {repaired}건 "
+                f"(clmRsnCd 300번대 오분류 레코드)"
+            )
+    except Exception as _repair_err:
+        logger.warning(f"[반품동기화] 롯데ON 반품 재분류 수정 실패: {_repair_err}")
+
     return {"total_synced": total_synced, "results": results}
