@@ -244,7 +244,7 @@ async def _autotune_loop():
                                 "site": "MUSINSA",
                                 "product_id": "",
                                 "name": "",
-                                "msg": f"[{_kst.strftime('%H:%M:%S')}] -- 사이클 완료: {_ok_count}건 성공, {_err_count}건 실패 (타임아웃 {_timeout_count}건) / 총 {len(results)}건 --",
+                                "msg": f"[{_kst.strftime('%H:%M:%S')}] -- 사이클 완료: {_ok_count:,}건 성공, {_err_count:,}건 실패 (타임아웃 {_timeout_count:,}건) / 총 {len(results):,}건 --",
                                 "level": "info",
                                 "source": "autotune",
                             }
@@ -272,7 +272,7 @@ async def _autotune_loop():
                                 await monitor.emit(
                                     "scheduler_tick",
                                     "info",
-                                    summary=f"오토튠 — 대상 {filtered_count}건, 갱신 {summary.refreshed}건 (성공 {_ok_count}, 실패 {_err_count}) | {_duration_sec}초, {_rate}건/초",
+                                    summary=f"오토튠 — 대상 {filtered_count:,}건, 갱신 {summary.refreshed:,}건 (성공 {_ok_count:,}, 실패 {_err_count:,}) | {_duration_sec:,}초, {_rate:,}건/초",
                                     detail={
                                         "total": filtered_count,
                                         "refreshed": summary.refreshed,
