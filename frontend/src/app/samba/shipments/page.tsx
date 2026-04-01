@@ -171,28 +171,9 @@ export default function ShipmentsPage() {
     }
   }, [loopRestart, products])
 
-  // 페이지 이탈 시 비상정지 (전송 중일 때만)
+  // 페이지 이탈해도 서버 잡은 계속 실행 (오토튠과 동일 — 다시 열면 자동 연결)
   const transmittingRef = useRef(false)
   useEffect(() => { transmittingRef.current = transmitting }, [transmitting])
-  useEffect(() => {
-    const stopTransmitOnly = () => {
-      if (!transmittingRef.current) return
-      import('@/config/api').then(({ API_BASE_URL }) => {
-        navigator.sendBeacon(`${API_BASE_URL}/api/v1/samba/shipments/cancel`)
-      }).catch(() => {})
-    }
-    window.addEventListener('beforeunload', stopTransmitOnly)
-    return () => {
-      window.removeEventListener('beforeunload', stopTransmitOnly)
-      if (!transmittingRef.current) return
-      import('@/config/api').then(({ API_BASE_URL }) => {
-        fetch(`${API_BASE_URL}/api/v1/samba/shipments/cancel`, { method: 'POST' }).catch(() => {})
-        if (activeJobIdRef.current) {
-          fetch(`${API_BASE_URL}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' }).catch(() => {})
-        }
-      }).catch(() => {})
-    }
-  }, [])
 
   // 카테고리 매핑 데이터
   const [categoryMappings, setCategoryMappings] = useState<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>([])
