@@ -1,4 +1,4 @@
-# Base Image: NVIDIA PyTorch container with CUDA, cuDNN, and PyTorch pre-installed.
+# Base Image
 FROM python:3.12.3-slim
 
 # Set environment variables for non-interactive installs and unbuffered python output.
