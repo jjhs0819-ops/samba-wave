@@ -21,9 +21,11 @@ fi
 echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
-  # Uvicorn 단일 프로세스 — gunicorn 제거로 멀티프로세스 완전 차단
-  echo "Starting production server with Uvicorn (single process)..."
-  exec uv run -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
+  # Uvicorn 순수 단일 프로세스 — gunicorn 프로세스 매니저 우회
+  # uv run -m uvicorn은 gunicorn 감지 시 자동 멀티프로세스 → OOM
+  # python -c로 직접 uvicorn.run() 호출하여 단일 프로세스 강제
+  echo "Starting production server with Uvicorn (single process, no gunicorn)..."
+  exec uv run python -c "import uvicorn; uvicorn.run('backend.main:app', host='0.0.0.0', port=8080)"
 else
   # Run the development server with Uvicorn and --reload
   echo "Starting development server with Uvicorn..."
