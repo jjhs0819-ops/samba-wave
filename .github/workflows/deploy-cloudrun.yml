@@ -1,13 +1,13 @@
 name: Deploy Backend to Cloud Run
 
-  on:
+on:
     workflow_dispatch:
     push:
       branches: [main]
       paths:
         - 'backend/**'
 
-  jobs:
+jobs:
     deploy:
       name: Deploy to Cloud Run
       runs-on: ubuntu-latest
@@ -53,4 +53,4 @@ name: Deploy Backend to Cloud Run
               --env-vars-file /tmp/cloudrun-env.yaml \
               --add-cloudsql-instances project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db \  
               --clear-base-image \
-              --quiet 
+              --quiet
