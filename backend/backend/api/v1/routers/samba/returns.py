@@ -365,6 +365,110 @@ async def sync_returns_from_markets(
     results: list[dict[str, Any]] = []
     total_synced = 0
 
+    # 마켓 타입 → 한글 마켓명
+    market_label_map: dict[str, str] = {
+        "smartstore": "스마트스토어",
+        "coupang": "쿠팡",
+        "11st": "11번가",
+        "lotteon": "롯데ON",
+        "ssg": "SSG",
+        "gsshop": "GS샵",
+    }
+
+    # 주문 status → 반품 type 매핑
+    _ORDER_STATUS_TO_RETURN_TYPE: dict[str, str] = {
+        "cancelled": "cancel",
+        "cancel_requested": "cancel",
+        "returned": "return",
+        "return_requested": "return",
+    }
+
+    # ── 1단계: DB 기반 — samba_order에서 취소/반품 주문 직접 조회 ──
+    from sqlalchemy import text as sa_text
+
+    account_ids = [acc.id for acc in active_accounts]
+    if account_ids:
+        # 취소/반품 상태 주문 중 아직 samba_return이 없는 것
+        placeholders = ", ".join(f":aid_{i}" for i in range(len(account_ids)))
+        bind_params = {f"aid_{i}": aid for i, aid in enumerate(account_ids)}
+        bind_params["days"] = body.days
+
+        claim_orders_query = sa_text(f"""
+            SELECT o.* FROM samba_order o
+            LEFT JOIN samba_return r ON r.order_id = o.id
+            WHERE o.channel_id IN ({placeholders})
+              AND o.status IN ('cancelled','cancel_requested','returned','return_requested')
+              AND o.created_at >= now() - make_interval(days => :days)
+              AND r.id IS NULL
+            ORDER BY o.created_at DESC
+        """)
+        result = await session.execute(claim_orders_query, bind_params)
+        claim_orders = result.mappings().all()
+
+        db_synced = 0
+        for row in claim_orders:
+            order_status = row["status"]
+            return_type = _ORDER_STATUS_TO_RETURN_TYPE.get(order_status)
+            if not return_type:
+                continue
+
+            # 해당 주문의 계정 찾기
+            acct = next((a for a in active_accounts if a.id == row["channel_id"]), None)
+            if not acct:
+                continue
+
+            from datetime import UTC, datetime
+
+            is_completed = order_status in ("cancelled", "returned")
+            ret_status = "completed" if is_completed else "requested"
+            shipping = row.get("shipping_status", "") or ""
+
+            timeline_entries = [
+                {
+                    "date": datetime.now(UTC).isoformat(),
+                    "status": ret_status,
+                    "message": f"{shipping or order_status} (주문 데이터 기반 동기화)",
+                }
+            ]
+
+            return_data: dict[str, Any] = {
+                "order_id": row["id"],
+                "order_number": row["order_number"],
+                "type": return_type,
+                "reason": None,
+                "description": row.get("product_name") or None,
+                "quantity": row.get("quantity", 1) or 1,
+                "requested_amount": float(row.get("sale_price", 0) or 0),
+                "product_image": row.get("product_image"),
+                "product_name": row.get("product_name"),
+                "customer_name": row.get("customer_name"),
+                "customer_phone": row.get("customer_phone"),
+                "product_location": _extract_city_district(row.get("customer_address")),
+                "customer_address": row.get("customer_address"),
+                "business_name": acct.business_name or acct.market_name or "",
+                "market": market_label_map.get(acct.market_type, acct.market_type),
+                "market_order_status": shipping,
+                "return_link": row.get("source_url") or "",
+                "return_source": row.get("source_site") or "",
+                "region": _extract_city_district(row.get("customer_address")),
+                "return_request_date": datetime.now(UTC),
+                "order_date": row.get("created_at"),
+                "status": ret_status,
+                "timeline": timeline_entries,
+                "notes": [],
+            }
+            if is_completed:
+                return_data["approval_date"] = datetime.now(UTC)
+                return_data["completion_date"] = datetime.now(UTC)
+
+            await svc.repo.create_async(**return_data)
+            db_synced += 1
+
+        if db_synced > 0:
+            total_synced += db_synced
+            logger.info(f"[반품동기화] DB 기반: {db_synced}건 신규 저장")
+
+    # ── 2단계: API 기반 — 마켓별 실시간 클레임 조회 (추가 보완) ──
     for account in active_accounts:
         market_type = account.market_type
         extras = account.additional_fields or {}
@@ -400,7 +504,6 @@ async def sync_returns_from_markets(
                 claims_data: list[dict[str, Any]] = []
                 for ro in raw_orders:
                     po = ro.get("productOrder", ro)
-                    order_info = ro.get("order", {})
                     claim_type = po.get("claimType", "")
                     claim_status = po.get("claimStatus", "")
                     if not claim_type or not claim_status:
@@ -417,8 +520,6 @@ async def sync_returns_from_markets(
                         po.get("totalPaymentAmount", 0) or po.get("unitPrice", 0) or 0
                     )
                     quantity = po.get("quantity", 1) or 1
-
-                    # 클레임 사유
                     claim_reason = (
                         po.get("claimReason", "") or po.get("returnReason", "") or ""
                     )
@@ -441,35 +542,30 @@ async def sync_returns_from_markets(
                         }
                     )
 
-                # 기존 주문 매칭 및 반품 레코드 생성/업데이트
+                # API 클레임 → 반품 레코드 생성/업데이트
                 synced = 0
                 for claim in claims_data:
                     product_order_id = claim["product_order_id"]
-                    # 주문 테이블에서 order_number로 매칭
                     existing_order = await order_repo.find_by_async(
                         order_number=product_order_id
                     )
                     if not existing_order:
-                        # 주문이 아직 동기화 안 된 경우 — 건너뜀
                         continue
 
                     order_id = existing_order.id
-                    # 이미 동일한 반품 기록이 있는지 확인 (order_id 기준)
                     existing_returns = await svc.repo.filter_by_async(order_id=order_id)
 
                     if existing_returns:
-                        # 같은 타입 우선, 없으면 첫 번째 레코드 사용
+                        # 기존 레코드 업데이트
                         existing_ret = next(
                             (r for r in existing_returns if r.type == claim["type"]),
                             existing_returns[0],
                         )
-                        # 타입이 변경된 경우 (교환→반품 등) 업데이트
                         if existing_ret.type != claim["type"]:
                             await svc.repo.update_async(
                                 existing_ret.id, type=claim["type"]
                             )
                         new_status = claim["status"]
-                        # 상태 진행도: requested → approved → completed/rejected
                         status_priority = {
                             "requested": 0,
                             "approved": 1,
@@ -488,7 +584,8 @@ async def sync_returns_from_markets(
                                     "date": datetime.now(UTC).isoformat(),
                                     "status": new_status,
                                     "message": _CLAIM_STATUS_LABEL.get(
-                                        claim["claim_status_raw"], f"상태: {new_status}"
+                                        claim["claim_status_raw"],
+                                        f"상태: {new_status}",
                                     ),
                                 }
                             )
@@ -527,7 +624,7 @@ async def sync_returns_from_markets(
                             await svc.repo.update_async(existing_ret.id, **patch_fields)
                         continue
 
-                    # 신규 반품 생성
+                    # 신규 반품 생성 (API 데이터 기반 — DB보다 상세)
                     from datetime import UTC, datetime
 
                     claim_status_raw = claim["claim_status_raw"]
@@ -542,17 +639,7 @@ async def sync_returns_from_markets(
                         }
                     ]
 
-                    # 마켓 타입 → 한글 마켓명
-                    market_label_map: dict[str, str] = {
-                        "smartstore": "스마트스토어",
-                        "coupang": "쿠팡",
-                        "11st": "11번가",
-                        "lotteon": "롯데ON",
-                        "ssg": "SSG",
-                        "gsshop": "GS샵",
-                    }
-
-                    return_data: dict[str, Any] = {
+                    return_data = {
                         "order_id": order_id,
                         "order_number": product_order_id,
                         "type": claim["type"],
@@ -587,7 +674,6 @@ async def sync_returns_from_markets(
                         "timeline": timeline_entries,
                         "notes": [],
                     }
-                    # 이미 진행된 상태이면 날짜도 설정
                     if claim["status"] in ("approved", "completed"):
                         return_data["approval_date"] = datetime.now(UTC)
                     if claim["status"] == "completed":
@@ -596,17 +682,18 @@ async def sync_returns_from_markets(
                     await svc.repo.create_async(**return_data)
                     synced += 1
 
+                api_fetched = len(claims_data)
                 total_synced += synced
                 results.append(
                     {
                         "account": label,
                         "status": "success",
-                        "fetched": len(claims_data),
+                        "fetched": api_fetched,
                         "synced": synced,
                     }
                 )
                 logger.info(
-                    f"[반품동기화] {label}: 클레임 {len(claims_data)}건 조회, {synced}건 신규 저장"
+                    f"[반품동기화] {label}: API {api_fetched}건, 신규 {synced}건"
                 )
 
             else:
@@ -622,5 +709,17 @@ async def sync_returns_from_markets(
         except Exception as e:
             logger.error(f"[반품동기화] {label} 실패: {e}")
             results.append({"account": label, "status": "error", "message": str(e)})
+
+    # db_synced가 있으면 결과에 포함
+    if account_ids and db_synced > 0:
+        results.insert(
+            0,
+            {
+                "account": "DB 주문 기반",
+                "status": "success",
+                "fetched": len(claim_orders),
+                "synced": db_synced,
+            },
+        )
 
     return {"total_synced": total_synced, "results": results}
