@@ -146,22 +146,10 @@ async def lifespan(app: FastAPI):
     _log = logging.getLogger("backend.shutdown")
     _log.info("[shutdown] SIGTERM 수신 — graceful shutdown 시작")
 
-    # 1) running 잡 → pending 복구 (최우선 — 10초 안에 완료해야 함)
-    try:
-        from backend.db.orm import get_write_session
-        from sqlalchemy import text
-
-        async with get_write_session() as session:
-            r = await session.execute(
-                text(
-                    "UPDATE samba_jobs SET status = 'pending' WHERE status = 'running'"
-                )
-            )
-            if r.rowcount > 0:
-                _log.info(f"[shutdown] running Job {r.rowcount}건 → pending 복구")
-            await session.commit()
-    except Exception as e:
-        _log.warning(f"[shutdown] Job 복구 실패: {e}")
+    # 1) running 잡 복구는 다음 인스턴스의 startup에서 처리
+    #    shutdown에서 ALL running → pending 리셋 시 새 인스턴스의 잡까지 리셋하는
+    #    레이스 컨디션 발생 → startup 핸들러에 위임
+    _log.info("[shutdown] running 잡 복구는 다음 인스턴스 startup에 위임")
 
     # 2) 오토튠 + 잡 워커 즉시 정지 (대기 없음)
     from backend.api.v1.routers.samba.collector_autotune import (

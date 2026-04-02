@@ -46,6 +46,7 @@ jobs:
             --region asia-northeast3 \
             --project fresh-sanctuary-489804-v4 \
             --env-vars-file /tmp/cloudrun-env.yaml \
+            --no-cpu-throttling \
             --clear-base-image \
             --quiet
 

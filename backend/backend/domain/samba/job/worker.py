@@ -408,11 +408,15 @@ class JobWorker:
             # 비상정지 + Job 취소 + 전송중단 플래그 체크 (건별)
             from backend.domain.samba.emergency import is_emergency_stopped
 
-            if (
-                is_emergency_stopped()
-                or is_cancel_requested()
-                or await repo.is_cancelled(job.id)
-            ):
+            try:
+                _is_cancelled = await repo.is_cancelled(job.id)
+            except Exception as cancel_err:
+                logger.warning(
+                    f"[잡워커] is_cancelled 체크 실패 (계속 진행): {cancel_err}"
+                )
+                _is_cancelled = False
+
+            if is_emergency_stopped() or is_cancel_requested() or _is_cancelled:
                 cancelled = len(product_ids) - i
                 reason = "비상정지" if is_emergency_stopped() else "취소"
                 _add_job_log(job.id, f"{reason} — {i}건 완료, {cancelled}건 중단")
@@ -520,8 +524,19 @@ class JobWorker:
                 results.append({"error": str(e)})
                 failed_pids.append(pid)
             # 잡 progress는 외부 세션으로 업데이트
-            await repo.update_progress(job.id, i + 1, total)
-            await session.commit()
+            try:
+                await repo.update_progress(job.id, i + 1, total)
+                await session.commit()
+            except Exception as pg_err:
+                logger.error(f"[잡워커] progress 업데이트 실패: {job.id} — {pg_err}")
+                _add_job_log(
+                    job.id,
+                    f"[{i + 1}/{total}] DB 세션 오류 — 다음 건 계속 진행",
+                )
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
 
         # 2차 재시도 — 실패 상품만 (건별 독립 세션)
         retry_success = 0
