@@ -21,9 +21,10 @@ fi
 echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
-  # Uvicorn 단일 프로세스 — uvicorn 0.29는 gunicorn 자동 활성화 없음
+  # Uvicorn 단일 프로세스
+  # --no-dev: 런타임에 dev 패키지(mypy/black/ruff) 재설치 방지 → OOM 방지
   echo "Starting production server with Uvicorn (single process)..."
-  exec uv run -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
+  exec uv run --no-dev -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
 else
   # Run the development server with Uvicorn and --reload
   echo "Starting development server with Uvicorn..."
