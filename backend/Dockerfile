@@ -36,5 +36,7 @@ RUN uv sync --compile-bytecode --no-dev
 
 COPY backend ./backend
 COPY scripts ./scripts
+COPY alembic.ini ./alembic.ini
+COPY alembic ./alembic
 
 ENTRYPOINT ["./scripts/entrypoint.sh"]
