@@ -107,8 +107,11 @@ export default function ShipmentsPage() {
     (async () => {
       try {
         const { API_BASE_URL: apiBase } = await import('@/config/api')
-        // 1) 링 버퍼에서 기존 로그 복원
-        const bufRes = await fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=0`)
+        // 1) 로그 복원 + 실행 중인 Job 확인 (병렬)
+        const [bufRes, res] = await Promise.all([
+          fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=0`),
+          fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`),
+        ])
         const bufData = await bufRes.json()
         const prevLogs = (bufData.logs || []) as string[]
         sinceIdxRef.current = bufData.current_idx || 0
@@ -116,7 +119,6 @@ export default function ShipmentsPage() {
           setLogMessages(prevLogs.map(l => `[이전] ${l}`).slice(-30))
         }
         // 2) 실행 중인 Job 확인
-        const res = await fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`)
         const jobs = await res.json()
         const job = Array.isArray(jobs) ? jobs.find((j: Record<string, unknown>) => j.job_type === 'transmit') : null
         if (!job) return
