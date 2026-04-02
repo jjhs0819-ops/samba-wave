@@ -43,10 +43,17 @@ db_host = os.getenv("WRITE_DB_HOST", "localhost")
 db_port = os.getenv("WRITE_DB_PORT", "5432")
 db_name = os.getenv("WRITE_DB_NAME", "railway")
 
-config.set_main_option(
-    "sqlalchemy.url",
-    f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}",
-)
+# Cloud SQL Unix 소켓 경로 감지 (/cloudsql/...)
+if db_host.startswith("/"):
+    config.set_main_option(
+        "sqlalchemy.url",
+        f"postgresql://{db_user}:{db_password}@/{db_name}?host={db_host}",
+    )
+else:
+    config.set_main_option(
+        "sqlalchemy.url",
+        f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}",
+    )
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
