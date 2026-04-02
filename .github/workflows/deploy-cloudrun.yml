@@ -52,5 +52,4 @@ jobs:
               --project project-d57efcc7-c0d8-4778-837 \
               --env-vars-file /tmp/cloudrun-env.yaml \
               --add-cloudsql-instances project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db \  
-              --clear-base-image \
               --quiet
