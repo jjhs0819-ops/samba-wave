@@ -36,7 +36,7 @@ jobs:
             --source ./backend \
             --region asia-northeast3 \
             --project "${PROJECT}" \
-            --set-env-vars "^||^ENVIRONMENT=production||WRITE_DB_USER=postgres||WRITE_DB_PASSWORD=${DB_PASSWORD}||WRITE_DB_HOST=/cloudsql/${INSTANCE}||WRITE_DB_PORT=5432||WRITE_DB_NAME=samba-wave||READ_DB_USER=postgres||READ_DB_PASSWORD=${DB_PASSWORD}||READ_DB_HOST=/cloudsql/${INSTANCE}||READ_DB_PORT=5432||READ_DB_NAME=samba-wave||DB_SSL_REQUIRED=false||WEB_CONCURRENCY=1||TERMINATION_GRACE_HACK=1||JWT_SECRET_KEY=${JWT_SECRET}||JWT_ALGORITHM=HS256" \
+            --set-env-vars "^||^ENVIRONMENT=production||WRITE_DB_USER=postgres||WRITE_DB_PASSWORD=${DB_PASSWORD}||WRITE_DB_HOST=/cloudsql/${INSTANCE}||WRITE_DB_PORT=5432||WRITE_DB_NAME=samba-wave||READ_DB_USER=postgres||READ_DB_PASSWORD=${DB_PASSWORD}||READ_DB_HOST=/cloudsql/${INSTANCE}||READ_DB_PORT=5432||READ_DB_NAME=samba-wave||DB_SSL_REQUIRED=false||WEB_CONCURRENCY=1||TERMINATION_GRACE_HACK=1||JWT_SECRET_KEY=${JWT_SECRET}||JWT_ALGORITHM=HS256||CORS_EXTRA_ORIGINS=https://samba-wave-deploy.vercel.app,https://samba-wave-deploy-git-main-samba-wave.vercel.app" \
             --add-cloudsql-instances "${INSTANCE}" \
             --allow-unauthenticated \
             --quiet
