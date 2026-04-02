@@ -459,11 +459,10 @@ class JobWorker:
         total = len(product_ids)
 
         # 이어하기: 이전 진행 위치를 먼저 읽은 후 진행률 갱신
+        # (초기 갱신은 외부 세션 사용 — 아직 살아있으므로 안전)
         start_from = job.current or 0
-        try:
-            await _update_progress_direct(job.id, start_from, total)
-        except Exception as init_err:
-            logger.error(f"[잡워커] 초기 progress 저장 실패: {job.id} — {init_err}")
+        await repo.update_progress(job.id, start_from, total)
+        await session.commit()
 
         success_count = 0
         fail_count = 0
