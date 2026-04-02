@@ -54,6 +54,44 @@ async def lifespan(app: FastAPI):
     # 앱 시작 시 DB 마이그레이션 자동 적용 (별도 프로세스 또는 수동 실행 권장)
     # 로컬 개발: cd backend && alembic upgrade head
 
+    # [진단] 컨테이너 전체 메모리 + 프로세스 목록 출력
+    import logging as _diag_log
+    import subprocess
+
+    _dl = _diag_log.getLogger("backend.diag")
+    try:
+        # cgroup 메모리 한도
+        for p in [
+            "/sys/fs/cgroup/memory.max",
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+        ]:
+            try:
+                with open(p) as f:
+                    _dl.warning(f"[DIAG] {p} = {f.read().strip()}")
+            except Exception:
+                pass
+        # cgroup 현재 사용량
+        for p in [
+            "/sys/fs/cgroup/memory.current",
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+        ]:
+            try:
+                with open(p) as f:
+                    val = int(f.read().strip())
+                    _dl.warning(f"[DIAG] {p} = {val // 1024 // 1024}MB")
+            except Exception:
+                pass
+        # 프로세스 목록 + RSS
+        ps = subprocess.run(
+            ["ps", "aux", "--sort=-rss"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        _dl.warning(f"[DIAG] ps aux:\n{ps.stdout[:2000]}")
+    except Exception as e:
+        _dl.warning(f"[DIAG] 진단 실패: {e}")
+
     # 캐시 서비스 연결 (Redis 또는 인메모리 폴백)
     from backend.domain.samba.cache import cache
 
