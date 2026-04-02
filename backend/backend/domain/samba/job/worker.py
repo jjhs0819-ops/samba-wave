@@ -472,12 +472,12 @@ class JobWorker:
                             success_count += 1
                             _add_job_log(
                                 job.id,
-                                f"[{i + 1}/{total}] {prod_name} → {acc_label}: 전송{rl}",
+                                f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: 전송{rl}",
                             )
                         elif acc_status == "skipped":
                             _add_job_log(
                                 job.id,
-                                f"[{i + 1}/{total}] {prod_name} → {acc_label}: 스킵{rl}",
+                                f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: 스킵{rl}",
                             )
                         else:
                             fail_count += 1
@@ -486,7 +486,7 @@ class JobWorker:
                                 err = "전송 동시성 오류"
                             _add_job_log(
                                 job.id,
-                                f"[{i + 1}/{total}] {prod_name} → {acc_label}: {err}",
+                                f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: {err}",
                             )
                     if not tx_result:
                         if status == "skipped":

@@ -227,6 +227,7 @@ export default function ShipmentsPage() {
       policyApi.list().catch(() => []),
       categoryApi.listMappings().catch(() => []),
     ])
+    if (preIds.length > 0) setTotalCount(p.length)
     setProducts(p)
     setAccounts(a)
     setShipments(s)
@@ -475,7 +476,7 @@ export default function ShipmentsPage() {
     }
     const effectiveLabels = [...effectiveAccountSet].map(aid => accountLabelMap[aid] || aid)
     abortRef.current = false
-    addLog(`[${ts()}] 전송 시작 — 상품 ${total}개, ${effectiveLabels.length > 0 ? effectiveLabels.join(', ') : '연결 계정 없음'}`)
+    addLog(`[${ts()}] 전송 시작 — 상품 ${total.toLocaleString()}개, ${effectiveLabels.length > 0 ? effectiveLabels.join(', ') : '연결 계정 없음'}`)
 
     const items: string[] = []
     if (updateItems.price) items.push('price', 'stock')
@@ -864,7 +865,7 @@ export default function ShipmentsPage() {
                     const acc = accounts.find(a => a.id === aid)
                     return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
                   }).join(', ')
-                  addLog(`[${ts()}] 전송 시작 — 상품 ${allIds.length}개, ${accLabels || '연결 계정 없음'}`)
+                  addLog(`[${ts()}] 전송 시작 — 상품 ${allIds.length.toLocaleString()}개, ${accLabels || '연결 계정 없음'}`)
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
                     method: 'POST',
