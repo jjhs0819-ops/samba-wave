@@ -322,8 +322,10 @@ class JobWorker:
 
             # 전송: 외부 세션 없이 메인 루프에서 실행 (자체 세션 관리)
             if _job_type == "transmit":
+                _add_job_log(_job_id, "전송 잡 진입")
                 logger.info(f"[잡워커] 전송 실행: {_job_id}")
                 try:
+                    _add_job_log(_job_id, "세션 로드 시작")
                     # Job 데이터를 읽고 세션을 즉시 닫음 (장기 보유 방지)
                     async with get_write_session() as load_session:
                         from backend.domain.samba.job.model import SambaJob as _SJ
@@ -336,6 +338,7 @@ class JobWorker:
                         _job_current = fresh_job.current or 0
                         _job_payload = fresh_job.payload or {}
                     # 세션 닫힘 — 이제 _run_transmit이 자체 세션으로 동작
+                    _add_job_log(_job_id, "세션 로드 완료, 전송 시작")
                     from backend.domain.samba.shipment.service import (
                         clear_account_semaphores,
                     )
