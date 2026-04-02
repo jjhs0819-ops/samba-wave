@@ -1,13 +1,13 @@
-name: Deploy Backend to Cloud Run
+ name: Deploy Backend to Cloud Run
 
-on:
+  on:
     workflow_dispatch:
     push:
       branches: [main]
       paths:
         - 'backend/**'
 
-jobs:
+  jobs:
     deploy:
       name: Deploy to Cloud Run
       runs-on: ubuntu-latest
@@ -25,37 +25,30 @@ jobs:
 
         - uses: google-github-actions/setup-gcloud@v2
 
-        - name: Write env vars file
-          run: |
-            cat > /tmp/cloudrun-env.yaml << EOF
-            ENVIRONMENT: "production"
-            WRITE_DB_USER: "postgres"
-            WRITE_DB_PASS: "${{ secrets.DB_PASSWORD }}"
-            WRITE_DB_HOST: "/cloudsql/project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db"    
-            WRITE_DB_PORT: "5432"
-            WRITE_DB_NAME: "samba-wave"
-            READ_DB_USER: "postgres"
-            READ_DB_PASS: "${{ secrets.DB_PASSWORD }}"
-            READ_DB_HOST: "/cloudsql/project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db"     
-            READ_DB_PORT: "5432"
-            READ_DB_NAME: "samba-wave"
-            DB_SSL_REQUIRED: "false"
-            WEB_CONCURRENCY: "1"
-            TERMINATION_GRACE_HACK: "1"
-            EOF
-
         - name: Deploy to Cloud Run
+          env:
+            DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           run: |
-             gcloud run deploy samba-wave-api \
+            gcloud run deploy samba-wave-api \
               --source ./backend \
               --region asia-northeast3 \
               --project project-d57efcc7-c0d8-4778-837 \
-              --set-env-vars "ENVIRONMENT=production,WRITE_DB_USER=postgres,WRITE_DB_PASS=${{
-  secrets.DB_PASSWORD }},WRITE_DB_HOST=/cloudsql/project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-w
-  ave-db,WRITE_DB_PORT=5432,WRITE_DB_NAME=samba-wave,READ_DB_USER=postgres,READ_DB_PASS=${{
-  secrets.DB_PASSWORD
-  }},READ_DB_HOST=/cloudsql/project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db,READ_DB_PORT=5
-  432,READ_DB_NAME=samba-wave,DB_SSL_REQUIRED=false,WEB_CONCURRENCY=1,TERMINATION_GRACE_HACK=1" \      
-              --add-cloudsql-instances project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db \  
+              --update-env-vars "ENVIRONMENT=production" \
+              --update-env-vars "WRITE_DB_USER=postgres" \
+              --update-env-vars "WRITE_DB_PASS=${DB_PASSWORD}" \
+              --update-env-vars
+  "WRITE_DB_HOST=/cloudsql/project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db" \
+              --update-env-vars "WRITE_DB_PORT=5432" \
+              --update-env-vars "WRITE_DB_NAME=samba-wave" \
+              --update-env-vars "READ_DB_USER=postgres" \
+              --update-env-vars "READ_DB_PASS=${DB_PASSWORD}" \
+              --update-env-vars
+  "READ_DB_HOST=/cloudsql/project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db" \
+              --update-env-vars "READ_DB_PORT=5432" \
+              --update-env-vars "READ_DB_NAME=samba-wave" \
+              --update-env-vars "DB_SSL_REQUIRED=false" \
+              --update-env-vars "WEB_CONCURRENCY=1" \
+              --update-env-vars "TERMINATION_GRACE_HACK=1" \
+              --add-cloudsql-instances "project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db" \
               --allow-unauthenticated \
               --quiet
