@@ -33,7 +33,6 @@ jobs:
           READ_DB_PORT: "5432"
           READ_DB_NAME: "railway"
           DB_SSL_REQUIRED: "false"
-          WEB_CONCURRENCY: "1"
           TERMINATION_GRACE_HACK: "1"
           PROXY_URLS: "${{ secrets.PROXY_URLS }}"
           COLLECT_PROXY_URL: "${{ secrets.COLLECT_PROXY_URL }}"
