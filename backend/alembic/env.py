@@ -1,9 +1,11 @@
+import asyncio
 import os
 import sys
 from logging.config import fileConfig
 
 from dotenv import load_dotenv
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import pool
+from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlmodel import SQLModel
 
 from alembic import context
@@ -47,12 +49,12 @@ db_name = os.getenv("WRITE_DB_NAME", "railway")
 if db_host.startswith("/"):
     config.set_main_option(
         "sqlalchemy.url",
-        f"postgresql://{db_user}:{db_password}@/{db_name}?host={db_host}",
+        f"postgresql+asyncpg://{db_user}:{db_password}@/{db_name}?host={db_host}",
     )
 else:
     config.set_main_option(
         "sqlalchemy.url",
-        f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}",
+        f"postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}",
     )
 
 if config.config_file_name is not None:
@@ -73,19 +75,28 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def run_migrations_online() -> None:
-    connectable = engine_from_config(
+def do_run_migrations(connection):
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations() -> None:
+    connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-        )
-        with context.begin_transaction():
-            context.run_migrations()
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+    await connectable.dispose()
+
+
+def run_migrations_online() -> None:
+    asyncio.run(run_async_migrations())
 
 
 if context.is_offline_mode():
