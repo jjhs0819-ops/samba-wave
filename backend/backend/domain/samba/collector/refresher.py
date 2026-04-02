@@ -26,27 +26,70 @@ CONCURRENCY_PER_SITE = 10 if _IS_CLOUD else 5
 # 소싱처별 동시 요청 수 (개별 설정)
 SITE_CONCURRENCY: dict[str, int] = {
     "MUSINSA": 40 if _IS_CLOUD else 10,  # 워커 8→4 축소로 메모리 여유 확보
+    "KREAM": 5 if _IS_CLOUD else 2,
+    "DANAWA": 5 if _IS_CLOUD else 2,
+    "FashionPlus": 10 if _IS_CLOUD else 3,
+    "Nike": 5 if _IS_CLOUD else 2,
+    "Adidas": 5 if _IS_CLOUD else 2,
+    "ABCmart": 5 if _IS_CLOUD else 2,
+    "GrandStage": 5 if _IS_CLOUD else 2,
+    "OKmall": 5 if _IS_CLOUD else 2,
     "SSG": 3 if _IS_CLOUD else 1,
     "LOTTEON": 5 if _IS_CLOUD else 2,
-    "FashionPlus": 10 if _IS_CLOUD else 3,
+    "GSShop": 5 if _IS_CLOUD else 2,
+    "ElandMall": 5 if _IS_CLOUD else 2,
+    "SSF": 5 if _IS_CLOUD else 2,
 }
 # 소싱처별 기본 인터벌 (초)
 SITE_BASE_INTERVAL: dict[str, float] = {
     "MUSINSA": 1.0,
+    "KREAM": 1.0,
+    "DANAWA": 1.0,
+    "FashionPlus": 1.0,
+    "Nike": 1.0,
+    "Adidas": 1.0,
+    "ABCmart": 1.0,
+    "GrandStage": 1.0,
+    "OKmall": 1.0,
     "SSG": 1.0,
     "LOTTEON": 0.5,
+    "GSShop": 1.0,
+    "ElandMall": 1.0,
+    "SSF": 1.0,
 }
 # 소싱처별 최소 인터벌 (초)
 SITE_MIN_INTERVAL: dict[str, float] = {
     "MUSINSA": 1.0,
+    "KREAM": 0.5,
+    "DANAWA": 0.5,
+    "FashionPlus": 0.5,
+    "Nike": 0.5,
+    "Adidas": 0.5,
+    "ABCmart": 0.5,
+    "GrandStage": 0.5,
+    "OKmall": 0.5,
     "SSG": 0.5,
     "LOTTEON": 0.3,
+    "GSShop": 0.5,
+    "ElandMall": 0.5,
+    "SSF": 0.5,
 }
 # 소싱처별 인터벌 복원 스텝 (성공 시 감소량)
 SITE_INTERVAL_STEP: dict[str, float] = {
     "MUSINSA": 0.2,
+    "KREAM": 0.3,
+    "DANAWA": 0.3,
+    "FashionPlus": 0.3,
+    "Nike": 0.3,
+    "Adidas": 0.3,
+    "ABCmart": 0.3,
+    "GrandStage": 0.3,
+    "OKmall": 0.3,
     "SSG": 0.5,
     "LOTTEON": 0.3,
+    "GSShop": 0.3,
+    "ElandMall": 0.3,
+    "SSF": 0.3,
 }
 # KREAM 확장앱 대기 타임아웃 (초)
 KREAM_TIMEOUT = 90

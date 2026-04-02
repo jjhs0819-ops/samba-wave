@@ -224,9 +224,19 @@ export default function WarroomPage() {
   // 소싱처별 인터벌 설정
   const INTERVAL_SITES = [
     { key: 'MUSINSA', label: '무신사' },
+    { key: 'KREAM', label: 'KREAM' },
+    { key: 'DANAWA', label: '다나와' },
+    { key: 'FashionPlus', label: '패션플러스' },
+    { key: 'Nike', label: 'Nike' },
+    { key: 'Adidas', label: 'Adidas' },
+    { key: 'ABCmart', label: 'ABC마트' },
+    { key: 'GrandStage', label: '그랜드스테이지' },
+    { key: 'OKmall', label: 'OKmall' },
     { key: 'SSG', label: 'SSG' },
     { key: 'LOTTEON', label: '롯데ON' },
-    { key: 'FashionPlus', label: '패션플러스' },
+    { key: 'GSShop', label: 'GSShop' },
+    { key: 'ElandMall', label: '이랜드몰' },
+    { key: 'SSF', label: 'SSF샵' },
   ]
   const [siteIntervals, setSiteIntervals] = useState<Record<string, string>>({})
   const intervalTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
