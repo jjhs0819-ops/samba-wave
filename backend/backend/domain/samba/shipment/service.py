@@ -714,14 +714,18 @@ class SambaShipmentService:
                     return shipment
 
         # 이미지/상세페이지 전송 판단
-        # 오토튠 재전송(price/stock만) → 이미지 불필요
-        # 그 외(수동 전송) → 항상 이미지 전송 (DB 현재 이미지 사용)
-        is_price_stock_only = update_items and set(update_items) <= {"price", "stock"}
+        is_price_stock_only = bool(update_items) and set(update_items) <= {
+            "price",
+            "stock",
+        }
         needs_image = not is_price_stock_only
 
-        # 2-1. 정책의 상세 템플릿으로 detail_html 재생성 (이미지/상세 업데이트 시에만)
-        if needs_image:
-            product_dict["detail_html"] = await self._build_detail_html(product_dict)
+        # price/stock만 업데이트 시 이미지 다운로드/업로드 완전 스킵
+        if is_price_stock_only:
+            product_dict["_skip_image_upload"] = True
+
+        # 상세 HTML은 항상 정책 기반으로 재생성 (원문 상세이미지 유출 방지)
+        product_dict["detail_html"] = await self._build_detail_html(product_dict)
 
         # 3. 카테고리 매핑 자동 조회 (성별 + category1~4 조합)
         cat_parts = [
@@ -1601,7 +1605,7 @@ class SambaShipmentService:
             "sub": True,
             "title": False,
             "option": False,
-            "detail": True,
+            "detail": False,
             "bottomImg": True,
         }
         img_order: list[str] = [
