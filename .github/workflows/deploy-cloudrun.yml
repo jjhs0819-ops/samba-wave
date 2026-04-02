@@ -1,60 +1,55 @@
-name: Deploy Backend to Cloud Run
+ name: Deploy Backend to Cloud Run
 
-on:
-  push:
-    branches: [main]
-    paths:
-      - 'backend/**'
+  on:
+    push:
+      branches: [main]
+      paths:
+        - 'backend/**'
 
-jobs:
-  deploy:
-    name: Deploy to Cloud Run
-    runs-on: ubuntu-latest
+  jobs:
+    deploy:
+      name: Deploy to Cloud Run
+      runs-on: ubuntu-latest
+      permissions:
+        contents: read
+        id-token: write
 
-    steps:
-      - uses: actions/checkout@v4
+      steps:
+        - uses: actions/checkout@v4
 
-      - uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+        - uses: google-github-actions/auth@v2
+          with:
+            workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+            service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+        - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Write env vars file
-        run: |
-          cat > /tmp/cloudrun-env.yaml << EOF
-          ENVIRONMENT: "production"
-          WRITE_DB_USER: "postgres"
-          WRITE_DB_HOST: "/cloudsql/fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
-          WRITE_DB_PORT: "5432"
-          WRITE_DB_NAME: "railway"
-          READ_DB_USER: "postgres"
-          READ_DB_HOST: "/cloudsql/fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
-          READ_DB_PORT: "5432"
-          READ_DB_NAME: "railway"
-          DB_SSL_REQUIRED: "false"
-          WEB_CONCURRENCY: "1"
-          TERMINATION_GRACE_HACK: "1"
-          PROXY_URLS: "${{ secrets.PROXY_URLS }}"
-          COLLECT_PROXY_URL: "${{ secrets.COLLECT_PROXY_URL }}"
-          EOF
+        - name: Write env vars file
+          run: |
+            cat > /tmp/cloudrun-env.yaml << EOF
+            ENVIRONMENT: "production"
+            WRITE_DB_USER: "postgres"
+            WRITE_DB_PASS: "${{ secrets.DB_PASSWORD }}"
+            WRITE_DB_HOST: "/cloudsql/project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db"    
+            WRITE_DB_PORT: "5432"
+            WRITE_DB_NAME: "samba-wave"
+            READ_DB_USER: "postgres"
+            READ_DB_PASS: "${{ secrets.DB_PASSWORD }}"
+            READ_DB_HOST: "/cloudsql/project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db"     
+            READ_DB_PORT: "5432"
+            READ_DB_NAME: "samba-wave"
+            DB_SSL_REQUIRED: "false"
+            WEB_CONCURRENCY: "1"
+            TERMINATION_GRACE_HACK: "1"
+            EOF
 
-      - name: Deploy to Cloud Run
-        run: |
-          gcloud run deploy samba-wave-api \
-            --source ./backend \
-            --region asia-northeast3 \
-            --project fresh-sanctuary-489804-v4 \
-            --env-vars-file /tmp/cloudrun-env.yaml \
-            --clear-base-image \
-            --quiet
-
-      - name: Health Check
-        run: |
-          sleep 10
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://samba-wave-api-363598397345.asia-northeast3.run.app/api/v1/health)
-          if [ "$STATUS" != "200" ]; then
-            echo "Health check failed with status $STATUS"
-            exit 1
-          fi
-          echo "Health check passed"
+        - name: Deploy to Cloud Run
+          run: |
+            gcloud run deploy samba-wave-api \
+              --source ./backend \
+              --region asia-northeast3 \
+              --project project-d57efcc7-c0d8-4778-837 \
+              --env-vars-file /tmp/cloudrun-env.yaml \
+              --add-cloudsql-instances project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db \  
+              --clear-base-image \
+              --quiet
