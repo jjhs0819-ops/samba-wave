@@ -316,7 +316,7 @@ class ImageFilterService:
         update_data: dict[str, Any] = {}
         result_info: dict[str, Any] = {"action": "filtered"}
 
-        # 대표+추가이미지 필터링
+        # 대표+추가이미지 필터링 (제거 발생 시 자동 2회차 재검증)
         if scope in ("images", "all"):
             images = product.images or []
             if images:
@@ -328,11 +328,36 @@ class ImageFilterService:
 
                 # 분류 결과 로그
                 logger.info(
-                    f"[이미지필터] 상품 {product_id} images — "
+                    f"[이미지필터] 상품 {product_id} images 1차 — "
                     f"총 {len(images)}장: product {len(product_cuts)}장, other {len(other_cuts)}장"
                 )
                 for c in classifications:
                     logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
+
+                # 1차에서 제거 발생 + 남은 이미지 2장 이상 → 2회차 재검증
+                if other_cuts and len(product_cuts) >= 2:
+                    logger.info(
+                        f"[이미지필터] 상품 {product_id} images 2차 재검증 시작 ({len(product_cuts)}장)"
+                    )
+                    re_classifications = await self.classify_images(product_cuts)
+                    re_product = [
+                        c["url"] for c in re_classifications if c["type"] == "product"
+                    ]
+                    re_other = [
+                        c["url"] for c in re_classifications if c["type"] == "other"
+                    ]
+                    logger.info(
+                        f"[이미지필터] 상품 {product_id} images 2차 — "
+                        f"product {len(re_product)}장, other {len(re_other)}장"
+                    )
+                    for c in re_classifications:
+                        logger.info(
+                            f"[이미지필터] 2차 {c['type']:7s} | {c['url'][:100]}"
+                        )
+                    # 2차에서 추가 제거된 것이 있고, product가 남아있으면 반영
+                    if re_other and re_product:
+                        other_cuts.extend(re_other)
+                        product_cuts = re_product
 
                 cls_detail = [
                     {"url": c["url"][-60:], "type": c["type"]} for c in classifications
@@ -386,7 +411,7 @@ class ImageFilterService:
                     "classifications": cls_detail,
                 }
 
-        # 상세페이지 이미지 필터링
+        # 상세페이지 이미지 필터링 (제거 발생 시 자동 2회차 재검증)
         if scope in ("detail", "all"):
             detail_images = product.detail_images or []
             if detail_images:
@@ -398,11 +423,35 @@ class ImageFilterService:
 
                 # 분류 결과 로그
                 logger.info(
-                    f"[이미지필터] 상품 {product_id} detail — "
+                    f"[이미지필터] 상품 {product_id} detail 1차 — "
                     f"총 {len(detail_images)}장: product {len(product_cuts)}장, other {len(other_cuts)}장"
                 )
                 for c in classifications:
                     logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
+
+                # 1차에서 제거 발생 + 남은 이미지 2장 이상 → 2회차 재검증
+                if other_cuts and len(product_cuts) >= 2:
+                    logger.info(
+                        f"[이미지필터] 상품 {product_id} detail 2차 재검증 시작 ({len(product_cuts)}장)"
+                    )
+                    re_classifications = await self.classify_images(product_cuts)
+                    re_product = [
+                        c["url"] for c in re_classifications if c["type"] == "product"
+                    ]
+                    re_other = [
+                        c["url"] for c in re_classifications if c["type"] == "other"
+                    ]
+                    logger.info(
+                        f"[이미지필터] 상품 {product_id} detail 2차 — "
+                        f"product {len(re_product)}장, other {len(re_other)}장"
+                    )
+                    for c in re_classifications:
+                        logger.info(
+                            f"[이미지필터] 2차 {c['type']:7s} | {c['url'][:100]}"
+                        )
+                    if re_other and re_product:
+                        other_cuts.extend(re_other)
+                        product_cuts = re_product
 
                 cls_detail = [
                     {"url": c["url"][-60:], "type": c["type"]} for c in classifications

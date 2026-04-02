@@ -188,7 +188,7 @@ export default function CollectorPage() {
 
   // 이미지 필터링 (모델컷/연출컷/배너 제거)
   const [imgFiltering, setImgFiltering] = useState(false)
-  const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['images']))
+  const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['images', 'detail_images', 'detail']))
 
   // 카테고리 매핑 모달
   const [showMappingModal, setShowMappingModal] = useState(false)
@@ -1190,6 +1190,8 @@ export default function CollectorPage() {
               setAiJobDone(false)
               setAiJobModal(true)
               const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
+              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              const startTime = ts()
               let success = 0
               let fail = 0
               let totalTall = 0
@@ -1207,9 +1209,12 @@ export default function CollectorPage() {
                     const { items: products } = await collectorApi.scrollProducts({ search_filter_id: gid, limit: 10000 })
                     totalProducts += products.length
                     addLog(`[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — ${products.length}개 상품`)
+                    if (gi === 0 && products.length > 0) addLog(`\n시작: ${startTime} (${totalProducts}개 상품)\n`)
                     for (let i = 0; i < products.length; i++) {
                       const prod = products[i]
-                      const label = prod.name?.slice(0, 30) || prod.id.slice(-8)
+                      const prodName = prod.name?.slice(0, 25) || '이름없음'
+                      const prodNo = prod.site_product_id || prod.id.slice(-8)
+                      const label = `${prodName}${prod.name && prod.name.length > 25 ? '...' : ''} (${prodNo})`
                       processedProducts++
                       setAiJobTitle(`이미지 필터링 [${processedProducts}/${totalProducts}] ${label}`)
                       try {
@@ -1247,9 +1252,9 @@ export default function CollectorPage() {
                           totalVisionRemoved += removed
                           if (removed > 0) steps.push(`Vision ${removed}장 제거`)
                           else steps.push('Vision 변동없음')
-                          addLog(`[${processedProducts}/${totalProducts}] ${label} — ${steps.join(' → ')}`)
-                        } else { fail++; addLog(`[${processedProducts}/${totalProducts}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
-                      } catch (e) { fail++; addLog(`[${processedProducts}/${totalProducts}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                          addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — ${steps.join(' → ')}`)
+                        } else { fail++; addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
+                      } catch (e) { fail++; addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
                     }
                   } catch (e) {
                     addLog(`[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — 상품 조회 실패: ${e instanceof Error ? e.message : ''}`)
@@ -1258,8 +1263,10 @@ export default function CollectorPage() {
                 const summary = [`성공 ${success}개`, `실패 ${fail}개`]
                 if (totalTall > 0) summary.push(`긴이미지 ${totalTall}장 제거`)
                 if (totalVisionRemoved > 0) summary.push(`Vision ${totalVisionRemoved}장 제거`)
+                const endTime = ts()
                 setAiJobTitle(`이미지 필터링 완료 (${success}/${totalProducts})`)
                 addLog(`\n완료: ${summary.join(' / ')}`)
+                addLog(`시작 ${startTime} → 종료 ${endTime}`)
               } catch (e) { addLog(`오류: ${e instanceof Error ? e.message : '오류'}`) }
               finally {
                 setAiJobDone(true)
