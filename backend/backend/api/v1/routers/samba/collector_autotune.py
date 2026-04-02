@@ -1012,6 +1012,11 @@ async def _save_autotune_state(enabled: bool):
 async def auto_start_if_enabled():
     """서버 시작 시 DB에서 오토튠 상태 확인 → ON이면 자동 시작."""
     try:
+        # 저장된 인터벌 설정 복원
+        from backend.domain.samba.collector.refresher import load_site_intervals_from_db
+
+        await load_site_intervals_from_db()
+
         from backend.db.orm import get_read_session
         from backend.api.v1.routers.samba.proxy import _get_setting
 

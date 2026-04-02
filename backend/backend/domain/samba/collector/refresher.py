@@ -317,6 +317,49 @@ def set_site_base_interval(site: str, interval: float) -> None:
     SITE_BASE_INTERVAL[site] = interval
     # 현재 적응형 인터벌도 함께 갱신
     _site_intervals[site] = interval
+    # DB에 영속화 (비동기 fire-and-forget)
+    _persist_intervals_to_db()
+
+
+def _persist_intervals_to_db() -> None:
+    """현재 SITE_BASE_INTERVAL을 DB에 비동기 저장."""
+    import asyncio
+
+    async def _save():
+        try:
+            from backend.db.orm import get_write_session
+            from backend.api.v1.routers.samba.proxy import _set_setting
+
+            async with get_write_session() as session:
+                await _set_setting(
+                    session, "autotune_intervals", dict(SITE_BASE_INTERVAL)
+                )
+                await session.commit()
+        except Exception:
+            pass  # 저장 실패해도 인메모리는 유지
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_save())
+    except RuntimeError:
+        pass  # 이벤트 루프 없으면 무시
+
+
+async def load_site_intervals_from_db() -> None:
+    """서버 시작 시 DB에서 저장된 인터벌을 로드하여 SITE_BASE_INTERVAL에 반영."""
+    try:
+        from backend.db.orm import get_read_session
+        from backend.api.v1.routers.samba.proxy import _get_setting
+
+        async with get_read_session() as session:
+            saved = await _get_setting(session, "autotune_intervals")
+        if saved and isinstance(saved, dict):
+            for site, val in saved.items():
+                if isinstance(val, (int, float)) and 0.1 <= val <= 60:
+                    SITE_BASE_INTERVAL[site] = float(val)
+                    _site_intervals[site] = float(val)
+    except Exception:
+        pass  # 로드 실패 시 기본값 유지
 
 
 @dataclass
