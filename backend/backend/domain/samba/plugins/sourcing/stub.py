@@ -16,6 +16,7 @@ class GenericStubPlugin(SourcingPlugin):
 
     직접 인스턴스화하지 않음 — 개별 소싱처 스텁의 base.
     """
+
     site_name = "_STUB"
     concurrency = 5
 
@@ -27,6 +28,7 @@ class GenericStubPlugin(SourcingPlugin):
 
     async def refresh(self, product) -> "RefreshResult":
         from backend.domain.samba.collector.refresher import RefreshResult
+
         return RefreshResult(
             product_id=getattr(product, "id", ""),
             error=f"{self.site_name} 소싱처 갱신 미구현",

@@ -8,9 +8,24 @@ from backend.domain.samba.account.repository import SambaMarketAccountRepository
 # Ported from js/modules/account.js supportedMarkets
 SUPPORTED_MARKETS: List[Dict[str, Any]] = [
     # Domestic
-    {"id": "auction", "name": "옥션", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
-    {"id": "gmarket", "name": "G마켓", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
-    {"id": "11st", "name": "11번가", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
+    {
+        "id": "auction",
+        "name": "옥션",
+        "group": "국내",
+        "api_fields": ["apiKey", "apiSecret"],
+    },
+    {
+        "id": "gmarket",
+        "name": "G마켓",
+        "group": "국내",
+        "api_fields": ["apiKey", "apiSecret"],
+    },
+    {
+        "id": "11st",
+        "name": "11번가",
+        "group": "국내",
+        "api_fields": ["apiKey", "apiSecret"],
+    },
     {
         "id": "smartstore",
         "name": "스마트스토어",
@@ -23,8 +38,18 @@ SUPPORTED_MARKETS: List[Dict[str, Any]] = [
         "group": "국내",
         "api_fields": ["accessKey", "secretKey", "vendorCode"],
     },
-    {"id": "gsshop", "name": "GS샵", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
-    {"id": "lotteon", "name": "롯데ON", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
+    {
+        "id": "gsshop",
+        "name": "GS샵",
+        "group": "국내",
+        "api_fields": ["apiKey", "apiSecret"],
+    },
+    {
+        "id": "lotteon",
+        "name": "롯데ON",
+        "group": "국내",
+        "api_fields": ["apiKey", "apiSecret"],
+    },
     {
         "id": "ssg",
         "name": "신세계몰",
@@ -37,11 +62,31 @@ SUPPORTED_MARKETS: List[Dict[str, Any]] = [
         "group": "국내",
         "api_fields": ["userId", "password", "agncNo"],
     },
-    {"id": "homeand", "name": "홈앤쇼핑", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
-    {"id": "hmall", "name": "HMALL", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
-    {"id": "toss", "name": "토스", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
+    {
+        "id": "homeand",
+        "name": "홈앤쇼핑",
+        "group": "국내",
+        "api_fields": ["apiKey", "apiSecret"],
+    },
+    {
+        "id": "hmall",
+        "name": "HMALL",
+        "group": "국내",
+        "api_fields": ["apiKey", "apiSecret"],
+    },
+    {
+        "id": "toss",
+        "name": "토스",
+        "group": "국내",
+        "api_fields": ["apiKey", "apiSecret"],
+    },
     # Integration solution
-    {"id": "playauto", "name": "플레이오토", "group": "연동솔루션", "api_fields": ["apiKey", "userId"]},
+    {
+        "id": "playauto",
+        "name": "플레이오토",
+        "group": "연동솔루션",
+        "api_fields": ["apiKey", "userId"],
+    },
     # Overseas
     {
         "id": "ebay",
@@ -61,15 +106,37 @@ SUPPORTED_MARKETS: List[Dict[str, Any]] = [
         "group": "해외",
         "api_fields": ["partnerId", "shopId", "accessToken"],
     },
-    {"id": "qoo10", "name": "Qoo10", "group": "해외", "api_fields": ["apiKey", "userId"]},
-    {"id": "quten", "name": "큐텐", "group": "해외", "api_fields": ["apiKey", "qUserId"]},
+    {
+        "id": "qoo10",
+        "name": "Qoo10",
+        "group": "해외",
+        "api_fields": ["apiKey", "userId"],
+    },
+    {
+        "id": "quten",
+        "name": "큐텐",
+        "group": "해외",
+        "api_fields": ["apiKey", "qUserId"],
+    },
     # Resale
-    {"id": "kream", "name": "KREAM", "group": "리셀", "api_fields": ["email", "password"]},
-    # 해외 추가
-    {"id": "ebay", "name": "eBay", "group": "해외", "api_fields": ["clientId", "clientSecret", "oauthToken"]},
-    {"id": "lazada", "name": "Lazada", "group": "해외", "api_fields": ["appKey", "appSecret", "accessToken"]},
-    {"id": "shopify", "name": "Shopify", "group": "해외", "api_fields": ["accessToken"]},
-    {"id": "zoom", "name": "Zum(줌)", "group": "국내", "api_fields": ["apiKey", "apiSecret"]},
+    {
+        "id": "kream",
+        "name": "KREAM",
+        "group": "리셀",
+        "api_fields": ["email", "password"],
+    },
+    {
+        "id": "shopify",
+        "name": "Shopify",
+        "group": "해외",
+        "api_fields": ["accessToken"],
+    },
+    {
+        "id": "zoom",
+        "name": "Zum(줌)",
+        "group": "국내",
+        "api_fields": ["apiKey", "apiSecret"],
+    },
 ]
 
 
@@ -80,7 +147,9 @@ class SambaAccountService:
     async def list_accounts(
         self, skip: int = 0, limit: int = 50
     ) -> List[SambaMarketAccount]:
-        return await self.repo.list_async(skip=skip, limit=limit, order_by="-created_at")
+        return await self.repo.list_async(
+            skip=skip, limit=limit, order_by="-created_at"
+        )
 
     async def get_account(self, account_id: str) -> Optional[SambaMarketAccount]:
         return await self.repo.get_async(account_id)
@@ -89,7 +158,9 @@ class SambaAccountService:
         # Auto-populate market_name and account_label if not provided
         market_info = self.get_market_info(data.get("market_type", ""))
         if "market_name" not in data or not data["market_name"]:
-            data["market_name"] = market_info["name"] if market_info else data.get("market_type", "")
+            data["market_name"] = (
+                market_info["name"] if market_info else data.get("market_type", "")
+            )
         if "account_label" not in data or not data["account_label"]:
             business = data.get("business_name") or data.get("market_name", "")
             seller = data.get("seller_id", "")
@@ -116,9 +187,7 @@ class SambaAccountService:
             market_type=market_type, order_by="created_at", order_by_desc=True
         )
 
-    async def toggle_active(
-        self, account_id: str
-    ) -> Optional[SambaMarketAccount]:
+    async def toggle_active(self, account_id: str) -> Optional[SambaMarketAccount]:
         account = await self.repo.get_async(account_id)
         if not account:
             return None

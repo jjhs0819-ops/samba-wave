@@ -44,6 +44,7 @@ function getStatusBadge(status: string) {
 
 
 export default function StoreCare() {
+  useEffect(() => { document.title = 'SAMBA-스토어케어' }, [])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [schedules, setSchedules] = useState<StoreCareSchedule[]>([])
   const [purchases, setPurchases] = useState<StoreCarePurchase[]>([])

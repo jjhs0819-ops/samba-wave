@@ -16,7 +16,13 @@ class SambaJobService:
         """잡 조회."""
         return await self.repo.get_async(job_id)
 
-    async def list_jobs(self, status: str | None = None, tenant_id: str | None = None, skip: int = 0, limit: int = 50):
+    async def list_jobs(
+        self,
+        status: str | None = None,
+        tenant_id: str | None = None,
+        skip: int = 0,
+        limit: int = 50,
+    ):
         """잡 목록 조회."""
         return await self.repo.list_by_status(status, tenant_id, skip, limit)
 

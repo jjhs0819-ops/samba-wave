@@ -51,7 +51,7 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                 <th style={{ width: '36px', padding: '0.5rem', textAlign: 'center' }}>
                   <input type="checkbox" checked={selectAll} onChange={(e) => setSelectAll(e.target.checked)} style={{ cursor: 'pointer', accentColor: '#FF8C00' }} />
                 </th>
-                <th style={{ padding: '0.5rem', textAlign: 'left', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
+                <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
                   옵션명
                   <button
                     onClick={() => setEditingName(editingName === -1 ? null : -1)}
@@ -62,30 +62,27 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                     style={{ marginLeft: '0.3rem', fontSize: '0.7rem', padding: '1px 6px', background: 'rgba(255,255,255,0.05)', color: '#C5C5C5', border: '1px solid #3D3D3D', borderRadius: '3px', cursor: 'pointer' }}
                   >옵션추가</button>
                 </th>
-                <th style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
+                <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
                   원가<br /><span style={{ fontSize: '0.7rem', color: '#555', fontWeight: 400 }}>(일반배송)</span>
                 </th>
                 {sourceSite === 'KREAM' && (
-                  <th style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
+                  <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
                     빠른배송<br /><span style={{ fontSize: '0.7rem', color: '#555', fontWeight: 400 }}>(KREAM)</span>
                   </th>
                 )}
-                <th style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
+                <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
                   상품가<br />
                   <button
                     onClick={() => { setBulkModal('price'); setBulkValue('') }}
                     style={{ fontSize: '0.7rem', padding: '1px 6px', background: 'rgba(255,255,255,0.05)', color: '#C5C5C5', border: '1px solid #3D3D3D', borderRadius: '3px', cursor: 'pointer', marginTop: '2px' }}
                   >일괄수정</button>
                 </th>
-                <th style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
+                <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
                   옵션재고
                   <button
                     onClick={() => { setBulkModal('stock'); setBulkValue('') }}
                     style={{ marginLeft: '0.3rem', fontSize: '0.7rem', padding: '1px 6px', background: 'rgba(255,255,255,0.05)', color: '#C5C5C5', border: '1px solid #3D3D3D', borderRadius: '3px', cursor: 'pointer' }}
                   >일괄수정</button>
-                </th>
-                <th style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
-                  마켓전송가격<br /><span style={{ fontSize: '0.7rem', color: '#666' }}>(마켓수수료 포함가격)</span>
                 </th>
               </tr>
             </thead>
@@ -168,9 +165,6 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                     </td>
                     <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: '#E5E5E5' }}>
                       {stockDisplay}
-                    </td>
-                    <td style={{ padding: '0.5rem', textAlign: 'right' }}>
-                      <span style={{ color: '#555', fontSize: '0.75rem' }}>미계산</span>
                     </td>
                   </tr>
                 )

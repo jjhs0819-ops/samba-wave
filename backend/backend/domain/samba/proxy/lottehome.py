@@ -114,14 +114,12 @@ class LotteHomeClient:
         # 에러 블록 확인
         errors = root.get("Errors") or root.get("errors")
         if errors:
-            error_block = (
-                errors.get("Error")
-                if isinstance(errors, dict)
-                else errors
-            )
+            error_block = errors.get("Error") if isinstance(errors, dict) else errors
             if isinstance(error_block, dict):
                 code = error_block.get("Code", error_block.get("code", ""))
-                msg = error_block.get("Message") or error_block.get("message", "알 수 없는 오류")
+                msg = error_block.get("Message") or error_block.get(
+                    "message", "알 수 없는 오류"
+                )
                 if str(code) != "0":
                     raise LotteApiError(code=str(code), message=str(msg))
 
@@ -197,7 +195,7 @@ class LotteHomeClient:
                 xml_str = raw_bytes.decode("utf-8", errors="replace")
 
             # XML 선언의 encoding="EUC-KR"을 제거 (이미 UTF-8로 디코딩됨)
-            xml_str = re.sub(r'<\?xml[^?]*\?>', '', xml_str).strip()
+            xml_str = re.sub(r"<\?xml[^?]*\?>", "", xml_str).strip()
             return self._parse_lotte_response(xml_str)
 
     # ------------------------------------------------------------------
@@ -342,7 +340,9 @@ class LotteHomeClient:
             md_data = md_result.get("data", {})
             md_list = md_data.get("Result", md_data)
             # MDInfoList > MDInfo에서 첫 번째 MDCode 추출
-            info_list = md_list.get("MDInfoList", {}) if isinstance(md_list, dict) else {}
+            info_list = (
+                md_list.get("MDInfoList", {}) if isinstance(md_list, dict) else {}
+            )
             md_info = info_list.get("MDInfo", {}) if isinstance(info_list, dict) else {}
             if isinstance(md_info, list) and md_info:
                 md_id = md_info[0].get("MDCode", "")
@@ -401,9 +401,7 @@ class LotteHomeClient:
             {"subscriptionId": cert_key, **place_data},
         )
 
-    async def search_goods_article_codes(
-        self, artc_cd: str = ""
-    ) -> dict[str, Any]:
+    async def search_goods_article_codes(self, artc_cd: str = "") -> dict[str, Any]:
         """품목별 항목코드정보 조회.
         수정: searchGoodsArtcOpenApi → searchGoodsArtcItemCdListOpenApi (롯데홈쇼핑 담당자 확인)
         """

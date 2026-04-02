@@ -25,7 +25,10 @@ async def get_current_tenant_id(
     try:
         from backend.core.config import settings
         import jwt
-        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+
+        payload = jwt.decode(
+            token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
+        )
         user_id = payload.get("sub", "")
     except Exception:
         raise HTTPException(401, "유효하지 않은 토큰입니다")
@@ -36,6 +39,7 @@ async def get_current_tenant_id(
     # DB에서 user의 tenant_id 조회
     from backend.domain.samba.user.model import SambaUser
     from sqlmodel import select
+
     stmt = select(SambaUser).where(SambaUser.id == user_id)
     result = await session.execute(stmt)
     user = result.scalars().first()
@@ -75,15 +79,17 @@ async def check_product_limit(tenant_id: str, session: AsyncSession):
         raise HTTPException(403, "테넌트를 찾을 수 없습니다")
 
     max_products = (tenant.limits or {}).get("max_products", 1000)
-    count_stmt = select(func.count()).select_from(SambaCollectedProduct).where(
-        SambaCollectedProduct.tenant_id == tenant_id
+    count_stmt = (
+        select(func.count())
+        .select_from(SambaCollectedProduct)
+        .where(SambaCollectedProduct.tenant_id == tenant_id)
     )
     current = (await session.execute(count_stmt)).scalar() or 0
 
     if current >= max_products:
         raise HTTPException(
             403,
-            f"상품 수 제한 초과 ({current}/{max_products}). 플랜을 업그레이드해주세요."
+            f"상품 수 제한 초과 ({current}/{max_products}). 플랜을 업그레이드해주세요.",
         )
 
 
@@ -100,13 +106,15 @@ async def check_market_limit(tenant_id: str, session: AsyncSession):
         raise HTTPException(403, "테넌트를 찾을 수 없습니다")
 
     max_markets = (tenant.limits or {}).get("max_markets", 3)
-    count_stmt = select(func.count()).select_from(SambaMarketAccount).where(
-        SambaMarketAccount.tenant_id == tenant_id
+    count_stmt = (
+        select(func.count())
+        .select_from(SambaMarketAccount)
+        .where(SambaMarketAccount.tenant_id == tenant_id)
     )
     current = (await session.execute(count_stmt)).scalar() or 0
 
     if current >= max_markets:
         raise HTTPException(
             403,
-            f"마켓 계정 수 제한 초과 ({current}/{max_markets}). 플랜을 업그레이드해주세요."
+            f"마켓 계정 수 제한 초과 ({current}/{max_markets}). 플랜을 업그레이드해주세요.",
         )

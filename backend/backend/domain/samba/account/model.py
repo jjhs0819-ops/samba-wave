@@ -24,7 +24,9 @@ class SambaMarketAccount(SQLModel, table=True):
         max_length=30,
     )
     # 테넌트 격리
-    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
 
     # 마켓 구분
     market_type: str = Field(
@@ -37,17 +39,24 @@ class SambaMarketAccount(SQLModel, table=True):
     seller_id: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True, index=True)
     )
-    business_name: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    business_name: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # API 인증 (암호화 필요시 별도 처리)
     api_key: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    api_secret: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    api_secret: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 추가 설정 (JSON)
-    additional_fields: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    additional_fields: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     is_active: bool = Field(
-        default=True, sa_column=Column(Boolean, nullable=False, server_default="true", index=True)
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default="true", index=True),
     )
 
     # Timestamps

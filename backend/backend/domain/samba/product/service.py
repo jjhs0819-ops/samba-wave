@@ -17,7 +17,9 @@ class SambaProductService:
     ) -> List[SambaProduct]:
         if status:
             return await self.repo.list_by_status(status)
-        return await self.repo.list_async(skip=skip, limit=limit, order_by="-created_at")
+        return await self.repo.list_async(
+            skip=skip, limit=limit, order_by="-created_at"
+        )
 
     async def get_product(self, product_id: str) -> Optional[SambaProduct]:
         return await self.repo.get_async(product_id)
@@ -25,7 +27,9 @@ class SambaProductService:
     async def create_product(self, data: Dict[str, Any]) -> SambaProduct:
         return await self.repo.create_async(**data)
 
-    async def update_product(self, product_id: str, data: Dict[str, Any]) -> Optional[SambaProduct]:
+    async def update_product(
+        self, product_id: str, data: Dict[str, Any]
+    ) -> Optional[SambaProduct]:
         return await self.repo.update_async(product_id, **data)
 
     async def delete_product(self, product_id: str) -> bool:
@@ -41,7 +45,9 @@ class SambaProductService:
         return math.ceil(cost / (1 - margin_rate / 100))
 
     @staticmethod
-    def calculate_profit(sale_price: float, cost: float, fee_rate: float) -> Dict[str, float]:
+    def calculate_profit(
+        sale_price: float, cost: float, fee_rate: float
+    ) -> Dict[str, float]:
         revenue = sale_price * (1 - fee_rate / 100)
         profit = revenue - cost
         profit_rate = round((profit / revenue) * 100, 2) if revenue > 0 else 0
@@ -55,7 +61,11 @@ class SambaProductService:
             return None
 
         price_change = current_price - product.source_price
-        change_percent = round((price_change / product.source_price) * 100, 2) if product.source_price else 0
+        change_percent = (
+            round((price_change / product.source_price) * 100, 2)
+            if product.source_price
+            else 0
+        )
 
         await self.repo.update_async(
             product_id,

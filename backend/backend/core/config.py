@@ -43,7 +43,7 @@ class BackendSettings(BaseSettings):
     # ===========================================
     # JWT Configuration
     # ===========================================
-    jwt_secret_key: str 
+    jwt_secret_key: str
     jwt_algorithm: str = "HS256"
 
     # Token expiration settings
@@ -82,9 +82,14 @@ class BackendSettings(BaseSettings):
     # ===========================================
     # HTTP 타임아웃 설정 (초)
     # ===========================================
-    http_timeout_short: int = 10    # 빠른 API (검색, 조회)
+    http_timeout_short: int = 10  # 빠른 API (검색, 조회)
     http_timeout_default: int = 30  # 기본 API (등록, 수정)
-    http_timeout_upload: int = 60   # 이미지 업로드 등 느린 작업
+    http_timeout_upload: int = 60  # 이미지 업로드 등 느린 작업
+
+    # 프록시 URL (오토튠용, 콤마 구분 — 로테이션)
+    proxy_urls: str = ""
+    # 프록시 URL (수집용)
+    collect_proxy_url: str = ""
 
     # 추가 허용 origin (콤마 구분, Railway 환경변수로 주입)
     cors_extra_origins: str = ""
@@ -99,10 +104,11 @@ class BackendSettings(BaseSettings):
             "http://localhost:3002",
             "http://localhost:3003",
             "http://127.0.0.1:3000",
-            "https://samba-wave-1zm6k4gb4-sbk0674-2598s-projects.vercel.app",
         ]
         if self.cors_extra_origins:
-            extras = [o.strip() for o in self.cors_extra_origins.split(",") if o.strip()]
+            extras = [
+                o.strip() for o in self.cors_extra_origins.split(",") if o.strip()
+            ]
             origins.extend(extras)
         return origins
 

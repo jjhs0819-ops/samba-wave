@@ -107,7 +107,12 @@ class SambaAnalyticsService:
                 continue
             date_str = order.created_at.strftime("%Y-%m-%d")
             if date_str not in daily:
-                daily[date_str] = {"date": date_str, "sales": 0.0, "orders": 0, "profit": 0.0}
+                daily[date_str] = {
+                    "date": date_str,
+                    "sales": 0.0,
+                    "orders": 0,
+                    "profit": 0.0,
+                }
 
             daily[date_str]["sales"] += order.sale_price * order.quantity
             daily[date_str]["orders"] += 1
@@ -165,7 +170,9 @@ class SambaAnalyticsService:
                 "total_orders": len(all_orders),
                 "total_profit": total_profit,
                 "avg_order_value": total_sales / len(all_orders) if all_orders else 0,
-                "profit_rate": (total_profit / total_sales * 100) if total_sales > 0 else 0,
+                "profit_rate": (total_profit / total_sales * 100)
+                if total_sales > 0
+                else 0,
             },
             "top_channels": channels[:5],
             "top_products": products[:5],
@@ -204,10 +211,7 @@ class SambaAnalyticsService:
         """기간 내 주문으로 통계 계산."""
         all_orders = await self.order_repo.list_async()
 
-        filtered = [
-            o for o in all_orders
-            if start <= o.created_at <= end
-        ]
+        filtered = [o for o in all_orders if start <= o.created_at <= end]
 
         total_sales = sum(o.sale_price * o.quantity for o in filtered)
         total_profit = sum(o.profit for o in filtered)

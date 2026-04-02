@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, String
+from sqlalchemy import Boolean
 from sqlmodel import Column, DateTime, Field, SQLModel, Text
 
 from ulid import ULID
@@ -78,9 +78,7 @@ class SambaCSInquiry(SQLModel, table=True):
 
     # 문의/답변 내용
     content: str = Field(sa_column=Column(Text, nullable=False))
-    reply: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
+    reply: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 답변 상태: pending, replied
     reply_status: str = Field(

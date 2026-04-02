@@ -111,7 +111,9 @@ def register_exception_handlers(app: FastAPI) -> None:
             exc
         ):
             logger.debug(f"Client disconnected during request: {request.url}")
-            return JSONResponse(status_code=499, content={"detail": "Client Closed Request"})
+            return JSONResponse(
+                status_code=499, content={"detail": "Client Closed Request"}
+            )
 
         logger.exception(f"Database error during request to {request.url}: {exc}")
         return JSONResponse(

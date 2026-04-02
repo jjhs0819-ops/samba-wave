@@ -26,7 +26,7 @@ export function StatCard({
     const end = value;
     if (start === end) return;
 
-    let totalDuration = 1500;
+    const totalDuration = 1500;
     let incrementTime = Math.max(totalDuration / end, 10);
     if (end > 1000) incrementTime = 20;
     

@@ -68,7 +68,9 @@ class SambaReturnService:
             return await self.repo.list_by_status(status)
         if type:
             return await self.repo.list_by_type(type)
-        return await self.repo.list_async(skip=skip, limit=limit, order_by="-created_at")
+        return await self.repo.list_async(
+            skip=skip, limit=limit, order_by="-created_at"
+        )
 
     async def get_return(self, return_id: str) -> Optional[SambaReturn]:
         return await self.repo.get_async(return_id)
@@ -86,7 +88,9 @@ class SambaReturnService:
         data["status"] = "requested"
 
         ret = await self.repo.create_async(**data)
-        logger.info(f"Return {ret.id} created for order {ret.order_id} type={return_type}")
+        logger.info(
+            f"Return {ret.id} created for order {ret.order_id} type={return_type}"
+        )
         return ret
 
     async def approve_return(self, return_id: str) -> Optional[SambaReturn]:
@@ -114,7 +118,11 @@ class SambaReturnService:
         if not ret:
             return None
 
-        message = f"요청이 거절되었습니다. 사유: {reason}" if reason else "요청이 거절되었습니다."
+        message = (
+            f"요청이 거절되었습니다. 사유: {reason}"
+            if reason
+            else "요청이 거절되었습니다."
+        )
         timeline = list(ret.timeline or [])
         timeline.append(_make_timeline_entry("rejected", message))
 
@@ -163,10 +171,12 @@ class SambaReturnService:
             return None
 
         notes = list(ret.notes or [])
-        notes.append({
-            "date": _now_iso(),
-            "message": note,
-        })
+        notes.append(
+            {
+                "date": _now_iso(),
+                "message": note,
+            }
+        )
 
         return await self.repo.update_async(return_id, notes=notes)
 

@@ -11,7 +11,6 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.domain.samba.collector.refresher import _site_intervals
 
 from backend.api.v1.routers.samba.collector_common import (
     _trim_history,
@@ -25,16 +24,12 @@ router = APIRouter(prefix="/collector", tags=["samba-collector"])
 
 # ── DTOs ──
 
+
 class RefreshRequest(BaseModel):
     product_ids: Optional[List[str]] = None
     search_filter_ids: Optional[List[str]] = None  # 선택된 그룹(검색필터) ID
     priority: Optional[str] = None  # hot / warm / cold
     auto_retransmit: bool = True
-
-
-class MonitorPriorityUpdate(BaseModel):
-    product_ids: List[str]
-    priority: str  # hot / warm / cold
 
 
 class RateLimitTestRequest(BaseModel):
@@ -64,13 +59,16 @@ async def refresh_products(
     from backend.domain.samba.collector.refresher import (
         refresh_products_bulk,
     )
-    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
+    from backend.domain.samba.collector.repository import (
+        SambaCollectedProductRepository,
+    )
 
     repo = SambaCollectedProductRepository(session)
 
     # 대상 상품 조회 (배치 쿼리)
     if body.product_ids:
         from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+
         _stmt = select(_CP).where(_CP.id.in_(body.product_ids))
         _result = await session.execute(_stmt)
         products = list(_result.scalars().all())
@@ -78,15 +76,20 @@ async def refresh_products(
         # 선택된 그룹의 상품만 조회
         products = []
         for sf_id in body.search_filter_ids:
-            group_products = await repo.filter_by_async(search_filter_id=sf_id, limit=10000)
+            group_products = await repo.filter_by_async(
+                search_filter_id=sf_id, limit=10000
+            )
             products.extend(group_products)
     elif body.priority:
         # 우선순위 기반 조회
         from sqlmodel import select as sel
         from backend.domain.samba.collector.model import SambaCollectedProduct
-        stmt = sel(SambaCollectedProduct).where(
-            SambaCollectedProduct.monitor_priority == body.priority
-        ).limit(500)
+
+        stmt = (
+            sel(SambaCollectedProduct)
+            .where(SambaCollectedProduct.monitor_priority == body.priority)
+            .limit(500)
+        )
         result = await session.execute(stmt)
         products = list(result.scalars().all())
     else:
@@ -95,16 +98,21 @@ async def refresh_products(
 
     if not products:
         return {
-            "total": 0, "refreshed": 0, "changed": 0,
-            "sold_out": 0, "retransmitted": 0,
-            "needs_extension": [], "errors": 0,
+            "total": 0,
+            "refreshed": 0,
+            "changed": 0,
+            "sold_out": 0,
+            "retransmitted": 0,
+            "needs_extension": [],
+            "errors": 0,
         }
 
-    # 벌크 갱신 실행
-    results, summary = await refresh_products_bulk(products)
+    # 벌크 갱신 실행 (수동 갱신 — 오토튠 로그에 노출되지 않음)
+    results, summary = await refresh_products_bulk(products, source="manual")
 
     # 모니터링 서비스 초기화
     from backend.domain.samba.warroom.service import SambaMonitorService
+
     monitor = SambaMonitorService(session)
 
     # 상품 Map (재전송/품절 처리에서 재조회 방지)
@@ -127,7 +135,8 @@ async def refresh_products(
                 )
                 # 모니터링: 갱신 에러
                 await monitor.emit(
-                    "refresh_error", "warning",
+                    "refresh_error",
+                    "warning",
                     summary=f"갱신 실패 — {product.name[:30] if product.name else r.product_id}",
                     source_site=getattr(product, "source_site", None),
                     product_id=r.product_id,
@@ -138,7 +147,8 @@ async def refresh_products(
         if r.needs_extension:
             # 모니터링: 확장앱 타임아웃
             await monitor.emit(
-                "extension_timeout", "warning",
+                "extension_timeout",
+                "warning",
                 summary=f"KREAM 확장앱 타임아웃 — {r.product_id}",
                 source_site="KREAM",
                 product_id=r.product_id,
@@ -160,8 +170,12 @@ async def refresh_products(
         snapshot: dict = {
             "date": now.isoformat(),
             "source": "refresh",
-            "sale_price": r.new_sale_price if r.new_sale_price is not None else product.sale_price,
-            "original_price": r.new_original_price if r.new_original_price is not None else product.original_price,
+            "sale_price": r.new_sale_price
+            if r.new_sale_price is not None
+            else product.sale_price,
+            "original_price": r.new_original_price
+            if r.new_original_price is not None
+            else product.original_price,
             "cost": r.new_cost if r.new_cost is not None else product.cost,
             "sale_status": r.new_sale_status,
             "changed": r.changed,
@@ -178,7 +192,11 @@ async def refresh_products(
         _img_edited = "__img_edited__" in _tags or "__img_filtered__" in _tags
         if r.new_images and not product.images and not _img_edited:
             updates["images"] = r.new_images
-        if r.new_detail_images and not getattr(product, "detail_images", None) and not _img_edited:
+        if (
+            r.new_detail_images
+            and not getattr(product, "detail_images", None)
+            and not _img_edited
+        ):
             updates["detail_images"] = r.new_detail_images
         if r.new_material and not getattr(product, "material", None):
             updates["material"] = r.new_material
@@ -190,6 +208,10 @@ async def refresh_products(
         if r.new_same_day_delivery is not None:
             updates["same_day_delivery"] = r.new_same_day_delivery
 
+        # 옵션은 가격 변동과 무관하게 항상 갱신
+        if r.new_options is not None:
+            updates["options"] = r.new_options
+
         if r.changed:
             if r.new_sale_price is not None:
                 updates["sale_price"] = r.new_sale_price
@@ -197,11 +219,9 @@ async def refresh_products(
                 updates["original_price"] = r.new_original_price
             if r.new_cost is not None:
                 updates["cost"] = r.new_cost
-            if r.new_options is not None:
-                updates["options"] = r.new_options
 
             updates["sale_status"] = r.new_sale_status
-            updates["is_sold_out"] = r.new_sale_status == "sold_out"
+            # is_sold_out 제거 → sale_status로 통일
 
             # 가격 변동 추적
             old_price = product.sale_price or 0
@@ -210,14 +230,23 @@ async def refresh_products(
                 updates["price_before_change"] = old_price
                 updates["price_changed_at"] = now
                 # 모니터링: 가격 변동
-                diff_pct = round((new_price - old_price) / old_price * 100, 1) if old_price else 0
+                diff_pct = (
+                    round((new_price - old_price) / old_price * 100, 1)
+                    if old_price
+                    else 0
+                )
                 await monitor.emit(
-                    "price_changed", "info",
+                    "price_changed",
+                    "info",
                     summary=f"가격 변동 — {product.name[:30] if product.name else ''} ₩{int(old_price):,}→₩{int(new_price):,}",
                     source_site=product.source_site,
                     product_id=r.product_id,
                     product_name=product.name,
-                    detail={"old_price": old_price, "new_price": new_price, "diff_pct": diff_pct},
+                    detail={
+                        "old_price": old_price,
+                        "new_price": new_price,
+                        "diff_pct": diff_pct,
+                    },
                 )
 
             changed_ids.append(r.product_id)
@@ -225,7 +254,8 @@ async def refresh_products(
                 soldout_ids.append(r.product_id)
                 # 모니터링: 품절 감지
                 await monitor.emit(
-                    "sold_out", "warning",
+                    "sold_out",
+                    "warning",
                     summary=f"품절 감지 — {product.name[:30] if product.name else r.product_id}",
                     source_site=product.source_site,
                     product_id=r.product_id,
@@ -258,7 +288,9 @@ async def refresh_products(
         for acc_key, pids in retransmit_groups.items():
             acc_ids = acc_key.split(",")
             try:
-                await ship_svc.start_update(pids, ["price"], acc_ids, skip_unchanged=False)
+                await ship_svc.start_update(
+                    pids, ["price"], acc_ids, skip_unchanged=False
+                )
                 retransmitted += len(pids)
             except Exception as e:
                 logger.error(f"[refresh] 재전송 실패 ({len(pids)}건): {e}")
@@ -267,6 +299,7 @@ async def refresh_products(
         import asyncio
         from backend.domain.samba.shipment.dispatcher import delete_from_market
         from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
         account_repo = SambaMarketAccountRepository(session)
 
         # 계정 배치 조회 (N+1 방지)
@@ -278,6 +311,7 @@ async def refresh_products(
         acc_map: dict = {}
         if all_acc_ids:
             from backend.domain.samba.account.model import SambaMarketAccount as _MA
+
             _acc_stmt = select(_MA).where(_MA.id.in_(list(all_acc_ids)))
             _acc_result = await session.execute(_acc_stmt)
             acc_map = {a.id: a for a in _acc_result.scalars().all()}
@@ -300,24 +334,38 @@ async def refresh_products(
                     if not account:
                         continue
                     m_nos = product.market_product_nos or {}
-                    pd = {**product_dict, "market_product_no": {account.market_type: m_nos.get(account_id, "")}}
+                    pd = {
+                        **product_dict,
+                        "market_product_no": {
+                            account.market_type: m_nos.get(account_id, "")
+                        },
+                    }
                     delete_targets.append((pid, pd, account_id, account))
 
         # 2단계: 마켓 판매중지 병렬 처리 (5개씩)
         sem = asyncio.Semaphore(5)
+
         async def _do_market_delete(pid: str, pd: dict, acc: object) -> None:
             async with sem:
                 try:
-                    result = await delete_from_market(session, acc.market_type, pd, account=acc)  # type: ignore[union-attr]
+                    result = await delete_from_market(
+                        session, acc.market_type, pd, account=acc
+                    )  # type: ignore[union-attr]
                     if result.get("success"):
-                        logger.info(f"[refresh] {pid} → {acc.market_type} 판매중지 완료")  # type: ignore[union-attr]
+                        logger.info(
+                            f"[refresh] {pid} → {acc.market_type} 판매중지 완료"
+                        )  # type: ignore[union-attr]
                     else:
-                        logger.warning(f"[refresh] {pid} → {acc.market_type} 판매중지 실패: {result.get('message')}")  # type: ignore[union-attr]
+                        logger.warning(
+                            f"[refresh] {pid} → {acc.market_type} 판매중지 실패: {result.get('message')}"
+                        )  # type: ignore[union-attr]
                 except Exception as e:
                     logger.error(f"[refresh] {pid} → 마켓 삭제 오류: {e}")
 
         if delete_targets:
-            await asyncio.gather(*[_do_market_delete(pid, pd, acc) for pid, pd, _, acc in delete_targets])
+            await asyncio.gather(
+                *[_do_market_delete(pid, pd, acc) for pid, pd, _, acc in delete_targets]
+            )
 
         # 3단계: DB 일괄 삭제 (단일 쿼리)
         deleted_ids: list[str] = []
@@ -325,7 +373,10 @@ async def refresh_products(
             from sqlalchemy import delete as sa_delete
             from sqlmodel import col
             from backend.domain.samba.collector.model import SambaCollectedProduct
-            del_stmt = sa_delete(SambaCollectedProduct).where(col(SambaCollectedProduct.id).in_(list(deletable_pids)))
+
+            del_stmt = sa_delete(SambaCollectedProduct).where(
+                col(SambaCollectedProduct.id).in_(list(deletable_pids))
+            )
             await session.exec(del_stmt)  # type: ignore[arg-type]
             deleted_ids = list(deletable_pids)
             logger.info(f"[refresh] 품절 상품 {len(deleted_ids)}건 일괄 삭제 완료")
@@ -337,21 +388,24 @@ async def refresh_products(
     # 모니터링: 재전송/삭제 이벤트
     if retransmitted > 0:
         await monitor.emit(
-            "market_retransmit", "info",
+            "market_retransmit",
+            "info",
             summary=f"가격변동 재전송 {retransmitted}건",
             detail={"count": retransmitted},
         )
     if body.auto_retransmit and deleted_ids:
         for did in deleted_ids:
             await monitor.emit(
-                "market_deleted", "info",
+                "market_deleted",
+                "info",
                 summary=f"품절 삭제 — {did}",
                 product_id=did,
             )
 
     # 모니터링: 배치 갱신 완료
     await monitor.emit(
-        "refresh_batch", "info",
+        "refresh_batch",
+        "info",
         summary=f"배치 갱신 완료 — {summary.total}건 중 {summary.refreshed}건 갱신, {summary.changed}건 변동",
         detail={
             "total": summary.total,
@@ -377,28 +431,6 @@ async def refresh_products(
     }
 
 
-@router.put("/products/monitor-priority")
-async def update_monitor_priority(
-    body: MonitorPriorityUpdate,
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """상품 모니터링 우선순위 일괄 변경."""
-    if body.priority not in ("hot", "warm", "cold"):
-        raise HTTPException(status_code=400, detail="priority는 hot/warm/cold만 가능합니다.")
-
-    from backend.domain.samba.collector.repository import SambaCollectedProductRepository
-    repo = SambaCollectedProductRepository(session)
-
-    updated = 0
-    for pid in body.product_ids:
-        result = await repo.update_async(pid, monitor_priority=body.priority)
-        if result:
-            updated += 1
-
-    await session.commit()
-    return {"updated": updated}
-
-
 # ══════════════════════════════════════════════════════════════
 # 무신사 차단 임계값 테스트
 # ══════════════════════════════════════════════════════════════
@@ -407,14 +439,13 @@ async def update_monitor_priority(
 @router.post("/test/rate-limit")
 async def test_rate_limit(body: RateLimitTestRequest = RateLimitTestRequest()):
     """무신사 차단 임계값 테스트."""
-    import asyncio
     import httpx
     import time
 
-    from backend.domain.samba.collector.refresher import _get_musinsa_cookie
+    from backend.api.v1.routers.samba.collector_common import get_musinsa_cookie
     from backend.domain.samba.proxy.musinsa import MusinsaClient
 
-    cookie = await _get_musinsa_cookie()
+    cookie = await get_musinsa_cookie()
     if not cookie:
         return {"error": "무신사 쿠키 없음"}
 
@@ -440,9 +471,21 @@ async def test_rate_limit(body: RateLimitTestRequest = RateLimitTestRequest()):
                         elapsed = round((time.monotonic() - start) * 1000)
                         retry_after = r.headers.get("Retry-After", "?")
                         api_name = url.split("/")[-1] if "/" in url else "detail"
-                        results.append({"req": i + 1, "statuses": statuses, "ms": elapsed, "blocked": api_name})
+                        results.append(
+                            {
+                                "req": i + 1,
+                                "statuses": statuses,
+                                "ms": elapsed,
+                                "blocked": api_name,
+                            }
+                        )
                         return {
-                            "blocked_at": {"request_no": i + 1, "status": r.status_code, "api": api_name, "retry_after": retry_after},
+                            "blocked_at": {
+                                "request_no": i + 1,
+                                "status": r.status_code,
+                                "api": api_name,
+                                "retry_after": retry_after,
+                            },
                             "total_ok": i,
                             "mode": body.mode,
                             "api_per_req": len(urls),
@@ -485,11 +528,13 @@ async def probe_status(
 ):
     """최근 probe 결과 조회."""
     from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+
     repo = SambaSettingsRepository(session)
     results: dict = {"sources": {}, "markets": {}}
 
     # 소싱처 probe 결과
     from backend.domain.samba.probe.health_checker import PROBE_TARGETS, MARKET_PROBES
+
     for site in PROBE_TARGETS:
         row = await repo.find_by_async(key=f"probe_{site}")
         if row and row.value:
@@ -510,10 +555,12 @@ async def probe_run(
 ):
     """수동 probe 실행 — 전체 소싱처+마켓 헬스체크."""
     from backend.domain.samba.probe.health_checker import run_all_probes
+
     results = await run_all_probes(session)
 
     # 모니터링: probe 결과 이벤트 발행
     from backend.domain.samba.warroom.service import SambaMonitorService
+
     monitor = SambaMonitorService(session)
 
     for site, data in results.get("sources", {}).items():
@@ -521,14 +568,16 @@ async def probe_run(
             missing = data.get("missing_fields", [])
             if missing:
                 await monitor.emit(
-                    "api_structure_changed", "critical",
+                    "api_structure_changed",
+                    "critical",
                     summary=f"API 구조 변경 감지 — {site} 필드 누락: {', '.join(missing)}",
                     source_site=site,
                     detail={"missing_fields": missing, "error": data.get("error")},
                 )
             elif data.get("error"):
                 await monitor.emit(
-                    "probe_failed", "warning",
+                    "probe_failed",
+                    "warning",
                     summary=f"Probe 실패 — {site}: {data.get('error')}",
                     source_site=site,
                     detail=data,
@@ -537,7 +586,8 @@ async def probe_run(
     for mt, data in results.get("markets", {}).items():
         if not data.get("ok") and data.get("error"):
             await monitor.emit(
-                "probe_failed", "warning",
+                "probe_failed",
+                "warning",
                 summary=f"마켓 Probe 실패 — {mt}: {data.get('error')}",
                 market_type=mt,
                 detail=data,
@@ -573,21 +623,25 @@ async def generate_product_video(
         raise HTTPException(400, "상품 이미지가 없습니다")
 
     # AI 변환 이미지가 없으면 자동 생성
-    ai_images = [u for u in images if '/transformed/' in u or '/ai_' in u]
+    ai_images = [u for u in images if "/transformed/" in u or "/ai_" in u]
     if not ai_images:
         logger.info(f"[영상생성] AI이미지 없음 — 자동 생성 시작 ({body.product_id})")
         img_svc_auto = ImageTransformService(session)
         try:
             # 대표이미지는 건드리지 않고 별도 생성
             ai_result = await img_svc_auto.transform_single_image(
-                body.product_id, images[0], "video",
+                body.product_id,
+                images[0],
+                "video",
             )
             if ai_result:
-                logger.info(f"[영상생성] AI이미지 자동 생성 완료")
+                logger.info("[영상생성] AI이미지 자동 생성 완료")
                 # 추가이미지 마지막에 추가
                 updated_images = list(images)
                 updated_images.append(ai_result)
-                await svc.update_collected_product(body.product_id, {"images": updated_images})
+                await svc.update_collected_product(
+                    body.product_id, {"images": updated_images}
+                )
                 images = updated_images
                 ai_images = [ai_result]
         except Exception as e:
@@ -614,6 +668,7 @@ async def generate_product_video(
         client, bucket_name, public_url = r2
         try:
             import io
+
             client.upload_fileobj(
                 io.BytesIO(video_bytes),
                 bucket_name,

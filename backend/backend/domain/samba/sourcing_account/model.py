@@ -51,15 +51,14 @@ class SambaSourcingAccount(SQLModel, table=True):
     chrome_profile: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
-    memo: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
+    memo: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     balance: Optional[float] = Field(default=None)
     balance_updated_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
     is_active: bool = Field(
-        default=True, sa_column=Column(Boolean, nullable=False, server_default="true", index=True)
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default="true", index=True),
     )
     additional_fields: Optional[Any] = Field(
         default=None, sa_column=Column(JSON, nullable=True)

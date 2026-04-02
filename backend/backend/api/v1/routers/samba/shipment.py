@@ -12,271 +12,348 @@ router = APIRouter(prefix="/shipments", tags=["samba-shipments"])
 
 
 class ShipmentStartRequest(BaseModel):
-  product_ids: list[str]
-  update_items: list[str]  # ['price', 'stock', 'image', 'description']
-  target_account_ids: list[str]
-  skip_unchanged: bool = False  # 가격 변동 없으면 스킵
+    product_ids: list[str]
+    update_items: list[str]  # ['price', 'stock', 'image', 'description']
+    target_account_ids: list[str]
+    skip_unchanged: bool = False  # 가격 변동 없으면 스킵
 
 
 class MarketDeleteRequest(BaseModel):
-  product_ids: list[str]
-  target_account_ids: list[str]
+    product_ids: list[str]
+    target_account_ids: list[str]
 
 
 def _get_service(session: AsyncSession):
-  from backend.domain.samba.shipment.repository import SambaShipmentRepository
-  from backend.domain.samba.shipment.service import SambaShipmentService
+    from backend.domain.samba.shipment.repository import SambaShipmentRepository
+    from backend.domain.samba.shipment.service import SambaShipmentService
 
-  return SambaShipmentService(SambaShipmentRepository(session), session)
+    return SambaShipmentService(SambaShipmentRepository(session), session)
+
+
+@router.post("/cancel")
+async def cancel_transmit():
+    """진행 중인 전송 강제 중단."""
+    from backend.domain.samba.shipment.service import request_cancel_transmit
+
+    request_cancel_transmit()
+    return {"ok": True, "message": "전송 중단 요청 완료"}
+
+
+@router.post("/emergency-stop")
+async def emergency_stop(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """비상정지 — 전송/오토튠 모든 백그라운드 작업 즉시 중단 + pending/running Job 전부 취소."""
+    from backend.domain.samba.emergency import trigger_emergency_stop
+    from backend.domain.samba.shipment.service import request_cancel_transmit
+    from sqlalchemy import text
+
+    # 1. 비상정지 플래그 ON
+    trigger_emergency_stop()
+    # 2. 전송 취소 플래그
+    request_cancel_transmit()
+    # 3. 오토튠 중단
+    try:
+        import backend.api.v1.routers.samba.collector_autotune as _at
+
+        _at._autotune_running_event.clear()
+        if _at._autotune_task and not _at._autotune_task.done():
+            _at._autotune_task.cancel()
+    except Exception:
+        pass
+    # 4. pending/running Job 전부 취소
+    r = await session.execute(
+        text(
+            "UPDATE samba_jobs SET status = 'cancelled', completed_at = now() WHERE status IN ('pending', 'running')"
+        )
+    )
+    cancelled_count = r.rowcount
+    await session.commit()
+
+    # 5. 비상정지 즉시 해제 — 진행 중 작업만 멈추고 이후 전송은 정상 허용
+    from backend.domain.samba.emergency import clear_emergency_stop
+    from backend.domain.samba.shipment.service import clear_cancel_transmit
+
+    clear_emergency_stop()
+    clear_cancel_transmit()
+
+    return {
+        "ok": True,
+        "cancelled_jobs": cancelled_count,
+        "message": "비상정지 완료 (자동 해제)",
+    }
+
+
+@router.post("/emergency-clear")
+async def emergency_clear():
+    """비상정지 해제 — 전송/오토튠 재개 가능."""
+    from backend.domain.samba.emergency import clear_emergency_stop
+    from backend.domain.samba.shipment.service import clear_cancel_transmit
+
+    clear_emergency_stop()
+    clear_cancel_transmit()
+    return {"ok": True, "message": "비상정지 해제"}
 
 
 @router.get("")
 async def list_shipments(
-  skip: int = Query(0, ge=0),
-  limit: int = Query(50, ge=1, le=200),
-  status: Optional[str] = None,
-  session: AsyncSession = Depends(get_read_session_dependency),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    status: Optional[str] = None,
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
-  svc = _get_service(session)
-  return await svc.list_shipments(skip=skip, limit=limit, status=status)
+    svc = _get_service(session)
+    return await svc.list_shipments(skip=skip, limit=limit, status=status)
 
 
 @router.get("/product/{product_id}")
 async def list_by_product(
-  product_id: str,
-  session: AsyncSession = Depends(get_read_session_dependency),
+    product_id: str,
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
-  return await _get_service(session).list_by_product(product_id)
+    return await _get_service(session).list_by_product(product_id)
 
 
 @router.get("/{shipment_id}")
 async def get_shipment(
-  shipment_id: str,
-  session: AsyncSession = Depends(get_read_session_dependency),
+    shipment_id: str,
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
-  svc = _get_service(session)
-  s = await svc.get_shipment(shipment_id)
-  if not s:
-    raise HTTPException(404, "전송 기록을 찾을 수 없습니다")
-  return s
+    svc = _get_service(session)
+    s = await svc.get_shipment(shipment_id)
+    if not s:
+        raise HTTPException(404, "전송 기록을 찾을 수 없습니다")
+    return s
 
 
 @router.post("/start", status_code=201)
 async def start_shipment(
-  body: ShipmentStartRequest,
-  session: AsyncSession = Depends(get_write_session_dependency),
+    body: ShipmentStartRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
 ):
-  svc = _get_service(session)
-  result = await svc.start_update(
-    body.product_ids, body.update_items, body.target_account_ids,
-    skip_unchanged=body.skip_unchanged,
-  )
-  return result
+    svc = _get_service(session)
+    result = await svc.start_update(
+        body.product_ids,
+        body.update_items,
+        body.target_account_ids,
+        skip_unchanged=body.skip_unchanged,
+    )
+    return result
 
 
 @router.post("/market-delete")
 async def market_delete(
-  body: MarketDeleteRequest,
-  session: AsyncSession = Depends(get_write_session_dependency),
+    body: MarketDeleteRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
 ):
-  """선택된 상품을 대상 마켓에서 판매중지/삭제."""
-  svc = _get_service(session)
-  return await svc.delete_from_markets(
-    body.product_ids, body.target_account_ids
-  )
+    """선택된 상품을 대상 마켓에서 판매중지/삭제."""
+    svc = _get_service(session)
+    return await svc.delete_from_markets(body.product_ids, body.target_account_ids)
 
 
 @router.post("/{shipment_id}/retry")
 async def retry_shipment(
-  shipment_id: str,
-  session: AsyncSession = Depends(get_write_session_dependency),
+    shipment_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
 ):
-  svc = _get_service(session)
-  result = await svc.retransmit(shipment_id)
-  if not result:
-    raise HTTPException(404, "전송 기록을 찾을 수 없습니다")
-  return result
+    svc = _get_service(session)
+    result = await svc.retransmit(shipment_id)
+    if not result:
+        raise HTTPException(404, "전송 기록을 찾을 수 없습니다")
+    return result
 
 
 # ==================== 그룹상품 ====================
 
 
 class GroupPreviewRequest(BaseModel):
-  product_ids: list[str] = []
-  search_filter_ids: list[str] = []
-  account_id: str
+    product_ids: list[str] = []
+    search_filter_ids: list[str] = []
+    account_id: str
 
 
 class GroupPreviewProduct(BaseModel):
-  id: str
-  name: str
-  color: Optional[str]
-  sale_price: Optional[float]
-  thumbnail: Optional[str]
-  existing_product_no: Optional[str]
+    id: str
+    name: str
+    color: Optional[str]
+    sale_price: Optional[float]
+    thumbnail: Optional[str]
+    existing_product_no: Optional[str]
 
 
 class GroupPreviewGroup(BaseModel):
-  group_key: str
-  group_name: str
-  products: list[GroupPreviewProduct]
+    group_key: str
+    group_name: str
+    products: list[GroupPreviewProduct]
 
 
 class GroupPreviewResponse(BaseModel):
-  groups: list[GroupPreviewGroup]
-  singles: list[GroupPreviewProduct]
-  delete_count: int
-  group_count: int
-  single_count: int
+    groups: list[GroupPreviewGroup]
+    singles: list[GroupPreviewProduct]
+    delete_count: int
+    group_count: int
+    single_count: int
 
 
 @router.post("/group-preview")
 async def group_preview(
-  body: GroupPreviewRequest,
-  session: AsyncSession = Depends(get_read_session_dependency),
+    body: GroupPreviewRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
-  """전송 대상 상품에서 그룹핑 가능한 상품을 감지하여 미리보기 반환."""
-  from collections import defaultdict
+    """전송 대상 상품에서 그룹핑 가능한 상품을 감지하여 미리보기 반환."""
+    from collections import defaultdict
 
-  from backend.domain.samba.collector.grouping import group_products_by_key
-  from backend.domain.samba.collector.repository import SambaCollectedProductRepository
-
-  repo = SambaCollectedProductRepository(session)
-  products = []
-
-  # search_filter_ids가 제공되면 해당 필터의 상품을 모두 조회
-  product_ids = list(body.product_ids)
-  if body.search_filter_ids:
-    for sf_id in body.search_filter_ids:
-      filter_products = await repo.filter_by_async(search_filter_id=sf_id, limit=10000)
-      product_ids.extend([p.id for p in filter_products])
-
-  for pid in product_ids:
-    p = await repo.get_async(pid)
-    if p:
-      products.append(p.model_dump())
-
-  # search_filter_id별로 분리 후 그룹핑 (다른 검색그룹끼리는 묶지 않음)
-  by_filter: dict[str, list[dict]] = defaultdict(list)
-  for p in products:
-    sf_id = p.get("search_filter_id") or "_none"
-    by_filter[sf_id].append(p)
-
-  all_groups: dict[str, list[dict]] = {}
-  all_singles: list[dict] = []
-  for sf_id, sf_products in by_filter.items():
-    r = group_products_by_key(sf_products)
-    all_groups.update(r["groups"])
-    all_singles.extend(r["singles"])
-
-  # 그룹별 미리보기 구성
-  groups = []
-  delete_count = 0
-  for key, items in all_groups.items():
-    first_name = items[0].get("name", "")
-    group_name = (
-      first_name.split(" - ", 1)[0].strip()
-      if " - " in first_name
-      else first_name
+    from backend.domain.samba.collector.grouping import group_products_by_key
+    from backend.domain.samba.collector.repository import (
+        SambaCollectedProductRepository,
     )
 
-    group_products = []
-    for item in items:
-      market_nos = item.get("market_product_nos") or {}
-      existing_no = market_nos.get(body.account_id)
-      if existing_no:
-        if isinstance(existing_no, dict):
-          existing_no = str(existing_no.get("originProductNo", ""))
+    repo = SambaCollectedProductRepository(session)
+    products = []
+
+    # search_filter_ids가 제공되면 해당 필터의 상품을 모두 조회
+    product_ids = list(body.product_ids)
+    if body.search_filter_ids:
+        for sf_id in body.search_filter_ids:
+            filter_products = await repo.filter_by_async(
+                search_filter_id=sf_id, limit=10000
+            )
+            product_ids.extend([p.id for p in filter_products])
+
+    for pid in product_ids:
+        p = await repo.get_async(pid)
+        if p:
+            products.append(p.model_dump())
+
+    # search_filter_id별로 분리 후 그룹핑 (다른 검색그룹끼리는 묶지 않음)
+    by_filter: dict[str, list[dict]] = defaultdict(list)
+    for p in products:
+        sf_id = p.get("search_filter_id") or "_none"
+        by_filter[sf_id].append(p)
+
+    all_groups: dict[str, list[dict]] = {}
+    all_singles: list[dict] = []
+    for sf_id, sf_products in by_filter.items():
+        r = group_products_by_key(sf_products)
+        all_groups.update(r["groups"])
+        all_singles.extend(r["singles"])
+
+    # 그룹별 미리보기 구성
+    groups = []
+    delete_count = 0
+    for key, items in all_groups.items():
+        first_name = items[0].get("name", "")
+        group_name = (
+            first_name.split(" - ", 1)[0].strip() if " - " in first_name else first_name
+        )
+
+        group_products = []
+        for item in items:
+            market_nos = item.get("market_product_nos") or {}
+            existing_no = market_nos.get(body.account_id)
+            if existing_no:
+                if isinstance(existing_no, dict):
+                    existing_no = str(existing_no.get("originProductNo", ""))
+                else:
+                    existing_no = str(existing_no)
+                delete_count += 1
+            else:
+                existing_no = None
+            item_images = item.get("images") or []
+            group_products.append(
+                GroupPreviewProduct(
+                    id=item["id"],
+                    name=item.get("name", ""),
+                    color=item.get("color"),
+                    sale_price=item.get("sale_price"),
+                    thumbnail=item_images[0] if item_images else None,
+                    existing_product_no=existing_no,
+                )
+            )
+        groups.append(
+            GroupPreviewGroup(
+                group_key=key,
+                group_name=group_name,
+                products=group_products,
+            )
+        )
+
+    singles = []
+    for item in all_singles:
+        item_images = item.get("images") or []
+        market_nos = item.get("market_product_nos") or {}
+        existing = market_nos.get(body.account_id)
+        if existing and isinstance(existing, dict):
+            existing = str(existing.get("originProductNo", ""))
+        elif existing:
+            existing = str(existing)
         else:
-          existing_no = str(existing_no)
-        delete_count += 1
-      else:
-        existing_no = None
-      item_images = item.get("images") or []
-      group_products.append(GroupPreviewProduct(
-        id=item["id"],
-        name=item.get("name", ""),
-        color=item.get("color"),
-        sale_price=item.get("sale_price"),
-        thumbnail=item_images[0] if item_images else None,
-        existing_product_no=existing_no,
-      ))
-    groups.append(GroupPreviewGroup(
-      group_key=key,
-      group_name=group_name,
-      products=group_products,
-    ))
+            existing = None
+        singles.append(
+            GroupPreviewProduct(
+                id=item["id"],
+                name=item.get("name", ""),
+                color=item.get("color"),
+                sale_price=item.get("sale_price"),
+                thumbnail=item_images[0] if item_images else None,
+                existing_product_no=existing,
+            )
+        )
 
-  singles = []
-  for item in all_singles:
-    item_images = item.get("images") or []
-    market_nos = item.get("market_product_nos") or {}
-    existing = market_nos.get(body.account_id)
-    if existing and isinstance(existing, dict):
-      existing = str(existing.get("originProductNo", ""))
-    elif existing:
-      existing = str(existing)
-    else:
-      existing = None
-    singles.append(GroupPreviewProduct(
-      id=item["id"],
-      name=item.get("name", ""),
-      color=item.get("color"),
-      sale_price=item.get("sale_price"),
-      thumbnail=item_images[0] if item_images else None,
-      existing_product_no=existing,
-    ))
-
-  return GroupPreviewResponse(
-    groups=groups,
-    singles=singles,
-    delete_count=delete_count,
-    group_count=len(groups),
-    single_count=len(singles),
-  )
+    return GroupPreviewResponse(
+        groups=groups,
+        singles=singles,
+        delete_count=delete_count,
+        group_count=len(groups),
+        single_count=len(singles),
+    )
 
 
 class GroupSendItem(BaseModel):
-  group_key: str
-  product_ids: list[str]
+    group_key: str
+    product_ids: list[str]
 
 
 class GroupSendRequest(BaseModel):
-  groups: list[GroupSendItem]
-  singles: list[str]
-  account_id: str
+    groups: list[GroupSendItem]
+    singles: list[str]
+    account_id: str
 
 
 @router.post("/group-send")
 async def group_send(
-  body: GroupSendRequest,
-  session: AsyncSession = Depends(get_write_session_dependency),
+    body: GroupSendRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
 ):
-  """그룹상품 + 단일상품 전송."""
-  svc = _get_service(session)
-  results = []
+    """그룹상품 + 단일상품 전송."""
+    svc = _get_service(session)
+    results = []
 
-  # 1. 그룹상품 전송
-  for group in body.groups:
-    try:
-      result = await svc.transmit_group(
-        product_ids=group.product_ids,
-        account_id=body.account_id,
-      )
-      results.append({"group_key": group.group_key, "status": "success", **result})
-    except Exception as e:
-      results.append({"group_key": group.group_key, "status": "error", "error": str(e)})
+    # 1. 그룹상품 전송
+    for group in body.groups:
+        try:
+            result = await svc.transmit_group(
+                product_ids=group.product_ids,
+                account_id=body.account_id,
+            )
+            results.append(
+                {"group_key": group.group_key, "status": "success", **result}
+            )
+        except Exception as e:
+            results.append(
+                {"group_key": group.group_key, "status": "error", "error": str(e)}
+            )
 
-  # 2. 단일상품 전송 (기존 방식)
-  single_results = {}
-  if body.singles:
-    single_results = await svc.start_update(
-      product_ids=body.singles,
-      update_items=["price", "stock", "image", "description"],
-      target_account_ids=[body.account_id],
-    )
+    # 2. 단일상품 전송 (기존 방식)
+    single_results = {}
+    if body.singles:
+        single_results = await svc.start_update(
+            product_ids=body.singles,
+            update_items=["price", "stock", "image", "description"],
+            target_account_ids=[body.account_id],
+        )
 
-  return {
-    "group_results": results,
-    "single_results": single_results,
-  }
+    return {
+        "group_results": results,
+        "single_results": single_results,
+    }

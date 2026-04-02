@@ -1,6 +1,6 @@
 """SambaWave Shipment DTOs."""
 
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 

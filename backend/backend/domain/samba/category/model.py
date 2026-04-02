@@ -24,7 +24,9 @@ class SambaCategoryMapping(SQLModel, table=True):
         max_length=30,
     )
     # 테넌트 격리
-    tenant_id: Optional[str] = Field(default=None, sa_column=Column(String, index=True, nullable=True))
+    tenant_id: Optional[str] = Field(
+        default=None, sa_column=Column(String, index=True, nullable=True)
+    )
 
     source_site: str = Field(
         sa_column=Column(Text, nullable=False, index=True),
@@ -32,9 +34,13 @@ class SambaCategoryMapping(SQLModel, table=True):
     source_category: str = Field(sa_column=Column(Text, nullable=False))
 
     # 마켓별 매핑: { marketName: categoryPath }
-    target_mappings: Optional[Any] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    target_mappings: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
-    applied_policy_id: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    applied_policy_id: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # Timestamps
     created_at: datetime = Field(
@@ -56,7 +62,9 @@ class SambaCategoryTree(SQLModel, table=True):
 
     # 카테고리 계층 (JSON)
     # cat1: ["대분류1", "대분류2", ...]
-    cat1: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    cat1: Optional[List[str]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     # cat2: 마켓별 용도 다름
     # - 11st: {경로문자열: 숫자코드} 매핑 딕셔너리 (예: {"패션 > 남성의류": "12345"})
     # - 기타: { "대분류1": ["중분류1", "중분류2"], ... }

@@ -23,6 +23,7 @@ class CacheService:
             return
         try:
             import redis.asyncio as aioredis
+
             self._redis = aioredis.from_url(self._redis_url, decode_responses=True)
             await self._redis.ping()
             logger.info("[캐시] Redis 연결 성공")

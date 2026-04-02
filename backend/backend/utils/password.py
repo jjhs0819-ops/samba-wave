@@ -14,8 +14,8 @@ def hash_password(password: str) -> str:
         Hashed password as string
     """
     salt = bcrypt.gensalt()
-    hashed: bytes = bcrypt.hashpw(password.encode('utf-8'), salt)
-    return hashed.decode('utf-8')
+    hashed: bytes = bcrypt.hashpw(password.encode("utf-8"), salt)
+    return hashed.decode("utf-8")
 
 
 def verify_password(password: str, hashed_password: str) -> bool:
@@ -29,5 +29,7 @@ def verify_password(password: str, hashed_password: str) -> bool:
     Returns:
         True if password matches, False otherwise
     """
-    result: bool = bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
+    result: bool = bcrypt.checkpw(
+        password.encode("utf-8"), hashed_password.encode("utf-8")
+    )
     return result

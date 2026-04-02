@@ -5,6 +5,7 @@ import { accountApi, type SambaMarketAccount } from "@/lib/samba/api";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 
 export default function AccountsPage() {
+  useEffect(() => { document.title = 'SAMBA-계정관리' }, [])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);

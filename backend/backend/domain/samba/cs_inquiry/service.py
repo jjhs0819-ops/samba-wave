@@ -137,9 +137,7 @@ class SambaCSInquiryService:
 
         for item in all_items:
             market_counts[item.market] = market_counts.get(item.market, 0) + 1
-            type_counts[item.inquiry_type] = (
-                type_counts.get(item.inquiry_type, 0) + 1
-            )
+            type_counts[item.inquiry_type] = type_counts.get(item.inquiry_type, 0) + 1
             if item.reply_status == "replied":
                 replied += 1
             else:

@@ -56,7 +56,11 @@ class SambaCSInquiryRepository(BaseRepository[SambaCSInquiry]):
         search: Optional[str] = None,
     ) -> int:
         """필터 적용된 총 개수."""
-        stmt = select(func.count()).select_from(SambaCSInquiry).where(SambaCSInquiry.is_hidden == False)  # noqa: E712
+        stmt = (
+            select(func.count())
+            .select_from(SambaCSInquiry)
+            .where(SambaCSInquiry.is_hidden == False)
+        )  # noqa: E712
 
         if market:
             stmt = stmt.where(SambaCSInquiry.market == market)

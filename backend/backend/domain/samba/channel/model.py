@@ -33,7 +33,9 @@ class SambaChannel(SQLModel, table=True):
     fee_rate: float = Field(default=0)
 
     # 연동 상품 목록 (JSON)
-    products: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    products: Optional[List[str]] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     status: str = Field(
         default="active",
@@ -42,7 +44,9 @@ class SambaChannel(SQLModel, table=True):
 
     # API 키 (암호화 필요시 별도 처리)
     api_key: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    api_secret: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    api_secret: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # Timestamps
     created_at: datetime = Field(

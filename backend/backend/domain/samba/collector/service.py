@@ -2,7 +2,12 @@
 
 from typing import Any, Dict, List, Optional
 
-from backend.domain.samba.collector.model import SambaCollectedProduct, SambaSearchFilter
+from sqlmodel import select
+
+from backend.domain.samba.collector.model import (
+    SambaCollectedProduct,
+    SambaSearchFilter,
+)
 from backend.domain.samba.collector.repository import (
     SambaCollectedProductRepository,
     SambaSearchFilterRepository,
@@ -79,7 +84,11 @@ class SambaCollectorService:
         if not fid:
             return
         # 이미 설정된 값은 덮어쓰지 않음
-        if data.get("tags") or data.get("seo_keywords") or data.get("applied_policy_id"):
+        if (
+            data.get("tags")
+            or data.get("seo_keywords")
+            or data.get("applied_policy_id")
+        ):
             return
         existing = await self.product_repo.list_by_filter(fid, limit=1)
         if not existing:
@@ -114,7 +123,11 @@ class SambaCollectorService:
         if not items:
             return 0
         # 검색필터의 정책을 신규 상품에 자동 적용
-        filter_ids = {item.get("search_filter_id") for item in items if item.get("search_filter_id")}
+        filter_ids = {
+            item.get("search_filter_id")
+            for item in items
+            if item.get("search_filter_id")
+        }
         filter_policy_map: Dict[str, str] = {}
         if filter_ids:
             filters = await self.filter_repo.filter_by_async(limit=len(filter_ids) + 10)
@@ -127,10 +140,45 @@ class SambaCollectorService:
                 if fid in filter_policy_map:
                     item["applied_policy_id"] = filter_policy_map[fid]
         from backend.domain.samba.collector.model import SambaCollectedProduct
-        objects = [SambaCollectedProduct(**d) for d in items]
-        self.product_repo.session.add_all(objects)
+        from sqlalchemy.exc import IntegrityError
+
+        created = 0
+        for d in items:
+            obj = SambaCollectedProduct(**d)
+            self.product_repo.session.add(obj)
+            try:
+                await self.product_repo.session.flush()
+                created += 1
+            except IntegrityError:
+                # 동시 수집으로 중복 발생 시 기존 상품 업데이트
+                await self.product_repo.session.rollback()
+                existing = (
+                    (
+                        await self.product_repo.session.execute(
+                            select(SambaCollectedProduct).where(
+                                SambaCollectedProduct.source_site
+                                == d.get("source_site"),
+                                SambaCollectedProduct.site_product_id
+                                == d.get("site_product_id"),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
+                if existing:
+                    update_fields = {
+                        k: v
+                        for k, v in d.items()
+                        if k
+                        not in ("id", "source_site", "site_product_id", "created_at")
+                    }
+                    for k, v in update_fields.items():
+                        setattr(existing, k, v)
+                    await self.product_repo.session.flush()
+                    created += 1
         await self.product_repo.session.commit()
-        return len(objects)
+        return created
 
     async def update_collected_product(
         self, product_id: str, data: Dict[str, Any]
@@ -170,7 +218,8 @@ class SambaCollectorService:
     def _clean_company_names(data: Dict[str, Any]) -> None:
         """브랜드/제조사에서 (주), ㈜, (株) 제거."""
         import re
-        _pattern = re.compile(r'\(주\)|㈜|\(株\)')
+
+        _pattern = re.compile(r"\(주\)|㈜|\(株\)")
         for field in ("brand", "manufacturer"):
             val = data.get(field)
             if val and isinstance(val, str):
@@ -212,7 +261,10 @@ class SambaCollectorService:
         return items
 
     async def apply_policy_to_filter_products(
-        self, filter_id: str, policy_id: str, policy_data: Optional[Dict[str, Any]] = None
+        self,
+        filter_id: str,
+        policy_id: str,
+        policy_data: Optional[Dict[str, Any]] = None,
     ) -> int:
         """그룹(필터)에 적용된 정책을 해당 그룹의 모든 상품에 전파."""
         if not policy_data:

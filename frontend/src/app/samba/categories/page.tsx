@@ -33,6 +33,7 @@ const COST_PER_CALL_KRW = 15
 const COST_BASIS = 'Sonnet4 $3/M in + $15/M out × ₩1,450'
 
 export default function CategoriesPage() {
+  useEffect(() => { document.title = 'SAMBA-카테고리' }, [])
   const router = useRouter()
   const [products, setProducts] = useState<SambaCollectedProduct[]>([])
   const [loading, setLoading] = useState(true)
@@ -92,80 +93,68 @@ export default function CategoriesPage() {
   // 수동 매핑 자동저장 디바운스
   const autoSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // category-tree API 원본 보관 (unmappedCount, filteredMappings에서 사용)
+  const [treeRows, setTreeRows] = useState<{ source_site: string; category: string; count: number }[]>([])
+
   const load = useCallback(async () => {
     setLoading(true)
-    try {
-      const all = await collectorApi.listProducts(0, 500)
-      if (Array.isArray(all) && all.length > 0) {
-        setProducts(all)
-        buildTree(all)
-      } else {
-        setProducts([])
-        setSites([])
-      }
-    } catch (e) {
-      console.error('[카테고리] 상품 로드 실패:', e)
+    // Phase 1: 경량 API 4개 병렬 호출 — 사이트 목록 즉시 표시
+    const [treeResult, mappingResult, accountResult, countResult] = await Promise.allSettled([
+      collectorApi.categoryTree(),
+      categoryApi.listMappings(),
+      accountApi.listActive(),
+      categoryApi.getMarketCategoryCounts(),
+    ])
+    // 카테고리 트리 (GROUP BY — 상품 전체 로드 불필요)
+    if (treeResult.status === 'fulfilled' && Array.isArray(treeResult.value)) {
+      setTreeRows(treeResult.value)
+      buildTreeFromApi(treeResult.value)
     }
-    // 매핑 현황 로드
-    try {
-      const list = await categoryApi.listMappings()
-      setMappings(Array.isArray(list) ? (list as MappingRow[]) : [])
-    } catch (e) {
-      console.error('[카테고리] 매핑 로드 실패:', e)
+    // 매핑 현황
+    if (mappingResult.status === 'fulfilled') {
+      setMappings(Array.isArray(mappingResult.value) ? (mappingResult.value as MappingRow[]) : [])
     }
-    // 활성 계정 마켓 로드
-    try {
-      const accounts = await accountApi.listActive()
-      if (Array.isArray(accounts)) {
-        const types = [...new Set(accounts.map(a => a.market_type))]
-        setActiveMarketTypes(types)
-        const initial: Record<string, boolean> = {}
-        types.forEach(t => { initial[t] = true })
-        setBulkSelectedMarkets(initial)
-      }
-    } catch (e) {
-      console.error('[카테고리] 활성 계정 로드 실패:', e)
+    // 활성 계정
+    if (accountResult.status === 'fulfilled' && Array.isArray(accountResult.value)) {
+      const types = [...new Set(accountResult.value.map(a => a.market_type))]
+      setActiveMarketTypes(types)
+      const initial: Record<string, boolean> = {}
+      types.forEach(t => { initial[t] = true })
+      setBulkSelectedMarkets(initial)
     }
-    // 마켓별 카테고리 수 로드
-    try {
-      const counts = await categoryApi.getMarketCategoryCounts()
-      setMarketCatCounts(counts)
-    } catch { /* 무시 */ }
+    // 마켓별 카테고리 수
+    if (countResult.status === 'fulfilled') {
+      setMarketCatCounts(countResult.value)
+    }
     setLoading(false)
+
+    // Phase 2: 상품 데이터 백그라운드 로드 (AI 리매핑 등에서 사용)
+    try {
+      const all = await collectorApi.listProducts(0, 100000)
+      if (Array.isArray(all) && all.length > 0) setProducts(all)
+    } catch { /* 백그라운드이므로 무시 */ }
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  const buildTree = (prods: SambaCollectedProduct[]) => {
+  // category-tree API 응답으로 트리 구성 (상품 전체 로드 없이)
+  const buildTreeFromApi = (rows: { source_site: string; category: string; count: number }[]) => {
     const tree: Record<string, CatLevel> = {}
     const siteSet = new Set<string>()
 
-    prods.forEach(p => {
-      const site = p.source_site || '기타'
+    rows.forEach(({ source_site, category, count }) => {
+      const site = source_site || '기타'
       siteSet.add(site)
-
       if (!tree[site]) tree[site] = { name: site, children: {}, products: [] }
 
-      const cats = [p.category1, p.category2, p.category3, p.category4].filter(Boolean) as string[]
-      if (cats.length === 0 && p.category) {
-        cats.push(...p.category.split('>').map(c => c.trim()).filter(Boolean))
-      }
-
+      const cats = category ? category.split('>').map(c => c.trim()).filter(Boolean) : []
       let current = tree[site]
-      cats.forEach((cat, idx) => {
+      cats.forEach((cat) => {
         if (!current.children[cat]) {
           current.children[cat] = { name: cat, children: {}, products: [] }
         }
-        if (idx === cats.length - 1) {
-          current.children[cat].products.push(p)
-        }
         current = current.children[cat]
       })
-
-      // 카테고리 없는 상품은 사이트 루트에
-      if (cats.length === 0) {
-        tree[site].products.push(p)
-      }
     })
 
     setCatTree(tree)
@@ -205,28 +194,25 @@ export default function CategoriesPage() {
     setSelectedProducts([]); setSelectedPath('')
   }
 
-  // 크로스 필터: 지정 레벨 제외한 나머지 필터 적용
-  const getCrossFiltered = useCallback((excludeLevel: string) => {
-    let filtered = products
-    if (excludeLevel !== 'site' && selectedSite) filtered = filtered.filter(p => (p.source_site || '기타') === selectedSite)
-    if (excludeLevel !== 'cat1' && selectedCat1) filtered = filtered.filter(p => p.category1 === selectedCat1)
-    if (excludeLevel !== 'cat2' && selectedCat2) filtered = filtered.filter(p => p.category2 === selectedCat2)
-    if (excludeLevel !== 'cat3' && selectedCat3) filtered = filtered.filter(p => p.category3 === selectedCat3)
-    if (excludeLevel !== 'cat4' && selectedCat4) filtered = filtered.filter(p => p.category4 === selectedCat4)
-    return filtered
-  }, [products, selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4])
-
-  // 선택 변경 시 상품 목록 자동 업데이트
+  // 선택 변경 시 경로 자동 업데이트
   useEffect(() => {
     if (!selectedSite && !selectedCat1 && !selectedCat2 && !selectedCat3 && !selectedCat4) {
       setSelectedProducts([]); setSelectedPath('')
       return
     }
-    const filtered = getCrossFiltered('none')
     const path = [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4].filter(Boolean)
-    setSelectedProducts(filtered)
     setSelectedPath(path.join(' > '))
-  }, [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4, getCrossFiltered])
+    // products 로드 완료 시 선택 상품 업데이트
+    if (products.length > 0) {
+      let filtered = products
+      if (selectedSite) filtered = filtered.filter(p => (p.source_site || '기타') === selectedSite)
+      if (selectedCat1) filtered = filtered.filter(p => p.category1 === selectedCat1)
+      if (selectedCat2) filtered = filtered.filter(p => p.category2 === selectedCat2)
+      if (selectedCat3) filtered = filtered.filter(p => p.category3 === selectedCat3)
+      if (selectedCat4) filtered = filtered.filter(p => p.category4 === selectedCat4)
+      setSelectedProducts(filtered)
+    }
+  }, [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4, products])
 
   // ── AI 카테고리 매핑 ──
 
@@ -406,12 +392,24 @@ export default function CategoriesPage() {
     }
   }
 
-  // 5단 드릴다운 데이터 (크로스 필터: 각 레벨은 자신을 제외한 필터 적용)
-  const getCrossSites = () => [...new Set(getCrossFiltered('site').map(p => p.source_site || '기타'))].sort()
-  const getCat1List = () => [...new Set(getCrossFiltered('cat1').map(p => p.category1).filter(Boolean) as string[])].sort()
-  const getCat2List = () => [...new Set(getCrossFiltered('cat2').map(p => p.category2).filter(Boolean) as string[])].sort()
-  const getCat3List = () => [...new Set(getCrossFiltered('cat3').map(p => p.category3).filter(Boolean) as string[])].sort()
-  const getCat4List = () => [...new Set(getCrossFiltered('cat4').map(p => p.category4).filter(Boolean) as string[])].sort()
+  // 5단 드릴다운 데이터 (catTree 기반 — 상품 전체 순회 불필요)
+  const getCrossSites = () => sites
+  const getCat1List = () => {
+    if (!selectedSite || !catTree[selectedSite]) return []
+    return Object.keys(catTree[selectedSite].children).sort()
+  }
+  const getCat2List = () => {
+    if (!selectedSite || !selectedCat1 || !catTree[selectedSite]?.children[selectedCat1]) return []
+    return Object.keys(catTree[selectedSite].children[selectedCat1].children).sort()
+  }
+  const getCat3List = () => {
+    if (!selectedSite || !selectedCat1 || !selectedCat2 || !catTree[selectedSite]?.children[selectedCat1]?.children[selectedCat2]) return []
+    return Object.keys(catTree[selectedSite].children[selectedCat1].children[selectedCat2].children).sort()
+  }
+  const getCat4List = () => {
+    if (!selectedSite || !selectedCat1 || !selectedCat2 || !selectedCat3 || !catTree[selectedSite]?.children[selectedCat1]?.children[selectedCat2]?.children[selectedCat3]) return []
+    return Object.keys(catTree[selectedSite].children[selectedCat1].children[selectedCat2].children[selectedCat3].children).sort()
+  }
 
   // ── 최하단 카테고리 감지 (하위 자식이 없는 노드) ──
 
@@ -423,7 +421,7 @@ export default function CategoriesPage() {
     if (selectedCat1 && getCat2List().length === 0) return true
     return false
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4, catTree, products])
+  }, [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4, catTree])
 
   // 최하단 선택 시 기존 매핑값으로 manualEdits 초기화
   useEffect(() => {
@@ -479,22 +477,17 @@ export default function CategoriesPage() {
 
   // ── 미매핑 카테고리 수 + 비용 추정 ──
 
+  // treeRows 기반 미매핑 수 계산 (상품 전체 순회 불필요)
   const unmappedCount = useMemo(() => {
-    const uniqueCats = new Set<string>()
-    products.forEach(p => {
-      const site = p.source_site || ''
-      if (!site) return
-      const cats = [p.category1, p.category2, p.category3, p.category4].filter(Boolean) as string[]
-      if (cats.length === 0 && p.category) {
-        cats.push(...p.category.split('>').map(c => c.trim()).filter(Boolean))
-      }
-      if (cats.length > 0) uniqueCats.add(`${site}::${cats.join(' > ')}`)
-    })
     const mappedKeys = new Set(mappings.map(m => `${m.source_site}::${m.source_category}`))
     let count = 0
-    uniqueCats.forEach(k => { if (!mappedKeys.has(k)) count++ })
+    treeRows.forEach(({ source_site, category }) => {
+      if (!source_site || !category) return
+      const normalized = category.split('>').map(c => c.trim()).filter(Boolean).join(' > ')
+      if (!mappedKeys.has(`${source_site}::${normalized}`)) count++
+    })
     return count
-  }, [products, mappings])
+  }, [treeRows, mappings])
 
   const costEstimate = useMemo(() => {
     if (selectedSite && selectedCat1) {
@@ -506,21 +499,16 @@ export default function CategoriesPage() {
 
   // ── 매핑 현황 필터링 (드릴다운 선택에 연동) ──
 
+  // treeRows 기반 매핑 현황 (상품 전체 순회 불필요)
   const filteredMappings = useMemo(() => {
-    // 수집 상품에서 고유 (site, leaf_category) 추출
+    // treeRows에서 고유 (site, leaf_category) 추출
     const productCats = new Map<string, { site: string; category: string }>()
-    products.forEach(p => {
-      const site = p.source_site || ''
-      if (!site) return
-      const cats = [p.category1, p.category2, p.category3, p.category4].filter(Boolean) as string[]
-      if (cats.length === 0 && p.category) {
-        cats.push(...p.category.split('>').map(c => c.trim()).filter(Boolean))
-      }
-      if (cats.length === 0) return
-      const leafPath = cats.join(' > ')
-      const key = `${site}::${leafPath}`
+    treeRows.forEach(({ source_site, category }) => {
+      if (!source_site || !category) return
+      const normalized = category.split('>').map(c => c.trim()).filter(Boolean).join(' > ')
+      const key = `${source_site}::${normalized}`
       if (!productCats.has(key)) {
-        productCats.set(key, { site, category: leafPath })
+        productCats.set(key, { site: source_site, category: normalized })
       }
     })
 
@@ -534,14 +522,12 @@ export default function CategoriesPage() {
     const merged: MappingRow[] = []
     const seen = new Set<string>()
 
-    // 수집 상품 카테고리 기준으로 먼저 추가 (매핑 유무 관계없이)
     productCats.forEach(({ site, category }, key) => {
       seen.add(key)
       const existing = mappingMap.get(key)
       if (existing) {
         merged.push(existing)
       } else {
-        // 미매핑 카테고리 — 빈 행으로 추가
         merged.push({
           id: `unmapped_${key}`,
           source_site: site,
@@ -551,7 +537,7 @@ export default function CategoriesPage() {
       }
     })
 
-    // DB에만 있고 상품이 없는 매핑도 추가 (과거 상품 삭제된 경우)
+    // DB에만 있고 상품이 없는 매핑도 추가
     mappings.forEach(m => {
       const key = `${m.source_site}::${m.source_category}`
       if (!seen.has(key)) {
@@ -572,7 +558,7 @@ export default function CategoriesPage() {
     return result.slice().sort((a, b) =>
       a.source_site.localeCompare(b.source_site) || a.source_category.localeCompare(b.source_category)
     )
-  }, [mappings, products, selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4])
+  }, [mappings, treeRows, selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4])
 
   // ── 매핑 현황 핸들러 ──
 
@@ -773,16 +759,26 @@ export default function CategoriesPage() {
       showAlert('리매핑할 매핑 데이터가 없습니다', 'info')
       return
     }
+    // 이미 해당 마켓 매핑이 있는 행은 제외
+    const needMapping = filteredMappings.filter(row => {
+      const existing = row.target_mappings?.[market]
+      return !existing || existing === ''
+    })
+    if (needMapping.length === 0) {
+      showAlert(`${MARKET_LABELS[market]} 매핑이 모두 완료되어 있습니다`, 'info')
+      return
+    }
+    const skippedCount = filteredMappings.length - needMapping.length
     setMarketAiLoading(market)
-    const total = filteredMappings.length
+    const total = needMapping.length
     setMarketAiProgress({ market, current: 0, total, success: 0, fail: 0 })
 
     let successCount = 0
     let errorCount = 0
     const updatedMappings = [...mappings]
 
-    for (let i = 0; i < filteredMappings.length; i++) {
-      const row = filteredMappings[i]
+    for (let i = 0; i < needMapping.length; i++) {
+      const row = needMapping[i]
       setMarketAiProgress({ market, current: i + 1, total, success: successCount, fail: errorCount })
 
       const rowProducts = products.filter(p =>
@@ -791,7 +787,6 @@ export default function CategoriesPage() {
           .filter(Boolean).join(' > ') === row.source_category
       )
       const sampleNames = rowProducts.slice(0, 5).map(p => p.name)
-      // 태그는 그룹 동일 → 첫 상품 것만
       const sampleTags = (rowProducts[0]?.tags || []).filter((t: string) => !t.startsWith('__')).slice(0, 10)
 
       try {
@@ -805,7 +800,6 @@ export default function CategoriesPage() {
         const newCat = result[market]
         if (newCat) {
           if (row.id.startsWith('unmapped_')) {
-            // 미매핑 → 신규 생성
             const created = await categoryApi.createMapping({
               source_site: row.source_site,
               source_category: row.source_category,
@@ -832,8 +826,34 @@ export default function CategoriesPage() {
     setMappings(updatedMappings)
     setMarketAiLoading(null)
     setLastAiUsage({ calls: successCount, tokens: successCount * 1800, cost: successCount * COST_PER_CALL_KRW, date: new Date().toLocaleTimeString() })
-    // 완료 상태로 모달 갱신 (자동 닫힘 아님)
     setMarketAiProgress({ market, current: total, total, success: successCount, fail: errorCount })
+    if (skippedCount > 0) showAlert(`${skippedCount}건은 이미 매핑되어 건너뜀`, 'info')
+  }
+
+  // ESM 크로스매핑 복사 (지마켓→옥션)
+  const [esmCopyLoading, setEsmCopyLoading] = useState(false)
+
+  const handleEsmCrossCopy = async (fromMarket: string, toMarket: string) => {
+    const ids = filteredMappings.map(m => m.id).filter(id => !id.startsWith('unmapped_'))
+    if (ids.length === 0) {
+      showAlert('복사할 매핑 데이터가 없습니다', 'info')
+      return
+    }
+    setEsmCopyLoading(true)
+    try {
+      const result = await categoryApi.copyEsmMapping(fromMarket, toMarket, ids)
+      const label = fromMarket === 'gmarket' ? 'G마켓→옥션' : '옥션→G마켓'
+      showAlert(`${label} 크로스매핑: ${result.copied}건 복사, ${result.skipped}건 스킵, ${result.failed}건 실패`, 'success')
+      if (result.copied > 0) {
+        const refreshed = await categoryApi.listMappings() as MappingRow[]
+        setMappings(refreshed)
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '복사 실패'
+      showAlert(`크로스매핑 실패: ${msg}`, 'error')
+    } finally {
+      setEsmCopyLoading(false)
+    }
   }
 
   // 마켓 키 목록
@@ -1059,6 +1079,47 @@ export default function CategoriesPage() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                         <span>{MARKET_LABELS[mk]}</span>
+                        {/* ESM 크로스매핑 버튼: 옥션은 G→A, 지마켓은 A→G */}
+                        {mk === 'auction' && (
+                          <button
+                            onClick={() => handleEsmCrossCopy('gmarket', 'auction')}
+                            disabled={esmCopyLoading || filteredMappings.length === 0}
+                            style={{
+                              background: 'none',
+                              border: '1px solid transparent',
+                              borderRadius: '3px',
+                              color: esmCopyLoading ? '#4C9AFF' : '#555',
+                              fontSize: '0.5625rem',
+                              cursor: esmCopyLoading ? 'not-allowed' : 'pointer',
+                              padding: '1px 3px',
+                              lineHeight: 1,
+                              fontWeight: 700,
+                            }}
+                            onMouseEnter={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#4C9AFF'; e.currentTarget.style.borderColor = 'rgba(76,154,255,0.3)' } }}
+                            onMouseLeave={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#555'; e.currentTarget.style.borderColor = 'transparent' } }}
+                            title="G마켓 매핑을 옥션으로 크로스매핑 복사"
+                          >{esmCopyLoading ? '...' : 'G→A'}</button>
+                        )}
+                        {mk === 'gmarket' && (
+                          <button
+                            onClick={() => handleEsmCrossCopy('auction', 'gmarket')}
+                            disabled={esmCopyLoading || filteredMappings.length === 0}
+                            style={{
+                              background: 'none',
+                              border: '1px solid transparent',
+                              borderRadius: '3px',
+                              color: esmCopyLoading ? '#4C9AFF' : '#555',
+                              fontSize: '0.5625rem',
+                              cursor: esmCopyLoading ? 'not-allowed' : 'pointer',
+                              padding: '1px 3px',
+                              lineHeight: 1,
+                              fontWeight: 700,
+                            }}
+                            onMouseEnter={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#4C9AFF'; e.currentTarget.style.borderColor = 'rgba(76,154,255,0.3)' } }}
+                            onMouseLeave={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#555'; e.currentTarget.style.borderColor = 'transparent' } }}
+                            title="옥션 매핑을 G마켓으로 크로스매핑 복사"
+                          >{esmCopyLoading ? '...' : 'A→G'}</button>
+                        )}
                         <button
                           onClick={() => handleMarketAiRemap(mk)}
                           disabled={marketAiLoading !== null || filteredMappings.length === 0}

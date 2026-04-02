@@ -238,6 +238,7 @@ export interface SambaCollectedProduct {
   sale_price: number;
   cost?: number;
   images?: string[];
+  coupang_main_image?: string;
   options?: unknown[];
   category?: string;
   category1?: string;
@@ -438,13 +439,6 @@ export const collectorApi = {
       body: JSON.stringify({ product_id: productId, max_images: maxImages, duration_per_image: durationPerImage }),
     }),
 
-  // 모니터링 우선순위 변경
-  updateMonitorPriority: (productIds: string[], priority: string) =>
-    request<{ updated: number }>(`${SAMBA_PREFIX}/collector/products/monitor-priority`, {
-      method: 'PUT',
-      body: JSON.stringify({ product_ids: productIds, priority }),
-    }),
-
   // Probe (소싱처/마켓 헬스체크)
   probeStatus: () =>
     request<Record<string, unknown>>(`${SAMBA_PREFIX}/collector/probe/status`),
@@ -455,7 +449,9 @@ export const collectorApi = {
   autotuneStop: () =>
     request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/stop`, { method: 'POST' }),
   autotuneStatus: () =>
-    request<{ running: boolean; last_tick: string | null; cycle_count: number; target: string }>(`${SAMBA_PREFIX}/collector/autotune/status`),
+    request<{ running: boolean; last_tick: string | null; cycle_count: number; target: string; refreshed_count: number; breaker_tripped: Record<string, number>; site_intervals?: Record<string, number>; traffic?: { collecting: boolean; transmitting: boolean; busy: boolean } }>(`${SAMBA_PREFIX}/collector/autotune/status`),
+  autotuneUpdateInterval: (site: string, interval: number) =>
+    request<{ ok: boolean; site: string; interval: number }>(`${SAMBA_PREFIX}/collector/autotune/interval`, { method: 'POST', body: JSON.stringify({ site, interval }) }),
 }
 
 // ── Market Accounts ──
@@ -736,7 +732,7 @@ export const proxyApi = {
       }),
   // 이미지 필터링 (모델컷/연출컷/배너 자동 제거)
   filterProductImages: (productIds: string[], filterId?: string, scope?: string) =>
-    request<{ success: boolean; results: Record<string, { action: string; removed?: number; kept?: number; count?: number }>; total: number; errors: Record<string, string> }>(
+    request<{ success: boolean; results: Record<string, { action: string; removed?: number; kept?: number; count?: number }>; total: number; total_removed?: number; errors: Record<string, string> }>(
       `${SAMBA_PREFIX}/proxy/image-filter/filter`, {
         method: 'POST',
         body: JSON.stringify({ product_ids: productIds, filter_id: filterId || '', scope: scope || 'images' }),
@@ -820,6 +816,12 @@ export const categoryApi = {
   syncAll: () =>
     request<{ ok: boolean; results: Record<string, unknown> }>(
       `${SAMBA_PREFIX}/categories/markets/sync-all`, { method: 'POST' }),
+  copyEsmMapping: (fromMarket: string, toMarket: string, mappingIds?: string[]) =>
+    request<{ copied: number; skipped: number; failed: number }>(
+      `${SAMBA_PREFIX}/categories/mappings/copy-esm`, {
+        method: 'POST',
+        body: JSON.stringify({ from_market: fromMarket, to_market: toMarket, mapping_ids: mappingIds }),
+      }),
 };
 
 // ── Returns ──
@@ -987,17 +989,6 @@ export interface AnalyticsStats {
   profit_rate: number;
 }
 
-export const analyticsApi = {
-  today: () => request<AnalyticsStats>(`${SAMBA_PREFIX}/analytics/today`),
-  range: (startDate: string, endDate: string) =>
-    request<AnalyticsStats>(`${SAMBA_PREFIX}/analytics/range?start_date=${startDate}&end_date=${endDate}`),
-  byChannel: () => request<unknown[]>(`${SAMBA_PREFIX}/analytics/channels`),
-  byProduct: () => request<unknown[]>(`${SAMBA_PREFIX}/analytics/products`),
-  daily: (days = 30) => request<unknown[]>(`${SAMBA_PREFIX}/analytics/daily?days=${days}`),
-  monthly: () => request<unknown[]>(`${SAMBA_PREFIX}/analytics/monthly`),
-  kpi: () => request<Record<string, unknown>>(`${SAMBA_PREFIX}/analytics/kpi`),
-  orderStatus: () => request<Record<string, number>>(`${SAMBA_PREFIX}/analytics/order-status`),
-};
 
 // ── Detail Templates ──
 
@@ -1045,6 +1036,7 @@ export interface SambaNameRule {
   replace_mode?: string;
   option_rules?: Array<{ from: string; to: string }>;
   name_composition?: string[];
+  market_name_compositions?: Record<string, string[]>;
   brand_display?: string;
   dedup_enabled?: boolean;
   created_at: string;
@@ -1070,7 +1062,7 @@ export const nameRuleApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/policies/name-rules/${id}`, { method: 'DELETE' }),
 };
 
-// ── Monitor (워룸) ──
+// ── Monitor (오토튠) ──
 
 export interface MonitorEvent {
   id: string
@@ -1088,6 +1080,7 @@ export interface MonitorEvent {
 export interface DashboardStats {
   product_stats: {
     total: number
+    registered?: number
     by_source: Record<string, number>
     by_priority: Record<string, number>
     by_sale_status: Record<string, number>

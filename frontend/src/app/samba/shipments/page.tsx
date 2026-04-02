@@ -2,9 +2,11 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, type SambaShipment, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
+import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
 import { MARKET_TYPE_TO_POLICY_KEY as SHARED_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { SITE_COLORS } from '@/lib/samba/constants'
+import { inputStyle } from '@/lib/samba/styles'
 
 const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
   pending:      { bg: 'rgba(100,100,100,0.15)', text: '#888', label: '대기중' },
@@ -19,34 +21,24 @@ const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adid
 // 영문 market_type → 한글 정책 키 (markets.ts에서 import)
 const MARKET_TYPE_TO_POLICY_KEY = SHARED_POLICY_KEY
 
-const inputStyle = {
-  padding: '4px 8px',
-  fontSize: '0.78rem',
-  background: '#111520',
-  border: '1px solid #2A3040',
-  color: '#C5C5C5',
-  borderRadius: '4px',
-  outline: 'none',
-  boxSizing: 'border-box' as const,
-}
-
 export default function ShipmentsPage() {
+  useEffect(() => { document.title = 'SAMBA-상품전송삭제' }, [])
   const searchParams = useSearchParams()
   const [products, setProducts] = useState<SambaCollectedProduct[]>([])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
-  const [shipments, setShipments] = useState<SambaShipment[]>([])
   const [filters, setFilters] = useState<SambaSearchFilter[]>([])
   const [policies, setPolicies] = useState<SambaPolicy[]>([])
   const [loading, setLoading] = useState(true)
 
   // 필터
-  const [searchField, setSearchField] = useState('name')
+  const [searchField, setSearchField] = useState('group')
   const [searchText, setSearchText] = useState('')
-  const [pageSize, setPageSize] = useState(50)
+  const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [siteFilter, setSiteFilter] = useState('전체')
-  const [registrationFilter, setRegistrationFilter] = useState('전체')
+  const [registrationFilter, setRegistrationFilter] = useState('미등록')
   const [sortBy, setSortBy] = useState('updated_at_desc')
+  const [totalCount, setTotalCount] = useState(0)
 
   // 선택
   const [selectedProducts, setSelectedProducts] = useState<string[]>([])
@@ -56,7 +48,7 @@ export default function ShipmentsPage() {
   const getAccountIdsByMarkets = useCallback((marketTypes: string[]) =>
     accounts.filter(a => marketTypes.includes(a.market_type)).map(a => a.id),
   [accounts])
-  const [updateItems, setUpdateItems] = useState({ all: false, price: true, thumb: false, detail: false })
+  const [updateItems, setUpdateItems] = useState({ all: false, price: false, thumb: false, detail: false })
   const [skipEnabled, setSkipEnabled] = useState(false)
   const [loopEnabled, setLoopEnabled] = useState(false)
   const [selectedSites, setSelectedSites] = useState<string[]>([])
@@ -64,11 +56,110 @@ export default function ShipmentsPage() {
   // 전송 로그
   const [logMessages, setLogMessages] = useState<string[]>(['— 전송 시작 버튼을 누르면 로그가 여기에 실시간으로 표시됩니다 —'])
   const [transmitting, setTransmitting] = useState(false)
+  const [stopping, setStopping] = useState('')  // '' | 'cancel' | 'emergency'
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const progressRef = useRef<NodeJS.Timeout | null>(null)
   const abortRef = useRef(false)
   const activeJobIdRef = useRef('')
+  const jobPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [loopRestart, setLoopRestart] = useState(false)
+  const sinceIdxRef = useRef(0)  // 링 버퍼 폴링용
+
+  // 실시간 Job 큐 상태
+  const [jobQueueStatus, setJobQueueStatus] = useState<{ running: number, pending: number }>({ running: 0, pending: 0 })
+  const jobQueuePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // 컴포넌트 언마운트 시 잡 폴링 정리
+  useEffect(() => {
+    return () => {
+      if (jobPollRef.current) clearInterval(jobPollRef.current)
+      if (jobQueuePollRef.current) clearInterval(jobQueuePollRef.current)
+    }
+  }, [])
+
+  // Job 큐 상태 폴링 (5초 간격)
+  useEffect(() => {
+    const fetchJobQueue = async () => {
+      try {
+        const { API_BASE_URL: apiBase } = await import('@/config/api')
+        const [runRes, penRes] = await Promise.all([
+          fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=100`),
+          fetch(`${apiBase}/api/v1/samba/jobs?status=pending&limit=100`),
+        ])
+        const runJobs = await runRes.json()
+        const penJobs = await penRes.json()
+        setJobQueueStatus({
+          running: Array.isArray(runJobs) ? runJobs.length : 0,
+          pending: Array.isArray(penJobs) ? penJobs.length : 0,
+        })
+      } catch { /* ignore */ }
+    }
+    // 초기 로딩 차단 방지: 3초 후 첫 호출
+    const delayTimer = setTimeout(() => {
+      fetchJobQueue()
+      jobQueuePollRef.current = setInterval(fetchJobQueue, 5000)
+    }, 3000)
+    return () => { clearTimeout(delayTimer); if (jobQueuePollRef.current) clearInterval(jobQueuePollRef.current) }
+  }, [])
+
+  // 페이지 로드 시 링 버퍼에서 기존 로그 복원 + 실행 중인 Job 자동 연결
+  useEffect(() => {
+    (async () => {
+      try {
+        const { API_BASE_URL: apiBase } = await import('@/config/api')
+        // 1) 로그 복원 + 실행 중인 Job 확인 (병렬)
+        const [bufRes, res] = await Promise.all([
+          fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=0`),
+          fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`),
+        ])
+        const bufData = await bufRes.json()
+        const prevLogs = (bufData.logs || []) as string[]
+        sinceIdxRef.current = bufData.current_idx || 0
+        if (prevLogs.length > 0) {
+          setLogMessages(prevLogs.map(l => `[이전] ${l}`).slice(-30))
+        }
+        // 2) 실행 중인 Job 확인
+        const jobs = await res.json()
+        const job = Array.isArray(jobs) ? jobs.find((j: Record<string, unknown>) => j.job_type === 'transmit') : null
+        if (!job) return
+        if (jobPollRef.current || activeJobIdRef.current) return
+        const jobId = job.id as string
+        activeJobIdRef.current = jobId
+        setTransmitting(true)
+        setProgress({ current: (job.current || 0) as number, total: (job.total || 0) as number })
+        // 3) 링 버퍼 기반 증분 폴링 시작
+        let polling = false
+        jobPollRef.current = setInterval(async () => {
+          if (polling) return
+          polling = true
+          try {
+            const [jr, lr] = await Promise.all([
+              fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+              fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
+            ])
+            const j = await jr.json()
+            const logData = await lr.json()
+            setProgress({ current: j.current || 0, total: j.total || 0 })
+            const newLogs = (logData.logs || []) as string[]
+            sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+            if (newLogs.length > 0) {
+              for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
+            }
+            if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
+              if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+              setTransmitting(false)
+              activeJobIdRef.current = ''
+              load()
+            }
+          } catch { /* ignore */ }
+          polling = false
+        }, 500)
+      } catch { /* ignore */ }
+    })()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // handleStart 최신 참조를 유지하는 ref (stale closure 방지)
+  const handleStartRef = useRef<(targetIds?: string[]) => Promise<void>>(async () => {})
 
   // 무한반복: 3분 대기 후 미등록 필터 + 전체 선택 + 재시작
   useEffect(() => {
@@ -78,58 +169,81 @@ export default function ShipmentsPage() {
     const unregistered = products.filter(p => !(p.registered_accounts?.length)).map(p => p.id)
     if (unregistered.length > 0) {
       setSelectedProducts(unregistered)
-      setTimeout(() => handleStart(unregistered), 300)
+      setTimeout(() => handleStartRef.current(unregistered), 300)
     } else {
       setTransmitting(false)
     }
-  }, [loopRestart, products]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loopRestart, products])
 
-  // 전송 중 새로고침/탭닫기 방지
-  useEffect(() => {
-    if (!transmitting) return
-    const handler = (e: BeforeUnloadEvent) => { e.preventDefault() }
-    window.addEventListener('beforeunload', handler)
-    return () => window.removeEventListener('beforeunload', handler)
-  }, [transmitting])
+  // 페이지 이탈해도 서버 잡은 계속 실행 (오토튠과 동일 — 다시 열면 자동 연결)
+  const transmittingRef = useRef(false)
+  useEffect(() => { transmittingRef.current = transmitting }, [transmitting])
 
   // 카테고리 매핑 데이터
   const [categoryMappings, setCategoryMappings] = useState<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>([])
 
+  // 검색 필터가 사용자에 의해 변경되었는지 추적
+  const userFilterChangedRef = useRef(false)
+
+  // 필터 변경 시 URL selected 파라미터 무시 + 선택 초기화
+  const onFilterChange = useCallback(() => {
+    userFilterChangedRef.current = true
+    setSelectedProducts([])
+    // URL에서 selected 파라미터 제거
+    const url = new URL(window.location.href)
+    if (url.searchParams.has('selected')) {
+      url.searchParams.delete('selected')
+      url.searchParams.delete('sites')
+      url.searchParams.delete('autoAll')
+      url.searchParams.delete('priceOnly')
+      window.history.replaceState({}, '', url.toString())
+    }
+  }, [])
+
   const load = useCallback(async () => {
     setLoading(true)
-    // URL에서 선택된 상품 ID 먼저 확인
-    const preIds = new URLSearchParams(window.location.search).get('selected')?.split(',').filter(Boolean) || []
+    // URL에서 선택된 상품 ID 먼저 확인 (단, 사용자가 필터를 변경했으면 무시)
+    const preIds = userFilterChangedRef.current
+      ? []
+      : new URLSearchParams(window.location.search).get('selected')?.split(',').filter(Boolean) || []
 
     // 검색 조건에 따라 서버 API 파라미터 구성
-    const scrollParams: Record<string, string | number> = { skip: 0, limit: 10000 }
+    const scrollParams: Record<string, string | number> = { skip: (currentPage - 1) * pageSize, limit: pageSize }
     if (searchText.trim()) {
       scrollParams.search = searchText.trim()
       const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
       scrollParams.search_type = typeMap[searchField] || 'name'
     }
     if (siteFilter !== '전체') scrollParams.source_site = siteFilter
+    if (registrationFilter !== '전체') scrollParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
+    if (sortBy) scrollParams.sort_by = sortBy
 
     // 선택된 상품이 있으면 해당 상품만 조회, 없으면 scroll API
     const productPromise = preIds.length > 0
       ? collectorApi.getProductsByIds(preIds).catch(() => [] as SambaCollectedProduct[])
-      : collectorApi.scrollProducts(scrollParams).then(r => r.items).catch(() => [] as SambaCollectedProduct[])
+      : collectorApi.scrollProducts(scrollParams).then(r => { setTotalCount(r.total || 0); return r.items }).catch(() => [] as SambaCollectedProduct[])
 
-    const [p, a, s, f, pol, cm] = await Promise.all([
+    // 필수 데이터(상품+계정)만 먼저 로드 → 즉시 화면 표시
+    const [p, a] = await Promise.all([
       productPromise,
       accountApi.listActive().catch(() => []),
-      shipmentApi.list(0, 100).catch(() => []),
+    ])
+    if (preIds.length > 0) setTotalCount(p.length)
+    setProducts(p)
+    setAccounts(a)
+    setLoading(false)
+
+    // 나머지는 백그라운드 로드 (화면 차단 없음)
+    Promise.all([
       collectorApi.listFilters().catch(() => []),
       policyApi.list().catch(() => []),
       categoryApi.listMappings().catch(() => []),
-    ])
-    setProducts(p)
-    setAccounts(a)
-    setShipments(s)
-    setFilters(f)
-    setPolicies(pol)
-    setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
-    setLoading(false)
-  }, [searchText, searchField, siteFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+    ]).then(([f, pol, cm]) => {
+      setFilters(f)
+      setPolicies(pol)
+      setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
+    })
+  }, [searchText, searchField, siteFilter, registrationFilter, sortBy, currentPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
   useEffect(() => { return () => { if (progressRef.current) clearInterval(progressRef.current) } }, [])
@@ -188,7 +302,7 @@ export default function ShipmentsPage() {
   const toggleAllProducts = () => {
     const pageIds = pageProducts.map(p => p.id)
     const allChecked = pageIds.every(id => selectedProducts.includes(id))
-    setSelectedProducts(prev => allChecked ? prev.filter(id => !pageIds.includes(id)) : [...new Set([...prev, ...pageIds])])
+    setSelectedProducts(allChecked ? [] : pageIds)
   }
   const toggleAccount = (id: string) => setSelectedAccounts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   const allSites = SOURCE_SITES.filter(s => s !== '전체')
@@ -202,63 +316,11 @@ export default function ShipmentsPage() {
     return map
   }, [filters])
 
-  const filteredProducts = useMemo(() => {
-    const q = searchText.trim().toLowerCase()
-    // URL에서 넘어온 선택 상품이 있으면 해당 상품만 표시
-    const preIds = preSelectedIds.filter(id => id)
-    return products.filter(p => {
-      if (preIds.length > 0 && !preIds.includes(p.id)) return false
-      if (siteFilter !== '전체' && p.source_site !== siteFilter) return false
-      // 마켓등록 필터
-      if (registrationFilter === '등록' && !(p.registered_accounts?.length)) return false
-      if (registrationFilter === '미등록' && (p.registered_accounts?.length ?? 0) > 0) return false
-      if (!q) return true
-      switch (searchField) {
-        case 'name':
-          return p.name.toLowerCase().includes(q)
-        case 'no':
-          return (p.site_product_id || '').toLowerCase().includes(q)
-        case 'group':
-          return (filterNameMap[p.search_filter_id || ''] || '').toLowerCase().includes(q)
-        default:
-          return true
-      }
-    }).sort((a, b) => {
-      // market_xxx_desc / market_xxx_asc 패턴 감지
-      const marketMatch = sortBy.match(/^market_(.+?)_(asc|desc)$/)
-      if (marketMatch) {
-        const marketType = marketMatch[1]
-        const mul = marketMatch[2] === 'desc' ? -1 : 1
-        const getMarketTime = (p: typeof a) => {
-          // last_sent_data에서 해당 마켓 계정의 sent_at 조회
-          const sent = (p as unknown as Record<string, unknown>).last_sent_data as Record<string, { sent_at?: string }> | undefined
-          if (!sent) return ''
-          const accIds = (p.registered_accounts || [])
-          const accId = accIds.find(aid => {
-            const acc = accounts.find(x => x.id === aid)
-            return acc?.market_type === marketType
-          })
-          if (!accId || !sent[accId]) return ''
-          return sent[accId].sent_at || ''
-        }
-        const va = getMarketTime(a), vb = getMarketTime(b)
-        return va > vb ? mul : va < vb ? -mul : 0
-      }
-      const isDesc = sortBy.endsWith('_desc')
-      const field = sortBy.replace(/_desc$|_asc$/, '')
-      const mul = isDesc ? -1 : 1
-      const getVal = (p: typeof a) => {
-        switch (field) {
-          case 'updated_at': return p.updated_at || ''
-          case 'collected_at': return p.collected_at || p.created_at || ''
-          default: return p.updated_at || ''
-        }
-      }
-      return getVal(a) > getVal(b) ? mul : getVal(a) < getVal(b) ? -mul : 0
-    })
-  }, [products, siteFilter, registrationFilter, searchText, searchField, filterNameMap, sortBy, accounts, shipments, preSelectedIds])
+  // 서버에서 필터/정렬/페이지네이션 완료된 상태 — 프론트 필터링 불필요
+  const filteredProducts = products
 
-  const pageProducts = useMemo(() => (filteredProducts || []).slice((currentPage - 1) * pageSize, currentPage * pageSize), [filteredProducts, currentPage, pageSize])
+  // 서버 페이지네이션 — products가 이미 현재 페이지분
+  const pageProducts = filteredProducts
 
   // 등록된 마켓 목록 (동적)
   const registeredMarkets = useMemo(() => {
@@ -277,27 +339,45 @@ export default function ShipmentsPage() {
   }, [products, accounts])
 
   const handleMarketDelete = async () => {
-    if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
-    // 소싱사이트 체크 + 등록된 마켓이 있는 상품만 필터
-    const siteSet = new Set(selectedSites)
+    // 비상정지 해제 (이전 중단 상태 초기화)
+    try {
+      const { API_BASE_URL: apiBase } = await import('@/config/api')
+      await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+    } catch { /* ignore */ }
+    // 등록된 마켓이 있는 상품만 필터
     const targetProducts = selectedProducts.filter(pid => {
       const p = products.find(x => x.id === pid)
-      return p && siteSet.has(p.source_site) && (p.registered_accounts || []).some(aid => selectedAccounts.includes(aid))
+      return p && (p.registered_accounts || []).some(aid => selectedAccounts.includes(aid))
     })
     if (targetProducts.length === 0) { showAlert('선택된 소싱사이트/마켓에 해당하는 등록 상품이 없습니다'); return }
 
-    const targetLabels = selectedAccounts.map(aid => {
+    // 실제 등록된 계정만 추출 (선택 계정 ∩ 상품별 registered_accounts)
+    const selectedSet = new Set(selectedAccounts)
+    const effectiveDeleteAccIds = new Set<string>()
+    for (const pid of targetProducts) {
+      const p = products.find(x => x.id === pid)
+      for (const aid of (p?.registered_accounts || [])) {
+        if (selectedSet.has(aid)) effectiveDeleteAccIds.add(aid)
+      }
+    }
+    const effectiveDeleteList = [...effectiveDeleteAccIds]
+    const targetLabels = effectiveDeleteList.map(aid => {
       const acc = accounts.find(a => a.id === aid)
       return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
     }).join(', ')
-    if (!await showConfirm(`${targetProducts.length}개 상품을 ${targetLabels}에서 마켓삭제하시겠습니까?`)) return
+    if (!await showConfirm(`${targetProducts.length}개 상품을 ${targetLabels || '선택 계정'}에서 마켓삭제하시겠습니까?`)) return
 
     setTransmitting(true)
     const ts = () => new Date().toLocaleTimeString()
     // 로그를 ref 배열로 관리 — spread O(n²) 방지
-    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg])
-    addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length}개`)
+    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
+    const accLabelMap: Record<string, string> = {}
+    for (const acc of accounts) {
+      accLabelMap[acc.id] = `${acc.market_name}(${acc.seller_id || acc.business_name || '-'})`
+    }
+    const targetAccLabels = effectiveDeleteList.map(aid => accLabelMap[aid] || aid).join(', ')
+    addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length}개, ${targetAccLabels}`)
 
     let totalSuccess = 0
     let totalFail = 0
@@ -305,19 +385,22 @@ export default function ShipmentsPage() {
       const pid = targetProducts[i]
       const prod = products.find(p => p.id === pid)
       const prodName = prod?.name?.slice(0, 30) || pid
+      // 이 상품에 등록된 계정만 삭제 대상
+      const prodAccIds = (prod?.registered_accounts || []).filter(aid => selectedSet.has(aid))
+      if (prodAccIds.length === 0) continue
       try {
-        const res = await shipmentApi.marketDelete([pid], selectedAccounts)
+        const res = await shipmentApi.marketDelete([pid], prodAccIds)
         const r = res.results?.[0]
-        if (r && r.success_count > 0) {
-          addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName}: 삭제 성공`)
-          totalSuccess += r.success_count
-        }
         if (r) {
-          const fails = Object.entries(r.delete_results).filter(([, st]) => st !== 'success')
-          for (const [aid, msg] of fails) {
-            const acc = accounts.find(a => a.id === aid)
-            addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName} → ${acc?.market_name || aid}: ${msg}`)
-            totalFail++
+          for (const [aid, st] of Object.entries(r.delete_results)) {
+            const accLabel = accLabelMap[aid] || aid
+            if (st === 'success') {
+              addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName} → ${accLabel}: 삭제 성공`)
+              totalSuccess++
+            } else {
+              addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName} → ${accLabel}: ${st}`)
+              totalFail++
+            }
           }
         }
       } catch (e) {
@@ -336,6 +419,12 @@ export default function ShipmentsPage() {
     if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
     if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
 
+    // 비상정지 해제 (이전 중단 상태 초기화)
+    try {
+      const { API_BASE_URL: apiBase } = await import('@/config/api')
+      await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+    } catch { /* ignore */ }
+
     // 소싱사이트 체크 + 현재 필터에 표시된 상품만 전송
     const siteSet = new Set(selectedSites)
     const filteredSet = new Set(filteredProducts.map(p => p.id))
@@ -349,7 +438,7 @@ export default function ShipmentsPage() {
     setTransmitting(true)
 
     const ts = () => new Date().toLocaleTimeString()
-    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg])
+    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
 
     // 계정 ID → 표시명 매핑
     const accountLabelMap: Record<string, string> = {}
@@ -386,7 +475,8 @@ export default function ShipmentsPage() {
       if (!policy?.market_policies || typeof policy.market_policies !== 'object') continue
       const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
       for (const marketPolicy of Object.values(mp)) {
-        const ids = marketPolicy.accountIds?.length
+        // accountIds 배열이 존재하면 그것만 사용 (빈 배열 = 연결 없음), 없으면 레거시 accountId 폴백
+        const ids = Array.isArray(marketPolicy.accountIds)
           ? marketPolicy.accountIds
           : (marketPolicy.accountId ? [marketPolicy.accountId] : [])
         ids.forEach((id: string) => { if (selectedSet.has(id)) effectiveAccountSet.add(id) })
@@ -394,38 +484,17 @@ export default function ShipmentsPage() {
     }
     const effectiveLabels = [...effectiveAccountSet].map(aid => accountLabelMap[aid] || aid)
     abortRef.current = false
-    addLog(`[${ts()}] 전송 시작 — 상품 ${total}개, ${effectiveLabels.length > 0 ? effectiveLabels.join(', ') : '연결 계정 없음'}`)
+    addLog(`[${ts()}] 전송 시작 — 상품 ${total.toLocaleString()}개, ${effectiveLabels.length > 0 ? effectiveLabels.join(', ') : '연결 계정 없음'}`)
 
     const items: string[] = []
     if (updateItems.price) items.push('price', 'stock')
     if (updateItems.thumb) items.push('image')
     if (updateItems.detail) items.push('description')
 
-    let successCount = 0
-    let failCount = 0
-    let skipCount = 0
-
-    // 에러 메시지 요약 (너무 긴 메시지 truncate)
-    const shortenError = (msg: string): string => {
-      if (msg.length <= 80) return msg
-      const apiMatch = msg.match(/API (?:에러|ERROR)[^:]*:\s*(.+)/)
-      if (apiMatch) {
-        const inner = apiMatch[1]
-        const first = inner.split(',')[0].trim().replace(/^\[/, '')
-        const count = (inner.match(/,/g) || []).length
-        return count > 0 ? `${first} 외 ${count}건` : first
-      }
-      return msg.slice(0, 77) + '...'
-    }
-
-    // 마켓별 결과 수집
-    type MarketLogEntry = { idx: number, prodLabel: string, status: string, error?: string }
-    const marketGrouped: Record<string, MarketLogEntry[]> = {}
-    const marketOrder: string[] = []
-
     // 전송 태스크 사전 준비
     type TransmitTask = { idx: number, pid: string, prodLabel: string, targetAccIds: string[] }
     const tasks: TransmitTask[] = []
+    let skipCount = 0
     for (let i = 0; i < policyProducts.length; i++) {
       const pid = policyProducts[i]
       const prod = products.find(p => p.id === pid)
@@ -435,7 +504,8 @@ export default function ShipmentsPage() {
       if (policy?.market_policies && typeof policy.market_policies === 'object') {
         const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
         for (const marketPolicy of Object.values(mp)) {
-          const ids = marketPolicy.accountIds?.length
+          // accountIds 배열이 존재하면 그것만 사용 (빈 배열 = 연결 없음), 없으면 레거시 accountId 폴백
+          const ids = Array.isArray(marketPolicy.accountIds)
             ? marketPolicy.accountIds
             : (marketPolicy.accountId ? [marketPolicy.accountId] : [])
           ids.forEach((id: string) => { if (selectedSet.has(id) && !targetAccIds.includes(id)) targetAccIds.push(id) })
@@ -449,169 +519,72 @@ export default function ShipmentsPage() {
 
     if (skipCount > 0) {
       addLog(`[${ts()}] 선택 마켓 미연결 ${skipCount}개 스킵 → 실제 전송 ${tasks.length}개`)
-      // 디버그: 스킵된 첫 3개 상품의 정책 연결 상태 출력
-      let debugCount = 0
-      for (let i = 0; i < policyProducts.length && debugCount < 3; i++) {
-        const pid = policyProducts[i]
-        const prod = products.find(p => p.id === pid)
-        const policy = policies.find(p => p.id === prod?.applied_policy_id)
-        const mp = policy?.market_policies as Record<string, { accountId?: string; accountIds?: string[] }> | undefined
-        const policyAccIds: string[] = []
-        if (mp) {
-          for (const v of Object.values(mp)) {
-            const ids = v.accountIds?.length ? v.accountIds : (v.accountId ? [v.accountId] : [])
-            policyAccIds.push(...ids)
-          }
-        }
-        const matched = policyAccIds.filter(id => selectedSet.has(id))
-        if (matched.length === 0) {
-          addLog(`  [디버그] ${prod?.name?.slice(0, 25)} — 정책: ${policy?.name || '없음'}, 정책계정: ${policyAccIds.length}개 [${policyAccIds.slice(0, 2).join(',')}], 선택계정: ${selectedAccounts.length}개 [${selectedAccounts.slice(0, 2).join(',')}]`)
-          debugCount++
-        }
-      }
     }
     setProgress({ current: 0, total: tasks.length })
 
-    // 대량 전송(50건 이상): Job 큐로 백그라운드 처리
-    if (tasks.length >= 50) {
-      try {
-        const allPids = tasks.map(t => t.pid)
-        const allAccIds = [...effectiveAccountSet]
-        const { API_BASE_URL: apiBase } = await import('@/config/api')
-        const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            job_type: 'transmit',
-            payload: {
-              product_ids: allPids,
-              update_items: items,
-              target_account_ids: allAccIds,
-              skip_unchanged: skipEnabled,
-            },
-          }),
-        })
-        const jobData = await res.json()
-        const jobId = jobData.id || ''
-        activeJobIdRef.current = jobId
-        setProgress({ current: 0, total: tasks.length })
-        // 전송 진행 폴링
-        const poll = setInterval(async () => {
-          try {
-            const jr = await fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`)
-            const j = await jr.json()
-            const cur = j.progress_current || 0
-            const tot = j.progress_total || tasks.length
-            setProgress({ current: cur, total: tot })
-            if (j.status === 'completed' || j.status === 'failed') {
-              clearInterval(poll)
-              addLog(`[${new Date().toLocaleTimeString()}] 전송 완료 — ${cur}/${tot}건`)
-              if (j.error) addLog(`[${new Date().toLocaleTimeString()}] ${j.error}`)
-              setTransmitting(false)
-              load()
-            }
-          } catch { /* ignore */ }
-        }, 3000)
-      } catch (e) {
-        addLog(`[${ts()}] 전송 실패: ${e instanceof Error ? e.message : '오류'}`)
-        setTransmitting(false)
-      }
-      return
-    }
-
-    // 소량 전송: 기존 방식 (상품 3건 동시)
-    const BATCH_SIZE = 3
-    let doneCount = 0
-    for (let b = 0; b < tasks.length; b += BATCH_SIZE) {
-      if (abortRef.current) {
-        addLog(`[${ts()}] ⛔ 전송 강제 중단 — ${doneCount}/${total} 완료 시점에서 중단됨`)
-        break
-      }
-      const batch = tasks.slice(b, b + BATCH_SIZE)
-      const promises = batch.map(async (task) => {
-        if (abortRef.current) return
-        try {
-          const res = await shipmentApi.start([task.pid], items, task.targetAccIds, skipEnabled)
-          const r = res.results?.[0]
-          if (!r) {
-            for (const aid of task.targetAccIds) {
-              const label = accountLabelMap[aid] || aid
-              if (!marketGrouped[label]) { marketGrouped[label] = []; marketOrder.push(label) }
-              marketGrouped[label].push({ idx: task.idx, prodLabel: task.prodLabel, status: 'failed', error: '응답 없음' })
-              failCount++
-            }
-            return
-          }
-          if (r.status === 'skipped') {
-            const refreshInfo = (r as Record<string, unknown>).update_result as Record<string, string> | undefined
-            const refreshLabel = refreshInfo?.refresh ? ` [${refreshInfo.refresh}]` : ''
-            addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel}: 스킵${refreshLabel}`)
-            skipCount++
-            return
-          }
-          const txResult = r.transmit_result || {}
-          const txError = r.transmit_error || {}
-          const ur = (r as Record<string, unknown>).update_result as Record<string, string> | undefined
-          const rl = ur?.refresh ? ` [${ur.refresh}]` : ''
-
-          for (const [accId, status] of Object.entries(txResult)) {
-            const label = accountLabelMap[accId] || accId
-            if (status === 'success') {
-              const hasChange = rl && (rl.includes('>') || rl.includes('변동'))
-              const statusLabel = '전송'
-              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: ${statusLabel}${rl}`)
-              successCount++
-            } else if (status === 'skipped') {
-              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 스킵 (변동 없음)`)
-              skipCount++
-            } else {
-              addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 실패 — ${shortenError(txError[accId] || '알 수 없는 오류')}`)
-              failCount++
-            }
-          }
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : '전송 실패'
-          for (const aid of task.targetAccIds) {
-            const label = accountLabelMap[aid] || aid
-            addLog(`[${ts()}] [${task.idx}/${total}] ${task.prodLabel} → ${label}: 실패 — ${shortenError(msg)}`)
-            failCount++
-          }
-        }
+    // Job 큐로 백그라운드 전송 (건수 무관)
+    try {
+      const allPids = tasks.map(t => t.pid)
+      const allAccIds = [...effectiveAccountSet]
+      const { API_BASE_URL: apiBase } = await import('@/config/api')
+      const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          job_type: 'transmit',
+          payload: {
+            product_ids: allPids,
+            update_items: items,
+            target_account_ids: allAccIds,
+            skip_unchanged: skipEnabled,
+          },
+        }),
       })
-      await Promise.all(promises)
-      doneCount += batch.length
-      setProgress({ current: doneCount, total })
-    }
-
-    // 최종 요약
-    const summaryParts: string[] = []
-    if (successCount > 0) summaryParts.push(`성공 ${successCount}건`)
-    if (failCount > 0) summaryParts.push(`실패 ${failCount}건`)
-    if (skipCount > 0) summaryParts.push(`스킵 ${skipCount}건`)
-    addLog(`[${ts()}] 전송 완료 — ${summaryParts.length > 0 ? summaryParts.join(', ') : '처리 없음'}`)
-
-    setProgress({ current: total, total })
-
-    if (loopEnabled && !abortRef.current) {
-      addLog(`[${ts()}] 무한반복 모드 — 3분 대기 후 새로고침 & 미등록 상품부터 재시작...`)
-      // 3분 카운트다운 (10초 단위 로그)
-      for (let remain = 180; remain > 0; remain -= 10) {
-        if (abortRef.current) break
-        await new Promise(r => setTimeout(r, Math.min(10000, remain * 1000)))
-        if (abortRef.current) break
-        const left = Math.max(0, remain - 10)
-        if (left > 0 && left % 60 === 0) addLog(`[${ts()}] 대기 중... ${Math.floor(left / 60)}분 남음`)
-      }
-      if (!abortRef.current) {
-        setRegistrationFilter('미등록')
-        await load()
-        addLog(`[${ts()}] 새로고침 완료 — 미등록 상품 전체 선택 후 재시작`)
-        setLoopRestart(true)
-      }
-    } else {
-      setTimeout(() => { setTransmitting(false); load() }, 2000)
+      const jobData = await res.json()
+      const jobId = jobData.id || ''
+      activeJobIdRef.current = jobId
+      setProgress({ current: 0, total: tasks.length })
+      // 전송 진행 폴링 + 링 버퍼 기반 실시간 로그
+      let polling = false
+      if (jobPollRef.current) clearInterval(jobPollRef.current)
+      jobPollRef.current = setInterval(async () => {
+        if (polling) return
+        polling = true
+        try {
+          const [jr, lr] = await Promise.all([
+            fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+            fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
+          ])
+          const j = await jr.json()
+          const logData = await lr.json()
+          const cur = j.current || 0
+          const tot = j.total || tasks.length
+          setProgress({ current: cur, total: tot })
+          const newLogs = (logData.logs || []) as string[]
+          sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+          if (newLogs.length > 0) {
+            for (const log of newLogs) {
+              setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
+            }
+          }
+          if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
+            if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+            if (j.error) addLog(`[${new Date().toLocaleTimeString()}] ${j.error}`)
+            setTransmitting(false)
+            activeJobIdRef.current = ''
+            load()
+          }
+        } catch { /* ignore */ }
+        polling = false
+      }, 500)
+    } catch (e) {
+      addLog(`[${ts()}] 전송 실패: ${e instanceof Error ? e.message : '오류'}`)
+      setTransmitting(false)
     }
   }
+
+  // handleStart가 항상 최신 클로저를 참조하도록 ref 갱신
+  handleStartRef.current = handleStart
 
   return (
     <div style={{ color: '#E5E5E5' }}>
@@ -627,7 +600,7 @@ export default function ShipmentsPage() {
         {/* 검색항목 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>검색항목</span>
-          <select value={searchField} onChange={e => setSearchField(e.target.value)} style={{ ...inputStyle, width: '100px' }}>
+          <select value={searchField} onChange={e => { onFilterChange(); setSearchField(e.target.value) }} style={{ ...inputStyle, width: '100px' }}>
             <option value="name">검색항목</option>
             <option value="brand">브랜드</option>
             <option value="name_all">상품명+등록명</option>
@@ -635,20 +608,20 @@ export default function ShipmentsPage() {
             <option value="no">상품번호</option>
             <option value="policy">정책</option>
           </select>
-          <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)} placeholder={searchField === 'name' ? '상품명 검색' : searchField === 'no' ? '상품번호 검색' : '그룹명 검색'} style={{ ...inputStyle, width: '200px' }} />
+          <input type="text" value={searchText} onChange={e => { onFilterChange(); setSearchText(e.target.value) }} placeholder={searchField === 'name' ? '상품명 검색' : searchField === 'no' ? '상품번호 검색' : '그룹명 검색'} style={{ ...inputStyle, width: '200px' }} />
         </div>
         {/* 소싱사이트 필터 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>소싱사이트</span>
-          <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ ...inputStyle, width: '140px' }}>
+          <select value={siteFilter} onChange={e => { onFilterChange(); setSiteFilter(e.target.value) }} style={{ ...inputStyle, width: '140px' }}>
             {SOURCE_SITES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
         {/* 마켓등록 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>마켓등록</span>
-          <select value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)} style={{ ...inputStyle, width: '100px' }}>
-            <option>전체</option><option>등록</option><option>미등록</option>
+          <select value={registrationFilter} onChange={e => { onFilterChange(); setRegistrationFilter(e.target.value) }} style={{ ...inputStyle, width: '100px' }}>
+            <option>전체</option><option>등록</option><option>미등록</option><option>품절</option>
           </select>
         </div>
         {/* 실패건처리 */}
@@ -664,7 +637,7 @@ export default function ShipmentsPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '2px solid #181C28', flexWrap: 'wrap', gap: '8px' }}>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={load} style={{ padding: '6px 40px', fontSize: '0.875rem', fontWeight: 700, background: '#2A2F3E', border: '1px solid #3D4560', color: '#E5E5E5', borderRadius: '6px', cursor: 'pointer' }}>검색하기</button>
-            <button onClick={() => { setSearchText(''); setSiteFilter('전체'); setRegistrationFilter('전체'); setSearchField('name') }} style={{ padding: '6px 24px', fontSize: '0.875rem', background: 'transparent', border: '1px solid #2A3040', color: '#9AA5C0', borderRadius: '6px', cursor: 'pointer' }}>초기화</button>
+            <button onClick={() => { onFilterChange(); setSearchText(''); setSiteFilter('전체'); setRegistrationFilter('전체'); setSearchField('name') }} style={{ padding: '6px 24px', fontSize: '0.875rem', background: 'transparent', border: '1px solid #2A3040', color: '#9AA5C0', borderRadius: '6px', cursor: 'pointer' }}>초기화</button>
           </div>
         </div>
 
@@ -773,26 +746,76 @@ export default function ShipmentsPage() {
       {/* 전송 로그 */}
       <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
-          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>전송 로그</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>전송 로그</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem' }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0,
+                background: jobQueueStatus.running > 0 ? '#51CF66' : jobQueueStatus.pending > 0 ? '#FAB005' : '#444',
+              }} />
+              <span style={{ color: jobQueueStatus.running > 0 ? '#51CF66' : jobQueueStatus.pending > 0 ? '#FAB005' : '#555' }}>
+                {jobQueueStatus.running > 0 ? `전송 중 ${jobQueueStatus.running}건` : jobQueueStatus.pending > 0 ? `대기 ${jobQueueStatus.pending}건` : '대기 잡 없음'}
+              </span>
+              {jobQueueStatus.pending > 0 && jobQueueStatus.running > 0 && (
+                <span style={{ color: '#FAB005' }}>+ 대기 {jobQueueStatus.pending}건</span>
+              )}
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>복사</button>
-            <button onClick={() => setLogMessages(['로그가 초기화되었습니다.'])} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
+            <button onClick={async () => {
+              setLogMessages(['로그가 초기화되었습니다.'])
+              sinceIdxRef.current = 0
+              try {
+                const { API_BASE_URL: apiBase } = await import('@/config/api')
+                await fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' })
+              } catch { /* ignore */ }
+            }} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
             <button onClick={handleMarketDelete} disabled={transmitting}
               style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: transmitting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
-            {transmitting ? (
-              <button onClick={async () => {
+            <button disabled={!!stopping} onClick={async () => {
+                setStopping('cancel')
+                const ts = new Date().toLocaleTimeString()
+                setLogMessages(prev => [...prev, `[${ts}] 전송 중단 요청...`].slice(-30))
                 abortRef.current = true
-                if (activeJobIdRef.current) {
-                  try {
-                    const { API_BASE_URL: apiBase } = await import('@/config/api')
+                if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+                try {
+                  const { API_BASE_URL: apiBase } = await import('@/config/api')
+                  if (activeJobIdRef.current) {
                     await fetch(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
-                    activeJobIdRef.current = ''
-                  } catch { /* ignore */ }
+                  }
+                  await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
+                  activeJobIdRef.current = ''
+                  setLogMessages(prev => [...prev, `[${ts}] 전송 중단 완료`].slice(-30))
+                } catch {
+                  setLogMessages(prev => [...prev, `[${ts}] 전송 중단 실패`].slice(-30))
                 }
+                setTransmitting(false)
+                setStopping('')
               }}
-                style={{ padding: '4px 16px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.2)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.5)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
-              >전송 중단</button>
-            ) : (<>
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'cancel' ? 'rgba(255,50,50,0.4)' : 'rgba(255,50,50,0.15)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.4)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: stopping ? 0.7 : 1 }}
+              >{stopping === 'cancel' ? '중단중...' : '전송 중단'}</button>
+            <button disabled={!!stopping} onClick={async () => {
+                setStopping('emergency')
+                const ts = new Date().toLocaleTimeString()
+                setLogMessages(prev => [...prev, `[${ts}] 전체 중단 요청...`].slice(-30))
+                abortRef.current = true
+                if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+                try {
+                  const { API_BASE_URL: apiBase } = await import('@/config/api')
+                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+                  await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
+                  await fetch(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
+                  activeJobIdRef.current = ''
+                  setLogMessages(prev => [...prev, `[${ts}] 전체 중단 완료 — 모든 전송/대기 잡 취소됨`].slice(-30))
+                } catch {
+                  setLogMessages(prev => [...prev, `[${ts}] 전체 중단 실패`].slice(-30))
+                }
+                setTransmitting(false)
+                setStopping('')
+              }}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'emergency' ? 'rgba(255,50,50,0.6)' : 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: stopping ? 0.7 : 1 }}
+              >{stopping === 'emergency' ? '중단중...' : '전체 중단'}</button>
+            {<>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: loopEnabled ? '#FF8C00' : '#666', cursor: 'pointer' }}>
                 <input type="checkbox" checked={loopEnabled} onChange={() => setLoopEnabled(!loopEnabled)} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
                 무한반복
@@ -800,10 +823,102 @@ export default function ShipmentsPage() {
               <button onClick={() => handleStart()}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.4)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >선택전송</button>
-              <button onClick={() => handleStart(filteredProducts.map(p => p.id))}
+              <button onClick={async () => {
+                // 전체 상품 ID를 서버에서 조회 → Job에 직접 전달 (프론트 필터링 스킵)
+                if (selectedAccounts.length === 0) { showAlert('마켓 계정을 선택해주세요'); return }
+                if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
+                try {
+                  const { API_BASE_URL: apiBase } = await import('@/config/api')
+                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+                } catch { /* ignore */ }
+                const allParams: Record<string, string | number> = { skip: 0, limit: 10000 }
+                if (searchText.trim()) {
+                  allParams.search = searchText.trim()
+                  const typeMap: Record<string, string> = { name: 'name', brand: 'brand', name_all: 'name_all', group: 'filter', no: 'no', policy: 'policy' }
+                  allParams.search_type = typeMap[searchField] || 'name'
+                }
+                if (siteFilter !== '전체') allParams.source_site = siteFilter
+                if (registrationFilter !== '전체') allParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : ''
+                try {
+                  const all = await collectorApi.scrollProducts(allParams)
+                  // 소싱사이트 필터
+                  const siteSet = new Set(selectedSites)
+                  const allIds = all.items.filter(p => siteSet.has(p.source_site)).map(p => p.id)
+                  if (allIds.length === 0) { showAlert('선택된 소싱사이트에 해당하는 상품이 없습니다'); return }
+                  // Job 직접 생성
+                  setTransmitting(true)
+                  const ts = () => new Date().toLocaleTimeString()
+                  const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
+                  const items: string[] = []
+                  if (updateItems.price) items.push('price', 'stock')
+                  if (updateItems.thumb) items.push('image')
+                  if (updateItems.detail) items.push('description')
+                  // 정책 연결 계정만 필터 (선택전송과 동일 로직)
+                  const selectedSet = new Set(selectedAccounts)
+                  const effectiveAccIds = new Set<string>()
+                  for (const prod of all.items.filter(p => siteSet.has(p.source_site))) {
+                    if (!prod.applied_policy_id) continue
+                    const policy = policies.find(p => p.id === prod.applied_policy_id)
+                    if (!policy?.market_policies || typeof policy.market_policies !== 'object') continue
+                    const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
+                    for (const marketPolicy of Object.values(mp)) {
+                      const ids = Array.isArray(marketPolicy.accountIds)
+                        ? marketPolicy.accountIds
+                        : (marketPolicy.accountId ? [marketPolicy.accountId] : [])
+                      ids.forEach((id: string) => { if (selectedSet.has(id)) effectiveAccIds.add(id) })
+                    }
+                  }
+                  const effectiveAccList = [...effectiveAccIds]
+                  const accLabels = effectiveAccList.map(aid => {
+                    const acc = accounts.find(a => a.id === aid)
+                    return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
+                  }).join(', ')
+                  addLog(`[${ts()}] 전송 시작 — 상품 ${allIds.length.toLocaleString()}개, ${accLabels || '연결 계정 없음'}`)
+                  const { API_BASE_URL: apiBase } = await import('@/config/api')
+                  const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      job_type: 'transmit',
+                      payload: { product_ids: allIds, update_items: items, target_account_ids: effectiveAccList, skip_unchanged: skipEnabled },
+                    }),
+                  })
+                  const jobData = await res.json()
+                  const jobId = jobData.id || ''
+                  activeJobIdRef.current = jobId
+                  setProgress({ current: 0, total: allIds.length })
+                  let polling = false
+                  if (jobPollRef.current) clearInterval(jobPollRef.current)
+                  jobPollRef.current = setInterval(async () => {
+                    if (polling) return
+                    polling = true
+                    try {
+                      const [jr, lr] = await Promise.all([
+                        fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+                        fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
+                      ])
+                      const j = await jr.json()
+                      const logData = await lr.json()
+                      setProgress({ current: j.current || 0, total: j.total || allIds.length })
+                      const newLogs = (logData.logs || []) as string[]
+                      sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+                      if (newLogs.length > 0) {
+                        for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
+                      }
+                      if (j.status === 'completed' || j.status === 'failed') {
+                        if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+                        setTransmitting(false)
+                        activeJobIdRef.current = ''
+                        load()
+                      }
+                    } catch { /* ignore */ }
+                    polling = false
+                  }, 500)
+                } catch (e) { showAlert(e instanceof Error ? e.message : '전송 실패', 'error') }
+              }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
-              >검색결과전송 ({filteredProducts.length})</button>
-            </>)}
+              >검색결과전송 ({totalCount})</button>
+            </>}
           </div>
         </div>
         <div
@@ -820,24 +935,15 @@ export default function ShipmentsPage() {
           })}
         </div>
         {/* 프로그레스바 */}
-        {transmitting && (
-          <div style={{ padding: '6px 14px 8px', borderTop: '1px solid #1C1E2A' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-              <span style={{ fontSize: '0.75rem', color: '#7B8DB0' }}>{progress.current}/{progress.total} 처리 중...</span>
-            </div>
-            <div style={{ background: '#111520', borderRadius: '4px', height: '5px', overflow: 'hidden' }}>
-              <div style={{ background: 'linear-gradient(90deg,#FF8C00,#FFB84D)', height: '100%', width: `${progress.total > 0 ? (progress.current / progress.total) * 100 : 0}%`, transition: 'width 0.3s' }} />
-            </div>
-          </div>
-        )}
+        {/* 진행률 바 제거 — 멀티 잡 시 왔다갔다 문제 */}
       </div>
 
       {/* 상품 목록 테이블 */}
       <div style={{ background: 'rgba(30,30,30,0.5)', border: '1px solid #2D2D2D', borderRadius: '12px', overflow: 'hidden' }}>
         {/* 상단 탭 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid #2D2D2D', gap: '8px' }}>
-          <span style={{ fontSize: '0.8rem', color: '#888' }}>총 <span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredProducts.length.toLocaleString()}</span> 개의 상품이 검색되었습니다.</span>
-          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '250px', marginLeft: 'auto' }}>
+          <span style={{ fontSize: '0.8rem', color: '#888' }}>총 <span style={{ color: '#FF8C00', fontWeight: 600 }}>{totalCount.toLocaleString()}</span> 개의 상품이 검색되었습니다.</span>
+          <select value={sortBy} onChange={e => { onFilterChange(); setSortBy(e.target.value) }} style={{ ...inputStyle, width: '250px', marginLeft: 'auto' }}>
             <option value="updated_at_desc">상품업데이트 날짜순 ▼</option>
             <option value="updated_at_asc">상품업데이트 날짜순 ▲</option>
             <option value="collected_at_desc">상품수집 날짜순 ▼</option>
@@ -852,7 +958,7 @@ export default function ShipmentsPage() {
             <option value={50}>50개</option>
             <option value={100}>100개</option>
             <option value={200}>200개</option>
-            <option value={99999}>전체</option>
+            <option value={10000}>전체</option>
           </select>
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
@@ -870,9 +976,9 @@ export default function ShipmentsPage() {
           <tbody>
             {loading ? (
               <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
-            ) : filteredProducts.length === 0 ? (
+            ) : products.length === 0 ? (
               <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>상품이 없습니다</td></tr>
-            ) : filteredProducts.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((p, idx) => {
+            ) : filteredProducts.map((p, idx) => {
               const regAccounts = p.registered_accounts || []
               const regMarkets = regAccounts.map(aid => accounts.find(a => a.id === aid)?.market_name).filter(Boolean)
               const optCount = (p.options || []).length
@@ -886,7 +992,9 @@ export default function ShipmentsPage() {
                   </td>
                   <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: '#666', fontSize: '0.72rem' }}>{(currentPage - 1) * pageSize + idx + 1}</td>
                   <td style={{ padding: '0.625rem 0.5rem', color: '#666', fontSize: '0.72rem' }}>{p.site_product_id || '-'}</td>
-                  <td style={{ padding: '0.625rem 0.5rem', fontSize: '0.75rem', color: '#888' }}>{p.source_site}</td>
+                  <td style={{ padding: '0.625rem 0.5rem' }}>
+                    <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, color: SITE_COLORS[p.source_site] || '#888', background: `${SITE_COLORS[p.source_site] || '#888'}18`, border: `1px solid ${SITE_COLORS[p.source_site] || '#888'}40` }}>{p.source_site}</span>
+                  </td>
                   <td style={{ padding: '0.625rem 0.5rem' }}>
                     <div>
                       <a href={`/samba/products?highlight=${p.id}`} style={{ color: '#DCE0E8', textDecoration: 'none', fontSize: '0.8rem', cursor: 'pointer' }}
@@ -904,16 +1012,18 @@ export default function ShipmentsPage() {
                       </div>
                     )}
                   </td>
-                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem', color: '#666' }}>
+                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem' }}>
                     {p.updated_at ? (() => {
                       const d = new Date(p.updated_at)
-                      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+                      return (
+                        <span style={{ color: '#AAB0BC' }}>{d.getFullYear()}-{String(d.getMonth() + 1).padStart(2, '0')}-{String(d.getDate()).padStart(2, '0')} {String(d.getHours()).padStart(2, '0')}:{String(d.getMinutes()).padStart(2, '0')}:{String(d.getSeconds()).padStart(2, '0')}</span>
+                      )
                     })() : '-'}
                   </td>
-                  <td style={{ padding: '0.625rem 0.5rem', fontSize: '0.72rem', color: '#666' }}>
+                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem' }}>
                     {(() => {
                       const regAccs = (p.registered_accounts || [])
-                      if (regAccs.length === 0) return <span style={{ color: '#555', textAlign: 'center', display: 'block' }}>-</span>
+                      if (regAccs.length === 0) return <span style={{ color: '#555' }}>-</span>
                       const sent = p.last_sent_data || {}
                       return regAccs.map(aid => {
                         const acc = accounts.find(a => a.id === aid)
@@ -921,12 +1031,12 @@ export default function ShipmentsPage() {
                         const sentAt = sent[aid]?.sent_at
                         const timeLabel = sentAt ? (() => {
                           const d = new Date(sentAt)
-                          return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+                          return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
                         })() : ''
                         return (
-                          <div key={aid} style={{ fontSize: '0.68rem' }}>
+                          <div key={aid} style={{ marginBottom: '2px', fontSize: '0.68rem' }}>
                             <span style={{ color: '#51CF66' }}>{acc.market_name}({acc.seller_id || acc.account_label || '-'})</span>
-                            {timeLabel && <span style={{ color: '#555' }}> {timeLabel}</span>}
+                            {timeLabel && <span style={{ color: '#AAB0BC', marginLeft: '6px' }}>{timeLabel}</span>}
                           </div>
                         )
                       })
@@ -939,15 +1049,15 @@ export default function ShipmentsPage() {
         </table>
 
         {/* 페이지네이션 */}
-        {filteredProducts.length > pageSize && (
+        {totalCount > pageSize && (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', padding: '12px 0' }}>
             <button
               disabled={currentPage <= 1}
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
               style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage <= 1 ? '#444' : '#C5C5C5', cursor: currentPage <= 1 ? 'default' : 'pointer' }}
             >◀</button>
-            {Array.from({ length: Math.ceil(filteredProducts.length / pageSize) }, (_, i) => i + 1)
-              .filter(page => Math.abs(page - currentPage) <= 2 || page === 1 || page === Math.ceil(filteredProducts.length / pageSize))
+            {Array.from({ length: Math.ceil(totalCount / pageSize) }, (_, i) => i + 1)
+              .filter(page => Math.abs(page - currentPage) <= 2 || page === 1 || page === Math.ceil(totalCount / pageSize))
               .map((page, i, arr) => (
                 <span key={page}>
                   {i > 0 && arr[i - 1] !== page - 1 && <span style={{ color: '#555' }}>…</span>}
@@ -964,12 +1074,12 @@ export default function ShipmentsPage() {
                 </span>
               ))}
             <button
-              disabled={currentPage >= Math.ceil(filteredProducts.length / pageSize)}
+              disabled={currentPage >= Math.ceil(totalCount / pageSize)}
               onClick={() => setCurrentPage(p => p + 1)}
-              style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage >= Math.ceil(filteredProducts.length / pageSize) ? '#444' : '#C5C5C5', cursor: currentPage >= Math.ceil(filteredProducts.length / pageSize) ? 'default' : 'pointer' }}
+              style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage >= Math.ceil(totalCount / pageSize) ? '#444' : '#C5C5C5', cursor: currentPage >= Math.ceil(totalCount / pageSize) ? 'default' : 'pointer' }}
             >▶</button>
             <span style={{ fontSize: '0.72rem', color: '#666', marginLeft: '8px' }}>
-              {filteredProducts.length}개 중 {(currentPage - 1) * pageSize + 1}~{Math.min(currentPage * pageSize, filteredProducts.length)}
+              {totalCount}개 중 {(currentPage - 1) * pageSize + 1}~{Math.min(currentPage * pageSize, totalCount)}
             </span>
           </div>
         )}

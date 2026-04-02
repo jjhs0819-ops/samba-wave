@@ -696,4 +696,6 @@ DB 컬럼: samba_collected_product.free_shipping / same_day_delivery (Boolean, s
 | 2026-03-28 | 검색 수집 시 URL 필터(brand, minPrice, maxPrice, gf) 무시 버그 수정 — search_products()에 필터 파라미터 추가, collector에서 URL 파싱 후 전달 | - |
 | 2026-03-28 | **최대혜택가 대규모 검증 (83개 상품 × 크롬캡쳐 비교)** — 4가지 수정: (1) 등급할인 조건 `isLimitedDc=False` 발견, (2) 선할인 `memberSavePointRate+savePoint`, (3) isSale 무관 확인, (4) 쿠폰 API에 `specialtyCodes` 파라미터 추가 (beauty/sneaker 등 카테고리 쿠폰 누락 해결) | - |
 | 2026-03-28 | **패션플러스 소싱처 활성화** — proxy/fashionplus.py에 max_count 페이지네이션 추가, _map_item을 CollectedProduct flat 스키마로 보강(sourceUrl/cost/saleStatus/manufacturer), job/worker.py에 _collect_direct_api() 분기 추가, SKILL.md에 패션플러스 수집 패턴 섹션 추가. 검색 API만 지원 (상세/옵션/고시정보 미지원) | - |
-| 2026-03-29 | **브랜드 소싱 모드** — 무신사 필터 API로 브랜드별 최하위 카테고리 자동 스캔 + 카테고리별 그룹 일괄 생성. `scan_brand_categories()` 메서드, `/brand-scan` + `/brand-create-groups` API, 프론트 탭 UI (브랜드 소싱 / 브랜드+키워드 소싱) | - |
+| 2026-03-29 | **브랜드 소싱 모드** — 무신사 필터 API로 브랜드별 최하위 카테고리 자동 스캔 + 카테고리별 그룹 일괄 생성. `scan_brand_categories()` 메서드, `/brand-scan` + `/brand-create-groups` + `/brand-refresh`(추가수집) API | - |
+| 2026-03-29 | **수집 완료 후 요청수=수집수 자동 보정** — 카테고리 간 중복으로 요청수 합산이 부풀려지는 문제 해결. 모든 소싱처(무신사/직접API) 워커에서 수집 완료 시 `requested_count = 실제 DB 수집수`로 갱신. 비율 배분 방식은 과소 요청/왜곡 문제로 기각 | - |
+| 2026-03-29 | **옵션/재고 일관성 전반 검증** — 6개 문제 발견 및 수정: (1) FashionPlus enrich DB options 미갱신 (2) worker 초기수집 price_history에 options 누락 (3) worker cost→sale_price 오기록 (4) Nike enrich snapshot options 누락 (5) stock_changed만일 때 DB options 미갱신 (전체) (6) stub 파서 옵션 미반환. 무신사/KREAM 기준으로 전 소싱처 통일 완료 | - |

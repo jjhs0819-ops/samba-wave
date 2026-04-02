@@ -54,7 +54,9 @@ class SambaContactService:
             return await self.repo.list_by_order(order_id)
         if status:
             return await self.repo.list_by_status(status)
-        return await self.repo.list_async(skip=skip, limit=limit, order_by="-created_at")
+        return await self.repo.list_async(
+            skip=skip, limit=limit, order_by="-created_at"
+        )
 
     async def get_contact(self, contact_id: str) -> Optional[SambaContactLog]:
         return await self.repo.get_async(contact_id)

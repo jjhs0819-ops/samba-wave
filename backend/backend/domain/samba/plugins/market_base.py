@@ -10,11 +10,14 @@ class MarketPlugin(ABC):
     새 마켓 추가 시 execute()와 transform() 2개만 구현.
     인증 로드, 정책 주입, 에러 분류는 base가 처리.
     """
-    market_type: str          # "smartstore"
-    policy_key: str           # "스마트스토어"
+
+    market_type: str  # "smartstore"
+    policy_key: str  # "스마트스토어"
     required_fields: list[str] = ["name", "sale_price"]
 
-    async def handle(self, session, product: dict, category_id: str, account, existing_no: str = "") -> dict[str, Any]:
+    async def handle(
+        self, session, product: dict, category_id: str, account, existing_no: str = ""
+    ) -> dict[str, Any]:
         """마켓 전송 진입점."""
         creds = await self._load_auth(session, account)
         if not creds:
@@ -22,11 +25,20 @@ class MarketPlugin(ABC):
         category_id = self._validate_category(category_id)
         product = await self._apply_market_settings(session, product, account)
         if not category_id:
-            return {"success": False, "message": f"{self.market_type} 카테고리 코드 없음"}
+            return {
+                "success": False,
+                "message": f"{self.market_type} 카테고리 코드 없음",
+            }
         try:
-            return await self.execute(session, product, creds, category_id, account, existing_no)
+            return await self.execute(
+                session, product, creds, category_id, account, existing_no
+            )
         except Exception as e:
-            return {"success": False, "error_type": self._classify_error(e), "message": str(e)}
+            return {
+                "success": False,
+                "error_type": self._classify_error(e),
+                "message": str(e),
+            }
 
     def _classify_error(self, exc: Exception) -> str:
         """에러 유형 분류."""
@@ -48,7 +60,10 @@ class MarketPlugin(ABC):
         if not creds:
             from backend.domain.samba.forbidden.model import SambaSettings
             from sqlmodel import select
-            stmt = select(SambaSettings).where(SambaSettings.key == f"store_{self.market_type}")
+
+            stmt = select(SambaSettings).where(
+                SambaSettings.key == f"store_{self.market_type}"
+            )
             result = await session.execute(stmt)
             row = result.scalars().first()
             if row and isinstance(row.value, dict):
@@ -67,6 +82,7 @@ class MarketPlugin(ABC):
         if not policy_id:
             return product
         from backend.domain.samba.policy.repository import SambaPolicyRepository
+
         policy_repo = SambaPolicyRepository(session)
         policy = await policy_repo.get_async(policy_id)
         if policy and policy.market_policies:
@@ -83,7 +99,15 @@ class MarketPlugin(ABC):
         return product
 
     @abstractmethod
-    async def execute(self, session, product: dict, creds: dict, category_id: str, account, existing_no: str) -> dict[str, Any]:
+    async def execute(
+        self,
+        session,
+        product: dict,
+        creds: dict,
+        category_id: str,
+        account,
+        existing_no: str,
+    ) -> dict[str, Any]:
         """마켓 API 호출 (등록/수정)."""
         ...
 

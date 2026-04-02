@@ -19,11 +19,11 @@ from backend.utils.logger import logger
 
 class RateLimitError(Exception):
     """소싱처 차단 감지 (429/403)."""
+
     def __init__(self, status: int, retry_after: int = 0):
         self.status = status
         self.retry_after = retry_after
         super().__init__(f"HTTP {status} (retry_after={retry_after})")
-
 
 
 class MusinsaClient:
@@ -31,7 +31,9 @@ class MusinsaClient:
 
     BASE_DETAIL = "https://goods-detail.musinsa.com/api2/goods"
     BASE_SEARCH = "https://api.musinsa.com/api2/dp/v1/plp/goods"
-    BASE_COUPON = "https://api.musinsa.com/api2/coupon/coupons/getUsableCouponsByGoodsNo"
+    BASE_COUPON = (
+        "https://api.musinsa.com/api2/coupon/coupons/getUsableCouponsByGoodsNo"
+    )
     BASE_MEMBER = "https://api.musinsa.com/api2/member/v1/me"
 
     HEADERS: dict[str, str] = {
@@ -46,8 +48,9 @@ class MusinsaClient:
         "Origin": "https://www.musinsa.com",
     }
 
-    def __init__(self, cookie: str = "") -> None:
+    def __init__(self, cookie: str = "", *, proxy_url: str | None = None) -> None:
         self.cookie = cookie
+        self.proxy_url = proxy_url
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -76,13 +79,17 @@ class MusinsaClient:
     # ------------------------------------------------------------------
 
     async def get_goods_detail(
-        self, goods_no: str, *,
+        self,
+        goods_no: str,
+        *,
         member_grade_rate: Optional[float] = None,
         refresh_only: bool = False,
+        _shared_client: Optional[httpx.AsyncClient] = None,
     ) -> dict[str, Any]:
         """상품 상세 조회 - 상세 + 옵션 + 재고 + 고시정보 + 쿠폰 + 혜택가.
 
         proxy-server.mjs ``fetchMusinsaProduct()`` 전체 로직 포팅.
+        _shared_client: 외부에서 공유 클라이언트를 넘기면 연결 재사용 (병렬 수집 성능 향상)
         """
         # 무신사는 로그인(쿠키) 필수
         if not self.cookie:
@@ -91,7 +98,22 @@ class MusinsaClient:
                 "확장앱에서 무신사 로그인 후 다시 시도하세요."
             )
         timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        # 공유 클라이언트 재사용 (TCP 연결 풀링) 또는 새로 생성
+        _own_client = None
+        if _shared_client:
+            client = _shared_client
+        else:
+            _client_kwargs: dict[str, Any] = {"timeout": timeout}
+            if self.proxy_url:
+                _client_kwargs["proxy"] = self.proxy_url
+            _own_client = httpx.AsyncClient(**_client_kwargs)
+            client = _own_client
+        try:
+            # 방어적 초기화 — 모든 코드 경로에서 UnboundLocalError 방지
+            desc_html = ""
+            unique_images: list[str] = []
+            detail_images: list[str] = []
+
             # 1) 상품 상세 API
             detail_resp = await client.get(
                 f"{self.BASE_DETAIL}/{goods_no}",
@@ -117,47 +139,56 @@ class MusinsaClient:
             )
 
             # 3) 상품고시정보 API (갱신 모드에서는 스킵)
-            essential = {} if refresh_only else await self._fetch_essential(client, goods_no)
+            essential = (
+                {} if refresh_only else await self._fetch_essential(client, goods_no)
+            )
 
             # 카테고리
-            category_levels = [
-                cat.get(f"categoryDepth{i}Name") for i in range(1, 5)
-            ]
+            category_levels = [cat.get(f"categoryDepth{i}Name") for i in range(1, 5)]
             category_levels = [c for c in category_levels if c]
 
-            # 상세페이지 이미지 추출
-            desc_html = d.get("goodsContents", "")
-            detail_images = self._extract_detail_images(desc_html)
+            # 이미지 파싱 (갱신 모드에서는 스킵 — 가격/재고만 필요)
+            unique_images = []
+            original_image_count = 0
+            detail_images = []
+            desc_html = ""
+            if not refresh_only:
+                desc_html = d.get("goodsContents", "")
+                detail_images = self._extract_detail_images(desc_html)
 
-            # 이미지: 썸네일 + 상품이미지 최대 8장
-            thumbnail_url = d.get("thumbnailImageUrl", "")
-            goods_images_raw = d.get("goodsImages") or []
-            logger.info(
-                f"[무신사 이미지] {goods_no}: "
-                f"thumbnail={thumbnail_url!r}, "
-                f"goodsImages={len(goods_images_raw)}개, "
-                f"goodsContents길이={len(desc_html)}, "
-                f"detailImages={len(detail_images)}개"
-            )
-            if goods_images_raw:
-                logger.info(f"[무신사 이미지 상세] goodsImages 샘플: {goods_images_raw[:3]}")
-
-            all_images = [self._to_image_url(thumbnail_url)]
-            for img in goods_images_raw:
-                all_images.append(
-                    self._to_image_url(img.get("imageUrl") or img.get("url", ""))
+                thumbnail_url = d.get("thumbnailImageUrl", "")
+                goods_images_raw = d.get("goodsImages") or []
+                logger.info(
+                    f"[무신사 이미지] {goods_no}: "
+                    f"thumbnail={thumbnail_url!r}, "
+                    f"goodsImages={len(goods_images_raw)}개, "
+                    f"goodsContents길이={len(desc_html)}, "
+                    f"detailImages={len(detail_images)}개"
                 )
-            all_images = [i for i in all_images if i]
-            unique_images = list(dict.fromkeys(all_images))
-            # 추가이미지 부족 시 상세페이지 이미지로 보충 (최대 9장)
-            if len(unique_images) < 9 and detail_images:
-                existing = set(unique_images)
-                for di in detail_images:
-                    if di not in existing and len(unique_images) < 9:
-                        unique_images.append(di)
-                        existing.add(di)
-            unique_images = unique_images[:9]
-            logger.info(f"[무신사 이미지 최종] {goods_no}: images={len(unique_images)}개, detail_images={len(detail_images)}개")
+                if goods_images_raw:
+                    logger.info(
+                        f"[무신사 이미지 상세] goodsImages 샘플: {goods_images_raw[:3]}"
+                    )
+
+                all_images = [self._to_image_url(thumbnail_url)]
+                for img in goods_images_raw:
+                    all_images.append(
+                        self._to_image_url(img.get("imageUrl") or img.get("url", ""))
+                    )
+                all_images = [i for i in all_images if i]
+                unique_images = list(dict.fromkeys(all_images))
+                original_image_count = len(unique_images)
+                # 추가이미지 부족 시 상세페이지 이미지로 보충 (최대 9장)
+                if len(unique_images) < 9 and detail_images:
+                    existing = set(unique_images)
+                    for di in detail_images:
+                        if di not in existing and len(unique_images) < 9:
+                            unique_images.append(di)
+                            existing.add(di)
+                unique_images = unique_images[:9]
+                logger.info(
+                    f"[무신사 이미지 최종] {goods_no}: images={len(unique_images)}개 (원본 {original_image_count}+보충 {len(unique_images) - original_image_count}), detail_images={len(detail_images)}개"
+                )
 
             # 소재 정보
             materials = (d.get("goodsMaterial") or {}).get("materials", [])
@@ -173,7 +204,13 @@ class MusinsaClient:
             )
 
             # 시즌 정보 — 코드 → 텍스트 변환
-            _SEASON_MAP = {"1": "SS", "2": "FW", "3": "ALL SS", "4": "ALL FW", "0": "ALL"}
+            _SEASON_MAP = {
+                "1": "SS",
+                "2": "FW",
+                "3": "ALL SS",
+                "4": "ALL FW",
+                "0": "ALL",
+            }
             season_year = d.get("seasonYear", "")
             if season_year == "0000":
                 season_year = "ALL"
@@ -211,22 +248,30 @@ class MusinsaClient:
             #   → 등급적립(memberSavePointRate) + 구매적립(savePoint)
             is_limited_dc = d.get("isLimitedDc") is True
             grade_discount_rate = (
-                gp.get("memberDiscountRate", 0) or 0
-            ) if not is_limited_dc else 0
+                (gp.get("memberDiscountRate", 0) or 0) if not is_limited_dc else 0
+            )
             grade_save_point_rate = gp.get("memberSavePointRate", 0) or 0
             save_point_value = gp.get("savePoint", 0) or 0
 
             # 2단계: 등급할인 (benefit_base 기준, 10원 절사)
-            grade_discount = int(benefit_base * grade_discount_rate / 100 / 10) * 10 if grade_discount_rate > 0 else 0
+            grade_discount = (
+                int(benefit_base * grade_discount_rate / 100 / 10) * 10
+                if grade_discount_rate > 0
+                else 0
+            )
 
             # 3단계: 적립금 사용 (benefit_base - 등급할인 기준, 10원 절사)
             is_point_restricted = d.get("isRestictedUsePoint") is True
             raw_point_rate = d.get("maxUsePointRate", 0) or 0
-            point_rate_pct = raw_point_rate * 100 if 0 < raw_point_rate < 1 else raw_point_rate
+            point_rate_pct = (
+                raw_point_rate * 100 if 0 < raw_point_rate < 1 else raw_point_rate
+            )
             point_base = benefit_base - grade_discount
             point_usage = 0
             if not is_point_restricted and point_rate_pct > 0:
-                point_usage = int(point_base * point_rate_pct / 100 / 10) * 10  # 10원 절사
+                point_usage = (
+                    int(point_base * point_rate_pct / 100 / 10) * 10
+                )  # 10원 절사
 
             # 4단계: 적립 선할인 (isPrePoint=True일 때)
             # 선할인 = 등급적립(remaining × memberSavePointRate) + 구매적립(savePoint)
@@ -234,7 +279,11 @@ class MusinsaClient:
             remaining = benefit_base - grade_discount - point_usage
             pre_discount = 0
             if is_pre_point:
-                grade_point = int(remaining * grade_save_point_rate / 100 / 10) * 10 if grade_save_point_rate > 0 else 0
+                grade_point = (
+                    int(remaining * grade_save_point_rate / 100 / 10) * 10
+                    if grade_save_point_rate > 0
+                    else 0
+                )
                 pre_discount = grade_point + save_point_value
 
             best_benefit_price = remaining - pre_discount
@@ -303,6 +352,7 @@ class MusinsaClient:
                     or ""
                 ),
                 "images": unique_images,
+                "originalImageCount": original_image_count,
                 "detailImages": detail_images,
                 "detailHtml": desc_html,
                 "options": options,
@@ -334,7 +384,9 @@ class MusinsaClient:
                 "marketTransmitEnabled": True,
                 "registeredAccounts": [],
                 # 성별: 배열 → 문자열 (예: ["남성", "여성"] → "남녀공용", ["남성"] → "남성")
-                "sex": (lambda s: "남녀공용" if len(s) != 1 else s[0])(d.get("sex") or []),
+                "sex": (lambda s: "남녀공용" if len(s) != 1 else s[0])(
+                    d.get("sex") or []
+                ),
                 "storeCodes": d.get("storeCodes", []),
                 "isOutlet": d.get("isOutlet", False),
                 # 부티끄 판별: goodsTypeCode 또는 saleType
@@ -352,7 +404,10 @@ class MusinsaClient:
                     d.get("isSoldOut")
                     or (d.get("goodsPrice") or {}).get("isSoldOut")
                     or d.get("isOutOfStock", False)
-                    or (bool(options) and all(opt.get("isSoldOut", False) for opt in options))
+                    or (
+                        bool(options)
+                        and all(opt.get("isSoldOut", False) for opt in options)
+                    )
                 ),
                 "isSale": gp.get("isSale", False),
                 # 판매 상태: sold_out(품절) → preorder(판매예정) → in_stock 순서로 판단
@@ -363,15 +418,19 @@ class MusinsaClient:
                         d.get("isSoldOut")
                         or (d.get("goodsPrice") or {}).get("isSoldOut")
                         or d.get("isOutOfStock", False)
-                        or (bool(options) and all(opt.get("isSoldOut", False) for opt in options))
+                        or (
+                            bool(options)
+                            and all(opt.get("isSoldOut", False) for opt in options)
+                        )
                     )
                     else "preorder"
+                    # 판매 예약 날짜가 설정된 경우 (판매예정)
                     if (
-                        # 판매 예약 날짜가 설정된 경우 (판매예정)
                         bool(gp.get("saleReserveYmdt") or d.get("saleReserveYmdt"))
                         # 예약/사전주문 배송 타입 옵션이 있는 경우
                         or bool(
-                            options and any(
+                            options
+                            and any(
                                 str(opt.get("deliveryType", "")).upper()
                                 in ("RESERVATION", "PREORDER", "RESERVE", "SCHEDULED")
                                 for opt in options
@@ -386,6 +445,9 @@ class MusinsaClient:
                 "collectedAt": now_iso,
                 "updatedAt": now_iso,
             }
+        finally:
+            if _own_client:
+                await _own_client.aclose()
 
     async def search_products(
         self,
@@ -459,7 +521,8 @@ class MusinsaClient:
                         "detailImages": [],
                         "detailHtml": "",
                         "options": [],
-                        "originalPrice": item.get("normalPrice") or item.get("price", 0),
+                        "originalPrice": item.get("normalPrice")
+                        or item.get("price", 0),
                         "salePrice": item.get("price") or item.get("normalPrice", 0),
                         "discountRate": item.get("saleRate", 0),
                         "origin": "",
@@ -517,9 +580,7 @@ class MusinsaClient:
 
                 parsed = urlparse(url)
                 qs = parse_qs(parsed.query)
-                kw = (
-                    (qs.get("keyword") or qs.get("q") or qs.get("query") or [""])[0]
-                )
+                kw = (qs.get("keyword") or qs.get("q") or qs.get("query") or [""])[0]
                 if kw:
                     params = {
                         "caller": "SEARCH",
@@ -635,17 +696,26 @@ class MusinsaClient:
                     )
                     if resp.status_code != 200:
                         results.append(
-                            {"goodsNo": goods_no, "error": f"API {resp.status_code}", "isSoldOut": None}
+                            {
+                                "goodsNo": goods_no,
+                                "error": f"API {resp.status_code}",
+                                "isSoldOut": None,
+                            }
                         )
                         continue
                     d = resp.json().get("data")
                     if not d:
                         results.append(
-                            {"goodsNo": goods_no, "error": "데이터 없음", "isSoldOut": None}
+                            {
+                                "goodsNo": goods_no,
+                                "error": "데이터 없음",
+                                "isSoldOut": None,
+                            }
                         )
                         continue
                     is_sold_out = bool(
-                        d.get("isSoldOut") or (d.get("goodsPrice") or {}).get("isSoldOut")
+                        d.get("isSoldOut")
+                        or (d.get("goodsPrice") or {}).get("isSoldOut")
                     )
                     price = (
                         (d.get("goodsPrice") or {}).get("immediateDiscountedPrice")
@@ -668,9 +738,7 @@ class MusinsaClient:
         sold_out_count = sum(1 for r in results if r.get("isSoldOut") is True)
         return {"success": True, "results": results, "soldOutCount": sold_out_count}
 
-    async def monitor_prices(
-        self, products: list[dict[str, Any]]
-    ) -> dict[str, Any]:
+    async def monitor_prices(self, products: list[dict[str, Any]]) -> dict[str, Any]:
         """가격 변동 감지 - proxy-server.mjs /api/agents/price-monitor 포팅."""
         results = []
         timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
@@ -790,10 +858,9 @@ class MusinsaClient:
                     )
                     if inv_resp.status_code == 200:
                         inv_json = inv_resp.json()
-                        if (
-                            (inv_json.get("meta") or {}).get("result") == "SUCCESS"
-                            and isinstance(inv_json.get("data"), list)
-                        ):
+                        if (inv_json.get("meta") or {}).get(
+                            "result"
+                        ) == "SUCCESS" and isinstance(inv_json.get("data"), list):
                             for inv in inv_json["data"]:
                                 opt_item_no = inv.get("productVariantId")
                                 if opt_item_no:
@@ -808,9 +875,7 @@ class MusinsaClient:
                                         ),
                                     }
                 except Exception as inv_err:
-                    logger.warning(
-                        f"[재고] {goods_no} 재고 API 실패 (무시): {inv_err}"
-                    )
+                    logger.warning(f"[재고] {goods_no} 재고 API 실패 (무시): {inv_err}")
 
             # 옵션 정리 — preorder 등 salePrice=0인 경우 normalPrice 폴백
             base_price = (
@@ -876,10 +941,9 @@ class MusinsaClient:
             if resp.status_code != 200:
                 return essential
             ess_json = resp.json()
-            if (
-                (ess_json.get("meta") or {}).get("result") != "SUCCESS"
-                or not (ess_json.get("data") or {}).get("essentials")
-            ):
+            if (ess_json.get("meta") or {}).get("result") != "SUCCESS" or not (
+                ess_json.get("data") or {}
+            ).get("essentials"):
                 return essential
 
             for item in ess_json["data"]["essentials"]:
@@ -933,21 +997,25 @@ class MusinsaClient:
                 "salePrice": s_price,
             }
             if specialty:
-                params_dict["specialtyCodes"] = ",".join(specialty) if isinstance(specialty, list) else specialty
+                params_dict["specialtyCodes"] = (
+                    ",".join(specialty) if isinstance(specialty, list) else specialty
+                )
             params = urlencode(params_dict)
             coupon_url = f"{self.BASE_COUPON}?{params}"
             resp = await client.get(coupon_url, headers=self._headers())
             if resp.status_code == 200:
                 coupon_json = resp.json()
-                coupons = (coupon_json.get("data") or {}).get("list") or coupon_json.get(
-                    "data", []
-                )
+                coupons = (coupon_json.get("data") or {}).get(
+                    "list"
+                ) or coupon_json.get("data", [])
                 if isinstance(coupons, list):
                     for c in coupons:
-                        logger.debug(f"[쿠폰 상세] {goods_no}: salePrice={c.get('salePrice')}, "
-                                     f"discountPrice={c.get('discountPrice')}, "
-                                     f"discountRate={c.get('discountRate')}, "
-                                     f"couponNm={c.get('couponNm','')[:30]}")
+                        logger.debug(
+                            f"[쿠폰 상세] {goods_no}: salePrice={c.get('salePrice')}, "
+                            f"discountPrice={c.get('discountPrice')}, "
+                            f"discountRate={c.get('discountRate')}, "
+                            f"couponNm={c.get('couponNm', '')[:30]}"
+                        )
                         actual_discount = 0
                         c_sale_price = c.get("salePrice", 0) or 0
                         # salePrice 우선 처리
@@ -955,7 +1023,9 @@ class MusinsaClient:
                             if c_sale_price < s_price * 0.5:
                                 actual_discount = c_sale_price  # 작은 값 = 할인금액
                             else:
-                                actual_discount = s_price - c_sale_price  # 큰 값 = 적용가
+                                actual_discount = (
+                                    s_price - c_sale_price
+                                )  # 큰 값 = 적용가
                         elif c.get("discountPrice", 0) and c["discountPrice"] > 0:
                             dp = c["discountPrice"]
                             # discountPrice도 적용가일 수 있으므로 가드 추가
@@ -987,6 +1057,7 @@ class MusinsaClient:
     async def _get_order_option_nos(self, order_no: str) -> list[str]:
         """주문의 orderOptionNo 목록 추출 (API → HTML 순서)."""
         import json as _json
+
         timeout = httpx.Timeout(15.0, connect=10.0)
         headers = self._headers()
 
@@ -1007,19 +1078,31 @@ class MusinsaClient:
                         logger.info(f"[무신사 옵션조회] 응답 body: {resp.text[:300]}")
                     if resp.status_code == 200:
                         data = resp.json()
-                        logger.info(f"[무신사 옵션조회] 응답 키: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                        logger.info(
+                            f"[무신사 옵션조회] 응답 키: {list(data.keys()) if isinstance(data, dict) else type(data)}"
+                        )
                         # JSON 전체에서 orderOptionNo 재귀 탐색
                         nos: set[str] = set()
+
                         def _find(obj: Any) -> None:
                             if isinstance(obj, dict):
                                 for k, v in obj.items():
-                                    if k in ("orderOptionNo", "orderOptionId", "optionNo") and v:
+                                    if (
+                                        k
+                                        in (
+                                            "orderOptionNo",
+                                            "orderOptionId",
+                                            "optionNo",
+                                        )
+                                        and v
+                                    ):
                                         nos.add(str(v))
                                     else:
                                         _find(v)
                             elif isinstance(obj, list):
                                 for item in obj:
                                     _find(item)
+
                         _find(data)
                         if nos:
                             logger.info(f"[무신사 옵션조회] API에서 추출: {nos}")
@@ -1035,35 +1118,59 @@ class MusinsaClient:
                 )
                 if resp.status_code == 200:
                     html = resp.text
-                    logger.info(f"[무신사 옵션조회] HTML 길이: {len(html)}, __NEXT_DATA__ 포함: {'__NEXT_DATA__' in html}")
+                    logger.info(
+                        f"[무신사 옵션조회] HTML 길이: {len(html)}, __NEXT_DATA__ 포함: {'__NEXT_DATA__' in html}"
+                    )
                     # __NEXT_DATA__ 파싱
-                    match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+                    match = re.search(
+                        r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S
+                    )
                     if match:
                         try:
                             next_data = _json.loads(match.group(1))
-                            logger.info(f"[무신사 옵션조회] __NEXT_DATA__ props 키: {list(next_data.get('props', {}).get('pageProps', {}).keys())}")
-                            logger.info(f"[무신사 옵션조회] __NEXT_DATA__ query: {next_data.get('query', {})}")
+                            logger.info(
+                                f"[무신사 옵션조회] __NEXT_DATA__ props 키: {list(next_data.get('props', {}).get('pageProps', {}).keys())}"
+                            )
+                            logger.info(
+                                f"[무신사 옵션조회] __NEXT_DATA__ query: {next_data.get('query', {})}"
+                            )
                             nos2: set[str] = set()
+
                             def _find2(obj: Any) -> None:
                                 if isinstance(obj, dict):
                                     for k, v in obj.items():
-                                        if k in ("orderOptionNo", "orderOptionId", "optionNo") and v:
+                                        if (
+                                            k
+                                            in (
+                                                "orderOptionNo",
+                                                "orderOptionId",
+                                                "optionNo",
+                                            )
+                                            and v
+                                        ):
                                             nos2.add(str(v))
                                         else:
                                             _find2(v)
                                 elif isinstance(obj, list):
                                     for item in obj:
                                         _find2(item)
+
                             _find2(next_data)
                             if nos2:
-                                logger.info(f"[무신사 옵션조회] __NEXT_DATA__에서 추출: {nos2}")
+                                logger.info(
+                                    f"[무신사 옵션조회] __NEXT_DATA__에서 추출: {nos2}"
+                                )
                                 return list(nos2)
                         except Exception as e:
-                            logger.warning(f"[무신사 옵션조회] __NEXT_DATA__ 파싱 실패: {e}")
+                            logger.warning(
+                                f"[무신사 옵션조회] __NEXT_DATA__ 파싱 실패: {e}"
+                            )
                     # fallback: HTML에서 숫자 패턴
-                    option_nos = re.findall(rf'/{order_no}/(\d{{6,12}})', html)
+                    option_nos = re.findall(rf"/{order_no}/(\d{{6,12}})", html)
                     if option_nos:
-                        logger.info(f"[무신사 옵션조회] HTML 패턴에서 추출: {set(option_nos)}")
+                        logger.info(
+                            f"[무신사 옵션조회] HTML 패턴에서 추출: {set(option_nos)}"
+                        )
                         return list(set(option_nos))
             except Exception as e:
                 logger.warning(f"[무신사 옵션조회] HTML 페이지 실패: {e}")
@@ -1071,7 +1178,9 @@ class MusinsaClient:
         logger.warning(f"[무신사 옵션조회] orderOptionNo를 찾을 수 없음: {order_no}")
         return []
 
-    async def cancel_order(self, order_no: str, reason: str = "단순변심") -> dict[str, Any]:
+    async def cancel_order(
+        self, order_no: str, reason: str = "단순변심"
+    ) -> dict[str, Any]:
         """무신사 원주문 취소 (소비자 주문취소).
 
         확정 API: GET /api2/claim/store/mypage/order/cancel/voucher/refund/complete/{주문번호}?orderOptionNoList={옵션번호}
@@ -1083,7 +1192,9 @@ class MusinsaClient:
         # 1) orderOptionNo 추출
         option_nos = await self._get_order_option_nos(order_no)
         if not option_nos:
-            raise ValueError(f"주문 {order_no}의 상품옵션번호를 찾을 수 없습니다. 주문 상세 페이지를 확인해주세요.")
+            raise ValueError(
+                f"주문 {order_no}의 상품옵션번호를 찾을 수 없습니다. 주문 상세 페이지를 확인해주세요."
+            )
 
         option_list = ",".join(option_nos)
         logger.info(f"[무신사 주문취소] 주문={order_no}, 옵션={option_list}")
@@ -1103,7 +1214,11 @@ class MusinsaClient:
                     if resp.status_code == 200:
                         data = resp.json() if resp.text else {}
                         logger.info(f"[무신사 주문취소] 성공: {data}")
-                        return {"ok": True, "message": "무신사 주문취소 완료", "data": data}
+                        return {
+                            "ok": True,
+                            "message": "무신사 주문취소 완료",
+                            "data": data,
+                        }
                     elif resp.status_code == 400:
                         body = resp.text[:500]
                         logger.warning(f"[무신사 주문취소] 400 응답: {body}")
@@ -1115,3 +1230,153 @@ class MusinsaClient:
                     continue
 
         raise ValueError(f"무신사 주문취소 실패: {order_no} (모든 API 시도 실패)")
+
+    # ------------------------------------------------------------------
+    # 브랜드 카테고리 스캔
+    # ------------------------------------------------------------------
+
+    async def scan_brand_categories(
+        self,
+        brand: str,
+        gf: str = "A",
+        keyword: str = "",
+    ) -> list[dict[str, Any]]:
+        """브랜드의 최하위 카테고리 목록 + 상품 수 반환.
+
+        무신사 필터 API로 대>중분류를 가져온 뒤,
+        각 중분류에 대해 소분류를 재귀 탐색하여 최하위 카테고리별 상품 수를 집계한다.
+        """
+        timeout = httpx.Timeout(30.0, connect=10.0)
+        base_params = {
+            "caller": "SEARCH",
+            "keyword": keyword or brand,
+            "brand": brand,
+            "gf": gf,
+        }
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            # 1) 필터 API로 대>중분류 가져오기
+            resp = await client.get(
+                "https://api.musinsa.com/api2/dp/v1/plp/filter",
+                params=base_params,
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            cats = (
+                resp.json()
+                .get("data", {})
+                .get("detail", {})
+                .get("category", {})
+                .get("list", [])
+            )
+
+            results: list[dict[str, Any]] = []
+
+            for cat in cats:
+                big_name = cat.get("displayText", "")
+                big_code = cat.get("value", "")
+                subs = cat.get("categoryList", [])
+
+                for sub in subs:
+                    mid_name = sub.get("displayText", "")
+                    mid_code = sub.get("value", "")
+
+                    # 2) 중분류 선택 후 소분류 필터 확인
+                    resp2 = await client.get(
+                        "https://api.musinsa.com/api2/dp/v1/plp/filter",
+                        params={**base_params, "category": mid_code},
+                        headers=self._headers(),
+                    )
+                    sub_cats = []
+                    if resp2.status_code == 200:
+                        for d1 in (
+                            resp2.json()
+                            .get("data", {})
+                            .get("detail", {})
+                            .get("category", {})
+                            .get("list", [])
+                        ):
+                            sub_cats.extend(d1.get("categoryList", []))
+
+                    if sub_cats:
+                        # 소분류별 상품 수 조회
+                        for small in sub_cats:
+                            small_name = small.get("displayText", "")
+                            small_code = small.get("value", "")
+                            resp3 = await client.get(
+                                "https://api.musinsa.com/api2/dp/v1/plp/goods",
+                                params={
+                                    **base_params,
+                                    "category": small_code,
+                                    "page": "1",
+                                    "size": "1",
+                                },
+                                headers=self._headers(),
+                            )
+                            cnt = 0
+                            if resp3.status_code == 200:
+                                cnt = (
+                                    resp3.json()
+                                    .get("data", {})
+                                    .get("pagination", {})
+                                    .get("totalCount", 0)
+                                )
+                            if cnt > 0:
+                                # 소분류가 중분류와 동일하면 생략
+                                actual_cat3 = (
+                                    "" if small_name == mid_name else small_name
+                                )
+                                path = (
+                                    f"{big_name} > {mid_name} > {small_name}"
+                                    if actual_cat3
+                                    else f"{big_name} > {mid_name}"
+                                )
+                                results.append(
+                                    {
+                                        "category1": big_name,
+                                        "category2": mid_name,
+                                        "category3": actual_cat3,
+                                        "categoryCode": small_code,
+                                        "path": path,
+                                        "count": cnt,
+                                    }
+                                )
+                    else:
+                        # 소분류 없으면 중분류가 최하단
+                        resp3 = await client.get(
+                            "https://api.musinsa.com/api2/dp/v1/plp/goods",
+                            params={
+                                **base_params,
+                                "category": mid_code,
+                                "page": "1",
+                                "size": "1",
+                            },
+                            headers=self._headers(),
+                        )
+                        cnt = 0
+                        if resp3.status_code == 200:
+                            cnt = (
+                                resp3.json()
+                                .get("data", {})
+                                .get("pagination", {})
+                                .get("totalCount", 0)
+                            )
+                        if cnt > 0:
+                            results.append(
+                                {
+                                    "category1": big_name,
+                                    "category2": mid_name,
+                                    "category3": "",
+                                    "categoryCode": mid_code,
+                                    "path": f"{big_name} > {mid_name}",
+                                    "count": cnt,
+                                }
+                            )
+
+            # 상품 수 내림차순 정렬
+            results.sort(key=lambda x: -x["count"])
+            total = sum(r["count"] for r in results)
+            logger.info(
+                f"[무신사 브랜드스캔] {brand}: {len(results)}개 카테고리, 총 {total}건"
+            )
+            return results

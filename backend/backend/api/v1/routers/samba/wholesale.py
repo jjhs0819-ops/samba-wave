@@ -45,7 +45,7 @@ def _read_service(session: AsyncSession):
 # ── 엔드포인트 ─────────────────────────────────────────────────────────────
 
 
-@router.post('/search')
+@router.post("/search")
 async def search_wholesale(
     body: WholesaleSearchRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
@@ -61,17 +61,19 @@ async def search_wholesale(
             keyword=body.keyword,
             page=body.page,
         )
-        return {'saved': len(items), 'items': items}
+        return {"saved": len(items), "items": items}
     finally:
         await svc.close()
 
 
-@router.get('/products')
+@router.get("/products")
 async def list_wholesale_products(
-    source: Optional[str] = Query(None, description='도매몰 구분 (domeme, ownerclan 등)'),
-    keyword: Optional[str] = Query(None, description='상품명 키워드 필터'),
-    page: int = Query(1, ge=1, description='페이지 번호'),
-    size: int = Query(20, ge=1, le=100, description='페이지 크기'),
+    source: Optional[str] = Query(
+        None, description="도매몰 구분 (domeme, ownerclan 등)"
+    ),
+    keyword: Optional[str] = Query(None, description="상품명 키워드 필터"),
+    page: int = Query(1, ge=1, description="페이지 번호"),
+    size: int = Query(20, ge=1, le=100, description="페이지 크기"),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """저장된 도매 상품 목록 조회.
@@ -85,4 +87,4 @@ async def list_wholesale_products(
         page=page,
         size=size,
     )
-    return {'items': items, 'page': page, 'size': size}
+    return {"items": items, "page": page, "size": size}

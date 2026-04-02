@@ -14,7 +14,9 @@ class SambaWholesaleProductRepository(BaseRepository[SambaWholesaleProduct]):
     def __init__(self, session):
         super().__init__(session, SambaWholesaleProduct)
 
-    async def list_by_source_mall(self, source_mall: str) -> List[SambaWholesaleProduct]:
+    async def list_by_source_mall(
+        self, source_mall: str
+    ) -> List[SambaWholesaleProduct]:
         """도매몰 구분으로 상품 목록 조회."""
         return await self.filter_by_async(
             source_mall=source_mall, order_by="collected_at", order_by_desc=True

@@ -1,6 +1,19 @@
 .pnpm-store
 .worktrees/
 
+# 임시 개발 파일
+tmp_*
+tmp_captures/
+
+# Claude IDE 캐시
+.claude/tsc-cache/
+
+# 생성 산출물
+backend/backend/static/images/
+
+# npm lock in node_modules
+node_modules/.package-lock.json
+
 # 쿠키/토큰 파일 (민감정보)
 .kream-cookie.json
 .musinsa-cookie.json

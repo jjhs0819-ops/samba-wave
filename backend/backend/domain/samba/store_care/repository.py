@@ -16,7 +16,9 @@ class StoreCareScheduleRepository(BaseRepository[StoreCareSchedule]):
     def __init__(self, session: AsyncSession):
         super().__init__(session, StoreCareSchedule)
 
-    async def list_active(self, tenant_id: str | None = None) -> list[StoreCareSchedule]:
+    async def list_active(
+        self, tenant_id: str | None = None
+    ) -> list[StoreCareSchedule]:
         """활성 스케줄 목록 조회."""
         stmt = select(StoreCareSchedule).where(StoreCareSchedule.is_active == True)
         if tenant_id:
@@ -50,14 +52,21 @@ class StoreCarePurchaseRepository(BaseRepository[StoreCarePurchase]):
         """오늘 가구매 통계."""
         from datetime import date
 
-        today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=UTC)
+        today_start = datetime.combine(date.today(), datetime.min.time()).replace(
+            tzinfo=UTC
+        )
 
         stmt = select(
             func.count().label("total"),
-            func.count().filter(StoreCarePurchase.status == "completed").label("success"),
+            func.count()
+            .filter(StoreCarePurchase.status == "completed")
+            .label("success"),
             func.count().filter(StoreCarePurchase.status == "failed").label("failed"),
             func.coalesce(
-                func.sum(StoreCarePurchase.amount).filter(StoreCarePurchase.status == "completed"), 0
+                func.sum(StoreCarePurchase.amount).filter(
+                    StoreCarePurchase.status == "completed"
+                ),
+                0,
             ).label("total_amount"),
         ).where(StoreCarePurchase.created_at >= today_start)
         if tenant_id:

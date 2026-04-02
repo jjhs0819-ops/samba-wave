@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from backend.domain.samba.plugins.sourcing.stub import GenericStubPlugin
 
 if TYPE_CHECKING:
-    from backend.domain.samba.collector.refresher import RefreshResult
+    pass
 
 logger = logging.getLogger(__name__)
 

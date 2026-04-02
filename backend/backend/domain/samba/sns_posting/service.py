@@ -63,28 +63,26 @@ class SnsPostingService:
         finally:
             await client.close()
 
-        if not result.get('ok'):
-            return {'ok': False, 'error': result.get('error', '연결 실패')}
+        if not result.get("ok"):
+            return {"ok": False, "error": result.get("error", "연결 실패")}
 
         # 사이트 정보 DB 저장
         site = SambaWpSite(
             site_url=site_url,
             username=username,
             app_password=app_password,
-            site_name=result.get('name', ''),
+            site_name=result.get("name", ""),
             tenant_id=tenant_id,
-            status='active',
+            status="active",
         )
         self._session.add(site)
         await self._session.commit()
         await self._session.refresh(site)
 
-        logger.info('[SnsPostingService] 워드프레스 사이트 연결 성공: %s', site_url)
-        return {'ok': True, 'site': site}
+        logger.info("[SnsPostingService] 워드프레스 사이트 연결 성공: %s", site_url)
+        return {"ok": True, "site": site}
 
-    async def list_wp_sites(
-        self, tenant_id: Optional[str] = None
-    ) -> List[SambaWpSite]:
+    async def list_wp_sites(self, tenant_id: Optional[str] = None) -> List[SambaWpSite]:
         """등록된 워드프레스 사이트 목록을 반환한다.
 
         Args:
@@ -132,7 +130,7 @@ class SnsPostingService:
         await self._session.commit()
         await self._session.refresh(group)
 
-        logger.info('[SnsPostingService] 키워드 그룹 저장: %s (%s)', name, category)
+        logger.info("[SnsPostingService] 키워드 그룹 저장: %s (%s)", name, category)
         return group
 
     async def list_keyword_groups(
@@ -146,7 +144,9 @@ class SnsPostingService:
         Returns:
             SambaSnKeywordGroup 목록
         """
-        stmt = select(SambaSnKeywordGroup).order_by(SambaSnKeywordGroup.created_at.desc())  # type: ignore[attr-defined]
+        stmt = select(SambaSnKeywordGroup).order_by(
+            SambaSnKeywordGroup.created_at.desc()
+        )  # type: ignore[attr-defined]
         if tenant_id is not None:
             stmt = stmt.where(SambaSnKeywordGroup.tenant_id == tenant_id)
         result = await self._session.exec(stmt)
@@ -169,7 +169,7 @@ class SnsPostingService:
 
         await self._session.delete(group)
         await self._session.commit()
-        logger.info('[SnsPostingService] 키워드 그룹 삭제: %s', group_id)
+        logger.info("[SnsPostingService] 키워드 그룹 삭제: %s", group_id)
         return True
 
     # ------------------------------------------------------------------
@@ -205,7 +205,7 @@ class SnsPostingService:
         wp_site_id: str,
         issue: Dict[str, Any],
         category: str,
-        language: str = 'ko',
+        language: str = "ko",
         product_info: Optional[Dict[str, Any]] = None,
         product_banner_html: Optional[str] = None,
         tenant_id: Optional[str] = None,
@@ -229,11 +229,11 @@ class SnsPostingService:
         result = await self._session.exec(stmt)
         wp_site = result.first()
         if wp_site is None:
-            return {'ok': False, 'error': f'사이트 없음: {wp_site_id}'}
+            return {"ok": False, "error": f"사이트 없음: {wp_site_id}"}
 
-        issue_title = issue.get('title', '')
-        issue_description = issue.get('description', '')
-        source_url = issue.get('link', '')
+        issue_title = issue.get("title", "")
+        issue_description = issue.get("description", "")
+        source_url = issue.get("link", "")
 
         # AI 글 생성
         try:
@@ -245,17 +245,17 @@ class SnsPostingService:
                 product_info=product_info,
             )
         except Exception as e:
-            logger.error('[SnsPostingService] AI 글 생성 실패: %s', e)
-            return {'ok': False, 'error': f'AI 글 생성 실패: {e}'}
+            logger.error("[SnsPostingService] AI 글 생성 실패: %s", e)
+            return {"ok": False, "error": f"AI 글 생성 실패: {e}"}
 
-        title = post_data.get('title', issue_title)
-        content = post_data.get('content', '')
-        tags = post_data.get('tags', [])
-        excerpt = post_data.get('excerpt', '')
+        title = post_data.get("title", issue_title)
+        content = post_data.get("content", "")
+        tags = post_data.get("tags", [])
+        excerpt = post_data.get("excerpt", "")
 
         # 상품 배너 HTML 삽입 (본문 하단)
         if product_banner_html:
-            content = f'{content}\n{product_banner_html}'
+            content = f"{content}\n{product_banner_html}"
 
         # 워드프레스 발행
         client = WordPressClient(
@@ -269,15 +269,15 @@ class SnsPostingService:
             wp_result = await client.create_post(
                 title=title,
                 content=content,
-                status='publish',
+                status="publish",
                 categories=[cat_id],
                 tags=tags,
                 excerpt=excerpt,
             )
-            wp_post_id = wp_result.get('id')
-            post_link = wp_result.get('link', '')
+            wp_post_id = wp_result.get("id")
+            post_link = wp_result.get("link", "")
         except Exception as e:
-            logger.error('[SnsPostingService] 워드프레스 발행 실패: %s', e)
+            logger.error("[SnsPostingService] 워드프레스 발행 실패: %s", e)
             # 발행 실패 이력 저장
             failed_post = SambaSnsPost(
                 tenant_id=tenant_id,
@@ -287,11 +287,11 @@ class SnsPostingService:
                 category=category,
                 source_url=source_url,
                 language=language,
-                status='failed',
+                status="failed",
             )
             self._session.add(failed_post)
             await self._session.commit()
-            return {'ok': False, 'error': f'워드프레스 발행 실패: {e}'}
+            return {"ok": False, "error": f"워드프레스 발행 실패: {e}"}
         finally:
             await client.close()
 
@@ -305,14 +305,14 @@ class SnsPostingService:
             category=category,
             source_url=source_url,
             language=language,
-            status='published',
+            status="published",
             published_at=datetime.now(tz=timezone.utc),
         )
         self._session.add(sns_post)
         await self._session.commit()
 
-        logger.info('[SnsPostingService] 발행 성공: %s → %s', title[:40], post_link)
-        return {'ok': True, 'post_id': wp_post_id, 'link': post_link, 'title': title}
+        logger.info("[SnsPostingService] 발행 성공: %s → %s", title[:40], post_link)
+        return {"ok": True, "post_id": wp_post_id, "link": post_link, "title": title}
 
     # ------------------------------------------------------------------
     # 자동 포스팅 스트리밍
@@ -345,7 +345,10 @@ class SnsPostingService:
         config = cfg_result.first()
 
         if config is None:
-            yield self._sse('error', {'message': '자동 포스팅 설정이 없습니다. 먼저 설정을 저장하세요.'})
+            yield self._sse(
+                "error",
+                {"message": "자동 포스팅 설정이 없습니다. 먼저 설정을 저장하세요."},
+            )
             return
 
         # is_running 플래그 활성화
@@ -354,12 +357,14 @@ class SnsPostingService:
         self._session.add(config)
         await self._session.commit()
 
-        yield self._sse('log', {'message': f'자동 포스팅 시작 — 사이트: {wp_site_id}'})
+        yield self._sse("log", {"message": f"자동 포스팅 시작 — 사이트: {wp_site_id}"})
 
         interval_seconds = config.interval_minutes * 60
         max_daily = config.max_daily_posts
         language = config.language
-        banner_html = config.product_banner_html if config.include_product_banner else None
+        banner_html = (
+            config.product_banner_html if config.include_product_banner else None
+        )
 
         # 오늘 발행 수 초기화 (자정 기준)
         today_count = 0
@@ -369,14 +374,17 @@ class SnsPostingService:
                 # is_running 상태 재확인 (stop 요청 감지)
                 await self._session.refresh(config)
                 if not config.is_running:
-                    yield self._sse('done', {'message': '자동 포스팅 중지됨'})
+                    yield self._sse("done", {"message": "자동 포스팅 중지됨"})
                     break
 
                 # 일일 최대 발행 수 도달 확인
                 if today_count >= max_daily:
-                    yield self._sse('done', {
-                        'message': f'일일 최대 발행 수({max_daily}건) 도달. 자동 포스팅 종료.'
-                    })
+                    yield self._sse(
+                        "done",
+                        {
+                            "message": f"일일 최대 발행 수({max_daily}건) 도달. 자동 포스팅 종료."
+                        },
+                    )
                     config.is_running = False
                     config.updated_at = datetime.now(tz=timezone.utc)
                     self._session.add(config)
@@ -393,7 +401,9 @@ class SnsPostingService:
                 keyword_groups = list(kg_result.all())
 
                 if not keyword_groups:
-                    yield self._sse('error', {'message': '활성 키워드 그룹이 없습니다.'})
+                    yield self._sse(
+                        "error", {"message": "활성 키워드 그룹이 없습니다."}
+                    )
                     config.is_running = False
                     config.updated_at = datetime.now(tz=timezone.utc)
                     self._session.add(config)
@@ -407,9 +417,9 @@ class SnsPostingService:
                     if not config.is_running:
                         break
 
-                    yield self._sse('log', {
-                        'message': f'키워드 그룹 [{kg.name}] 이슈 검색 중...'
-                    })
+                    yield self._sse(
+                        "log", {"message": f"키워드 그룹 [{kg.name}] 이슈 검색 중..."}
+                    )
 
                     # 이슈 검색
                     try:
@@ -419,22 +429,23 @@ class SnsPostingService:
                             max_results=5,
                         )
                     except Exception as e:
-                        yield self._sse('log', {
-                            'message': f'이슈 검색 실패 [{kg.name}]: {e}'
-                        })
+                        yield self._sse(
+                            "log", {"message": f"이슈 검색 실패 [{kg.name}]: {e}"}
+                        )
                         continue
 
                     if not issues:
-                        yield self._sse('log', {
-                            'message': f'[{kg.name}] 검색 결과 없음. 다음 그룹으로.'
-                        })
+                        yield self._sse(
+                            "log",
+                            {"message": f"[{kg.name}] 검색 결과 없음. 다음 그룹으로."},
+                        )
                         continue
 
                     # 첫 번째 이슈로 글 생성 및 발행
                     issue = issues[0]
-                    yield self._sse('log', {
-                        'message': f'글 생성 중: {issue["title"][:50]}'
-                    })
+                    yield self._sse(
+                        "log", {"message": f"글 생성 중: {issue['title'][:50]}"}
+                    )
 
                     pub_result = await self.generate_and_publish(
                         wp_site_id=wp_site_id,
@@ -445,7 +456,7 @@ class SnsPostingService:
                         tenant_id=tenant_id,
                     )
 
-                    if pub_result.get('ok'):
+                    if pub_result.get("ok"):
                         today_count += 1
                         # today_count 업데이트
                         config.today_count = today_count
@@ -454,20 +465,26 @@ class SnsPostingService:
                         self._session.add(config)
                         await self._session.commit()
 
-                        yield self._sse('success', {
-                            'message': f'발행 성공: {pub_result.get("title", "")[:40]}',
-                            'link': pub_result.get('link', ''),
-                            'today_count': today_count,
-                        })
+                        yield self._sse(
+                            "success",
+                            {
+                                "message": f"발행 성공: {pub_result.get('title', '')[:40]}",
+                                "link": pub_result.get("link", ""),
+                                "today_count": today_count,
+                            },
+                        )
                     else:
-                        yield self._sse('fail', {
-                            'message': f'발행 실패: {pub_result.get("error", "")}',
-                        })
+                        yield self._sse(
+                            "fail",
+                            {
+                                "message": f"발행 실패: {pub_result.get('error', '')}",
+                            },
+                        )
 
                     # 그룹 간 인터벌 대기
-                    yield self._sse('log', {
-                        'message': f'{interval_seconds}초 대기 중...'
-                    })
+                    yield self._sse(
+                        "log", {"message": f"{interval_seconds}초 대기 중..."}
+                    )
                     await asyncio.sleep(interval_seconds)
 
                     # 일일 한도 재확인
@@ -475,10 +492,10 @@ class SnsPostingService:
                         break
 
         except asyncio.CancelledError:
-            yield self._sse('done', {'message': '자동 포스팅 스트림 취소됨'})
+            yield self._sse("done", {"message": "자동 포스팅 스트림 취소됨"})
         except Exception as e:
-            logger.error('[SnsPostingService] auto_posting_stream 오류: %s', e)
-            yield self._sse('error', {'message': f'자동 포스팅 오류: {e}'})
+            logger.error("[SnsPostingService] auto_posting_stream 오류: %s", e)
+            yield self._sse("error", {"message": f"자동 포스팅 오류: {e}"})
         finally:
             # 스트리밍 종료 시 is_running 해제
             try:
@@ -529,9 +546,7 @@ class SnsPostingService:
     # 대시보드
     # ------------------------------------------------------------------
 
-    async def get_dashboard(
-        self, tenant_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def get_dashboard(self, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         """자동 포스팅 대시보드 통계를 반환한다.
 
         Args:
@@ -542,7 +557,6 @@ class SnsPostingService:
              "success_rate": 성공률%, "is_running": 실행상태}
         """
         from sqlalchemy import func
-        from sqlmodel import col
 
         # 오늘 날짜 (UTC 기준)
         now_utc = datetime.now(tz=timezone.utc)
@@ -556,8 +570,10 @@ class SnsPostingService:
         total_posts = total_result.one()
 
         # 성공 포스트 수
-        success_stmt = select(func.count()).select_from(SambaSnsPost).where(
-            SambaSnsPost.status == 'published'
+        success_stmt = (
+            select(func.count())
+            .select_from(SambaSnsPost)
+            .where(SambaSnsPost.status == "published")
         )
         if tenant_id is not None:
             success_stmt = success_stmt.where(SambaSnsPost.tenant_id == tenant_id)
@@ -565,8 +581,10 @@ class SnsPostingService:
         success_count = success_result.one()
 
         # 오늘 발행 수 (published_at 기준)
-        today_stmt = select(func.count()).select_from(SambaSnsPost).where(
-            SambaSnsPost.published_at >= today_start
+        today_stmt = (
+            select(func.count())
+            .select_from(SambaSnsPost)
+            .where(SambaSnsPost.published_at >= today_start)
         )
         if tenant_id is not None:
             today_stmt = today_stmt.where(SambaSnsPost.tenant_id == tenant_id)
@@ -574,7 +592,9 @@ class SnsPostingService:
         today_posts = today_result.one()
 
         # 성공률 계산
-        success_rate = round(success_count / total_posts * 100, 1) if total_posts > 0 else 0.0
+        success_rate = (
+            round(success_count / total_posts * 100, 1) if total_posts > 0 else 0.0
+        )
 
         # 실행 상태 (하나라도 is_running=True인 설정이 있으면 True)
         running_stmt = select(SambaSnsAutoConfig).where(
@@ -586,11 +606,11 @@ class SnsPostingService:
         is_running = running_result.first() is not None
 
         return {
-            'today_posts': today_posts,
-            'total_posts': total_posts,
-            'success_count': success_count,
-            'success_rate': success_rate,
-            'is_running': is_running,
+            "today_posts": today_posts,
+            "total_posts": total_posts,
+            "success_count": success_count,
+            "success_rate": success_rate,
+            "is_running": is_running,
         }
 
     # ------------------------------------------------------------------
@@ -602,7 +622,7 @@ class SnsPostingService:
         wp_site_id: str,
         interval_minutes: int = 20,
         max_daily_posts: int = 150,
-        language: str = 'ko',
+        language: str = "ko",
         include_product_banner: bool = True,
         product_banner_html: Optional[str] = None,
         tenant_id: Optional[str] = None,
@@ -655,7 +675,7 @@ class SnsPostingService:
         await self._session.commit()
         await self._session.refresh(config)
 
-        logger.info('[SnsPostingService] 자동 포스팅 설정 저장: site=%s', wp_site_id)
+        logger.info("[SnsPostingService] 자동 포스팅 설정 저장: site=%s", wp_site_id)
         return config
 
     async def stop_auto_posting(
@@ -688,7 +708,7 @@ class SnsPostingService:
         self._session.add(config)
         await self._session.commit()
 
-        logger.info('[SnsPostingService] 자동 포스팅 중지: site=%s', wp_site_id)
+        logger.info("[SnsPostingService] 자동 포스팅 중지: site=%s", wp_site_id)
         return True
 
     # ------------------------------------------------------------------

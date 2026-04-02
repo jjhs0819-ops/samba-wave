@@ -1,9 +1,11 @@
 'use client'
 
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { PERIOD_BUTTONS } from '@/lib/samba/constants'
+import { inputStyle } from '@/lib/samba/styles'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   pending:    { label: '주문접수', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
@@ -24,16 +26,6 @@ const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = 
 
 const SHIPPING_COMPANIES = ['CJ대한통운', '한진택배', '롯데택배', '로젠택배', '우체국택배', '경동택배', '대신택배', '일양로지스', '편의점택배', 'DHL', '직접배송', '기타']
 
-const PERIOD_BUTTONS = [
-  { key: 'lastmonth', label: '지난달' },
-  { key: 'thismonth', label: '이번달' },
-  { key: 'lastweek', label: '지난주' },
-  { key: 'thisweek', label: '이번주' },
-  { key: 'yesterday', label: '어제' },
-  { key: 'today', label: '오늘' },
-  { key: 'thisyear', label: '올해' },
-]
-
 const MARKET_STATUS_OPTIONS = ['일반', '발송대기', '교환요청', '취소요청', '반품요청', '배송완료']
 
 // 택배사별 배송조회 URL
@@ -44,17 +36,6 @@ const TRACKING_URLS: Record<string, string> = {
   '로젠택배': 'https://www.ilogen.com/web/personal/trace/',
   '우체국택배': 'https://service.epost.go.kr/trace.RetrieveDomRi498.postal?sid1=',
   '경동택배': 'https://kdexp.com/deliverySearch?barcode=',
-}
-
-const inputStyle = {
-  padding: '0.28rem 0.4rem',
-  fontSize: '0.8125rem',
-  background: '#1E1E1E',
-  border: '1px solid #3D3D3D',
-  borderRadius: '4px',
-  color: '#C5C5C5',
-  outline: 'none',
-  boxSizing: 'border-box' as const,
 }
 
 interface OrderForm {
@@ -77,6 +58,7 @@ const ACTION_BUTTONS = [
 ] as const
 
 export default function OrdersPage() {
+  useEffect(() => { document.title = 'SAMBA-주문관리' }, [])
   const searchParams = useSearchParams()
   const [orders, setOrders] = useState<SambaOrder[]>([])
   const [channels, setChannels] = useState<SambaChannel[]>([])
@@ -87,11 +69,16 @@ export default function OrdersPage() {
   const [marketFilter, setMarketFilter] = useState('')
   const [marketStatus, setMarketStatus] = useState('')
   const [siteFilter, setSiteFilter] = useState('')
+  const [accountFilter, setAccountFilter] = useState('')
   const [inputFilter, setInputFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('active')
   const [searchText, setSearchText] = useState('')
   const [pageSize, setPageSize] = useState(50)
-  const [logMessages, setLogMessages] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
+  const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
+  const setLogMessages: typeof _setLogMessagesRaw = (v) => _setLogMessagesRaw(prev => {
+    const next = typeof v === 'function' ? v(prev) : v
+    return next.slice(-30)
+  })
   const [smsRemain, setSmsRemain] = useState<{ SMS_CNT?: number; LMS_CNT?: number; MMS_CNT?: number } | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -170,6 +157,15 @@ export default function OrdersPage() {
     } catch { /* ignore */ }
     setLoading(false)
   }, [pageSize])
+
+  // 개별 주문 로컬 상태 업데이트 (전체 목록 재조회 방지)
+  const updateOrderLocal = useCallback((id: string, updates: Partial<SambaOrder>) => {
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o))
+  }, [])
+
+  const removeOrderLocal = useCallback((id: string) => {
+    setOrders(prev => prev.filter(o => o.id !== id))
+  }, [])
 
   useEffect(() => { loadOrders() }, [loadOrders])
   useEffect(() => { channelApi.list().then(setChannels).catch(() => {}) }, [])
@@ -320,13 +316,13 @@ export default function OrdersPage() {
   }
 
   const handleStatusChange = async (id: string, status: string) => {
-    try { await orderApi.updateStatus(id, status); loadOrders() }
+    try { await orderApi.updateStatus(id, status); updateOrderLocal(id, { status }) }
     catch (e) { showAlert(e instanceof Error ? e.message : '상태 변경 실패', 'error') }
   }
 
   const handleDelete = async (id: string) => {
     if (!await showConfirm('주문삭제하시겠습니까?')) return
-    try { await orderApi.delete(id); loadOrders() }
+    try { await orderApi.delete(id); removeOrderLocal(id) }
     catch (e) { showAlert(e instanceof Error ? e.message : '삭제 실패', 'error') }
   }
 
@@ -337,7 +333,7 @@ export default function OrdersPage() {
     try {
       await orderApi.update(id, { cost: Number(val) || 0 })
       setEditingCosts(prev => { const n = { ...prev }; delete n[id]; return n })
-      loadOrders()
+      updateOrderLocal(id, { cost: Number(val) || 0 })
     } catch (e) { showAlert(e instanceof Error ? e.message : '원가 저장 실패', 'error') }
   }
 
@@ -348,7 +344,7 @@ export default function OrdersPage() {
     try {
       await orderApi.update(id, { shipping_fee: Number(val) || 0 })
       setEditingShipFees(prev => { const n = { ...prev }; delete n[id]; return n })
-      loadOrders()
+      updateOrderLocal(id, { shipping_fee: Number(val) || 0 })
     } catch (e) { showAlert(e instanceof Error ? e.message : '배송비 저장 실패', 'error') }
   }
 
@@ -498,7 +494,10 @@ export default function OrdersPage() {
       setShowUrlModal(false)
       setUrlModalInput('')
       setUrlModalImageInput('')
-      loadOrders()
+      updateOrderLocal(urlModalOrderId, {
+        ...(url ? { source_url: url } : {}),
+        ...(imgUrl ? { product_image: imgUrl } : {}),
+      })
       showAlert('미등록 상품 정보가 등록되었습니다', 'success')
     } catch (e) {
       showAlert(e instanceof Error ? e.message : '저장 실패', 'error')
@@ -548,8 +547,8 @@ export default function OrdersPage() {
     }
   }
 
-  // 필터링된 주문 목록
-  const filteredOrders = orders.filter(o => {
+  // 필터링된 주문 목록 (메모이제이션)
+  const filteredOrders = useMemo(() => orders.filter(o => {
     const orderDate = new Date(o.created_at)
     // 시작일 고정이면 customStart 우선
     if (startLocked && customStart) {
@@ -585,6 +584,9 @@ export default function OrdersPage() {
     if (siteFilter) {
       if (o.source_site !== siteFilter) return false
     }
+    if (accountFilter) {
+      if (o.channel_id !== accountFilter) return false
+    }
     if (marketStatus) {
       if (o.shipping_status !== marketStatus) return false
     }
@@ -611,7 +613,7 @@ export default function OrdersPage() {
       if (searchCategory === 'order_number' && !o.order_number?.toLowerCase().includes(q)) return false
     }
     return true
-  })
+  }), [orders, startLocked, customStart, customEnd, period, marketFilter, accounts, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory])
 
   // 숫자 콤마 포맷 헬퍼
   const fmtNum = (v: string) => {
@@ -769,16 +771,16 @@ export default function OrdersPage() {
 
       {/* 필터 바 */}
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
-        <select style={{ ...inputStyle, width: '80px', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
+        <select style={{ ...inputStyle, width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품</option>
           <option value="customer">고객</option>
           <option value="product_id">상품번호</option>
           <option value="order_number">주문번호</option>
         </select>
-        <input style={{ ...inputStyle, width: '140px' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
+        <input style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} />
         <button style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>검색</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
-          <select style={{ ...inputStyle, width: '200px', fontSize: '0.72rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체마켓보기</option>
             {(() => {
               const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
@@ -795,12 +797,16 @@ export default function OrdersPage() {
               ))
             })()}
           </select>
-          <select style={{ ...inputStyle, width: '110px' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체사이트보기</option>{['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','GrandStage','OKmall','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}</select>
-          <select style={{ ...inputStyle, width: '112px' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
+          <select style={{ ...inputStyle, width: '110px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체사이트보기</option>{['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','GrandStage','OKmall','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}</select>
+          <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
+            <option value="">주문계정</option>
+            {accounts.map(a => <option key={a.id} value={a.id}>{a.market_name || a.market_type}</option>)}
+          </select>
+          <select style={{ ...inputStyle, width: '112px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
             <option value="">마켓상태 보기</option>
             {MARKET_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '118px' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '118px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
             <option value="">입력값</option>
             <option value="has_order">주문번호입력</option>
             <option value="no_order">주문번호 미입력</option>
@@ -808,14 +814,14 @@ export default function OrdersPage() {
             <option value="kkadaegi">까대기</option>
             <option value="gift">선물</option>
           </select>
-          <select style={{ ...inputStyle, width: '130px' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="active">접수/대기/사무실</option>
             <option value="">전체 주문상태</option>
             {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
           </select>
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
-          <select style={{ ...inputStyle, width: '88px' }}><option>-- 정렬 --</option><option>주문일자▲</option><option>주문일자▼</option></select>
-          <select style={{ ...inputStyle, width: '92px' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
+          <select style={{ ...inputStyle, width: '88px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}><option>-- 정렬 --</option><option>주문일자▲</option><option>주문일자▼</option></select>
+          <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
             <option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
           </select>
         </div>
@@ -914,7 +920,7 @@ export default function OrdersPage() {
                           if (val === (o.coupang_display_name ?? '')) return
                           try {
                             await orderApi.update(o.id, { coupang_display_name: val || undefined })
-                            loadOrders()
+                            updateOrderLocal(o.id, { coupang_display_name: val || undefined })
                           } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
                         }}
                         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
@@ -998,7 +1004,7 @@ export default function OrdersPage() {
                             const priceStr = costVal != null ? `₩${Number(costVal).toLocaleString()}` : '-'
                             const stockStr = p?.is_sold_out ? '품절' : '재고있음'
                             showAlert(`${(o.product_name || '').slice(0, 20)} → ${priceStr} | ${stockStr}`, 'success')
-                            if (costVal) { await orderApi.update(o.id, { cost: costVal }); loadOrders() }
+                            if (costVal) { await orderApi.update(o.id, { cost: costVal }); updateOrderLocal(o.id, { cost: costVal }) }
                           } else {
                             showAlert(data.message || '업데이트 실패', 'error')
                           }
@@ -1052,7 +1058,7 @@ export default function OrdersPage() {
                           if (val === (o.ext_order_number ?? '')) return
                           try {
                             await orderApi.update(o.id, { ext_order_number: val || undefined })
-                            loadOrders()
+                            updateOrderLocal(o.id, { ext_order_number: val || undefined })
                           } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
                         }}
                         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
@@ -1117,7 +1123,7 @@ export default function OrdersPage() {
                             if (val === (o.sourcing_order_number ?? '')) return
                             try {
                               await orderApi.update(o.id, { sourcing_order_number: val })
-                              loadOrders()
+                              updateOrderLocal(o.id, { sourcing_order_number: val })
                             } catch (err) { showAlert(err instanceof Error ? err.message : '소싱주문번호 저장 실패', 'error') }
                           }}
                           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
@@ -1133,7 +1139,7 @@ export default function OrdersPage() {
                             const val = e.target.value
                             try {
                               await orderApi.update(o.id, { sourcing_account_id: val || undefined } as Partial<SambaOrder>)
-                              loadOrders()
+                              updateOrderLocal(o.id, { sourcing_account_id: val || undefined })
                             } catch { /* ignore */ }
                           }}
                           style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
@@ -1204,7 +1210,7 @@ export default function OrdersPage() {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                               try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
-                              loadOrders()
+                              updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn })
                             } else if (co && tn) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 중... (${co} ${tn})`])
@@ -1213,14 +1219,15 @@ export default function OrdersPage() {
                                 if (!res.market_sent) {
                                   await orderApi.updateStatus(o.id, 'ship_failed')
                                   setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                  updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                                 } else {
                                   setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                  updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'shipping', shipping_status: '송장전송완료' })
                                 }
-                                loadOrders()
                               } catch (err) {
                                 await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
                                 setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 실패`])
-                                loadOrders()
+                                updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                               }
                             } else if (co) {
                               try { await orderApi.update(o.id, { shipping_company: co }) } catch { /* ignore */ }
@@ -1247,7 +1254,7 @@ export default function OrdersPage() {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                               try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
-                              loadOrders()
+                              updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn })
                             } else if (co && tn && (changed || retry)) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 중... (${co} ${tn})`])
@@ -1256,14 +1263,15 @@ export default function OrdersPage() {
                                 if (!res.market_sent) {
                                   await orderApi.updateStatus(o.id, 'ship_failed')
                                   setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                  updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                                 } else {
                                   setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                  updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'shipping', shipping_status: '송장전송완료' })
                                 }
-                                loadOrders()
                               } catch (err) {
                                 await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
                                 setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 실패`])
-                                loadOrders()
+                                updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                               }
                             } else if (tn && tn !== (o.tracking_number || '')) {
                               try { await orderApi.update(o.id, { tracking_number: tn }) } catch { /* ignore */ }

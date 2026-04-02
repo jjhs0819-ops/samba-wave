@@ -44,13 +44,16 @@ async def list_accounts(session: AsyncSession = Depends(get_read_session_depende
 
 
 @router.get("/active")
-async def list_active_accounts(session: AsyncSession = Depends(get_read_session_dependency)):
+async def list_active_accounts(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
     return await _get_service(session).get_active_accounts()
 
 
 @router.get("/markets")
 async def get_supported_markets():
     from backend.domain.samba.account.service import SambaAccountService
+
     return SambaAccountService.SUPPORTED_MARKETS
 
 
@@ -116,6 +119,7 @@ async def _enrich_store_slug(data: dict[str, Any]) -> None:
 
     try:
         from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
         client = SmartStoreClient(client_id, client_secret)
         info = await client.get_channel_info()
         if info.get("storeSlug"):

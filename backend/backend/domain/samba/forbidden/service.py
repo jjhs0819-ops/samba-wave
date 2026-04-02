@@ -108,9 +108,7 @@ class SambaForbiddenService:
             return name
 
         deletion_active = await self.word_repo.list_active("deletion")
-        title_words = [
-            w for w in deletion_active if w.scope in ("title", "both")
-        ]
+        title_words = [w for w in deletion_active if w.scope in ("title", "both")]
 
         cleaned = name
         for dw in title_words:
@@ -120,9 +118,7 @@ class SambaForbiddenService:
         # Collapse multiple spaces
         return re.sub(r"\s+", " ", cleaned).strip()
 
-    async def validate_product(
-        self, product: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    async def validate_product(self, product: Dict[str, Any]) -> Dict[str, Any]:
         """Validate a product against all active forbidden/deletion words.
 
         Ported from js/modules/forbidden.js validateProduct().
@@ -153,7 +149,8 @@ class SambaForbiddenService:
         # 이미 조회한 all_active로 직접 clean 처리 (중복 DB 조회 방지)
         cleaned = raw_name or ""
         deletion_words = [
-            w for w in all_active
+            w
+            for w in all_active
             if w.type == "deletion" and w.scope in ("title", "both")
         ]
         for dw in deletion_words:
