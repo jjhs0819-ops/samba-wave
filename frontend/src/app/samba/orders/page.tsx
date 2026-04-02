@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
@@ -158,6 +158,15 @@ export default function OrdersPage() {
     setLoading(false)
   }, [pageSize])
 
+  // 개별 주문 로컬 상태 업데이트 (전체 목록 재조회 방지)
+  const updateOrderLocal = useCallback((id: string, updates: Partial<SambaOrder>) => {
+    setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o))
+  }, [])
+
+  const removeOrderLocal = useCallback((id: string) => {
+    setOrders(prev => prev.filter(o => o.id !== id))
+  }, [])
+
   useEffect(() => { loadOrders() }, [loadOrders])
   useEffect(() => { channelApi.list().then(setChannels).catch(() => {}) }, [])
   useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
@@ -307,13 +316,13 @@ export default function OrdersPage() {
   }
 
   const handleStatusChange = async (id: string, status: string) => {
-    try { await orderApi.updateStatus(id, status); loadOrders() }
+    try { await orderApi.updateStatus(id, status); updateOrderLocal(id, { status }) }
     catch (e) { showAlert(e instanceof Error ? e.message : '상태 변경 실패', 'error') }
   }
 
   const handleDelete = async (id: string) => {
     if (!await showConfirm('주문삭제하시겠습니까?')) return
-    try { await orderApi.delete(id); loadOrders() }
+    try { await orderApi.delete(id); removeOrderLocal(id) }
     catch (e) { showAlert(e instanceof Error ? e.message : '삭제 실패', 'error') }
   }
 
@@ -324,7 +333,7 @@ export default function OrdersPage() {
     try {
       await orderApi.update(id, { cost: Number(val) || 0 })
       setEditingCosts(prev => { const n = { ...prev }; delete n[id]; return n })
-      loadOrders()
+      updateOrderLocal(id, { cost: Number(val) || 0 })
     } catch (e) { showAlert(e instanceof Error ? e.message : '원가 저장 실패', 'error') }
   }
 
@@ -335,7 +344,7 @@ export default function OrdersPage() {
     try {
       await orderApi.update(id, { shipping_fee: Number(val) || 0 })
       setEditingShipFees(prev => { const n = { ...prev }; delete n[id]; return n })
-      loadOrders()
+      updateOrderLocal(id, { shipping_fee: Number(val) || 0 })
     } catch (e) { showAlert(e instanceof Error ? e.message : '배송비 저장 실패', 'error') }
   }
 
@@ -485,7 +494,10 @@ export default function OrdersPage() {
       setShowUrlModal(false)
       setUrlModalInput('')
       setUrlModalImageInput('')
-      loadOrders()
+      updateOrderLocal(urlModalOrderId, {
+        ...(url ? { source_url: url } : {}),
+        ...(imgUrl ? { product_image: imgUrl } : {}),
+      })
       showAlert('미등록 상품 정보가 등록되었습니다', 'success')
     } catch (e) {
       showAlert(e instanceof Error ? e.message : '저장 실패', 'error')
@@ -535,8 +547,8 @@ export default function OrdersPage() {
     }
   }
 
-  // 필터링된 주문 목록
-  const filteredOrders = orders.filter(o => {
+  // 필터링된 주문 목록 (메모이제이션)
+  const filteredOrders = useMemo(() => orders.filter(o => {
     const orderDate = new Date(o.created_at)
     // 시작일 고정이면 customStart 우선
     if (startLocked && customStart) {
@@ -601,7 +613,7 @@ export default function OrdersPage() {
       if (searchCategory === 'order_number' && !o.order_number?.toLowerCase().includes(q)) return false
     }
     return true
-  })
+  }), [orders, startLocked, customStart, customEnd, period, marketFilter, accounts, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory])
 
   // 숫자 콤마 포맷 헬퍼
   const fmtNum = (v: string) => {
@@ -765,7 +777,7 @@ export default function OrdersPage() {
           <option value="product_id">상품번호</option>
           <option value="order_number">주문번호</option>
         </select>
-        <input style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
+        <input style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} />
         <button style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>검색</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
           <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
@@ -908,7 +920,7 @@ export default function OrdersPage() {
                           if (val === (o.coupang_display_name ?? '')) return
                           try {
                             await orderApi.update(o.id, { coupang_display_name: val || undefined })
-                            loadOrders()
+                            updateOrderLocal(o.id, { coupang_display_name: val || undefined })
                           } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
                         }}
                         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
@@ -992,7 +1004,7 @@ export default function OrdersPage() {
                             const priceStr = costVal != null ? `₩${Number(costVal).toLocaleString()}` : '-'
                             const stockStr = p?.is_sold_out ? '품절' : '재고있음'
                             showAlert(`${(o.product_name || '').slice(0, 20)} → ${priceStr} | ${stockStr}`, 'success')
-                            if (costVal) { await orderApi.update(o.id, { cost: costVal }); loadOrders() }
+                            if (costVal) { await orderApi.update(o.id, { cost: costVal }); updateOrderLocal(o.id, { cost: costVal }) }
                           } else {
                             showAlert(data.message || '업데이트 실패', 'error')
                           }
@@ -1046,7 +1058,7 @@ export default function OrdersPage() {
                           if (val === (o.ext_order_number ?? '')) return
                           try {
                             await orderApi.update(o.id, { ext_order_number: val || undefined })
-                            loadOrders()
+                            updateOrderLocal(o.id, { ext_order_number: val || undefined })
                           } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
                         }}
                         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
@@ -1111,7 +1123,7 @@ export default function OrdersPage() {
                             if (val === (o.sourcing_order_number ?? '')) return
                             try {
                               await orderApi.update(o.id, { sourcing_order_number: val })
-                              loadOrders()
+                              updateOrderLocal(o.id, { sourcing_order_number: val })
                             } catch (err) { showAlert(err instanceof Error ? err.message : '소싱주문번호 저장 실패', 'error') }
                           }}
                           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
@@ -1127,7 +1139,7 @@ export default function OrdersPage() {
                             const val = e.target.value
                             try {
                               await orderApi.update(o.id, { sourcing_account_id: val || undefined } as Partial<SambaOrder>)
-                              loadOrders()
+                              updateOrderLocal(o.id, { sourcing_account_id: val || undefined })
                             } catch { /* ignore */ }
                           }}
                           style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
@@ -1198,7 +1210,7 @@ export default function OrdersPage() {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                               try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
-                              loadOrders()
+                              updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn })
                             } else if (co && tn) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 중... (${co} ${tn})`])
@@ -1207,14 +1219,15 @@ export default function OrdersPage() {
                                 if (!res.market_sent) {
                                   await orderApi.updateStatus(o.id, 'ship_failed')
                                   setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                  updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                                 } else {
                                   setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                  updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'shipping', shipping_status: '송장전송완료' })
                                 }
-                                loadOrders()
                               } catch (err) {
                                 await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
                                 setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 실패`])
-                                loadOrders()
+                                updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                               }
                             } else if (co) {
                               try { await orderApi.update(o.id, { shipping_company: co }) } catch { /* ignore */ }
@@ -1241,7 +1254,7 @@ export default function OrdersPage() {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                               try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
-                              loadOrders()
+                              updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn })
                             } else if (co && tn && (changed || retry)) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 중... (${co} ${tn})`])
@@ -1250,14 +1263,15 @@ export default function OrdersPage() {
                                 if (!res.market_sent) {
                                   await orderApi.updateStatus(o.id, 'ship_failed')
                                   setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                  updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                                 } else {
                                   setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                  updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'shipping', shipping_status: '송장전송완료' })
                                 }
-                                loadOrders()
                               } catch (err) {
                                 await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
                                 setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 실패`])
-                                loadOrders()
+                                updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                               }
                             } else if (tn && tn !== (o.tracking_number || '')) {
                               try { await orderApi.update(o.id, { tracking_number: tn }) } catch { /* ignore */ }
