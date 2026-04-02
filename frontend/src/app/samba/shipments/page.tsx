@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, type SambaShipment, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
+import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
 import { MARKET_TYPE_TO_POLICY_KEY as SHARED_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
@@ -26,7 +26,6 @@ export default function ShipmentsPage() {
   const searchParams = useSearchParams()
   const [products, setProducts] = useState<SambaCollectedProduct[]>([])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
-  const [shipments, setShipments] = useState<SambaShipment[]>([])
   const [filters, setFilters] = useState<SambaSearchFilter[]>([])
   const [policies, setPolicies] = useState<SambaPolicy[]>([])
   const [loading, setLoading] = useState(true)
@@ -95,9 +94,12 @@ export default function ShipmentsPage() {
         })
       } catch { /* ignore */ }
     }
-    fetchJobQueue()
-    jobQueuePollRef.current = setInterval(fetchJobQueue, 5000)
-    return () => { if (jobQueuePollRef.current) clearInterval(jobQueuePollRef.current) }
+    // 초기 로딩 차단 방지: 3초 후 첫 호출
+    const delayTimer = setTimeout(() => {
+      fetchJobQueue()
+      jobQueuePollRef.current = setInterval(fetchJobQueue, 5000)
+    }, 3000)
+    return () => { clearTimeout(delayTimer); if (jobQueuePollRef.current) clearInterval(jobQueuePollRef.current) }
   }, [])
 
   // 페이지 로드 시 링 버퍼에서 기존 로그 복원 + 실행 중인 Job 자동 연결
@@ -219,22 +221,26 @@ export default function ShipmentsPage() {
       ? collectorApi.getProductsByIds(preIds).catch(() => [] as SambaCollectedProduct[])
       : collectorApi.scrollProducts(scrollParams).then(r => { setTotalCount(r.total || 0); return r.items }).catch(() => [] as SambaCollectedProduct[])
 
-    const [p, a, s, f, pol, cm] = await Promise.all([
+    // 필수 데이터(상품+계정)만 먼저 로드 → 즉시 화면 표시
+    const [p, a] = await Promise.all([
       productPromise,
       accountApi.listActive().catch(() => []),
-      shipmentApi.list(0, 100).catch(() => []),
-      collectorApi.listFilters().catch(() => []),
-      policyApi.list().catch(() => []),
-      categoryApi.listMappings().catch(() => []),
     ])
     if (preIds.length > 0) setTotalCount(p.length)
     setProducts(p)
     setAccounts(a)
-    setShipments(s)
-    setFilters(f)
-    setPolicies(pol)
-    setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
     setLoading(false)
+
+    // 나머지는 백그라운드 로드 (화면 차단 없음)
+    Promise.all([
+      collectorApi.listFilters().catch(() => []),
+      policyApi.list().catch(() => []),
+      categoryApi.listMappings().catch(() => []),
+    ]).then(([f, pol, cm]) => {
+      setFilters(f)
+      setPolicies(pol)
+      setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
+    })
   }, [searchText, searchField, siteFilter, registrationFilter, sortBy, currentPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
