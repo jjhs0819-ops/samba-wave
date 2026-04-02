@@ -1005,10 +1005,7 @@ class SmartStoreClient:
             if not _dl_client:
                 await dl.aclose()
 
-        # EXIF 메타데이터 제거
-        from backend.domain.samba.image.exif import strip_exif
-
-        img_bytes = strip_exif(img_bytes)
+        # EXIF 제거 스킵 — 소싱처 CDN 이미지에 EXIF 없음, PIL 디코딩이 OOM 유발
 
         # content_type 불명확 시 바이트 시그니처로 감지
         if not content_type.startswith("image/"):
@@ -1074,7 +1071,6 @@ class SmartStoreClient:
             return []
         token = await self._ensure_token()
         from urllib.parse import urlparse
-        from backend.domain.samba.image.exif import strip_exif
 
         # 이미지 다운로드 + 전처리
         def _mem_mb():
@@ -1114,7 +1110,7 @@ class SmartStoreClient:
                             f"[스마트스토어] 이미지 다운로드 실패: {url[:60]}"
                         )
                         continue
-                    img_bytes = strip_exif(resp.content)
+                    img_bytes = resp.content
                     content_type = resp.headers.get("content-type", "image/jpeg")
 
                     # content_type 불명확 시 바이트 시그니처로 감지
