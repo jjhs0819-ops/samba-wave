@@ -319,12 +319,33 @@ class JobWorker:
                         logger.error(f"[잡워커] 타임아웃 잡 상태 갱신 실패: {te}")
                 return
 
-            # 전송 + 기타: 메인 루프 직접 실행 (인메모리 로그 공유)
+            # 전송: 별도 스레드 + 독립 이벤트 루프 (외부 세션 충돌 방지)
+            if _job_type == "transmit":
+                logger.info(f"[잡워커] 전송 실행 (격리 스레드): {_job_id}")
+                thread = threading.Thread(
+                    target=_run_transmit_in_thread,
+                    args=(self, _job_id, _job_payload),
+                    daemon=True,
+                )
+                thread.start()
+                elapsed = 0
+                while thread.is_alive() and elapsed < 7200:
+                    await asyncio.sleep(2)
+                    elapsed += 2
+                if thread.is_alive():
+                    logger.error(f"[잡워커] 전송 스레드 2시간 타임아웃: {_job_id}")
+                    _add_job_log(_job_id, "전송 타임아웃 (2시간)")
+                    try:
+                        await _fail_job_direct(_job_id, "전송 타임아웃 (2시간)")
+                    except Exception as te:
+                        logger.error(f"[잡워커] 타임아웃 잡 상태 갱신 실패: {te}")
+                return
+
+            # 기타: 메인 루프 직접 실행
             _job_id = job.id
             _job_type = job.job_type
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
-                # detached 객체 대신 현재 세션에서 job 재조회
                 from backend.domain.samba.job.model import SambaJob as _SJ
 
                 fresh_job = await session.get(_SJ, _job_id)
@@ -334,9 +355,7 @@ class JobWorker:
                 logger.info(f"[잡워커] 실행: {_job_id} ({_job_type})")
 
                 try:
-                    if _job_type == "transmit":
-                        await self._run_transmit(fresh_job, repo, session)
-                    elif _job_type == "refresh":
+                    if _job_type == "refresh":
                         await self._run_stub(fresh_job, repo, "갱신")
                     elif _job_type == "ai_tag":
                         await self._run_stub(fresh_job, repo, "AI태그")
@@ -346,7 +365,6 @@ class JobWorker:
                     await session.commit()
                 except Exception as e:
                     logger.error(f"[잡워커] 잡 실행 실패: {_job_id} — {e}")
-                    # 직접 SQL로 실패 상태 저장 (행 락 충돌 방지)
                     try:
                         await _fail_job_direct(_job_id, str(e))
                     except Exception as fail_exc:
@@ -413,14 +431,17 @@ class JobWorker:
                 except Exception as e:
                     logger.error(f"[잡워커] 전송 실행 실패: {job_id} — {e}")
                     try:
-                        await repo.fail_job(job_id, str(e))
-                        await session.commit()
+                        await _fail_job_direct(job_id, str(e))
                     except Exception as fail_exc:
                         logger.error(
                             f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {job_id} — {fail_exc}"
                         )
         except Exception as e:
             logger.error(f"[잡워커] 전송 세션 에러: {job_id} — {e}")
+            try:
+                await _fail_job_direct(job_id, str(e))
+            except Exception:
+                pass
 
     async def _run_transmit(self, job, repo, session):
         """전송 잡 실행 — 기존 shipment_service 호출."""
