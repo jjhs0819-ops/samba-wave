@@ -21,9 +21,9 @@ fi
 echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
-  # Uvicorn 단일 프로세스 — uv run 우회 (메모리 절약)
-  echo "Starting production server with Uvicorn (single process, direct python)..."
-  exec python -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
+  # Uvicorn 단일 프로세스 — 인메모리 잡 로그 + 워커 중복 실행 방지
+  echo "Starting production server with Uvicorn (single process)..."
+  exec uv run -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
 else
   # Run the development server with Uvicorn and --reload
   echo "Starting development server with Uvicorn..."
