@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -64,29 +65,29 @@ class SambaMonitorService:
             logger.warning(f"[monitor] 이벤트 기록 실패: {e}")
 
     async def get_dashboard_stats(self) -> Dict[str, Any]:
-        """대시보드 전체 통계 — 단일 호출로 반환."""
+        """대시보드 전체 통계 — 병렬 호출로 반환."""
         now = datetime.now(timezone.utc)
         since_24h = now - timedelta(hours=24)
         since_1h = now - timedelta(hours=1)
 
-        # 상품 통계
-        product_stats = await self._get_product_stats()
-
-        # 갱신 통계
-        refresh_stats = await self._get_refresh_stats(since_1h, since_24h)
-
-        # 가격 변동 통계
-        price_change_stats = await self._get_price_change_stats(since_24h)
-
-        # 소싱처/마켓 헬스
-        site_health = await self._get_site_health()
-        market_health = await self._get_market_health()
-
-        # 이벤트 요약
-        event_summary = await self._get_event_summary(since_24h)
-
-        # 시간대별 변동 건수 (24시간)
-        hourly_changes = await self._get_hourly_changes(since_24h)
+        # 7개 통계를 병렬 실행
+        (
+            product_stats,
+            refresh_stats,
+            price_change_stats,
+            site_health,
+            market_health,
+            event_summary,
+            hourly_changes,
+        ) = await asyncio.gather(
+            self._get_product_stats(),
+            self._get_refresh_stats(since_1h, since_24h),
+            self._get_price_change_stats(since_24h),
+            self._get_site_health(),
+            self._get_market_health(),
+            self._get_event_summary(since_24h),
+            self._get_hourly_changes(since_24h),
+        )
 
         return {
             "product_stats": product_stats,
