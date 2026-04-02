@@ -46,10 +46,16 @@ jobs:
 
         - name: Deploy to Cloud Run
           run: |
-            gcloud run deploy samba-wave-api \
+             gcloud run deploy samba-wave-api \
               --source ./backend \
               --region asia-northeast3 \
               --project project-d57efcc7-c0d8-4778-837 \
-              --env-vars-file /tmp/cloudrun-env.yaml \
+              --set-env-vars "ENVIRONMENT=production,WRITE_DB_USER=postgres,WRITE_DB_PASS=${{
+  secrets.DB_PASSWORD }},WRITE_DB_HOST=/cloudsql/project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-w
+  ave-db,WRITE_DB_PORT=5432,WRITE_DB_NAME=samba-wave,READ_DB_USER=postgres,READ_DB_PASS=${{
+  secrets.DB_PASSWORD
+  }},READ_DB_HOST=/cloudsql/project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db,READ_DB_PORT=5
+  432,READ_DB_NAME=samba-wave,DB_SSL_REQUIRED=false,WEB_CONCURRENCY=1,TERMINATION_GRACE_HACK=1" \      
               --add-cloudsql-instances project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db \  
+              --allow-unauthenticated \
               --quiet
