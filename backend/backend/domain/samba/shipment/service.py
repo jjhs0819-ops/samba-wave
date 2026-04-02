@@ -525,7 +525,15 @@ class SambaShipmentService:
             except Exception:
                 return -1
 
-        logger.info(f"[메모리] 전송시작: {_mem_mb()}MB")
+        def _cgroup_mb():
+            """컨테이너 전체 메모리 (cgroup)"""
+            try:
+                with open("/sys/fs/cgroup/memory/memory.usage_in_bytes") as f:
+                    return int(f.read().strip()) // 1024 // 1024
+            except Exception:
+                return -1
+
+        logger.info(f"[메모리] 전송시작: VmRSS={_mem_mb()}MB, cgroup={_cgroup_mb()}MB")
 
         from backend.domain.samba.account.model import SambaMarketAccount
         from backend.domain.samba.account.repository import SambaMarketAccountRepository
@@ -1277,7 +1285,7 @@ class SambaShipmentService:
                     logger.warning(f"[전송] 계정 {account_id} 세마포어 120초 타임아웃")
                     return res
                 try:
-                    logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
+                    logger.info(f"[메모리] 마켓전송 전: VmRSS={_mem_mb()}MB, cgroup={_cgroup_mb()}MB")
                     result = await dispatch_to_market(
                         acct_session,
                         market_type,

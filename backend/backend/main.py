@@ -81,14 +81,29 @@ async def lifespan(app: FastAPI):
                     _dl.warning(f"[DIAG] {p} = {val // 1024 // 1024}MB")
             except Exception:
                 pass
-        # 프로세스 목록 + RSS
-        ps = subprocess.run(
-            ["ps", "aux", "--sort=-rss"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        _dl.warning(f"[DIAG] ps aux:\n{ps.stdout[:2000]}")
+        # /proc에서 프로세스별 메모리 직접 읽기
+        import os
+        proc_info = []
+        for pid_dir in sorted(os.listdir("/proc")):
+            if not pid_dir.isdigit():
+                continue
+            try:
+                with open(f"/proc/{pid_dir}/status") as f:
+                    lines = f.readlines()
+                name = cmd = ""
+                rss = 0
+                for line in lines:
+                    if line.startswith("Name:"):
+                        name = line.split(":", 1)[1].strip()
+                    elif line.startswith("VmRSS:"):
+                        rss = int(line.split()[1])  # kB
+                with open(f"/proc/{pid_dir}/cmdline") as f:
+                    cmd = f.read().replace("\x00", " ")[:80]
+                if rss > 1024:  # 1MB 이상만
+                    proc_info.append(f"  PID={pid_dir} RSS={rss // 1024}MB name={name} cmd={cmd}")
+            except Exception:
+                pass
+        _dl.warning(f"[DIAG] 프로세스 목록:\n" + "\n".join(proc_info))
     except Exception as e:
         _dl.warning(f"[DIAG] 진단 실패: {e}")
 
