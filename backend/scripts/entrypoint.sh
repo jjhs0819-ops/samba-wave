@@ -21,6 +21,11 @@ fi
 echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
+  # DB 마이그레이션 자동 실행
+  echo "Running database migrations..."
+  uv run alembic upgrade head
+  echo "Migrations complete."
+
   # Uvicorn 단일 프로세스 — 인메모리 잡 로그 + 워커 중복 실행 방지
   echo "Starting production server with Uvicorn (single process)..."
   exec uv run -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
