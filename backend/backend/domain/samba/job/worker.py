@@ -9,7 +9,75 @@ import threading
 from collections import deque
 from datetime import datetime, timezone
 
+from sqlalchemy import text
+
 logger = logging.getLogger(__name__)
+
+
+async def _update_job_direct(job_id: str, **fields) -> None:
+    """직접 SQL UPDATE로 잡 상태 저장 — SELECT 없이 실행하여 행 락 충돌 방지."""
+    from backend.db.orm import get_write_session
+
+    set_parts = []
+    params: dict = {"job_id": job_id}
+    # JSON 컬럼은 ::jsonb 캐스팅 필요
+    json_columns = {"result", "payload"}
+    for k, v in fields.items():
+        if k in json_columns:
+            set_parts.append(f"{k} = :{k}::jsonb")
+        else:
+            set_parts.append(f"{k} = :{k}")
+        params[k] = v
+    if not set_parts:
+        return
+    sql = f"UPDATE samba_jobs SET {', '.join(set_parts)} WHERE id = :job_id"
+    async with get_write_session() as sess:
+        await sess.execute(text(sql), params)
+        await sess.commit()
+
+
+async def _update_progress_direct(job_id: str, current: int, total: int) -> None:
+    """직접 SQL로 progress 업데이트."""
+    progress = int((current / total) * 100) if total > 0 else 0
+    await _update_job_direct(job_id, current=current, total=total, progress=progress)
+
+
+async def _fail_job_direct(job_id: str, error: str) -> None:
+    """직접 SQL로 잡 실패 처리."""
+    await _update_job_direct(
+        job_id,
+        status="failed",
+        error=error[:500],
+        completed_at=datetime.now(timezone.utc),
+    )
+
+
+async def _complete_job_direct(job_id: str, success: int, failed: int) -> None:
+    """직접 SQL로 잡 완료 처리."""
+    import json
+
+    await _update_job_direct(
+        job_id,
+        status="completed",
+        progress=100,
+        result=json.dumps({"success": success, "failed": failed}),
+        completed_at=datetime.now(timezone.utc),
+    )
+
+
+async def _is_cancelled_direct(job_id: str) -> bool:
+    """직접 SQL로 취소 여부 확인."""
+    from backend.db.orm import get_write_session
+
+    async with get_write_session() as sess:
+        row = await sess.execute(
+            text("SELECT status FROM samba_jobs WHERE id = :job_id"),
+            {"job_id": job_id},
+        )
+        status = row.scalar()
+        return status == "cancelled"
+
+
 UTC = timezone.utc
 
 # Job별 실시간 로그 버퍼 (인메모리, 최근 500줄)
@@ -164,6 +232,7 @@ class JobWorker:
                     threshold_sec=self.STUCK_THRESHOLD_SEC,
                 )
                 if recovered:
+                    await session.commit()
                     logger.info(
                         f"[잡워커] stuck running 잡 {recovered}건 → pending 복구"
                     )
@@ -251,12 +320,48 @@ class JobWorker:
                         logger.error(f"[잡워커] 타임아웃 잡 상태 갱신 실패: {te}")
                 return
 
-            # 전송 + 기타: 메인 루프 직접 실행 (인메모리 로그 공유)
+            # 전송: 외부 세션 없이 메인 루프에서 실행 (자체 세션 관리)
+            if _job_type == "transmit":
+                _add_job_log(_job_id, "전송 잡 진입")
+                logger.info(f"[잡워커] 전송 실행: {_job_id}")
+                try:
+                    _add_job_log(_job_id, "세션 로드 시작")
+                    # Job 데이터를 읽고 세션을 즉시 닫음 (장기 보유 방지)
+                    async with get_write_session() as load_session:
+                        from backend.domain.samba.job.model import SambaJob as _SJ
+
+                        fresh_job = await load_session.get(_SJ, _job_id)
+                        if not fresh_job:
+                            logger.error(f"[잡워커] 전송 잡 없음: {_job_id}")
+                            return
+                        # 필요한 데이터만 추출 (세션 닫힌 후에도 사용 가능)
+                        _job_current = fresh_job.current or 0
+                        _job_payload = fresh_job.payload or {}
+                    # 세션 닫힘 — 이제 _run_transmit이 자체 세션으로 동작
+                    _add_job_log(_job_id, "세션 로드 완료, 전송 시작")
+                    from backend.domain.samba.shipment.service import (
+                        clear_account_semaphores,
+                    )
+
+                    clear_account_semaphores()
+                    await self._run_transmit_standalone(
+                        _job_id, _job_current, _job_payload
+                    )
+                except Exception as e:
+                    logger.error(f"[잡워커] 전송 실행 실패: {_job_id} — {e}")
+                    try:
+                        await _fail_job_direct(_job_id, str(e))
+                    except Exception as fail_exc:
+                        logger.error(
+                            f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {_job_id} — {fail_exc}"
+                        )
+                return
+
+            # 기타: 메인 루프 직접 실행
             _job_id = job.id
             _job_type = job.job_type
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
-                # detached 객체 대신 현재 세션에서 job 재조회
                 from backend.domain.samba.job.model import SambaJob as _SJ
 
                 fresh_job = await session.get(_SJ, _job_id)
@@ -266,9 +371,7 @@ class JobWorker:
                 logger.info(f"[잡워커] 실행: {_job_id} ({_job_type})")
 
                 try:
-                    if _job_type == "transmit":
-                        await self._run_transmit(fresh_job, repo, session)
-                    elif _job_type == "refresh":
+                    if _job_type == "refresh":
                         await self._run_stub(fresh_job, repo, "갱신")
                     elif _job_type == "ai_tag":
                         await self._run_stub(fresh_job, repo, "AI태그")
@@ -279,8 +382,7 @@ class JobWorker:
                 except Exception as e:
                     logger.error(f"[잡워커] 잡 실행 실패: {_job_id} — {e}")
                     try:
-                        await repo.fail_job(_job_id, str(e))
-                        await session.commit()
+                        await _fail_job_direct(_job_id, str(e))
                     except Exception as fail_exc:
                         logger.error(
                             f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {_job_id} — {fail_exc}"
@@ -345,14 +447,34 @@ class JobWorker:
                 except Exception as e:
                     logger.error(f"[잡워커] 전송 실행 실패: {job_id} — {e}")
                     try:
-                        await repo.fail_job(job_id, str(e))
-                        await session.commit()
+                        await _fail_job_direct(job_id, str(e))
                     except Exception as fail_exc:
                         logger.error(
                             f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {job_id} — {fail_exc}"
                         )
         except Exception as e:
             logger.error(f"[잡워커] 전송 세션 에러: {job_id} — {e}")
+            try:
+                await _fail_job_direct(job_id, str(e))
+            except Exception:
+                pass
+
+    async def _run_transmit_standalone(
+        self, job_id: str, start_from: int, payload: dict
+    ):
+        """외부 세션 없이 전송 실행 — 자체 세션으로 동작."""
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.job.repository import SambaJobRepository
+        from backend.domain.samba.job.model import SambaJob
+
+        async with get_write_session() as session:
+            repo = SambaJobRepository(session)
+            job = await session.get(SambaJob, job_id)
+            if not job:
+                logger.error(f"[잡워커] 전송 잡 없음: {job_id}")
+                return
+            await self._run_transmit(job, repo, session)
+            await session.commit()
 
     async def _run_transmit(self, job, repo, session):
         """전송 잡 실행 — 기존 shipment_service 호출."""
@@ -391,9 +513,10 @@ class JobWorker:
         total = len(product_ids)
 
         # 이어하기: 이전 진행 위치를 먼저 읽은 후 진행률 갱신
-        # (update_progress가 identity map으로 job.current를 덮어쓰기 때문)
+        # (초기 갱신은 외부 세션 사용 — 아직 살아있으므로 안전)
         start_from = job.current or 0
         await repo.update_progress(job.id, start_from, total)
+        await session.commit()
 
         success_count = 0
         fail_count = 0
@@ -408,7 +531,7 @@ class JobWorker:
             from backend.domain.samba.emergency import is_emergency_stopped
 
             try:
-                _is_cancelled = await repo.is_cancelled(job.id)
+                _is_cancelled = await _is_cancelled_direct(job.id)
             except Exception:
                 _is_cancelled = False
 
@@ -419,7 +542,12 @@ class JobWorker:
                 logger.info(
                     f"[잡워커] 전송 {reason}: {job.id} — {i}건 완료, {cancelled}건 중단"
                 )
-                await repo.fail_job(job.id, f"{reason}: {i}건 완료, {cancelled}건 중단")
+                try:
+                    await _fail_job_direct(
+                        job.id, f"{reason}: {i}건 완료, {cancelled}건 중단"
+                    )
+                except Exception as stop_err:
+                    logger.error(f"[잡워커] 취소 상태 저장 실패: {job.id} — {stop_err}")
                 return
 
             # 건별 독립 세션 — greenlet_spawn 방지 (세션 상태 누적 차단)
@@ -517,23 +645,11 @@ class JobWorker:
                 fail_count += 1
                 _add_job_log(job.id, f"[{i + 1}/{total}] {prod_name}: {e}")
                 failed_pids.append(pid)
-            # 잡 progress는 10건마다 배치 업데이트 (DB 부하 vs 재처리 손실 균형)
-            if (i + 1) % 10 == 0 or (i + 1) == total:
-                try:
-                    await repo.update_progress(job.id, i + 1, total)
-                    await session.commit()
-                except Exception as pg_err:
-                    logger.error(
-                        f"[잡워커] progress 업데이트 실패: {job.id} — {pg_err}"
-                    )
-                    _add_job_log(
-                        job.id,
-                        f"[{i + 1}/{total}] DB 세션 오류 — 다음 건 계속 진행",
-                    )
-                    try:
-                        await session.rollback()
-                    except Exception:
-                        pass
+            # 잡 progress는 매 건마다 직접 SQL로 저장 (행 락 충돌 방지)
+            try:
+                await _update_progress_direct(job.id, i + 1, total)
+            except Exception as pg_err:
+                logger.error(f"[잡워커] progress 업데이트 실패: {job.id} — {pg_err}")
 
         # 2차 재시도 — 실패 상품만 (건별 독립 세션)
         retry_success = 0
@@ -543,7 +659,12 @@ class JobWorker:
             for ri, pid in enumerate(failed_pids):
                 from backend.domain.samba.emergency import is_emergency_stopped
 
-                if is_emergency_stopped() or await repo.is_cancelled(job.id):
+                _retry_cancelled = False
+                try:
+                    _retry_cancelled = await _is_cancelled_direct(job.id)
+                except Exception:
+                    pass
+                if is_emergency_stopped() or _retry_cancelled:
                     break
                 try:
                     async with get_write_session() as retry_session:
@@ -590,9 +711,11 @@ class JobWorker:
 
         final_fail = fail_count
         _add_job_log(job.id, f"전송 완료 — 성공 {success_count}건, 실패 {final_fail}건")
-        await repo.complete_job(
-            job.id, {"success": success_count, "failed": final_fail}
-        )
+        # 직접 SQL로 완료 상태 저장 (행 락 충돌 방지)
+        try:
+            await _complete_job_direct(job.id, success_count, final_fail)
+        except Exception as done_err:
+            logger.error(f"[잡워커] 전송 완료 상태 저장 실패: {job.id} — {done_err}")
         logger.info(f"[잡워커] 전송 완료: {job.id} (성공 {success_count}/{total}건)")
 
     async def _run_collect(self, job, repo, session):

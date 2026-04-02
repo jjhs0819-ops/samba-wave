@@ -102,23 +102,13 @@ export default function ShipmentsPage() {
     return () => { clearTimeout(delayTimer); if (jobQueuePollRef.current) clearInterval(jobQueuePollRef.current) }
   }, [])
 
-  // 페이지 로드 시 링 버퍼에서 기존 로그 복원 + 실행 중인 Job 자동 연결
+  // 마운트 시 실행 중인 Job 감지 → 자동 폴링 (오토튠과 동일 패턴)
   useEffect(() => {
     (async () => {
       try {
         const { API_BASE_URL: apiBase } = await import('@/config/api')
-        // 1) 로그 복원 + 실행 중인 Job 확인 (병렬)
-        const [bufRes, res] = await Promise.all([
-          fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=0`),
-          fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`),
-        ])
-        const bufData = await bufRes.json()
-        const prevLogs = (bufData.logs || []) as string[]
-        sinceIdxRef.current = bufData.current_idx || 0
-        if (prevLogs.length > 0) {
-          setLogMessages(prevLogs.map(l => `[이전] ${l}`).slice(-30))
-        }
-        // 2) 실행 중인 Job 확인
+        // 실행 중인 Job 확인 (가벼운 호출만)
+        const res = await fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`)
         const jobs = await res.json()
         const job = Array.isArray(jobs) ? jobs.find((j: Record<string, unknown>) => j.job_type === 'transmit') : null
         if (!job) return
@@ -127,9 +117,9 @@ export default function ShipmentsPage() {
         activeJobIdRef.current = jobId
         setTransmitting(true)
         setProgress({ current: (job.current || 0) as number, total: (job.total || 0) as number })
-        // 3) 링 버퍼 기반 증분 폴링 시작
+        // 증분 폴링 즉시 시작 (500ms)
         let polling = false
-        jobPollRef.current = setInterval(async () => {
+        const poll = async () => {
           if (polling) return
           polling = true
           try {
@@ -143,7 +133,7 @@ export default function ShipmentsPage() {
             const newLogs = (logData.logs || []) as string[]
             sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
             if (newLogs.length > 0) {
-              for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
+              for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
             }
             if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
               if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
@@ -153,7 +143,9 @@ export default function ShipmentsPage() {
             }
           } catch { /* ignore */ }
           polling = false
-        }, 500)
+        }
+        poll()
+        jobPollRef.current = setInterval(poll, 500)
       } catch { /* ignore */ }
     })()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
