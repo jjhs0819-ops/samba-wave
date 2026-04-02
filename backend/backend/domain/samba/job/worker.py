@@ -517,8 +517,8 @@ class JobWorker:
                 fail_count += 1
                 _add_job_log(job.id, f"[{i + 1}/{total}] {prod_name}: {e}")
                 failed_pids.append(pid)
-            # 잡 progress는 100건마다 배치 업데이트 (10만건 시 DB 부하 방지)
-            if (i + 1) % 100 == 0 or (i + 1) == total:
+            # 잡 progress는 10건마다 배치 업데이트 (DB 부하 vs 재처리 손실 균형)
+            if (i + 1) % 10 == 0 or (i + 1) == total:
                 try:
                     await repo.update_progress(job.id, i + 1, total)
                     await session.commit()
