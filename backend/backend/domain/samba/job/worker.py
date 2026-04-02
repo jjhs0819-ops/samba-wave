@@ -273,6 +273,10 @@ class JobWorker:
             await session.commit()
 
         # 선택된 잡들 병렬 실행 (각각 독립 세션)
+        for _dbg in to_run:
+            _add_shipment_log(
+                f"[디버그] _poll_once → _execute_job 호출: {_dbg.id} ({_dbg.job_type})"
+            )
         if len(to_run) == 1:
             await self._execute_job(to_run[0])
         else:
