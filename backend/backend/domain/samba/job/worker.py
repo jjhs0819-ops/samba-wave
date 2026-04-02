@@ -395,7 +395,6 @@ class JobWorker:
         start_from = job.current or 0
         await repo.update_progress(job.id, start_from, total)
 
-        results = []
         success_count = 0
         fail_count = 0
         failed_pids: list[str] = []  # 재시도 대상
@@ -513,27 +512,28 @@ class JobWorker:
                     # 1차 실패 → 재시도 대상
                     if not any_success and status not in ("skipped", "completed"):
                         failed_pids.append(pid)
-                    results.append(result)
                     await item_session.commit()
             except Exception as e:
                 fail_count += 1
                 _add_job_log(job.id, f"[{i + 1}/{total}] {prod_name}: {e}")
-                results.append({"error": str(e)})
                 failed_pids.append(pid)
-            # 잡 progress는 외부 세션으로 업데이트
-            try:
-                await repo.update_progress(job.id, i + 1, total)
-                await session.commit()
-            except Exception as pg_err:
-                logger.error(f"[잡워커] progress 업데이트 실패: {job.id} — {pg_err}")
-                _add_job_log(
-                    job.id,
-                    f"[{i + 1}/{total}] DB 세션 오류 — 다음 건 계속 진행",
-                )
+            # 잡 progress는 100건마다 배치 업데이트 (10만건 시 DB 부하 방지)
+            if (i + 1) % 100 == 0 or (i + 1) == total:
                 try:
-                    await session.rollback()
-                except Exception:
-                    pass
+                    await repo.update_progress(job.id, i + 1, total)
+                    await session.commit()
+                except Exception as pg_err:
+                    logger.error(
+                        f"[잡워커] progress 업데이트 실패: {job.id} — {pg_err}"
+                    )
+                    _add_job_log(
+                        job.id,
+                        f"[{i + 1}/{total}] DB 세션 오류 — 다음 건 계속 진행",
+                    )
+                    try:
+                        await session.rollback()
+                    except Exception:
+                        pass
 
         # 2차 재시도 — 실패 상품만 (건별 독립 세션)
         retry_success = 0

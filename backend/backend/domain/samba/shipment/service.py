@@ -1271,10 +1271,10 @@ class SambaShipmentService:
                 # 마켓 API 호출 (계정별 세마포어 — 30초 타임아웃)
                 account_sem = _get_account_semaphore(account_id)
                 try:
-                    await asyncio.wait_for(account_sem.acquire(), timeout=120)
+                    await asyncio.wait_for(account_sem.acquire(), timeout=60)
                 except asyncio.TimeoutError:
-                    res["error"] = f"계정 사용 중 (120초 타임아웃, {market_type})"
-                    logger.warning(f"[전송] 계정 {account_id} 세마포어 120초 타임아웃")
+                    res["error"] = f"계정 사용 중 (60초 타임아웃, {market_type})"
+                    logger.warning(f"[전송] 계정 {account_id} 세마포어 60초 타임아웃")
                     return res
                 try:
                     logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
