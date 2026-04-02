@@ -21,8 +21,7 @@ fi
 echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
-  # Uvicorn 단일 프로세스 — WEB_CONCURRENCY 제거로 workers=None 유지
-  unset WEB_CONCURRENCY
+  # Uvicorn 단일 프로세스 — uvicorn 0.29는 gunicorn 자동 활성화 없음
   echo "Starting production server with Uvicorn (single process)..."
   exec uv run -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
 else
