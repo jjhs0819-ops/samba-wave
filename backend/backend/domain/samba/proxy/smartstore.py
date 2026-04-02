@@ -1031,15 +1031,8 @@ class SmartStoreClient:
         elif "gif" in content_type:
             ext = "gif"
         elif "webp" in content_type or image_url.endswith(".webp"):
-            from PIL import Image as _PILImage
-            import io as _io
-
-            pil_img = _PILImage.open(_io.BytesIO(img_bytes)).convert("RGB")
-            buf = _io.BytesIO()
-            pil_img.save(buf, format="PNG")
-            img_bytes = buf.getvalue()
-            ext = "png"
-            upload_type = "image/png"
+            ext = "webp"
+            upload_type = "image/webp"
 
         # 네이버 업로드 (클라이언트 재사용 + 429 재시도)
         import asyncio as _aio_retry
@@ -1142,15 +1135,8 @@ class SmartStoreClient:
                     elif "gif" in content_type:
                         ext = "gif"
                     elif "webp" in content_type or url.endswith(".webp"):
-                        from PIL import Image as _PILImage
-                        import io as _io
-
-                        pil_img = _PILImage.open(_io.BytesIO(img_bytes)).convert("RGB")
-                        buf = _io.BytesIO()
-                        pil_img.save(buf, format="PNG")
-                        img_bytes = buf.getvalue()
-                        ext = "png"
-                        content_type = "image/png"
+                        ext = "webp"
+                        content_type = "image/webp"
                     files_list.append(
                         (f"image_{len(files_list)}.{ext}", img_bytes, content_type)
                     )
