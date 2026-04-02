@@ -320,26 +320,38 @@ class JobWorker:
                         logger.error(f"[잡워커] 타임아웃 잡 상태 갱신 실패: {te}")
                 return
 
-            # 전송: 별도 스레드 + 독립 이벤트 루프 (외부 세션 충돌 방지)
+            # 전송: 외부 세션 없이 메인 루프에서 실행 (자체 세션 관리)
             if _job_type == "transmit":
-                logger.info(f"[잡워커] 전송 실행 (격리 스레드): {_job_id}")
-                thread = threading.Thread(
-                    target=_run_transmit_in_thread,
-                    args=(self, _job_id, _job_payload),
-                    daemon=True,
-                )
-                thread.start()
-                elapsed = 0
-                while thread.is_alive() and elapsed < 7200:
-                    await asyncio.sleep(2)
-                    elapsed += 2
-                if thread.is_alive():
-                    logger.error(f"[잡워커] 전송 스레드 2시간 타임아웃: {_job_id}")
-                    _add_job_log(_job_id, "전송 타임아웃 (2시간)")
+                logger.info(f"[잡워커] 전송 실행: {_job_id}")
+                try:
+                    # Job 데이터를 읽고 세션을 즉시 닫음 (장기 보유 방지)
+                    async with get_write_session() as load_session:
+                        from backend.domain.samba.job.model import SambaJob as _SJ
+
+                        fresh_job = await load_session.get(_SJ, _job_id)
+                        if not fresh_job:
+                            logger.error(f"[잡워커] 전송 잡 없음: {_job_id}")
+                            return
+                        # 필요한 데이터만 추출 (세션 닫힌 후에도 사용 가능)
+                        _job_current = fresh_job.current or 0
+                        _job_payload = fresh_job.payload or {}
+                    # 세션 닫힘 — 이제 _run_transmit이 자체 세션으로 동작
+                    from backend.domain.samba.shipment.service import (
+                        clear_account_semaphores,
+                    )
+
+                    clear_account_semaphores()
+                    await self._run_transmit_standalone(
+                        _job_id, _job_current, _job_payload
+                    )
+                except Exception as e:
+                    logger.error(f"[잡워커] 전송 실행 실패: {_job_id} — {e}")
                     try:
-                        await _fail_job_direct(_job_id, "전송 타임아웃 (2시간)")
-                    except Exception as te:
-                        logger.error(f"[잡워커] 타임아웃 잡 상태 갱신 실패: {te}")
+                        await _fail_job_direct(_job_id, str(e))
+                    except Exception as fail_exc:
+                        logger.error(
+                            f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {_job_id} — {fail_exc}"
+                        )
                 return
 
             # 기타: 메인 루프 직접 실행
@@ -443,6 +455,23 @@ class JobWorker:
                 await _fail_job_direct(job_id, str(e))
             except Exception:
                 pass
+
+    async def _run_transmit_standalone(
+        self, job_id: str, start_from: int, payload: dict
+    ):
+        """외부 세션 없이 전송 실행 — 자체 세션으로 동작."""
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.job.repository import SambaJobRepository
+        from backend.domain.samba.job.model import SambaJob
+
+        async with get_write_session() as session:
+            repo = SambaJobRepository(session)
+            job = await session.get(SambaJob, job_id)
+            if not job:
+                logger.error(f"[잡워커] 전송 잡 없음: {job_id}")
+                return
+            await self._run_transmit(job, repo, session)
+            await session.commit()
 
     async def _run_transmit(self, job, repo, session):
         """전송 잡 실행 — 기존 shipment_service 호출."""
