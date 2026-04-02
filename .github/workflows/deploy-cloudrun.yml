@@ -47,6 +47,7 @@ jobs:
             --project fresh-sanctuary-489804-v4 \
             --env-vars-file /tmp/cloudrun-env.yaml \
             --no-cpu-throttling \
+            --memory 2Gi \
             --clear-base-image \
             --quiet
 
