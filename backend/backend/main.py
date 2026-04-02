@@ -54,59 +54,6 @@ async def lifespan(app: FastAPI):
     # 앱 시작 시 DB 마이그레이션 자동 적용 (별도 프로세스 또는 수동 실행 권장)
     # 로컬 개발: cd backend && alembic upgrade head
 
-    # [진단] 컨테이너 전체 메모리 + 프로세스 목록 출력
-    import logging as _diag_log
-    import subprocess
-
-    _dl = _diag_log.getLogger("backend.diag")
-    try:
-        # cgroup 메모리 한도
-        for p in [
-            "/sys/fs/cgroup/memory.max",
-            "/sys/fs/cgroup/memory/memory.limit_in_bytes",
-        ]:
-            try:
-                with open(p) as f:
-                    _dl.warning(f"[DIAG] {p} = {f.read().strip()}")
-            except Exception:
-                pass
-        # cgroup 현재 사용량
-        for p in [
-            "/sys/fs/cgroup/memory.current",
-            "/sys/fs/cgroup/memory/memory.usage_in_bytes",
-        ]:
-            try:
-                with open(p) as f:
-                    val = int(f.read().strip())
-                    _dl.warning(f"[DIAG] {p} = {val // 1024 // 1024}MB")
-            except Exception:
-                pass
-        # /proc에서 프로세스별 메모리 직접 읽기
-        import os
-        proc_info = []
-        for pid_dir in sorted(os.listdir("/proc")):
-            if not pid_dir.isdigit():
-                continue
-            try:
-                with open(f"/proc/{pid_dir}/status") as f:
-                    lines = f.readlines()
-                name = cmd = ""
-                rss = 0
-                for line in lines:
-                    if line.startswith("Name:"):
-                        name = line.split(":", 1)[1].strip()
-                    elif line.startswith("VmRSS:"):
-                        rss = int(line.split()[1])  # kB
-                with open(f"/proc/{pid_dir}/cmdline") as f:
-                    cmd = f.read().replace("\x00", " ")[:80]
-                if rss > 1024:  # 1MB 이상만
-                    proc_info.append(f"  PID={pid_dir} RSS={rss // 1024}MB name={name} cmd={cmd}")
-            except Exception:
-                pass
-        _dl.warning(f"[DIAG] 프로세스 목록:\n" + "\n".join(proc_info))
-    except Exception as e:
-        _dl.warning(f"[DIAG] 진단 실패: {e}")
-
     # 캐시 서비스 연결 (Redis 또는 인메모리 폴백)
     from backend.domain.samba.cache import cache
 
@@ -199,10 +146,22 @@ async def lifespan(app: FastAPI):
     _log = logging.getLogger("backend.shutdown")
     _log.info("[shutdown] SIGTERM 수신 — graceful shutdown 시작")
 
-    # 1) running 잡 복구는 다음 인스턴스의 startup에서 처리
-    #    shutdown에서 ALL running → pending 리셋 시 새 인스턴스의 잡까지 리셋하는
-    #    레이스 컨디션 발생 → startup 핸들러에 위임
-    _log.info("[shutdown] running 잡 복구는 다음 인스턴스 startup에 위임")
+    # 1) running 잡 → pending 복구 (최우선 — 10초 안에 완료해야 함)
+    try:
+        from backend.db.orm import get_write_session
+        from sqlalchemy import text
+
+        async with get_write_session() as session:
+            r = await session.execute(
+                text(
+                    "UPDATE samba_jobs SET status = 'pending' WHERE status = 'running'"
+                )
+            )
+            if r.rowcount > 0:
+                _log.info(f"[shutdown] running Job {r.rowcount}건 → pending 복구")
+            await session.commit()
+    except Exception as e:
+        _log.warning(f"[shutdown] Job 복구 실패: {e}")
 
     # 2) 오토튠 + 잡 워커 즉시 정지 (대기 없음)
     from backend.api.v1.routers.samba.collector_autotune import (
