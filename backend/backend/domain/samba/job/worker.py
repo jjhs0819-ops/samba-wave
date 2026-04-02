@@ -232,6 +232,7 @@ class JobWorker:
                     threshold_sec=self.STUCK_THRESHOLD_SEC,
                 )
                 if recovered:
+                    await session.commit()
                     logger.info(
                         f"[잡워커] stuck running 잡 {recovered}건 → pending 복구"
                     )
