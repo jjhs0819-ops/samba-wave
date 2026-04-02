@@ -21,10 +21,21 @@ fi
 echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
-  # DB 마이그레이션 자동 실행
+  # Cloud SQL Auth Proxy 사이드카 대기
+  echo "Waiting for Cloud SQL proxy..."
+  sleep 5
+
+  # DB 마이그레이션 자동 실행 (최대 3회 재시도)
   echo "Running database migrations..."
-  uv run alembic upgrade head
-  echo "Migrations complete."
+  for i in 1 2 3; do
+    if uv run alembic upgrade head; then
+      echo "Migrations complete."
+      break
+    else
+      echo "Migration attempt $i failed, retrying in 3s..."
+      sleep 3
+    fi
+  done
 
   # Uvicorn 단일 프로세스 — 인메모리 잡 로그 + 워커 중복 실행 방지
   echo "Starting production server with Uvicorn (single process)..."
