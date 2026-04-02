@@ -287,10 +287,15 @@ class JobWorker:
         from backend.domain.samba.job.repository import SambaJobRepository
 
         try:
-            # 수집: 별도 스레드 + 독립 이벤트 루프 (전송과 I/O 격리)
             _job_id = job.id
             _job_type = job.job_type
-            _job_payload = job.payload or {}
+            # detached 객체에서 payload 접근 실패 방어
+            try:
+                _job_payload = job.payload or {}
+            except Exception:
+                _job_payload = {}
+            _add_job_log(_job_id, f"잡 실행 시작: {_job_type}")
+            logger.info(f"[잡워커] _execute_job 진입: {_job_id} ({_job_type})")
             if _job_type == "collect":
                 logger.info(f"[잡워커] 수집 실행 (격리 스레드): {_job_id}")
                 thread = threading.Thread(
