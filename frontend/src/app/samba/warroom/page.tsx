@@ -441,7 +441,8 @@ export default function WarroomPage() {
               cursor: 'pointer',
             }}
           >강제중단</button>
-          <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.1)', margin: '0 0.25rem' }} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>수집인터벌</span>
           {INTERVAL_SITES.map(({ key, label }) => (
             <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
