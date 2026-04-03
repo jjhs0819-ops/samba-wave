@@ -94,6 +94,17 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     Returns: "wear" | "shoes" | "bag" | "accessories" | "cosmetic" | "food" | "electronics" | "etc"
     """
     cat1 = (product.get("category1") or "").strip()
+
+    # "스포츠/레저", "소품" 등 복합 카테고리는 category2로 세분화
+    if cat1 in ("스포츠/레저", "소품"):
+        cat2 = (product.get("category2") or "").strip()
+        if cat2 in _CATEGORY_GROUP:
+            return _CATEGORY_GROUP[cat2]
+        for keyword, group in _CATEGORY_GROUP.items():
+            if keyword in cat2:
+                return group
+        return "etc"  # 기구/용품/장비 등 → 기타 재화
+
     if cat1 in _CATEGORY_GROUP:
         return _CATEGORY_GROUP[cat1]
 

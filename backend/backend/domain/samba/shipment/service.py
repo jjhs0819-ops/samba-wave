@@ -750,19 +750,27 @@ class SambaShipmentService:
             "셔츠",
             "팬츠",
             "의류",
+            "스포츠/레저",  # 하위에 아우터/상의/하의 포함
+            "소품",  # 모자 등
         }
         if cat1 in clothing_categories:
-            kream = (
-                product_row.kream_data if hasattr(product_row, "kream_data") else None
-            )
-            if isinstance(kream, dict):
-                sex_list = kream.get("sex", [])
-                if isinstance(sex_list, list) and sex_list:
-                    sex = sex_list[0]
-                    if "남" in sex:
-                        sex_prefix = "남성의류"
-                    elif "여" in sex:
-                        sex_prefix = "여성의류"
+            # 1순위: product_row.sex (모든 소싱처 공통 — MUSINSA, KREAM 등)
+            raw_sex = getattr(product_row, "sex", None) or ""
+            if not raw_sex:
+                # 2순위: kream_data.sex (KREAM 전용, 리스트 형태)
+                kream = getattr(product_row, "kream_data", None)
+                if isinstance(kream, dict):
+                    sex_val = kream.get("sex", "")
+                    if isinstance(sex_val, list) and sex_val:
+                        raw_sex = sex_val[0]
+                    elif isinstance(sex_val, str):
+                        raw_sex = sex_val
+
+            if "남" in raw_sex and "여" not in raw_sex:
+                sex_prefix = "남성의류"
+            elif "여" in raw_sex and "남" not in raw_sex:
+                sex_prefix = "여성의류"
+            # "남녀공용" → prefix 없음 (기존 매핑 사용)
 
         source_category = (
             f"{sex_prefix} > {raw_category}"

@@ -546,8 +546,8 @@ class CoupangClient:
 
             return {
                 "itemName": item_name,
-                "originalPrice": int(product.get("original_price", 0)),
-                "salePrice": int(product.get("sale_price", 0)),
+                "originalPrice": int(product.get("original_price", 0)) // 10 * 10,
+                "salePrice": int(product.get("sale_price", 0)) // 10 * 10,
                 "maximumBuyCount": min(stock, 99999),
                 "maximumBuyForPerson": 0,
                 "maximumBuyForPersonPeriod": 1,
