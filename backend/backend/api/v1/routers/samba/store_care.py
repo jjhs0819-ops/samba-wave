@@ -121,7 +121,7 @@ async def delete_schedule(
 
 @router.get("/purchases")
 async def list_purchases(
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     market_type: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):

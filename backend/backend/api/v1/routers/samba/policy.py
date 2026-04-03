@@ -27,7 +27,7 @@ def _get_service(session: AsyncSession) -> SambaPolicyService:
 @router.get("", response_model=list[SambaPolicy])
 async def list_policies(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     svc = _get_service(session)
@@ -41,7 +41,7 @@ async def list_policies(
 @router.get("/detail-templates", response_model=list[SambaDetailTemplate])
 async def list_detail_templates(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """상세페이지 템플릿 목록 조회."""
@@ -115,7 +115,7 @@ async def delete_detail_template(
 @router.get("/name-rules", response_model=list[SambaNameRule])
 async def list_name_rules(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """상품/옵션명 규칙 목록 조회."""

@@ -58,7 +58,7 @@ class UserOut(BaseModel):
 @router.get("", response_model=list[UserOut])
 async def list_users(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """활성 사용자 목록 조회 (삭제된 사용자 제외)."""

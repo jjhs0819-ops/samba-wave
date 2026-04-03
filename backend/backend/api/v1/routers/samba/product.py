@@ -25,7 +25,7 @@ def _write_service(session: AsyncSession) -> SambaProductService:
 @router.get("", response_model=list[SambaProduct])
 async def list_products(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     status: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):

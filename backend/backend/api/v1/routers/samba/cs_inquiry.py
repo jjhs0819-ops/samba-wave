@@ -111,7 +111,7 @@ async def delete_reply_template(
 @router.get("")
 async def list_cs_inquiries(
     skip: int = Query(0, ge=0),
-    limit: int = Query(30, ge=1, le=200),
+    limit: int = Query(30, ge=1, le=500),
     market: Optional[str] = None,
     inquiry_type: Optional[str] = None,
     reply_status: Optional[str] = None,

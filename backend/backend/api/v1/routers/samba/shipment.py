@@ -98,7 +98,7 @@ async def emergency_clear():
 @router.get("")
 async def list_shipments(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     status: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
