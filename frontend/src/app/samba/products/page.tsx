@@ -111,6 +111,7 @@ export default function ProductsPage() {
   const [aiJobTitle, setAiJobTitle] = useState('')
   const [aiJobLogs, setAiJobLogs] = useState<string[]>([])
   const [aiJobDone, setAiJobDone] = useState(false)
+  const aiJobAbortRef = useRef(false)
   const aiJobLogRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
@@ -577,15 +578,22 @@ export default function ProductsPage() {
                 <p style={{ margin: 0, color: '#FFB84D' }}>처리 중...</p>
               )}
             </div>
-            {aiJobDone && (
-              <div style={{ padding: '12px 20px', borderTop: '1px solid #2D2D2D', textAlign: 'right' }}>
+            <div style={{ padding: '12px 20px', borderTop: '1px solid #2D2D2D', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              {!aiJobDone && (
+                <button onClick={() => { aiJobAbortRef.current = true }} style={{
+                  padding: '6px 20px', borderRadius: '6px', fontSize: '0.56rem',
+                  background: 'rgba(255,107,107,0.15)', border: '1px solid rgba(255,107,107,0.4)',
+                  color: '#FF6B6B', cursor: 'pointer', fontWeight: 600,
+                }}>중단</button>
+              )}
+              {aiJobDone && (
                 <button onClick={() => setAiJobModal(false)} style={{
                   padding: '6px 20px', borderRadius: '6px', fontSize: '0.56rem',
                   background: 'rgba(81,207,102,0.15)', border: '1px solid rgba(81,207,102,0.4)',
                   color: '#51CF66', cursor: 'pointer', fontWeight: 600,
                 }}>확인</button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -961,6 +969,7 @@ export default function ProductsPage() {
             const ids = [...selectedIds]
             const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
             setAiImgTransforming(true)
+            aiJobAbortRef.current = false
             setAiJobTitle(`AI 이미지변환 (${ids.length}개)`)
             setAiJobLogs([])
             setAiJobDone(false)
@@ -971,6 +980,7 @@ export default function ProductsPage() {
             let success = 0
             let fail = 0
             for (let i = 0; i < ids.length; i++) {
+              if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i}/${ids.length})`); break }
               const prod = allProducts.find(p => p.id === ids[i])
               const label = prod?.name?.slice(0, 30) || ids[i].slice(-8)
               setAiJobTitle(`AI 이미지변환 [${i + 1}/${ids.length}] ${label}`)
@@ -1019,6 +1029,7 @@ export default function ProductsPage() {
             if (!ok) return
             const ids = [...selectedIds]
             setImgFiltering(true)
+            aiJobAbortRef.current = false
             setAiJobTitle(`이미지 필터링 (${ids.length}개)`)
             setAiJobLogs([])
             setAiJobDone(false)
@@ -1031,6 +1042,7 @@ export default function ProductsPage() {
             let totalVisionRemoved = 0
             const startTime = ts()
             for (let i = 0; i < ids.length; i++) {
+              if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i}/${ids.length})`); break }
               const prod = allProducts.find(p => p.id === ids[i])
               const prodName = prod?.name?.slice(0, 25) || ids[i].slice(-8)
               const prodNo = prod?.site_product_id || ids[i].slice(-8)
@@ -1220,6 +1232,7 @@ export default function ProductsPage() {
               const targets = allProducts.filter(p => selectedIds.has(p.id) && (p.registered_accounts?.length ?? 0) > 0)
               if (!targets.length) { showAlert('마켓에 등록된 상품이 없습니다.'); return }
               if (!await showConfirm(`${targets.length}개 상품을 마켓에서 삭제(판매중지)하시겠습니까?`)) return
+              aiJobAbortRef.current = false
               setAiJobTitle(`마켓삭제 (${targets.length}건)`)
               setAiJobLogs([])
               setAiJobDone(false)
@@ -1232,6 +1245,7 @@ export default function ProductsPage() {
               const successMap = new Map<string, string[]>()
               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
               for (let i = 0; i < targets.length; i++) {
+                if (aiJobAbortRef.current) { logsRef.push(`\n⛔ 사용자 중단 (${i}/${targets.length})`); flushLogs(); break }
                 const t = targets[i]
                 const name = t.name.slice(0, 20)
                 try {

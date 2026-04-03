@@ -184,6 +184,7 @@ export default function CollectorPage() {
   const [aiJobTitle, setAiJobTitle] = useState('')
   const [aiJobLogs, setAiJobLogs] = useState<string[]>([])
   const [aiJobDone, setAiJobDone] = useState(false)
+  const aiJobAbortRef = useRef(false)
   const aiJobLogRef = useRef<HTMLDivElement>(null)
 
   // 이미지 필터링 (모델컷/연출컷/배너 제거)
@@ -1125,6 +1126,7 @@ export default function CollectorPage() {
               if (!ok) return
               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
               setAiImgTransforming(true)
+              aiJobAbortRef.current = false
               setAiJobTitle(`AI 이미지변환 (${productIds.length}개)`)
               setAiJobLogs([])
               setAiJobDone(false)
@@ -1135,6 +1137,7 @@ export default function CollectorPage() {
               let success = 0
               let fail = 0
               for (let i = 0; i < productIds.length; i++) {
+                if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i}/${productIds.length})`); break }
                 const label = productIds[i].slice(-8)
                 setAiJobTitle(`AI 이미지변환 [${i + 1}/${productIds.length}]`)
                 try {
@@ -1185,6 +1188,7 @@ export default function CollectorPage() {
               if (!ok) return
               const scope = imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') && imgFilterScopes.has('detail') ? 'all' : imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') ? 'images' : imgFilterScopes.has('detail') ? 'detail' : [...imgFilterScopes][0] || 'images'
               setImgFiltering(true)
+              aiJobAbortRef.current = false
               setAiJobTitle(`이미지 필터링 (${activeGroupIds.length}개 그룹)`)
               setAiJobLogs([])
               setAiJobDone(false)
@@ -1202,6 +1206,7 @@ export default function CollectorPage() {
                 let totalProducts = 0
                 let processedProducts = 0
                 for (let gi = 0; gi < groupIds.length; gi++) {
+                  if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단`); break }
                   const gid = groupIds[gi]
                   const groupLabel = tree.find(t => t.id === gid)?.keyword?.slice(0, 20) || gid.slice(-8)
                   addLog(`\n[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — 상품 조회중...`)
@@ -1211,6 +1216,7 @@ export default function CollectorPage() {
                     addLog(`[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — ${products.length}개 상품`)
                     if (gi === 0 && products.length > 0) addLog(`\n시작: ${startTime} (${totalProducts}개 상품)\n`)
                     for (let i = 0; i < products.length; i++) {
+                      if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${processedProducts}/${totalProducts})`); break }
                       const prod = products[i]
                       const prodName = prod.name?.slice(0, 25) || '이름없음'
                       const prodNo = prod.site_product_id || prod.id.slice(-8)
@@ -2732,9 +2738,14 @@ export default function CollectorPage() {
                 return <div key={i} style={{ color }}>{msg}</div>
               })}
             </div>
-            {aiJobDone && (
-              <button onClick={() => setAiJobModal(false)} style={{ marginTop: '0.75rem', padding: '0.5rem', background: '#333', border: '1px solid #555', borderRadius: '6px', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.8rem' }}>닫기</button>
-            )}
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+              {!aiJobDone && (
+                <button onClick={() => { aiJobAbortRef.current = true }} style={{ flex: 1, padding: '0.5rem', background: 'rgba(255,107,107,0.15)', border: '1px solid rgba(255,107,107,0.4)', borderRadius: '6px', color: '#FF6B6B', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>중단</button>
+              )}
+              {aiJobDone && (
+                <button onClick={() => setAiJobModal(false)} style={{ flex: 1, padding: '0.5rem', background: '#333', border: '1px solid #555', borderRadius: '6px', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.8rem' }}>닫기</button>
+              )}
+            </div>
           </div>
         </div>
       )}
