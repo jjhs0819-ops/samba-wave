@@ -28,7 +28,7 @@ if [ "$ENVIRONMENT" = "production" ]; then
   # DB 마이그레이션 자동 실행 (최대 3회 재시도)
   echo "Running database migrations..."
   for i in 1 2 3; do
-    if uv run alembic upgrade head; then
+    if uv run alembic upgrade heads; then
       echo "Migrations complete."
       break
     else
