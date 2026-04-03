@@ -209,7 +209,8 @@ class LotteonClient:
     logger.info(f"[롯데ON] {method} {path} → {resp.status_code}")
 
     if not resp.is_success:
-      msg = data.get("message", "") or data.get("msg", "") or resp.text[:200]
+      msg = data.get("message", "") or data.get("msg", "") or resp.text[:300]
+      logger.warning(f"[롯데ON] HTTP {resp.status_code} 응답 body: {resp.text[:500]}")
       raise LotteonApiError(f"HTTP {resp.status_code}: {msg}")
 
     # HTTP 200이어도 응답 body에 에러 코드가 있을 수 있음
@@ -563,6 +564,166 @@ class LotteonClient:
       body={"spdLst": [{"spdNo": spd_no, "selPrdNo": spd_no}]},
     )
     return {"success": True, "data": result}
+
+  # ------------------------------------------------------------------
+  # 주문 조회
+  # ------------------------------------------------------------------
+
+  async def get_orders(self, days: int = 7) -> list[dict[str, Any]]:
+    """최근 N일 주문 목록 조회.
+
+    롯데ON Order API — camelCase 액션 방식 사용.
+    날짜 형식: yyyymmddhh24miss (전체 datetime)
+    """
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    start = (now - timedelta(days=days)).strftime("%Y%m%d") + "000000"
+    end = now.strftime("%Y%m%d") + "235959"
+
+    body: dict[str, Any] = {
+      "trGrpCd": self.tr_grp_cd or "SR",
+      "trNo": self.tr_no,
+      "lrtrNo": self.tr_no,
+      "srchStrtDttm": start,
+      "srchEndDttm": end,
+      "pageNo": 1,
+      "pageSize": 100,
+      # 주문 상태 전체 조회 (일부 API에서 필수)
+      "orderStatusList": [],
+    }
+    logger.info(f"[롯데ON] 주문 조회 {start}~{end}, trGrpCd={self.tr_grp_cd}, trNo={self.tr_no}")
+
+    # 문서 확인된 경로: getSROrderList
+    result = await self._call_api(
+      "POST", "/v1/openapi/order/v1/getSROrderList", body=body
+    )
+    logger.info(f"[롯데ON] 주문 API 응답 키: {list(result.keys())}")
+
+    # 응답 구조 탐색 (data.orderItems 또는 data.list 등)
+    data = result.get("data") or {}
+    if isinstance(data, list):
+      return data
+    if isinstance(data, dict):
+      for key in ("orderItems", "orderList", "list", "content", "items", "orders"):
+        val = data.get(key)
+        if isinstance(val, list):
+          logger.info(f"[롯데ON] 주문 데이터 키='{key}', 건수={len(val)}")
+          return val
+    logger.warning(f"[롯데ON] 주문 응답 구조 미파악: {list(result.keys())}")
+    return []
+
+  async def get_claims(self, days: int = 7) -> list[dict[str, Any]]:
+    """최근 N일 클레임(반품/교환/취소) 목록 조회.
+
+    문서 확인된 경로:
+    - 반품: returningOpenApi/returnRequestSearch
+    - 교환: exchangeOpenApi/exchangeSearch
+    - 취소: cancellationOpenApi/getCancellationRequestAndComplateList
+         + cancellationOpenApi/purFvrCnclSearch (구매자 취소)
+    """
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    start = (now - timedelta(days=days)).strftime("%Y%m%d")
+    end = now.strftime("%Y%m%d")
+
+    body: dict[str, Any] = {
+      "trGrpCd": self.tr_grp_cd or "SR",
+      "trNo": self.tr_no,
+      "srchStDt": start,
+      "srchEdDt": end,
+      "pageNo": 1,
+      "pageSize": 100,
+    }
+
+    # (경로, 클레임 타입) 쌍 — 타입을 각 아이템에 주입해 구분
+    claim_endpoints = [
+      ("/v1/openapi/claim/v1/returningOpenApi/returnRequestSearch", "RETURN"),
+      ("/v1/openapi/claim/v1/exchangeOpenApi/exchangeSearch", "EXCHANGE"),
+      ("/v1/openapi/claim/v1/cancellationOpenApi/getCancellationRequestAndComplateList", "CANCEL"),
+      ("/v1/openapi/claim/v1/cancellationOpenApi/purFvrCnclSearch", "CANCEL"),
+    ]
+    all_claims: list[dict[str, Any]] = []
+    for path, claim_type in claim_endpoints:
+      try:
+        r = await self._call_api("POST", path, body=body)
+        logger.info(f"[롯데ON] 클레임 API 성공: {path}, 키: {list(r.keys())}")
+        logger.info(f"[롯데ON] 클레임 응답 전체: {str(r)[:300]}")
+        d = r.get("data") or r.get("list") or []
+        if isinstance(d, dict):
+          d = (d.get("list") or d.get("content")
+               or d.get("claimList") or d.get("items") or [])
+        if isinstance(d, list) and d:
+          for item in d:
+            if isinstance(item, dict):
+              item.setdefault("_claimType", claim_type)
+          all_claims.extend(d)
+          logger.info(f"[롯데ON] {claim_type} 클레임 {len(d)}건")
+      except LotteonApiError as e:
+        err_str = str(e)
+        if "404" in err_str or "403" in err_str:
+          logger.info(f"[롯데ON] 클레임 API {err_str[:20]} — 건너뜀: {path}")
+          continue
+        raise
+
+    logger.info(f"[롯데ON] 클레임 총 {len(all_claims)}건 수집")
+    return all_claims
+
+  async def get_cs_inquiries(self, days: int = 30) -> list[dict[str, Any]]:
+    """CS 문의(QnA) 목록 조회 — 엔드포인트 자동 탐색."""
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    start = (now - timedelta(days=days)).strftime("%Y%m%d")
+    end = now.strftime("%Y%m%d")
+
+    body: dict[str, Any] = {
+      "trGrpCd": self.tr_grp_cd or "SR",
+      "trNo": self.tr_no,
+      "srchStDt": start,
+      "srchEdDt": end,
+      "pageNo": 1,
+      "pageSize": 100,
+    }
+    candidate_paths = [
+      "/v1/openapi/qna/v1/qna/list",
+      "/v1/openapi/cs/v1/qna/list",
+      "/v1/openapi/cs/v1/inquiry/list",
+      "/v1/openapi/qna/v1/qnas",
+    ]
+    result: dict[str, Any] = {}
+    for path in candidate_paths:
+      try:
+        result = await self._call_api("POST", path, body=body)
+        logger.info(f"[롯데ON] CS문의 API 성공 경로: {path}")
+        break
+      except LotteonApiError as e:
+        if "404" in str(e):
+          logger.info(f"[롯데ON] CS문의 API 404 — 다음 경로 시도: {path}")
+          continue
+        raise
+    if not result:
+      logger.warning("[롯데ON] CS문의 API — 모든 후보 경로 404")
+      return []
+    data = result.get("data") or result.get("qnaList") or result.get("list") or []
+    if isinstance(data, dict):
+      data = data.get("qnaList") or data.get("list") or data.get("content") or []
+    return data if isinstance(data, list) else []
+
+  async def reply_cs_inquiry(self, qna_no: str, content: str) -> dict[str, Any]:
+    """CS 문의 답변 등록.
+
+    롯데ON QnA 답변 API: POST /v1/openapi/qna/v1/qna/answer
+    """
+    body: dict[str, Any] = {
+      "trGrpCd": self.tr_grp_cd or "SR",
+      "trNo": self.tr_no,
+      "qnaNo": qna_no,
+      "answerContent": content,
+    }
+    return await self._call_api(
+      "POST",
+      "/v1/openapi/qna/v1/qna/answer",
+      body=body,
+    )
 
   # ------------------------------------------------------------------
   # 카테고리 / 브랜드 (onpick-api 도메인)

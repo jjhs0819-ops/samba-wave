@@ -1013,6 +1013,18 @@ async def sync_orders_from_markets(
                     except Exception as ce:
                         logger.warning(f"[주문동기화] {label}: 발주확인 실패 — {ce}")
 
+            elif market_type == "lotteon":
+                from backend.domain.samba.proxy.lotteon import LotteonClient
+                api_key = extras.get("apiKey", "") or account.api_key or ""
+                if not api_key:
+                    results.append({"account": label, "status": "skip", "message": "롯데ON API Key 없음"})
+                    continue
+                lotteon_client = LotteonClient(api_key)
+                await lotteon_client.test_auth()
+                raw_orders = await lotteon_client.get_orders(days=body.days)
+                logger.info(f"[주문동기화] {label}: 롯데ON 주문 {len(raw_orders)}건 조회")
+                for ro in raw_orders:
+                    orders_data.append(_parse_lotteon_order(ro, account.id, label))
             elif market_type == "coupang":
                 # 쿠팡 주문 조회 (구현 대기)
                 results.append(
@@ -1389,27 +1401,67 @@ async def sync_orders_from_markets(
 
             total_synced += synced
             confirmed_count = len(unconfirmed_ids) if market_type == "smartstore" else 0
-            # 취소/반품/교환 요청 건수 (송장 미입력건만)
-            cancel_requested = sum(
-                1
-                for od in orders_data
-                if od.get("shipping_status")
-                in ("취소요청", "취소처리중", "반품요청", "교환요청")
-                and not od.get("tracking_number")
-            )
-            results.append(
-                {
-                    "account": label,
-                    "status": "success",
-                    "fetched": len(orders_data),
-                    "synced": synced,
-                    "confirmed": confirmed_count,
-                    "cancel_requested": cancel_requested,
+
+            # ── 클레임(취소/반품/교환) → SambaReturn 자동 생성 ──────────────
+            returns_synced = 0
+            claim_statuses = {"취소요청", "반품요청", "교환요청", "취소처리중"}
+            claim_orders = [
+                od for od in orders_data
+                if od.get("shipping_status") in claim_statuses
+            ]
+            if claim_orders:
+                from backend.domain.samba.returns.service import SambaReturnService
+                from backend.domain.samba.returns.repository import SambaReturnRepository
+                from backend.domain.samba.returns.model import SambaReturn
+                from sqlmodel import select as _sel
+                return_svc = SambaReturnService(SambaReturnRepository(session))
+
+                claim_type_map = {
+                    "취소요청": "cancel", "취소처리중": "cancel",
+                    "반품요청": "return",
+                    "교환요청": "exchange",
                 }
-            )
-            logger.info(
-                f"[주문동기화] {label}: {len(orders_data)}건 조회, {synced}건 저장, {confirmed_count}건 발주확인"
-            )
+                for od in claim_orders:
+                    order_no = od.get("order_number", "")
+                    if not order_no:
+                        continue
+                    # 중복 체크
+                    existing_ret = await session.execute(
+                        _sel(SambaReturn).where(SambaReturn.order_number == order_no)
+                    )
+                    if existing_ret.scalar_one_or_none():
+                        continue
+                    # 연결 주문 조회
+                    linked_order = await svc.repo.find_by_async(order_number=order_no)
+                    if not linked_order:
+                        continue
+                    ret_type = claim_type_map.get(od.get("shipping_status", ""), "return")
+                    await return_svc.create_return({
+                        "order_id": linked_order.id,
+                        "order_number": order_no,
+                        "type": ret_type,
+                        "status": "requested",
+                        "market": label,
+                        "market_order_status": od.get("shipping_status", ""),
+                        "product_name": od.get("product_name", ""),
+                        "product_image": od.get("product_image", ""),
+                        "customer_name": od.get("customer_name", ""),
+                        "customer_phone": od.get("customer_phone", ""),
+                        "customer_address": od.get("customer_address", ""),
+                        "requested_amount": od.get("sale_price", 0),
+                    })
+                    returns_synced += 1
+                logger.info(f"[주문동기화] {label}: 클레임 {len(claim_orders)}건 중 {returns_synced}건 반품교환 생성")
+
+            cancel_requested = len(claim_orders)
+            results.append({
+                "account": label, "status": "success",
+                "fetched": len(orders_data), "synced": synced,
+                "confirmed": confirmed_count,
+                "cancel_requested": cancel_requested,
+                "returns_synced": returns_synced,
+            })
+            logger.info(f"[주문동기화] {label}: {len(orders_data)}건 조회, {synced}건 저장, {confirmed_count}건 발주확인")
 
         except Exception as e:
             logger.error(f"[주문동기화] {label} 실패: {e}")
@@ -1440,6 +1492,145 @@ async def sync_orders_from_markets(
         logger.warning(f"[주문동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
 
     return {"total_synced": total_synced, "results": results}
+
+
+def _parse_lotteon_order(
+    order: dict, account_id: str, account_label: str
+) -> dict[str, Any]:
+    """롯데ON 주문 데이터 → SambaOrder 변환.
+
+    실제 응답 구조 확인 후 파싱 보정 예정.
+    롯데ON 주문 상태 코드 (예상):
+      PAYMENT_COMPLETE / PAYED → pending
+      DELIVERING → shipped
+      DELIVERED / PURCHASE_CONFIRMED → delivered
+      CANCEL_REQUEST → cancel_requested
+      RETURN_REQUEST → return_requested
+    """
+    # 상태 코드 매핑 (확인 전 예상값 — 로그 보고 보정)
+    status_map = {
+        "PAYMENT_COMPLETE": "pending",
+        "PAYED": "pending",
+        "PAY_COMPLETE": "pending",
+        "SHIP_ING": "shipped",
+        "DELIVERING": "shipped",
+        "DELIVERED": "delivered",
+        "PURCHASE_CONFIRMED": "delivered",
+        "CANCELED": "cancelled",
+        "CANCEL_REQUEST": "cancel_requested",
+        "RETURN_REQUEST": "return_requested",
+        "EXCHANGE_REQUEST": "return_requested",
+    }
+    raw_status = (
+        order.get("ordStatCd") or order.get("orderStatus")
+        or order.get("slOrdStatCd") or order.get("statCd") or ""
+    )
+    claim_status = (
+        order.get("clmStatCd") or order.get("claimStatus")
+        or order.get("claimStatCd") or ""
+    )
+    claim_type = (
+        order.get("clmTypCd") or order.get("claimType")
+        or order.get("claimTypCd") or ""
+    )
+
+    # 클레임 상태 한글 변환
+    claim_status_kr_map = {
+        "CANCEL_REQUEST": "취소요청",
+        "RETURN_REQUEST": "반품요청",
+        "EXCHANGE_REQUEST": "교환요청",
+        "CANCEL_DONE": "취소완료",
+        "RETURN_DONE": "반품완료",
+        "EXCHANGE_DONE": "교환완료",
+    }
+    if claim_status:
+        market_order_status = claim_status_kr_map.get(claim_status, claim_status)
+    else:
+        market_order_status_map = {
+            "PAYMENT_COMPLETE": "결제완료",
+            "PAY_COMPLETE": "결제완료",
+            "PAYED": "결제완료",
+            "SHIP_ING": "배송중",
+            "DELIVERING": "배송중",
+            "DELIVERED": "배송완료",
+            "PURCHASE_CONFIRMED": "구매확정",
+            "CANCELED": "취소완료",
+        }
+        market_order_status = market_order_status_map.get(raw_status, raw_status)
+
+    # 내부 상태 결정 (클레임 우선)
+    if claim_status in ("CANCEL_REQUEST",):
+        internal_status = "cancel_requested"
+    elif claim_status in ("RETURN_REQUEST", "EXCHANGE_REQUEST"):
+        internal_status = "return_requested"
+    elif claim_status in ("CANCEL_DONE",):
+        internal_status = "cancelled"
+    elif claim_status in ("RETURN_DONE",):
+        internal_status = "returned"
+    else:
+        internal_status = status_map.get(raw_status, "pending")
+
+    # 금액 (필드명 탐색)
+    sale_price = int(
+        order.get("ordAmt") or order.get("payAmt") or order.get("totalAmt")
+        or order.get("salePrice") or order.get("ordPrc") or 0
+    )
+
+    # 주문번호
+    order_number = str(
+        order.get("ordNo") or order.get("orderNo") or order.get("slOrdNo") or ""
+    )
+
+    # 상품 정보
+    product_name = (
+        order.get("spdNm") or order.get("pdNm") or order.get("productName")
+        or order.get("itemNm") or ""
+    )
+    product_no = str(
+        order.get("spdNo") or order.get("pdNo") or order.get("productNo") or ""
+    )
+
+    # 고객 정보
+    customer_name = (
+        order.get("ordNm") or order.get("buyerNm") or order.get("custNm") or ""
+    )
+    customer_phone = (
+        order.get("ordTelNo") or order.get("buyerTel") or order.get("custTel") or ""
+    )
+    ship_addr = (
+        order.get("dlvAddr") or order.get("shipAddr") or order.get("rcvrAddr") or ""
+    )
+    tracking_no = (
+        order.get("invcNo") or order.get("trackingNo") or order.get("waybillNo") or ""
+    )
+    ship_company = (
+        order.get("dlvCmpNm") or order.get("courierName") or order.get("dlvCoNm") or ""
+    )
+
+    logger.info(
+        f"[롯데ON 주문 파싱] ordNo={order_number!r} status={raw_status!r} "
+        f"claim={claim_status!r} amt={sale_price} keys={list(order.keys())[:12]}"
+    )
+
+    return {
+        "order_number": order_number,
+        "channel_id": account_id,
+        "channel_name": account_label,
+        "product_id": product_no,
+        "product_name": product_name,
+        "customer_name": customer_name,
+        "customer_phone": customer_phone,
+        "customer_address": ship_addr,
+        "sale_price": sale_price,
+        "cost": 0,
+        "fee_rate": 0,
+        "revenue": sale_price,
+        "status": internal_status,
+        "shipping_status": market_order_status,
+        "tracking_number": tracking_no,
+        "shipping_company": ship_company,
+        "source": "lotteon",
+    }
 
 
 def _parse_smartstore_order(
