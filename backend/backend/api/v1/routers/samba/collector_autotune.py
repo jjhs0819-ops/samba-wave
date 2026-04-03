@@ -416,20 +416,18 @@ async def _autotune_loop():
                                 history.insert(0, snapshot)
                                 updates["price_history"] = _trim_history(history)
 
-                                if r.changed:
-                                    if r.new_sale_price is not None:
-                                        updates["sale_price"] = r.new_sale_price
-                                    if r.new_original_price is not None:
-                                        updates["original_price"] = r.new_original_price
-                                    if r.new_cost is not None:
-                                        updates["cost"] = r.new_cost
-                                    if r.new_options is not None:
-                                        updates["options"] = r.new_options
-                                    updates["sale_status"] = r.new_sale_status
-                                    updates["price_changed_at"] = now
-                                elif r.stock_changed:
-                                    if r.new_options is not None:
-                                        updates["options"] = r.new_options
+                                # 가격/옵션 필드는 변동 여부와 무관하게 항상 DB 반영
+                                # (changed=False여도 cost만 바뀔 수 있음 → 전송 시 DB 읽으므로 필수)
+                                if r.new_sale_price is not None:
+                                    updates["sale_price"] = r.new_sale_price
+                                if r.new_original_price is not None:
+                                    updates["original_price"] = r.new_original_price
+                                if r.new_cost is not None:
+                                    updates["cost"] = r.new_cost
+                                if r.new_options is not None:
+                                    updates["options"] = r.new_options
+                                updates["sale_status"] = r.new_sale_status
+                                if r.changed or r.stock_changed:
                                     updates["price_changed_at"] = now
 
                                 # 품절 → 서킷브레이커 + 즉시 마켓삭제
@@ -1158,8 +1156,8 @@ async def autotune_update_interval(body: AutotuneIntervalRequest):
     """소싱처별 오토튠 인터벌 동적 변경 (초 단위)."""
     from backend.domain.samba.collector.refresher import set_site_base_interval
 
-    if body.interval < 0.1 or body.interval > 60:
-        return {"ok": False, "error": "인터벌은 0.1~60초 범위만 가능합니다"}
+    if body.interval < 0 or body.interval > 60:
+        return {"ok": False, "error": "인터벌은 0~60초 범위만 가능합니다"}
     set_site_base_interval(body.site, body.interval)
     logger.info("[오토튠] 인터벌 변경: %s → %.1f초", body.site, body.interval)
     return {"ok": True, "site": body.site, "interval": body.interval}
