@@ -28,6 +28,16 @@ def _filter_overseas(categories: list[str]) -> list[str]:
     return [c for c in categories if not any(kw in c for kw in _OVERSEAS_KEYWORDS)]
 
 
+def _filter_to_leaves(categories: list[str]) -> list[str]:
+    """리프 카테고리만 필터링 (하위 카테고리가 없는 경로만 반환)."""
+    cat_set = set(categories)
+    return [
+        c
+        for c in categories
+        if not any(other.startswith(c + " > ") for other in cat_set)
+    ]
+
+
 # ══════════════════════════════════════════════
 # 성별 감지
 # ══════════════════════════════════════════════
@@ -1354,8 +1364,8 @@ class SambaCategoryService:
         if not keywords:
             return []
 
-        # DB에서 카테고리 목록 조회
-        categories = await self._get_market_categories(target_market)
+        # DB에서 카테고리 목록 조회 (리프만 — 비-리프 매핑 방지)
+        categories = _filter_to_leaves(await self._get_market_categories(target_market))
         if not categories:
             logger.warning(
                 "[카테고리 추천] %s: 동기화된 카테고리 없음 — 카테고리 동기화를 먼저 실행해주세요",
@@ -1915,7 +1925,41 @@ class SambaCategoryService:
                 best_code,
                 best_score,
             )
-        return best_code
+            return best_code
+
+        # 3. 비-리프 폴백: 하위 리프 카테고리 중 최적 선택
+        prefix = category_path + " > "
+        descendants = {p: c for p, c in code_map.items() if p.startswith(prefix)}
+        if descendants:
+            # 리프만 추출 (하위 자식이 없는 경로)
+            leaf_descs = [
+                (p, c)
+                for p, c in descendants.items()
+                if not any(d.startswith(p + " > ") for d in descendants)
+            ]
+            if leaf_descs:
+                # "기타" 하위 카테고리 우선
+                for p, c in leaf_descs:
+                    last_seg = p.split(" > ")[-1]
+                    if "기타" in last_seg:
+                        logger.info(
+                            "[카테고리 코드] 비-리프 → 기타: '%s' → %s (%s)",
+                            category_path,
+                            c,
+                            p,
+                        )
+                        return str(c)
+                # 없으면 최단 경로(가장 직접적인 하위) 선택
+                leaf_descs.sort(key=lambda x: len(x[0]))
+                logger.info(
+                    "[카테고리 코드] 비-리프 → 리프: '%s' → %s (%s)",
+                    category_path,
+                    leaf_descs[0][1],
+                    leaf_descs[0][0],
+                )
+                return str(leaf_descs[0][1])
+
+        return ""
 
     async def sync_all_markets(self, session: "AsyncSession") -> Dict[str, Any]:
         """등록된 모든 마켓의 카테고리를 API에서 일괄 동기화.
@@ -1961,7 +2005,8 @@ class SambaCategoryService:
             raise ValueError("스마트스토어 clientId/clientSecret이 없습니다")
 
         client = SmartStoreClient(client_id, client_secret)
-        raw = await client.get_categories(last_only=True)
+        # 전체 카테고리 조회 (비-리프 포함 — 코드맵 완전성 보장)
+        raw = await client.get_categories(last_only=False)
 
         categories: List[str] = []
         code_map: Dict[str, str] = {}
@@ -3086,10 +3131,10 @@ JSON만:
         similarity_mapped = 0
         errors: List[str] = []
 
-        # DB 스마트스토어 카테고리 목록 (2단계 유사도 매칭용)
+        # DB 스마트스토어 카테고리 목록 (2단계 유사도 매칭용 — 리프만)
         ss_cats: list[str] = []
         if "smartstore" in all_market_keys:
-            ss_cats = await self._get_market_categories("smartstore")
+            ss_cats = _filter_to_leaves(await self._get_market_categories("smartstore"))
 
         # ── 3단계 매핑 전략 ──
         # AI 호출 대상만 별도 수집
@@ -3128,7 +3173,7 @@ JSON만:
                 mk_cats = (
                     ss_cats
                     if mk == "smartstore"
-                    else await self._get_market_categories(mk)
+                    else _filter_to_leaves(await self._get_market_categories(mk))
                 )
                 if mk_cats:
                     # ESM 마켓은 SS 매핑 결과를 브릿지로 사용 (SS 카테고리 이름이 ESM과 더 유사)
