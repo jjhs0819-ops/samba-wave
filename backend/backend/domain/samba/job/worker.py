@@ -619,7 +619,15 @@ class JobWorker:
         # 직접 API 소싱처 (서버 HTTP)
         DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas", "LOTTEON"}
         # 확장앱 기반 소싱처 (소싱큐)
-        EXTENSION_SITES = {"ABCmart", "GrandStage", "OKmall", "GSShop", "ElandMall", "SSF", "SSG"}
+        EXTENSION_SITES = {
+            "ABCmart",
+            "GrandStage",
+            "OKmall",
+            "GSShop",
+            "ElandMall",
+            "SSF",
+            "SSG",
+        }
 
         if site in DIRECT_API_SITES:
             await self._collect_direct_api(job, sf, session, repo)
@@ -972,7 +980,9 @@ class JobWorker:
             if parsed.scheme:
                 qs = parse_qs(parsed.query)
                 # 소싱처별 키워드 파라미터: LOTTEON=q, FashionPlus=searchWord
-                keyword = qs.get("q", qs.get("keyword", qs.get("searchWord", [keyword])))[0]
+                keyword = qs.get(
+                    "q", qs.get("keyword", qs.get("searchWord", [keyword]))
+                )[0]
                 # 패션플러스 필터 파라미터
                 for k in (
                     "category1Id",
@@ -1023,7 +1033,10 @@ class JobWorker:
 
             client = AdidasClient()
         elif site == "LOTTEON":
-            from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
+            from backend.domain.samba.proxy.lotteon_sourcing import (
+                LotteonSourcingClient,
+            )
+
             client = LotteonSourcingClient()
 
         # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청

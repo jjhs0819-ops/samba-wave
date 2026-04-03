@@ -345,6 +345,7 @@ async def _delete_lotteon(
 ) -> dict[str, Any]:
     """롯데ON 상품 판매중지 — 플러그인 delete() 위임."""
     from backend.domain.samba.plugins.markets.lotteon import LotteonPlugin
+
     product_no = product.get("market_product_no", {}).get("lotteon", "")
     if not product_no:
         return {"success": True, "message": "롯데ON 상품번호 없음 (건너뜀)"}

@@ -242,12 +242,19 @@ async def reply_cs_inquiry(
                         market_msg = "고객문의 답변 전송 완료"
             elif inquiry.market == "롯데ON":
                 from backend.domain.samba.proxy.lotteon import LotteonClient
+
                 settings_result = await session.execute(
-                    select(SambaSettings).where(SambaSettings.key.like("store_lotteon%"))
+                    select(SambaSettings).where(
+                        SambaSettings.key.like("store_lotteon%")
+                    )
                 )
                 lo_settings = settings_result.scalars().first()
                 if lo_settings:
-                    config = json.loads(lo_settings.value) if isinstance(lo_settings.value, str) else lo_settings.value
+                    config = (
+                        json.loads(lo_settings.value)
+                        if isinstance(lo_settings.value, str)
+                        else lo_settings.value
+                    )
                     client = LotteonClient(api_key=config["apiKey"])
                     await client.test_auth()  # trGrpCd/trNo 획득 (필수)
                     inq_no = inquiry.market_inquiry_no or ""
@@ -267,14 +274,20 @@ async def reply_cs_inquiry(
                     elif inq_no.startswith("COMP_"):
                         # 보상 요청은 판매자센터에서 직접 처리 (답변 API 없음)
                         market_sent = False
-                        market_msg = "롯데ON 보상요청은 판매자센터에서 직접 처리해주세요"
+                        market_msg = (
+                            "롯데ON 보상요청은 판매자센터에서 직접 처리해주세요"
+                        )
                     else:
                         # 일반 Q&A (Inquiry)
                         if inquiry.market_answer_no:
-                            await client.update_qna_answer(inq_no, inquiry.market_answer_no, body.reply)
+                            await client.update_qna_answer(
+                                inq_no, inquiry.market_answer_no, body.reply
+                            )
                         else:
                             data = await client.answer_qna(inq_no, body.reply)
-                            new_ans_no = str(data.get("ansNo", data.get("qnaAnsNo", "")))
+                            new_ans_no = str(
+                                data.get("ansNo", data.get("qnaAnsNo", ""))
+                            )
                             if new_ans_no:
                                 answer_no = new_ans_no
                         market_sent = True
@@ -407,19 +420,19 @@ async def _sync_lotteon_qna(
 
     # 롯데ON vocLcsfCd → inquiry_type 매핑 (실제 API 문서 기준)
     VOC_TYPE_MAP = {
-        "IC00000263": "exchange_return",   # 교환/반품/AS (고객문의)
-        "IC00000264": "delivery",          # 배송 (고객문의)
-        "IC00000312": "general",           # 회원정보
-        "IC00000313": "general",           # 이벤트/프로모션
+        "IC00000263": "exchange_return",  # 교환/반품/AS (고객문의)
+        "IC00000264": "delivery",  # 배송 (고객문의)
+        "IC00000312": "general",  # 회원정보
+        "IC00000313": "general",  # 이벤트/프로모션
         "IC00000316": "product_question",  # 상품 (고객문의)
-        "IC00000597": "general",           # 주문/결제
-        "IC00000618": "exchange_return",   # 환불일정
-        "IC00000619": "general",           # 오류
-        "IC00000620": "general",           # 사이트이용/개선
-        "IC00000621": "exchange_return",   # 취소
+        "IC00000597": "general",  # 주문/결제
+        "IC00000618": "exchange_return",  # 환불일정
+        "IC00000619": "general",  # 오류
+        "IC00000620": "general",  # 사이트이용/개선
+        "IC00000621": "exchange_return",  # 취소
         "IC00000265": "product_question",  # 상품 (판매자문의)
-        "IC00000266": "delivery",          # 배송 (판매자문의)
-        "IC00000267": "exchange_return",   # 교환/반품/AS (판매자문의)
+        "IC00000266": "delivery",  # 배송 (판매자문의)
+        "IC00000267": "exchange_return",  # 교환/반품/AS (판매자문의)
     }
 
     for item in items:
@@ -455,27 +468,37 @@ async def _sync_lotteon_qna(
         if raw_date and len(raw_date) >= 8:
             try:
                 from datetime import datetime as _dt
+
                 parsed_date = _dt.strptime(raw_date[:14], "%Y%m%d%H%M%S")
             except Exception:
                 try:
                     from dateutil.parser import parse as parse_dt
+
                     parsed_date = parse_dt(raw_date)
                 except Exception:
                     parsed_date = None
 
         # 수집 상품 매칭
-        matched = await _find_collected_product_by_market_product_no(session, market_product_no)
-        product_link = _build_market_product_url("롯데ON", market_product_no) if market_product_no else ""
+        matched = await _find_collected_product_by_market_product_no(
+            session, market_product_no
+        )
+        product_link = (
+            _build_market_product_url("롯데ON", market_product_no)
+            if market_product_no
+            else ""
+        )
 
         inquiry_data = {
             "market": "롯데ON",
             "market_inquiry_no": qna_no,
-            "market_answer_no": None,          # 롯데ON은 답변번호 없음 (문의번호로 식별)
+            "market_answer_no": None,  # 롯데ON은 답변번호 없음 (문의번호로 식별)
             "market_order_id": str(item.get("odNo", "") or "") or None,
             "market_product_no": market_product_no or None,
             "account_name": account_name,
             "inquiry_type": inquiry_type,
-            "questioner": str(item.get("slrNo", "") or ""),   # 판매자번호 (구매자 ID 미제공)
+            "questioner": str(
+                item.get("slrNo", "") or ""
+            ),  # 판매자번호 (구매자 ID 미제공)
             "product_name": str(item.get("pdNm", "") or ""),
             "product_image": matched["product_image"] if matched else "",
             "product_link": product_link,
@@ -491,7 +514,9 @@ async def _sync_lotteon_qna(
         await svc.create_inquiry(inquiry_data)
         synced += 1
 
-    logger.info(f"[CS동기화] 롯데ON({account_name}) Q&A: {len(items)}건 조회, {synced}건 동기화")
+    logger.info(
+        f"[CS동기화] 롯데ON({account_name}) Q&A: {len(items)}건 조회, {synced}건 동기화"
+    )
     return synced
 
 
@@ -549,17 +574,25 @@ async def _sync_lotteon_product_qna(
         if raw_date and len(raw_date) >= 8:
             try:
                 from datetime import datetime as _dt
+
                 parsed_date = _dt.strptime(raw_date[:14], "%Y%m%d%H%M%S")
             except Exception:
                 try:
                     from dateutil.parser import parse as parse_dt
+
                     parsed_date = parse_dt(raw_date)
                 except Exception:
                     parsed_date = None
 
         # 수집 상품 매칭
-        matched = await _find_collected_product_by_market_product_no(session, market_product_no)
-        product_link = _build_market_product_url("롯데ON", market_product_no) if market_product_no else ""
+        matched = await _find_collected_product_by_market_product_no(
+            session, market_product_no
+        )
+        product_link = (
+            _build_market_product_url("롯데ON", market_product_no)
+            if market_product_no
+            else ""
+        )
 
         inquiry_data = {
             "market": "롯데ON",
@@ -585,7 +618,9 @@ async def _sync_lotteon_product_qna(
         await svc.create_inquiry(inquiry_data)
         synced += 1
 
-    logger.info(f"[CS동기화] 롯데ON({account_name}) 상품Q&A: {len(items)}건 조회, {synced}건 동기화")
+    logger.info(
+        f"[CS동기화] 롯데ON({account_name}) 상품Q&A: {len(items)}건 조회, {synced}건 동기화"
+    )
     return synced
 
 
@@ -624,9 +659,7 @@ async def _sync_lotteon_contact(
 
     for item in items:
         # 연락번호 — 실제 필드명 다를 수 있어 여러 키 체크
-        raw_no = (
-            item.get("cntcNo") or item.get("contNo") or item.get("contactNo") or ""
-        )
+        raw_no = item.get("cntcNo") or item.get("contNo") or item.get("contactNo") or ""
         cntc_no = str(raw_no)
         if not cntc_no or cntc_no == "0":
             logger.debug(f"[CS동기화][롯데ON][Contact] 연락번호 없음: {item}")
@@ -645,13 +678,19 @@ async def _sync_lotteon_contact(
 
         # 내용 — 여러 필드명 시도
         content = str(
-            item.get("cntcCnts") or item.get("contCnts") or item.get("cnts") or
-            item.get("contents") or item.get("content") or ""
+            item.get("cntcCnts")
+            or item.get("contCnts")
+            or item.get("cnts")
+            or item.get("contents")
+            or item.get("content")
+            or ""
         )
         if not content:
             content = "내용 없음"
 
-        proc_stat = str(item.get("procStatCd") or item.get("slrInqProcStatCd") or "UNANS")
+        proc_stat = str(
+            item.get("procStatCd") or item.get("slrInqProcStatCd") or "UNANS"
+        )
         is_answered = proc_stat == "ANS"
         reply_content = str(item.get("ansCnts") or "")
 
@@ -666,12 +705,19 @@ async def _sync_lotteon_contact(
         if raw_date and len(raw_date) >= 8:
             try:
                 from datetime import datetime as _dt
+
                 parsed_date = _dt.strptime(raw_date[:14], "%Y%m%d%H%M%S")
             except Exception:
                 pass
 
-        matched = await _find_collected_product_by_market_product_no(session, market_product_no)
-        product_link = _build_market_product_url("롯데ON", market_product_no) if market_product_no else ""
+        matched = await _find_collected_product_by_market_product_no(
+            session, market_product_no
+        )
+        product_link = (
+            _build_market_product_url("롯데ON", market_product_no)
+            if market_product_no
+            else ""
+        )
 
         inquiry_data = {
             "market": "롯데ON",
@@ -696,7 +742,9 @@ async def _sync_lotteon_contact(
         await svc.create_inquiry(inquiry_data)
         synced += 1
 
-    logger.info(f"[CS동기화] 롯데ON({account_name}) 판매자연락: {len(items)}건 조회, {synced}건 동기화")
+    logger.info(
+        f"[CS동기화] 롯데ON({account_name}) 판매자연락: {len(items)}건 조회, {synced}건 동기화"
+    )
     return synced
 
 
@@ -741,8 +789,12 @@ async def _sync_lotteon_compensate(
             continue
 
         content = str(
-            item.get("compCnts") or item.get("cmpCnts") or item.get("cnts") or
-            item.get("contents") or item.get("content") or ""
+            item.get("compCnts")
+            or item.get("cmpCnts")
+            or item.get("cnts")
+            or item.get("contents")
+            or item.get("content")
+            or ""
         )
         if not content:
             content = "보상 요청"
@@ -759,12 +811,19 @@ async def _sync_lotteon_compensate(
         if raw_date and len(raw_date) >= 8:
             try:
                 from datetime import datetime as _dt
+
                 parsed_date = _dt.strptime(raw_date[:14], "%Y%m%d%H%M%S")
             except Exception:
                 pass
 
-        matched = await _find_collected_product_by_market_product_no(session, market_product_no)
-        product_link = _build_market_product_url("롯데ON", market_product_no) if market_product_no else ""
+        matched = await _find_collected_product_by_market_product_no(
+            session, market_product_no
+        )
+        product_link = (
+            _build_market_product_url("롯데ON", market_product_no)
+            if market_product_no
+            else ""
+        )
 
         inquiry_data = {
             "market": "롯데ON",
@@ -773,7 +832,7 @@ async def _sync_lotteon_compensate(
             "market_order_id": od_no or None,
             "market_product_no": market_product_no or None,
             "account_name": account_name,
-            "inquiry_type": "exchange_return",   # 보상은 교환/반품 유형으로 분류
+            "inquiry_type": "exchange_return",  # 보상은 교환/반품 유형으로 분류
             "questioner": str(item.get("mbId") or item.get("custId") or ""),
             "product_name": str(item.get("pdNm") or ""),
             "product_image": matched["product_image"] if matched else "",
@@ -789,7 +848,9 @@ async def _sync_lotteon_compensate(
         await svc.create_inquiry(inquiry_data)
         synced += 1
 
-    logger.info(f"[CS동기화] 롯데ON({account_name}) 보상요청: {len(items)}건 조회, {synced}건 동기화")
+    logger.info(
+        f"[CS동기화] 롯데ON({account_name}) 보상요청: {len(items)}건 조회, {synced}건 동기화"
+    )
     return synced
 
 
@@ -1081,6 +1142,7 @@ async def _do_sync_cs_from_markets(
     if not market_name or market_name == "롯데ON":
         try:
             from backend.domain.samba.proxy.lotteon import LotteonClient
+
             lo_settings_result = await session.execute(
                 select(SambaSettings).where(SambaSettings.key.like("store_lotteon%"))
             )
@@ -1091,9 +1153,18 @@ async def _do_sync_cs_from_markets(
     for lo_setting in lo_settings_list:
         try:
             import json as _json
-            lo_config = _json.loads(lo_setting.value) if isinstance(lo_setting.value, str) else lo_setting.value
+
+            lo_config = (
+                _json.loads(lo_setting.value)
+                if isinstance(lo_setting.value, str)
+                else lo_setting.value
+            )
             api_key = lo_config.get("apiKey", "")
-            account_name = lo_config.get("businessName", "") or lo_config.get("storeId", "") or lo_setting.key
+            account_name = (
+                lo_config.get("businessName", "")
+                or lo_config.get("storeId", "")
+                or lo_setting.key
+            )
 
             if not api_key:
                 continue
@@ -1106,28 +1177,38 @@ async def _do_sync_cs_from_markets(
 
             # 상품 Q&A 동기화
             try:
-                lo_pqna_synced = await _sync_lotteon_product_qna(lo_client, session, svc, account_name)
+                lo_pqna_synced = await _sync_lotteon_product_qna(
+                    lo_client, session, svc, account_name
+                )
                 synced += lo_pqna_synced
             except Exception as pqe:
                 logger.warning(f"[CS동기화] 롯데ON 상품Q&A 동기화 실패 (무시): {pqe}")
 
             # 판매자 연락(Contact) 동기화
             try:
-                lo_contact_synced = await _sync_lotteon_contact(lo_client, session, svc, account_name)
+                lo_contact_synced = await _sync_lotteon_contact(
+                    lo_client, session, svc, account_name
+                )
                 synced += lo_contact_synced
             except Exception as ce:
                 logger.warning(f"[CS동기화] 롯데ON Contact 동기화 실패 (무시): {ce}")
 
             # 보상 요청(Compensate) 동기화
             try:
-                lo_comp_synced = await _sync_lotteon_compensate(lo_client, session, svc, account_name)
+                lo_comp_synced = await _sync_lotteon_compensate(
+                    lo_client, session, svc, account_name
+                )
                 synced += lo_comp_synced
             except Exception as compe:
-                logger.warning(f"[CS동기화] 롯데ON Compensate 동기화 실패 (무시): {compe}")
+                logger.warning(
+                    f"[CS동기화] 롯데ON Compensate 동기화 실패 (무시): {compe}"
+                )
 
         except Exception as e:
             logger.error(f"[CS동기화] 롯데ON({lo_setting.key}) 동기화 실패: {e}")
-            errors.append(f"롯데ON({lo_setting.key}): {str(e)}")  # 독립 에러 격리 — 다른 마켓에 영향 없음
+            errors.append(
+                f"롯데ON({lo_setting.key}): {str(e)}"
+            )  # 독립 에러 격리 — 다른 마켓에 영향 없음
 
     # 미연결 CS 문의 일괄 매칭 (market_product_no → market_product_nos)
     linked = 0
@@ -1311,6 +1392,7 @@ async def send_reply_to_market(
 
     if inquiry.market == "롯데ON":
         from backend.domain.samba.proxy.lotteon import LotteonClient
+
         settings_result = await session.execute(
             select(SambaSettings).where(SambaSettings.key.like("store_lotteon%"))
         )
@@ -1318,7 +1400,11 @@ async def send_reply_to_market(
         if not lo_settings:
             raise HTTPException(400, "롯데ON 계정 설정이 없습니다")
 
-        config = json.loads(lo_settings.value) if isinstance(lo_settings.value, str) else lo_settings.value
+        config = (
+            json.loads(lo_settings.value)
+            if isinstance(lo_settings.value, str)
+            else lo_settings.value
+        )
         client = LotteonClient(api_key=config["apiKey"])
         await client.test_auth()  # trGrpCd/trNo 획득 (필수)
 
@@ -1332,6 +1418,7 @@ async def send_reply_to_market(
             answer_no = str(data.get("ansNo", data.get("qnaAnsNo", "")))
 
         from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
+
         repo = SambaCSInquiryRepository(session)
         await repo.update_async(
             inquiry_id,
@@ -1342,7 +1429,9 @@ async def send_reply_to_market(
         )
         return {"success": True, "message": "롯데ON Q&A 답변 전송 완료", "data": {}}
 
-    raise HTTPException(400, f"'{inquiry.market}' 마켓은 아직 답변 전송을 지원하지 않습니다")
+    raise HTTPException(
+        400, f"'{inquiry.market}' 마켓은 아직 답변 전송을 지원하지 않습니다"
+    )
 
 
 @router.post("/batch-delete")

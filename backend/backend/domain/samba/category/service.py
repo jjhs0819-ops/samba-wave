@@ -359,6 +359,7 @@ def _rule_match(
     무신사 카테고리의 '(브랜드명)' 같은 괄호 부분 제거 후 매칭.
     """
     import re
+
     if source_site != "MUSINSA":
         return None
     rules = _MARKET_RULES.get(market)
@@ -368,7 +369,7 @@ def _rule_match(
     result = rules.get(source_category)
     # 괄호(브랜드명) 제거 후 재시도 — 예: "바지 > 기타 하의 (아디다스)" → "바지 > 기타 하의"
     if not result:
-        normalized = re.sub(r'\s*\([^)]+\)', '', source_category).strip()
+        normalized = re.sub(r"\s*\([^)]+\)", "", source_category).strip()
         if normalized != source_category:
             result = rules.get(normalized)
     # 상위 카테고리 계단식 매칭 — "A > B > C"가 없으면 "A > B", "A" 순으로 탐색
@@ -1413,7 +1414,10 @@ class SambaCategoryService:
             "신발": ["스니커즈", "운동화", "구두", "부츠", "샌들", "슬리퍼"],
             "가방": ["백팩", "크로스백", "토트백", "숄더백", "클러치"],
             "데님": ["청바지", "진"],  # 데님 팬츠 → 청바지 카테고리 매핑 보완
-            "조거": ["트레이닝팬츠", "스포츠팬츠"],  # 조거/트레이닝 팬츠 카테고리 매핑 보완
+            "조거": [
+                "트레이닝팬츠",
+                "스포츠팬츠",
+            ],  # 조거/트레이닝 팬츠 카테고리 매핑 보완
         }
 
         raw_keywords = [
@@ -1920,12 +1924,18 @@ class SambaCategoryService:
         # 1.5. Prefix 매칭 — 입력이 부모 경로인 경우 (3단계 → 4단계 leaf 검색)
         # 예: "패션의류 > 남성의류 > 바지" → "패션의류 > 남성의류 > 바지 > 청바지" 코드 반환
         prefix = category_path + " > "
-        prefix_matches = {path: code for path, code in code_map.items() if path.startswith(prefix)}
+        prefix_matches = {
+            path: code for path, code in code_map.items() if path.startswith(prefix)
+        }
         if prefix_matches:
             best_prefix_path = min(prefix_matches.keys(), key=len)
-            logger.info("[카테고리 코드] prefix 매칭: '%s' → '%s' (%s)", category_path, best_prefix_path, prefix_matches[best_prefix_path])
+            logger.info(
+                "[카테고리 코드] prefix 매칭: '%s' → '%s' (%s)",
+                category_path,
+                best_prefix_path,
+                prefix_matches[best_prefix_path],
+            )
             return str(prefix_matches[best_prefix_path])
-
 
         # 2. 키워드 기반 퍼지 매칭
         # 입력 경로의 세그먼트 추출 (예: "패션의류 > 남성의류 > 아우터/코트")
@@ -2597,13 +2607,17 @@ class SambaCategoryService:
                 seo_str = ", ".join(item.get("seo", [])[:5])
                 group_str = ", ".join(item.get("groups", [])[:3])
                 sample_names = [n for n in (item.get("samples") or []) if n][:2]
-                gender_hint = {"male": "남성", "female": "여성", "unisex": "남녀공용"}.get(item.get("gender", ""), "")
+                gender_hint = {
+                    "male": "남성",
+                    "female": "여성",
+                    "unisex": "남녀공용",
+                }.get(item.get("gender", ""), "")
                 ss_hint = item.get("ss_mapped", "")
-                entry = f'{idx + 1}. [{item["site"]}] {item["leaf_path"]}'
+                entry = f"{idx + 1}. [{item['site']}] {item['leaf_path']}"
                 if gender_hint:
-                    entry += f' | 성별: {gender_hint}'
+                    entry += f" | 성별: {gender_hint}"
                 if sample_names:
-                    entry += f' | 상품명: {" / ".join(sample_names)}'
+                    entry += f" | 상품명: {' / '.join(sample_names)}"
                 if ss_hint:
                     entry += f" | 스마트스토어매핑: {ss_hint}"
                 if seo_str:
@@ -2839,7 +2853,9 @@ JSON만 응답:
             if rule is not None:
                 result[m] = rule
                 if rule:
-                    logger.info(f"[매핑-룰] {source_site} > {source_category} → {m}: {rule} (성별:{gender})")
+                    logger.info(
+                        f"[매핑-룰] {source_site} > {source_category} → {m}: {rule} (성별:{gender})"
+                    )
 
         # 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만)
         for m in markets:
@@ -3150,7 +3166,7 @@ JSON만:
             if len(cat_samples[key]) < 5:
                 cat_samples[key].append(p.name)
             # p.sex 수집 (남성/여성/남녀공용)
-            if getattr(p, 'sex', None):
+            if getattr(p, "sex", None):
                 cat_sex[key].add(p.sex)
             # SEO 키워드 수집 (중복 제거)
             for kw in getattr(p, "seo_keywords", None) or []:
@@ -3213,18 +3229,26 @@ JSON만:
                 if rule_result is not None:
                     resolved[mk] = rule_result
                     if rule_result:
-                        logger.info(f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})")
+                        logger.info(
+                            f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})"
+                        )
 
             # ── 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만, 롯데ON 제외) ──
             # ESM(지마켓/옥션): SS 매핑이 있으면 SS 결과를 브릿지로 사용
             # 롯데ON은 카테고리 구조가 복잡하여 유사도 매칭이 오히려 오류를 유발 → 룰에서 못 찾으면 AI에 위임
-            ss_mapped = current_targets.get("smartstore") or resolved.get("smartstore", "")
+            ss_mapped = current_targets.get("smartstore") or resolved.get(
+                "smartstore", ""
+            )
             for mk in list(missing_markets):
                 if mk in resolved:
                     continue
                 if mk == "lotteon":
                     continue
-                mk_cats = ss_cats if mk == "smartstore" else await self._get_market_categories(mk)
+                mk_cats = (
+                    ss_cats
+                    if mk == "smartstore"
+                    else await self._get_market_categories(mk)
+                )
                 if mk_cats:
                     # ESM 마켓은 SS 매핑 결과를 브릿지로 사용 (SS 카테고리 이름이 ESM과 더 유사)
                     if mk in ("gmarket", "auction") and ss_mapped:
@@ -3282,20 +3306,24 @@ JSON만:
             # ── 3단계: 나머지 마켓은 AI에 위임 ──
             if missing_markets:
                 # AI에 SS 매핑 결과 전달 (ESM 정확도 향상용)
-                ss_hint = current_targets.get("smartstore") or resolved.get("smartstore", "")
-                batch_items.append({
-                    "site": site,
-                    "leaf_path": leaf_path,
-                    "samples": samples,
-                    "tags": cat_tags.get((site, leaf_path), []),
-                    "seo": cat_seo.get((site, leaf_path), []),
-                    "groups": list(cat_groups.get((site, leaf_path), set())),
-                    "gender": gender,
-                    "ss_mapped": ss_hint,
-                    "target_markets": list(missing_markets),
-                    "existing": existing,
-                    "mode": "update" if existing else "create",
-                })
+                ss_hint = current_targets.get("smartstore") or resolved.get(
+                    "smartstore", ""
+                )
+                batch_items.append(
+                    {
+                        "site": site,
+                        "leaf_path": leaf_path,
+                        "samples": samples,
+                        "tags": cat_tags.get((site, leaf_path), []),
+                        "seo": cat_seo.get((site, leaf_path), []),
+                        "groups": list(cat_groups.get((site, leaf_path), set())),
+                        "gender": gender,
+                        "ss_mapped": ss_hint,
+                        "target_markets": list(missing_markets),
+                        "existing": existing,
+                        "mode": "update" if existing else "create",
+                    }
+                )
 
         logger.info(
             f"[벌크매핑] 1~2단계 완료: 룰/유사도={rule_mapped}건, AI대상={len(batch_items)}건, 스킵={skipped}건"

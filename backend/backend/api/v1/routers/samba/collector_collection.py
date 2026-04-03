@@ -1929,6 +1929,7 @@ async def enrich_all_products(
 
 # ── 카테고리 스캔 ──────────────────────────────────────────────────────────────
 
+
 class BrandScanRequest(BaseModel):
     brand: str = ""
     gf: str = "A"
@@ -1951,6 +1952,7 @@ async def brand_scan(
 
     if body.source_site == "LOTTEON":
         from backend.domain.samba.plugins.sourcing.lotteon import LotteonSourcingPlugin
+
         plugin = LotteonSourcingPlugin()
         return await plugin.scan_categories(keyword)
 
@@ -1958,28 +1960,36 @@ async def brand_scan(
         # 무신사 쿠키 로드
         from backend.domain.samba.forbidden.model import SambaSettings
         from sqlmodel import select as sql_select
+
         try:
-            row = (await session.execute(
-                sql_select(SambaSettings).where(SambaSettings.key == "musinsa_cookie")
-            )).scalar_one_or_none()
+            row = (
+                await session.execute(
+                    sql_select(SambaSettings).where(
+                        SambaSettings.key == "musinsa_cookie"
+                    )
+                )
+            ).scalar_one_or_none()
             cookie = (row.value if row and row.value else "") or ""
         except Exception:
             cookie = ""
         if not cookie:
-            raise HTTPException(400, "무신사 쿠키가 없습니다. 확장앱에서 무신사 로그인 후 다시 시도하세요.")
+            raise HTTPException(
+                400,
+                "무신사 쿠키가 없습니다. 확장앱에서 무신사 로그인 후 다시 시도하세요.",
+            )
         return await _scan_musinsa_categories(keyword, body.brand, body.gf, cookie)
 
     raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
 
 
-async def _scan_musinsa_categories(keyword: str, brand: str = "", gf: str = "A", cookie: str = "") -> dict:
+async def _scan_musinsa_categories(
+    keyword: str, brand: str = "", gf: str = "A", cookie: str = ""
+) -> dict:
     """무신사 카테고리 스캔 — 검색 결과 상위 20개 상품 상세 조회 후 카테고리 분포 집계."""
     from backend.domain.samba.proxy.musinsa import MusinsaClient
 
     client = MusinsaClient(cookie=cookie)
-    search_result = await client.search_products(
-        keyword, size=20, brand=brand, gf=gf
-    )
+    search_result = await client.search_products(keyword, size=20, brand=brand, gf=gf)
     products = search_result.get("data", [])
     if not products:
         return {"categories": [], "total": 0, "groupCount": 0}
@@ -2014,14 +2024,16 @@ async def _scan_musinsa_categories(keyword: str, brand: str = "", gf: str = "A",
     categories = []
     for key, count in sorted(cat_counter.items(), key=lambda x: -x[1]):
         code, path, c1, c2, c3 = key.split("||")
-        categories.append({
-            "categoryCode": code,
-            "path": path,
-            "count": count,
-            "category1": c1,
-            "category2": c2,
-            "category3": c3,
-        })
+        categories.append(
+            {
+                "categoryCode": code,
+                "path": path,
+                "count": count,
+                "category1": c1,
+                "category2": c2,
+                "category3": c3,
+            }
+        )
 
     return {
         "categories": categories,
@@ -2031,6 +2043,7 @@ async def _scan_musinsa_categories(keyword: str, brand: str = "", gf: str = "A",
 
 
 # ── 브랜드 그룹 생성 ──────────────────────────────────────────────────────────
+
 
 class BrandCreateGroupsRequest(BaseModel):
     brand: str = ""
@@ -2076,9 +2089,11 @@ async def brand_create_groups(
 
         # 소싱처별 keyword 및 category_filter 결정
         if body.source_site == "MUSINSA":
-            parts = [f"keyword={body.brand_name or body.brand}",
-                     "keywordType=keyword",
-                     f"gf={body.gf}"]
+            parts = [
+                f"keyword={body.brand_name or body.brand}",
+                "keywordType=keyword",
+                f"gf={body.gf}",
+            ]
             if body.brand:
                 parts.append(f"brand={body.brand}")
             if code:
@@ -2101,15 +2116,18 @@ async def brand_create_groups(
 
         try:
             sf = await svc.create_filter(filter_data)
-            created_groups.append({
-                "id": str(sf.id),
-                "name": group_name,
-                "count": req_count,
-                "path": path,
-            })
+            created_groups.append(
+                {
+                    "id": str(sf.id),
+                    "name": group_name,
+                    "count": req_count,
+                    "path": path,
+                }
+            )
         except Exception as e:
             # 중복 그룹은 건너뜀
             import logging
+
             logging.getLogger(__name__).warning(f"그룹 생성 스킵: {group_name} — {e}")
 
     return {
