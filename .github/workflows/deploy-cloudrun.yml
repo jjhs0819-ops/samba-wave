@@ -38,6 +38,7 @@ jobs:
           TERMINATION_GRACE_HACK: "1"
           PROXY_URLS: "${{ secrets.PROXY_URLS }}"
           COLLECT_PROXY_URL: "${{ secrets.COLLECT_PROXY_URL }}"
+          COMMIT_SHA: "${{ github.sha }}"
           EOF
 
       - name: Deploy to Cloud Run

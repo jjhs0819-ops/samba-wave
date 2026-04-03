@@ -59,12 +59,19 @@ async def lifespan(app: FastAPI):
 
     await cache.connect()
 
-    # 서버 시작 시 좀비 running Job 처리
-    # - collect: pending 복구 (재시도 가능)
-    # - transmit: failed 처리 (OOM 무한루프 방지, 수동 재개만 허용)
+    # 서버 시작 시 리비전/커밋 로그 — 어떤 코드가 돌고 있는지 즉시 확인
     import logging as _startup_logging
 
     _startup_log = _startup_logging.getLogger("backend.startup")
+    _revision = os.environ.get("K_REVISION", "local")
+    _commit = os.environ.get("COMMIT_SHA", "unknown")
+    _startup_log.info(
+        f"[startup] 리비전={_revision}, 커밋={_commit}, 메모리={os.environ.get('K_SERVICE', 'local')}"
+    )
+
+    # 서버 시작 시 좀비 running Job 처리
+    # - collect: pending 복구 (재시도 가능)
+    # - transmit: failed 처리 (OOM 무한루프 방지, 수동 재개만 허용)
     for _attempt in range(3):
         try:
             from backend.db.orm import get_write_session
