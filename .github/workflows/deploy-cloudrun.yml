@@ -29,8 +29,8 @@ jobs:
         env:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           JWT_SECRET: ${{ secrets.JWT_SECRET_KEY }}
-          PROJECT: project-d57efcc7-c0d8-4778-837
-          INSTANCE: project-d57efcc7-c0d8-4778-837:asia-northeast3:samba-wave-db
+          PROJECT: samba-wave-molle
+          INSTANCE: samba-wave-molle:asia-northeast3:samba-wave-db
         run: |
           gcloud run deploy samba-wave-api \
             --source ./backend \
@@ -44,7 +44,7 @@ jobs:
 
       - name: Verify deployment revision
         env:
-          PROJECT: project-d57efcc7-c0d8-4778-837
+          PROJECT: samba-wave-molle
         run: |
           echo "=== 배포 검증 시작 ==="
           # 최신 리비전 확인
