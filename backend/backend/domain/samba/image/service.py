@@ -100,7 +100,7 @@ MODEL_PRESETS: dict[str, dict[str, str]] = {
 
 
 # ──────────────────────────────────────────────
-# Gemini 모델컷 전용 한국어 프롬프트
+# Gemini 이미지 변환 한국어 프롬프트
 # ──────────────────────────────────────────────
 def _get_category_prompt(category: str, mode: str, model_desc: str) -> str:
     """카테고리 + 모드 + 모델 프리셋으로 프롬프트 생성."""
@@ -282,7 +282,7 @@ class ImageTransformService:
         return None
 
     async def _get_gemini_config(self) -> tuple[str, str]:
-        """Gemini API 키, 모델 반환 (모델컷 생성 전용)."""
+        """Gemini API 키, 모델 반환 (이미지 변환 / AI태그)."""
         creds = await self._get_setting("gemini")
         if not creds:
             raise ValueError(

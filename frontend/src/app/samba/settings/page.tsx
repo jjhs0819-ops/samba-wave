@@ -847,7 +847,7 @@ export default function SettingsPage() {
   const [claudeStatus, setClaudeStatus] = useState('')
   const [aiFeatures, setAiFeatures] = useState<Record<string, boolean>>({ productName: true })
 
-  // Gemini AI 설정 (모델컷 생성 전용)
+  // Gemini AI 설정 (이미지 변환 / AI태그)
   const [geminiApiKey, setGeminiApiKey] = useState('')
   const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash')
   const [geminiStatus, setGeminiStatus] = useState('')
@@ -1277,7 +1277,7 @@ export default function SettingsPage() {
     }
   }
 
-  // Gemini AI 저장 (모델컷 생성 전용)
+  // Gemini AI 저장 (이미지 변환 / AI태그)
   const saveGeminiSettings = async () => {
     if (!geminiApiKey) { showAlert('API Key를 입력해주세요', 'error'); return }
     try {
@@ -1869,10 +1869,10 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Gemini AI (모델컷 생성 전용) */}
+      {/* Gemini AI (이미지 변환 / AI태그) */}
       <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#4285F4' }}>Gemini AI (모델컷 전용)</span>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#4285F4' }}>Gemini AI (이미지 변환 / AI태그)</span>
           <span style={{ fontSize: '0.8125rem', color: '#666' }}>상품사진 → 모델착용컷 생성 (₩430/장)</span>
           <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4285F4', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
           <button onClick={saveGeminiSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>
