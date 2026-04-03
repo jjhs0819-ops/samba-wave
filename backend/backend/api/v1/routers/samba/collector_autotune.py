@@ -534,6 +534,8 @@ async def _autotune_loop():
                                             updates["market_product_nos"] = (
                                                 _new_mnos if _new_mnos else {}
                                             )
+                                            if not _new_reg:
+                                                updates["status"] = "collected"
                                     await repo.update_async(r.product_id, **updates)
                                     _site_consecutive_soldout[site] = 0
                                     return
@@ -865,6 +867,8 @@ async def _autotune_loop():
                                             if _new_mnos
                                             else {},
                                         }
+                                        if not _new_reg:
+                                            _cleanup["status"] = "collected"
                                         await repo.update_async(_sp.id, **_cleanup)
 
                                 try:
