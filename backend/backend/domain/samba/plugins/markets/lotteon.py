@@ -1552,7 +1552,10 @@ class LotteonPlugin(MarketPlugin):
                     eitm_nos=existing_sitm_nos,
                 )
                 # ── 홍보문구 갱신 (180일 자동 연장) ────────────────────
-                publicity_phrase = extras.get("publicityPhrase", "").strip()
+                publicity_phrase = (
+                    extras.get("promotionMessage", "")
+                    or extras.get("publicityPhrase", "").strip()
+                )
                 if publicity_phrase:
                     try:
                         await client.register_publicity_sentence(
@@ -1649,7 +1652,10 @@ class LotteonPlugin(MarketPlugin):
 
                 # ── 홍보문구 등록 ────────────────────────────────────────────
                 if spd_no:
-                    publicity_phrase = extras.get("publicityPhrase", "").strip()
+                    publicity_phrase = (
+                        extras.get("promotionMessage", "")
+                        or extras.get("publicityPhrase", "").strip()
+                    )
                     if publicity_phrase:
                         logger.info(
                             f"[롯데ON] 홍보문구 등록 시도 — spdNo={spd_no!r} phrase={publicity_phrase!r}"
