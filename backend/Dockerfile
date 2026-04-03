@@ -16,11 +16,10 @@ RUN apt-get update && \
 RUN rm -f /usr/lib/python*/EXTERNALLY-MANAGED
 
 # Download and run the uv installer (버전 고정 — 최신 uv의 런타임 변경 방지)
+# /usr/local/bin으로 복사 — 비루트 사용자도 접근 가능
 ADD https://astral.sh/uv/0.10.9/install.sh /uv-installer.sh
-RUN sh /uv-installer.sh && rm /uv-installer.sh
-
-# Ensure the installed binary is on the PATH
-ENV PATH="/root/.local/bin/:$PATH"
+RUN sh /uv-installer.sh && rm /uv-installer.sh \
+    && cp /root/.local/bin/uv /usr/local/bin/uv
 
 # Tell uv to use the system Python by default
 ENV UV_SYSTEM_PYTHON=1
@@ -38,6 +37,8 @@ COPY backend ./backend
 COPY scripts ./scripts
 
 # CLIP 모델 사전 다운로드 (런타임 다운로드 방지)
+# 캐시를 /app 하위에 저장 — 비루트 사용자 접근 보장
+ENV HF_HOME="/app/.cache/huggingface"
 RUN .venv/bin/python -c "import open_clip; open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')"
 
 # 비루트 사용자로 실행 (보안 강화)
