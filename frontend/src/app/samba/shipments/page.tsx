@@ -556,7 +556,7 @@ export default function ShipmentsPage() {
           sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
           if (newLogs.length > 0) {
             for (const log of newLogs) {
-              setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
+              setLogMessages(prev => [...prev, log].slice(-30))
             }
           }
           if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
