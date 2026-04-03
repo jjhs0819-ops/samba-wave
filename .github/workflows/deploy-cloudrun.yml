@@ -76,7 +76,7 @@ jobs:
           fi
 
           # 헬스체크
-          HEALTH_URL="https://samba-wave-api-363598397345.asia-northeast3.run.app/api/v1/health"
+          HEALTH_URL="https://samba-wave-api-413651618998.asia-northeast3.run.app/api/v1/health"
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${HEALTH_URL}" --max-time 10)
           if [ "${HTTP_CODE}" = "200" ]; then
             echo "✅ 헬스체크 통과 (HTTP ${HTTP_CODE})"

@@ -2,7 +2,7 @@
 
 let PROXY_URL = 'http://localhost:28080'
 const DEFAULT_PROXY_URL = 'http://localhost:28080'
-const CLOUD_URL = 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
+const CLOUD_URL = 'https://samba-wave-api-413651618998.asia-northeast3.run.app'
 const API_PREFIX = '/api/v1/samba/proxy'
 
 // ==================== KREAM 셀렉터 설정 (서버에서 동적 변경 가능) ====================
