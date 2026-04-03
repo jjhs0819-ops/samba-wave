@@ -79,6 +79,8 @@ export default function SambaLayout({
 
   const handleLogout = () => {
     localStorage.removeItem(STORAGE_KEYS.SAMBA_USER);
+    // 인증 쿠키 제거
+    document.cookie = "samba_user=; path=/; max-age=0";
     router.replace("/samba/login");
   };
 

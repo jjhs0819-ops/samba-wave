@@ -40,4 +40,9 @@ COPY scripts ./scripts
 # CLIP 모델 사전 다운로드 (런타임 다운로드 방지)
 RUN .venv/bin/python -c "import open_clip; open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')"
 
+# 비루트 사용자로 실행 (보안 강화)
+RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
 ENTRYPOINT ["./scripts/entrypoint.sh"]

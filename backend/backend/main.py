@@ -224,7 +224,7 @@ def create_application() -> FastAPI:
         description="Backend API",
         docs_url="/docs" if settings.is_development else None,
         redoc_url="/redoc" if settings.is_development else None,
-        openapi_url="/openapi.json",
+        openapi_url="/openapi.json" if settings.is_development else None,
         lifespan=lifespan,
     )
 
@@ -245,7 +245,7 @@ def create_application() -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(user_router, prefix="/api/v1")
 
-    # SambaWave routers (no auth required)
+    # SambaWave routers (개별 엔드포인트에서 인증 의존성 적용)
     app.include_router(samba_product_router, prefix="/api/v1/samba")
     app.include_router(samba_order_router, prefix="/api/v1/samba")
     app.include_router(samba_channel_router, prefix="/api/v1/samba")

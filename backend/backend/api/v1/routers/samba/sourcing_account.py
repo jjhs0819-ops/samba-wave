@@ -12,11 +12,42 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.dtos.samba.sourcing_account import (
     SourcingAccountCreate,
+    SourcingAccountOut,
     SourcingAccountUpdate,
 )
 from backend.utils.logger import logger
 
 router = APIRouter(prefix="/sourcing-accounts", tags=["samba-sourcing-accounts"])
+
+
+def _mask_password(value: str) -> str:
+    """비밀번호 마스킹 — 앞 2자만 표시."""
+    if len(value) <= 2:
+        return "****"
+    return value[:2] + "****"
+
+
+def _to_sourcing_account_out(account: object) -> SourcingAccountOut:
+    """ORM 모델 → 마스킹된 응답 DTO."""
+    # additional_fields에서 민감 쿠키 정보 제거
+    safe_fields = dict(account.additional_fields or {})
+    safe_fields.pop("musinsa_cookie", None)
+    return SourcingAccountOut(
+        id=account.id,
+        tenant_id=account.tenant_id,
+        site_name=account.site_name,
+        account_label=account.account_label,
+        username=account.username,
+        password=_mask_password(account.password),
+        chrome_profile=account.chrome_profile,
+        memo=account.memo,
+        balance=account.balance,
+        balance_updated_at=account.balance_updated_at,
+        is_active=account.is_active,
+        additional_fields=safe_fields if safe_fields else None,
+        created_at=account.created_at,
+        updated_at=account.updated_at,
+    )
 
 
 def _read_service(session: AsyncSession):
@@ -41,12 +72,13 @@ def _write_service(session: AsyncSession):
     return SambaSourcingAccountService(SambaSourcingAccountRepository(session))
 
 
-@router.get("")
+@router.get("", response_model=list[SourcingAccountOut])
 async def list_sourcing_accounts(
     site_name: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    return await _read_service(session).list_accounts(site_name=site_name)
+    accounts = await _read_service(session).list_accounts(site_name=site_name)
+    return [_to_sourcing_account_out(a) for a in accounts]
 
 
 @router.get("/sites")
@@ -60,7 +92,12 @@ async def get_supported_sites():
 
 @router.get("/chrome-profiles")
 async def get_chrome_profiles():
-    """PC에 존재하는 크롬 프로필 목록 반환."""
+    """PC에 존재하는 크롬 프로필 목록 반환 (개발 환경 전용)."""
+    from backend.core.config import settings
+
+    # 프로덕션에서는 호스트 정보 노출 방지
+    if not settings.is_development:
+        return []
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     local_state_path = (
         Path(local_app_data) / "Google" / "Chrome" / "User Data" / "Local State"
@@ -107,7 +144,7 @@ async def get_balance_check_requested():
     return {"requested": False}
 
 
-@router.get("/{account_id}")
+@router.get("/{account_id}", response_model=SourcingAccountOut)
 async def get_sourcing_account(
     account_id: str,
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -116,20 +153,21 @@ async def get_sourcing_account(
     account = await svc.get_account(account_id)
     if not account:
         raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
-    return account
+    return _to_sourcing_account_out(account)
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, response_model=SourcingAccountOut)
 async def create_sourcing_account(
     body: SourcingAccountCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    return await _write_service(session).create_account(
+    account = await _write_service(session).create_account(
         body.model_dump(exclude_unset=True)
     )
+    return _to_sourcing_account_out(account)
 
 
-@router.put("/{account_id}")
+@router.put("/{account_id}", response_model=SourcingAccountOut)
 async def update_sourcing_account(
     account_id: str,
     body: SourcingAccountUpdate,
@@ -139,10 +177,10 @@ async def update_sourcing_account(
     result = await svc.update_account(account_id, body.model_dump(exclude_unset=True))
     if not result:
         raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
-    return result
+    return _to_sourcing_account_out(result)
 
 
-@router.put("/{account_id}/toggle")
+@router.put("/{account_id}/toggle", response_model=SourcingAccountOut)
 async def toggle_sourcing_account(
     account_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
@@ -150,7 +188,7 @@ async def toggle_sourcing_account(
     result = await _write_service(session).toggle_active(account_id)
     if not result:
         raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
-    return result
+    return _to_sourcing_account_out(result)
 
 
 @router.delete("/{account_id}")

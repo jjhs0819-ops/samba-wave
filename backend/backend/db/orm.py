@@ -55,7 +55,7 @@ def _build_db_url(user: str, password: str, host: str, port: int, name: str) -> 
     if host.startswith("/cloudsql/"):
         return f"postgresql+asyncpg://{user}:{password}@/{name}?host={host}"
     base_url = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{name}"
-    if settings.db_ssl_required:
+    if settings.use_db_ssl:
         return f"{base_url}?ssl=require"
     return base_url
 
