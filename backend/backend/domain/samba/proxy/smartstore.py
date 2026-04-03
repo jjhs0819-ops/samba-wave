@@ -1053,12 +1053,15 @@ class SmartStoreClient:
                     raise SmartStoreApiError(
                         f"이미지 업로드 실패: {resp.status_code} {resp.text[:200]}"
                     )
+                del img_bytes  # OOM 방지: 업로드 완료 후 bytes 즉시 해제
                 data = resp.json()
                 images = data.get("images", [])
                 if not images:
                     raise SmartStoreApiError("이미지 업로드 응답에 URL 없음")
                 return images[0].get("url", "")
         finally:
+            # OOM 방지: 예외 시에도 bytes 해제
+            img_bytes = None  # noqa: F841
             if not _ul_client:
                 await ul.aclose()
         raise SmartStoreApiError(
@@ -1166,9 +1169,17 @@ class SmartStoreClient:
                     raise SmartStoreApiError(
                         f"이미지 업로드 실패: {resp.status_code} {resp.text[:200]}"
                     )
+                # OOM 방지: 업로드 완료 후 bytes 즉시 해제
+                for _f in files_list:
+                    del _f
+                files_list.clear()
                 logger.info(f"[메모리] 네이버업로드 후: {_mem_mb()}MB")
                 data = resp.json()
                 return [img.get("url", "") for img in data.get("images", [])]
+        # OOM 방지: 예외 시에도 bytes 해제
+        for _f in files_list:
+            del _f
+        files_list.clear()
         raise SmartStoreApiError("이미지 업로드 실패: 429 Rate Limit 초과")
 
     async def register_product(self, product_data: dict[str, Any]) -> dict[str, Any]:

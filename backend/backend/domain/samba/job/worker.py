@@ -4,6 +4,8 @@
 """
 
 import asyncio
+import ctypes
+import gc
 import logging
 import threading
 from collections import deque
@@ -11,6 +13,16 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
+
+
+def _force_free_memory():
+    """gc.collect() + glibc malloc_trim으로 해제된 메모리를 OS에 반환."""
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass  # Windows/macOS에서는 무시
+
 
 # Job별 실시간 로그 버퍼 (인메모리, 최근 500줄)
 _job_logs: dict[str, list[str]] = {}
@@ -175,7 +187,7 @@ class JobWorker:
         self._running = False
 
     async def _poll_once(self) -> bool:
-        """pending 잡을 타입별로 1개씩 병렬 실행. 같은 타입은 순차."""
+        """OOM 방지: 한 번에 1개 잡만 실행 (수집+전송 동시 실행 차단)."""
         _worker_status["last_poll"] = datetime.now(UTC).isoformat()
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
@@ -186,31 +198,25 @@ class JobWorker:
             if not jobs:
                 return False
 
-            # 실행 중이 아닌 타입의 잡만 선택 (타입별 1개)
-            to_run = []
-            for job in jobs:
-                if job.job_type not in self._active_types:
-                    to_run.append(job)
-                    self._active_types.add(job.job_type)
-                else:
-                    # 실행 안 할 잡은 pending으로 되돌림
+            # OOM 방지: 이미 실행 중인 잡이 있으면 대기
+            if self._active_types:
+                for job in jobs:
                     job.status = "pending"
                     job.started_at = None
-            if not to_run:
-                # 전부 되돌림
                 await session.commit()
                 return False
 
-            # running 상태를 DB에 커밋 → 다음 폴링에서 중복 선택 방지
+            # 1개만 선택, 나머지는 pending으로 되돌림
+            selected = jobs[0]
+            self._active_types.add(selected.job_type)
+            for job in jobs[1:]:
+                job.status = "pending"
+                job.started_at = None
+
             await session.commit()
 
-        # 선택된 잡들 병렬 실행 (각각 독립 세션)
-        if len(to_run) == 1:
-            await self._execute_job(to_run[0])
-        else:
-            await asyncio.gather(
-                *[self._execute_job(j) for j in to_run], return_exceptions=True
-            )
+        # 1개 잡만 실행
+        await self._execute_job(selected)
         return True
 
     async def _execute_job(self, job):
@@ -518,6 +524,10 @@ class JobWorker:
                 fail_count += 1
                 _add_job_log(job.id, f"[{i + 1}/{total}] {prod_name}: {e}")
                 failed_pids.append(pid)
+            # OOM 방지: 50건마다 gc + malloc_trim으로 RSS 회수
+            if (i + 1) % 50 == 0:
+                _force_free_memory()
+                logger.info(f"[잡워커] 메모리 회수 ({i + 1}/{total}건)")
             # 잡 progress는 매 건마다 업데이트 (재시작 시 재처리 최소화)
             if True:
                 try:
