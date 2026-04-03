@@ -275,14 +275,14 @@ class SmartStorePlugin(MarketPlugin):
                 """1장씩 순차 업로드 — OOM 방지 (피크 메모리 최소화)."""
                 results: list[str | None] = []
                 import httpx as _img_httpx
-                from backend.core.config import get_settings as _img_settings
+                from backend.core.config import settings as _img_settings
 
                 _dl = _img_httpx.AsyncClient(
-                    timeout=_img_settings().http_timeout_default,
+                    timeout=_img_settings.http_timeout_default,
                     follow_redirects=True,
                 )
                 _ul = _img_httpx.AsyncClient(
-                    timeout=_img_settings().http_timeout_default,
+                    timeout=_img_settings.http_timeout_default,
                 )
                 try:
                     for url in all_img_urls:
