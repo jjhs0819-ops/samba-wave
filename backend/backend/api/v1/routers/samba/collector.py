@@ -1103,10 +1103,10 @@ async def bulk_create_collected_products(
 ):
     svc = _get_services(session)
     items = [item.model_dump(exclude_unset=True) for item in body.items]
-    created = await svc.bulk_create_collected_products(items)
+    created_count = await svc.bulk_create_products(items)
     # 상품 일괄 생성 시 캐시 무효화
     await cache.clear_pattern("products:*")
-    return {"created": len(created)}
+    return {"created": created_count}
 
 
 @router.post("/products/images/bulk-remove")

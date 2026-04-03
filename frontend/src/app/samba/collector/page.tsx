@@ -18,7 +18,7 @@ import {
   type AISourcingCombination,
 } from "@/lib/samba/api";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { SITE_COLORS } from '@/lib/samba/constants'
+import { SITE_COLORS, SOURCING_SEARCH_URLS } from '@/lib/samba/constants'
 import { fmtDate as _fmtDate } from '@/lib/samba/utils'
 
 const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
@@ -1697,14 +1697,9 @@ export default function CollectorPage() {
                     const storedUrl = (selectedFilter as unknown as Record<string, string>).category_filter || ''
                     const kw = selectedFilter.keyword || ''
                     const site = selectedFilter.source_site || ''
-                    const siteSearchUrls: Record<string, string> = {
-                      MUSINSA: 'https://www.musinsa.com/search/musinsa/integration?q=',
-                      KREAM: 'https://kream.co.kr/search?keyword=',
-                      ABCmart: 'https://abcmart.a-rt.com/search?q=',
-                    }
                     // keyword가 이미 URL이면 그대로 사용
                     const kwIsUrl = kw.startsWith('http://') || kw.startsWith('https://')
-                    const linkUrl = storedUrl || (kwIsUrl ? kw : (siteSearchUrls[site] ? siteSearchUrls[site] + encodeURIComponent(kw) : ''))
+                    const linkUrl = storedUrl || (kwIsUrl ? kw : (SOURCING_SEARCH_URLS[site] ? SOURCING_SEARCH_URLS[site] + encodeURIComponent(kw) : ''))
                     return (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         {linkUrl ? (

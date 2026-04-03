@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { PERIOD_BUTTONS } from '@/lib/samba/constants'
+import { PERIOD_BUTTONS, DELIVERY_TRACKING_URLS, SOURCING_PRODUCT_URLS, SOURCING_ORDER_URLS, STORAGE_KEYS } from '@/lib/samba/constants'
 import { inputStyle } from '@/lib/samba/styles'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
@@ -28,15 +28,7 @@ const SHIPPING_COMPANIES = ['CJ대한통운', '한진택배', '롯데택배', '�
 
 const MARKET_STATUS_OPTIONS = ['일반', '발송대기', '교환요청', '취소요청', '반품요청', '배송완료']
 
-// 택배사별 배송조회 URL
-const TRACKING_URLS: Record<string, string> = {
-  'CJ대한통운': 'https://trace.cjlogistics.com/next/tracking.html?wblNo=',
-  '한진택배': 'https://www.hanjin.com/kor/CMS/DeliveryMgr/WaybillResult.do?mession=&searchType=General&wblnumText2=',
-  '롯데택배': 'https://www.lotteglogis.com/home/reservation/tracking/link498?InvNo=',
-  '로젠택배': 'https://www.ilogen.com/web/personal/trace/',
-  '우체국택배': 'https://service.epost.go.kr/trace.RetrieveDomRi498.postal?sid1=',
-  '경동택배': 'https://kdexp.com/deliverySearch?barcode=',
-}
+// 배송조회 URL은 @/lib/samba/constants에서 DELIVERY_TRACKING_URLS로 통합
 
 interface OrderForm {
   channel_id: string; product_name: string; customer_name: string; customer_phone: string
@@ -376,7 +368,7 @@ export default function OrdersPage() {
       showAlert('송장번호가 없습니다', 'error')
       return
     }
-    const baseUrl = TRACKING_URLS[shippingCompany] || TRACKING_URLS['CJ대한통운']
+    const baseUrl = DELIVERY_TRACKING_URLS[shippingCompany] || DELIVERY_TRACKING_URLS['CJ대한통운']
     window.open(`${baseUrl}${trackingNumber}`, '_blank')
   }
   const handleSourceLink = async (o: SambaOrder) => {
@@ -401,28 +393,21 @@ export default function OrdersPage() {
       } catch { /* ignore */ }
     }
     // 4. 상품명에서 소싱처 상품번호 추출 → URL 구성
-    const sourcingUrls: Record<string, string> = {
-      MUSINSA: 'https://www.musinsa.com/products/',
-      KREAM: 'https://kream.co.kr/products/',
-      FashionPlus: 'https://www.fashionplus.co.kr/goods/detail/',
-      ABCmart: 'https://www.a-rt.com/product?prdtNo=',
-      Nike: 'https://www.nike.com/kr/t/',
-    }
     const name = o.product_name || ''
     // 상품명 끝에 숫자가 있으면 소싱처 상품번호로 추정
     const idMatch = name.match(/\b(\d{6,})\s*$/)
-    if (idMatch && o.source_site && sourcingUrls[o.source_site]) {
-      window.open(sourcingUrls[o.source_site] + idMatch[1], '_blank')
+    if (idMatch && o.source_site && SOURCING_PRODUCT_URLS[o.source_site]) {
+      window.open(SOURCING_PRODUCT_URLS[o.source_site] + idMatch[1], '_blank')
       return
     }
     // source_site 없어도 상품명 패턴으로 소싱처 추론
     if (idMatch) {
       const id = idMatch[1]
       if (name.includes('운동화') || name.includes('나이키') || name.includes('아디다스')) {
-        window.open('https://www.fashionplus.co.kr/goods/detail/' + id, '_blank')
+        window.open(SOURCING_PRODUCT_URLS.FashionPlus + id, '_blank')
         return
       }
-      window.open('https://www.musinsa.com/products/' + id, '_blank')
+      window.open(SOURCING_PRODUCT_URLS.MUSINSA + id, '_blank')
       return
     }
     showAlert('소싱처 원문링크 정보가 없습니다', 'info')
@@ -1015,14 +1000,8 @@ export default function OrdersPage() {
                         if (o.ext_order_number) { window.open(o.ext_order_number, '_blank'); return }
                         const srcNo = o.sourcing_order_number || ''
                         if (!srcNo) { showAlert('소싱 주문번호가 없습니다', 'info'); return }
-                        const orderUrlMap: Record<string, string> = {
-                          MUSINSA: `https://www.musinsa.com/order/order-detail/${srcNo}`,
-                          KREAM: `https://kream.co.kr/my/purchasing/${srcNo}`,
-                          FashionPlus: `https://www.fashionplus.co.kr/mypage/order/detail/${srcNo}`,
-                          ABCmart: `https://www.a-rt.com/mypage/order-detail/${srcNo}`,
-                          Nike: `https://www.nike.com/kr/orders/${srcNo}`,
-                        }
-                        const url = orderUrlMap[o.source_site || '']
+                        const orderBaseUrl = SOURCING_ORDER_URLS[o.source_site || '']
+                        const url = orderBaseUrl ? `${orderBaseUrl}${srcNo}` : undefined
                         if (!url) { showAlert(`${o.source_site || '알수없는'} 소싱처는 원주문링크를 지원하지 않습니다`, 'info'); return }
                         window.open(url, '_blank')
                       }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: (o.ext_order_number || o.sourcing_order_number) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원주문링크</button>

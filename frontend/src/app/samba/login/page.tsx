@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { userApi } from '@/lib/samba/api'
+import { STORAGE_KEYS } from '@/lib/samba/constants'
 
 export default function SambaLoginPage() {
   const router = useRouter()
@@ -23,7 +24,7 @@ export default function SambaLoginPage() {
     setSubmitting(true)
     try {
       const user = await userApi.login(email, password)
-      localStorage.setItem('samba_user', JSON.stringify(user))
+      localStorage.setItem(STORAGE_KEYS.SAMBA_USER, JSON.stringify(user))
       router.replace('/samba')
     } catch (err) {
       setError(err instanceof Error ? err.message : '로그인에 실패했습니다')

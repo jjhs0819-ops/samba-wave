@@ -76,8 +76,6 @@ async def _get_musinsa_client(session: AsyncSession) -> MusinsaClient:
 @router.get("/musinsa/ip-check")
 async def musinsa_ip_check():
     """무신사 CDN 차단 여부 테스트 — 서버 IP 기준."""
-    import httpx
-
     test_url = "https://image.msscdn.net/images/goods_img/20260309/6099644/6099644_17736397410885_500.jpg"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=5)) as client:
@@ -1063,7 +1061,6 @@ async def regenerate_preset_image(
         MODEL_PRESETS,
         PRESET_IMAGE_DIR,
     )
-    import httpx
 
     preset_key = request.get("preset_key", "")
     custom_desc = request.get("desc", "")
@@ -3408,7 +3405,6 @@ async def image_proxy(
     """외부 이미지 프록시 (핫링크 차단 우회)."""
     if not url:
         raise HTTPException(status_code=400, detail="URL 필요")
-    import httpx
     from urllib.parse import unquote
 
     target = unquote(url)

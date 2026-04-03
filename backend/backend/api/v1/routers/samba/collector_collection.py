@@ -582,9 +582,9 @@ async def collect_by_url(
                     }
                 )
 
-            created = []
+            created_count = 0
             if bulk_items:
-                created = await svc.bulk_create_collected_products(bulk_items)
+                created_count = await svc.bulk_create_products(bulk_items)
 
             # 검색그룹에 최근수집일 업데이트
             from datetime import datetime, timezone
@@ -602,8 +602,8 @@ async def collect_by_url(
                 "filter_id": filter_id,
                 "filter_name": keyword,
                 "total_found": len(items_list),
-                "saved": len(created),
-                "skipped_duplicates": len(items_list) - len(created),
+                "saved": created_count,
+                "skipped_duplicates": len(items_list) - created_count,
             }
 
         else:

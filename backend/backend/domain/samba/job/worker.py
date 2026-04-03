@@ -11,6 +11,8 @@ import threading
 from collections import deque
 from datetime import datetime, timezone
 
+from backend.domain.samba.job.model import JobStatus
+
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
 
@@ -201,7 +203,7 @@ class JobWorker:
             # OOM 방지: 이미 실행 중인 잡이 있으면 대기
             if self._active_types:
                 for job in jobs:
-                    job.status = "pending"
+                    job.status = JobStatus.PENDING
                     job.started_at = None
                 await session.commit()
                 return False
@@ -210,7 +212,7 @@ class JobWorker:
             selected = jobs[0]
             self._active_types.add(selected.job_type)
             for job in jobs[1:]:
-                job.status = "pending"
+                job.status = JobStatus.PENDING
                 job.started_at = None
 
             await session.commit()
@@ -745,7 +747,7 @@ class JobWorker:
             from backend.domain.samba.job.model import SambaJob as _SJ
 
             _job_check = await session.get(_SJ, job.id)
-            if _job_check and _job_check.status == "failed":
+            if _job_check and _job_check.status == JobStatus.FAILED:
                 logger.info(f"[잡워커] 수집 취소됨: {job.id}")
                 return
 
@@ -1131,7 +1133,7 @@ class JobWorker:
             from backend.domain.samba.job.model import SambaJob as _SJ2
 
             _job_chk = await session.get(_SJ2, job.id)
-            if _job_chk and _job_chk.status == "failed":
+            if _job_chk and _job_chk.status == JobStatus.FAILED:
                 logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
                 return
 

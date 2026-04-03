@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import SambaModal from "@/components/samba/Modal";
 import SambaBlockAlert from "@/components/samba/BlockAlert";
 import type { SambaUser } from "@/lib/samba/api";
+import { STORAGE_KEYS } from "@/lib/samba/constants";
 
 interface NavItem {
   href: string;
@@ -48,12 +49,12 @@ export default function SambaLayout({
       setAuthChecked(true);
       return;
     }
-    const raw = localStorage.getItem("samba_user");
+    const raw = localStorage.getItem(STORAGE_KEYS.SAMBA_USER);
     if (raw) {
       try {
         setCurrentUser(JSON.parse(raw) as SambaUser);
       } catch {
-        localStorage.removeItem("samba_user");
+        localStorage.removeItem(STORAGE_KEYS.SAMBA_USER);
         router.replace("/samba/login");
       }
     } else {
@@ -77,7 +78,7 @@ export default function SambaLayout({
   }
 
   const handleLogout = () => {
-    localStorage.removeItem("samba_user");
+    localStorage.removeItem(STORAGE_KEYS.SAMBA_USER);
     router.replace("/samba/login");
   };
 

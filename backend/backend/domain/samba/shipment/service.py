@@ -14,8 +14,9 @@ from backend.utils.logger import logger
 
 import math
 
-# 마켓타입 → 정책키 매핑
-MARKET_TYPE_TO_POLICY_KEY = {
+# 마켓타입(영문 코드) → 정책키(한글 표시명) 매핑
+# 마켓 계정의 market_type 필드 값을 정책 설정의 per_market 키로 변환할 때 사용
+MARKET_TYPE_TO_POLICY_KEY: dict[str, str] = {
     "coupang": "쿠팡",
     "ssg": "신세계몰",
     "smartstore": "스마트스토어",

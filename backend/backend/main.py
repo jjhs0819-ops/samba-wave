@@ -74,16 +74,17 @@ async def lifespan(app: FastAPI):
     for _attempt in range(3):
         try:
             from backend.db.orm import get_write_session
+            from backend.domain.samba.job.model import JobStatus
             from sqlalchemy import text
 
             async with get_write_session() as session:
                 # transmit Job → failed (OOM 재시작 시 자동 재실행 방지)
                 r_tx = await session.execute(
                     text(
-                        "UPDATE samba_jobs SET status = 'failed', "
+                        f"UPDATE samba_jobs SET status = '{JobStatus.FAILED}', "
                         "error = 'OOM 재시작 — 자동복구 중단', "
                         "completed_at = now() "
-                        "WHERE status = 'running' AND job_type = 'transmit'"
+                        f"WHERE status = '{JobStatus.RUNNING}' AND job_type = 'transmit'"
                     )
                 )
                 if r_tx.rowcount > 0:
@@ -93,8 +94,8 @@ async def lifespan(app: FastAPI):
                 # collect 등 나머지 → pending 복구 (기존 동작 유지)
                 r_other = await session.execute(
                     text(
-                        "UPDATE samba_jobs SET status = 'pending', started_at = NULL "
-                        "WHERE status = 'running' AND job_type != 'transmit'"
+                        f"UPDATE samba_jobs SET status = '{JobStatus.PENDING}', started_at = NULL "
+                        f"WHERE status = '{JobStatus.RUNNING}' AND job_type != 'transmit'"
                     )
                 )
                 if r_other.rowcount > 0:

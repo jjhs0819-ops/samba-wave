@@ -1508,20 +1508,33 @@ class SambaCategoryService:
             return 0
 
         # 3) 상품의 registered_accounts에 해당 마켓 계정이 있는지 확인
-        stmt = select(SambaCollectedProduct)
+        # OOM 방지: 전체 상품을 메모리에 올리지 않고 SQL 필터로 범위 축소
+        target_sites = {site for site, _ in target_cats}
+        stmt = select(
+            SambaCollectedProduct.source_site,
+            SambaCollectedProduct.category,
+            SambaCollectedProduct.category1,
+            SambaCollectedProduct.category2,
+            SambaCollectedProduct.category3,
+            SambaCollectedProduct.category4,
+            SambaCollectedProduct.registered_accounts,
+        ).where(
+            SambaCollectedProduct.source_site.in_(target_sites),
+            SambaCollectedProduct.registered_accounts.isnot(None),
+        )
         result = await session.execute(stmt)
         count = 0
-        for p in result.scalars().all():
-            site = p.source_site or ""
-            cats = [p.category1, p.category2, p.category3, p.category4]
+        for row in result.all():
+            site = row.source_site or ""
+            cats = [row.category1, row.category2, row.category3, row.category4]
             cats = [c for c in cats if c]
-            if not cats and p.category:
-                cats = [c.strip() for c in p.category.split(">") if c.strip()]
+            if not cats and row.category:
+                cats = [c.strip() for c in row.category.split(">") if c.strip()]
             leaf = " > ".join(cats)
             if (site, leaf) not in target_cats:
                 continue
             # registered_accounts에 해당 마켓 계정이 있는지 확인
-            reg_accs = p.registered_accounts or []
+            reg_accs = row.registered_accounts or []
             if any(aid in account_ids for aid in reg_accs):
                 count += 1
         return count
@@ -2995,9 +3008,23 @@ JSON만:
                 all_market_cats[mk] = cats
 
         # 1) 수집 상품에서 고유 (site, leaf_category, 대표 상품명) 추출
-        stmt = select(SambaCollectedProduct)
+        # OOM 방지: 필요한 컬럼만 조회 + source_site 필터 적용
+        stmt = select(
+            SambaCollectedProduct.source_site,
+            SambaCollectedProduct.category,
+            SambaCollectedProduct.category1,
+            SambaCollectedProduct.category2,
+            SambaCollectedProduct.category3,
+            SambaCollectedProduct.category4,
+            SambaCollectedProduct.name,
+            SambaCollectedProduct.tags,
+            SambaCollectedProduct.seo_keywords,
+            SambaCollectedProduct.group_key,
+        )
+        if source_site:
+            stmt = stmt.where(SambaCollectedProduct.source_site == source_site)
         result = await session.execute(stmt)
-        products = list(result.scalars().all())
+        products = result.all()
 
         # (site, leaf_path) → 태그 + SEO키워드 + 그룹명
         cat_samples: Dict[tuple, List[str]] = {}
@@ -3007,9 +3034,6 @@ JSON만:
         for p in products:
             site = p.source_site or ""
             if not site:
-                continue
-            # 범위 필터
-            if source_site and site != source_site:
                 continue
             cats = [p.category1, p.category2, p.category3, p.category4]
             cats = [c for c in cats if c]
