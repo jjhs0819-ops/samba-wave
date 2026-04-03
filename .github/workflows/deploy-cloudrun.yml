@@ -52,12 +52,42 @@ jobs:
             --clear-base-image \
             --quiet
 
+      - name: Verify traffic on latest revision
+        run: |
+          # 배포 후 최신 리비전이 실제로 트래픽을 받는지 확인
+          LATEST=$(gcloud run revisions list \
+            --service=samba-wave-api \
+            --region=asia-northeast3 \
+            --project=fresh-sanctuary-489804-v4 \
+            --sort-by=~createTime \
+            --limit=1 \
+            --format="value(name)")
+          SERVING=$(gcloud run services describe samba-wave-api \
+            --region=asia-northeast3 \
+            --project=fresh-sanctuary-489804-v4 \
+            --format="value(status.traffic[0].revisionName)")
+          echo "최신 리비전: $LATEST"
+          echo "트래픽 리비전: $SERVING"
+          if [ "$LATEST" != "$SERVING" ]; then
+            echo "⚠️ 트래픽이 구 리비전에 고정됨 — 강제 전환"
+            gcloud run services update-traffic samba-wave-api \
+              --region=asia-northeast3 \
+              --project=fresh-sanctuary-489804-v4 \
+              --to-latest --quiet
+            echo "✅ 최신 리비전으로 트래픽 전환 완료"
+          fi
+
       - name: Health Check
         run: |
-          sleep 10
+          sleep 15
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://samba-wave-api-363598397345.asia-northeast3.run.app/api/v1/health)
           if [ "$STATUS" != "200" ]; then
-            echo "Health check failed with status $STATUS"
+            echo "❌ Health check 실패 (HTTP $STATUS)"
+            # 실패 시 어떤 리비전이 서빙 중인지 로그
+            gcloud run services describe samba-wave-api \
+              --region=asia-northeast3 \
+              --project=fresh-sanctuary-489804-v4 \
+              --format="value(status.traffic)"
             exit 1
           fi
-          echo "Health check passed"
+          echo "✅ Health check 통과"
