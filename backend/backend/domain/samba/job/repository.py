@@ -62,11 +62,12 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             await self.session.flush()
 
     async def complete_job(self, job_id: str, result: dict | None = None):
-        """잡 완료 처리."""
+        """잡 완료 처리 — attempt 리셋 포함."""
         job = await self.get_async(job_id)
         if job:
             job.status = JobStatus.COMPLETED
             job.progress = 100
+            job.attempt = 0  # 성공 → attempt 리셋
             job.completed_at = datetime.now(UTC)
             if result:
                 job.result = result
@@ -141,7 +142,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         for job in stuck:
             job.status = JobStatus.PENDING
             job.started_at = None
-            job.progress = 0
+            # current/progress 보존 — 전송 잡이 이어서 재개할 수 있도록
             self.session.add(job)
         if stuck:
             await self.session.flush()

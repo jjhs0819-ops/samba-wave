@@ -137,7 +137,9 @@ class JobWorker:
 
     def __init__(self):
         self._running = True
+        self._shutting_down = False  # SIGTERM 수신 시 True — 전송 루프가 체크
         self._active_types: set[str] = set()  # 현재 실행 중인 잡 타입
+        self._active_job_id: str | None = None  # 현재 실행 중인 잡 ID (shutdown 복구용)
         self._poll_count = 0
 
     async def start(self):
@@ -187,6 +189,45 @@ class JobWorker:
 
     def stop(self):
         self._running = False
+
+    async def graceful_stop(self, timeout: int = 30):
+        """배포 시 호출 — 전송 루프에 종료 신호 보내고 대기.
+
+        1) _shutting_down 플래그 세팅 → 전송 루프가 현재 건 완료 후 탈출
+        2) 최대 timeout초 대기 → 전송 루프 종료 확인
+        3) running transmit Job → pending으로 전환 (current 보존)
+        """
+        self._shutting_down = True
+        self._running = False
+        logger.info("[잡워커] graceful_stop — 전송 루프 종료 대기")
+
+        # 전송 루프가 자연 종료될 때까지 대기
+        for _ in range(timeout):
+            if not self._active_types:
+                break
+            await asyncio.sleep(1)
+
+        # running 상태인 transmit Job → pending 복구 (current 보존, attempt 유지)
+        if self._active_job_id:
+            try:
+                from backend.db.orm import get_write_session
+                from sqlalchemy import text
+
+                async with get_write_session() as session:
+                    await session.execute(
+                        text(
+                            "UPDATE samba_jobs SET status = 'pending', "
+                            "started_at = NULL "
+                            "WHERE id = :jid AND status = 'running'"
+                        ),
+                        {"jid": self._active_job_id},
+                    )
+                    await session.commit()
+                    logger.info(
+                        f"[잡워커] 배포 종료 — 잡 {self._active_job_id} → pending 복구"
+                    )
+            except Exception as e:
+                logger.error(f"[잡워커] 배포 종료 잡 복구 실패: {e}")
 
     async def _poll_once(self) -> bool:
         """OOM 방지: 한 번에 1개 잡만 실행 (수집+전송 동시 실행 차단)."""
@@ -241,6 +282,11 @@ class JobWorker:
                 thread.start()
                 elapsed = 0
                 while thread.is_alive() and elapsed < 600:
+                    if self._shutting_down:
+                        logger.info(
+                            f"[잡워커] 배포 종료 — 수집 스레드 대기 중단: {_job_id}"
+                        )
+                        break
                     await asyncio.sleep(2)
                     elapsed += 2
                 if thread.is_alive():
@@ -263,6 +309,7 @@ class JobWorker:
             # 전송 + 기타: 메인 루프 직접 실행 (인메모리 로그 공유)
             _job_id = job.id
             _job_type = job.job_type
+            self._active_job_id = _job_id
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
                 # detached 객체 대신 현재 세션에서 job 재조회
@@ -295,6 +342,7 @@ class JobWorker:
                             f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {_job_id} — {fail_exc}"
                         )
         finally:
+            self._active_job_id = None
             self._active_types.discard(_job_type)
             # 프론트 폴링이 로그를 읽을 시간 확보 후 삭제 (60초)
             try:
@@ -420,6 +468,23 @@ class JobWorker:
                 _is_cancelled = await repo.is_cancelled(job.id)
             except Exception:
                 _is_cancelled = False
+
+            # 배포 종료 감지 — progress 저장 후 정상 탈출 (pending 유지)
+            if self._shutting_down:
+                remaining = len(product_ids) - i
+                _add_job_log(
+                    job.id,
+                    f"배포 종료 — {i}건 완료, {remaining}건 남음 (다음 인스턴스에서 재개)",
+                )
+                logger.info(
+                    f"[잡워커] 배포 종료 감지: {job.id} — {i}/{total}건, pending 유지"
+                )
+                try:
+                    await repo.update_progress(job.id, i, total)
+                    await session.commit()
+                except Exception:
+                    pass
+                return  # fail 아닌 정상 리턴 — graceful_stop이 pending으로 전환
 
             if is_emergency_stopped() or is_cancel_requested() or _is_cancelled:
                 cancelled = len(product_ids) - i

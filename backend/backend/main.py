@@ -69,33 +69,53 @@ async def lifespan(app: FastAPI):
     _startup_log.info(f"[startup] 리비전={_revision}, 커밋={_commit}")
 
     # 서버 시작 시 좀비 running Job 처리
-    # - collect: pending 복구 (재시도 가능)
-    # - transmit: failed 처리 (OOM 무한루프 방지, 수동 재개만 허용)
+    # - transmit: attempt < 3이면 pending 복구 (배포 중단 → 자동 재개)
+    #             attempt >= 3이면 failed (OOM 무한루프 방지)
+    # - collect 등 나머지: pending 복구
+    _MAX_TRANSMIT_ATTEMPTS = 3
     for _attempt in range(3):
         try:
             from backend.db.orm import get_write_session
-            from backend.domain.samba.job.model import JobStatus
             from sqlalchemy import text
 
             async with get_write_session() as session:
-                # transmit Job → failed (OOM 재시작 시 자동 재실행 방지)
-                r_tx = await session.execute(
+                # transmit Job: attempt 기반 분기
+                # attempt < 3 → pending 복구 + attempt 증가 (current 보존 → 이어서 전송)
+                r_resume = await session.execute(
                     text(
-                        f"UPDATE samba_jobs SET status = '{JobStatus.FAILED}', "
-                        "error = 'OOM 재시작 — 자동복구 중단', "
-                        "completed_at = now() "
-                        f"WHERE status = '{JobStatus.RUNNING}' AND job_type = 'transmit'"
+                        "UPDATE samba_jobs "
+                        "SET status = 'pending', started_at = NULL, "
+                        "attempt = COALESCE(attempt, 0) + 1 "
+                        "WHERE status = 'running' AND job_type = 'transmit' "
+                        f"AND COALESCE(attempt, 0) < {_MAX_TRANSMIT_ATTEMPTS}"
                     )
                 )
-                if r_tx.rowcount > 0:
+                if r_resume.rowcount > 0:
                     _startup_log.info(
-                        f"[startup] 좀비 transmit Job {r_tx.rowcount}건 → failed 처리"
+                        f"[startup] 좀비 transmit Job {r_resume.rowcount}건 → pending 복구 (재개 예정)"
                     )
+
+                # attempt >= 3 → failed (OOM 반복 의심)
+                r_fail = await session.execute(
+                    text(
+                        "UPDATE samba_jobs "
+                        "SET status = 'failed', "
+                        "error = 'OOM 반복 재시작 (attempt >= 3) — 수동 확인 필요', "
+                        "completed_at = now() "
+                        "WHERE status = 'running' AND job_type = 'transmit' "
+                        f"AND COALESCE(attempt, 0) >= {_MAX_TRANSMIT_ATTEMPTS}"
+                    )
+                )
+                if r_fail.rowcount > 0:
+                    _startup_log.info(
+                        f"[startup] 좀비 transmit Job {r_fail.rowcount}건 → failed (attempt >= {_MAX_TRANSMIT_ATTEMPTS})"
+                    )
+
                 # collect 등 나머지 → pending 복구 (기존 동작 유지)
                 r_other = await session.execute(
                     text(
-                        f"UPDATE samba_jobs SET status = '{JobStatus.PENDING}', started_at = NULL "
-                        f"WHERE status = '{JobStatus.RUNNING}' AND job_type != 'transmit'"
+                        "UPDATE samba_jobs SET status = 'pending', started_at = NULL "
+                        "WHERE status = 'running' AND job_type != 'transmit'"
                     )
                 )
                 if r_other.rowcount > 0:
@@ -163,18 +183,13 @@ async def lifespan(app: FastAPI):
         )
 
     yield
-    # Graceful Shutdown — 진행 중인 작업 완료 대기 후 종료
+    # Graceful Shutdown — 진행 중인 전송을 안전하게 중단하고 pending으로 보존
     import logging
 
     _log = logging.getLogger("backend.shutdown")
     _log.info("[shutdown] SIGTERM 수신 — graceful shutdown 시작")
 
-    # 1) running 잡 복구는 다음 인스턴스의 startup에서 처리
-    #    shutdown에서 ALL running → pending 리셋 시 새 인스턴스의 잡까지 리셋하는
-    #    레이스 컨디션 발생 → startup 핸들러에 위임
-    _log.info("[shutdown] running 잡 복구는 다음 인스턴스 startup에 위임")
-
-    # 2) 오토튠 + 잡 워커 즉시 정지 (대기 없음)
+    # 1) 오토튠 즉시 정지
     from backend.api.v1.routers.samba.collector_autotune import (
         _autotune_running_event,
         _autotune_task,
@@ -186,9 +201,17 @@ async def lifespan(app: FastAPI):
     if _autotune_task and not _autotune_task.done():
         _autotune_task.cancel()
     watchdog_task.cancel()
-    worker.stop()
-    worker_task.cancel()
 
+    # 2) 잡 워커 graceful 종료 — 전송 루프가 현재 건 완료 후 pending 보존
+    #    최대 30초 대기 (Cloud Run graceful-timeout=300초 내)
+    try:
+        await worker.graceful_stop(timeout=30)
+    except Exception as gs_err:
+        _log.error(f"[shutdown] graceful_stop 실패: {gs_err}")
+        # 폴백: 강제 종료
+        worker.stop()
+
+    worker_task.cancel()
     _log.info("[shutdown] graceful shutdown 완료")
 
 

@@ -56,6 +56,9 @@ class SambaJob(SQLModel, table=True):
     progress: int = Field(default=0, sa_column=Column(Integer, default=0))
     total: int = Field(default=0, sa_column=Column(Integer, default=0))
     current: int = Field(default=0, sa_column=Column(Integer, default=0))
+    attempt: int = Field(
+        default=0, sa_column=Column(Integer, default=0, server_default="0")
+    )  # 연속 재시작 횟수 — 배포 vs OOM 구분용
     error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
