@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 
 router = APIRouter(prefix="/shipments", tags=["samba-shipments"])
 
@@ -101,7 +102,25 @@ async def list_shipments(
     limit: int = Query(50, ge=1, le=500),
     status: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
+    from sqlmodel import select
+
+    from backend.domain.samba.shipment.model import SambaShipment
+
+    # tenant_id가 있으면 해당 테넌트 전송 이력만 조회
+    if tenant_id is not None:
+        stmt = (
+            select(SambaShipment)
+            .order_by(SambaShipment.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        stmt = stmt.where(SambaShipment.tenant_id == tenant_id)
+        if status:
+            stmt = stmt.where(SambaShipment.status == status)
+        result = await session.execute(stmt)
+        return result.scalars().all()
     svc = _get_service(session)
     return await svc.list_shipments(skip=skip, limit=limit, status=status)
 

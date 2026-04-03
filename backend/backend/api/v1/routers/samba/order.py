@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 from backend.domain.samba.order.model import SambaOrder
 from backend.domain.samba.order.repository import SambaOrderRepository
 from backend.domain.samba.order.service import SambaOrderService
@@ -35,7 +36,23 @@ async def list_orders(
     limit: int = Query(50, ge=1, le=500),
     status: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
+    from sqlmodel import select
+
+    # tenant_id가 있으면 해당 테넌트 주문만 조회
+    if tenant_id is not None:
+        stmt = (
+            select(SambaOrder)
+            .order_by(SambaOrder.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
+        if status:
+            stmt = stmt.where(SambaOrder.status == status)
+        result = await session.execute(stmt)
+        return result.scalars().all()
     svc = _read_service(session)
     return await svc.list_orders(skip=skip, limit=limit, status=status)
 
@@ -43,6 +60,7 @@ async def list_orders(
 @router.get("/dashboard-stats")
 async def dashboard_stats(
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """대시보드 집계 — DB에서 SUM/COUNT 후 결과만 반환 (빠름)."""
     from sqlalchemy import select, func, case, and_
@@ -66,6 +84,9 @@ async def dashboard_stats(
             "delivered"
         ),
     ).where(SambaOrder.created_at >= this_month_start)
+    # tenant_id가 있으면 해당 테넌트 데이터만 집계
+    if tenant_id is not None:
+        this_month_q = this_month_q.where(SambaOrder.tenant_id == tenant_id)
     tm = (await session.execute(this_month_q)).one()
 
     # 전월 집계
@@ -81,6 +102,8 @@ async def dashboard_stats(
             SambaOrder.created_at < this_month_start,
         )
     )
+    if tenant_id is not None:
+        last_month_q = last_month_q.where(SambaOrder.tenant_id == tenant_id)
     lm = (await session.execute(last_month_q)).one()
 
     # 최근 7일 일별 집계
@@ -96,6 +119,8 @@ async def dashboard_stats(
         .where(SambaOrder.created_at >= week_ago)
         .group_by(func.date(SambaOrder.created_at))
     )
+    if tenant_id is not None:
+        daily_q = daily_q.where(SambaOrder.tenant_id == tenant_id)
     daily_rows = (await session.execute(daily_q)).all()
     weekly = []
     for i in range(7):
@@ -113,6 +138,8 @@ async def dashboard_stats(
 
     # 최근 활동 5건
     recent_q = select(SambaOrder).order_by(SambaOrder.created_at.desc()).limit(5)
+    if tenant_id is not None:
+        recent_q = recent_q.where(SambaOrder.tenant_id == tenant_id)
     recent = (await session.execute(recent_q)).scalars().all()
 
     tm_fulfillment = (

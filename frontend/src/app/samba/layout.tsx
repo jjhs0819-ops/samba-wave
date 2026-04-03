@@ -78,6 +78,8 @@ export default function SambaLayout({
 
   const handleLogout = () => {
     localStorage.removeItem("samba_user");
+    // 로그아웃 시 JWT 토큰도 함께 삭제
+    localStorage.removeItem("samba_token");
     router.replace("/samba/login");
   };
 

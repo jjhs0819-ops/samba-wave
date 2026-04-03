@@ -9,7 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from sqlmodel import select
+
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 from backend.dtos.samba.sourcing_account import (
     SourcingAccountCreate,
     SourcingAccountUpdate,
@@ -45,7 +48,20 @@ def _write_service(session: AsyncSession):
 async def list_sourcing_accounts(
     site_name: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
+    from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+
+    # tenant_id가 있으면 해당 테넌트 소싱처 계정만 조회
+    if tenant_id is not None:
+        stmt = select(SambaSourcingAccount).order_by(
+            SambaSourcingAccount.created_at.desc()
+        )
+        stmt = stmt.where(SambaSourcingAccount.tenant_id == tenant_id)
+        if site_name:
+            stmt = stmt.where(SambaSourcingAccount.site_name == site_name)
+        result = await session.execute(stmt)
+        return result.scalars().all()
     return await _read_service(session).list_accounts(site_name=site_name)
 
 
@@ -123,10 +139,13 @@ async def get_sourcing_account(
 async def create_sourcing_account(
     body: SourcingAccountCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    return await _write_service(session).create_account(
-        body.model_dump(exclude_unset=True)
-    )
+    data = body.model_dump(exclude_unset=True)
+    # tenant_id가 있으면 신규 소싱처 계정에 테넌트 정보 설정
+    if tenant_id is not None:
+        data["tenant_id"] = tenant_id
+    return await _write_service(session).create_account(data)
 
 
 @router.put("/{account_id}")
@@ -134,8 +153,16 @@ async def update_sourcing_account(
     account_id: str,
     body: SourcingAccountUpdate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _write_service(session)
+    # tenant_id가 있으면 소유권 검증
+    if tenant_id is not None:
+        existing = await svc.get_account(account_id)
+        if not existing:
+            raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
+        if existing.tenant_id != tenant_id:
+            raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
     result = await svc.update_account(account_id, body.model_dump(exclude_unset=True))
     if not result:
         raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
@@ -146,8 +173,17 @@ async def update_sourcing_account(
 async def toggle_sourcing_account(
     account_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    result = await _write_service(session).toggle_active(account_id)
+    svc = _write_service(session)
+    # tenant_id가 있으면 소유권 검증
+    if tenant_id is not None:
+        existing = await svc.get_account(account_id)
+        if not existing:
+            raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
+        if existing.tenant_id != tenant_id:
+            raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
+    result = await svc.toggle_active(account_id)
     if not result:
         raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
     return result
@@ -157,8 +193,17 @@ async def toggle_sourcing_account(
 async def delete_sourcing_account(
     account_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    if not await _write_service(session).delete_account(account_id):
+    svc = _write_service(session)
+    # tenant_id가 있으면 소유권 검증
+    if tenant_id is not None:
+        existing = await svc.get_account(account_id)
+        if not existing:
+            raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
+        if existing.tenant_id != tenant_id:
+            raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
+    if not await svc.delete_account(account_id):
         raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
     return {"ok": True}
 

@@ -41,3 +41,47 @@ jobs:
             --allow-unauthenticated \
             --vpc-egress=all-traffic \
             --quiet
+
+      - name: Verify deployment revision
+        env:
+          PROJECT: project-d57efcc7-c0d8-4778-837
+        run: |
+          echo "=== 배포 검증 시작 ==="
+          # 최신 리비전 확인
+          LATEST=$(gcloud run revisions list \
+            --service=samba-wave-api \
+            --region=asia-northeast3 \
+            --project="${PROJECT}" \
+            --sort-by="~creationTimestamp" \
+            --limit=1 \
+            --format="value(name)")
+          echo "최신 리비전: ${LATEST}"
+
+          # 현재 트래픽 받는 리비전 확인
+          SERVING=$(gcloud run services describe samba-wave-api \
+            --region=asia-northeast3 \
+            --project="${PROJECT}" \
+            --format="value(status.traffic[0].revisionName)")
+          echo "서빙 리비전: ${SERVING}"
+
+          # 불일치 시 최신 리비전으로 트래픽 전환
+          if [ "${LATEST}" != "${SERVING}" ]; then
+            echo "⚠️ 리비전 불일치! ${SERVING} → ${LATEST} 전환 시도"
+            gcloud run services update-traffic samba-wave-api \
+              --to-revisions="${LATEST}=100" \
+              --region=asia-northeast3 \
+              --project="${PROJECT}"
+            echo "✅ 트래픽 전환 완료"
+          else
+            echo "✅ 최신 리비전이 정상 서빙 중"
+          fi
+
+          # 헬스체크
+          HEALTH_URL="https://samba-wave-api-363598397345.asia-northeast3.run.app/api/v1/health"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${HEALTH_URL}" --max-time 10)
+          if [ "${HTTP_CODE}" = "200" ]; then
+            echo "✅ 헬스체크 통과 (HTTP ${HTTP_CODE})"
+          else
+            echo "❌ 헬스체크 실패 (HTTP ${HTTP_CODE})"
+            exit 1
+          fi

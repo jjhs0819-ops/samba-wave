@@ -23,6 +23,8 @@ export default function SambaLoginPage() {
     setSubmitting(true)
     try {
       const user = await userApi.login(email, password)
+      // JWT 토큰과 사용자 정보를 localStorage에 저장
+      if (user.token) localStorage.setItem('samba_token', user.token)
       localStorage.setItem('samba_user', JSON.stringify(user))
       router.replace('/samba')
     } catch (err) {

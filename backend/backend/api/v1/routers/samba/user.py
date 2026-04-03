@@ -1,12 +1,15 @@
 """삼바웨이브 사용자(로그인 계정) 관리 API."""
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from jose import jwt
 from pydantic import BaseModel, EmailStr, Field
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from backend.core.config import settings
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.user.model import SambaUser
 from backend.domain.samba.user.repository import SambaUserRepository
@@ -50,6 +53,9 @@ class UserOut(BaseModel):
     status: str = "active"
     created_at: str
     updated_at: str
+    # 로그인 응답 전용 필드 (목록 조회 등에서는 None)
+    token: Optional[str] = None
+    tenant_id: Optional[str] = None
 
 
 # ── 엔드포인트 ──
@@ -144,6 +150,15 @@ async def login_user(
             status_code=401, detail="이메일 또는 비밀번호가 올바르지 않습니다"
         )
 
+    # JWT 토큰 생성 (7일 유효)
+    token_payload = {
+        "sub": user.id,
+        "exp": datetime.now(tz=timezone.utc) + timedelta(days=7),
+    }
+    access_token = jwt.encode(
+        token_payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm
+    )
+
     logger.info(f"[사용자관리] 로그인: {user.email}")
     return UserOut(
         id=user.id,
@@ -153,6 +168,8 @@ async def login_user(
         status=user.status,
         created_at=user.created_at.isoformat(),
         updated_at=user.updated_at.isoformat(),
+        token=access_token,
+        tenant_id=user.id,
     )
 
 

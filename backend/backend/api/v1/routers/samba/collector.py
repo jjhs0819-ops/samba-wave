@@ -15,6 +15,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.cache import cache
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 
 from backend.api.v1.routers.samba.collector_common import (
     _HEAVY_FIELDS,
@@ -168,9 +169,19 @@ async def musinsa_auth_status(
 
 
 @router.get("/filters")
-async def list_filters(session: AsyncSession = Depends(get_read_session_dependency)):
-    svc = _get_services(session)
-    all_filters = await svc.list_filters(limit=10000)
+async def list_filters(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    from backend.domain.samba.collector.model import SambaSearchFilter as _SF
+
+    # tenant_id가 있으면 해당 테넌트 필터만 조회
+    sf_stmt = select(_SF).limit(10000)
+    if tenant_id:
+        sf_stmt = sf_stmt.where(_SF.tenant_id == tenant_id)
+    sf_result = await session.execute(sf_stmt)
+    all_filters = sf_result.scalars().all()
+
     # 폴더 제외, 리프 그룹만 반환 (기존 호환성)
     filters = [f for f in all_filters if not f.is_folder]
 
@@ -257,9 +268,14 @@ async def list_filters(session: AsyncSession = Depends(get_read_session_dependen
 async def create_filter(
     body: SearchFilterCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _get_services(session)
-    return await svc.create_filter(body.model_dump(exclude_unset=True))
+    data = body.model_dump(exclude_unset=True)
+    # 테넌트 ID가 있으면 새 필터에 설정
+    if tenant_id:
+        data["tenant_id"] = tenant_id
+    return await svc.create_filter(data)
 
 
 @router.put("/filters/{filter_id}")
@@ -392,10 +408,19 @@ async def delete_orphan_products(
 
 
 @router.get("/filters/tree")
-async def get_filter_tree(session: AsyncSession = Depends(get_read_session_dependency)):
+async def get_filter_tree(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
     """검색그룹 트리 구조 반환. 사이트 > 폴더 > 리프 그룹."""
-    svc = _get_services(session)
-    all_filters = await svc.list_filters(limit=10000)
+    from backend.domain.samba.collector.model import SambaSearchFilter as _SF_TREE
+
+    # tenant_id가 있으면 해당 테넌트 필터만 조회
+    tree_stmt = select(_SF_TREE).limit(10000)
+    if tenant_id:
+        tree_stmt = tree_stmt.where(_SF_TREE.tenant_id == tenant_id)
+    tree_result = await session.execute(tree_stmt)
+    all_filters = tree_result.scalars().all()
 
     # 각 필터별 수집상품 카운트 — 단일 쿼리로 일괄 조회
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
@@ -495,6 +520,7 @@ async def get_filter_tree(session: AsyncSession = Depends(get_read_session_depen
 async def create_folder(
     body: FolderCreateRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """폴더(분류) 노드 생성."""
     svc = _get_services(session)
@@ -505,6 +531,9 @@ async def create_folder(
         "is_folder": True,
         "requested_count": 0,
     }
+    # 테넌트 ID가 있으면 새 폴더에 설정
+    if tenant_id:
+        data["tenant_id"] = tenant_id
     return await svc.create_filter(data)
 
 
@@ -537,6 +566,7 @@ async def scroll_products(
     search_filter_id: Optional[str] = None,
     sort_by: str = Query("collect-desc"),
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """서버사이드 필터/정렬/페이지네이션 — 무한스크롤용.
 
@@ -550,6 +580,10 @@ async def scroll_products(
 
     # 기본 조건
     conditions = []
+
+    # 테넌트 ID가 있으면 해당 테넌트 상품만 조회
+    if tenant_id:
+        conditions.append(_CP.tenant_id == tenant_id)
 
     # 텍스트 검색
     q = search.strip()
@@ -961,6 +995,7 @@ async def list_collected_products(
     status: Optional[str] = None,
     source_site: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from sqlalchemy import inspect as _sa_inspect
@@ -970,6 +1005,9 @@ async def list_collected_products(
     light_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]
 
     stmt = select(*light_cols)
+    # 테넌트 ID가 있으면 해당 테넌트 상품만 조회
+    if tenant_id:
+        stmt = stmt.where(_CP.tenant_id == tenant_id)
     if status:
         stmt = stmt.where(_CP.status == status)
     if source_site:
@@ -1057,9 +1095,14 @@ async def get_price_history(
 async def create_collected_product(
     body: CollectedProductCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _get_services(session)
-    result = await svc.create_collected_product(body.model_dump(exclude_unset=True))
+    data = body.model_dump(exclude_unset=True)
+    # 테넌트 ID가 있으면 새 상품에 설정
+    if tenant_id:
+        data["tenant_id"] = tenant_id
+    result = await svc.create_collected_product(data)
     # 상품 생성 시 캐시 무효화
     await cache.clear_pattern("products:*")
     return result
@@ -1100,9 +1143,14 @@ async def lookup_by_market_product_no(
 async def bulk_create_collected_products(
     body: BulkCreateRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _get_services(session)
     items = [item.model_dump(exclude_unset=True) for item in body.items]
+    # 테넌트 ID가 있으면 각 상품에 설정
+    if tenant_id:
+        for item in items:
+            item["tenant_id"] = tenant_id
     created = await svc.bulk_create_collected_products(items)
     # 상품 일괄 생성 시 캐시 무효화
     await cache.clear_pattern("products:*")

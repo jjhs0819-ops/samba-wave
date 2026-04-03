@@ -12,9 +12,16 @@ export const API_BASE = API_BASE_URL
 const SAMBA_PREFIX = `${API_BASE}/api/v1/samba`;
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  // localStorage에서 JWT 토큰 읽기 (SSR 환경 고려)
+  const token = typeof window !== 'undefined' ? localStorage.getItem('samba_token') : null
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(init?.headers as Record<string, string>),
+  }
+  if (token) headers['Authorization'] = `Bearer ${token}`
   const res = await fetch(url, {
     cache: 'no-store',
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers,
     ...init,
   });
   if (!res.ok) {
