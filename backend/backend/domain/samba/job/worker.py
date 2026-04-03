@@ -74,10 +74,10 @@ def get_job_logs(job_id: str, since: int = 0) -> list[str]:
 
 def _add_job_log(job_id: str, msg: str):
     """Job 로그 추가 (최대 _MAX_JOB_LOGS 유지) + 전송 링 버퍼에도 저장."""
-    # 백엔드 타임스탬프 — 프론트 폴링 시각이 아닌 실제 처리 시각 기록
-    from datetime import datetime as _dt
+    # 백엔드 타임스탬프 (KST) — 프론트 폴링 시각이 아닌 실제 처리 시각 기록
+    from datetime import datetime as _dt, timezone, timedelta
 
-    msg = f"[{_dt.now().strftime('%H:%M:%S')}] {msg}"
+    msg = f"[{(_dt.now(timezone.utc) + timedelta(hours=9)).strftime('%H:%M:%S')}] {msg}"
     if job_id not in _job_logs:
         _job_logs[job_id] = []
     buf = _job_logs[job_id]
