@@ -60,6 +60,57 @@ jobs:
             --allow-unauthenticated \
             --port 8080 \
             --memory 1Gi \
-            --set-env-vars ENVIRONMENT=production,write_db_user=${{ secrets.DB_WRITE_USER }},write_db_password=${{ secrets.DB_WRITE_PASSWORD }},write_db_host=${{ secrets.DB_WRITE_HOST }},write_db_port=5432,write_db_name=samba-wave,read_db_user=${{ secrets.DB_READ_USER }},read_db_password=${{ secrets.DB_READ_PASSWORD }},read_db_host=${{ secrets.DB_READ_HOST }},read_db_port=5432,read_db_name=samba-wave,db_ssl_required=false,jwt_secret_key=${{ secrets.JWT_SECRET_KEY }},AWS_EC2_METADATA_DISABLED=true \
+            --set-env-vars ENVIRONMENT=production,write_db_user=${{ secrets.DB_WRITE_USER }},write_db_password=${{ secrets.DB_WRITE_PASSWORD }},write_db_host=${{ secrets.DB_WRITE_HOST }},write_db_port=5432,write_db_name=samba-wave,read_db_user=${{ secrets.DB_READ_USER }},read_db_password=${{ secrets.DB_READ_PASSWORD }},read_db_host=${{ secrets.DB_READ_HOST }},read_db_port=5432,read_db_name=samba-wave,db_ssl_required=false,jwt_secret_key=${{ secrets.JWT_SECRET_KEY }},AWS_EC2_METADATA_DISABLED=true,COMMIT_SHA=${{ github.sha }} \
             --project glass-sight-452013-n6 \
             --quiet
+
+      - name: Verify deployment (새 리비전이 실제로 서비스 중인지 확인)
+        run: |
+          PROJECT=glass-sight-452013-n6
+          REGION=asia-northeast3
+          SERVICE=samba-wave-backend
+
+          echo "[검증] 최신 리비전 확인 중..."
+
+          # 최신 리비전 이름 조회
+          LATEST_REVISION=$(gcloud run revisions list \
+            --service=$SERVICE \
+            --region=$REGION \
+            --project=$PROJECT \
+            --format="value(name)" \
+            --sort-by="~creationTimestamp" \
+            --limit=1)
+          echo "[검증] 최신 리비전: $LATEST_REVISION"
+
+          # 현재 트래픽을 받고 있는 리비전 조회
+          SERVING_REVISION=$(gcloud run services describe $SERVICE \
+            --region=$REGION \
+            --project=$PROJECT \
+            --format="value(status.traffic[0].revisionName)")
+          echo "[검증] 트래픽 수신 중인 리비전: $SERVING_REVISION"
+
+          # 최신 리비전이 트래픽을 받고 있지 않으면 강제 전환
+          if [ "$LATEST_REVISION" != "$SERVING_REVISION" ]; then
+            echo "[경고] 새 리비전이 트래픽을 받지 못하고 있습니다. 강제 전환 시도..."
+            gcloud run services update-traffic $SERVICE \
+              --region=$REGION \
+              --project=$PROJECT \
+              --to-revisions=$LATEST_REVISION=100
+
+            # 전환 후 재확인
+            SERVING_REVISION=$(gcloud run services describe $SERVICE \
+              --region=$REGION \
+              --project=$PROJECT \
+              --format="value(status.traffic[0].revisionName)")
+
+            if [ "$LATEST_REVISION" != "$SERVING_REVISION" ]; then
+              echo "[오류] 강제 전환 실패 — 구 코드가 여전히 서비스 중입니다!"
+              echo "[오류] 서빙 리비전: $SERVING_REVISION"
+              echo "[오류] 커밋: ${{ github.sha }}"
+              exit 1
+            fi
+          fi
+
+          echo "[완료] 배포 검증 성공 ✅"
+          echo "[완료] 서빙 리비전: $SERVING_REVISION"
+          echo "[완료] 커밋 SHA: ${{ github.sha }}"
