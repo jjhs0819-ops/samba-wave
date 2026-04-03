@@ -456,8 +456,11 @@ class JobWorker:
         start_from = job.current or 0
         await repo.update_progress(job.id, start_from, total)
 
-        success_count = 0
-        fail_count = 0
+        # 이어하기: 이전 실행의 카운트 복원
+        prev_result = job.result or {}
+        success_count = prev_result.get("success", 0) if start_from > 0 else 0
+        fail_count = prev_result.get("failed", 0) if start_from > 0 else 0
+        skip_count = prev_result.get("skipped", 0) if start_from > 0 else 0
         failed_pids: list[str] = []  # 재시도 대상
 
         # 상품별 전송 루프
@@ -553,6 +556,7 @@ class JobWorker:
                                 f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: 전송{rl}",
                             )
                         elif acc_status == "skipped":
+                            skip_count += 1
                             _add_job_log(
                                 job.id,
                                 f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: 스킵{rl}",
@@ -568,6 +572,7 @@ class JobWorker:
                             )
                     if not tx_result:
                         if status == "skipped":
+                            skip_count += 1
                             refresh_info = r.get("update_result", {})
                             rl = (
                                 refresh_info.get("refresh", "")
@@ -603,6 +608,14 @@ class JobWorker:
             if True:
                 try:
                     await repo.update_progress(job.id, i + 1, total)
+                    # 중간 카운트 저장 — 이어하기 시 복원용
+                    _job = await repo.get_async(job.id)
+                    if _job:
+                        _job.result = {
+                            "success": success_count,
+                            "skipped": skip_count,
+                            "failed": fail_count,
+                        }
                     await session.commit()
                 except Exception as pg_err:
                     logger.error(
@@ -650,6 +663,7 @@ class JobWorker:
                         any_ok = any(s == "success" for s in tx2.values())
                         if any_ok:
                             retry_success += 1
+                            success_count += 1
                             fail_count = prev_fail - 1
                             _add_job_log(
                                 job.id,
@@ -671,11 +685,17 @@ class JobWorker:
                 )
 
         final_fail = fail_count
-        _add_job_log(job.id, f"전송 완료 — 성공 {success_count}건, 실패 {final_fail}건")
-        await repo.complete_job(
-            job.id, {"success": success_count, "failed": final_fail}
+        _add_job_log(
+            job.id,
+            f"전송 완료 — 성공 {success_count}건, 스킵 {skip_count}건, 실패 {final_fail}건",
         )
-        logger.info(f"[잡워커] 전송 완료: {job.id} (성공 {success_count}/{total}건)")
+        await repo.complete_job(
+            job.id,
+            {"success": success_count, "skipped": skip_count, "failed": final_fail},
+        )
+        logger.info(
+            f"[잡워커] 전송 완료: {job.id} (성공 {success_count}, 스킵 {skip_count}, 실패 {final_fail}/{total}건)"
+        )
 
     async def _run_collect(self, job, repo, session):
         """수집 잡 실행 — collector_collection의 _stream_musinsa 로직 이식."""
@@ -840,6 +860,10 @@ class JobWorker:
                     api_total_count = data.get("totalCount", 0)
                     if api_total_pages > 0:
                         max_pages = api_total_pages
+                    else:
+                        logger.warning(
+                            f"[잡워커] totalPages={api_total_pages}, totalCount={api_total_count} → 초기값({max_pages}) 유지"
+                        )
                     logger.info(
                         f"[잡워커] API 총 {api_total_count}건, {api_total_pages}페이지 → max_pages={max_pages}"
                     )
@@ -1020,6 +1044,11 @@ class JobWorker:
         # requested_count는 실제 수집수가 더 클 때만 갱신 (축소 방지)
         if _actual > requested_count:
             _upd_vals["requested_count"] = _actual
+            logger.info(f"[잡워커] requested_count 갱신: {requested_count} → {_actual}")
+        elif _actual < requested_count:
+            logger.info(
+                f"[잡워커] 실제 {_actual}건 < 요청 {requested_count}건 (축소 방지로 유지)"
+            )
         await session.execute(
             _sa_upd(SambaSearchFilter)
             .where(SambaSearchFilter.id == filter_id)
