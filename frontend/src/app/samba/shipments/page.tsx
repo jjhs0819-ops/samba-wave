@@ -789,7 +789,7 @@ export default function ShipmentsPage() {
             <button disabled={!!stopping} onClick={async () => {
                 setStopping('emergency')
                 const ts = new Date().toLocaleTimeString()
-                setLogMessages(prev => [...prev, `[${ts}] 전체 중단 요청...`].slice(-30))
+                setLogMessages(prev => [...prev, `[${ts}] 작업중단 요청...`].slice(-30))
                 abortRef.current = true
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                 try {
@@ -798,15 +798,15 @@ export default function ShipmentsPage() {
                   await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   await fetch(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
                   activeJobIdRef.current = ''
-                  setLogMessages(prev => [...prev, `[${ts}] 전체 중단 완료 — 모든 전송/대기 잡 취소됨`].slice(-30))
+                  setLogMessages(prev => [...prev, `[${ts}] 작업중단 완료`].slice(-30))
                 } catch {
-                  setLogMessages(prev => [...prev, `[${ts}] 전체 중단 실패`].slice(-30))
+                  setLogMessages(prev => [...prev, `[${ts}] 작업중단 실패`].slice(-30))
                 }
                 setTransmitting(false)
                 setStopping('')
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'emergency' ? 'rgba(255,50,50,0.6)' : 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: stopping ? 0.7 : 1 }}
-              >{stopping === 'emergency' ? '중단중...' : '전체 중단'}</button>
+              >{stopping === 'emergency' ? '중단중...' : '작업중단'}</button>
             {<>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: loopEnabled ? '#FF8C00' : '#666', cursor: 'pointer' }}>
                 <input type="checkbox" checked={loopEnabled} onChange={() => setLoopEnabled(!loopEnabled)} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
