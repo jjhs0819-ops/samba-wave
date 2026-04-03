@@ -15,6 +15,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.cache import cache
+from backend.domain.user.auth_service import get_user_id
 
 from backend.api.v1.routers.samba.collector_common import (
     _HEAVY_FIELDS,
@@ -257,9 +258,12 @@ async def list_filters(session: AsyncSession = Depends(get_read_session_dependen
 async def create_filter(
     body: SearchFilterCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    user_id: str = Depends(get_user_id),
 ):
     svc = _get_services(session)
-    return await svc.create_filter(body.model_dump(exclude_unset=True))
+    data = body.model_dump(exclude_unset=True)
+    data["created_by"] = user_id
+    return await svc.create_filter(data)
 
 
 @router.put("/filters/{filter_id}")
