@@ -54,7 +54,7 @@ class BaseRepository(Generic[ModelType]):
             return entity
         except SQLAlchemyError as e:
             logger.exception(f"Error fetching {self.model.__name__} with id {id}: {e}")
-            raise
+            return None
 
     async def list_async(
         self, skip: int = 0, limit: Optional[int] = None, order_by: Optional[str] = None
@@ -96,7 +96,7 @@ class BaseRepository(Generic[ModelType]):
 
         except SQLAlchemyError as e:
             logger.exception(f"Error listing {self.model.__name__}: {e}")
-            raise
+            return []
 
     async def create_async(self, **kwargs: Any) -> ModelType:
         """
@@ -221,7 +221,7 @@ class BaseRepository(Generic[ModelType]):
 
         except SQLAlchemyError as e:
             logger.exception(f"Error counting {self.model.__name__}: {e}")
-            raise
+            return 0
 
     async def exists_async(self, **kwargs: Any) -> bool:
         """
@@ -246,7 +246,7 @@ class BaseRepository(Generic[ModelType]):
 
         except SQLAlchemyError as e:
             logger.exception(f"Error checking existence for {self.model.__name__}: {e}")
-            raise
+            return False
 
     async def bulk_create_async(
         self, entities: List[Dict[str, Any]]
@@ -346,7 +346,7 @@ class BaseRepository(Generic[ModelType]):
 
         except SQLAlchemyError as e:
             logger.exception(f"Error finding {self.model.__name__}: {e}")
-            raise
+            return None
 
     async def filter_by_async(
         self,
@@ -395,7 +395,7 @@ class BaseRepository(Generic[ModelType]):
 
         except SQLAlchemyError as e:
             logger.exception(f"Error filtering {self.model.__name__}: {e}")
-            raise
+            return []
 
     async def execute_query_async(self, statement) -> Any:  # type: ignore[no-untyped-def]  # Generic query executor
         """
