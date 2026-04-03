@@ -37,4 +37,7 @@ RUN uv sync --compile-bytecode --no-dev
 COPY backend ./backend
 COPY scripts ./scripts
 
+# CLIP 모델 사전 다운로드 (런타임 다운로드 방지)
+RUN python -c "import open_clip; open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')"
+
 ENTRYPOINT ["./scripts/entrypoint.sh"]
