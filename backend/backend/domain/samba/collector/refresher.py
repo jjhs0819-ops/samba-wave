@@ -59,20 +59,20 @@ SITE_BASE_INTERVAL: dict[str, float] = {
 }
 # 소싱처별 최소 인터벌 (초)
 SITE_MIN_INTERVAL: dict[str, float] = {
-    "MUSINSA": 1.0,
-    "KREAM": 0.5,
-    "DANAWA": 0.5,
-    "FashionPlus": 0.5,
-    "Nike": 0.5,
-    "Adidas": 0.5,
-    "ABCmart": 0.5,
-    "GrandStage": 0.5,
-    "OKmall": 0.5,
-    "SSG": 0.5,
-    "LOTTEON": 0.3,
-    "GSShop": 0.5,
-    "ElandMall": 0.5,
-    "SSF": 0.5,
+    "MUSINSA": 0,
+    "KREAM": 0,
+    "DANAWA": 0,
+    "FashionPlus": 0,
+    "Nike": 0,
+    "Adidas": 0,
+    "ABCmart": 0,
+    "GrandStage": 0,
+    "OKmall": 0,
+    "SSG": 0,
+    "LOTTEON": 0,
+    "GSShop": 0,
+    "ElandMall": 0,
+    "SSF": 0,
 }
 # 소싱처별 인터벌 복원 스텝 (성공 시 감소량)
 SITE_INTERVAL_STEP: dict[str, float] = {
@@ -558,12 +558,11 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
             ),
             timeout=45,
         )
-        # 성공 → 인터벌 점진 복원
+        # 성공 → 인터벌 점진 복원 (사용자 설정 base_interval을 하한으로 사용)
         base = SITE_BASE_INTERVAL.get("MUSINSA", 1.0)
-        min_iv = SITE_MIN_INTERVAL.get("MUSINSA", base)
         step = SITE_INTERVAL_STEP.get("MUSINSA", 0.5)
         prev_interval = _site_intervals.get("MUSINSA", base)
-        new_interval = max(min_iv, prev_interval - step)
+        new_interval = max(base, prev_interval - step)
         _site_intervals["MUSINSA"] = new_interval
         _site_consecutive_errors["MUSINSA"] = 0
         # 차단 안 당하는 최소 인터벌 기록

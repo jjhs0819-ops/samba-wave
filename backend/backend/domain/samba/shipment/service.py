@@ -346,7 +346,8 @@ class SambaShipmentService:
             # 상품 데이터 준비 (가격 계산, 이미지 업로드)
             product_dicts = []
             for p in products:
-                pd = p.model_dump()
+                # OOM 방지: 전송에 불필요한 대용량 필드 제외
+                pd = p.model_dump(exclude={"last_sent_data", "extra_data"})
 
                 # 상세 HTML 재생성
                 pd["detail_html"] = await self._build_detail_html(pd)
@@ -558,7 +559,8 @@ class SambaShipmentService:
             )
             return shipment
 
-        product_dict = product_row.model_dump()
+        # OOM 방지: 전송에 불필요한 대용량 필드 제외
+        product_dict = product_row.model_dump(exclude={"last_sent_data", "extra_data"})
 
         # 업데이트 항목이 체크되어 있으면 소싱처 최신화 먼저 실행
         # skip_refresh=True이면 오토튠에서 이미 리프레시 완료 → 이중 호출 방지
@@ -869,9 +871,7 @@ class SambaShipmentService:
                     )
                     # 마켓별 상품명 조합이 있으면 _dispatch_one에서 덮어쓸 수 있도록 name_rule 보관
                     product_dict["_name_rule"] = name_rule
-                    product_dict["_original_name"] = product_row.model_dump().get(
-                        "name", ""
-                    )
+                    product_dict["_original_name"] = product_row.name or ""
 
         # 글로벌 삭제어 적용 (상품명에서 금칙어 제거)
         # DB 실제 데이터: type='deletion', scope='all'
@@ -1789,7 +1789,8 @@ class SambaShipmentService:
         product_row = await product_repo.get_async(shipment.product_id)
         if not product_row:
             return shipment
-        product_dict = product_row.model_dump()
+        # OOM 방지: 전송에 불필요한 대용량 필드 제외
+        product_dict = product_row.model_dump(exclude={"last_sent_data", "extra_data"})
 
         # 재전송
         await self.repo.update_async(shipment_id, status="transmitting")
@@ -1922,7 +1923,10 @@ class SambaShipmentService:
                 )
                 continue
 
-            product_dict = product_row.model_dump()
+            # OOM 방지: 삭제에 불필요한 대용량 필드 제외
+            product_dict = product_row.model_dump(
+                exclude={"last_sent_data", "extra_data"}
+            )
             market_product_nos = product_row.market_product_nos or {}
             reg_accounts = product_row.registered_accounts or []
             delete_results: dict[str, str] = {}
