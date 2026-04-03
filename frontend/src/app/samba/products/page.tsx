@@ -104,7 +104,7 @@ export default function ProductsPage() {
   const [aiPresetList, setAiPresetList] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
   const [aiImgTransforming, setAiImgTransforming] = useState(false)
   const [imgFiltering, setImgFiltering] = useState(false)
-  const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['images']))
+  const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['detail_images']))
 
   // AI 작업 진행 모달
   const [aiJobModal, setAiJobModal] = useState(false)
