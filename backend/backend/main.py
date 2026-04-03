@@ -66,9 +66,7 @@ async def lifespan(app: FastAPI):
     _startup_log = _startup_logging.getLogger("backend.startup")
     _revision = _os.environ.get("K_REVISION", "local")
     _commit = _os.environ.get("COMMIT_SHA", "unknown")
-    _startup_log.info(
-        f"[startup] 리비전={_revision}, 커밋={_commit}"
-    )
+    _startup_log.info(f"[startup] 리비전={_revision}, 커밋={_commit}")
 
     # 서버 시작 시 좀비 running Job 처리
     # - collect: pending 복구 (재시도 가능)
