@@ -810,8 +810,9 @@ class JobWorker:
         total_skipped = 0
         search_page = 1
         empty_pages = 0  # 연속 신규 0건 페이지 카운터 (잡 간 오염 방지용 로컬 변수)
+        max_pages = 100  # API totalPages 기반으로 동적 조정 (초기값)
 
-        while total_saved < remaining and search_page <= 20:
+        while total_saved < remaining and search_page <= max_pages:
             # 취소 확인 (DB에서 상태 재조회)
             from backend.domain.samba.job.model import SambaJob as _SJ
 
@@ -833,6 +834,15 @@ class JobWorker:
                     gf=_gf_filter,
                 )
                 search_items = data.get("data", [])
+                # 첫 페이지에서 totalPages로 최대 페이지 동적 설정
+                if search_page == 1:
+                    api_total_pages = data.get("totalPages", 0)
+                    api_total_count = data.get("totalCount", 0)
+                    if api_total_pages > 0:
+                        max_pages = api_total_pages
+                    logger.info(
+                        f"[잡워커] API 총 {api_total_count}건, {api_total_pages}페이지 → max_pages={max_pages}"
+                    )
                 logger.info(
                     f"[잡워커] 검색 p{search_page}: {len(search_items)}건 (kw={keyword}, brand={_brand_filter})"
                 )
@@ -843,14 +853,14 @@ class JobWorker:
                 logger.error(f"[잡워커] 검색 실패: {e}")
                 break
 
-            # 중복 필터링
+            # 중복 필터링 (현재 필터 기준 — 다른 그룹과 독립적으로 수집)
             candidate_ids = [
                 str(item.get("siteProductId", item.get("goodsNo", "")))
                 for item in search_items
             ]
             existing_result = await session.execute(
                 select(CPModel.site_product_id).where(
-                    CPModel.source_site == "MUSINSA",
+                    CPModel.search_filter_id == filter_id,
                     CPModel.site_product_id.in_(candidate_ids),
                 )
             )
@@ -870,9 +880,9 @@ class JobWorker:
                 f"[잡워커] 중복={len(existing_ids)}, 타겟={len(targets)}, 스킵={total_skipped}"
             )
             if not targets:
-                # 연속 3페이지 신규 0건이면 조기 종료 (나머지도 중복일 가능성 높음)
+                # 연속 5페이지 신규 0건이면 조기 종료
                 empty_pages += 1
-                if empty_pages >= 3:
+                if empty_pages >= 5:
                     logger.info(
                         f"[잡워커] 연속 {empty_pages}페이지 신규 0건 → 조기 종료"
                     )
@@ -1007,7 +1017,8 @@ class JobWorker:
             )
         ).scalar() or 0
         _upd_vals: dict = {"last_collected_at": datetime.now(UTC)}
-        if _actual > 0:
+        # requested_count는 실제 수집수가 더 클 때만 갱신 (축소 방지)
+        if _actual > requested_count:
             _upd_vals["requested_count"] = _actual
         await session.execute(
             _sa_upd(SambaSearchFilter)
