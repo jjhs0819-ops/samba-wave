@@ -355,7 +355,7 @@ async def load_site_intervals_from_db() -> None:
             saved = await _get_setting(session, "autotune_intervals")
         if saved and isinstance(saved, dict):
             for site, val in saved.items():
-                if isinstance(val, (int, float)) and 0.1 <= val <= 60:
+                if isinstance(val, (int, float)) and 0 <= val <= 60:
                     SITE_BASE_INTERVAL[site] = float(val)
                     _site_intervals[site] = float(val)
     except Exception:
@@ -963,11 +963,20 @@ async def _parse_fashionplus(product: Any) -> RefreshResult:
         f"원가 {old_cost}→{new_cost}, 판매가 {old_sale}→{new_sale}, 배송비 {shipping_fee}"
     )
     new_options = detail.get("options") or None
+    # 옵션 기반 품절 판정: 모든 옵션 재고 0이면 sold_out
+    is_sold_out = False
+    if new_options:
+        is_sold_out = all(
+            (opt.get("stock", 0) if isinstance(opt, dict) else 0) <= 0
+            for opt in new_options
+        )
+    new_sale_status = "sold_out" if is_sold_out else "in_stock"
     return RefreshResult(
         product_id=product.id,
         new_sale_price=new_sale,
         new_original_price=new_orig,
         new_cost=new_cost,
+        new_sale_status=new_sale_status,
         new_options=new_options,
         changed=changed,
         stock_changed=bool(
@@ -1075,7 +1084,7 @@ async def refresh_products_bulk(
                     )
                 # 실패 시 1회 재시도 (오토튠만)
                 if r.error and source == "autotune":
-                    interval = _site_intervals.get(site, base_interval)
+                    interval = max(0.1, _site_intervals.get(site, base_interval))
                     await asyncio.sleep(interval)
                     try:
                         r = await asyncio.wait_for(
@@ -1129,8 +1138,8 @@ async def refresh_products_bulk(
                         await on_result(p, r, _idx, _site_total)
                     except Exception as cb_err:
                         logger.warning("[오토튠] on_result 콜백 오류: %s", cb_err)
-                # 소싱처별 적응형 인터벌 (기본값은 소싱처별 base_interval)
-                interval = _site_intervals.get(site, base_interval)
+                # 소싱처별 적응형 인터벌 (기본값은 소싱처별 base_interval, 최소 0.1초)
+                interval = max(0.1, _site_intervals.get(site, base_interval))
                 await asyncio.sleep(interval)
                 return r
 

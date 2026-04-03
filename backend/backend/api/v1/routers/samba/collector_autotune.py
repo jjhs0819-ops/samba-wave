@@ -427,7 +427,16 @@ async def _autotune_loop():
                                 if r.new_options is not None:
                                     updates["options"] = r.new_options
                                 updates["sale_status"] = r.new_sale_status
-                                if r.changed or r.stock_changed:
+                                # cost 변경도 price_changed_at에 반영 (warm/hot 분류 기준)
+                                if (
+                                    r.changed
+                                    or r.stock_changed
+                                    or (
+                                        r.new_cost is not None
+                                        and r.new_cost
+                                        != (getattr(product, "cost", None) or 0)
+                                    )
+                                ):
                                     updates["price_changed_at"] = now
 
                                 # 품절 → 서킷브레이커 + 즉시 마켓삭제
