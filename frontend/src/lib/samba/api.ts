@@ -1197,6 +1197,7 @@ export interface SambaUser {
   name?: string
   is_admin: boolean
   status: string
+  access_token?: string
   created_at: string
   updated_at: string
 }
