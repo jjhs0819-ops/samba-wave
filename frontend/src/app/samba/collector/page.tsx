@@ -1214,9 +1214,10 @@ export default function CollectorPage() {
                       const prod = products[i]
                       const prodName = prod.name?.slice(0, 25) || '이름없음'
                       const prodNo = prod.site_product_id || prod.id.slice(-8)
-                      const label = `${prodName}${prod.name && prod.name.length > 25 ? '...' : ''} (${prodNo})`
+                      const prodBrand = prod.brand || '-'
+                      const label = `${prodBrand} / ${prodNo} / ${prodName}${prod.name && prod.name.length > 25 ? '...' : ''}`
                       processedProducts++
-                      setAiJobTitle(`이미지 필터링 [${processedProducts}/${totalProducts}] ${label}`)
+                      setAiJobTitle(`이미지 필터링 [${processedProducts}/${totalProducts}] ${prodBrand} / ${prodNo}`)
                       try {
                         const steps: string[] = []
                         // 1) 프론트에서 추가이미지 비율 체크 (세로 2배 이상 → 제거)
@@ -1244,14 +1245,14 @@ export default function CollectorPage() {
                             }
                           }
                         }
-                        // 2) 백엔드 Claude Vision 필터링
+                        // 2) 백엔드 이미지 필터링 (CLIP)
                         const r = await proxyApi.filterProductImages([prod.id], '', scope)
                         if (r.success) {
                           success++
                           const removed = r.total_removed || 0
                           totalVisionRemoved += removed
-                          if (removed > 0) steps.push(`Vision ${removed}장 제거`)
-                          else steps.push('Vision 변동없음')
+                          if (removed > 0) steps.push(`CLIP ${removed}장 제거`)
+                          else steps.push('CLIP 변동없음')
                           addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — ${steps.join(' → ')}`)
                         } else { fail++; addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
                       } catch (e) { fail++; addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
@@ -1262,7 +1263,7 @@ export default function CollectorPage() {
                 }
                 const summary = [`성공 ${success}개`, `실패 ${fail}개`]
                 if (totalTall > 0) summary.push(`긴이미지 ${totalTall}장 제거`)
-                if (totalVisionRemoved > 0) summary.push(`Vision ${totalVisionRemoved}장 제거`)
+                if (totalVisionRemoved > 0) summary.push(`CLIP ${totalVisionRemoved}장 제거`)
                 const endTime = ts()
                 setAiJobTitle(`이미지 필터링 완료 (${success}/${totalProducts})`)
                 addLog(`\n완료: ${summary.join(' / ')}`)

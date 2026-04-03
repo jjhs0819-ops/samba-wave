@@ -1,7 +1,10 @@
-"""상품 이미지 자동 필터링 — Claude Vision 분류 + Fireworks 변환.
+"""상품 이미지 자동 필터링 — Claude Vision / CLIP 분류.
 
 수집된 상품 이미지에서 순수 이미지컷(단색 배경 + 상품만)만 남기고
 모델컷/연출컷/배너/사이즈표 등을 자동 제거한다.
+
+method="claude": Claude Vision API (유료, 고정확도)
+method="clip":   CLIP zero-shot 분류 (무료, 로컬)
 """
 
 from __future__ import annotations
@@ -9,9 +12,11 @@ from __future__ import annotations
 import base64
 import json
 import logging
+from io import BytesIO
 from typing import Any
 
 import httpx
+from PIL import Image
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.core.config import settings
@@ -38,9 +43,61 @@ CLASSIFY_PROMPT = """아래 상품 이미지들을 각각 분류하세요:
 이미지 순서대로 JSON 배열로만 답변 (다른 텍스트 없이):
 [{"index": 0, "type": "product"}, {"index": 1, "type": "other"}, ...]"""
 
+# ── CLIP zero-shot 분류 라벨 ──
+CLIP_PRODUCT_LABELS = [
+    "a product photo on a plain white or solid color background, no person visible",
+    "a close-up detail shot of a product without any human body",
+    "a product laid flat on a surface, flat lay photography",
+    "a product displayed on a hanger or mannequin without real human",
+    "shoes photographed from multiple angles on plain background",
+    "a sole or bottom view of shoes on plain background",
+]
+CLIP_OTHER_LABELS = [
+    "a person wearing or modeling clothes or shoes",
+    "human body parts visible such as feet legs hands arms or torso",
+    "a lifestyle or outdoor photoshoot with a person",
+    "a text banner, promotional graphic, or advertisement image",
+    "a size chart, specification table, or measurement guide",
+    "a brand logo or decorative graphic design",
+]
+
+# CLIP 모델 싱글턴 캐시 (프로세스당 1회 로드)
+_clip_model_cache: dict[str, Any] = {}
+
+
+def _get_clip_model() -> tuple[Any, Any, Any]:
+    """CLIP 모델+전처리기+토크나이저 반환 (최초 1회 로드)."""
+    if "model" not in _clip_model_cache:
+        import open_clip
+        import torch
+
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            "ViT-B-32", pretrained="laion2b_s34b_b79k"
+        )
+        tokenizer = open_clip.get_tokenizer("ViT-B-32")
+        model.eval()
+
+        # 라벨 텍스트 임베딩 사전 계산
+        all_labels = CLIP_PRODUCT_LABELS + CLIP_OTHER_LABELS
+        text_tokens = tokenizer(all_labels)
+        with torch.no_grad():
+            text_features = model.encode_text(text_tokens)
+            text_features /= text_features.norm(dim=-1, keepdim=True)
+
+        _clip_model_cache["model"] = model
+        _clip_model_cache["preprocess"] = preprocess
+        _clip_model_cache["text_features"] = text_features
+        _clip_model_cache["n_product"] = len(CLIP_PRODUCT_LABELS)
+
+    return (
+        _clip_model_cache["model"],
+        _clip_model_cache["preprocess"],
+        _clip_model_cache["text_features"],
+    )
+
 
 class ImageFilterService:
-    """Claude Vision으로 이미지 분류 후 필터링."""
+    """Claude Vision 또는 CLIP으로 이미지 분류 후 필터링."""
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -89,9 +146,6 @@ class ImageFilterService:
                 media_type = "image/jpeg"
 
             # Claude Vision 제한: base64 5MB + 해상도 8000px → 초과 시 리사이즈
-            from io import BytesIO
-            from PIL import Image
-
             img = Image.open(BytesIO(img_bytes))
             w, h = img.size
             if len(img_bytes) > 3_500_000 or w > 7999 or h > 7999:
@@ -147,7 +201,6 @@ class ImageFilterService:
             )
 
         # 이미지 다운로드 + base64 인코딩 (클라이언트 재사용으로 연결 풀링)
-        # ※ 긴 이미지(tall) 비율 체크는 프론트에서 선제 처리하므로 백엔드에서는 생략
         encoded: list[tuple[int, str, str, str]] = []  # (index, url, b64, media_type)
         failed_indices: dict[int, str] = {}  # 다운로드 실패 (idx -> 에러)
 
@@ -262,6 +315,142 @@ class ImageFilterService:
         return results
 
     # ------------------------------------------------------------------
+    # CLIP zero-shot 분류 (무료)
+    # ------------------------------------------------------------------
+
+    async def classify_images_clip(
+        self, urls: list[str], threshold: float = 0.0
+    ) -> list[dict[str, Any]]:
+        """CLIP zero-shot으로 이미지 분류 (무료, 로컬).
+
+        각 이미지에 대해 product/other 라벨 유사도를 계산하고
+        product 최대 점수 - other 최대 점수 > threshold → "product".
+
+        Returns:
+          [{"url": "...", "type": "product"/"other",
+            "score_product": 0.82, "score_other": 0.45}, ...]
+        """
+        import asyncio
+
+        import torch
+
+        model, preprocess, text_features = _get_clip_model()
+        n_product = _clip_model_cache["n_product"]
+
+        results: list[dict[str, Any]] = []
+
+        async with httpx.AsyncClient(
+            timeout=30,
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        ) as client:
+            for url in urls:
+                try:
+                    # 이미지 다운로드
+                    _headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Accept": "image/*,*/*;q=0.8",
+                        "Referer": url,
+                    }
+                    resp = await client.get(url, headers=_headers)
+                    resp.raise_for_status()
+                    img = Image.open(BytesIO(resp.content)).convert("RGB")
+
+                    # CLIP 전처리 + 추론 (CPU, 동기 → run_in_executor)
+                    def _classify_single(img: Image.Image) -> tuple[float, float]:
+                        img_tensor = preprocess(img).unsqueeze(0)
+                        with torch.no_grad():
+                            img_features = model.encode_image(img_tensor)
+                            img_features /= img_features.norm(dim=-1, keepdim=True)
+                            similarities = (img_features @ text_features.T).squeeze(0)
+
+                        # product 라벨 최대 점수 vs other 라벨 최대 점수
+                        product_score = similarities[:n_product].max().item()
+                        other_score = similarities[n_product:].max().item()
+                        return product_score, other_score
+
+                    loop = asyncio.get_event_loop()
+                    product_score, other_score = await loop.run_in_executor(
+                        None, _classify_single, img
+                    )
+
+                    img_type = (
+                        "product"
+                        if (product_score - other_score) > threshold
+                        else "other"
+                    )
+                    results.append(
+                        {
+                            "url": url,
+                            "type": img_type,
+                            "score_product": round(product_score, 4),
+                            "score_other": round(other_score, 4),
+                        }
+                    )
+                    logger.info(
+                        f"[이미지필터-CLIP] {img_type:7s} | "
+                        f"product={product_score:.4f} other={other_score:.4f} | {url[:80]}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[이미지필터-CLIP] 실패 (other 처리): {url[:80]} — {e}"
+                    )
+                    results.append(
+                        {
+                            "url": url,
+                            "type": "other",
+                            "score_product": 0,
+                            "score_other": 0,
+                        }
+                    )
+
+        return results
+
+    # ------------------------------------------------------------------
+    # 정확도 비교 (Claude vs CLIP)
+    # ------------------------------------------------------------------
+
+    async def compare_methods(self, urls: list[str]) -> dict[str, Any]:
+        """같은 이미지에 Claude + CLIP 둘 다 돌려서 결과 비교."""
+        import asyncio
+
+        claude_task = asyncio.create_task(self.classify_images(urls))
+        clip_task = asyncio.create_task(self.classify_images_clip(urls))
+
+        claude_results, clip_results = await asyncio.gather(claude_task, clip_task)
+
+        # URL 기준으로 매칭
+        claude_map = {r["url"]: r["type"] for r in claude_results}
+        clip_map = {r["url"]: r for r in clip_results}
+
+        comparisons = []
+        match_count = 0
+        for url in urls:
+            claude_type = claude_map.get(url, "unknown")
+            clip_data = clip_map.get(url, {})
+            clip_type = clip_data.get("type", "unknown")
+            matched = claude_type == clip_type
+            if matched:
+                match_count += 1
+            comparisons.append(
+                {
+                    "url": url[-80:],
+                    "claude": claude_type,
+                    "clip": clip_type,
+                    "clip_score_product": clip_data.get("score_product", 0),
+                    "clip_score_other": clip_data.get("score_other", 0),
+                    "match": matched,
+                }
+            )
+
+        return {
+            "total": len(urls),
+            "match_count": match_count,
+            "accuracy": round(match_count / len(urls) * 100, 1) if urls else 0,
+            "comparisons": comparisons,
+        }
+
+    # ------------------------------------------------------------------
     # Fireworks AI 변환 (모델컷/연출컷 -> 이미지컷)
     # ------------------------------------------------------------------
 
@@ -294,10 +483,12 @@ class ImageFilterService:
         self,
         product_id: str,
         scope: str = "images",
+        method: str = "claude",
     ) -> dict[str, Any]:
         """단일 상품 이미지 필터링.
 
         scope: "images" (대표+추가), "detail_images" (추가만), "detail" (상세페이지), "all" (전체)
+        method: "claude" (Claude Vision, 유료) | "clip" (CLIP zero-shot, 무료)
 
         대표+추가이미지 필터링 규칙:
         - 이미지컷이 있으면 나머지 제거
@@ -313,14 +504,19 @@ class ImageFilterService:
         if not product:
             return {"action": "skipped", "reason": "not_found"}
 
+        # method에 따라 분류 함수 선택
+        _classify = (
+            self.classify_images_clip if method == "clip" else self.classify_images
+        )
+
         update_data: dict[str, Any] = {}
-        result_info: dict[str, Any] = {"action": "filtered"}
+        result_info: dict[str, Any] = {"action": "filtered", "method": method}
 
         # 대표+추가이미지 필터링 (제거 발생 시 자동 2회차 재검증)
         if scope in ("images", "all"):
             images = product.images or []
             if images:
-                classifications = await self.classify_images(images)
+                classifications = await _classify(images)
                 product_cuts = [
                     c["url"] for c in classifications if c["type"] == "product"
                 ]
@@ -328,18 +524,20 @@ class ImageFilterService:
 
                 # 분류 결과 로그
                 logger.info(
-                    f"[이미지필터] 상품 {product_id} images 1차 — "
+                    f"[이미지필터-{method}] 상품 {product_id} images 1차 — "
                     f"총 {len(images)}장: product {len(product_cuts)}장, other {len(other_cuts)}장"
                 )
                 for c in classifications:
-                    logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
+                    logger.info(
+                        f"[이미지필터-{method}]   {c['type']:7s} | {c['url'][:100]}"
+                    )
 
                 # 1차에서 제거 발생 + 남은 이미지 2장 이상 → 2회차 재검증
                 if other_cuts and len(product_cuts) >= 2:
                     logger.info(
-                        f"[이미지필터] 상품 {product_id} images 2차 재검증 시작 ({len(product_cuts)}장)"
+                        f"[이미지필터-{method}] 상품 {product_id} images 2차 재검증 시작 ({len(product_cuts)}장)"
                     )
-                    re_classifications = await self.classify_images(product_cuts)
+                    re_classifications = await _classify(product_cuts)
                     re_product = [
                         c["url"] for c in re_classifications if c["type"] == "product"
                     ]
@@ -347,12 +545,12 @@ class ImageFilterService:
                         c["url"] for c in re_classifications if c["type"] == "other"
                     ]
                     logger.info(
-                        f"[이미지필터] 상품 {product_id} images 2차 — "
+                        f"[이미지필터-{method}] 상품 {product_id} images 2차 — "
                         f"product {len(re_product)}장, other {len(re_other)}장"
                     )
                     for c in re_classifications:
                         logger.info(
-                            f"[이미지필터] 2차 {c['type']:7s} | {c['url'][:100]}"
+                            f"[이미지필터-{method}] 2차 {c['type']:7s} | {c['url'][:100]}"
                         )
                     # 2차에서 추가 제거된 것이 있고, product가 남아있으면 반영
                     if re_other and re_product:
@@ -387,18 +585,20 @@ class ImageFilterService:
             if len(images) > 1:
                 main_image = images[0]
                 additional = images[1:]
-                classifications = await self.classify_images(additional)
+                classifications = await _classify(additional)
                 product_cuts = [
                     c["url"] for c in classifications if c["type"] == "product"
                 ]
                 other_cuts = [c["url"] for c in classifications if c["type"] == "other"]
 
                 logger.info(
-                    f"[이미지필터] 상품 {product_id} 추가이미지 — "
+                    f"[이미지필터-{method}] 상품 {product_id} 추가이미지 — "
                     f"총 {len(additional)}장: product {len(product_cuts)}장, other {len(other_cuts)}장"
                 )
                 for c in classifications:
-                    logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
+                    logger.info(
+                        f"[이미지필터-{method}]   {c['type']:7s} | {c['url'][:100]}"
+                    )
 
                 cls_detail = [
                     {"url": c["url"][-60:], "type": c["type"]} for c in classifications
@@ -415,7 +615,7 @@ class ImageFilterService:
         if scope in ("detail", "all"):
             detail_images = product.detail_images or []
             if detail_images:
-                classifications = await self.classify_images(detail_images)
+                classifications = await _classify(detail_images)
                 product_cuts = [
                     c["url"] for c in classifications if c["type"] == "product"
                 ]
@@ -423,18 +623,20 @@ class ImageFilterService:
 
                 # 분류 결과 로그
                 logger.info(
-                    f"[이미지필터] 상품 {product_id} detail 1차 — "
+                    f"[이미지필터-{method}] 상품 {product_id} detail 1차 — "
                     f"총 {len(detail_images)}장: product {len(product_cuts)}장, other {len(other_cuts)}장"
                 )
                 for c in classifications:
-                    logger.info(f"[이미지필터]   {c['type']:7s} | {c['url'][:100]}")
+                    logger.info(
+                        f"[이미지필터-{method}]   {c['type']:7s} | {c['url'][:100]}"
+                    )
 
                 # 1차에서 제거 발생 + 남은 이미지 2장 이상 → 2회차 재검증
                 if other_cuts and len(product_cuts) >= 2:
                     logger.info(
-                        f"[이미지필터] 상품 {product_id} detail 2차 재검증 시작 ({len(product_cuts)}장)"
+                        f"[이미지필터-{method}] 상품 {product_id} detail 2차 재검증 시작 ({len(product_cuts)}장)"
                     )
-                    re_classifications = await self.classify_images(product_cuts)
+                    re_classifications = await _classify(product_cuts)
                     re_product = [
                         c["url"] for c in re_classifications if c["type"] == "product"
                     ]
@@ -442,12 +644,12 @@ class ImageFilterService:
                         c["url"] for c in re_classifications if c["type"] == "other"
                     ]
                     logger.info(
-                        f"[이미지필터] 상품 {product_id} detail 2차 — "
+                        f"[이미지필터-{method}] 상품 {product_id} detail 2차 — "
                         f"product {len(re_product)}장, other {len(re_other)}장"
                     )
                     for c in re_classifications:
                         logger.info(
-                            f"[이미지필터] 2차 {c['type']:7s} | {c['url'][:100]}"
+                            f"[이미지필터-{method}] 2차 {c['type']:7s} | {c['url'][:100]}"
                         )
                     if re_other and re_product:
                         other_cuts.extend(re_other)
@@ -490,6 +692,7 @@ class ImageFilterService:
         self,
         product_ids: list[str],
         scope: str = "images",
+        method: str = "claude",
     ) -> dict[str, Any]:
         """다중 상품 일괄 필터링. 상품 단위 커밋 (부분 성공 허용)."""
         results: dict[str, Any] = {}
@@ -497,7 +700,7 @@ class ImageFilterService:
 
         for pid in product_ids:
             try:
-                result = await self.filter_product(pid, scope=scope)
+                result = await self.filter_product(pid, scope=scope, method=method)
                 results[pid] = result
             except Exception as e:
                 logger.error(f"[이미지필터] 상품 {pid} 처리 실패: {e}")
@@ -520,7 +723,7 @@ class ImageFilterService:
         }
 
     async def filter_by_group(
-        self, filter_id: str, scope: str = "images"
+        self, filter_id: str, scope: str = "images", method: str = "claude"
     ) -> dict[str, Any]:
         """수집 그룹(search_filter_id) 단위 필터링."""
         from backend.domain.samba.collector.repository import (
@@ -540,4 +743,4 @@ class ImageFilterService:
                 "message": "해당 그룹에 상품이 없습니다.",
             }
 
-        return await self.batch_filter(product_ids, scope=scope)
+        return await self.batch_filter(product_ids, scope=scope, method=method)
