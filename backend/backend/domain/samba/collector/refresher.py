@@ -1104,6 +1104,26 @@ async def refresh_products_bulk(
                             )
                     except asyncio.TimeoutError:
                         pass  # 재시도도 실패 → 원래 에러 유지
+                # 에러 건도 로그에 표시 (on_result 콜백 전)
+                if r.error and source == "autotune":
+                    _rb = getattr(p, "brand", "") or ""
+                    _rn = getattr(p, "name", "") or ""
+                    _rs = getattr(p, "site_product_id", "") or ""
+                    _rl = (
+                        f"{_rb} {_rn} ({_rs})".strip()
+                        if _rs
+                        else f"{_rb} {_rn}".strip()
+                    )
+                    _err_short = (r.error or "")[:60]
+                    _log_refresh(
+                        site,
+                        getattr(p, "id", "unknown"),
+                        _rl,
+                        f"실패: {_err_short}",
+                        level="warning",
+                        idx=_idx,
+                        total=_site_total,
+                    )
                 # 콜백 호출 (리프레시 직후 즉시 전송 등)
                 if on_result and not r.error:
                     try:

@@ -9,6 +9,7 @@ from typing import Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy import func, case, update as sa_update
+from sqlalchemy.orm import defer
 from sqlmodel import select
 
 from backend.api.v1.routers.samba.collector_common import (
@@ -192,6 +193,13 @@ async def _autotune_loop():
                         .order_by(
                             priority_order, _CP.last_refreshed_at.asc().nullsfirst()
                         )
+                        # 오토튠에 불필요한 대형 컬럼 제외 — OOM 방지
+                        .options(
+                            defer(_CP.detail_html),
+                            defer(_CP.detail_images),
+                            defer(_CP.images),
+                            defer(_CP.extra_data),
+                        )
                     )
                     result = await session.exec(stmt)
                     # ID 기준 중복 제거 (동일 상품 2회 이상 처리 방지)
@@ -278,39 +286,42 @@ async def _autotune_loop():
                         _all_price_pids: set[str] = set()
                         _all_stock_pids: set[str] = set()
                         _session_lock = asyncio.Lock()
+                        # OOM 방지: 동시 전송 task 수 제한
+                        _transmit_sem = asyncio.Semaphore(5)
 
                         async def _fire_transmit(pid, items, acc_id, label):
-                            """별도 세션으로 마켓 전송 (fire-and-forget)."""
-                            try:
-                                async with get_write_session() as tx_session:
-                                    from backend.domain.samba.shipment.repository import (
-                                        SambaShipmentRepository as _TxShipRepo,
-                                    )
-                                    from backend.domain.samba.shipment.service import (
-                                        SambaShipmentService as _TxShipSvc,
-                                    )
+                            """별도 세션으로 마켓 전송 (세마포어로 동시 실행 제한)."""
+                            async with _transmit_sem:
+                                try:
+                                    async with get_write_session() as tx_session:
+                                        from backend.domain.samba.shipment.repository import (
+                                            SambaShipmentRepository as _TxShipRepo,
+                                        )
+                                        from backend.domain.samba.shipment.service import (
+                                            SambaShipmentService as _TxShipSvc,
+                                        )
 
-                                    tx_svc = _TxShipSvc(
-                                        _TxShipRepo(tx_session), tx_session
+                                        tx_svc = _TxShipSvc(
+                                            _TxShipRepo(tx_session), tx_session
+                                        )
+                                        await tx_svc.start_update(
+                                            [pid],
+                                            items,
+                                            [acc_id],
+                                            skip_unchanged=False,
+                                            skip_refresh=True,
+                                        )
+                                        await tx_session.commit()
+                                except Exception as e:
+                                    _log_line(
+                                        "MUSINSA",
+                                        pid,
+                                        f"{label} 전송실패: {str(e)[:80]}",
+                                        "error",
                                     )
-                                    await tx_svc.start_update(
-                                        [pid],
-                                        items,
-                                        [acc_id],
-                                        skip_unchanged=False,
-                                        skip_refresh=True,
+                                    log.error(
+                                        "[오토튠] 전송실패 (%s, %s): %s", pid, acc_id, e
                                     )
-                                    await tx_session.commit()
-                            except Exception as e:
-                                _log_line(
-                                    "MUSINSA",
-                                    pid,
-                                    f"{label} 전송실패: {str(e)[:80]}",
-                                    "error",
-                                )
-                                log.error(
-                                    "[오토튠] 전송실패 (%s, %s): %s", pid, acc_id, e
-                                )
 
                         def _log_line(site, pid, msg, level="info"):
                             """오토튠 통합 로그 (한 줄)."""
@@ -1010,7 +1021,10 @@ async def _save_autotune_state(enabled: bool):
 
 
 async def auto_start_if_enabled():
-    """서버 시작 시 DB에서 오토튠 상태 확인 → ON이면 자동 시작."""
+    """서버 시작 시 DB에서 오토튠 상태 확인 → ON이면 자동 시작.
+
+    전송 Job이 존재하면 완료될 때까지 대기 후 시작 (OOM 방지).
+    """
     try:
         # 저장된 인터벌 설정 복원
         from backend.domain.samba.collector.refresher import load_site_intervals_from_db
@@ -1023,6 +1037,29 @@ async def auto_start_if_enabled():
         async with get_read_session() as session:
             enabled = await _get_setting(session, "autotune_enabled")
         if enabled:
+            # 전송 Job 존재 시 대기 (OOM 방지 — 전송과 동시 실행 차단)
+            from backend.db.orm import get_read_session as _get_rs
+            from sqlalchemy import text as _st
+
+            for _wait in range(12):  # 최대 60초 대기
+                async with _get_rs() as _s:
+                    _r = await _s.execute(
+                        _st(
+                            "SELECT count(*) FROM samba_jobs "
+                            "WHERE status IN ('pending', 'running') "
+                            "AND job_type = 'transmit'"
+                        )
+                    )
+                    _tx_count = _r.scalar() or 0
+                if _tx_count == 0:
+                    break
+                logger.info(
+                    "[오토튠] 전송 Job %d건 진행 중 — 시작 대기 (%d/12)",
+                    _tx_count,
+                    _wait + 1,
+                )
+                await asyncio.sleep(5)
+
             global _autotune_task, _autotune_cycle_count
             from backend.domain.samba.collector.refresher import clear_bulk_cancel
 

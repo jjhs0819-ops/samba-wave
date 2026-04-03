@@ -59,7 +59,9 @@ async def lifespan(app: FastAPI):
 
     await cache.connect()
 
-    # 서버 시작 시 좀비 running Job → pending 복구 (배포 중 끊긴 Job 재처리)
+    # 서버 시작 시 좀비 running Job 처리
+    # - collect: pending 복구 (재시도 가능)
+    # - transmit: failed 처리 (OOM 무한루프 방지, 수동 재개만 허용)
     import logging as _startup_logging
 
     _startup_log = _startup_logging.getLogger("backend.startup")
@@ -69,15 +71,29 @@ async def lifespan(app: FastAPI):
             from sqlalchemy import text
 
             async with get_write_session() as session:
-                r = await session.execute(
+                # transmit Job → failed (OOM 재시작 시 자동 재실행 방지)
+                r_tx = await session.execute(
                     text(
-                        "UPDATE samba_jobs SET status = 'pending', started_at = NULL "
-                        "WHERE status = 'running'"
+                        "UPDATE samba_jobs SET status = 'failed', "
+                        "error = 'OOM 재시작 — 자동복구 중단', "
+                        "completed_at = now() "
+                        "WHERE status = 'running' AND job_type = 'transmit'"
                     )
                 )
-                if r.rowcount > 0:
+                if r_tx.rowcount > 0:
                     _startup_log.info(
-                        f"[startup] 좀비 running Job {r.rowcount}건 → pending 복구"
+                        f"[startup] 좀비 transmit Job {r_tx.rowcount}건 → failed 처리"
+                    )
+                # collect 등 나머지 → pending 복구 (기존 동작 유지)
+                r_other = await session.execute(
+                    text(
+                        "UPDATE samba_jobs SET status = 'pending', started_at = NULL "
+                        "WHERE status = 'running' AND job_type != 'transmit'"
+                    )
+                )
+                if r_other.rowcount > 0:
+                    _startup_log.info(
+                        f"[startup] 좀비 running Job {r_other.rowcount}건 → pending 복구"
                     )
                 await session.commit()
             break
