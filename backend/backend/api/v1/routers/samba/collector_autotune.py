@@ -329,7 +329,7 @@ async def _autotune_loop():
                                     else _name_part
                                 )
                                 _idx_prefix = (
-                                    f"[{idx}/{total}] " if idx and total else ""
+                                    f"[{idx:,}/{total:,}] " if idx and total else ""
                                 )
 
                                 # 원가 표시용
@@ -594,7 +594,7 @@ async def _autotune_loop():
                                         )
 
                                 # 통합 한 줄 로그 (전송 전에 즉시 출력)
-                                _tail = f" [원가 {_cost_int:,}, 재고변동 {_stock_changes}건]"
+                                _tail = f" [원가 {_cost_int:,}, 재고변동 {_stock_changes:,}건]"
                                 if _actions:
                                     _log_line(
                                         site,
