@@ -113,19 +113,20 @@ _SS_M_TO_F: dict[str, str] = {
 }
 
 # 롯데ON: 남성→여성 카테고리 변환 맵
+# 이 계정은 FC05(패션의류) 권한 없음 → 직접 스포츠의류 경로로 매핑
 _LOTTEON_M_TO_F: dict[str, str] = {
-    "패션의류 > 남성의류 > 티셔츠": "패션의류 > 여성의류 > 티셔츠",
-    "패션의류 > 남성의류 > 맨투맨/스웨트셔츠": "패션의류 > 여성의류 > 맨투맨/스웨트셔츠",
-    "패션의류 > 남성의류 > 후드티셔츠": "패션의류 > 여성의류 > 후드티셔츠",
-    "패션의류 > 남성의류 > 니트/스웨터": "패션의류 > 여성의류 > 니트/스웨터",
-    "패션의류 > 남성의류 > 셔츠": "패션의류 > 여성의류 > 블라우스",
-    "패션의류 > 남성의류 > 가디건": "패션의류 > 여성의류 > 가디건",
-    "패션의류 > 남성의류 > 후드집업": "패션의류 > 여성의류 > 후드집업",
-    "패션의류 > 남성의류 > 점퍼/재킷": "패션의류 > 여성의류 > 점퍼/재킷",
-    "패션의류 > 남성의류 > 트레이닝복": "패션의류 > 여성의류 > 트레이닝복",
-    "패션의류 > 남성의류 > 패딩": "패션의류 > 여성의류 > 패딩",
-    "패션의류 > 남성의류 > 청바지": "패션의류 > 여성의류 > 청바지",
-    "패션의류 > 남성의류 > 바지": "패션의류 > 여성의류 > 바지",
+    "패션의류 > 남성의류 > 티셔츠": "스포츠의류/운동화 > 여성스포츠의류 > 반팔티셔츠",
+    "패션의류 > 남성의류 > 맨투맨/스웨트셔츠": "스포츠의류/운동화 > 여성스포츠의류 > 맨투맨",
+    "패션의류 > 남성의류 > 후드티셔츠": "스포츠의류/운동화 > 여성스포츠의류 > 후드",
+    "패션의류 > 남성의류 > 니트/스웨터": "스포츠의류/운동화 > 여성스포츠의류 > 니트",
+    "패션의류 > 남성의류 > 셔츠": "스포츠의류/운동화 > 여성스포츠의류 > 긴팔티셔츠",
+    "패션의류 > 남성의류 > 가디건": "스포츠의류/운동화 > 여성스포츠의류 > 가디건",
+    "패션의류 > 남성의류 > 후드집업": "스포츠의류/운동화 > 여성스포츠의류 > 집업",
+    "패션의류 > 남성의류 > 점퍼": "스포츠의류/운동화 > 여성스포츠의류 > 점퍼",
+    "패션의류 > 남성의류 > 트레이닝복": "스포츠의류/운동화 > 여성스포츠의류 > 트레이닝복",
+    "패션의류 > 남성의류 > 패딩": "스포츠의류/운동화 > 여성스포츠의류 > 다운/패딩",
+    "패션의류 > 남성의류 > 청바지": "스포츠의류/운동화 > 여성스포츠의류 > 긴바지",
+    "패션의류 > 남성의류 > 바지": "스포츠의류/운동화 > 여성스포츠의류 > 긴바지",
     "패션잡화 > 남성화 > 스니커즈": "패션잡화 > 여성화 > 스니커즈",
     "패션잡화 > 남성화 > 운동화": "패션잡화 > 여성화 > 운동화",
 }
@@ -141,6 +142,9 @@ def _apply_gender(category: str, market: str, gender: str) -> str:
     """룰 매핑 결과에 성별을 적용. female이면 남성→여성 변환."""
     if gender != "female":
         return category
+    # 롯데ON 스포츠의류: 문자열 교체로 남성→여성 자동 변환
+    if market == "lotteon" and "남성스포츠의류" in category:
+        return category.replace("남성스포츠의류", "여성스포츠의류")
     m_to_f = _MARKET_M_TO_F.get(market)
     if not m_to_f:
         return category
@@ -187,6 +191,7 @@ _MUSINSA_SS_RULES: dict[str, str] = {
     "바지 > 코튼 팬츠": "패션의류 > 남성의류 > 바지",
     "바지 > 슈트 팬츠/슬랙스": "패션의류 > 남성의류 > 바지",
     "바지 > 트레이닝/조거 팬츠": "패션의류 > 남성의류 > 트레이닝복",
+    "바지 > 기타 하의": "패션의류 > 남성의류 > 바지",
     "바지 > 숏팬츠": "패션의류 > 남성의류 > 바지",
     "바지 > 레깅스": "패션의류 > 여성의류 > 레깅스",
     "바지 > 점프 슈트/오버올": "패션의류 > 남성의류 > 점프슈트",
@@ -251,41 +256,88 @@ _MUSINSA_SS_RULES: dict[str, str] = {
 
 
 # ── 무신사→롯데ON 룰 매핑 ──
+# 이 계정은 FC08(스포츠의류/운동화) 권한만 있으므로 모든 의류를 스포츠 카테고리로 매핑
+# FC05(패션의류) 카테고리는 "사용할 수 없는 카테고리" 에러 발생
 _MUSINSA_LOTTEON_RULES: dict[str, str] = {
-    "상의 > 반소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
-    "상의 > 긴소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
-    "상의 > 피케/카라 티셔츠": "패션의류 > 남성의류 > 티셔츠",
-    "상의 > 맨투맨/스웨트셔츠": "패션의류 > 남성의류 > 맨투맨/스웨트셔츠",
-    "상의 > 후드 티셔츠": "패션의류 > 남성의류 > 후드티셔츠",
-    "상의 > 민소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
-    "상의 > 니트/스웨터": "패션의류 > 남성의류 > 니트/스웨터",
-    "상의 > 셔츠/블라우스": "패션의류 > 남성의류 > 셔츠",
-    "아우터 > 카디건": "패션의류 > 남성의류 > 가디건",
-    "아우터 > 후드 집업": "패션의류 > 남성의류 > 후드집업",
-    "아우터 > 블루종/MA-1": "패션의류 > 남성의류 > 점퍼/재킷",
-    "아우터 > 나일론/코치 재킷": "패션의류 > 남성의류 > 점퍼/재킷",
-    "아우터 > 트레이닝 재킷": "패션의류 > 남성의류 > 트레이닝복",
-    "아우터 > 기타 아우터": "패션의류 > 남성의류 > 점퍼/재킷",
-    "아우터 > 패딩": "패션의류 > 남성의류 > 패딩",
-    "아우터 > 레더/라이더스 재킷": "패션의류 > 남성의류 > 점퍼/재킷",
-    "바지 > 점프 슈트/오버올": "패션의류 > 여성의류 > 점프수트/오버올",
-    "바지 > 데님 팬츠": "패션의류 > 남성의류 > 청바지",
-    "바지 > 코튼 팬츠": "패션의류 > 남성의류 > 바지",
-    "바지 > 슈트 팬츠/슬랙스": "패션의류 > 남성의류 > 바지",
-    "바지 > 트레이닝/조거 팬츠": "패션의류 > 남성의류 > 트레이닝복",
-    "원피스/스커트 > 미니원피스": "패션의류 > 여성의류 > 원피스",
-    "원피스/스커트 > 미디원피스": "패션의류 > 여성의류 > 원피스",
-    "원피스/스커트 > 맥시원피스": "패션의류 > 여성의류 > 원피스",
+    # ── 상의 → 남성스포츠의류 ──
+    "상의 > 반소매 티셔츠": "스포츠의류/운동화 > 남성스포츠의류 > 반팔티셔츠",
+    "상의 > 긴소매 티셔츠": "스포츠의류/운동화 > 남성스포츠의류 > 긴팔티셔츠",
+    "상의 > 피케/카라 티셔츠": "스포츠의류/운동화 > 남성스포츠의류 > 반팔티셔츠",
+    "상의 > 맨투맨/스웨트셔츠": "스포츠의류/운동화 > 남성스포츠의류 > 맨투맨",
+    "상의 > 후드 티셔츠": "스포츠의류/운동화 > 남성스포츠의류 > 후드",
+    "상의 > 민소매 티셔츠": "스포츠의류/운동화 > 남성스포츠의류 > 민소매/탑",
+    "상의 > 니트/스웨터": "스포츠의류/운동화 > 남성스포츠의류 > 니트",
+    "상의 > 셔츠/블라우스": "스포츠의류/운동화 > 남성스포츠의류 > 긴팔티셔츠",
+    # ── 아우터 → 남성스포츠의류 ──
+    "아우터 > 카디건": "스포츠의류/운동화 > 남성스포츠의류 > 가디건",
+    "아우터 > 후드 집업": "스포츠의류/운동화 > 남성스포츠의류 > 집업",
+    "아우터 > 블루종/MA-1": "스포츠의류/운동화 > 남성스포츠의류 > 점퍼",
+    "아우터 > 나일론/코치 재킷": "스포츠의류/운동화 > 남성스포츠의류 > 바람막이/재킷",
+    "아우터 > 트레이닝 재킷": "스포츠의류/운동화 > 남성스포츠의류 > 바람막이/재킷",
+    "아우터 > 기타 아우터": "스포츠의류/운동화 > 남성스포츠의류 > 점퍼",
+    "아우터 > 패딩": "스포츠의류/운동화 > 남성스포츠의류 > 다운/패딩",
+    "아우터 > 레더/라이더스 재킷": "스포츠의류/운동화 > 남성스포츠의류 > 점퍼",
+    # ── 바지 → 남성스포츠의류 ──
+    "바지 > 데님 팬츠": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
+    "바지 > 코튼 팬츠": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
+    "바지 > 슈트 팬츠/슬랙스": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
+    "바지 > 트레이닝/조거 팬츠": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
+    "바지 > 기타 하의": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
+    "바지 > 숏팬츠": "스포츠의류/운동화 > 남성스포츠의류 > 반바지",
+    "바지 > 기타 바지": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
+    "바지 > 점프 슈트/오버올": "스포츠의류/운동화 > 여성스포츠의류 > 원피스",
+    # ── 원피스/스커트 → 여성스포츠의류 (성별 무관하게 처음부터 여성) ──
+    "원피스/스커트 > 미니원피스": "스포츠의류/운동화 > 여성스포츠의류 > 원피스",
+    "원피스/스커트 > 미디원피스": "스포츠의류/운동화 > 여성스포츠의류 > 원피스",
+    "원피스/스커트 > 맥시원피스": "스포츠의류/운동화 > 여성스포츠의류 > 원피스",
+    "원피스/스커트 > 미니스커트": "스포츠의류/운동화 > 여성스포츠의류 > 스커트",
+    "원피스/스커트 > 미디스커트": "스포츠의류/운동화 > 여성스포츠의류 > 스커트",
+    "원피스/스커트 > 롱스커트": "스포츠의류/운동화 > 여성스포츠의류 > 스커트",
+    # ── 신발 (이미 FC08 스포츠신발로 잘 등록됨) ──
     "신발 > 스니커즈": "패션잡화 > 남성화 > 스니커즈",
+    "신발 > 스포츠화 > 러닝화": "패션잡화 > 남성화 > 운동화",
     "신발 > 스포츠화 > 기타 운동화": "패션잡화 > 남성화 > 운동화",
     "신발 > 스포츠화 > 등산화": "스포츠/레저 > 등산 > 등산화",
+    # ── 뷰티 ──
     "뷰티 > 베이스메이크업 > 블러셔": "뷰티 > 메이크업 > 베이스메이크업 > 블러셔",
     "뷰티 > 뷰티 디바이스/소품 > 메이크업소품 > 기타 소품": "뷰티 > 메이크업 > 메이크업도구 > 퍼프/스펀지",
-    "스포츠/레저 > 상의 > 반소매 티셔츠": "패션의류 > 남성의류 > 티셔츠",
-    "스포츠/레저 > 상의 > 반소매티셔츠": "패션의류 > 남성의류 > 티셔츠",
-    "스포츠/레저 > 아우터 > 기타 점퍼/재킷": "패션의류 > 남성의류 > 점퍼/재킷",
-    "스포츠/레저 > 아우터 > 트레이닝 재킷": "패션의류 > 남성의류 > 트레이닝복",
+    # ── 스포츠/레저 소스 카테고리 → 스포츠의류 ──
+    "스포츠/레저 > 상의 > 반소매 티셔츠": "스포츠의류/운동화 > 남성스포츠의류 > 반팔티셔츠",
+    "스포츠/레저 > 상의 > 반소매티셔츠": "스포츠의류/운동화 > 남성스포츠의류 > 반팔티셔츠",
+    "스포츠/레저 > 하의 > 트레이닝 팬츠": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
+    "스포츠/레저 > 하의 > 숏팬츠": "스포츠의류/운동화 > 남성스포츠의류 > 반바지",
+    "스포츠/레저 > 아우터 > 기타 점퍼/재킷": "스포츠의류/운동화 > 남성스포츠의류 > 점퍼",
+    "스포츠/레저 > 아우터 > 트레이닝 재킷": "스포츠의류/운동화 > 남성스포츠의류 > 바람막이/재킷",
+    "스포츠/레저 > 아우터 > 패딩": "스포츠의류/운동화 > 남성스포츠의류 > 다운/패딩",
+    "스포츠/레저 > 아우터 > 다운재킷": "스포츠의류/운동화 > 남성스포츠의류 > 다운/패딩",
+    "스포츠/레저 > 아우터 > 경량패딩": "스포츠의류/운동화 > 남성스포츠의류 > 다운/패딩",
+    "스포츠/레저 > 아우터 > 플리스": "스포츠의류/운동화 > 남성스포츠의류 > 집업",
+    "스포츠/레저 > 아우터 > 바람막이": "스포츠의류/운동화 > 남성스포츠의류 > 바람막이/재킷",
+    "스포츠/레저 > 아우터 > 후드재킷": "스포츠의류/운동화 > 남성스포츠의류 > 후드",
+    "스포츠/레저 > 아우터 > 베스트": "스포츠의류/운동화 > 남성스포츠의류 > 조끼/베스트",
+    # ── 스포츠/레저 > 상의/하의 추가 ──
+    "스포츠/레저 > 상의 > 긴소매 티셔츠": "스포츠의류/운동화 > 남성스포츠의류 > 긴팔티셔츠",
+    "스포츠/레저 > 상의 > 맨투맨": "스포츠의류/운동화 > 남성스포츠의류 > 맨투맨",
+    "스포츠/레저 > 상의 > 후드": "스포츠의류/운동화 > 남성스포츠의류 > 후드",
+    "스포츠/레저 > 상의 > 민소매": "스포츠의류/운동화 > 남성스포츠의류 > 민소매/탑",
+    "스포츠/레저 > 하의 > 긴바지": "스포츠의류/운동화 > 남성스포츠의류 > 긴바지",
+    "스포츠/레저 > 하의 > 레깅스": "스포츠의류/운동화 > 여성스포츠의류 > 레깅스",
     "스포츠/레저 > 신발 > 라이프스타일화": "패션잡화 > 남성화 > 스니커즈",
+    "스포츠/레저 > 신발 > 런닝화": "패션잡화 > 남성화 > 운동화",
+    # ── 소품 > 모자류 — FC08 권한에 모자 카테고리 없음 → 등록 불가(스킵) ──
+    "소품 > 모자": "__SKIP__",
+    "소품 > 모자 > 기타 모자": "__SKIP__",
+    "소품 > 모자 > 버킷/사파리햇": "__SKIP__",
+    "소품 > 모자 > 캡/야구모자": "__SKIP__",
+    "소품 > 모자 > 비니": "__SKIP__",
+    # ── 상의 > 기타 상의 — 분류 불명확한 상의는 긴팔티셔츠 폴백 ──
+    "상의 > 기타 상의": "스포츠의류/운동화 > 남성스포츠의류 > 긴팔티셔츠",
+    # ── 스포츠/레저 비의류 — 등록 불가(스킵), 계단식 매칭으로 하위 전체 커버 ──
+    "스포츠/레저 > 기구/용품/장비": "__SKIP__",
+    "스포츠/레저 > 소품": "__SKIP__",
+    "스포츠/레저 > 용품": "__SKIP__",
+    # ── 스포츠/레저 > 상하의세트 — 트레이닝복으로 매핑 ──
+    "스포츠/레저 > 상하의세트": "스포츠의류/운동화 > 남성스포츠의류 > 트레이닝복",
 }
 
 # 마켓별 룰 테이블 레지스트리
@@ -304,13 +356,33 @@ def _rule_match(
     """1단계: 룰 기반 매핑. 정확히 매칭되면 반환, 없으면 None.
 
     gender가 'female'이면 남성 카테고리를 여성으로 변환.
+    무신사 카테고리의 '(브랜드명)' 같은 괄호 부분 제거 후 매칭.
     """
+    import re
     if source_site != "MUSINSA":
         return None
     rules = _MARKET_RULES.get(market)
     if not rules:
         return None
+    # 정확 매칭 먼저
     result = rules.get(source_category)
+    # 괄호(브랜드명) 제거 후 재시도 — 예: "바지 > 기타 하의 (아디다스)" → "바지 > 기타 하의"
+    if not result:
+        normalized = re.sub(r'\s*\([^)]+\)', '', source_category).strip()
+        if normalized != source_category:
+            result = rules.get(normalized)
+    # 상위 카테고리 계단식 매칭 — "A > B > C"가 없으면 "A > B", "A" 순으로 탐색
+    if not result:
+        parts = [p.strip() for p in source_category.split(">")]
+        for i in range(len(parts) - 1, 0, -1):
+            parent = " > ".join(parts[:i])
+            result = rules.get(parent)
+            if result:
+                break
+    # __SKIP__ = 해당 마켓에 등록 불가 → 빈 문자열 반환 (AI 폴백 방지)
+    if result == "__SKIP__":
+        logger.info(f"[매핑-스킵] {source_category} → {market}: 등록 불가 카테고리")
+        return ""
     if result and gender == "female":
         result = _apply_gender(result, market, gender)
     return result
@@ -471,6 +543,7 @@ _SYNONYM_MAP: dict[str, list[str]] = {
     "트레이닝": ["트레이닝", "트레이닝복", "조거", "운동복"],
     "상의": ["상의", "탑", "톱", "의류"],
     "하의": ["하의", "바지", "팬츠", "보텀"],
+    "스포츠": ["스포츠", "스포츠의류", "트레이닝", "트레이닝복", "운동복"],
     "아우터": ["아우터", "외투", "겉옷", "자켓"],
     "뷰티": ["뷰티", "화장품", "코스메틱", "미용"],
     "화장품": ["화장품", "뷰티", "코스메틱"],
@@ -1339,6 +1412,8 @@ class SambaCategoryService:
             "하의": ["바지", "팬츠", "슬랙스", "청바지", "레깅스", "치마"],
             "신발": ["스니커즈", "운동화", "구두", "부츠", "샌들", "슬리퍼"],
             "가방": ["백팩", "크로스백", "토트백", "숄더백", "클러치"],
+            "데님": ["청바지", "진"],  # 데님 팬츠 → 청바지 카테고리 매핑 보완
+            "조거": ["트레이닝팬츠", "스포츠팬츠"],  # 조거/트레이닝 팬츠 카테고리 매핑 보완
         }
 
         raw_keywords = [
@@ -1842,6 +1917,16 @@ class SambaCategoryService:
         if category_path in code_map:
             return str(code_map[category_path])
 
+        # 1.5. Prefix 매칭 — 입력이 부모 경로인 경우 (3단계 → 4단계 leaf 검색)
+        # 예: "패션의류 > 남성의류 > 바지" → "패션의류 > 남성의류 > 바지 > 청바지" 코드 반환
+        prefix = category_path + " > "
+        prefix_matches = {path: code for path, code in code_map.items() if path.startswith(prefix)}
+        if prefix_matches:
+            best_prefix_path = min(prefix_matches.keys(), key=len)
+            logger.info("[카테고리 코드] prefix 매칭: '%s' → '%s' (%s)", category_path, best_prefix_path, prefix_matches[best_prefix_path])
+            return str(prefix_matches[best_prefix_path])
+
+
         # 2. 키워드 기반 퍼지 매칭
         # 입력 경로의 세그먼트 추출 (예: "패션의류 > 남성의류 > 아우터/코트")
         input_segments = [s.strip() for s in category_path.split(">") if s.strip()]
@@ -1882,14 +1967,26 @@ class SambaCategoryService:
                 continue
             score = overlap * 10
 
-            # 상위 세그먼트 키워드 보너스
+            # 상위 세그먼트 키워드 보너스 (가중치 상향: 3 → 5)
             path_all_keywords = set()
             for seg in path_segments[:-1]:
                 for part in seg.replace("/", " ").replace(",", " ").split():
                     if len(part) >= 2:
                         path_all_keywords.add(part)
             parent_overlap = len(parent_keywords & path_all_keywords)
-            score += parent_overlap * 3
+            score += parent_overlap * 5
+
+            # 대분류(첫 세그먼트) 일치 보너스 — 골프의류 vs 패션의류 구분
+            if input_segments and path_segments:
+                if input_segments[0] == path_segments[0]:
+                    score += 15
+
+            # 세그먼트 깊이 유사도 보너스
+            depth_diff = abs(len(input_segments) - len(path_segments))
+            if depth_diff == 0:
+                score += 5
+            elif depth_diff == 1:
+                score += 2
 
             if score > best_score:
                 best_score = score
@@ -2499,8 +2596,14 @@ class SambaCategoryService:
                 tag_str = ", ".join(item.get("tags", [])[:5])
                 seo_str = ", ".join(item.get("seo", [])[:5])
                 group_str = ", ".join(item.get("groups", [])[:3])
+                sample_names = [n for n in (item.get("samples") or []) if n][:2]
+                gender_hint = {"male": "남성", "female": "여성", "unisex": "남녀공용"}.get(item.get("gender", ""), "")
                 ss_hint = item.get("ss_mapped", "")
-                entry = f"{idx + 1}. [{item['site']}] {item['leaf_path']}"
+                entry = f'{idx + 1}. [{item["site"]}] {item["leaf_path"]}'
+                if gender_hint:
+                    entry += f' | 성별: {gender_hint}'
+                if sample_names:
+                    entry += f' | 상품명: {" / ".join(sample_names)}'
                 if ss_hint:
                     entry += f" | 스마트스토어매핑: {ss_hint}"
                 if seo_str:
@@ -2535,6 +2638,13 @@ class SambaCategoryService:
                     for g in (item.get("groups") or [])[:3]:
                         if g and len(g) >= 2:
                             leaf_kw.add(g)
+                    # 상품명 키워드 추가 — "기타 하의" 같은 모호한 카테고리 보완
+                    for name in (item.get("samples") or [])[:2]:
+                        if not name:
+                            continue
+                        for part in name.replace("/", " ").replace("-", " ").split():
+                            if len(part) >= 2:
+                                leaf_kw.add(part)
 
                 # 동의어 확장 — 소싱 키워드와 마켓 카테고리 용어 차이 보완
                 leaf_kw = _expand_synonyms(leaf_kw)
@@ -2666,7 +2776,7 @@ JSON만 응답:
                         for market, suggested in result[key_str].items():
                             if market in target_set and suggested:
                                 # 동기화된 카테고리 목록에 있는지 검증
-                                market_cat_list = all_market_cats.get(market, [])  # noqa: F821
+                                market_cat_list = market_cat_lists.get(market, [])
                                 if not market_cat_list or suggested in market_cat_list:
                                     validated[market] = suggested
                                 else:
@@ -2726,11 +2836,10 @@ JSON만 응답:
         # 1단계: 룰 기반 매핑 (모든 마켓)
         for m in markets:
             rule = _rule_match(source_site, source_category, m, gender)
-            if rule:
+            if rule is not None:
                 result[m] = rule
-                logger.info(
-                    f"[매핑-룰] {source_site} > {source_category} → {m}: {rule} (성별:{gender})"
-                )
+                if rule:
+                    logger.info(f"[매핑-룰] {source_site} > {source_category} → {m}: {rule} (성별:{gender})")
 
         # 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만)
         for m in markets:
@@ -2999,11 +3108,12 @@ JSON만:
         result = await session.execute(stmt)
         products = list(result.scalars().all())
 
-        # (site, leaf_path) → 태그 + SEO키워드 + 그룹명
+        # (site, leaf_path) → 태그 + SEO키워드 + 그룹명 + 성별
         cat_samples: Dict[tuple, List[str]] = {}
         cat_tags: Dict[tuple, List[str]] = {}
         cat_seo: Dict[tuple, List[str]] = {}
         cat_groups: Dict[tuple, set[str]] = {}
+        cat_sex: Dict[tuple, set[str]] = {}  # p.sex 값 수집
         for p in products:
             site = p.source_site or ""
             if not site:
@@ -3034,9 +3144,14 @@ JSON만:
                 cat_seo[key] = []
                 # 그룹명
                 cat_groups[key] = set()
+                # 성별
+                cat_sex[key] = set()
             # 상품명 수집 (성별 감지용, 최대 5개)
             if len(cat_samples[key]) < 5:
                 cat_samples[key].append(p.name)
+            # p.sex 수집 (남성/여성/남녀공용)
+            if getattr(p, 'sex', None):
+                cat_sex[key].add(p.sex)
             # SEO 키워드 수집 (중복 제거)
             for kw in getattr(p, "seo_keywords", None) or []:
                 if kw and kw not in cat_seo[key] and len(cat_seo[key]) < 10:
@@ -3079,33 +3194,37 @@ JSON만:
                 skipped += 1
                 continue
 
-            # 성별 감지 (상품명 + 태그 + 카테고리)
-            tags_for_gender = cat_tags.get((site, leaf_path), [])
-            gender = _detect_gender(samples, tags_for_gender, leaf_path)
+            # 성별 감지: p.sex 값 우선, 없으면 상품명+태그+카테고리 기반 감지
+            sex_values = cat_sex.get((site, leaf_path), set())
+            if "여성" in sex_values and "남성" not in sex_values:
+                gender = "female"
+            elif "남성" in sex_values and "여성" not in sex_values:
+                gender = "male"
+            elif sex_values:
+                gender = "unisex"
+            else:
+                tags_for_gender = cat_tags.get((site, leaf_path), [])
+                gender = _detect_gender(samples, tags_for_gender, leaf_path)
 
             # ── 1단계: 룰 기반 매핑 (모든 마켓) ──
             resolved: Dict[str, str] = {}
             for mk in list(missing_markets):
                 rule_result = _rule_match(site, leaf_path, mk, gender)
-                if rule_result:
+                if rule_result is not None:
                     resolved[mk] = rule_result
-                    logger.info(
-                        f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})"
-                    )
+                    if rule_result:
+                        logger.info(f"[매핑-룰] {site} > {leaf_path} → {mk}: {rule_result} (성별:{gender})")
 
-            # ── 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만) ──
+            # ── 2단계: 유사도 매칭 (룰에서 못 찾은 마켓만, 롯데ON 제외) ──
             # ESM(지마켓/옥션): SS 매핑이 있으면 SS 결과를 브릿지로 사용
-            ss_mapped = current_targets.get("smartstore") or resolved.get(
-                "smartstore", ""
-            )
+            # 롯데ON은 카테고리 구조가 복잡하여 유사도 매칭이 오히려 오류를 유발 → 룰에서 못 찾으면 AI에 위임
+            ss_mapped = current_targets.get("smartstore") or resolved.get("smartstore", "")
             for mk in list(missing_markets):
                 if mk in resolved:
                     continue
-                mk_cats = (
-                    ss_cats
-                    if mk == "smartstore"
-                    else await self._get_market_categories(mk)
-                )
+                if mk == "lotteon":
+                    continue
+                mk_cats = ss_cats if mk == "smartstore" else await self._get_market_categories(mk)
                 if mk_cats:
                     # ESM 마켓은 SS 매핑 결과를 브릿지로 사용 (SS 카테고리 이름이 ESM과 더 유사)
                     if mk in ("gmarket", "auction") and ss_mapped:
@@ -3163,23 +3282,20 @@ JSON만:
             # ── 3단계: 나머지 마켓은 AI에 위임 ──
             if missing_markets:
                 # AI에 SS 매핑 결과 전달 (ESM 정확도 향상용)
-                ss_hint = current_targets.get("smartstore") or resolved.get(
-                    "smartstore", ""
-                )
-                batch_items.append(
-                    {
-                        "site": site,
-                        "leaf_path": leaf_path,
-                        "samples": samples,
-                        "tags": cat_tags.get((site, leaf_path), []),
-                        "seo": cat_seo.get((site, leaf_path), []),
-                        "groups": list(cat_groups.get((site, leaf_path), set())),
-                        "ss_mapped": ss_hint,
-                        "target_markets": list(missing_markets),
-                        "existing": existing,
-                        "mode": "update" if existing else "create",
-                    }
-                )
+                ss_hint = current_targets.get("smartstore") or resolved.get("smartstore", "")
+                batch_items.append({
+                    "site": site,
+                    "leaf_path": leaf_path,
+                    "samples": samples,
+                    "tags": cat_tags.get((site, leaf_path), []),
+                    "seo": cat_seo.get((site, leaf_path), []),
+                    "groups": list(cat_groups.get((site, leaf_path), set())),
+                    "gender": gender,
+                    "ss_mapped": ss_hint,
+                    "target_markets": list(missing_markets),
+                    "existing": existing,
+                    "mode": "update" if existing else "create",
+                })
 
         logger.info(
             f"[벌크매핑] 1~2단계 완료: 룰/유사도={rule_mapped}건, AI대상={len(batch_items)}건, 스킵={skipped}건"

@@ -47,7 +47,7 @@ async def get_return_reasons():
 @router.get("")
 async def list_returns(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=1000),
     order_id: Optional[str] = None,
     status: Optional[str] = None,
     type: Optional[str] = None,
@@ -202,6 +202,8 @@ class ReturnPatchBody(BaseModel):
     status: Optional[str] = None
     customer_order_no: Optional[str] = None
     original_order_no: Optional[str] = None
+    type: Optional[str] = None
+    market_order_status: Optional[str] = None
 
 
 @router.patch("/{return_id}")
@@ -242,6 +244,10 @@ async def patch_return(
         update_fields["customer_order_no"] = body.customer_order_no
     if body.original_order_no is not None:
         update_fields["original_order_no"] = body.original_order_no
+    if body.type is not None:
+        update_fields["type"] = body.type
+    if body.market_order_status is not None:
+        update_fields["market_order_status"] = body.market_order_status
     if not update_fields:
         return ret
     return await svc.repo.update_async(return_id, **update_fields)
@@ -332,6 +338,47 @@ def _extract_city_district(address: Optional[str]) -> Optional[str]:
         if p.endswith(("시", "군")):
             return p
     return parts[0] if parts else None
+
+
+def _parse_lotteon_return(
+  item: dict[str, Any],
+  return_type: str,  # "return" | "cancel"
+) -> dict[str, Any]:
+  """롯데ON 반품/취소 데이터 → SambaReturn dict 변환.
+
+  item: getCancellationRequestAndComplateList API의 itemList 단일 항목
+        (odNo, clmNo가 상위 claim에서 주입된 상태)
+  """
+  step_cd = str(item.get("odPrgsStepCd", "") or "")
+  # return_type은 호출 API(get_returns=return, get_exchanges=exchange)에서 결정
+  # step_cd로 재분류하지 않음 — clmTpCd=RETN이면 반품, 교환 API면 교환
+
+  if step_cd == "21":
+    status = "done"
+  elif step_cd == "22":
+    status = "rejected"
+  else:
+    status = "requested"
+
+  qty_raw = item.get("cnclQty") or item.get("odQty") or 1
+  try:
+    qty = int(qty_raw)
+  except (ValueError, TypeError):
+    qty = 1
+
+  return {
+    "source": "lotteon",
+    "order_number": item.get("odNo", ""),
+    "shipment_id": item.get("clmNo", ""),
+    "ord_dtl_sn": str(item.get("odSeq", "") or item.get("procSeq", "")),
+    "return_type": return_type,
+    "reason_code": item.get("clmRsnCd", ""),
+    "reason": item.get("clmRsnNm", "") or item.get("clmRsnCd", ""),
+    "quantity": qty,
+    "product_name": item.get("spdNm", "") or item.get("sitmNm", ""),
+    "product_id": item.get("spdNo", "") or item.get("sitmNo", ""),
+    "status": status,
+  }
 
 
 class SyncReturnsRequest(BaseModel):
@@ -609,6 +656,178 @@ async def sync_returns_from_markets(
                     f"[반품동기화] {label}: 클레임 {len(claims_data)}건 조회, {synced}건 신규 저장"
                 )
 
+            elif market_type == "lotteon":
+                from backend.domain.samba.proxy.lotteon import LotteonApiError, LotteonClient
+
+                api_key = account.api_key or extras.get("apiKey", "")
+                if not api_key:
+                    results.append({"account": label, "status": "skip", "message": "API 키 없음"})
+                    continue
+
+                client = LotteonClient(api_key=api_key)
+                await client.test_auth()
+
+                raw_cancels = await client.get_cancel_orders(days=body.days)
+                raw_returns = await client.get_returns(days=body.days)
+
+                # 반품 건만 반품교환 화면에 저장 (취소 건은 주문 내역에서 처리)
+                claims_data_lo: list[dict[str, Any]] = []
+                for item in raw_returns:
+                    parsed = _parse_lotteon_return(item, "return")
+                    parsed["sitmNo"] = item.get("sitmNo", "")
+                    claims_data_lo.append(parsed)
+                _lo_od_nos = [c['order_number'] for c in claims_data_lo]
+                logger.warning(f"[롯데ON] 반품 API 조회된 odNo 목록({len(_lo_od_nos)}건): {_lo_od_nos}")
+
+                synced = 0
+                for claim in claims_data_lo:
+                    order_number = claim["order_number"]
+                    if not order_number:
+                        continue
+                    existing_order = await order_repo.find_by_async(order_number=order_number)
+                    if not existing_order:
+                        # sitmNo(상품주문번호)는 DB의 shipment_id 필드에 저장됨
+                        sitmNo = claim.get("sitmNo", "")
+                        if sitmNo:
+                            existing_order = await order_repo.find_by_async(shipment_id=sitmNo)
+                    if not existing_order:
+                        logger.warning(f"[롯데ON] 반품 주문 미매칭: {order_number} sitmNo={claim.get('sitmNo','')}")
+                        continue
+
+                    order_id = existing_order.id
+                    logger.warning(f"[롯데ON] 반품 주문 매칭 성공: {order_number} → DB order_id={order_id}")
+                    existing_returns = await svc.repo.filter_by_async(order_id=order_id)
+                    if existing_returns:
+                        # 기존 레코드에 누락/오류 필드 보충
+                        er = existing_returns[0]
+                        patch_lo: dict[str, Any] = {}
+                        correct_type = claim["return_type"]  # API에서 확정된 type (return/exchange)
+                        if not er.product_image and existing_order.product_image:
+                            patch_lo["product_image"] = existing_order.product_image
+                        # market_order_status가 type과 불일치하면 강제 수정
+                        if correct_type == "exchange" and er.market_order_status and "반품" in er.market_order_status:
+                            patch_lo["market_order_status"] = "교환요청"
+                        elif correct_type == "return" and er.market_order_status and "교환" in er.market_order_status:
+                            patch_lo["market_order_status"] = "반품요청"
+                        elif not er.market_order_status:
+                            patch_lo["market_order_status"] = "교환요청" if correct_type == "exchange" else "반품요청"
+                        # type이 없거나 잘못 저장된 경우 수정
+                        if er.type != correct_type:
+                            patch_lo["type"] = correct_type
+                        if patch_lo:
+                            await svc.repo.update_async(er.id, **patch_lo)
+                            logger.warning(f"[롯데ON] 반품 레코드 패치: {order_number} type={correct_type} patch={list(patch_lo.keys())} er.type={er.type} er.market_order_status={er.market_order_status}")
+                        else:
+                            logger.warning(f"[롯데ON] 반품 레코드 패치 불필요: {order_number} er.type={er.type} er.market_order_status={er.market_order_status}")
+                        # 원주문 shipping_status 동기화 (교환/반품 진행 중이면 주문 페이지에서 제외)
+                        new_order_ss = "교환요청" if correct_type == "exchange" else "반품요청"
+                        if existing_order.shipping_status != new_order_ss:
+                            await order_repo.update_async(existing_order.id, shipping_status=new_order_ss)
+                        continue
+
+                    from datetime import UTC, datetime
+                    return_data: dict[str, Any] = {
+                        "order_id": order_id,
+                        "order_number": order_number,
+                        "type": claim["return_type"],
+                        "reason": claim["reason"] or None,
+                        "quantity": claim["quantity"],
+                        "product_name": claim["product_name"] or (existing_order.product_name if existing_order else None),
+                        "product_image": existing_order.product_image if existing_order else None,
+                        "customer_name": existing_order.customer_name if existing_order else None,
+                        "customer_phone": existing_order.customer_phone if existing_order else None,
+                        "product_location": _extract_city_district(existing_order.customer_address if existing_order else None),
+                        "customer_address": existing_order.customer_address if existing_order else None,
+                        "business_name": account.business_name or account.market_name or label,
+                        "market": "롯데ON",
+                        "market_order_status": "교환요청" if claim["return_type"] == "exchange" else "반품요청",
+                        "status": claim["status"],
+                        "timeline": [{
+                            "date": datetime.now(UTC).isoformat(),
+                            "status": claim["status"],
+                            "message": f"{claim['return_type']} 요청 접수",
+                        }],
+                        "notes": [],
+                    }
+                    await svc.repo.create_async(**return_data)
+                    # 원주문 shipping_status 동기화
+                    new_order_ss = "교환요청" if claim["return_type"] == "exchange" else "반품요청"
+                    await order_repo.update_async(existing_order.id, shipping_status=new_order_ss)
+                    synced += 1
+
+                # 교환 클레임 동기화
+                try:
+                    raw_exchanges = await client.get_exchanges(days=body.days)
+                    for item in raw_exchanges:
+                        ex_order_number = item.get("odNo", "")
+                        if not ex_order_number:
+                            continue
+                        existing_order = await order_repo.find_by_async(order_number=ex_order_number)
+                        if not existing_order:
+                            # sitmNo(상품주문번호)는 DB의 shipment_id 필드에 저장됨
+                            ex_sitmNo = item.get("sitmNo", "")
+                            if ex_sitmNo:
+                                existing_order = await order_repo.find_by_async(shipment_id=ex_sitmNo)
+                        if not existing_order:
+                            logger.warning(f"[롯데ON] 교환 주문 미매칭: {ex_order_number} sitmNo={item.get('sitmNo','')}")
+                            continue
+                        order_id = existing_order.id
+                        existing_returns = await svc.repo.filter_by_async(order_id=order_id)
+                        if existing_returns:
+                            # 기존 레코드 image 보충 (type은 변경 금지 — 교환취소 후 반품 재신청 케이스 보호)
+                            er = existing_returns[0]
+                            patch: dict[str, Any] = {}
+                            if not er.product_image and existing_order.product_image:
+                                patch["product_image"] = existing_order.product_image
+                            if not er.market_order_status:
+                                patch["market_order_status"] = "교환요청" if er.type == "exchange" else "반품요청"
+                            if patch:
+                                await svc.repo.update_async(er.id, **patch)
+                            # shipping_status는 현재 저장된 type 기준으로 동기화 (덮어쓰기 금지)
+                            expected_ss = "교환요청" if er.type == "exchange" else "반품요청"
+                            if existing_order.shipping_status != expected_ss:
+                                await order_repo.update_async(existing_order.id, shipping_status=expected_ss)
+                            continue
+                        from datetime import UTC, datetime
+                        await svc.repo.create_async(
+                            order_id=order_id,
+                            order_number=ex_order_number,
+                            type="exchange",
+                            reason=item.get("clmRsnCd", "") or None,
+                            quantity=int(item.get("xchgQty") or item.get("odQty") or 1),
+                            product_name=item.get("spdNm", "") or existing_order.product_name,
+                            product_image=existing_order.product_image,
+                            customer_name=existing_order.customer_name,
+                            customer_phone=existing_order.customer_phone,
+                            product_location=_extract_city_district(existing_order.customer_address),
+                            customer_address=existing_order.customer_address,
+                            business_name=account.business_name or account.market_name or label,
+                            market="롯데ON",
+                            market_order_status="교환요청",
+                            status="requested",
+                            timeline=[{
+                                "date": datetime.now(UTC).isoformat(),
+                                "status": "requested",
+                                "message": "교환 요청 접수",
+                            }],
+                            notes=[],
+                        )
+                        # 원주문 shipping_status 동기화
+                        await order_repo.update_async(existing_order.id, shipping_status="교환요청")
+                        synced += 1
+                        logger.info(f"[반품동기화][롯데ON] 교환 클레임 저장: {ex_order_number}")
+                except Exception as ex_err:
+                    logger.warning(f"[반품동기화][롯데ON] 교환 클레임 동기화 실패: {ex_err}")
+
+                total_synced += synced
+                results.append({
+                    "account": label,
+                    "status": "success",
+                    "fetched": len(claims_data_lo),
+                    "synced": synced,
+                })
+                logger.info(f"[반품동기화][롯데ON] {label}: 반품 {len(raw_returns)}건, 취소 {len(raw_cancels)}건 조회, {synced}건 신규 저장")
+
             else:
                 results.append(
                     {
@@ -622,5 +841,87 @@ async def sync_returns_from_markets(
         except Exception as e:
             logger.error(f"[반품동기화] {label} 실패: {e}")
             results.append({"account": label, "status": "error", "message": str(e)})
+
+    # DB 기반 원주문 shipping_status 일괄 동기화
+    # samba_return 레코드가 있고 아직 진행 중인 주문의 shipping_status를 강제 업데이트
+    try:
+        from sqlalchemy import text as _sa_text
+        await session.execute(_sa_text("""
+            UPDATE samba_order o
+            SET shipping_status = CASE
+                WHEN r.type = 'exchange' THEN '교환요청'
+                WHEN r.type = 'return' THEN '반품요청'
+                ELSE o.shipping_status
+            END
+            FROM samba_return r
+            WHERE r.order_id = o.id
+              AND r.status NOT IN ('completed', 'cancelled', 'rejected')
+              AND o.shipping_status NOT IN (
+                  '교환요청', '교환회수완료', '교환재배송', '교환완료',
+                  '반품요청', '반품완료', '반품거부'
+              )
+        """))
+        await session.commit()
+        logger.info("[반품동기화] 원주문 shipping_status 일괄 업데이트 완료")
+    except Exception as _upd_err:
+        logger.warning(f"[반품동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
+
+    # 롯데ON API 버그 수정: clmRsnCd=300번대(반품 사유)가 교환으로 잘못 저장된 레코드 일괄 수정
+    try:
+        from sqlalchemy import text as _sa_text
+        # 진단: 실제 저장된 값 확인
+        _diag = await session.execute(_sa_text("""
+            SELECT r.id, r.type, r.market, r.reason, r.market_order_status, o.order_number
+            FROM samba_return r
+            LEFT JOIN samba_order o ON o.id = r.order_id
+            WHERE r.type = 'exchange'
+              AND r.market ILIKE '%롯데%'
+            LIMIT 20
+        """))
+        _diag_rows = _diag.fetchall()
+        if _diag_rows:
+            logger.warning(
+                f"[반품동기화][진단] 롯데ON 교환 레코드 샘플: "
+                + str([(str(r[0])[:8], r[1], repr(r[2]), repr(r[3]), r[4], r[5]) for r in _diag_rows])
+            )
+        else:
+            logger.warning("[반품동기화][진단] 롯데ON 교환 레코드 없음 (type=exchange AND market ILIKE '%롯데%')")
+
+        # 1단계: 연결된 원주문 shipping_status를 교환 상태에서 반품요청으로 수정
+        # reason이 NULL이거나 2xx/3xx(반품 사유코드)인 경우 처리
+        await session.execute(_sa_text("""
+            UPDATE samba_order o
+            SET shipping_status = '반품요청'
+            FROM samba_return r
+            WHERE r.order_id = o.id
+              AND r.type = 'exchange'
+              AND r.market ILIKE '%롯데%'
+              AND (r.reason ~ '^[23][0-9]+' OR r.reason IS NULL)
+              AND o.shipping_status IN (
+                  '교환요청', '교환회수완료', '교환재배송', '교환완료'
+              )
+        """))
+        # 2단계: samba_return 타입 교환→반품 수정
+        result_repair = await session.execute(_sa_text("""
+            UPDATE samba_return
+            SET type = 'return',
+                market_order_status = '반품요청'
+            WHERE type = 'exchange'
+              AND market ILIKE '%롯데%'
+              AND (reason ~ '^[23][0-9]+' OR reason IS NULL)
+            RETURNING id, order_id, reason
+        """))
+        repaired_rows = result_repair.fetchall()
+        repaired = len(repaired_rows)
+        if repaired > 0:
+            logger.warning(
+                f"[반품동기화] 롯데ON 교환→반품 재분류 수정: {repaired}건 "
+                f"IDs={[str(r[0])[:8] for r in repaired_rows]}"
+            )
+        else:
+            logger.warning("[반품동기화] 롯데ON 교환→반품 재분류 수정 대상 없음")
+        await session.commit()
+    except Exception as _repair_err:
+        logger.warning(f"[반품동기화] 롯데ON 반품 재분류 수정 실패: {_repair_err}")
 
     return {"total_synced": total_synced, "results": results}

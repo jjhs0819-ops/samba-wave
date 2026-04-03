@@ -32,18 +32,17 @@ from backend.domain.samba.returns.model import *  # noqa: F401,F403
 from backend.domain.samba.warroom.model import *  # noqa: F401,F403
 from backend.domain.samba.user.model import *  # noqa: F401,F403
 from backend.domain.samba.job.model import *  # noqa: F401,F403
-from backend.domain.samba.cs_inquiry.model import *  # noqa: F401,F403
 from backend.domain.samba.store_care.model import *  # noqa: F401,F403
 from backend.domain.samba.wholesale.model import *  # noqa: F401,F403
 
 config = context.config
 
 # DB URL을 .env에서 설정
-db_user = os.getenv("WRITE_DB_USER", "postgres")
-db_password = os.getenv("WRITE_DB_PASSWORD", "")
-db_host = os.getenv("WRITE_DB_HOST", "localhost")
-db_port = os.getenv("WRITE_DB_PORT", "5432")
-db_name = os.getenv("WRITE_DB_NAME", "railway")
+db_user = os.getenv("WRITE_DB_USER") or os.getenv("write_db_user", "postgres")
+db_password = os.getenv("WRITE_DB_PASSWORD") or os.getenv("write_db_password", "")
+db_host = os.getenv("WRITE_DB_HOST") or os.getenv("write_db_host", "localhost")
+db_port = os.getenv("WRITE_DB_PORT") or os.getenv("write_db_port", "5432")
+db_name = os.getenv("WRITE_DB_NAME") or os.getenv("write_db_name", "samba_wave")
 
 # Cloud SQL Unix 소켓 경로 감지 (/cloudsql/...)
 if db_host.startswith("/"):
