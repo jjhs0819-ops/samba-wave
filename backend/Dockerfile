@@ -33,13 +33,12 @@ COPY README.md ./README.md
 COPY uv.lock ./uv.lock
 RUN uv sync --compile-bytecode --no-dev
 
-COPY backend ./backend
-COPY scripts ./scripts
-
-# CLIP 모델 사전 다운로드 (런타임 다운로드 방지)
-# 캐시를 /app 하위에 저장 — 비루트 사용자 접근 보장
+# CLIP 모델 사전 다운로드 (코드 복사 전 — 패키지 변경 없으면 캐시 유지)
 ENV HF_HOME="/app/.cache/huggingface"
 RUN .venv/bin/python -c "import open_clip; open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')"
+
+COPY backend ./backend
+COPY scripts ./scripts
 
 # 비루트 사용자로 실행 (보안 강화)
 RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser \
