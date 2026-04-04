@@ -1216,7 +1216,7 @@ async def autotune_update_interval(body: AutotuneIntervalRequest):
 
     if body.interval < 0 or body.interval > 60:
         return {"ok": False, "error": "인터벌은 0~60초 범위만 가능합니다"}
-    set_site_base_interval(body.site, body.interval)
+    await set_site_base_interval(body.site, body.interval)
     logger.info("[오토튠] 인터벌 변경: %s → %.1f초", body.site, body.interval)
     return {"ok": True, "site": body.site, "interval": body.interval}
 

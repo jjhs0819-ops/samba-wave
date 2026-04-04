@@ -312,37 +312,26 @@ def get_site_intervals_info() -> Dict[str, Any]:
     }
 
 
-def set_site_base_interval(site: str, interval: float) -> None:
-    """소싱처 기본 인터벌 동적 변경 (초)."""
+async def set_site_base_interval(site: str, interval: float) -> None:
+    """소싱처 기본 인터벌 동적 변경 (초). DB에 동기적으로 저장."""
     SITE_BASE_INTERVAL[site] = interval
     # 현재 적응형 인터벌도 함께 갱신
     _site_intervals[site] = interval
-    # DB에 영속화 (비동기 fire-and-forget)
-    _persist_intervals_to_db()
+    # DB에 영속화 (await로 저장 보장)
+    await _persist_intervals_to_db()
 
 
-def _persist_intervals_to_db() -> None:
-    """현재 SITE_BASE_INTERVAL을 DB에 비동기 저장."""
-    import asyncio
-
-    async def _save():
-        try:
-            from backend.db.orm import get_write_session
-            from backend.api.v1.routers.samba.proxy import _set_setting
-
-            async with get_write_session() as session:
-                await _set_setting(
-                    session, "autotune_intervals", dict(SITE_BASE_INTERVAL)
-                )
-                await session.commit()
-        except Exception:
-            pass  # 저장 실패해도 인메모리는 유지
-
+async def _persist_intervals_to_db() -> None:
+    """현재 SITE_BASE_INTERVAL을 DB에 저장."""
     try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_save())
-    except RuntimeError:
-        pass  # 이벤트 루프 없으면 무시
+        from backend.db.orm import get_write_session
+        from backend.api.v1.routers.samba.proxy import _set_setting
+
+        async with get_write_session() as session:
+            await _set_setting(session, "autotune_intervals", dict(SITE_BASE_INTERVAL))
+            await session.commit()
+    except Exception as e:
+        logger.warning("[오토튠] 인터벌 DB 저장 실패: %s", e)
 
 
 async def load_site_intervals_from_db() -> None:
