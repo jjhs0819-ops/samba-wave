@@ -172,6 +172,42 @@ class SambaReturn(SQLModel, table=True):
         default=None, sa_column=Column(JSON, nullable=True)
     )
 
+    # ── 교환 전용 필드 ──────────────────────────────────────────────
+    # 11번가 클레임 요청번호 (교환/반품 공용 — API 제공)
+    clm_req_seq: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 11번가 주문상품순번 (교환 승인/거부 API 호출에 필요 — API 제공)
+    ord_prd_seq: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 교환 상품 회수 상태 (수기 입력: 미회수 / 회수중 / 회수완료)
+    exchange_retrieval_status: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 교환 상품 회수 완료 일자 (수기 입력)
+    exchange_retrieved_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+
+    # 소싱처(구매처)에서 고객에게 출고한 택배사 (수기 입력)
+    exchange_reship_company: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 소싱처(구매처)에서 고객에게 출고한 송장번호 (수기 입력)
+    exchange_reship_tracking: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 교환 상품 고객 도착 예정/확인 일자 (수기 입력)
+    exchange_delivered_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),

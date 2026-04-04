@@ -99,6 +99,10 @@ export const orderApi = {
       `${SAMBA_PREFIX}/orders/sync-from-markets`, { method: "POST", body: JSON.stringify({ days, account_id: accountId || undefined }) }),
   approveCancel: (id: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/approve-cancel`, { method: "POST" }),
+  rejectCancel11st: (accountId: string, ordPrdCnSeq: string, ordNo: string, ordPrdSeq: string) =>
+    request<{ success: boolean; message: string }>(`${SAMBA_PREFIX}/orders/11st/cancel-reject`, {
+      method: "POST", body: JSON.stringify({ account_id: accountId, ord_prd_cn_seq: ordPrdCnSeq, ord_no: ordNo, ord_prd_seq: ordPrdSeq }),
+    }),
   exchangeAction: (id: string, action: string, reason?: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/exchange-action`, {
       method: "POST", body: JSON.stringify({ action, reason }),
@@ -826,6 +830,14 @@ export const categoryApi = {
 
 // ── Returns ──
 
+export interface ExchangeTrackingUpdate {
+  exchange_retrieval_status?: '미회수' | '회수중' | '회수완료';
+  exchange_retrieved_at?: string;
+  exchange_reship_company?: string;
+  exchange_reship_tracking?: string;
+  exchange_delivered_at?: string;
+}
+
 export interface SambaReturn {
   id: string;
   order_id: string;
@@ -862,6 +874,14 @@ export interface SambaReturn {
   customer_order_no?: string;
   original_order_no?: string;
   created_at: string;
+  // 11번가 교환 추적 필드
+  exchange_retrieval_status?: string;
+  exchange_retrieved_at?: string;
+  exchange_reship_company?: string;
+  exchange_reship_tracking?: string;
+  exchange_delivered_at?: string;
+  clm_req_seq?: string;
+  ord_prd_seq?: string;
 }
 
 export const returnApi = {
@@ -893,6 +913,23 @@ export const returnApi = {
   },
   patch: (id: string, data: { confirmed?: boolean; settlement_amount?: number; recovery_amount?: number; check_date?: string; memo?: string; product_location?: string; completion_detail?: string; status?: string; customer_order_no?: string; original_order_no?: string; return_source?: string }) =>
     request<SambaReturn>(`${SAMBA_PREFIX}/returns/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  // 11번가 교환 승인/거부
+  exchangeAction: (returnId: string, action: 'approve' | 'reject', reason?: string) =>
+    request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/returns/${returnId}/exchange-action`, {
+      method: "POST",
+      body: JSON.stringify({ action, ...(reason ? { reason } : {}) }),
+    }),
+  // 교환 추적 정보 업데이트 (회수 상태, 소싱처 출고 정보 등)
+  updateExchangeTracking: (returnId: string, data: ExchangeTrackingUpdate) =>
+    request<SambaReturn>(`${SAMBA_PREFIX}/returns/${returnId}/exchange-tracking`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  // 교환 전용 동기화 (11번가 교환 신청 목록 가져오기)
+  syncExchangeFromMarkets: (days = 7) =>
+    request<{ total_synced: number; results: { account: string; status: string; fetched?: number; synced?: number; message?: string }[] }>(
+      `${SAMBA_PREFIX}/returns/sync-from-markets`, { method: "POST", body: JSON.stringify({ days }) }
+    ),
 };
 
 // ── CS Inquiries ──

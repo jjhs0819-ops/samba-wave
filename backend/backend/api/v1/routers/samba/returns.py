@@ -8,7 +8,13 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.dtos.samba.returns import ReturnCreate, ReturnNoteBody, ReturnRejectBody
+from backend.dtos.samba.returns import (
+    ExchangeActionBody as ExchangeActionBodyDTO,
+    ExchangeTrackingPatchBody as ExchangeTrackingPatchBodyDTO,
+    ReturnCreate,
+    ReturnNoteBody,
+    ReturnRejectBody,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -696,6 +702,229 @@ async def sync_returns_from_markets(
                     f"[반품동기화] {label}: API {api_fetched}건, 신규 {synced}건"
                 )
 
+            elif market_type == "11st":
+                # 11번가 교환/취소 요청 동기화
+                api_key = account.api_key or extras.get("apiKey", "")
+                if not api_key:
+                    results.append(
+                        {"account": label, "status": "skip", "message": "API 키 없음"}
+                    )
+                    continue
+
+                from backend.domain.samba.proxy.elevenst_exchange import (
+                    ElevenstExchangeClient,
+                    ElevenstApiError,
+                )
+
+                elevenst_client = ElevenstExchangeClient(api_key)
+
+                from datetime import datetime, timedelta
+
+                end_dt = datetime.now()  # 로컬 KST 기준 (11번가 API는 KST 시각 사용)
+                start_dt = end_dt - timedelta(days=body.days)
+                fmt = "%Y%m%d%H%M"
+
+                try:
+                    exchange_items = await elevenst_client.get_exchange_requests(
+                        start_dt.strftime(fmt), end_dt.strftime(fmt)
+                    )
+                except ElevenstApiError as e:
+                    logger.warning(f"[반품동기화] {label} 11번가 교환 조회 실패: {e}")
+                    exchange_items = []
+
+                synced = 0
+                for item in exchange_items:
+                    ord_no = item.get("ordNo", "")
+                    ord_prd_seq = item.get("ordPrdSeq", "")
+                    clm_req_seq = item.get("clmReqSeq", "")
+                    # 11번가는 ordPrdNo(상품주문번호)를 order_number로 사용
+                    order_number = item.get("ordPrdNo", "") or ord_no
+
+                    if not order_number:
+                        continue
+
+                    existing_order = await order_repo.find_by_async(
+                        order_number=order_number
+                    )
+                    if not existing_order:
+                        # ordNo로도 재시도
+                        if ord_no and ord_no != order_number:
+                            existing_order = await order_repo.find_by_async(
+                                order_number=ord_no
+                            )
+                    if not existing_order:
+                        continue
+
+                    order_id = existing_order.id
+                    existing_returns = await svc.repo.filter_by_async(
+                        order_id=order_id, type="exchange"
+                    )
+
+                    status_raw = item.get("ordPrdStatCd", "") or item.get(
+                        "clmStatCd", ""
+                    )
+                    mapped_status = "requested"
+
+                    timeline_msg = "11번가 교환 요청이 접수되었습니다."
+                    if existing_returns:
+                        # 기존 레코드 — clm_req_seq/ord_prd_seq 보완
+                        existing_ret = existing_returns[0]
+                        patch: dict[str, Any] = {}
+                        if clm_req_seq and not existing_ret.clm_req_seq:
+                            patch["clm_req_seq"] = clm_req_seq
+                        if ord_prd_seq and not existing_ret.ord_prd_seq:
+                            patch["ord_prd_seq"] = ord_prd_seq
+                        if patch:
+                            await svc.repo.update_async(existing_ret.id, **patch)
+                        continue
+
+                    # 신규 교환 레코드 생성
+                    timeline_entries = [
+                        {
+                            "date": datetime.now(UTC).isoformat(),
+                            "status": mapped_status,
+                            "message": timeline_msg,
+                        }
+                    ]
+
+                    return_data: dict[str, Any] = {
+                        "order_id": order_id,
+                        "order_number": order_number,
+                        "type": "exchange",
+                        "reason": item.get("clmRsn") or None,
+                        "description": item.get("prdNm") or existing_order.product_name,
+                        "quantity": int(item.get("qty", 1) or 1),
+                        "requested_amount": float(item.get("sellAmt", 0) or 0),
+                        "product_image": existing_order.product_image,
+                        "product_name": item.get("prdNm")
+                        or existing_order.product_name,
+                        "customer_name": item.get("buyMbrNm")
+                        or existing_order.customer_name,
+                        "customer_phone": item.get("rcvTelNo")
+                        or existing_order.customer_phone,
+                        "product_location": _extract_city_district(
+                            item.get("rcvAddr") or existing_order.customer_address
+                        ),
+                        "customer_address": item.get("rcvAddr")
+                        or existing_order.customer_address,
+                        "business_name": account.business_name
+                        or account.market_name
+                        or label,
+                        "market": "11번가",
+                        "market_order_status": "교환요청",
+                        "return_link": existing_order.source_url or "",
+                        "return_source": existing_order.source_site or "",
+                        "region": _extract_city_district(
+                            item.get("rcvAddr") or existing_order.customer_address
+                        ),
+                        "return_request_date": datetime.now(UTC),
+                        "order_date": existing_order.created_at,
+                        "status": mapped_status,
+                        "timeline": timeline_entries,
+                        "notes": [],
+                        # 11번가 교환 클레임 식별자
+                        "clm_req_seq": clm_req_seq or None,
+                        "ord_prd_seq": ord_prd_seq or None,
+                    }
+
+                    await svc.repo.create_async(**return_data)
+                    synced += 1
+
+                exchange_synced = synced
+
+                # 11번가 취소 요청 동기화
+                from backend.domain.samba.proxy.elevenst import ElevenstClient
+
+                elevenst_order_client = ElevenstClient(api_key)
+                try:
+                    cancel_items = await elevenst_order_client.get_cancel_requests(
+                        start_dt.strftime(fmt), end_dt.strftime(fmt)
+                    )
+                except Exception as ce:
+                    logger.warning(f"[반품동기화] {label} 11번가 취소 조회 실패: {ce}")
+                    cancel_items = []
+
+                cancel_synced = 0
+                for item in cancel_items:
+                    ord_no = item.get("ordNo", "")
+                    ord_prd_seq = item.get("ordPrdSeq", "")
+                    ord_prd_cn_seq = item.get("ordPrdCnSeq", "")
+                    order_number = item.get("ordPrdNo", "") or ord_no
+
+                    if not order_number:
+                        continue
+
+                    existing_order = await order_repo.find_by_async(order_number=order_number)
+                    if not existing_order and ord_no and ord_no != order_number:
+                        existing_order = await order_repo.find_by_async(order_number=ord_no)
+                    if not existing_order:
+                        continue
+
+                    # 이미 취소 레코드가 있으면 스킵
+                    existing_cancels = await svc.repo.filter_by_async(
+                        order_id=existing_order.id, type="cancel"
+                    )
+                    if existing_cancels:
+                        continue
+
+                    from datetime import UTC, datetime as _dt
+
+                    timeline_entries = [
+                        {
+                            "date": _dt.now(UTC).isoformat(),
+                            "status": "requested",
+                            "message": "11번가 취소 요청이 접수되었습니다.",
+                        }
+                    ]
+                    return_data = {
+                        "order_id": existing_order.id,
+                        "order_number": order_number,
+                        "type": "cancel",
+                        "reason": item.get("cnRsnCd") or None,
+                        "description": item.get("prdNm") or existing_order.product_name,
+                        "quantity": int(item.get("qty", 1) or 1),
+                        "requested_amount": float(item.get("sellAmt", 0) or 0),
+                        "product_image": existing_order.product_image,
+                        "product_name": item.get("prdNm") or existing_order.product_name,
+                        "customer_name": existing_order.customer_name,
+                        "customer_phone": existing_order.customer_phone,
+                        "customer_address": existing_order.customer_address,
+                        "product_location": _extract_city_district(existing_order.customer_address),
+                        "business_name": account.business_name or account.market_name or label,
+                        "market": "11번가",
+                        "market_order_status": "취소요청",
+                        "return_link": existing_order.source_url or "",
+                        "return_source": existing_order.source_site or "",
+                        "region": _extract_city_district(existing_order.customer_address),
+                        "return_request_date": _dt.now(UTC),
+                        "order_date": existing_order.created_at,
+                        "status": "requested",
+                        "timeline": timeline_entries,
+                        "notes": [],
+                        "clm_req_seq": ord_prd_cn_seq or None,
+                        "ord_prd_seq": ord_prd_seq or None,
+                    }
+                    await svc.repo.create_async(**return_data)
+                    # 주문 상태도 취소요청으로 업데이트
+                    await order_repo.update_async(
+                        existing_order.id, status="cancel_requested", shipping_status="취소요청"
+                    )
+                    cancel_synced += 1
+
+                logger.info(
+                    f"[반품동기화] {label}: 11번가 교환 {len(exchange_items)}건({exchange_synced}건 신규), 취소 {len(cancel_items)}건({cancel_synced}건 신규)"
+                )
+                synced = exchange_synced + cancel_synced
+                total_synced += synced
+                results.append(
+                    {
+                        "account": label,
+                        "status": "success",
+                        "fetched": len(exchange_items) + len(cancel_items),
+                        "synced": synced,
+                    }
+                )
+
             else:
                 results.append(
                     {
@@ -723,3 +952,179 @@ async def sync_returns_from_markets(
         )
 
     return {"total_synced": total_synced, "results": results}
+
+
+# ══════════════════════════════════════════════
+# 11번가 교환 처리 (승인 / 거부)
+# ══════════════════════════════════════════════
+
+
+@router.post("/{return_id}/exchange-action")
+async def elevenst_exchange_action(
+    return_id: str,
+    body: ExchangeActionBodyDTO,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """11번가 교환 승인(재배송) 또는 거부 처리.
+
+    - action="approve" → GET /rest/claimservice/exchangereqconf/{clmReqSeq}/{ordNo}/{ordPrdSeq}
+    - action="reject"  → GET /rest/claimservice/exchangereqrej/{clmReqSeq}/{ordNo}/{ordPrdSeq}
+
+    clm_req_seq, ord_no, ord_prd_seq는 samba_return 레코드에 저장된 값을 우선 사용.
+    요청 바디에서 override 가능.
+    """
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+    from backend.domain.samba.order.repository import SambaOrderRepository
+    from backend.domain.samba.proxy.elevenst_exchange import (
+        ElevenstApiError,
+        ElevenstExchangeClient,
+    )
+
+    svc = _write_service(session)
+    ret = await svc.repo.get_async(return_id)
+    if not ret:
+        raise HTTPException(status_code=404, detail="교환 기록을 찾을 수 없습니다")
+    if ret.type != "exchange":
+        raise HTTPException(status_code=400, detail="교환 유형이 아닙니다")
+
+    # 클레임 식별자: 요청 바디 우선, 없으면 DB 저장값 사용
+    clm_req_seq = body.clm_req_seq or ret.clm_req_seq or ""
+    ord_prd_seq = body.ord_prd_seq or ret.ord_prd_seq or ""
+    ord_no = body.ord_no or ret.order_number or ""
+
+    if not clm_req_seq or not ord_no or not ord_prd_seq:
+        raise HTTPException(
+            status_code=400,
+            detail="교환 처리에 필요한 클레임 식별자(clm_req_seq, ord_no, ord_prd_seq)가 없습니다",
+        )
+
+    # 주문 → 마켓 계정 조회
+    order_repo = SambaOrderRepository(session)
+    order = await order_repo.get_async(ret.order_id)
+    if not order or not order.channel_id:
+        raise HTTPException(status_code=400, detail="주문/마켓 계정 정보가 없습니다")
+
+    account_repo = SambaMarketAccountRepository(session)
+    account = await account_repo.get_async(order.channel_id)
+    if not account or account.market_type != "11st":
+        raise HTTPException(status_code=400, detail="11번가 계정이 아닙니다")
+
+    api_key = account.api_key or ""
+    if not api_key:
+        raise HTTPException(status_code=400, detail="11번가 API 키가 없습니다")
+
+    client = ElevenstExchangeClient(api_key)
+
+    action_labels = {"approve": "교환승인(재배송)", "reject": "교환거부"}
+    label = action_labels.get(body.action, body.action)
+
+    try:
+        if body.action == "approve":
+            await client.confirm_exchange(clm_req_seq, ord_no, ord_prd_seq)
+            new_status = "approved"
+            new_market_status = "교환승인"
+        elif body.action == "reject":
+            await client.reject_exchange(
+                clm_req_seq, ord_no, ord_prd_seq, body.reason or "판매자 교환 거부"
+            )
+            new_status = "rejected"
+            new_market_status = "교환거부"
+        else:
+            raise HTTPException(
+                status_code=400, detail=f"알 수 없는 액션: {body.action}"
+            )
+    except HTTPException:
+        raise
+    except ElevenstApiError as e:
+        raise HTTPException(status_code=502, detail=f"{label} API 오류: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"{label} 실패: {e}")
+
+    # DB 상태 업데이트
+    from datetime import UTC, datetime
+
+    timeline = list(ret.timeline or [])
+    timeline.append(
+        {
+            "date": datetime.now(UTC).isoformat(),
+            "status": new_status,
+            "message": f"{label} 처리 완료",
+        }
+    )
+    update_fields: dict[str, Any] = {
+        "status": new_status,
+        "market_order_status": new_market_status,
+        "timeline": timeline,
+    }
+    if new_status == "approved":
+        update_fields["approval_date"] = datetime.now(UTC)
+    elif new_status == "rejected":
+        update_fields["completion_date"] = datetime.now(UTC)
+
+    await svc.repo.update_async(return_id, **update_fields)
+
+    # 연결 주문 상태도 업데이트
+    from backend.domain.samba.order.service import SambaOrderService
+
+    order_svc = SambaOrderService(order_repo)
+    order_status_map = {"approved": "교환승인", "rejected": "교환거부"}
+    await order_svc.update_order(
+        ret.order_id, {"shipping_status": order_status_map[new_status]}
+    )
+
+    logger.info(
+        f"[11번가 교환처리] return_id={return_id} clmReqSeq={clm_req_seq} {label} 완료"
+    )
+    return {"ok": True, "message": f"{label} 완료"}
+
+
+@router.patch("/{return_id}/exchange-tracking")
+async def patch_exchange_tracking(
+    return_id: str,
+    body: ExchangeTrackingPatchBodyDTO,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """교환 추적 정보 수기 업데이트.
+
+    11번가 API가 제공하지 않는 정보(회수 상태, 소싱처 출고 정보, 도착일)를 수기로 입력.
+    """
+    svc = _write_service(session)
+    ret = await svc.repo.get_async(return_id)
+    if not ret:
+        raise HTTPException(status_code=404, detail="교환 기록을 찾을 수 없습니다")
+
+    from datetime import datetime, timezone
+
+    update_fields: dict[str, Any] = {}
+
+    if body.exchange_retrieval_status is not None:
+        update_fields["exchange_retrieval_status"] = body.exchange_retrieval_status
+
+    if body.exchange_retrieved_at is not None:
+        update_fields["exchange_retrieved_at"] = (
+            datetime.fromisoformat(body.exchange_retrieved_at).replace(
+                tzinfo=timezone.utc
+            )
+            if body.exchange_retrieved_at
+            else None
+        )
+
+    if body.exchange_reship_company is not None:
+        update_fields["exchange_reship_company"] = body.exchange_reship_company
+
+    if body.exchange_reship_tracking is not None:
+        update_fields["exchange_reship_tracking"] = body.exchange_reship_tracking
+
+    if body.exchange_delivered_at is not None:
+        update_fields["exchange_delivered_at"] = (
+            datetime.fromisoformat(body.exchange_delivered_at).replace(
+                tzinfo=timezone.utc
+            )
+            if body.exchange_delivered_at
+            else None
+        )
+
+    if not update_fields:
+        return ret
+
+    return await svc.repo.update_async(return_id, **update_fields)

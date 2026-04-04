@@ -246,6 +246,20 @@ export default function ReturnsPage() {
     } catch (e) { showAlert(e instanceof Error ? e.message : '취소승인 실패', 'error') }
   }
 
+  const handleCancelReject = async (r: SambaReturn) => {
+    const orderNum = r.order_number || r.order_id
+    if (!orderNum) { showAlert('주문번호가 없습니다', 'error'); return }
+    if (!r.clm_req_seq || !r.ord_prd_seq) { showAlert('취소 클레임 정보가 없습니다', 'error'); return }
+    if (!await showConfirm(`${orderNum} 주문의 취소요청을 거절하시겠습니까?`)) return
+    try {
+      const order = await orderApi.findByOrderNumber(orderNum)
+      if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
+      const res = await orderApi.rejectCancel11st(order.channel_id || '', r.clm_req_seq, orderNum, r.ord_prd_seq)
+      showAlert(res.message || '취소거절 완료', 'success')
+      load()
+    } catch (e) { showAlert(e instanceof Error ? e.message : '취소거절 실패', 'error') }
+  }
+
   const handleReturnAction = async (r: SambaReturn, action: string) => {
     const orderNum = r.order_number || r.order_id
     if (!orderNum) { showAlert('주문번호가 없습니다', 'error'); return }
@@ -555,7 +569,10 @@ export default function ReturnsPage() {
                             <button onClick={() => handleReturnAction(r, 'reject')} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(255,107,107,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.3)', cursor: 'pointer' }}>반품거부</button>
                           </div>
                         ) : r.market_order_status?.includes('취소') && !r.market_order_status?.includes('완료') ? (
-                          <button onClick={() => handleCancelApprove(r)} style={{ padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.72rem', fontWeight: 600, background: 'rgba(255,80,80,0.15)', color: '#FF5050', border: '1px solid rgba(255,80,80,0.3)', cursor: 'pointer' }}>{r.market_order_status}</button>
+                          <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
+                            <button onClick={() => handleCancelApprove(r)} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(255,80,80,0.15)', color: '#FF5050', border: '1px solid rgba(255,80,80,0.3)', cursor: 'pointer' }}>취소승인</button>
+                            <button onClick={() => handleCancelReject(r)} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(100,100,100,0.15)', color: '#888', border: '1px solid rgba(100,100,100,0.3)', cursor: 'pointer' }}>취소거절</button>
+                          </div>
                         ) : (
                           <span style={{ color: r.market_order_status?.includes('완료') ? '#51CF66' : r.market_order_status?.includes('거부') ? '#FF6B6B' : '#E5E5E5' }}>{r.market_order_status || '-'}</span>
                         )}
