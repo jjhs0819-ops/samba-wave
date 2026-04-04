@@ -44,6 +44,22 @@ db_host = os.getenv("WRITE_DB_HOST") or os.getenv("write_db_host", "localhost")
 db_port = os.getenv("WRITE_DB_PORT") or os.getenv("write_db_port", "5432")
 db_name = os.getenv("WRITE_DB_NAME") or os.getenv("write_db_name", "samba_wave")
 
+# ── 운영 DB 직접 마이그레이션 차단 ──
+# Cloud Run(ENVIRONMENT=production)에서는 허용, 로컬 개발 환경에서만 차단
+_PRODUCTION_HOSTS = ["/cloudsql/fresh-sanctuary", "/cloudsql/samba-wave-molle"]
+_is_production_host = any(p in db_host for p in _PRODUCTION_HOSTS)
+_app_env = os.getenv("ENVIRONMENT", "development")
+if (
+    _is_production_host
+    and _app_env != "production"
+    and not os.getenv("ALEMBIC_PRODUCTION_CONFIRMED")
+):
+    raise RuntimeError(
+        f"[보안 차단] 로컬 개발 환경에서 운영 DB({db_host})에 직접 마이그레이션이 감지되었습니다. "
+        "운영 마이그레이션은 Cloud Run 배포(entrypoint.sh)를 통해서만 실행해야 합니다. "
+        "직접 실행이 필요하면: ALEMBIC_PRODUCTION_CONFIRMED=1 alembic upgrade heads"
+    )
+
 # Cloud SQL Unix 소켓 경로 감지 (/cloudsql/...)
 if db_host.startswith("/"):
     config.set_main_option(
