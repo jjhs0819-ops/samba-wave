@@ -385,6 +385,42 @@ async def refresh_products(
 
     summary.retransmitted = retransmitted
 
+    # 갱신 후 상품 0건인 그룹 자동 삭제
+    cleaned_filter_ids: list[str] = []
+    if body.search_filter_ids:
+        from sqlalchemy import func as _func, delete as _sa_del
+        from backend.domain.samba.collector.model import (
+            SambaCollectedProduct as _CP2,
+            SambaSearchFilter as _SF,
+        )
+
+        for sf_id in body.search_filter_ids:
+            _cnt = (
+                await session.execute(
+                    select(_func.count()).where(_CP2.search_filter_id == sf_id)
+                )
+            ).scalar() or 0
+            if _cnt == 0:
+                # 마켓등록 상품 없는지 확인
+                _reg = (
+                    await session.execute(
+                        select(_func.count())
+                        .where(_CP2.search_filter_id == sf_id)
+                        .where(_CP2.registered_accounts.isnot(None))
+                    )
+                ).scalar() or 0
+                if _reg == 0:
+                    await session.execute(
+                        _sa_del(_CP2).where(_CP2.search_filter_id == sf_id)
+                    )
+                    await session.execute(_sa_del(_SF).where(_SF.id == sf_id))
+                    cleaned_filter_ids.append(sf_id)
+                    logger.info(
+                        f"[refresh] 빈 그룹 자동 삭제: {sf_id} (갱신 후 상품 0건)"
+                    )
+        if cleaned_filter_ids:
+            await session.commit()
+
     # 모니터링: 재전송/삭제 이벤트
     if retransmitted > 0:
         await monitor.emit(
@@ -428,6 +464,7 @@ async def refresh_products(
         "retransmitted": summary.retransmitted,
         "needs_extension": summary.needs_extension,
         "errors": summary.errors,
+        "cleaned_filters": len(cleaned_filter_ids),
     }
 
 

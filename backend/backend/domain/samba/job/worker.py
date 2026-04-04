@@ -1212,6 +1212,27 @@ class JobWorker:
         )
         logger.info(f"[잡워커] 수집 완료: {job.id} ({total_saved}건)")
 
+        # 수집 완료 후 상품 0건인 그룹 자동 삭제
+        if _actual == 0:
+            from sqlalchemy import delete as _sa_del
+
+            # 마켓등록 상품 존재 여부 확인
+            _reg_stmt = (
+                select(_func.count())
+                .where(CPModel.search_filter_id == filter_id)
+                .where(CPModel.registered_accounts.isnot(None))
+            )
+            _reg_count = (await session.execute(_reg_stmt)).scalar() or 0
+            if _reg_count == 0:
+                await session.execute(
+                    _sa_del(CPModel).where(CPModel.search_filter_id == filter_id)
+                )
+                await session.execute(
+                    _sa_del(SambaSearchFilter).where(SambaSearchFilter.id == filter_id)
+                )
+                await session.commit()
+                logger.info(f"[잡워커] 빈 그룹 자동 삭제: {filter_id} (수집 상품 0건)")
+
     async def _collect_direct_api(self, job, sf, session, repo):
         """FashionPlus/Nike/Adidas 등 직접 API 소싱처 수집."""
         from sqlalchemy import func as _func, select
@@ -1505,6 +1526,28 @@ class JobWorker:
         logger.info(
             f"[잡워커] {site} 수집 완료: {job.id} ({total_saved}건{policy_msg})"
         )
+
+        # 수집 완료 후 상품 0건인 그룹 자동 삭제
+        if actual_count == 0:
+            from sqlalchemy import delete as _sa_del
+            from backend.domain.samba.collector.model import (
+                SambaSearchFilter as _SF2,
+            )
+
+            # 마켓등록 상품 존재 여부 확인
+            _reg_stmt = (
+                select(_func.count())
+                .where(CPModel.search_filter_id == filter_id)
+                .where(CPModel.registered_accounts.isnot(None))
+            )
+            _reg_count = (await session.execute(_reg_stmt)).scalar() or 0
+            if _reg_count == 0:
+                await session.execute(
+                    _sa_del(CPModel).where(CPModel.search_filter_id == filter_id)
+                )
+                await session.execute(_sa_del(_SF2).where(_SF2.id == filter_id))
+                await session.commit()
+                logger.info(f"[잡워커] 빈 그룹 자동 삭제: {filter_id} (수집 상품 0건)")
 
     async def _run_stub(self, job, repo, name: str):
         """미구현 잡 타입 스텁."""
