@@ -26,6 +26,17 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash(git commit)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/ruff-format-on-commit.sh"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|MultiEdit|Write",
