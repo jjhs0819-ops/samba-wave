@@ -1295,22 +1295,21 @@ async def brand_create_groups(
     svc = _get_services(session)
     created = []
 
-    # 기존 그룹 조회 — 동일 브랜드 내 이름/카테고리코드 중복 방지
+    # 기존 그룹 조회 — URL의 brand 파라미터 기준 동일 브랜드 중복 방지
     all_filters = await svc.list_filters()
     existing_names: set[str] = set()
     existing_cat_codes: set[str] = set()
-    _brand_prefix = f"MUSINSA_{req.brand_name or req.brand}_"
     for f in all_filters:
         if f.source_site != "MUSINSA":
             continue
-        _fname = f.name or ""
-        # 동일 브랜드 그룹만 체크
-        if not _fname.startswith(_brand_prefix):
-            continue
-        existing_names.add(_fname)
         try:
             _p = urlparse(f.keyword or "")
             _qs = parse_qs(_p.query)
+            _fb = _qs.get("brand", [""])[0]
+            # brand 코드 기준으로 동일 브랜드만 필터링
+            if _fb != req.brand:
+                continue
+            existing_names.add(f.name or "")
             _c = _qs.get("category", [""])[0]
             if _c:
                 existing_cat_codes.add(_c)
@@ -1382,8 +1381,11 @@ async def brand_create_groups(
     group_name_all = f"MUSINSA_{req.brand_name or req.brand}_전체"
     _real_total = req.real_total or sum(c.get("count", 0) for c in req.categories)
 
-    # 전체 보정 그룹 중복 체크
-    if group_name_all not in existing_names:
+    # 전체 보정 그룹 중복 체크 — 이름 또는 category 없는 동일 brand 그룹 존재 여부
+    _has_all_group = group_name_all in existing_names or any(
+        "_전체" in n for n in existing_names
+    )
+    if not _has_all_group:
         filter_data_all = {
             "source_site": "MUSINSA",
             "keyword": keyword_url_all,
