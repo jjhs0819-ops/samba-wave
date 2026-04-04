@@ -1584,6 +1584,16 @@ class SambaShipmentService:
         parts: list[str] = []
         img_tag = '<div style="text-align:center;"><img src="{url}" style="max-width:860px;width:100%;" /></div>'
 
+        def _extract_url(value: str) -> str:
+            """img 태그가 저장된 경우 src URL만 추출."""
+            if not value:
+                return value
+            if value.strip().startswith("<img"):
+                import re as _re
+                m = _re.search(r'src=["\']([^"\']+)["\']', value)
+                return m.group(1) if m else value
+            return value
+
         # 정책에서 상세 템플릿 조회
         policy_id = product.get("applied_policy_id")
         top_img = ""
@@ -1618,8 +1628,8 @@ class SambaShipmentService:
                     tpl_repo = BaseRepository(self.session, SambaDetailTemplate)
                     tpl = await tpl_repo.get_async(template_id)
                     if tpl:
-                        top_img = tpl.top_image_s3_key or ""
-                        bottom_img = tpl.bottom_image_s3_key or ""
+                        top_img = _extract_url(tpl.top_image_s3_key or "")
+                        bottom_img = _extract_url(tpl.bottom_image_s3_key or "")
                         if tpl.img_checks:
                             img_checks.update(tpl.img_checks)
                         if tpl.img_order:
