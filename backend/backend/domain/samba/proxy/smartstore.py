@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import time
 from typing import Any, Optional
 
@@ -129,8 +130,6 @@ _COUNTRY_ORIGIN_CODE: dict[str, str] = {
 
 def _format_phone(phone: str) -> str:
     """전화번호 포맷팅 — 010-95940674 → 010-9594-0674."""
-    import re
-
     digits = re.sub(r"[^0-9]", "", phone)
     if not digits:
         return phone
@@ -152,6 +151,37 @@ def _format_phone(phone: str) -> str:
     if len(digits) == 12 and digits.startswith("05"):
         return f"{digits[:4]}-{digits[4:8]}-{digits[8:]}"
     return phone
+
+
+def _safe_build_ss_notice(product: dict, **kwargs: Any) -> dict:
+    """고시정보 생성 — 실패 시 기본 ETC 타입으로 폴백."""
+    try:
+        return _build_ss_notice(product, **kwargs)
+    except Exception as e:
+        logger.warning(f"[스마트스토어] 고시정보 생성 실패, ETC 폴백: {e}")
+        return {
+            "productInfoProvidedNoticeType": "ETC",
+            "etcInfo": {
+                "returnCostReason": "상세설명 참조",
+                "noRefundReason": "상세설명 참조",
+                "qualityAssuranceStandard": "상세설명 참조",
+                "compensationProcedure": "상세설명 참조",
+                "troubleShootingContents": "상세설명 참조",
+            },
+        }
+
+
+def _validate_as_phone(phone: str) -> str:
+    """AS 전화번호 검증 — 전화번호 형식이 아니면 기본값 반환.
+
+    네이버 API가 xxx-xxxx-xxxx 형식을 요구하므로
+    텍스트(예: '상세페이지 참조')가 들어오면 기본 번호로 대체.
+    """
+    formatted = _format_phone(phone)
+    # 포맷된 결과가 숫자+하이픈 형식인지 확인
+    if re.match(r"^\d{2,4}-\d{3,4}-\d{4}$", formatted):
+        return formatted
+    return "02-0000-0000"
 
 
 def _build_origin_area(origin: str) -> dict:
@@ -255,8 +285,6 @@ def _build_combination_options(
     max_stock_per_option: 계정 재고수량 설정 (옵션별 재고 상한)
     option_deletion_words: 옵션명에서 제거할 단어 목록
     """
-    import re as _re
-
     _opt_del = option_deletion_words or []
     # 옵션명 패턴 분석: "02(235)" → 사이즈, "Black / 270" → 색상+사이즈
     # 2단 옵션 판별: " / " (공백+슬래시+공백) 패턴이 있어야 진짜 색상/사이즈 구분
@@ -274,7 +302,7 @@ def _build_combination_options(
         """옵션명에서 삭제어 제거."""
         for w in _opt_del:
             n = n.replace(w, "")
-        return _re.sub(r"\s{2,}", " ", n).strip() or n
+        return re.sub(r"\s{2,}", " ", n).strip() or n
 
     combinations = []
     for idx, opt in enumerate(options):
@@ -449,9 +477,17 @@ class SmartStoreClient:
             if not resp.is_success:
                 # 네이버 API는 invalidInputs 배열로 상세 에러 제공
                 msg = data.get("message", "") or data.get("reason", "") or text[:200]
+                logger.error(
+                    f"[스마트스토어] API 에러 — {method} {path} → {resp.status_code} | body: {text[:500]}"
+                )
                 invalid_inputs = data.get("invalidInputs") or []
                 if invalid_inputs:
-                    logger.error(f"[스마트스토어] invalidInputs 원본: {invalid_inputs}")
+                    for iv in invalid_inputs:
+                        if isinstance(iv, dict):
+                            logger.error(
+                                f"[스마트스토어] invalidInput — field={iv.get('name', iv.get('field', '?'))}, "
+                                f"message={iv.get('message', '')}, value={str(iv.get('value', ''))[:100]}"
+                            )
                     details = "; ".join(
                         f"{iv.get('name', iv.get('field', '?'))}: {iv.get('message', '')}"
                         for iv in invalid_inputs
@@ -625,8 +661,6 @@ class SmartStoreClient:
 
         시도 순서: 원본 → 접미사 제거 → 법인명 제거 → 첫 단어만
         """
-        import re
-
         seen: set[str] = set()
         variants: list[str] = []
         for candidate in [
@@ -1551,6 +1585,10 @@ class SmartStoreClient:
             raw_name = product.get("name", "")
             product_name = raw_name[:49]
 
+        # 상품명 특수문자 정제: #, _ → 공백 치환 + 연속 공백 정리
+        product_name = re.sub(r"[#_]+", " ", product_name)
+        product_name = re.sub(r"\s{2,}", " ", product_name).strip()[:49]
+
         images_raw = product.get("images") or []
 
         representative = {"url": images_raw[0]} if images_raw else {}
@@ -1572,8 +1610,6 @@ class SmartStoreClient:
             immediate_discount = True
         else:
             sale_price = ((desired_price + 9) // 10) * 10
-
-        import re
 
         # (주) 제거 함수
         def _clean_company(name: str) -> str:
@@ -1800,6 +1836,16 @@ class SmartStoreClient:
                         "returnDeliveryFee": product.get("_return_fee", 3000),
                         "exchangeDeliveryFee": product.get("_exchange_fee", 6000),
                         **(
+                            {"shippingAddressId": product["_shipping_address_id"]}
+                            if product.get("_shipping_address_id")
+                            else {}
+                        ),
+                        **(
+                            {"returnAddressId": product["_return_address_id"]}
+                            if product.get("_return_address_id")
+                            else {}
+                        ),
+                        **(
                             {"freeReturnInsuranceYn": True}
                             if product.get("_return_safeguard")
                             else {}
@@ -1808,15 +1854,21 @@ class SmartStoreClient:
                 },
                 "detailAttribute": {
                     "afterServiceInfo": {
-                        "afterServiceTelephoneNumber": _format_phone(
+                        "afterServiceTelephoneNumber": _validate_as_phone(
                             product.get("_as_phone", "") or "상세페이지 참조"
                         ),
                         "afterServiceGuideContent": product.get("_as_message", "")
                         or "상세페이지 참조",
                     },
                     "originAreaInfo": _build_origin_area(product.get("origin", "")),
+                    # 관부가세 타입 — 해외 출고지 스토어에서 필수
+                    **(
+                        {"customsTaxType": product["_customs_tax_type"]}
+                        if product.get("_customs_tax_type")
+                        else {}
+                    ),
                     "minorPurchasable": True,
-                    "productInfoProvidedNotice": _build_ss_notice(
+                    "productInfoProvidedNotice": _safe_build_ss_notice(
                         product,
                         color_text=color_text,
                         size_text=(f"발길이(mm): {size_text}")[:200]
@@ -1866,8 +1918,6 @@ class SmartStoreClient:
         # 모델명/품번 입력 — style_code 없으면 상품명에서 추출 시도
         if not style_code:
             # 상품명에서 영숫자 품번 패턴 추출 (예: DUF24G03R2)
-            import re
-
             code_match = re.search(r"[A-Z]{2,}[\dA-Z]{4,}", product.get("name", ""))
             if code_match:
                 style_code = code_match.group()
@@ -1878,22 +1928,15 @@ class SmartStoreClient:
         # 브랜드명 정제 — brandId가 이미 있으면(카탈로그 매칭 완료) 정제 스킵
         # brandId 없을 때만 접미사 제거하여 검색 성공률 높임
         if not product.get("_brand_id"):
-            import re as _re_brand
-
             _brand_suffixes = r"\s*(키즈|kids|kid|주니어|junior|jr|아동|유아|베이비|baby|우먼|women|맨즈|men|골프|golf|스포츠|sports|아웃도어|outdoor)\s*$"
             if brand:
                 brand = (
-                    _re_brand.sub(
-                        _brand_suffixes, "", brand, flags=_re_brand.IGNORECASE
-                    ).strip()
+                    re.sub(_brand_suffixes, "", brand, flags=re.IGNORECASE).strip()
                     or brand
                 )
             if mfr:
                 mfr = (
-                    _re_brand.sub(
-                        _brand_suffixes, "", mfr, flags=_re_brand.IGNORECASE
-                    ).strip()
-                    or mfr
+                    re.sub(_brand_suffixes, "", mfr, flags=re.IGNORECASE).strip() or mfr
                 )
 
         # 브랜드/제조사 — naverShoppingSearchInfo에 설정 (스마트스토어 상품주요정보)
@@ -1926,7 +1969,11 @@ class SmartStoreClient:
                 naver_search_info
             )
 
-        # 상품속성 (성별, 시즌 등)
+        # 상품속성 (성별, 시즌 등) — attributeValueSeq=0인 항목 제거
+        if product_attributes:
+            product_attributes = [
+                pa for pa in product_attributes if pa.get("attributeValueSeq", 0) != 0
+            ]
         if product_attributes:
             data["originProduct"]["detailAttribute"]["productAttributes"] = (
                 product_attributes
@@ -1984,13 +2031,11 @@ class SmartStoreClient:
         brand_lower = brand.lower() if brand else ""
         name_lower = (product.get("name", "") or "").lower()
         # 카테고리 단어 추출 (스마트스토어는 카테고리명을 태그 금지어 처리)
-        import re as _re
-
         _cat_words: set[str] = set()
         for ck in ("category1", "category2", "category3", "category4", "category"):
             cv = product.get(ck, "")
             if cv:
-                for w in _re.split(r"[\s>/\-]+", cv):
+                for w in re.split(r"[\s>/\-]+", cv):
                     cw = w.strip().lower()
                     if len(cw) >= 2:
                         _cat_words.add(cw)

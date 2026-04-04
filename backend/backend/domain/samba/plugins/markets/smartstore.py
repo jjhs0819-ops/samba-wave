@@ -119,6 +119,14 @@ class SmartStorePlugin(MarketPlugin):
                 product_copy["_return_safeguard"] = True
             naver_shopping = extras.get("naverShopping", "true")
             product_copy["_naver_shopping"] = naver_shopping in (True, "true", "True")
+            # 출고지/반품지 주소 ID (국내 출고지 지정 시 해외배송 방지)
+            if extras.get("shippingAddressId"):
+                product_copy["_shipping_address_id"] = int(extras["shippingAddressId"])
+            if extras.get("returnAddressId"):
+                product_copy["_return_address_id"] = int(extras["returnAddressId"])
+            # 관부가세 타입 (해외 출고지 스토어 필수)
+            customs_tax = extras.get("customsTaxType", "INCLUDED")
+            product_copy["_customs_tax_type"] = customs_tax
             if extras.get("returnFee"):
                 product_copy["_return_fee"] = int(extras["returnFee"])
             if extras.get("exchangeFee"):
@@ -446,8 +454,12 @@ class SmartStorePlugin(MarketPlugin):
         else:
             # 전체 전송 시 디버그 로깅
             da = data.get("originProduct", {}).get("detailAttribute", {})
+            as_info = da.get("afterServiceInfo", {})
+            notice = da.get("productInfoProvidedNotice", {})
             logger.info(
-                f"[스마트스토어] 전송 detailAttribute — modelName={da.get('modelName')}, brandId={da.get('brandId')}, brandName={da.get('brandName')}, mfr={da.get('manufacturerName')}, attrs={len(da.get('productAttributes', []))}개, cancelGuide={da.get('cancelGuide')}"
+                f"[스마트스토어] 전송 detailAttribute — modelName={da.get('modelName')}, brandId={da.get('brandId')}, brandName={da.get('brandName')}, "
+                f"mfr={da.get('manufacturerName')}, attrs={len(da.get('productAttributes', []))}개, cancelGuide={da.get('cancelGuide')}, "
+                f"asPhone={as_info.get('afterServiceTelephoneNumber')}, noticeType={notice.get('productInfoProvidedNoticeType')}"
             )
 
         # 기존 상품번호가 있으면 수정, 없으면 신규등록
