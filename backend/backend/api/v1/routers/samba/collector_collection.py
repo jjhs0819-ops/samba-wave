@@ -11,7 +11,6 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.domain.user.auth_service import get_user_id
 from backend.domain.samba.proxy.musinsa import RateLimitError
 from backend.domain.samba.collector.grouping import (
     generate_group_key,
@@ -1288,7 +1287,6 @@ class BrandCreateGroupsRequest(BaseModel):
 async def brand_create_groups(
     req: BrandCreateGroupsRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
-    user_id: str = Depends(get_user_id),
 ):
     """선택된 카테고리별로 검색그룹 일괄 생성 (기존 그룹 중복 방지)."""
     from backend.api.v1.routers.samba.collector_common import _get_services
@@ -1352,7 +1350,6 @@ async def brand_create_groups(
             "name": group_name,
             "requested_count": req_count,
             "applied_policy_id": req.applied_policy_id,
-            "created_by": user_id,
         }
         try:
             sf = await svc.create_filter(filter_data)
@@ -1387,7 +1384,6 @@ async def brand_create_groups(
             "name": group_name_all,
             "requested_count": _real_total,
             "applied_policy_id": req.applied_policy_id,
-            "created_by": user_id,
         }
         try:
             sf_all = await svc.create_filter(filter_data_all)
