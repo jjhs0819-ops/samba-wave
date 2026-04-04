@@ -18,7 +18,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("samba_return", sa.Column("order_number", sa.Text(), nullable=True))
+    op.execute("ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS order_number TEXT")
 
 
 def downgrade() -> None:
