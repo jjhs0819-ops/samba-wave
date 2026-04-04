@@ -1,7 +1,7 @@
-"""samba_order.sourcing_account_id 컬럼 추가 및 두 브랜치 머지
+"""samba_order.sourcing_account_id 컬럼 추가
 
 Revision ID: b9c8d7e6f5a4
-Revises: d985fc142e4a, z3a4b5c6d7e8
+Revises: b3786b6834dc
 Create Date: 2026-04-01 10:45:00.000000
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision: str = "b9c8d7e6f5a4"
-down_revision: Union[str, Sequence[str], None] = ("d985fc142e4a", "z3a4b5c6d7e8")
+down_revision: Union[str, Sequence[str], None] = "b3786b6834dc"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
