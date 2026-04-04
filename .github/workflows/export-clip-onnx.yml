@@ -17,7 +17,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install export dependencies
-        run: pip install --no-cache-dir open-clip-torch onnx numpy
+        run: pip install --no-cache-dir open-clip-torch onnx onnxscript numpy
 
       - name: Export ONNX model
         run: |
