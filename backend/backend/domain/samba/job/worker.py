@@ -1022,10 +1022,12 @@ class JobWorker:
                         logger.warning(f"[잡워커] 수집 실패 {goods_no}: {e}")
                         return None
 
-            _collect_results = await asyncio.gather(
-                *[_fetch_detail(gn) for gn in targets]
-            )
-            await _shared_http.aclose()
+            try:
+                _collect_results = await asyncio.gather(
+                    *[_fetch_detail(gn) for gn in targets]
+                )
+            finally:
+                await _shared_http.aclose()
 
             if _rate_limited:
                 await repo.fail_job(job.id, "소싱처 차단 (연속 rate limit)")
@@ -1035,52 +1037,47 @@ class JobWorker:
             from backend.api.v1.routers.samba.collector_common import _get_services
 
             svc = _get_services(session)
-            for item in _collect_results:
-                if item is None:
-                    continue
-                goods_no = item["goods_no"]
-                detail = item["detail"]
 
+            def _detail_to_product_data(detail: dict, gno: str) -> dict:
+                """상세 정보 → product_data 변환 (수집/재시도 공통)."""
                 if _use_max_discount:
-                    _raw_cost = detail.get("bestBenefitPrice")
-                    new_cost = (
-                        _raw_cost
-                        if (_raw_cost is not None and _raw_cost > 0)
+                    _raw = detail.get("bestBenefitPrice")
+                    cost = (
+                        _raw
+                        if (_raw is not None and _raw > 0)
                         else (detail.get("salePrice") or 0)
                     )
                 else:
-                    new_cost = detail.get("salePrice") or 0
-
-                raw_cat = detail.get("category", "") or ""
-                cat_parts = (
-                    [c.strip() for c in raw_cat.split(">") if c.strip()]
-                    if raw_cat
-                    else []
+                    cost = detail.get("salePrice") or 0
+                rcat = detail.get("category", "") or ""
+                cparts = (
+                    [c.strip() for c in rcat.split(">") if c.strip()] if rcat else []
                 )
-                _sale_price = detail.get("salePrice", 0)
-                _original_price = detail.get("originalPrice", 0)
-
-                raw_detail_html = detail.get("detailHtml", "")
-                if not raw_detail_html:
-                    detail_imgs = detail.get("detailImages") or []
-                    if detail_imgs:
-                        raw_detail_html = "\n".join(
+                dhtml = detail.get("detailHtml", "")
+                if not dhtml:
+                    dimgs = detail.get("detailImages") or []
+                    if dimgs:
+                        dhtml = "\n".join(
                             f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
-                            for img in detail_imgs
+                            for img in dimgs
                         )
-
-                product_data = _build_product_data(
+                return _build_product_data(
                     detail,
-                    goods_no,
+                    gno,
                     filter_id,
                     "MUSINSA",
-                    new_cost,
-                    _sale_price,
-                    _original_price,
-                    raw_cat,
-                    cat_parts,
-                    raw_detail_html,
+                    cost,
+                    detail.get("salePrice", 0),
+                    detail.get("originalPrice", 0),
+                    rcat,
+                    cparts,
+                    dhtml,
                 )
+
+            for item in _collect_results:
+                if item is None:
+                    continue
+                product_data = _detail_to_product_data(item["detail"], item["goods_no"])
                 await svc.create_collected_product(product_data)
                 total_saved += 1
                 await repo.update_progress(
@@ -1119,8 +1116,9 @@ class JobWorker:
                 _retry_saved = 0
                 _attempts: dict[str, int] = defaultdict(int)
                 _max_attempts = 6
+                _retry_deadline = asyncio.get_event_loop().time() + 600  # 최대 10분
 
-                while _pending:
+                while _pending and asyncio.get_event_loop().time() < _retry_deadline:
                     gn = _pending.popleft()
                     _attempts[gn] += 1
                     await asyncio.sleep(3)
@@ -1138,43 +1136,9 @@ class JobWorker:
                             continue
                         if _exclude_boutique and detail.get("isBoutique"):
                             continue
-
-                        if _use_max_discount:
-                            _rc = detail.get("bestBenefitPrice")
-                            _nc = (
-                                _rc
-                                if (_rc is not None and _rc > 0)
-                                else (detail.get("salePrice") or 0)
-                            )
-                        else:
-                            _nc = detail.get("salePrice") or 0
-                        _rcat = detail.get("category", "") or ""
-                        _cp = (
-                            [c.strip() for c in _rcat.split(">") if c.strip()]
-                            if _rcat
-                            else []
+                        await _svc2.create_collected_product(
+                            _detail_to_product_data(detail, gn)
                         )
-                        _rdh = detail.get("detailHtml", "")
-                        if not _rdh:
-                            _di = detail.get("detailImages") or []
-                            if _di:
-                                _rdh = "\n".join(
-                                    f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
-                                    for img in _di
-                                )
-                        _pd = _build_product_data(
-                            detail,
-                            gn,
-                            filter_id,
-                            "MUSINSA",
-                            _nc,
-                            detail.get("salePrice", 0),
-                            detail.get("originalPrice", 0),
-                            _rcat,
-                            _cp,
-                            _rdh,
-                        )
-                        await _svc2.create_collected_product(_pd)
                         _retry_saved += 1
                         total_saved += 1
                     except RateLimitError as _rle:
