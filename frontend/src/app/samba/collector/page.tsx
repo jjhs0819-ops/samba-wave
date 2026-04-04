@@ -475,13 +475,15 @@ export default function CollectorPage() {
     setCollecting(true)
     addLog(`${targetIds.length}개 그룹 상품수집 시작...`)
 
-    for (const id of targetIds) {
+    for (let gi = 0; gi < targetIds.length; gi++) {
+      const id = targetIds[gi]
       if (abort.signal.aborted) break
       const f = filters.find((x) => x.id === id)
       if (!f) continue
+      const gTag = `[${gi + 1}/${targetIds.length}]`
       // 그룹 전환 시 렌더링 보장
       await new Promise(r => setTimeout(r, 100))
-      addLog(`[${f.name}] 수집 요청 중...`)
+      addLog(`${gTag} [${f.name}] 수집 요청 중...`)
 
       try {
         // Job 생성
@@ -491,7 +493,7 @@ export default function CollectorPage() {
         )
         if (!res.ok) {
           const errData = await res.json().catch(() => null)
-          addLog(`[${f.name}] 수집 실패: ${errData?.detail || `HTTP ${res.status}`}`)
+          addLog(`${gTag} [${f.name}] 수집 실패: ${errData?.detail || `HTTP ${res.status}`}`)
           continue
         }
         const { job_id } = await res.json() as { job_id: string }
@@ -513,7 +515,7 @@ export default function CollectorPage() {
             }
 
             if (job.current > lastCurrent) {
-              addLog(`[${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`)
+              addLog(`${gTag} [${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`)
               lastCurrent = job.current
               load()
             }
@@ -525,12 +527,12 @@ export default function CollectorPage() {
               const parts = [`신규 ${saved}건`]
               if (skipped > 0) parts.push(`중복 ${skipped}건`)
               if (policy) parts.push(policy)
-              addLog(`[${f.name}] 수집 완료: ${parts.join(' | ')}`)
+              addLog(`${gTag} [${f.name}] 수집 완료: ${parts.join(' | ')}`)
               await new Promise(r => setTimeout(r, 100))
               break
             }
             if (job.status === 'failed') {
-              addLog(`[${f.name}] 수집 실패: ${job.error || '알 수 없는 오류'}`)
+              addLog(`${gTag} [${f.name}] 수집 실패: ${job.error || '알 수 없는 오류'}`)
               await new Promise(r => setTimeout(r, 100))
               break
             }
@@ -539,7 +541,7 @@ export default function CollectorPage() {
           }
         }
       } catch (e) {
-        addLog(`[${f.name}] 수집 오류: ${(e as Error).message}`)
+        addLog(`${gTag} [${f.name}] 수집 오류: ${(e as Error).message}`)
       }
     }
     setCollecting(false)
@@ -1398,14 +1400,15 @@ export default function CollectorPage() {
                         collectAbortRef.current = abort
                         setCollecting(true)
                         addLog(`${updatedFilters.length}개 그룹 상품수집 시작...`)
-                        for (const f of updatedFilters) {
+                        for (let gi = 0; gi < updatedFilters.length; gi++) {
+                          const f = updatedFilters[gi]
+                          const gTag = `[${gi + 1}/${updatedFilters.length}]`
                           if (abort.signal.aborted) break
-                          addLog(`[${f.name}] 수집 요청 중...`)
+                          addLog(`${gTag} [${f.name}] 수집 요청 중...`)
                           try {
                             const r = await fetch(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}`, { method: 'POST' })
-                            if (!r.ok) { addLog(`[${f.name}] 수집 실패: HTTP ${r.status}`); continue }
+                            if (!r.ok) { addLog(`${gTag} [${f.name}] 수집 실패: HTTP ${r.status}`); continue }
                             const { job_id } = await r.json()
-                            // 수집 시작 로그 생략
                             let lastCurrent = 0
                             while (!abort.signal.aborted) {
                               await new Promise(r => setTimeout(r, 1000))
@@ -1413,18 +1416,18 @@ export default function CollectorPage() {
                               const jr = await fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
                               if (!jr.ok) break
                               const job = await jr.json()
-                              if (job.current > lastCurrent) { addLog(`[${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
+                              if (job.current > lastCurrent) { addLog(`${gTag} [${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
                               if (job.status === 'completed') {
                                 const _s = job.result?.saved ?? 0, _sk = job.result?.skipped ?? 0, _p = job.result?.policy || ''
                                 const _parts = [`신규 ${_s}건`]
                                 if (_sk > 0) _parts.push(`중복 ${_sk}건`)
                                 if (_p) _parts.push(_p)
-                                addLog(`[${f.name}] 수집 완료: ${_parts.join(' | ')}`)
+                                addLog(`${gTag} [${f.name}] 수집 완료: ${_parts.join(' | ')}`)
                                 break
                               }
-                              if (job.status === 'failed') { addLog(`[${f.name}] 수집 실패: ${job.error || '오류'}`); break }
+                              if (job.status === 'failed') { addLog(`${gTag} [${f.name}] 수집 실패: ${job.error || '오류'}`); break }
                             }
-                          } catch (e) { addLog(`[${f.name}] 수집 오류: ${(e as Error).message}`) }
+                          } catch (e) { addLog(`${gTag} [${f.name}] 수집 오류: ${(e as Error).message}`) }
                         }
                         setCollecting(false)
                         await syncRequestedCounts()
