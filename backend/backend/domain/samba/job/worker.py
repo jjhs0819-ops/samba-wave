@@ -955,9 +955,9 @@ class JobWorker:
             from backend.domain.samba.collector.refresher import SITE_CONCURRENCY
             import httpx as _httpx
 
-            # 브랜드 전체수집: 동시성 2 (rate limit 방지), 일반: 기존값
+            # 브랜드 소싱: 동시성 1 (상품당 5~6개 API 호출 → rate limit 방지), 일반: 기존값
             _concurrency = (
-                2 if _is_brand_exhaustive else SITE_CONCURRENCY.get("MUSINSA", 5)
+                1 if _brand_filter else SITE_CONCURRENCY.get("MUSINSA", 5)
             )
             _collect_sem = asyncio.Semaphore(_concurrency)
             _collect_results: list[dict | None] = []
