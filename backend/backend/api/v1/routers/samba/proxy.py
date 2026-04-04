@@ -613,7 +613,7 @@ async def lotteon_auth_test(
     if not creds or not isinstance(creds, dict):
         return {"success": False, "message": "롯데ON 설정이 저장되지 않았습니다."}
 
-    api_key = creds.get("apiKey", "")
+    api_key = (creds.get("apiKey", "") or "").strip()
     if not api_key:
         return {"success": False, "message": "API Key가 비어있습니다."}
 

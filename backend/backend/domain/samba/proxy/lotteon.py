@@ -189,7 +189,7 @@ class LotteonClient:
     ONPICK_URL = "https://onpick-api.lotteon.com"
 
     def __init__(self, api_key: str) -> None:
-        self.api_key = api_key
+        self.api_key = api_key.strip()
         self.tr_grp_cd: str = ""
         self.tr_no: str = ""
 
