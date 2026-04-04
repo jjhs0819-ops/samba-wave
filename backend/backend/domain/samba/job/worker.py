@@ -955,10 +955,17 @@ class JobWorker:
             from backend.domain.samba.collector.refresher import SITE_CONCURRENCY
             import httpx as _httpx
 
-            _collect_sem = asyncio.Semaphore(SITE_CONCURRENCY.get("MUSINSA", 5))
+            # 브랜드 전체수집: 동시성 2 (rate limit 방지), 일반: 기존값
+            _concurrency = (
+                2 if _is_brand_exhaustive else SITE_CONCURRENCY.get("MUSINSA", 5)
+            )
+            _collect_sem = asyncio.Semaphore(_concurrency)
             _collect_results: list[dict | None] = []
             _rate_limited = False
-            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(15, connect=5.0))
+            _shared_http_kwargs: dict = {"timeout": _httpx.Timeout(15, connect=5.0)}
+            if _collect_proxy:
+                _shared_http_kwargs["proxy"] = _collect_proxy
+            _shared_http = _httpx.AsyncClient(**_shared_http_kwargs)
 
             async def _fetch_detail(goods_no: str) -> dict | None:
                 nonlocal total_skipped, _rate_limited
@@ -1085,8 +1092,10 @@ class JobWorker:
 
             search_page += 1
 
-        # 전체수집 모드: 실패 상품 순차 재시도 (rate limit 회피를 위해 1건씩)
+        # 전체수집 모드: 실패 상품 deque 기반 재투입 (최대 6회, rate limit 시 30초 쿨다운)
         if _is_brand_exhaustive and _failed_ids:
+            from collections import deque, defaultdict
+
             # DB에 이미 존재하는 것 제외
             _retry_check = await session.execute(
                 select(CPModel.site_product_id).where(
@@ -1095,26 +1104,31 @@ class JobWorker:
                 )
             )
             _already_saved = {row[0] for row in _retry_check.all()}
-            _retry_targets = [
+            _pending = deque(
                 gn for gn in dict.fromkeys(_failed_ids) if gn not in _already_saved
-            ]
-            if _retry_targets:
+            )
+            if _pending:
                 logger.info(
-                    f"[잡워커] 실패 상품 재시도: {len(_retry_targets)}건 (순차, 2초 간격)"
+                    f"[잡워커] 실패 상품 재시도: {len(_pending)}건 (deque 재투입, 최대 6회)"
                 )
-                _site_consecutive_errors[_ik] = 0
-                _site_consecutive_errors["_rl_total"] = 0
                 from backend.api.v1.routers.samba.collector_common import (
                     _get_services as _gs2,
                 )
 
                 _svc2 = _gs2(session)
                 _retry_saved = 0
-                for gn in _retry_targets:
-                    await asyncio.sleep(2)
+                _attempts: dict[str, int] = defaultdict(int)
+                _max_attempts = 6
+
+                while _pending:
+                    gn = _pending.popleft()
+                    _attempts[gn] += 1
+                    await asyncio.sleep(3)
                     try:
                         detail = await client.get_goods_detail(gn)
                         if not detail or not detail.get("name"):
+                            if _attempts[gn] < _max_attempts:
+                                _pending.append(gn)
                             continue
                         if detail.get("saleStatus") == "sold_out" or detail.get(
                             "isOutOfStock"
@@ -1163,13 +1177,15 @@ class JobWorker:
                         await _svc2.create_collected_product(_pd)
                         _retry_saved += 1
                         total_saved += 1
-                    except RateLimitError:
-                        await asyncio.sleep(10)
+                    except RateLimitError as _rle:
+                        if _attempts[gn] < _max_attempts:
+                            _pending.append(gn)
+                        await asyncio.sleep(max(_rle.retry_after, 30))
                     except Exception as e:
+                        if _attempts[gn] < _max_attempts:
+                            _pending.append(gn)
                         logger.debug(f"[잡워커] 재시도 실패 {gn}: {e}")
-                logger.info(
-                    f"[잡워커] 재시도 완료: {_retry_saved}/{len(_retry_targets)}건 추가 수집"
-                )
+                logger.info(f"[잡워커] 재시도 완료: {_retry_saved}건 추가 수집")
 
         # 수집 완료 → last_collected_at 갱신 + 요청수를 실제 수집수로 보정
         from sqlalchemy import update as _sa_upd
