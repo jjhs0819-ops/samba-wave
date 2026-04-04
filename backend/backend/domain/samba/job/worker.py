@@ -977,6 +977,9 @@ class JobWorker:
                             goods_no, _shared_client=_shared_http
                         )
                         if not detail or not detail.get("name"):
+                            logger.warning(
+                                f"[잡워커] 상세 빈 응답 {goods_no}: name={detail.get('name', 'MISSING') if detail else 'NO_DETAIL'}"
+                            )
                             if _is_brand_exhaustive:
                                 _failed_ids.append(goods_no)
                             return None
@@ -1017,7 +1020,9 @@ class JobWorker:
                     except Exception as e:
                         if _is_brand_exhaustive:
                             _failed_ids.append(goods_no)
-                        logger.warning(f"[잡워커] 수집 실패 {goods_no}: {e}")
+                        logger.warning(
+                            f"[잡워커] 수집 실패 {goods_no}: {type(e).__name__}: {e}"
+                        )
                         return None
 
             try:
