@@ -1209,6 +1209,8 @@ export interface SambaUser {
   status: string
   created_at: string
   updated_at: string
+  token?: string
+  tenant_id?: string
 }
 
 export const userApi = {
