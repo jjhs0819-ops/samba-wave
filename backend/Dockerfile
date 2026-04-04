@@ -1,4 +1,16 @@
-# Base Image
+# ══════════════════════════════════════════════
+# Stage 1: CLIP 모델 ONNX 변환 (빌드 후 버려짐)
+# ══════════════════════════════════════════════
+FROM python:3.12.3-slim AS clip-export
+
+RUN pip install --no-cache-dir open-clip-torch onnx numpy
+
+COPY scripts/export_clip_onnx.py /export_clip_onnx.py
+RUN python /export_clip_onnx.py
+
+# ══════════════════════════════════════════════
+# Stage 2: 프로덕션 이미지 (torch 없음)
+# ══════════════════════════════════════════════
 FROM python:3.12.3-slim
 
 # Set environment variables for non-interactive installs and unbuffered python output.
@@ -33,9 +45,8 @@ COPY README.md ./README.md
 COPY uv.lock ./uv.lock
 RUN uv sync --compile-bytecode --no-dev
 
-# CLIP 모델 사전 다운로드 (코드 복사 전 — 패키지 변경 없으면 캐시 유지)
-ENV HF_HOME="/app/.cache/huggingface"
-RUN .venv/bin/python -c "import open_clip; open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')"
+# CLIP ONNX 모델 복사 (Stage 1에서 변환된 ~85MB)
+COPY --from=clip-export /clip_onnx/ /app/models/clip/
 
 COPY backend ./backend
 COPY scripts ./scripts

@@ -1,10 +1,10 @@
-"""상품 이미지 자동 필터링 — Claude Vision / CLIP 분류.
+"""상품 이미지 자동 필터링 — Claude Vision / CLIP(ONNX) 분류.
 
 수집된 상품 이미지에서 순수 이미지컷(단색 배경 + 상품만)만 남기고
 모델컷/연출컷/배너/사이즈표 등을 자동 제거한다.
 
 method="claude": Claude Vision API (유료, 고정확도)
-method="clip":   CLIP zero-shot 분류 (무료, 로컬)
+method="clip":   CLIP zero-shot 분류 (무료, ONNX Runtime)
 """
 
 from __future__ import annotations
@@ -12,10 +12,12 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 from io import BytesIO
 from typing import Any
 
 import httpx
+import numpy as np
 from PIL import Image
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -43,57 +45,59 @@ CLASSIFY_PROMPT = """아래 상품 이미지들을 각각 분류하세요:
 이미지 순서대로 JSON 배열로만 답변 (다른 텍스트 없이):
 [{"index": 0, "type": "product"}, {"index": 1, "type": "other"}, ...]"""
 
-# ── CLIP zero-shot 분류 라벨 ──
-CLIP_PRODUCT_LABELS = [
-    "a product photo on a plain white or solid color background, no person visible",
-    "a close-up detail shot of a product without any human body",
-    "a product laid flat on a surface, flat lay photography",
-    "a product displayed on a hanger or mannequin without real human",
-    "shoes photographed from multiple angles on plain background",
-    "a sole or bottom view of shoes on plain background",
-]
-CLIP_OTHER_LABELS = [
-    "a person wearing or modeling clothes or shoes",
-    "human body parts visible such as feet legs hands arms or torso",
-    "a lifestyle or outdoor photoshoot with a person",
-    "a text banner, promotional graphic, or advertisement image",
-    "a size chart, specification table, or measurement guide",
-    "a brand logo or decorative graphic design",
-]
-
-# CLIP 모델 싱글턴 캐시 (프로세스당 1회 로드)
-_clip_model_cache: dict[str, Any] = {}
+# ── CLIP ONNX 모델 싱글턴 캐시 ──
+_CLIP_MODEL_DIR = os.environ.get("CLIP_MODEL_DIR", "/app/models/clip")
+_clip_onnx_cache: dict[str, Any] = {}
 
 
-def _get_clip_model() -> tuple[Any, Any, Any]:
-    """CLIP 모델+전처리기+토크나이저 반환 (최초 1회 로드)."""
-    if "model" not in _clip_model_cache:
-        import open_clip
-        import torch
+def _get_clip_onnx() -> tuple[Any, np.ndarray, dict]:
+    """CLIP ONNX 세션 + 사전 계산된 텍스트 임베딩 반환 (최초 1회 로드)."""
+    if "session" not in _clip_onnx_cache:
+        import onnxruntime as ort
 
-        model, _, preprocess = open_clip.create_model_and_transforms(
-            "ViT-B-32", pretrained="laion2b_s34b_b79k"
-        )
-        tokenizer = open_clip.get_tokenizer("ViT-B-32")
-        model.eval()
+        onnx_path = os.path.join(_CLIP_MODEL_DIR, "visual.onnx")
+        text_path = os.path.join(_CLIP_MODEL_DIR, "text_features.npy")
+        meta_path = os.path.join(_CLIP_MODEL_DIR, "meta.json")
 
-        # 라벨 텍스트 임베딩 사전 계산
-        all_labels = CLIP_PRODUCT_LABELS + CLIP_OTHER_LABELS
-        text_tokens = tokenizer(all_labels)
-        with torch.no_grad():
-            text_features = model.encode_text(text_tokens)
-            text_features /= text_features.norm(dim=-1, keepdim=True)
+        session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+        text_features = np.load(text_path)
+        with open(meta_path) as f:
+            meta = json.load(f)
 
-        _clip_model_cache["model"] = model
-        _clip_model_cache["preprocess"] = preprocess
-        _clip_model_cache["text_features"] = text_features
-        _clip_model_cache["n_product"] = len(CLIP_PRODUCT_LABELS)
+        _clip_onnx_cache["session"] = session
+        _clip_onnx_cache["text_features"] = text_features
+        _clip_onnx_cache["meta"] = meta
+        logger.info("[CLIP-ONNX] 모델 로드 완료 — %s", onnx_path)
 
     return (
-        _clip_model_cache["model"],
-        _clip_model_cache["preprocess"],
-        _clip_model_cache["text_features"],
+        _clip_onnx_cache["session"],
+        _clip_onnx_cache["text_features"],
+        _clip_onnx_cache["meta"],
     )
+
+
+def _preprocess_image(img: Image.Image, meta: dict) -> np.ndarray:
+    """CLIP 이미지 전처리 — Pillow만 사용 (torch 불필요)."""
+    size = meta["image_size"]  # 224
+    mean = np.array(meta["mean"], dtype=np.float32)
+    std = np.array(meta["std"], dtype=np.float32)
+
+    # 짧은 변 기준 리사이즈 후 중앙 크롭
+    w, h = img.size
+    scale = size / min(w, h)
+    new_w, new_h = int(w * scale + 0.5), int(h * scale + 0.5)
+    img = img.resize((new_w, new_h), Image.BICUBIC)
+
+    # 중앙 크롭
+    left = (new_w - size) // 2
+    top = (new_h - size) // 2
+    img = img.crop((left, top, left + size, top + size))
+
+    # numpy 변환 + 정규화 (HWC → CHW, 0~1 스케일)
+    arr = np.array(img, dtype=np.float32) / 255.0
+    arr = (arr - mean) / std
+    arr = arr.transpose(2, 0, 1)  # CHW
+    return arr[np.newaxis, ...]  # NCHW batch=1
 
 
 class ImageFilterService:
@@ -321,7 +325,7 @@ class ImageFilterService:
     async def classify_images_clip(
         self, urls: list[str], threshold: float = 0.0
     ) -> list[dict[str, Any]]:
-        """CLIP zero-shot으로 이미지 분류 (무료, 로컬).
+        """CLIP ONNX zero-shot으로 이미지 분류 (무료, 로컬).
 
         각 이미지에 대해 product/other 라벨 유사도를 계산하고
         product 최대 점수 - other 최대 점수 > threshold → "product".
@@ -332,10 +336,8 @@ class ImageFilterService:
         """
         import asyncio
 
-        import torch
-
-        model, preprocess, text_features = _get_clip_model()
-        n_product = _clip_model_cache["n_product"]
+        session, text_features, meta = _get_clip_onnx()
+        n_product = meta["n_product_labels"]
 
         results: list[dict[str, Any]] = []
 
@@ -356,17 +358,18 @@ class ImageFilterService:
                     resp.raise_for_status()
                     img = Image.open(BytesIO(resp.content)).convert("RGB")
 
-                    # CLIP 전처리 + 추론 (CPU, 동기 → run_in_executor)
+                    # ONNX 추론 (CPU, 동기 → run_in_executor)
                     def _classify_single(img: Image.Image) -> tuple[float, float]:
-                        img_tensor = preprocess(img).unsqueeze(0)
-                        with torch.no_grad():
-                            img_features = model.encode_image(img_tensor)
-                            img_features /= img_features.norm(dim=-1, keepdim=True)
-                            similarities = (img_features @ text_features.T).squeeze(0)
+                        pixel_values = _preprocess_image(img, meta)
+                        (img_features,) = session.run(
+                            ["image_features"],
+                            {"pixel_values": pixel_values},
+                        )
+                        # 코사인 유사도 (이미 L2 정규화됨)
+                        similarities = (img_features @ text_features.T).squeeze(0)
 
-                        # product 라벨 최대 점수 vs other 라벨 최대 점수
-                        product_score = similarities[:n_product].max().item()
-                        other_score = similarities[n_product:].max().item()
+                        product_score = float(similarities[:n_product].max())
+                        other_score = float(similarities[n_product:].max())
                         return product_score, other_score
 
                     loop = asyncio.get_event_loop()
