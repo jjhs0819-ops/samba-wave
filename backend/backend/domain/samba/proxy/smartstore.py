@@ -1585,8 +1585,8 @@ class SmartStoreClient:
             raw_name = product.get("name", "")
             product_name = raw_name[:49]
 
-        # 상품명 특수문자 정제: #, _ → 공백 치환 + 연속 공백 정리
-        product_name = re.sub(r"[#_]+", " ", product_name)
+        # 상품명 특수문자 정제: #, _, [] → 공백 치환 + 연속 공백 정리
+        product_name = re.sub(r"[#_\[\]]+", " ", product_name)
         product_name = re.sub(r"\s{2,}", " ", product_name).strip()[:49]
 
         images_raw = product.get("images") or []
@@ -2157,6 +2157,10 @@ class SmartStoreClient:
             name = first.get("name", "")
             group_name = name.split(" - ", 1)[0].strip() if " - " in name else name
             group_name = group_name[:50]
+
+        # 그룹 상품명 특수문자 정제: #, _, [] → 공백 치환 + 연속 공백 정리
+        group_name = re.sub(r"[#_\[\]]+", " ", group_name)
+        group_name = re.sub(r"\s{2,}", " ", group_name).strip()[:50]
 
         # A/S 정보
         as_phone = account_settings.get("asPhone", "") or "상세페이지 참조"

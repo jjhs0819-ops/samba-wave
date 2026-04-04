@@ -108,6 +108,10 @@ def detect_notice_group(product: dict[str, Any]) -> str:
         if keyword in full_cat:
             return group
 
+    # "기타 재화"는 소싱처에서 미분류된 상품 → 의류로 폴백 (GSShop 등)
+    if full_cat == "기타 재화":
+        return "wear"
+
     # 상품명에서 카테고리 추론 (카테고리 미설정 소싱처 대응)
     name = (product.get("name") or "").lower()
     name_hints = {
