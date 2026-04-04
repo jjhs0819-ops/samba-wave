@@ -27,6 +27,8 @@ OTHER_LABELS = [
     "a person wearing or modeling clothes or shoes",
     "human body parts visible such as feet legs hands arms or torso",
     "a lifestyle or outdoor photoshoot with a person",
+    "a model standing and posing in clothing on plain background",
+    "a full body shot of a person wearing fashion items",
     "a text banner, promotional graphic, or advertisement image",
     "a size chart, specification table, or measurement guide",
     "a brand logo or decorative graphic design",

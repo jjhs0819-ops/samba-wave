@@ -1076,21 +1076,21 @@ export default function ProductsPage() {
                     }
                   }
                 }
-                // 2) 백엔드 이미지 필터링 (CLIP)
+                // 2) 백엔드 이미지 필터링
                 const r = await proxyApi.filterProductImages([ids[i]], '', scope)
                 if (r.success) {
                   success++
                   const removed = r.total_removed || 0
                   totalVisionRemoved += removed
-                  if (removed > 0) steps.push(`CLIP ${removed}장 제거`)
-                  else steps.push('CLIP 변동없음')
+                  if (removed > 0) steps.push(`필터 ${removed}장 제거`)
+                  else steps.push('필터 변동없음')
                   addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — ${steps.join(' → ')}`)
                 } else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
               } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
             }
             const summary = [`성공 ${success}개`, `실패 ${fail}개`]
             if (totalTall > 0) summary.push(`긴이미지 ${totalTall}장 제거`)
-            if (totalVisionRemoved > 0) summary.push(`CLIP ${totalVisionRemoved}장 제거`)
+            if (totalVisionRemoved > 0) summary.push(`필터 ${totalVisionRemoved}장 제거`)
             setAiJobTitle(`이미지 필터링 완료 (${success}/${ids.length})`)
             addLog(`\n완료: ${summary.join(' / ')}`)
             addLog(`시작 ${startTime} → 종료 ${ts()}`)
