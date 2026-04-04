@@ -884,12 +884,20 @@ class JobWorker:
                 await asyncio.sleep(_site_intervals.get(_ik, 0))
             except RateLimitError as rle:
                 _search_rl_retries += 1
-                if _search_rl_retries >= 3:
-                    # 3회 연속 rate limit → 해당 그룹 종료 (다음 그룹으로)
+                if not _is_brand_exhaustive:
+                    # 카테고리 그룹: rate limit 시 즉시 건너뜀 (전체 보정 그룹이 보정)
                     logger.warning(
-                        f"[잡워커] 검색 rate limit {_search_rl_retries}회 연속 → 그룹 종료"
+                        "[잡워커] 검색 rate limit → 카테고리 그룹 스킵 (전체 보정 그룹에서 수집)"
                     )
                     break
+                if _search_rl_retries >= 3:
+                    # 전체수집 모드: 3회 연속 rate limit → 30초 대기 후 카운터 리셋
+                    logger.warning(
+                        f"[잡워커] 검색 rate limit {_search_rl_retries}회 → 30초 쿨다운"
+                    )
+                    await asyncio.sleep(30)
+                    _search_rl_retries = 0
+                    continue
                 logger.warning(
                     f"[잡워커] 검색 rate limit (p{search_page}), {rle.retry_after}초 대기 ({_search_rl_retries}/3)"
                 )
