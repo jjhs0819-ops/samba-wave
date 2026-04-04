@@ -47,11 +47,21 @@ router = APIRouter(prefix="/proxy", tags=["samba-proxy"])
 
 # ── Cloud Run 외부 IP 확인 ──
 @router.get("/myip")
-async def get_my_ip() -> dict[str, str]:
-    """Cloud Run 컨테이너의 외부 IP 주소를 반환한다."""
+async def get_my_ip() -> dict[str, Any]:
+    """Cloud Run 컨테이너의 외부 IP 주소를 반환한다 (IPv4/IPv6)."""
+    result: dict[str, Any] = {}
     async with httpx.AsyncClient(timeout=5) as client:
-        resp = await client.get("https://ifconfig.me/ip")
-        return {"ip": resp.text.strip()}
+        try:
+            resp = await client.get("https://api.ipify.org?format=json")
+            result["ipv4"] = resp.json().get("ip", "")
+        except Exception:
+            result["ipv4"] = ""
+        try:
+            resp = await client.get("https://api64.ipify.org?format=json")
+            result["ipv6"] = resp.json().get("ip", "")
+        except Exception:
+            result["ipv6"] = ""
+    return result
 
 
 # ── Helper: read setting from DB ──
