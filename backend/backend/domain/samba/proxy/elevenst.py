@@ -909,6 +909,126 @@ class ElevenstClient:
 
         return True
 
+    # ------------------------------------------------------------------
+    # 상품 Q&A (고객 문의)
+    # ------------------------------------------------------------------
+
+    async def get_qna_list(
+        self, start_dt: Optional[str] = None, end_dt: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        """상품 Q&A 목록 조회.
+
+        Args:
+            start_dt: 검색시작일 YYYYMMDD (기본: 7일 전)
+            end_dt:   검색종료일 YYYYMMDD (기본: 오늘)
+
+        Returns:
+            Q&A 항목 리스트 (brdInfoNo, brdInfoCont, answerCont, answerYn, prdNm 등)
+        """
+        import re as _re
+        from datetime import timedelta
+
+        if not end_dt:
+            end_dt = datetime.now().strftime("%Y%m%d")
+        if not start_dt:
+            start_dt = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+
+        # answerStatus: 00=전체, 01=답변완료, 02=미답변
+        url = f"https://api.11st.co.kr/rest/prodqnaservices/prodqnalist/{start_dt}/{end_dt}/00"
+        headers = self._headers()
+
+        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+            resp = await client.get(url, headers=headers)
+            logger.info("[11번가] Q&A 목록 조회 → %s", resp.status_code)
+
+        if not resp.is_success:
+            raise ElevenstApiError(
+                f"Q&A 목록 HTTP {resp.status_code}: {resp.text[:300]}"
+            )
+
+        try:
+            text = resp.content.decode("euc-kr")
+        except Exception:
+            text = resp.text
+
+        # ns2: 네임스페이스 제거
+        xml_text = text.replace("ns2:", "").replace("s2:", "")
+        xml_text = _re.sub(r"<\?xml[^?]*\?>", "", xml_text, count=1).strip()
+        logger.info("[11번가] Q&A 원시 응답(500자): %s", xml_text[:500])
+
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError as e:
+            logger.error("[11번가] Q&A XML 파싱 실패: %s", e)
+            return []
+
+        result_code = root.findtext("result_code", "")
+        if result_code:
+            result_text = root.findtext("result_text", "")
+            if result_code in ("0", "-1") and "없습니다" in (result_text or ""):
+                return []
+            raise ElevenstApiError(f"Q&A 조회 에러 ({result_code}): {result_text}")
+
+        items: list[dict[str, Any]] = []
+        for el in root.findall("productQna"):
+            item: dict[str, Any] = {}
+            for child in el:
+                item[child.tag] = (child.text or "").strip()
+            items.append(item)
+
+        logger.info("[11번가] Q&A %d건 조회", len(items))
+        return items
+
+    async def reply_qna(self, brd_info_no: str, prd_no: str, answer: str) -> bool:
+        """Q&A 답변 등록.
+
+        Args:
+            brd_info_no: QnA 글번호 (brdInfoNo)
+            prd_no:      상품번호 (brdInfoClfNo)
+            answer:      답변 내용
+
+        Returns:
+            True if 성공
+        """
+        import re as _re
+
+        url = f"https://api.11st.co.kr/rest/prodqnaservices/prodqnaanswer/{brd_info_no}/{prd_no}"
+        headers = self._headers()
+        xml_body = f"<?xml version='1.0' encoding='UTF-8'?><ProductQna><answerCont>{answer}</answerCont></ProductQna>"
+
+        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+            resp = await client.put(
+                url, headers=headers, content=xml_body.encode("utf-8")
+            )
+            logger.info(
+                "[11번가] Q&A 답변 brdInfoNo=%s → %s", brd_info_no, resp.status_code
+            )
+
+        if not resp.is_success:
+            raise ElevenstApiError(
+                f"Q&A 답변 HTTP {resp.status_code}: {resp.text[:300]}"
+            )
+
+        try:
+            text = resp.content.decode("euc-kr")
+        except Exception:
+            text = resp.text
+
+        xml_text = _re.sub(r"<\?xml[^?]*\?>", "", text, count=1).strip()
+        logger.info("[11번가] Q&A 답변 원시 응답: %s", xml_text[:300])
+
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError:
+            raise ElevenstApiError(f"Q&A 답변 응답 파싱 실패: {text[:200]}")
+
+        result_code = root.findtext("resultCode", "")
+        if result_code and result_code != "200":
+            message = root.findtext("message", "")
+            raise ElevenstApiError(f"Q&A 답변 에러 ({result_code}): {message}")
+
+        return True
+
     async def _fetch_claim_list(
         self, claim_type: str, start_time: str, end_time: str
     ) -> list[dict[str, Any]]:

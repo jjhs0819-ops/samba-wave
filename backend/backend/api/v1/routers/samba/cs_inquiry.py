@@ -185,6 +185,12 @@ async def reply_cs_inquiry(
     )
 
     # 마켓 전송 시도 (market_inquiry_no가 있는 경우)
+    logger.info(
+        "[CS답변] market=%s market_inquiry_no=%s market_product_no=%s",
+        inquiry.market,
+        inquiry.market_inquiry_no,
+        inquiry.market_product_no,
+    )
     if inquiry.market_inquiry_no:
         try:
             if inquiry.market == "스마트스토어":
@@ -229,6 +235,7 @@ async def reply_cs_inquiry(
             elif inquiry.market == "11번가":
                 from backend.domain.samba.account.model import SambaMarketAccount
                 from backend.domain.samba.proxy.elevenst import ElevenstClient
+
                 account_result = await session.execute(
                     select(SambaMarketAccount).where(
                         SambaMarketAccount.market_type == "11st",
@@ -236,11 +243,20 @@ async def reply_cs_inquiry(
                     )
                 )
                 e_account = account_result.scalars().first()
-                if e_account and e_account.api_key:
-                    e_client = ElevenstClient(e_account.api_key)
-                    await e_client.reply_qna(inquiry.market_inquiry_no, body.reply)
-                    market_sent = True
-                    market_msg = "11번가 Q&A 답변 전송 완료"
+                if e_account:
+                    extras = e_account.additional_fields or {}
+                    api_key = e_account.api_key or extras.get("apiKey", "")
+                    if api_key:
+                        e_client = ElevenstClient(api_key)
+                        # brdInfoNo=market_inquiry_no, prdNo=market_product_no
+                        prd_no = inquiry.market_product_no or ""
+                        await e_client.reply_qna(
+                            inquiry.market_inquiry_no, prd_no, body.reply
+                        )
+                        market_sent = True
+                        market_msg = "11번가 Q&A 답변 전송 완료"
+                    else:
+                        logger.warning("[CS답변] 11번가 api_key 없음")
         except Exception as e:
             logger.warning(f"[CS답변] 마켓 전송 실패 (DB 저장은 진행): {e}")
             market_msg = f"마켓 전송 실패: {e}"
@@ -635,7 +651,8 @@ async def sync_cs_from_markets(
         elevenst_accounts = elevenst_result.scalars().all()
 
         for account in elevenst_accounts:
-            api_key = account.api_key or ""
+            extras = account.additional_fields or {}
+            api_key = account.api_key or extras.get("apiKey", "")
             if not api_key:
                 continue
 
@@ -643,55 +660,61 @@ async def sync_cs_from_markets(
 
             try:
                 client = ElevenstClient(api_key)
-                qna_items = await client.get_qna_list(page=1, page_size=100)
+                qna_items = await client.get_qna_list()
 
                 for item in qna_items:
-                    qna_no = item.get("qnaNo", "")
-                    if not qna_no:
+                    # brdInfoNo: QnA 글번호, brdInfoClfNo: 상품번호
+                    brd_info_no = item.get("brdInfoNo", "")
+                    if not brd_info_no:
                         continue
 
-                    # 중복 체크
+                    # 중복 체크 (숨김 처리된 것 제외)
                     existing_qna = await session.execute(
                         select(SambaCSInquiry).where(
                             SambaCSInquiry.market == "11번가",
-                            SambaCSInquiry.market_inquiry_no == qna_no,
+                            SambaCSInquiry.market_inquiry_no == brd_info_no,
+                            SambaCSInquiry.is_hidden == False,  # noqa: E712
                         )
                     )
                     if existing_qna.scalar_one_or_none():
                         continue
 
-                    qna_stat = item.get("qnaStatCd", "")
-                    is_answered = qna_stat == "02"
+                    is_answered = item.get("answerYn", "N") == "Y"
 
-                    raw_date = item.get("regDt", item.get("qnaDate", ""))
+                    raw_date = item.get("createDt", "")
                     parsed_date = None
                     if raw_date:
                         try:
                             from dateutil.parser import parse as parse_dt
+
                             parsed_date = parse_dt(raw_date)
                         except Exception:
                             pass
 
-                    prd_no = item.get("prdNo", "")
-                    matched = await _find_collected_product_by_market_product_no(session, prd_no)
-                    product_link = _build_market_product_url("11번가", prd_no) if prd_no else ""
+                    prd_no = item.get("brdInfoClfNo", "")
+                    matched = await _find_collected_product_by_market_product_no(
+                        session, prd_no
+                    )
+                    product_link = (
+                        _build_market_product_url("11번가", prd_no) if prd_no else ""
+                    )
 
                     inquiry_data = {
                         "market": "11번가",
-                        "market_inquiry_no": qna_no,
+                        "market_inquiry_no": brd_info_no,
                         "market_answer_no": None,
                         "market_order_id": None,
                         "market_product_no": prd_no or None,
                         "account_name": account_name,
                         "inquiry_type": "product_question",
-                        "questioner": item.get("buyerId", item.get("writerId", "")),
+                        "questioner": item.get("memID", ""),
                         "product_name": item.get("prdNm", ""),
                         "product_image": matched["product_image"] if matched else "",
                         "product_link": product_link,
                         "original_link": matched["original_link"] if matched else "",
                         "collected_product_id": matched["id"] if matched else None,
-                        "content": item.get("qnaContent", ""),
-                        "reply": item.get("answerContent", "") if is_answered else None,
+                        "content": item.get("brdInfoCont", ""),
+                        "reply": item.get("answerCont", "") if is_answered else None,
                         "reply_status": "replied" if is_answered else "pending",
                         "inquiry_date": parsed_date,
                         "replied_at": None,
@@ -700,7 +723,9 @@ async def sync_cs_from_markets(
                     await svc.create_inquiry(inquiry_data)
                     synced += 1
 
-                logger.info(f"[CS동기화] 11번가({account_name}) Q&A: {len(qna_items)}건 조회")
+                logger.info(
+                    f"[CS동기화] 11번가({account_name}) Q&A: {len(qna_items)}건 조회"
+                )
             except ElevenstApiError as e:
                 logger.error(f"[CS동기화] 11번가({account_name}) API 실패: {e}")
                 errors.append(f"11번가 {account_name}: {str(e)}")
@@ -894,7 +919,7 @@ async def send_reply_to_market(
 
     if inquiry.market == "11번가":
         from backend.domain.samba.account.model import SambaMarketAccount
-        from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+        from backend.domain.samba.proxy.elevenst import ElevenstClient
 
         account_result = await session.execute(
             select(SambaMarketAccount).where(
@@ -907,9 +932,11 @@ async def send_reply_to_market(
             raise HTTPException(400, "11번가 계정 설정이 없습니다")
 
         client = ElevenstClient(account.api_key)
-        result = await client.reply_qna(inquiry.market_inquiry_no, body.reply)
+        prd_no = inquiry.market_product_no or ""
+        result = await client.reply_qna(inquiry.market_inquiry_no, prd_no, body.reply)
 
         from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
+
         repo = SambaCSInquiryRepository(session)
         await repo.update_async(
             inquiry_id,
@@ -919,7 +946,9 @@ async def send_reply_to_market(
         )
         return {"success": True, "message": "11번가 Q&A 답변 전송 완료", "data": result}
 
-    raise HTTPException(400, f"'{inquiry.market}' 마켓은 아직 답변 전송을 지원하지 않습니다")
+    raise HTTPException(
+        400, f"'{inquiry.market}' 마켓은 아직 답변 전송을 지원하지 않습니다"
+    )
 
 
 @router.post("/batch-delete")

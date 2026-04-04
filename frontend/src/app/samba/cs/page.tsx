@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { csInquiryApi, orderApi, accountApi, type SambaCSInquiry, type CSReplyTemplate, type SambaMarketAccount } from '@/lib/samba/api'
+import { csInquiryApi, orderApi, accountApi, returnApi, type SambaCSInquiry, type CSReplyTemplate, type SambaMarketAccount } from '@/lib/samba/api'
 import { CS_MARKET_FILTERS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle } from '@/lib/samba/styles'
@@ -73,12 +73,61 @@ export default function CSPage() {
 
   // 교환/취소 액션 모달
   const [exchangeActionItem, setExchangeActionItem] = useState<SambaCSInquiry | null>(null)
+  // 11번가 교환 거부 사유 입력 모달
+  const [rejectReasonModal, setRejectReasonModal] = useState(false)
+  const [rejectReasonText, setRejectReasonText] = useState('')
+  const [rejectTargetItem, setRejectTargetItem] = useState<SambaCSInquiry | null>(null)
+
+  // 11번가 교환 승인: returnApi 사용
+  const handleElevenstExchangeApprove = async (item: SambaCSInquiry) => {
+    if (!item.market_order_id) { showAlert('주문번호가 없습니다', 'error'); return }
+    if (!await showConfirm(`${item.market_order_id} 주문의 교환을 승인(재배송) 하시겠습니까?`)) return
+    try {
+      const order = await orderApi.findByOrderNumber(item.market_order_id)
+      if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
+      const returns = await returnApi.list(order.id, undefined, 'exchange')
+      const ret = returns[0]
+      if (!ret) { showAlert('교환 신청 기록을 찾을 수 없습니다', 'error'); return }
+      const res = await returnApi.exchangeAction(ret.id, 'approve')
+      showAlert(res.message || '교환승인 완료', 'success')
+      setExchangeActionItem(null)
+    } catch (e) { showAlert(e instanceof Error ? e.message : '교환승인 실패', 'error') }
+  }
+
+  // 11번가 교환 거부: 사유 입력 후 처리
+  const handleElevenstExchangeReject = (item: SambaCSInquiry) => {
+    setRejectTargetItem(item)
+    setRejectReasonText('')
+    setRejectReasonModal(true)
+  }
+
+  const submitElevenstExchangeReject = async () => {
+    if (!rejectTargetItem?.market_order_id) { showAlert('주문번호가 없습니다', 'error'); return }
+    if (!rejectReasonText.trim()) { showAlert('거부 사유를 입력해 주세요', 'error'); return }
+    try {
+      const order = await orderApi.findByOrderNumber(rejectTargetItem.market_order_id)
+      if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
+      const returns = await returnApi.list(order.id, undefined, 'exchange')
+      const ret = returns[0]
+      if (!ret) { showAlert('교환 신청 기록을 찾을 수 없습니다', 'error'); return }
+      const res = await returnApi.exchangeAction(ret.id, 'reject', rejectReasonText.trim())
+      showAlert(res.message || '교환거부 완료', 'success')
+      setRejectReasonModal(false)
+      setExchangeActionItem(null)
+    } catch (e) { showAlert(e instanceof Error ? e.message : '교환거부 실패', 'error') }
+  }
 
   const handleExchangeAction = async (item: SambaCSInquiry, action: string) => {
     if (!item.market_order_id) {
       showAlert('주문번호가 없습니다', 'error')
       return
     }
+    // 11번가 교환은 returnApi 사용 (reship=approve, reject=reject)
+    if (item.market === '11st' || item.market === '11번가') {
+      if (action === 'reship') { await handleElevenstExchangeApprove(item); return }
+      if (action === 'reject') { handleElevenstExchangeReject(item); return }
+    }
+    // 기타 마켓(스마트스토어 등) — 기존 방식 유지
     const labels: Record<string, string> = { reship: '교환재배송', reject: '교환거부', convert_return: '반품변경' }
     if (!await showConfirm(`${item.market_order_id} 주문을 ${labels[action] || action} 처리하시겠습니까?`)) return
     try {
@@ -888,6 +937,35 @@ export default function CSPage() {
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
               <button onClick={() => setExchangeActionItem(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 11번가 교환 거부 사유 입력 모달 */}
+      {rejectReasonModal && rejectTargetItem && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 101 }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '400px', maxWidth: '90vw' }}>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.5rem' }}>교환거부 사유 입력</h3>
+            <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '1.25rem' }}>주문번호: {rejectTargetItem.market_order_id || '-'}</p>
+            <input
+              type="text"
+              value={rejectReasonText}
+              onChange={e => setRejectReasonText(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submitElevenstExchangeReject() }}
+              placeholder="거부 사유를 입력하세요"
+              autoFocus
+              style={{ width: '100%', padding: '0.625rem 0.75rem', background: '#111', border: '1px solid #444', borderRadius: '8px', color: '#E5E5E5', fontSize: '0.875rem', boxSizing: 'border-box', marginBottom: '1.25rem' }}
+            />
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setRejectReasonModal(false); setRejectTargetItem(null) }}
+                style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}
+              >취소</button>
+              <button
+                onClick={submitElevenstExchangeReject}
+                style={{ padding: '0.625rem 1.25rem', background: 'rgba(255,107,107,0.15)', border: '1px solid rgba(255,107,107,0.4)', borderRadius: '8px', color: '#FF6B6B', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
+              >거부 확정</button>
             </div>
           </div>
         </div>

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
+import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, returnApi, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount, type SambaReturn } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { inputStyle } from '@/lib/samba/styles'
@@ -92,6 +92,9 @@ export default function OrdersPage() {
   const [editingOrderNumbers, setEditingOrderNumbers] = useState<Record<string, string>>({})
   // 직배/까대기/선물 토글 상태
   const [activeActions, setActiveActions] = useState<Record<string, string | null>>({})
+  // 교환 상세 정보 (order_id → SambaReturn | null | undefined)
+  // undefined: 아직 조회 안 함, null: 조회 중, SambaReturn: 조회 완료
+  const [exchangeDetails, setExchangeDetails] = useState<Record<string, SambaReturn | null | undefined>>({})
   // 미등록 입력 모달
   // 우측상단 알람
   const [notifications, setNotifications] = useState<{id: number, message: string, type: string}[]>([])
@@ -1065,6 +1068,70 @@ export default function OrdersPage() {
                         style={{ flex: 1, fontSize: '0.75rem', padding: '0.125rem 0.375rem', background: '#1A1A1A', border: '1px solid #444', color: '#E5E5E5', borderRadius: '4px', fontFamily: 'monospace', minWidth: 0 }}
                       />
                     </div>
+
+                    {/* 교환 상세 정보 — exchanging / exchanged 상태일 때만 표시 */}
+                    {(o.status === 'exchanging' || o.status === 'exchanged') && (() => {
+                      const exd = exchangeDetails[o.id]
+                      return (
+                        <div style={{ marginTop: '0.5rem', padding: '0.5rem 0.75rem', background: 'rgba(255,182,193,0.06)', border: '1px solid rgba(255,182,193,0.2)', borderRadius: '6px', fontSize: '0.78rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem', flexWrap: 'wrap' }}>
+                            <span style={{ color: '#FFB6C1', fontWeight: 700, whiteSpace: 'nowrap' }}>교환정보</span>
+                            {exd === undefined && (
+                              <button
+                                onClick={async () => {
+                                  setExchangeDetails(prev => ({ ...prev, [o.id]: null }))
+                                  try {
+                                    const list = await returnApi.list(o.id, undefined, 'exchange')
+                                    setExchangeDetails(prev => ({ ...prev, [o.id]: list[0] || null }))
+                                  } catch { setExchangeDetails(prev => ({ ...prev, [o.id]: null })) }
+                                }}
+                                style={{ fontSize: '0.7rem', padding: '0.1rem 0.5rem', background: 'rgba(255,182,193,0.12)', border: '1px solid rgba(255,182,193,0.3)', borderRadius: '4px', color: '#FFB6C1', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              >상세조회</button>
+                            )}
+                            {exd === null && <span style={{ color: '#666', fontSize: '0.72rem' }}>조회 중...</span>}
+                            {exd && exd.return_link && (
+                              <button
+                                onClick={() => window.open(exd.return_link!, '_blank')}
+                                style={{ fontSize: '0.7rem', padding: '0.1rem 0.5rem', background: 'rgba(76,154,255,0.12)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '4px', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              >원문링크</button>
+                            )}
+                          </div>
+                          {exd && (
+                            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
+                                <span style={{ color: '#888' }}>회수상태</span>
+                                <span style={{
+                                  padding: '0.1rem 0.375rem', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600,
+                                  background: exd.exchange_retrieval_status === '회수완료' ? 'rgba(81,207,102,0.15)' : exd.exchange_retrieval_status === '회수중' ? 'rgba(76,154,255,0.15)' : 'rgba(255,211,61,0.15)',
+                                  color: exd.exchange_retrieval_status === '회수완료' ? '#51CF66' : exd.exchange_retrieval_status === '회수중' ? '#4C9AFF' : '#FFD93D',
+                                }}>
+                                  {exd.exchange_retrieval_status || '미회수'}
+                                </span>
+                              </div>
+                              {exd.exchange_retrieved_at && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
+                                  <span style={{ color: '#888' }}>회수완료일</span>
+                                  <span style={{ color: '#C5C5C5' }}>{new Date(exd.exchange_retrieved_at).toLocaleDateString('ko-KR')}</span>
+                                </div>
+                              )}
+                              {(exd.exchange_reship_company || exd.exchange_reship_tracking) && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
+                                  <span style={{ color: '#888' }}>출고</span>
+                                  <span style={{ color: '#C5C5C5' }}>{exd.exchange_reship_company || '-'}</span>
+                                  <span style={{ color: '#888', fontFamily: 'monospace' }}>{exd.exchange_reship_tracking || '-'}</span>
+                                </div>
+                              )}
+                              {exd.exchange_delivered_at && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', whiteSpace: 'nowrap' }}>
+                                  <span style={{ color: '#888' }}>고객도착일</span>
+                                  <span style={{ color: '#51CF66' }}>{new Date(exd.exchange_delivered_at).toLocaleDateString('ko-KR')}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </td>
                   {/* 금액 */}
                   <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8rem' }}>
