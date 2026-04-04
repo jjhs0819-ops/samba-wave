@@ -84,3 +84,9 @@ jobs:
             echo "❌ 헬스체크 실패 (HTTP ${HTTP_CODE})"
             exit 1
           fi
+
+          # Cloud Run 외부 IP 확인 (롯데온 등 IP 화이트리스트용)
+          MYIP_URL="https://samba-wave-api-413651618998.asia-northeast3.run.app/api/v1/samba/proxy/myip"
+          IP_RESULT=$(curl -s "${MYIP_URL}" --max-time 10)
+          echo "🌐 Cloud Run 외부 IP: ${IP_RESULT}"
+          echo "⚠️ IP 변경 시 롯데온 셀러포털에서 허용 IP 재등록 필요"
