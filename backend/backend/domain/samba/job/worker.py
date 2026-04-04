@@ -949,6 +949,7 @@ class JobWorker:
                 search_page += 1
                 continue
             empty_pages = 0  # 신규 상품 발견 시 카운터 리셋
+            _failed_ids: list[str] = []  # 전체수집 모드: 실패 상품 재시도용
 
             # 상세 수집 (병렬 — SITE_CONCURRENCY + 공유 HTTP 클라이언트)
             from backend.domain.samba.collector.refresher import SITE_CONCURRENCY
@@ -962,6 +963,8 @@ class JobWorker:
             async def _fetch_detail(goods_no: str) -> dict | None:
                 nonlocal total_skipped, _rate_limited
                 if _rate_limited:
+                    if _is_brand_exhaustive:
+                        _failed_ids.append(goods_no)
                     return None
                 async with _collect_sem:
                     try:
@@ -969,6 +972,8 @@ class JobWorker:
                             goods_no, _shared_client=_shared_http
                         )
                         if not detail or not detail.get("name"):
+                            if _is_brand_exhaustive:
+                                _failed_ids.append(goods_no)
                             return None
                         if detail.get("saleStatus") == "sold_out" or detail.get(
                             "isOutOfStock"
@@ -983,6 +988,8 @@ class JobWorker:
                             return None
                         return {"goods_no": goods_no, "detail": detail}
                     except RateLimitError as rle:
+                        if _is_brand_exhaustive:
+                            _failed_ids.append(goods_no)
                         current = _site_intervals.get(_ik, 1.0)
                         _site_intervals[_ik] = min(30.0, current * 2)
                         _site_consecutive_errors[_ik] = (
@@ -992,7 +999,6 @@ class JobWorker:
                         _site_consecutive_errors["_rl_total"] = _rl_total
                         if _site_consecutive_errors[_ik] >= 5:
                             if _is_brand_exhaustive and _rl_total < 20:
-                                # 전체수집 모드: 30초 대기 후 카운터 리셋 (재시도)
                                 logger.warning(
                                     f"[잡워커] rate limit 5회 → 30초 대기 후 재시도 (누적 {_rl_total}회)"
                                 )
@@ -1004,6 +1010,8 @@ class JobWorker:
                             await asyncio.sleep(rle.retry_after)
                         return None
                     except Exception as e:
+                        if _is_brand_exhaustive:
+                            _failed_ids.append(goods_no)
                         logger.warning(f"[잡워커] 수집 실패 {goods_no}: {e}")
                         return None
 
@@ -1076,6 +1084,92 @@ class JobWorker:
                     break
 
             search_page += 1
+
+        # 전체수집 모드: 실패 상품 순차 재시도 (rate limit 회피를 위해 1건씩)
+        if _is_brand_exhaustive and _failed_ids:
+            # DB에 이미 존재하는 것 제외
+            _retry_check = await session.execute(
+                select(CPModel.site_product_id).where(
+                    CPModel.source_site == site,
+                    CPModel.site_product_id.in_(_failed_ids),
+                )
+            )
+            _already_saved = {row[0] for row in _retry_check.all()}
+            _retry_targets = [
+                gn for gn in dict.fromkeys(_failed_ids) if gn not in _already_saved
+            ]
+            if _retry_targets:
+                logger.info(
+                    f"[잡워커] 실패 상품 재시도: {len(_retry_targets)}건 (순차, 2초 간격)"
+                )
+                _site_consecutive_errors[_ik] = 0
+                _site_consecutive_errors["_rl_total"] = 0
+                from backend.api.v1.routers.samba.collector_common import (
+                    _get_services as _gs2,
+                )
+
+                _svc2 = _gs2(session)
+                _retry_saved = 0
+                for gn in _retry_targets:
+                    await asyncio.sleep(2)
+                    try:
+                        detail = await client.get_goods_detail(gn)
+                        if not detail or not detail.get("name"):
+                            continue
+                        if detail.get("saleStatus") == "sold_out" or detail.get(
+                            "isOutOfStock"
+                        ):
+                            continue
+                        if _exclude_preorder and detail.get("saleStatus") == "preorder":
+                            continue
+                        if _exclude_boutique and detail.get("isBoutique"):
+                            continue
+
+                        if _use_max_discount:
+                            _rc = detail.get("bestBenefitPrice")
+                            _nc = (
+                                _rc
+                                if (_rc is not None and _rc > 0)
+                                else (detail.get("salePrice") or 0)
+                            )
+                        else:
+                            _nc = detail.get("salePrice") or 0
+                        _rcat = detail.get("category", "") or ""
+                        _cp = (
+                            [c.strip() for c in _rcat.split(">") if c.strip()]
+                            if _rcat
+                            else []
+                        )
+                        _rdh = detail.get("detailHtml", "")
+                        if not _rdh:
+                            _di = detail.get("detailImages") or []
+                            if _di:
+                                _rdh = "\n".join(
+                                    f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                                    for img in _di
+                                )
+                        _pd = _build_product_data(
+                            detail,
+                            gn,
+                            filter_id,
+                            "MUSINSA",
+                            _nc,
+                            detail.get("salePrice", 0),
+                            detail.get("originalPrice", 0),
+                            _rcat,
+                            _cp,
+                            _rdh,
+                        )
+                        await _svc2.create_collected_product(_pd)
+                        _retry_saved += 1
+                        total_saved += 1
+                    except RateLimitError:
+                        await asyncio.sleep(10)
+                    except Exception as e:
+                        logger.debug(f"[잡워커] 재시도 실패 {gn}: {e}")
+                logger.info(
+                    f"[잡워커] 재시도 완료: {_retry_saved}/{len(_retry_targets)}건 추가 수집"
+                )
 
         # 수집 완료 → last_collected_at 갱신 + 요청수를 실제 수집수로 보정
         from sqlalchemy import update as _sa_upd
