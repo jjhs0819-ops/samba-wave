@@ -1875,7 +1875,14 @@ class SambaCategoryService:
         2. 마지막 세그먼트 키워드 기반 퍼지 매칭 (leaf 카테고리 유사도)
         """
         tree = await self.tree_repo.get_by_site(market_type)
+        # cat2가 없으면 ESM JSON 파일 폴백 (auction/gmarket)
         if not tree or not tree.cat2:
+            if market_type in ("auction", "gmarket"):
+                from backend.domain.samba.proxy.esmplus import esm_find_category_by_path
+
+                code = esm_find_category_by_path(category_path, market_type)
+                if code:
+                    return code
             return ""
         code_map = tree.cat2
         # 1. 정확 매칭
