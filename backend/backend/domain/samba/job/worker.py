@@ -936,8 +936,8 @@ class JobWorker:
                 f"[잡워커] 중복={len(existing_ids)}, 타겟={len(targets)}, 스킵={total_skipped}"
             )
             if not targets:
-                if _is_brand_exhaustive:
-                    # 전체수집 모드: 모든 페이지를 끝까지 순회 (조기 종료 안 함)
+                if _is_brand_exhaustive or _brand_filter:
+                    # 브랜드 소싱 그룹: 모든 페이지 끝까지 순회 (카테고리 간 중복 무시)
                     search_page += 1
                     continue
                 # 일반 모드: 연속 5페이지 신규 0건이면 조기 종료
