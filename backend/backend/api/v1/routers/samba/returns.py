@@ -854,9 +854,13 @@ async def sync_returns_from_markets(
                     if not order_number:
                         continue
 
-                    existing_order = await order_repo.find_by_async(order_number=order_number)
+                    existing_order = await order_repo.find_by_async(
+                        order_number=order_number
+                    )
                     if not existing_order and ord_no and ord_no != order_number:
-                        existing_order = await order_repo.find_by_async(order_number=ord_no)
+                        existing_order = await order_repo.find_by_async(
+                            order_number=ord_no
+                        )
                     if not existing_order:
                         continue
 
@@ -885,17 +889,24 @@ async def sync_returns_from_markets(
                         "quantity": int(item.get("qty", 1) or 1),
                         "requested_amount": float(item.get("sellAmt", 0) or 0),
                         "product_image": existing_order.product_image,
-                        "product_name": item.get("prdNm") or existing_order.product_name,
+                        "product_name": item.get("prdNm")
+                        or existing_order.product_name,
                         "customer_name": existing_order.customer_name,
                         "customer_phone": existing_order.customer_phone,
                         "customer_address": existing_order.customer_address,
-                        "product_location": _extract_city_district(existing_order.customer_address),
-                        "business_name": account.business_name or account.market_name or label,
+                        "product_location": _extract_city_district(
+                            existing_order.customer_address
+                        ),
+                        "business_name": account.business_name
+                        or account.market_name
+                        or label,
                         "market": "11번가",
                         "market_order_status": "취소요청",
                         "return_link": existing_order.source_url or "",
                         "return_source": existing_order.source_site or "",
-                        "region": _extract_city_district(existing_order.customer_address),
+                        "region": _extract_city_district(
+                            existing_order.customer_address
+                        ),
                         "return_request_date": _dt.now(UTC),
                         "order_date": existing_order.created_at,
                         "status": "requested",
@@ -907,20 +918,123 @@ async def sync_returns_from_markets(
                     await svc.repo.create_async(**return_data)
                     # 주문 상태도 취소요청으로 업데이트
                     await order_repo.update_async(
-                        existing_order.id, status="cancel_requested", shipping_status="취소요청"
+                        existing_order.id,
+                        status="cancel_requested",
+                        shipping_status="취소요청",
                     )
                     cancel_synced += 1
 
+                # 11번가 반품 요청 동기화
+                try:
+                    return_items = await elevenst_order_client.get_return_requests(
+                        start_dt.strftime(fmt), end_dt.strftime(fmt)
+                    )
+                except Exception as re:
+                    logger.warning(f"[반품동기화] {label} 11번가 반품 조회 실패: {re}")
+                    return_items = []
+
+                return_synced = 0
+                for item in return_items:
+                    ord_no = item.get("ordNo", "")
+                    ord_prd_seq = item.get("ordPrdSeq", "")
+                    clm_req_seq = item.get("clmReqSeq", "")
+                    order_number = item.get("ordPrdNo", "") or ord_no
+
+                    if not order_number:
+                        continue
+
+                    existing_order = await order_repo.find_by_async(
+                        order_number=order_number
+                    )
+                    if not existing_order and ord_no and ord_no != order_number:
+                        existing_order = await order_repo.find_by_async(
+                            order_number=ord_no
+                        )
+                    if not existing_order:
+                        continue
+
+                    # 이미 반품 레코드가 있으면 clm_req_seq/ord_prd_seq 보완 후 스킵
+                    existing_returns = await svc.repo.filter_by_async(
+                        order_id=existing_order.id, type="return"
+                    )
+                    if existing_returns:
+                        existing_ret = existing_returns[0]
+                        patch: dict[str, Any] = {}
+                        if clm_req_seq and not existing_ret.clm_req_seq:
+                            patch["clm_req_seq"] = clm_req_seq
+                        if ord_prd_seq and not existing_ret.ord_prd_seq:
+                            patch["ord_prd_seq"] = ord_prd_seq
+                        if patch:
+                            await svc.repo.update_async(existing_ret.id, **patch)
+                        continue
+
+                    from datetime import UTC, datetime as _dt
+
+                    timeline_entries = [
+                        {
+                            "date": _dt.now(UTC).isoformat(),
+                            "status": "requested",
+                            "message": "11번가 반품 요청이 접수되었습니다.",
+                        }
+                    ]
+                    return_data = {
+                        "order_id": existing_order.id,
+                        "order_number": order_number,
+                        "type": "return",
+                        "reason": item.get("returnRsnCd")
+                        or item.get("clmRsnCd")
+                        or None,
+                        "description": item.get("prdNm") or existing_order.product_name,
+                        "quantity": int(item.get("qty", 1) or 1),
+                        "requested_amount": float(item.get("sellAmt", 0) or 0),
+                        "product_image": existing_order.product_image,
+                        "product_name": item.get("prdNm")
+                        or existing_order.product_name,
+                        "customer_name": existing_order.customer_name,
+                        "customer_phone": existing_order.customer_phone,
+                        "customer_address": existing_order.customer_address,
+                        "product_location": _extract_city_district(
+                            existing_order.customer_address
+                        ),
+                        "business_name": account.business_name
+                        or account.market_name
+                        or label,
+                        "market": "11번가",
+                        "market_order_status": "반품요청",
+                        "return_link": existing_order.source_url or "",
+                        "return_source": existing_order.source_site or "",
+                        "region": _extract_city_district(
+                            existing_order.customer_address
+                        ),
+                        "return_request_date": _dt.now(UTC),
+                        "order_date": existing_order.created_at,
+                        "status": "requested",
+                        "timeline": timeline_entries,
+                        "notes": [],
+                        "clm_req_seq": clm_req_seq or None,
+                        "ord_prd_seq": ord_prd_seq or None,
+                    }
+                    await svc.repo.create_async(**return_data)
+                    # 주문 상태 반품요청으로 업데이트
+                    await order_repo.update_async(
+                        existing_order.id,
+                        status="return_requested",
+                        shipping_status="반품요청",
+                    )
+                    return_synced += 1
+
                 logger.info(
-                    f"[반품동기화] {label}: 11번가 교환 {len(exchange_items)}건({exchange_synced}건 신규), 취소 {len(cancel_items)}건({cancel_synced}건 신규)"
+                    f"[반품동기화] {label}: 11번가 교환 {len(exchange_items)}건({exchange_synced}건 신규), 취소 {len(cancel_items)}건({cancel_synced}건 신규), 반품 {len(return_items)}건({return_synced}건 신규)"
                 )
-                synced = exchange_synced + cancel_synced
+                synced = exchange_synced + cancel_synced + return_synced
                 total_synced += synced
                 results.append(
                     {
                         "account": label,
                         "status": "success",
-                        "fetched": len(exchange_items) + len(cancel_items),
+                        "fetched": len(exchange_items)
+                        + len(cancel_items)
+                        + len(return_items),
                         "synced": synced,
                     }
                 )

@@ -847,6 +847,68 @@ class ElevenstClient:
 
         return True
 
+    async def reject_return(
+        self,
+        clm_req_seq: str,
+        ord_no: str,
+        ord_prd_seq: str,
+    ) -> bool:
+        """반품 거부 처리.
+
+        Args:
+            clm_req_seq:  클레임번호 (반품요청코드)
+            ord_no:       주문번호
+            ord_prd_seq:  주문순번
+
+        Returns:
+            True if 반품거부 성공
+        """
+        import re as _re
+
+        url = (
+            f"https://api.11st.co.kr/rest/claimservice/returnreqreject"
+            f"/{clm_req_seq}/{ord_no}/{ord_prd_seq}"
+        )
+        headers = self._headers()
+
+        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+            resp = await client.get(url, headers=headers)
+            logger.info(
+                "[11번가] 반품거부 clmReqSeq=%s ordNo=%s → %s",
+                clm_req_seq,
+                ord_no,
+                resp.status_code,
+            )
+
+        if not resp.is_success:
+            raise ElevenstApiError(
+                f"반품거부 HTTP {resp.status_code}: {resp.text[:300]}"
+            )
+
+        try:
+            text = resp.content.decode("euc-kr")
+        except Exception:
+            text = resp.text
+
+        xml_text = text.replace("ns2:", "").replace("s2:", "")
+        xml_text = _re.sub(r"<\?xml[^?]*\?>", "", xml_text, count=1).strip()
+        logger.info("[11번가] 반품거부 원시 응답: %s", xml_text[:300])
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError:
+            raise ElevenstApiError(f"반품거부 응답 XML 파싱 실패: {text[:200]}")
+
+        result_code = root.findtext("result_code", "")
+        result_text = root.findtext("result_text", "")
+        logger.info(
+            "[11번가] 반품거부 결과: code=%s, text=%s", result_code, result_text
+        )
+
+        if result_code and result_code != "0":
+            raise ElevenstApiError(f"반품거부 에러 ({result_code}): {result_text}")
+
+        return True
+
     async def _fetch_claim_list(
         self, claim_type: str, start_time: str, end_time: str
     ) -> list[dict[str, Any]]:
@@ -883,6 +945,7 @@ class ElevenstClient:
         # 네임스페이스 + XML 선언 제거
         xml_text = text.replace("ns2:", "").replace("s2:", "")
         xml_text = _re.sub(r"<\?xml[^?]*\?>", "", xml_text, count=1).strip()
+        logger.info("[11번가] %s 원시 응답(500자): %s", claim_type, xml_text[:500])
 
         try:
             root = ET.fromstring(xml_text)
@@ -893,7 +956,13 @@ class ElevenstClient:
         # result_code 확인 (0=결과없음 정상, 음수=에러)
         result_code = root.findtext("result_code", "")
         if result_code:
-            if result_code == "0":
+            if result_code in ("0", "-1"):
+                # 0 또는 -1 + "해당 건이 없습니다" → 결과 없음 (정상)
+                result_text = root.findtext("result_text", "")
+                if result_code == "-1" and "없습니다" not in (result_text or ""):
+                    raise ElevenstApiError(
+                        f"{claim_type} 조회 에러 ({result_code}): {result_text}"
+                    )
                 return []
             result_text = root.findtext("result_text", "")
             raise ElevenstApiError(

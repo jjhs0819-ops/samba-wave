@@ -264,6 +264,11 @@ export default function ReturnsPage() {
     const orderNum = r.order_number || r.order_id
     if (!orderNum) { showAlert('주문번호가 없습니다', 'error'); return }
     const label = action === 'approve' ? '반품승인' : '반품거부'
+    // 11번가 반품거부는 API 미지원 → 셀러오피스 안내
+    if (action === 'reject' && r.market === '11번가') {
+      showAlert('11번가 반품거부는 API 미지원입니다. 셀러오피스에서 직접 처리해주세요.', 'error')
+      return
+    }
     if (!await showConfirm(`${orderNum} 주문을 ${label} 처리하시겠습니까?`)) return
     try {
       const order = await orderApi.findByOrderNumber(orderNum)

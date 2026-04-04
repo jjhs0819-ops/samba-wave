@@ -646,6 +646,71 @@ async def return_action(
 
         logger.info(f"[반품처리] {order.order_number} {label} 완료")
         return {"ok": True, "message": f"{label} 완료"}
+
+    elif account.market_type == "11st":
+        from backend.domain.samba.proxy.elevenst import ElevenstClient, ElevenstApiError
+        from backend.domain.samba.returns.repository import SambaReturnRepository
+        from datetime import UTC, datetime
+
+        extras = account.additional_fields or {}
+        api_key = account.api_key or extras.get("apiKey", "")
+        if not api_key:
+            raise HTTPException(status_code=400, detail="11번가 API 키가 없습니다")
+
+        return_repo = SambaReturnRepository(session)
+        return_records = await return_repo.filter_by_async(
+            order_id=order_id, type="return"
+        )
+        if not return_records:
+            raise HTTPException(
+                status_code=400, detail="반품 요청 레코드를 찾을 수 없습니다"
+            )
+
+        ret = return_records[0]
+        clm_req_seq = ret.clm_req_seq or ""
+        ord_prd_seq = ret.ord_prd_seq or ""
+        ord_no = order.order_number
+
+        if not clm_req_seq or not ord_prd_seq:
+            raise HTTPException(
+                status_code=400, detail="반품 처리에 필요한 클레임 정보가 없습니다"
+            )
+
+        client = ElevenstClient(api_key)
+        label = "반품승인" if body.action == "approve" else "반품거부"
+
+        try:
+            if body.action == "approve":
+                await client.confirm_return(clm_req_seq, ord_no, ord_prd_seq)
+                await return_repo.update_async(
+                    ret.id,
+                    status="completed",
+                    market_order_status="반품완료",
+                    completion_date=datetime.now(UTC),
+                )
+                await svc.update_order(
+                    order_id, {"shipping_status": "반품승인", "status": "returned"}
+                )
+            elif body.action == "reject":
+                await client.reject_return(clm_req_seq, ord_no, ord_prd_seq)
+                await return_repo.update_async(
+                    ret.id,
+                    status="rejected",
+                    market_order_status="반품거부",
+                )
+                await svc.update_order(order_id, {"shipping_status": "반품거부"})
+            else:
+                raise HTTPException(
+                    status_code=400, detail=f"알 수 없는 액션: {body.action}"
+                )
+        except HTTPException:
+            raise
+        except ElevenstApiError as e:
+            raise HTTPException(status_code=400, detail=f"{label} 실패: {e}")
+
+        logger.info("[11번가 반품처리] %s %s 완료", order.order_number, label)
+        return {"ok": True, "message": f"{label} 완료"}
+
     else:
         raise HTTPException(
             status_code=400, detail=f"{account.market_type} 반품처리 미지원"
