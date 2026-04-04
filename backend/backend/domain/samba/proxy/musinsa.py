@@ -487,6 +487,10 @@ class MusinsaClient:
                 params=params,
                 headers=self._headers(),
             )
+            # 검색 API도 429/403 차단 감지
+            if resp.status_code in (429, 403):
+                retry_after = int(resp.headers.get("Retry-After", "30"))
+                raise RateLimitError(resp.status_code, retry_after)
             resp.raise_for_status()
             api_data = resp.json()
 

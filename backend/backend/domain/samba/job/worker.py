@@ -807,6 +807,9 @@ class JobWorker:
         except Exception:
             pass
 
+        # 브랜드 전체수집 모드 판별 (brand= 있고 category= 없으면)
+        _is_brand_exhaustive = bool(_brand_filter) and not _category_filter
+
         # 기존 수집 수 확인
         requested_count = sf.requested_count or 100
         count_stmt = select(_func.count()).where(CPModel.search_filter_id == filter_id)
@@ -832,7 +835,10 @@ class JobWorker:
         empty_pages = 0  # 연속 신규 0건 페이지 카운터 (잡 간 오염 방지용 로컬 변수)
         max_pages = 100  # API totalPages 기반으로 동적 조정 (초기값)
 
-        while total_saved < remaining and search_page <= max_pages:
+        while search_page <= max_pages:
+            # 일반 모드: remaining 충족 시 종료 / 전체수집 모드: 페이지 소진까지 계속
+            if not _is_brand_exhaustive and total_saved >= remaining:
+                break
             # 취소 확인 (DB에서 상태 재조회)
             from backend.domain.samba.job.model import SambaJob as _SJ
 
@@ -866,6 +872,7 @@ class JobWorker:
                         )
                     logger.info(
                         f"[잡워커] API 총 {api_total_count}건, {api_total_pages}페이지 → max_pages={max_pages}"
+                        + (" [전체수집모드]" if _is_brand_exhaustive else "")
                     )
                 logger.info(
                     f"[잡워커] 검색 p{search_page}: {len(search_items)}건 (kw={keyword}, brand={_brand_filter})"
@@ -873,6 +880,13 @@ class JobWorker:
                 if not search_items:
                     break
                 await asyncio.sleep(_site_intervals.get(_ik, 0))
+            except RateLimitError as rle:
+                # 검색 API rate limit — 대기 후 같은 페이지 재시도
+                logger.warning(
+                    f"[잡워커] 검색 rate limit (p{search_page}), {rle.retry_after}초 대기"
+                )
+                await asyncio.sleep(max(rle.retry_after, 10))
+                continue
             except Exception as e:
                 logger.error(f"[잡워커] 검색 실패: {e}")
                 break
@@ -892,7 +906,8 @@ class JobWorker:
 
             targets = []
             for item in search_items:
-                if total_saved + len(targets) >= remaining:
+                # 전체수집 모드: remaining 제한 없이 모든 신규 상품 수집
+                if not _is_brand_exhaustive and total_saved + len(targets) >= remaining:
                     break
                 site_pid = str(item.get("siteProductId", item.get("goodsNo", "")))
                 if site_pid in existing_ids:
@@ -904,7 +919,11 @@ class JobWorker:
                 f"[잡워커] 중복={len(existing_ids)}, 타겟={len(targets)}, 스킵={total_skipped}"
             )
             if not targets:
-                # 연속 5페이지 신규 0건이면 조기 종료
+                if _is_brand_exhaustive:
+                    # 전체수집 모드: 모든 페이지를 끝까지 순회 (조기 종료 안 함)
+                    search_page += 1
+                    continue
+                # 일반 모드: 연속 5페이지 신규 0건이면 조기 종료
                 empty_pages += 1
                 if empty_pages >= 5:
                     logger.info(
@@ -953,8 +972,18 @@ class JobWorker:
                         _site_consecutive_errors[_ik] = (
                             _site_consecutive_errors.get("MUSINSA", 0) + 1
                         )
+                        _rl_total = _site_consecutive_errors.get("_rl_total", 0) + 1
+                        _site_consecutive_errors["_rl_total"] = _rl_total
                         if _site_consecutive_errors[_ik] >= 5:
-                            _rate_limited = True
+                            if _is_brand_exhaustive and _rl_total < 20:
+                                # 전체수집 모드: 30초 대기 후 카운터 리셋 (재시도)
+                                logger.warning(
+                                    f"[잡워커] rate limit 5회 → 30초 대기 후 재시도 (누적 {_rl_total}회)"
+                                )
+                                await asyncio.sleep(30)
+                                _site_consecutive_errors[_ik] = 0
+                            else:
+                                _rate_limited = True
                         if rle.retry_after > 0:
                             await asyncio.sleep(rle.retry_after)
                         return None
@@ -1027,7 +1056,7 @@ class JobWorker:
                     job.id, existing_count + total_saved, requested_count
                 )
 
-                if total_saved >= remaining:
+                if not _is_brand_exhaustive and total_saved >= remaining:
                     break
 
             search_page += 1

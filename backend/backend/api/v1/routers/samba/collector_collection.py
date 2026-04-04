@@ -1342,7 +1342,49 @@ async def brand_create_groups(
         except Exception as e:
             logger.warning(f"[브랜드소싱] 그룹 생성 실패 {group_name}: {e}")
 
-    logger.info(f"[브랜드소싱] {req.brand}: {len(created)}개 그룹 생성")
+    # 전체 보정 그룹 — 카테고리 간 누락 상품 수집 (brand만 필터, category 없음)
+    params_all: dict[str, str] = {
+        "keyword": req.brand_name or req.brand,
+        "brand": req.brand,
+        "gf": req.gf,
+    }
+    if req.options.get("excludePreorder"):
+        params_all["excludePreorder"] = "1"
+    if req.options.get("excludeBoutique"):
+        params_all["excludeBoutique"] = "1"
+    if req.options.get("maxDiscount"):
+        params_all["maxDiscount"] = "1"
+
+    keyword_url_all = f"https://www.musinsa.com/search/goods?{urlencode(params_all)}"
+    group_name_all = f"MUSINSA_{req.brand_name or req.brand}_전체"
+    _real_total = req.real_total or sum(c.get("count", 0) for c in req.categories)
+    filter_data_all = {
+        "source_site": "MUSINSA",
+        "keyword": keyword_url_all,
+        "name": group_name_all,
+        "requested_count": _real_total,
+        "applied_policy_id": req.applied_policy_id,
+        "created_by": user_id,
+    }
+    try:
+        sf_all = await svc.create_filter(filter_data_all)
+        created.append(
+            {
+                "id": sf_all.id,
+                "name": group_name_all,
+                "count": _real_total,
+                "path": "전체",
+            }
+        )
+        logger.info(
+            f"[브랜드소싱] 전체 보정 그룹 생성: {group_name_all} ({_real_total}건)"
+        )
+    except Exception as e:
+        logger.warning(f"[브랜드소싱] 전체 보정 그룹 생성 실패: {e}")
+
+    logger.info(
+        f"[브랜드소싱] {req.brand}: {len(created)}개 그룹 생성 (보정 그룹 포함)"
+    )
     return {"created": len(created), "groups": created}
 
 
