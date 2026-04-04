@@ -1465,61 +1465,6 @@ async def brand_refresh(
             except Exception as e:
                 logger.warning(f"[추가수집] 그룹 생성 실패 {group_name}: {e}")
 
-    # 전체 보정 그룹 생성 (추가수집에서만 — 누락 상품 보정용)
-    _all_group_exists = any(n.endswith("_전체") for n in existing_names)
-    if not _all_group_exists:
-        params_all: dict[str, str] = {
-            "keyword": req.brand_name or req.brand,
-            "brand": req.brand,
-            "gf": req.gf,
-        }
-        if req.options.get("excludePreorder"):
-            params_all["excludePreorder"] = "1"
-        if req.options.get("excludeBoutique"):
-            params_all["excludeBoutique"] = "1"
-        if req.options.get("maxDiscount"):
-            params_all["maxDiscount"] = "1"
-        import httpx as _httpx_scan
-
-        try:
-            async with _httpx_scan.AsyncClient(timeout=15) as _hc:
-                _r = await _hc.get(
-                    "https://api.musinsa.com/api2/dp/v1/plp/goods",
-                    params={**params_all, "caller": "SEARCH", "page": "1", "size": "1"},
-                    headers={
-                        "User-Agent": "Mozilla/5.0",
-                        "Accept": "application/json",
-                        "Referer": "https://www.musinsa.com/",
-                    },
-                )
-                _real_total = (
-                    _r.json().get("data", {}).get("pagination", {}).get("totalCount", 0)
-                    if _r.status_code == 200
-                    else 0
-                )
-        except Exception:
-            _real_total = sum(c.get("count", 0) for c in categories)
-
-        keyword_url_all = (
-            f"https://www.musinsa.com/search/goods?{urlencode(params_all)}"
-        )
-        group_name_all = f"MUSINSA_{req.brand_name or req.brand}_전체"
-        try:
-            await svc.create_filter(
-                {
-                    "source_site": "MUSINSA",
-                    "keyword": keyword_url_all,
-                    "name": group_name_all,
-                    "requested_count": _real_total,
-                }
-            )
-            new_groups += 1
-            logger.info(
-                f"[추가수집] 전체 보정 그룹 생성: {group_name_all} ({_real_total}건)"
-            )
-        except Exception as e:
-            logger.warning(f"[추가수집] 전체 보정 그룹 생성 실패: {e}")
-
     total_cats = len(categories)
     logger.info(
         f"[추가수집] {req.brand}: 스캔 {total_cats}개, 신규 {new_groups}개, 갱신 {updated_groups}개"
