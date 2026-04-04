@@ -1169,6 +1169,7 @@ async def bulk_remove_image(
 
     # DB 레벨에서 해당 이미지 URL을 포함하는 상품만 필터링 (전체 로드 방지)
     image_url = body.image_url
+    logger.info(f"[추적삭제] 요청 URL: {image_url}, field: {body.field}")
     stmt = select(SambaCollectedProduct).where(
         or_(
             cast(SambaCollectedProduct.images, String).like(f"%{image_url}%"),
@@ -1176,8 +1177,10 @@ async def bulk_remove_image(
         )
     )
     result = await session.exec(stmt)
+    all_products = result.all()
+    logger.info(f"[추적삭제] DB 검색 결과: {len(all_products)}개 상품 매칭")
     removed_count = 0
-    for p in result.all():
+    for p in all_products:
         found = False
         if p.images and image_url in p.images:
             p.images = [u for u in p.images if u != image_url]
