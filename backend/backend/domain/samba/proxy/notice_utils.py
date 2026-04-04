@@ -657,8 +657,11 @@ def build_lotteon_notice(product: dict[str, Any], **kwargs: str) -> dict[str, An
     )
     origin = product.get("origin", "") or fallback
     quality = product.get("quality_guarantee", "") or "소비자 기본법에 따름"
-    as_phone = product.get("_as_phone", "")
-    as_contact = as_phone or (f"{brand} 고객센터" if brand else "판매자 문의")
+    as_message = (product.get("_as_message", "") or "").strip()
+    as_phone = (product.get("_as_phone", "") or "").strip()
+    as_contact = (
+        as_message or as_phone or (f"{brand} 고객센터" if brand else "판매자 문의")
+    )
     care = product.get("care_instructions", "") or fallback
     manufacture_ym = _dt.now().strftime("%Y%m")  # 제조년월 기본값
 
