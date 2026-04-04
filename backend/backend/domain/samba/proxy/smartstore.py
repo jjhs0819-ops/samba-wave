@@ -1769,6 +1769,10 @@ class SmartStoreClient:
                     else {}
                 ),
                 "detailContent": product.get("detail_html", "")
+                or "\n".join(
+                    f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                    for img in (product.get("detail_images") or [])
+                )
                 or f"<p>{product_name}</p>",
                 "images": {
                     "representativeImage": representative,

@@ -57,6 +57,18 @@ class SmartStorePlugin(MarketPlugin):
 
         naver_images = []
         detail_html = product.get("detail_html", "")
+        # detail_html이 비어있으면 detail_images에서 HTML 자동 생성
+        if not detail_html:
+            detail_imgs = product.get("detail_images") or []
+            if detail_imgs:
+                detail_html = "\n".join(
+                    f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                    for img in detail_imgs
+                )
+                product["detail_html"] = detail_html
+                logger.info(
+                    f"[스마트스토어] detail_html 비어있어 detail_images {len(detail_imgs)}장으로 자동 생성"
+                )
         # 프로토콜 없는 이미지 URL 보정 (src="//... → src="https://...)
         if detail_html:
             detail_html = re.sub(r'(src=["\'])\/\/', r"\1https://", detail_html)
