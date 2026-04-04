@@ -323,7 +323,7 @@ class ImageFilterService:
     # ------------------------------------------------------------------
 
     async def classify_images_clip(
-        self, urls: list[str], threshold: float = 0.0
+        self, urls: list[str], threshold: float = 0.1
     ) -> list[dict[str, Any]]:
         """CLIP ONNX zero-shot으로 이미지 분류 (무료, 로컬).
 
