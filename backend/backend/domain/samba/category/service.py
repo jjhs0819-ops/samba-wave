@@ -30,12 +30,13 @@ def _filter_overseas(categories: list[str]) -> list[str]:
 
 def _filter_to_leaves(categories: list[str]) -> list[str]:
     """리프 카테고리만 필터링 (하위 카테고리가 없는 경로만 반환)."""
-    cat_set = set(categories)
-    return [
-        c
-        for c in categories
-        if not any(other.startswith(c + " > ") for other in cat_set)
-    ]
+    # 모든 부모 경로를 미리 추출하여 O(n) 조회
+    parent_set: set[str] = set()
+    for c in categories:
+        parts = c.split(" > ")
+        for i in range(1, len(parts)):
+            parent_set.add(" > ".join(parts[:i]))
+    return [c for c in categories if c not in parent_set]
 
 
 # ══════════════════════════════════════════════
