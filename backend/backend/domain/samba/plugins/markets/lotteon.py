@@ -1498,9 +1498,11 @@ class LotteonPlugin(MarketPlugin):
                 )
                 # impDvsCd fallback: 직수입 불허 카테고리 대응 (등록과 동일 전략)
                 _upd_imp_fallbacks = [
-                    ("DRC_IMP", "OVRS"),
-                    (None, "DMST"),
-                    (None, "OVRS"),
+                    ("NONE", "DMST"),  # 1. 해당없음 + 국내
+                    ("NONE", "OVRS"),  # 2. 해당없음 + 해외
+                    ("PRL_IMP", "DMST"),  # 3. 병행수입 + 국내
+                    (None, "DMST"),  # 4. impDvsCd 제거 + 국내
+                    ("_REMOVE_BOTH_", ""),  # 5. 둘 다 제거
                 ]
                 _upd_exception: Exception | None = None
                 api_result = None
@@ -1509,14 +1511,30 @@ class LotteonPlugin(MarketPlugin):
                 except Exception as _ue:
                     if "수입구분코드" in str(_ue):
                         _upd_exception = _ue
+                        import copy as _copy_upd
+
+                        _orig_pd_itms_u = (
+                            _copy_upd.deepcopy(data["spdLst"][0].get("pdItmsInfo"))
+                            if data.get("spdLst")
+                            else None
+                        )
                         for _imp_code, _dmst_code in _upd_imp_fallbacks:
+                            # 매 시도마다 pdItmsInfo 원본 복원
+                            if _orig_pd_itms_u is not None and data.get("spdLst"):
+                                data["spdLst"][0]["pdItmsInfo"] = _copy_upd.deepcopy(
+                                    _orig_pd_itms_u
+                                )
                             if data.get("spdLst") and isinstance(data["spdLst"], list):
                                 _spd = data["spdLst"][0]
-                                if _imp_code is None:
+                                if _imp_code == "_REMOVE_BOTH_":
+                                    _spd.pop("impDvsCd", None)
+                                    _spd.pop("dmstOvsDvDvsCd", None)
+                                elif _imp_code is None:
                                     _spd.pop("impDvsCd", None)
                                 else:
                                     _spd["impDvsCd"] = _imp_code
-                                _spd["dmstOvsDvDvsCd"] = _dmst_code
+                                if _imp_code != "_REMOVE_BOTH_":
+                                    _spd["dmstOvsDvDvsCd"] = _dmst_code
                             logger.info(
                                 f"[롯데ON] 수정 impDvsCd fallback: impDvsCd={_imp_code!r} dmst={_dmst_code}"
                             )
@@ -1525,9 +1543,180 @@ class LotteonPlugin(MarketPlugin):
                                 _upd_exception = None
                                 break
                             except Exception as _ue2:
+                                # 항목코드/품목항목코드 에러 처리
+                                if "항목코드" in str(_ue2):
+                                    _upd_exception = _ue2
+                                    _artl_err = _ue2
+                                    _artl_resolved = False
+                                    for _artl_try in range(10):
+                                        import re as _re_a
+
+                                        _am = _re_a.search(
+                                            r"항목코드\((\d+)\)", str(_artl_err)
+                                        )
+                                        _bad = _am.group(1) if _am else None
+                                        if not _bad:
+                                            break
+                                        logger.info(
+                                            f"[롯데ON] 수정 impDvsCd fallback 중 항목코드 제거 ({_artl_try + 1}회) — 코드={_bad}"
+                                        )
+                                        _spd3 = data["spdLst"][0]
+                                        _ntc3 = _spd3.get("pdItmsInfo")
+                                        if isinstance(_ntc3, dict):
+                                            _al3 = _ntc3.get("pdItmsArtlLst", [])
+                                            _ntc3["pdItmsArtlLst"] = [
+                                                a
+                                                for a in _al3
+                                                if a.get("pdArtlCd") != _bad
+                                            ]
+                                        try:
+                                            api_result = await client.update_product(
+                                                data
+                                            )
+                                            _upd_exception = None
+                                            _artl_resolved = True
+                                            break
+                                        except Exception as _ea:
+                                            _upd_exception = _ea
+                                            if "항목코드" in str(_ea):
+                                                _artl_err = _ea
+                                                continue
+                                            else:
+                                                break
+                                    # pdItmsCd=38(기타재화)로 교체 시도
+                                    if not _artl_resolved and _upd_exception:
+                                        _spd_f = data["spdLst"][0]
+                                        _pdi = _spd_f.get("pdItmsInfo")
+                                        if (
+                                            isinstance(_pdi, dict)
+                                            and _pdi.get("pdItmsCd") != "38"
+                                        ):
+                                            logger.info(
+                                                f"[롯데ON] 수정 pdItmsCd={_pdi.get('pdItmsCd')} 실패 → 38(기타재화)로 교체"
+                                            )
+                                            _pdi["pdItmsCd"] = "38"
+                                            _pdi["pdItmsArtlLst"] = [
+                                                {
+                                                    "pdArtlCd": c,
+                                                    "pdArtlCnts": "상세페이지 참조",
+                                                }
+                                                for c in [
+                                                    "0010",
+                                                    "0020",
+                                                    "0030",
+                                                    "0040",
+                                                    "0050",
+                                                    "0060",
+                                                    "0070",
+                                                    "0080",
+                                                    "0090",
+                                                ]
+                                            ]
+                                            # pdItmsCd=38 교체 후 항목코드 제거 루프
+                                            for _artl38_try in range(15):
+                                                try:
+                                                    api_result = (
+                                                        await client.update_product(
+                                                            data
+                                                        )
+                                                    )
+                                                    _upd_exception = None
+                                                    _artl_resolved = True
+                                                    break
+                                                except Exception as _ea2:
+                                                    _upd_exception = _ea2
+                                                    if "항목코드" in str(_ea2):
+                                                        import re as _re38
+
+                                                        _m38 = _re38.search(
+                                                            r"항목코드\((\d+)\)",
+                                                            str(_ea2),
+                                                        )
+                                                        _bad38 = (
+                                                            _m38.group(1)
+                                                            if _m38
+                                                            else None
+                                                        )
+                                                        if _bad38:
+                                                            _artl_lst = _pdi.get(
+                                                                "pdItmsArtlLst", []
+                                                            )
+                                                            _artl_lst[:] = [
+                                                                a
+                                                                for a in _artl_lst
+                                                                if a.get("pdArtlCd")
+                                                                != _bad38
+                                                            ]
+                                                            logger.info(
+                                                                f"[롯데ON] 수정 pdItmsCd=38 항목코드({_bad38}) 제거 → 남은: {[a.get('pdArtlCd') for a in _artl_lst]}"
+                                                            )
+                                                            if not _artl_lst:
+                                                                break
+                                                            continue
+                                                        else:
+                                                            break
+                                                    else:
+                                                        break
+                                    if _artl_resolved:
+                                        break
+                                    if _upd_exception and "항목코드" not in str(
+                                        _upd_exception
+                                    ):
+                                        continue
                                 logger.warning(
                                     f"[롯데ON] 수정 fallback 실패: impDvsCd={_imp_code!r} dmst={_dmst_code} — {_ue2}"
                                 )
+                    elif "항목코드" in str(_ue):
+                        # 항목코드 에러 (수입구분코드 문제 없음): 반복 제거 루프
+                        _artl_err = _ue
+                        for _artl_try in range(10):
+                            import re as _re_a
+
+                            _am = _re_a.search(r"항목코드\((\d+)\)", str(_artl_err))
+                            _bad_code2 = _am.group(1) if _am else None
+                            if not _bad_code2:
+                                break
+                            logger.info(
+                                f"[롯데ON] 수정 항목코드 fallback ({_artl_try + 1}회) — 코드={_bad_code2}"
+                            )
+                            if data.get("spdLst") and isinstance(data["spdLst"], list):
+                                _spd = data["spdLst"][0]
+                                _ntc = _spd.get("pdItmsInfo")
+                                if isinstance(_ntc, dict):
+                                    _artl_lst = _ntc.get("pdItmsArtlLst", [])
+                                    _ntc["pdItmsArtlLst"] = [
+                                        a
+                                        for a in _artl_lst
+                                        if a.get("pdArtlCd") != _bad_code2
+                                    ]
+                            try:
+                                api_result = await client.update_product(data)
+                                _upd_exception = None
+                                break
+                            except Exception as _ue3:
+                                if "항목코드" in str(_ue3):
+                                    _artl_err = _ue3
+                                    _upd_exception = _ue3
+                                    continue
+                                else:
+                                    logger.warning(
+                                        f"[롯데ON] 수정 항목코드 fallback 실패: {_ue3}"
+                                    )
+                                    _upd_exception = _ue3
+                                    break
+                        if _upd_exception and "항목코드" in str(_upd_exception):
+                            logger.info(
+                                "[롯데ON] 수정 항목코드 전부 실패 → pdItmsInfo 제거 후 재시도"
+                            )
+                            data["spdLst"][0].pop("pdItmsInfo", None)
+                            try:
+                                api_result = await client.update_product(data)
+                                _upd_exception = None
+                            except Exception as _ea_final:
+                                logger.warning(
+                                    f"[롯데ON] 수정 pdItmsInfo 제거 후에도 실패: {_ea_final}"
+                                )
+                                _upd_exception = _ea_final
                     else:
                         raise
                 if _upd_exception is not None:
@@ -1578,13 +1767,14 @@ class LotteonPlugin(MarketPlugin):
                 # - DRC_IMP+OVRS: 해외브랜드(아디다스 등) 직수입 → dmstOvsDvDvsCd를 OVRS로 변경
                 # - None: impDvsCd 필드 제거 (카테고리 기본값 사용)
                 # 이미 유효하지 않은 코드: NATN_MFR, DOM_MFR, IND_IMP (롯데ON이 인식 못함)
+                # impDvsCd + dmstOvsDvDvsCd fallback 전략 (6단계):
+                # None = 필드 제거(pop), "" = 빈문자열, "_REMOVE_BOTH_" = 둘 다 제거
                 _imp_dvs_fallbacks = [
-                    (
-                        "DRC_IMP",
-                        "OVRS",
-                    ),  # dmstOvsDvDvsCd=OVRS로 변경하여 DRC_IMP 재시도
-                    (None, "DMST"),  # impDvsCd 필드 제거 (카테고리 기본값 위임)
-                    (None, "OVRS"),  # impDvsCd 제거 + OVRS 조합
+                    ("NONE", "DMST"),  # 1. 해당없음 + 국내
+                    ("NONE", "OVRS"),  # 2. 해당없음 + 해외
+                    ("PRL_IMP", "DMST"),  # 3. 병행수입 + 국내
+                    (None, "DMST"),  # 4. impDvsCd 제거 + 국내
+                    ("_REMOVE_BOTH_", ""),  # 5. 둘 다 제거
                 ]
                 _reg_exception: Exception | None = None
                 api_result = None
@@ -1593,14 +1783,30 @@ class LotteonPlugin(MarketPlugin):
                 except Exception as _e:
                     if "수입구분코드" in str(_e):
                         _reg_exception = _e
+                        import copy as _copy_imp
+
+                        _orig_pd_itms = (
+                            _copy_imp.deepcopy(data["spdLst"][0].get("pdItmsInfo"))
+                            if data.get("spdLst")
+                            else None
+                        )
                         for _imp_code, _dmst_code in _imp_dvs_fallbacks:
+                            # 매 시도마다 pdItmsInfo 원본 복원
+                            if _orig_pd_itms is not None and data.get("spdLst"):
+                                data["spdLst"][0]["pdItmsInfo"] = _copy_imp.deepcopy(
+                                    _orig_pd_itms
+                                )
                             if data.get("spdLst") and isinstance(data["spdLst"], list):
                                 _spd = data["spdLst"][0]
-                                if _imp_code is None:
+                                if _imp_code == "_REMOVE_BOTH_":
+                                    _spd.pop("impDvsCd", None)
+                                    _spd.pop("dmstOvsDvDvsCd", None)
+                                elif _imp_code is None:
                                     _spd.pop("impDvsCd", None)
                                 else:
                                     _spd["impDvsCd"] = _imp_code
-                                _spd["dmstOvsDvDvsCd"] = _dmst_code
+                                if _imp_code != "_REMOVE_BOTH_":
+                                    _spd["dmstOvsDvDvsCd"] = _dmst_code
                             logger.info(
                                 f"[롯데ON] impDvsCd fallback: impDvsCd={_imp_code!r} dmst={_dmst_code} (원인: {_e})"
                             )
@@ -1609,9 +1815,182 @@ class LotteonPlugin(MarketPlugin):
                                 _reg_exception = None
                                 break
                             except Exception as _e2:
+                                # 항목코드/품목항목코드 에러 처리
+                                if "항목코드" in str(_e2):
+                                    _reg_exception = _e2  # 실제 에러로 갱신
+                                    _artl_err = _e2
+                                    _artl_resolved = False
+                                    # 개별 항목코드 제거 루프
+                                    for _artl_try in range(10):
+                                        import re as _re_a
+
+                                        _am = _re_a.search(
+                                            r"항목코드\((\d+)\)", str(_artl_err)
+                                        )
+                                        _bad = _am.group(1) if _am else None
+                                        if not _bad:
+                                            break
+                                        logger.info(
+                                            f"[롯데ON] impDvsCd fallback 중 항목코드 제거 ({_artl_try + 1}회) — 코드={_bad}"
+                                        )
+                                        _spd2 = data["spdLst"][0]
+                                        _ntc2 = _spd2.get("pdItmsInfo")
+                                        if isinstance(_ntc2, dict):
+                                            _al = _ntc2.get("pdItmsArtlLst", [])
+                                            _ntc2["pdItmsArtlLst"] = [
+                                                a
+                                                for a in _al
+                                                if a.get("pdArtlCd") != _bad
+                                            ]
+                                        try:
+                                            api_result = await client.register_product(
+                                                data
+                                            )
+                                            _reg_exception = None
+                                            _artl_resolved = True
+                                            break
+                                        except Exception as _ea:
+                                            _reg_exception = _ea
+                                            if "항목코드" in str(_ea):
+                                                _artl_err = _ea
+                                                continue
+                                            else:
+                                                break
+                                    # 개별 제거 실패 → pdItmsCd=38(기타재화)로 교체 시도
+                                    if not _artl_resolved and _reg_exception:
+                                        _spd_f = data["spdLst"][0]
+                                        _pdi = _spd_f.get("pdItmsInfo")
+                                        if (
+                                            isinstance(_pdi, dict)
+                                            and _pdi.get("pdItmsCd") != "38"
+                                        ):
+                                            logger.info(
+                                                f"[롯데ON] pdItmsCd={_pdi.get('pdItmsCd')} 실패 → 38(기타재화)로 교체"
+                                            )
+                                            _pdi["pdItmsCd"] = "38"
+                                            _pdi["pdItmsArtlLst"] = [
+                                                {
+                                                    "pdArtlCd": c,
+                                                    "pdArtlCnts": "상세페이지 참조",
+                                                }
+                                                for c in [
+                                                    "0010",
+                                                    "0020",
+                                                    "0030",
+                                                    "0040",
+                                                    "0050",
+                                                    "0060",
+                                                    "0070",
+                                                    "0080",
+                                                    "0090",
+                                                ]
+                                            ]
+                                            # pdItmsCd=38 교체 후 항목코드 제거 루프
+                                            for _artl38_try in range(15):
+                                                try:
+                                                    api_result = (
+                                                        await client.register_product(
+                                                            data
+                                                        )
+                                                    )
+                                                    _reg_exception = None
+                                                    _artl_resolved = True
+                                                    break
+                                                except Exception as _ea2:
+                                                    _reg_exception = _ea2
+                                                    if "항목코드" in str(_ea2):
+                                                        import re as _re38
+
+                                                        _m38 = _re38.search(
+                                                            r"항목코드\((\d+)\)",
+                                                            str(_ea2),
+                                                        )
+                                                        _bad38 = (
+                                                            _m38.group(1)
+                                                            if _m38
+                                                            else None
+                                                        )
+                                                        if _bad38:
+                                                            _artl_lst = _pdi.get(
+                                                                "pdItmsArtlLst", []
+                                                            )
+                                                            _artl_lst[:] = [
+                                                                a
+                                                                for a in _artl_lst
+                                                                if a.get("pdArtlCd")
+                                                                != _bad38
+                                                            ]
+                                                            logger.info(
+                                                                f"[롯데ON] pdItmsCd=38 항목코드({_bad38}) 제거 → 남은: {[a.get('pdArtlCd') for a in _artl_lst]}"
+                                                            )
+                                                            if not _artl_lst:
+                                                                break
+                                                            continue
+                                                        else:
+                                                            break
+                                                    else:
+                                                        break
+                                    if _artl_resolved:
+                                        break  # impDvsCd loop 탈출
+                                    if _reg_exception and "항목코드" not in str(
+                                        _reg_exception
+                                    ):
+                                        continue  # 다른 에러 → 다음 impDvsCd 조합
                                 logger.warning(
                                     f"[롯데ON] fallback impDvsCd={_imp_code!r} dmst={_dmst_code} 실패: {_e2}"
                                 )
+                    elif "항목코드" in str(_e):
+                        # 항목코드 에러 (수입구분코드 문제 없음): 반복 제거 루프
+                        _artl_err = _e
+                        for _artl_try in range(10):
+                            import re as _re_a
+
+                            _am = _re_a.search(r"항목코드\((\d+)\)", str(_artl_err))
+                            _bad_code = _am.group(1) if _am else None
+                            if not _bad_code:
+                                break
+                            logger.info(
+                                f"[롯데ON] 항목코드 fallback ({_artl_try + 1}회) — 코드={_bad_code}"
+                            )
+                            if data.get("spdLst") and isinstance(data["spdLst"], list):
+                                _spd = data["spdLst"][0]
+                                _ntc = _spd.get("pdItmsInfo")
+                                if isinstance(_ntc, dict):
+                                    _artl_lst = _ntc.get("pdItmsArtlLst", [])
+                                    _ntc["pdItmsArtlLst"] = [
+                                        a
+                                        for a in _artl_lst
+                                        if a.get("pdArtlCd") != _bad_code
+                                    ]
+                            try:
+                                api_result = await client.register_product(data)
+                                _reg_exception = None
+                                break
+                            except Exception as _e3:
+                                if "항목코드" in str(_e3):
+                                    _artl_err = _e3
+                                    _reg_exception = _e3
+                                    continue
+                                else:
+                                    logger.warning(
+                                        f"[롯데ON] 항목코드 fallback 실패: {_e3}"
+                                    )
+                                    _reg_exception = _e3
+                                    break
+                        # 루프 다 돌아도 항목코드 에러 → pdItmsInfo 자체 제거
+                        if _reg_exception and "항목코드" in str(_reg_exception):
+                            logger.info(
+                                "[롯데ON] 항목코드 전부 실패 → pdItmsInfo 제거 후 재시도"
+                            )
+                            data["spdLst"][0].pop("pdItmsInfo", None)
+                            try:
+                                api_result = await client.register_product(data)
+                                _reg_exception = None
+                            except Exception as _ea_final:
+                                logger.warning(
+                                    f"[롯데ON] pdItmsInfo 제거 후에도 실패: {_ea_final}"
+                                )
+                                _reg_exception = _ea_final
                     else:
                         raise
                 if _reg_exception is not None:

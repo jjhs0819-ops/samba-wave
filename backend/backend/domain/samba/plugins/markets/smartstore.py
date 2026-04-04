@@ -583,7 +583,19 @@ class SmartStorePlugin(MarketPlugin):
                             }
                     raise
             else:
-                r = await client.register_product(d)
+                try:
+                    r = await client.register_product(d)
+                except Exception as _reg_e:
+                    if "leafCategoryId" in str(_reg_e):
+                        # 카테고리 ID 유효하지 않음 → 기본 카테고리로 fallback
+                        _default_cat = "50000803"
+                        logger.warning(
+                            f"[스마트스토어] leafCategoryId 에러 → 기본 카테고리({_default_cat})로 재시도: {_reg_e}"
+                        )
+                        d["originProduct"]["leafCategoryId"] = _default_cat
+                        r = await client.register_product(d)
+                    else:
+                        raise
                 return {"success": True, "message": "스마트스토어 등록 성공", "data": r}
 
         # 태그사전 미등록 태그 사전 필터링 (누적 DB 기반)

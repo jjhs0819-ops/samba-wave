@@ -85,13 +85,26 @@ _CATEGORY_GROUP: dict[str, str] = {
     "디지털": "electronics",
     "컴퓨터": "electronics",
     "모바일": "electronics",
+    # 스포츠/레저
+    "스포츠": "sports",
+    "레저": "sports",
+    "스포츠/레저": "sports",
+    "등산": "sports",
+    "아웃도어": "sports",
+    "골프": "sports",
+    "헬스": "sports",
+    "피트니스": "sports",
+    "캠핑": "sports",
+    "낚시": "sports",
+    "자전거": "sports",
+    "수영": "sports",
 }
 
 
 def detect_notice_group(product: dict[str, Any]) -> str:
     """상품의 category1 기반으로 고시정보 그룹을 판별한다.
 
-    Returns: "wear" | "shoes" | "bag" | "accessories" | "cosmetic" | "food" | "electronics" | "etc"
+    Returns: "wear" | "shoes" | "bag" | "accessories" | "cosmetic" | "food" | "electronics" | "sports" | "etc"
     """
     cat1 = (product.get("category1") or "").strip()
     if cat1 in _CATEGORY_GROUP:
@@ -599,14 +612,15 @@ def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str,
 
 # 롯데ON pdItmsCd 매핑
 _LOTTEON_NOTICE_CODE: dict[str, str] = {
-    "wear": "01",  # [01]의류 — 롯데ON 어드민 확인
-    "shoes": "02",  # [02]구두/신발 — 롯데ON 어드민 확인
-    "bag": "03",  # [03]가방 — 롯데ON 어드민 확인
-    "accessories": "04",  # [04]패션잡화 — 롯데ON 어드민 확인
-    "cosmetic": "35",  # 화장품 — TODO: 어드민 확인 필요
-    "food": "35",  # 식품 — TODO: 어드민 확인 필요
-    "electronics": "35",  # 전자제품 — TODO: 어드민 확인 필요
-    "etc": "35",  # 기타 — TODO: 어드민 확인 필요
+    "wear": "01",  # [01]의류
+    "shoes": "02",  # [02]구두/신발
+    "bag": "03",  # [03]가방
+    "accessories": "04",  # [04]패션잡화
+    "cosmetic": "18",  # [18]화장품
+    "food": "21",  # [21]가공식품
+    "electronics": "10",  # [10]사무용기기(컴퓨터/노트북 등)
+    "sports": "25",  # [25]스포츠용품
+    "etc": "38",  # [38]기타(재화)
 }
 
 
@@ -699,7 +713,8 @@ def build_lotteon_notice(product: dict[str, Any], **kwargs: str) -> dict[str, An
             {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
         ]
     else:
-        # 기타 (35 등) — 공통 4개 항목
+        # 기타 (18화장품/21가공식품/25스포츠/38기타재화 등)
+        # 유효하지 않은 항목코드는 lotteon.py의 fallback 루프가 자동 제거
         articles = [
             {"pdArtlCd": "0060", "pdArtlCnts": origin},
             {"pdArtlCd": "0070", "pdArtlCnts": mfr},
