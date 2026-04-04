@@ -834,6 +834,7 @@ class JobWorker:
         search_page = 1
         empty_pages = 0  # 연속 신규 0건 페이지 카운터 (잡 간 오염 방지용 로컬 변수)
         max_pages = 100  # API totalPages 기반으로 동적 조정 (초기값)
+        _search_rl_retries = 0  # 검색 API rate limit 연속 재시도 카운터
 
         while search_page <= max_pages:
             # 일반 모드: remaining 충족 시 종료 / 전체수집 모드: 페이지 소진까지 계속
@@ -874,6 +875,7 @@ class JobWorker:
                         f"[잡워커] API 총 {api_total_count}건, {api_total_pages}페이지 → max_pages={max_pages}"
                         + (" [전체수집모드]" if _is_brand_exhaustive else "")
                     )
+                _search_rl_retries = 0  # 검색 성공 시 rate limit 카운터 리셋
                 logger.info(
                     f"[잡워커] 검색 p{search_page}: {len(search_items)}건 (kw={keyword}, brand={_brand_filter})"
                 )
@@ -881,9 +883,15 @@ class JobWorker:
                     break
                 await asyncio.sleep(_site_intervals.get(_ik, 0))
             except RateLimitError as rle:
-                # 검색 API rate limit — 대기 후 같은 페이지 재시도
+                _search_rl_retries += 1
+                if _search_rl_retries >= 3:
+                    # 3회 연속 rate limit → 해당 그룹 종료 (다음 그룹으로)
+                    logger.warning(
+                        f"[잡워커] 검색 rate limit {_search_rl_retries}회 연속 → 그룹 종료"
+                    )
+                    break
                 logger.warning(
-                    f"[잡워커] 검색 rate limit (p{search_page}), {rle.retry_after}초 대기"
+                    f"[잡워커] 검색 rate limit (p{search_page}), {rle.retry_after}초 대기 ({_search_rl_retries}/3)"
                 )
                 await asyncio.sleep(max(rle.retry_after, 10))
                 continue
