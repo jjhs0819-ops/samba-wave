@@ -1295,17 +1295,23 @@ async def brand_create_groups(
     svc = _get_services(session)
     created = []
 
-    # 기존 그룹 조회 — 이름 + 카테고리코드 기준 중복 방지
+    # 기존 그룹 조회 — 동일 브랜드 내 이름/카테고리코드 중복 방지
     all_filters = await svc.list_filters()
     existing_names: set[str] = set()
     existing_cat_codes: set[str] = set()
+    _brand_prefix = f"MUSINSA_{req.brand_name or req.brand}_"
     for f in all_filters:
         if f.source_site != "MUSINSA":
             continue
-        existing_names.add(f.name or "")
+        _fname = f.name or ""
+        # 동일 브랜드 그룹만 체크
+        if not _fname.startswith(_brand_prefix):
+            continue
+        existing_names.add(_fname)
         try:
             _p = urlparse(f.keyword or "")
-            _c = parse_qs(_p.query).get("category", [""])[0]
+            _qs = parse_qs(_p.query)
+            _c = _qs.get("category", [""])[0]
             if _c:
                 existing_cat_codes.add(_c)
         except Exception:
