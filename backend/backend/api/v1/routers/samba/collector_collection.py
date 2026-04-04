@@ -1290,12 +1290,30 @@ async def brand_create_groups(
     session: AsyncSession = Depends(get_write_session_dependency),
     user_id: str = Depends(get_user_id),
 ):
-    """선택된 카테고리별로 검색그룹 일괄 생성."""
+    """선택된 카테고리별로 검색그룹 일괄 생성 (기존 그룹 중복 방지)."""
     from backend.api.v1.routers.samba.collector_common import _get_services
+    from urllib.parse import urlencode, urlparse, parse_qs
 
     svc = _get_services(session)
     created = []
 
+    # 기존 그룹 조회 — 이름 + 카테고리코드 기준 중복 방지
+    all_filters = await svc.list_filters()
+    existing_names: set[str] = set()
+    existing_cat_codes: set[str] = set()
+    for f in all_filters:
+        if f.source_site != "MUSINSA":
+            continue
+        existing_names.add(f.name or "")
+        try:
+            _p = urlparse(f.keyword or "")
+            _c = parse_qs(_p.query).get("category", [""])[0]
+            if _c:
+                existing_cat_codes.add(_c)
+        except Exception:
+            pass
+
+    skipped = 0
     for cat in req.categories:
         cat_code = cat.get("categoryCode", "")
         path = cat.get("path", "")
@@ -1303,8 +1321,10 @@ async def brand_create_groups(
         cat_name = path.replace(" > ", "_").replace("/", "_")
         group_name = f"MUSINSA_{req.brand_name or req.brand}_{cat_name}"
 
-        # 검색 URL 구성
-        from urllib.parse import urlencode
+        # 이름 또는 카테고리코드 기준 중복 스킵
+        if group_name in existing_names or cat_code in existing_cat_codes:
+            skipped += 1
+            continue
 
         params = {
             "keyword": req.brand_name or req.brand,
@@ -1358,34 +1378,39 @@ async def brand_create_groups(
     keyword_url_all = f"https://www.musinsa.com/search/goods?{urlencode(params_all)}"
     group_name_all = f"MUSINSA_{req.brand_name or req.brand}_전체"
     _real_total = req.real_total or sum(c.get("count", 0) for c in req.categories)
-    filter_data_all = {
-        "source_site": "MUSINSA",
-        "keyword": keyword_url_all,
-        "name": group_name_all,
-        "requested_count": _real_total,
-        "applied_policy_id": req.applied_policy_id,
-        "created_by": user_id,
-    }
-    try:
-        sf_all = await svc.create_filter(filter_data_all)
-        created.append(
-            {
-                "id": sf_all.id,
-                "name": group_name_all,
-                "count": _real_total,
-                "path": "전체",
-            }
-        )
-        logger.info(
-            f"[브랜드소싱] 전체 보정 그룹 생성: {group_name_all} ({_real_total}건)"
-        )
-    except Exception as e:
-        logger.warning(f"[브랜드소싱] 전체 보정 그룹 생성 실패: {e}")
+
+    # 전체 보정 그룹 중복 체크
+    if group_name_all not in existing_names:
+        filter_data_all = {
+            "source_site": "MUSINSA",
+            "keyword": keyword_url_all,
+            "name": group_name_all,
+            "requested_count": _real_total,
+            "applied_policy_id": req.applied_policy_id,
+            "created_by": user_id,
+        }
+        try:
+            sf_all = await svc.create_filter(filter_data_all)
+            created.append(
+                {
+                    "id": sf_all.id,
+                    "name": group_name_all,
+                    "count": _real_total,
+                    "path": "전체",
+                }
+            )
+            logger.info(
+                f"[브랜드소싱] 전체 보정 그룹 생성: {group_name_all} ({_real_total}건)"
+            )
+        except Exception as e:
+            logger.warning(f"[브랜드소싱] 전체 보정 그룹 생성 실패: {e}")
+    else:
+        logger.info(f"[브랜드소싱] 전체 보정 그룹 이미 존재: {group_name_all}")
 
     logger.info(
-        f"[브랜드소싱] {req.brand}: {len(created)}개 그룹 생성 (보정 그룹 포함)"
+        f"[브랜드소싱] {req.brand}: 신규 {len(created)}개 생성, 기존 {skipped}개 스킵"
     )
-    return {"created": len(created), "groups": created}
+    return {"created": len(created), "skipped": skipped, "groups": created}
 
 
 class BrandRefreshRequest(BaseModel):
@@ -1421,9 +1446,11 @@ async def brand_refresh(
     # 2) 기존 그룹 조회 — brand + category 코드로 매칭
     all_filters = await svc.list_filters()
     existing_cat_codes: dict[str, Any] = {}  # categoryCode → filter
+    existing_names: set[str] = set()
     for f in all_filters:
         if f.source_site != "MUSINSA":
             continue
+        existing_names.add(f.name or "")
         try:
             parsed = urlparse(f.keyword or "")
             qs = parse_qs(parsed.query)
@@ -1449,9 +1476,11 @@ async def brand_refresh(
                 await svc.update_filter(f.id, {"requested_count": count})
                 updated_groups += 1
         else:
-            # 신규 카테고리 — 그룹 생성
+            # 신규 카테고리 — 이름 중복 확인 후 그룹 생성
             cat_name = path.replace(" > ", "_").replace("/", "_")
             group_name = f"MUSINSA_{req.brand_name or req.brand}_{cat_name}"
+            if group_name in existing_names:
+                continue
             params = {
                 "keyword": req.brand_name or req.brand,
                 "brand": req.brand,
