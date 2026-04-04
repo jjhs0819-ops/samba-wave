@@ -1851,11 +1851,27 @@ class SambaCategoryService:
         )
         return {"count": len(categories), "updated_at": datetime.now(UTC).isoformat()}
 
+    @staticmethod
+    def _edit_distance(a: str, b: str) -> int:
+        """두 문자열 간 편집 거리 (Levenshtein distance)."""
+        if len(a) < len(b):
+            return SambaCategoryService._edit_distance(b, a)
+        if len(b) == 0:
+            return len(a)
+        prev = list(range(len(b) + 1))
+        for i, ca in enumerate(a):
+            curr = [i + 1]
+            for j, cb in enumerate(b):
+                curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (ca != cb)))
+            prev = curr
+        return prev[len(b)]
+
     async def resolve_category_code(self, market_type: str, category_path: str) -> str:
         """경로 문자열 → 마켓 숫자 코드 변환. cat2에 저장된 코드맵 사용.
 
         매칭 우선순위:
         1. 정확 매칭
+        1.5. 상위 경로 일치 + 마지막 세그먼트 유사 매칭 (자켓↔재킷 등)
         2. 마지막 세그먼트 키워드 기반 퍼지 매칭 (leaf 카테고리 유사도)
         """
         tree = await self.tree_repo.get_by_site(market_type)
@@ -1866,12 +1882,37 @@ class SambaCategoryService:
         if category_path in code_map:
             return str(code_map[category_path])
 
-        # 2. 키워드 기반 퍼지 매칭
-        # 입력 경로의 세그먼트 추출 (예: "패션의류 > 남성의류 > 아우터/코트")
         input_segments = [s.strip() for s in category_path.split(">") if s.strip()]
         if not input_segments:
             return ""
 
+        # 1.5. 상위 경로 일치 + 마지막 세그먼트 유사 매칭
+        if len(input_segments) >= 2:
+            input_prefix = " > ".join(input_segments[:-1])
+            input_last = input_segments[-1]
+            prefix_matches = []
+            for path, code in code_map.items():
+                path_segs = [s.strip() for s in path.split(">") if s.strip()]
+                if len(path_segs) == len(input_segments):
+                    path_prefix = " > ".join(path_segs[:-1])
+                    if path_prefix == input_prefix:
+                        dist = self._edit_distance(input_last, path_segs[-1])
+                        prefix_matches.append((path, code, path_segs[-1], dist))
+            # 편집거리 3 이하인 후보만
+            close_matches = [m for m in prefix_matches if m[3] <= 3]
+            if close_matches:
+                best = min(close_matches, key=lambda x: x[3])
+                logger.info(
+                    "[카테고리 코드] 유사 매칭: '%s' → %s ('%s'↔'%s', dist=%d)",
+                    category_path,
+                    best[1],
+                    input_last,
+                    best[2],
+                    best[3],
+                )
+                return str(best[1])
+
+        # 2. 키워드 기반 퍼지 매칭
         # 마지막 세그먼트의 키워드 추출 (슬래시 분리 포함)
         last_seg = input_segments[-1]
         input_keywords = set()
