@@ -1769,11 +1769,7 @@ class SmartStoreClient:
                     else {}
                 ),
                 "detailContent": product.get("detail_html", "")
-                or "\n".join(
-                    f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
-                    for img in (product.get("detail_images") or [])
-                )
-                or f"<p>{product_name}</p>",
+                or f'<div style="text-align:center; padding:30px 0;"><p style="font-size:18px; font-weight:bold;">{product_name}</p><p style="margin-top:10px; color:#666;">상세 정보는 상품 이미지를 참조해주세요.</p></div>',
                 "images": {
                     "representativeImage": representative,
                     "optionalImages": optional,
