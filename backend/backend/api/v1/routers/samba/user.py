@@ -1,5 +1,6 @@
 """삼바웨이브 사용자(로그인 계정) 관리 API."""
 
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
