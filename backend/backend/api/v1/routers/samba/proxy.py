@@ -45,6 +45,15 @@ from backend.utils.logger import logger
 router = APIRouter(prefix="/proxy", tags=["samba-proxy"])
 
 
+# ── Cloud Run 외부 IP 확인 ──
+@router.get("/myip")
+async def get_my_ip() -> dict[str, str]:
+    """Cloud Run 컨테이너의 외부 IP 주소를 반환한다."""
+    async with httpx.AsyncClient(timeout=5) as client:
+        resp = await client.get("https://ifconfig.me/ip")
+        return {"ip": resp.text.strip()}
+
+
 # ── Helper: read setting from DB ──
 
 
