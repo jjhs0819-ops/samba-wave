@@ -9,6 +9,7 @@ from typing import Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy import func, case, update as sa_update
+from sqlalchemy.orm import defer
 from sqlmodel import select
 
 from backend.api.v1.routers.samba.collector_common import (
@@ -192,6 +193,13 @@ async def _autotune_loop():
                         .order_by(
                             priority_order, _CP.last_refreshed_at.asc().nullsfirst()
                         )
+                        # 오토튠에 불필요한 대형 컬럼 제외 — OOM 방지
+                        .options(
+                            defer(_CP.detail_html),
+                            defer(_CP.detail_images),
+                            defer(_CP.images),
+                            defer(_CP.extra_data),
+                        )
                     )
                     result = await session.exec(stmt)
                     # ID 기준 중복 제거 (동일 상품 2회 이상 처리 방지)
@@ -278,39 +286,8 @@ async def _autotune_loop():
                         _all_price_pids: set[str] = set()
                         _all_stock_pids: set[str] = set()
                         _session_lock = asyncio.Lock()
-
-                        async def _fire_transmit(pid, items, acc_id, label):
-                            """별도 세션으로 마켓 전송 (fire-and-forget)."""
-                            try:
-                                async with get_write_session() as tx_session:
-                                    from backend.domain.samba.shipment.repository import (
-                                        SambaShipmentRepository as _TxShipRepo,
-                                    )
-                                    from backend.domain.samba.shipment.service import (
-                                        SambaShipmentService as _TxShipSvc,
-                                    )
-
-                                    tx_svc = _TxShipSvc(
-                                        _TxShipRepo(tx_session), tx_session
-                                    )
-                                    await tx_svc.start_update(
-                                        [pid],
-                                        items,
-                                        [acc_id],
-                                        skip_unchanged=False,
-                                        skip_refresh=True,
-                                    )
-                                    await tx_session.commit()
-                            except Exception as e:
-                                _log_line(
-                                    "MUSINSA",
-                                    pid,
-                                    f"{label} 전송실패: {str(e)[:80]}",
-                                    "error",
-                                )
-                                log.error(
-                                    "[오토튠] 전송실패 (%s, %s): %s", pid, acc_id, e
-                                )
+                        # 사이클 중 감지된 전송 요청을 수집 (fire-and-forget 대신)
+                        _pending_syncs: list[tuple] = []
 
                         def _log_line(site, pid, msg, level="info"):
                             """오토튠 통합 로그 (한 줄)."""
@@ -352,7 +329,7 @@ async def _autotune_loop():
                                     else _name_part
                                 )
                                 _idx_prefix = (
-                                    f"[{idx}/{total}] " if idx and total else ""
+                                    f"[{idx:,}/{total:,}] " if idx and total else ""
                                 )
 
                                 # 원가 표시용
@@ -405,20 +382,27 @@ async def _autotune_loop():
                                 history.insert(0, snapshot)
                                 updates["price_history"] = _trim_history(history)
 
-                                if r.changed:
-                                    if r.new_sale_price is not None:
-                                        updates["sale_price"] = r.new_sale_price
-                                    if r.new_original_price is not None:
-                                        updates["original_price"] = r.new_original_price
-                                    if r.new_cost is not None:
-                                        updates["cost"] = r.new_cost
-                                    if r.new_options is not None:
-                                        updates["options"] = r.new_options
-                                    updates["sale_status"] = r.new_sale_status
-                                    updates["price_changed_at"] = now
-                                elif r.stock_changed:
-                                    if r.new_options is not None:
-                                        updates["options"] = r.new_options
+                                # 가격/옵션 필드는 변동 여부와 무관하게 항상 DB 반영
+                                # (changed=False여도 cost만 바뀔 수 있음 → 전송 시 DB 읽으므로 필수)
+                                if r.new_sale_price is not None:
+                                    updates["sale_price"] = r.new_sale_price
+                                if r.new_original_price is not None:
+                                    updates["original_price"] = r.new_original_price
+                                if r.new_cost is not None:
+                                    updates["cost"] = r.new_cost
+                                if r.new_options is not None:
+                                    updates["options"] = r.new_options
+                                updates["sale_status"] = r.new_sale_status
+                                # cost 변경도 price_changed_at에 반영 (warm/hot 분류 기준)
+                                if (
+                                    r.changed
+                                    or r.stock_changed
+                                    or (
+                                        r.new_cost is not None
+                                        and r.new_cost
+                                        != (getattr(product, "cost", None) or 0)
+                                    )
+                                ):
                                     updates["price_changed_at"] = now
 
                                 # 품절 → 서킷브레이커 + 즉시 마켓삭제
@@ -516,6 +500,8 @@ async def _autotune_loop():
                                             updates["market_product_nos"] = (
                                                 _new_mnos if _new_mnos else {}
                                             )
+                                            if not _new_reg:
+                                                updates["status"] = "collected"
                                     await repo.update_async(r.product_id, **updates)
                                     _site_consecutive_soldout[site] = 0
                                     return
@@ -608,7 +594,7 @@ async def _autotune_loop():
                                         )
 
                                 # 통합 한 줄 로그 (전송 전에 즉시 출력)
-                                _tail = f" [원가 {_cost_int:,}, 재고변동 {_stock_changes}건]"
+                                _tail = f" [원가 {_cost_int:,}, 재고변동 {_stock_changes:,}건]"
                                 if _actions:
                                     _log_line(
                                         site,
@@ -634,9 +620,9 @@ async def _autotune_loop():
                                         _skip_remaining[r.product_id] = SKIP_CYCLES
                                         _no_change_count[r.product_id] = 0
 
-                            # lock 밖: fire-and-forget 전송 (별도 세션, 완료 대기 안 함)
+                            # lock 밖: 전송 큐에 수집 (사이클 후 일괄 처리)
                             for _tx_args in _transmit_queue:
-                                asyncio.create_task(_fire_transmit(*_tx_args))
+                                _pending_syncs.append(_tx_args)
 
                         # DB 세션 복구 — 갱신 전 연결 확인
                         try:
@@ -671,6 +657,83 @@ async def _autotune_loop():
                                         )
                                     except Exception:
                                         pass
+
+                        # ④ 가격/재고 동기 — 전송잡 미실행 시에만 순차 처리
+                        _synced_count = 0
+                        if _pending_syncs:
+                            from sqlmodel import text as _sync_txt
+
+                            _tx_check = await session.execute(
+                                _sync_txt(
+                                    "SELECT count(*) FROM samba_jobs "
+                                    "WHERE status IN ('pending', 'running') "
+                                    "AND job_type = 'transmit'"
+                                )
+                            )
+                            _tx_job_count = _tx_check.scalar() or 0
+                            if _tx_job_count > 0:
+                                log.info(
+                                    "[오토튠] 전송잡 %d건 실행 중 — 가격/재고 동기 %d건 스킵 (잡이 처리)",
+                                    _tx_job_count,
+                                    len(_pending_syncs),
+                                )
+                            else:
+                                _sync_total = len(_pending_syncs)
+                                log.info(
+                                    "[오토튠] 가격/재고 동기 시작: %d건", _sync_total
+                                )
+                                _sync_sem = asyncio.Semaphore(2)
+
+                                async def _do_sync(s_pid, s_items, s_acc_id, s_label):
+                                    async with _sync_sem:
+                                        try:
+                                            async with get_write_session() as tx_s:
+                                                from backend.domain.samba.shipment.repository import (
+                                                    SambaShipmentRepository as _SyncRepo,
+                                                )
+                                                from backend.domain.samba.shipment.service import (
+                                                    SambaShipmentService as _SyncSvc,
+                                                )
+
+                                                _svc = _SyncSvc(_SyncRepo(tx_s), tx_s)
+                                                await _svc.start_update(
+                                                    [s_pid],
+                                                    s_items,
+                                                    [s_acc_id],
+                                                    skip_unchanged=False,
+                                                    skip_refresh=True,
+                                                )
+                                                await tx_s.commit()
+                                        except Exception as _se:
+                                            _log_line(
+                                                "MUSINSA",
+                                                s_pid,
+                                                f"{s_label} 동기실패: {str(_se)[:80]}",
+                                                "error",
+                                            )
+                                        # API 429 방지 딜레이
+                                        await asyncio.sleep(0.5)
+
+                                # 동시 2개씩 순차 처리
+                                for _chunk_start in range(0, len(_pending_syncs), 10):
+                                    _chunk = _pending_syncs[
+                                        _chunk_start : _chunk_start + 10
+                                    ]
+                                    await asyncio.gather(
+                                        *[_do_sync(*a) for a in _chunk],
+                                        return_exceptions=True,
+                                    )
+                                    _synced_count += len(_chunk)
+                                    # 비상정지 체크
+                                    if is_emergency_stopped():
+                                        log.info("[오토튠] 비상정지 — 동기 중단")
+                                        break
+                                log.info(
+                                    "[오토튠] 가격/재고 동기 완료: %d/%d건",
+                                    _synced_count,
+                                    _sync_total,
+                                )
+                            _pending_syncs.clear()
 
                         # 사이클 완료 로그 — 에러 유형별 분류
                         _err_count = sum(1 for r in results if r.error)
@@ -713,7 +776,7 @@ async def _autotune_loop():
                                 "site": "MUSINSA",
                                 "product_id": "",
                                 "name": "",
-                                "msg": f"[{_kst.strftime('%H:%M:%S')}] -- 사이클 완료: {_ok_count:,}건 성공, {_err_count:,}건 실패{_err_detail} / 총 {len(results):,}건, 가격전송 {len(_all_price_pids):,}건, 재고전송 {len(_all_stock_pids):,}건, 삭제 {deleted_count:,}건 --",
+                                "msg": f"[{_kst.strftime('%H:%M:%S')}] -- 사이클 완료: {_ok_count:,}건 성공, {_err_count:,}건 실패{_err_detail} / 총 {len(results):,}건, 가격전송 {len(_all_price_pids):,}건, 재고전송 {len(_all_stock_pids):,}건, 동기 {_synced_count:,}건, 삭제 {deleted_count:,}건 --",
                                 "level": "info",
                                 "source": "autotune",
                             }
@@ -847,6 +910,8 @@ async def _autotune_loop():
                                             if _new_mnos
                                             else {},
                                         }
+                                        if not _new_reg:
+                                            _cleanup["status"] = "collected"
                                         await repo.update_async(_sp.id, **_cleanup)
 
                                 try:
@@ -897,6 +962,7 @@ async def _autotune_loop():
                                         "stock_transmit": len(_all_stock_pids),
                                         "sold_out": summary.sold_out,
                                         "retransmitted": retransmitted,
+                                        "synced": _synced_count,
                                         "deleted": deleted_count,
                                         "started_at": now.isoformat(),
                                         "ended_at": _ended.isoformat(),
@@ -939,11 +1005,12 @@ async def _autotune_loop():
                                 pass
 
                         log.info(
-                            "[오토튠] tick 완료: 대상 %d, 갱신 %d, 가격전송 %d, 재고전송 %d, 삭제 %d",
+                            "[오토튠] tick 완료: 대상 %d, 갱신 %d, 가격전송 %d, 재고전송 %d, 동기 %d, 삭제 %d",
                             filtered_count,
                             summary.refreshed,
                             len(_all_price_pids),
                             len(_all_stock_pids),
+                            _synced_count,
                             deleted_count,
                         )
                     else:
@@ -1010,14 +1077,45 @@ async def _save_autotune_state(enabled: bool):
 
 
 async def auto_start_if_enabled():
-    """서버 시작 시 DB에서 오토튠 상태 확인 → ON이면 자동 시작."""
+    """서버 시작 시 DB에서 오토튠 상태 확인 → ON이면 자동 시작.
+
+    전송 Job이 존재하면 완료될 때까지 대기 후 시작 (OOM 방지).
+    """
     try:
+        # 저장된 인터벌 설정 복원
+        from backend.domain.samba.collector.refresher import load_site_intervals_from_db
+
+        await load_site_intervals_from_db()
+
         from backend.db.orm import get_read_session
         from backend.api.v1.routers.samba.proxy import _get_setting
 
         async with get_read_session() as session:
             enabled = await _get_setting(session, "autotune_enabled")
         if enabled:
+            # 전송 Job 존재 시 대기 (OOM 방지 — 전송과 동시 실행 차단)
+            from backend.db.orm import get_read_session as _get_rs
+            from sqlalchemy import text as _st
+
+            for _wait in range(12):  # 최대 60초 대기
+                async with _get_rs() as _s:
+                    _r = await _s.execute(
+                        _st(
+                            "SELECT count(*) FROM samba_jobs "
+                            "WHERE status IN ('pending', 'running') "
+                            "AND job_type = 'transmit'"
+                        )
+                    )
+                    _tx_count = _r.scalar() or 0
+                if _tx_count == 0:
+                    break
+                logger.info(
+                    "[오토튠] 전송 Job %d건 진행 중 — 시작 대기 (%d/12)",
+                    _tx_count,
+                    _wait + 1,
+                )
+                await asyncio.sleep(5)
+
             global _autotune_task, _autotune_cycle_count
             from backend.domain.samba.collector.refresher import clear_bulk_cancel
 
@@ -1088,6 +1186,11 @@ async def autotune_status():
     except Exception:
         refreshed_24h = 0
 
+    # 소싱처별 인터벌 정보
+    from backend.domain.samba.collector.refresher import get_site_intervals_info
+
+    intervals_info = get_site_intervals_info()
+
     return {
         "running": _autotune_running_event.is_set()
         and _autotune_task is not None
@@ -1097,7 +1200,25 @@ async def autotune_status():
         "refreshed_count": refreshed_24h,
         "target": "registered",
         "breaker_tripped": tripped,
+        "site_intervals": intervals_info.get("base_intervals", {}),
     }
+
+
+class AutotuneIntervalRequest(BaseModel):
+    site: str
+    interval: float  # 초
+
+
+@router.post("/autotune/interval")
+async def autotune_update_interval(body: AutotuneIntervalRequest):
+    """소싱처별 오토튠 인터벌 동적 변경 (초 단위)."""
+    from backend.domain.samba.collector.refresher import set_site_base_interval
+
+    if body.interval < 0 or body.interval > 60:
+        return {"ok": False, "error": "인터벌은 0~60초 범위만 가능합니다"}
+    set_site_base_interval(body.site, body.interval)
+    logger.info("[오토튠] 인터벌 변경: %s → %.1f초", body.site, body.interval)
+    return {"ok": True, "site": body.site, "interval": body.interval}
 
 
 @router.post("/autotune/breaker-reset")

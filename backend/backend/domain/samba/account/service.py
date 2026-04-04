@@ -199,9 +199,3 @@ class SambaAccountService:
             if market["id"] == market_type:
                 return market
         return None
-
-    @staticmethod
-    def format_account_label(account: SambaMarketAccount) -> str:
-        market_info = SambaAccountService.get_market_info(account.market_type)
-        market_name = market_info["name"] if market_info else account.market_type
-        return f"{account.business_name or market_name}-{account.seller_id or ''}"

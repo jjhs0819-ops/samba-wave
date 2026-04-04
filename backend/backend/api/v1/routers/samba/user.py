@@ -13,6 +13,7 @@ from backend.core.config import settings
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.user.model import SambaUser
 from backend.domain.samba.user.repository import SambaUserRepository
+from backend.domain.user.auth_service import get_user_id
 from backend.utils.logger import logger
 from backend.utils.password import hash_password, verify_password
 
@@ -21,7 +22,7 @@ router = APIRouter(prefix="/users", tags=["samba-users"])
 
 # ── DTO ──
 
-INVITE_CODE = "samba_wave"
+INVITE_CODE = os.environ.get("SAMBA_INVITE_CODE", "samba_wave")
 
 
 class UserCreateDto(BaseModel):
@@ -29,7 +30,6 @@ class UserCreateDto(BaseModel):
     password: str = Field(..., min_length=6)
     name: str = Field(..., min_length=1, max_length=50)
     invite_code: str = Field("", description="초대 코드")
-    is_admin: bool = False
 
 
 class UserLoginDto(BaseModel):
@@ -41,7 +41,6 @@ class UserUpdateDto(BaseModel):
     name: Optional[str] = None
     email: Optional[EmailStr] = None
     password: Optional[str] = Field(None, min_length=6)
-    is_admin: Optional[bool] = None
     status: Optional[str] = None
 
 
@@ -66,6 +65,7 @@ async def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     session: AsyncSession = Depends(get_read_session_dependency),
+    _user_id: str = Depends(get_user_id),
 ):
     """활성 사용자 목록 조회 (삭제된 사용자 제외)."""
     stmt = (
@@ -113,7 +113,7 @@ async def create_user(
         email=body.email,
         name=body.name,
         password_hash=hashed,
-        is_admin=body.is_admin,
+        is_admin=False,
         status="active",
     )
     logger.info(f"[사용자관리] 계정 생성: {user.email}")
@@ -178,6 +178,7 @@ async def update_user(
     user_id: str,
     body: UserUpdateDto,
     session: AsyncSession = Depends(get_write_session_dependency),
+    _user_id: str = Depends(get_user_id),
 ):
     """사용자 정보 수정."""
     repo = SambaUserRepository(session)
@@ -197,8 +198,6 @@ async def update_user(
         update_data["email"] = body.email
     if body.password is not None:
         update_data["password_hash"] = hash_password(body.password)
-    if body.is_admin is not None:
-        update_data["is_admin"] = body.is_admin
     if body.status is not None:
         update_data["status"] = body.status
 
@@ -224,6 +223,7 @@ async def update_user(
 async def delete_user(
     user_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
+    _user_id: str = Depends(get_user_id),
 ):
     """사용자 계정 삭제 (소프트 삭제)."""
     repo = SambaUserRepository(session)

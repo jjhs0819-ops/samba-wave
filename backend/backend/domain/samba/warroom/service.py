@@ -64,28 +64,17 @@ class SambaMonitorService:
             logger.warning(f"[monitor] 이벤트 기록 실패: {e}")
 
     async def get_dashboard_stats(self) -> Dict[str, Any]:
-        """대시보드 전체 통계 — 단일 호출로 반환."""
+        """대시보드 전체 통계 — 순차 호출 (AsyncSession 공유 제약)."""
         now = datetime.now(timezone.utc)
         since_24h = now - timedelta(hours=24)
         since_1h = now - timedelta(hours=1)
 
-        # 상품 통계
         product_stats = await self._get_product_stats()
-
-        # 갱신 통계
         refresh_stats = await self._get_refresh_stats(since_1h, since_24h)
-
-        # 가격 변동 통계
         price_change_stats = await self._get_price_change_stats(since_24h)
-
-        # 소싱처/마켓 헬스
         site_health = await self._get_site_health()
         market_health = await self._get_market_health()
-
-        # 이벤트 요약
         event_summary = await self._get_event_summary(since_24h)
-
-        # 시간대별 변동 건수 (24시간)
         hourly_changes = await self._get_hourly_changes(since_24h)
 
         return {
@@ -99,43 +88,37 @@ class SambaMonitorService:
         }
 
     async def _get_product_stats(self) -> Dict[str, Any]:
-        """상품 통계: 전체, 소싱처별, 우선순위별, 상태별."""
+        """상품 통계: 전체, 소싱처별, 우선순위별, 상태별 — 단일 쿼리."""
         from backend.domain.samba.collector.model import SambaCollectedProduct
-
-        # 전체 카운트
-        total_stmt = select(func.count(SambaCollectedProduct.id))
-        total_result = await self.session.execute(total_stmt)
-        total = total_result.scalar() or 0
-
-        # 소싱처별 카운트
-        by_source_stmt = select(
-            SambaCollectedProduct.source_site,
-            func.count(SambaCollectedProduct.id),
-        ).group_by(SambaCollectedProduct.source_site)
-        by_source_result = await self.session.execute(by_source_stmt)
-        by_source = {row[0]: row[1] for row in by_source_result.all()}
-
-        # 우선순위별
-        by_priority_stmt = select(
-            SambaCollectedProduct.monitor_priority,
-            func.count(SambaCollectedProduct.id),
-        ).group_by(SambaCollectedProduct.monitor_priority)
-        by_priority_result = await self.session.execute(by_priority_stmt)
-        by_priority = {row[0]: row[1] for row in by_priority_result.all()}
-
-        # 상태별
-        by_status_stmt = select(
-            SambaCollectedProduct.sale_status,
-            func.count(SambaCollectedProduct.id),
-        ).group_by(SambaCollectedProduct.sale_status)
-        by_status_result = await self.session.execute(by_status_stmt)
-        by_sale_status = {row[0]: row[1] for row in by_status_result.all()}
-
-        # 마켓등록상품 수 (collector_common 공통 조건 사용)
         from backend.api.v1.routers.samba.collector_common import (
             build_market_registered_conditions,
         )
 
+        # 소싱처·우선순위·상태별 카운트를 한 번에 가져오기
+        combo_stmt = select(
+            SambaCollectedProduct.source_site,
+            SambaCollectedProduct.monitor_priority,
+            SambaCollectedProduct.sale_status,
+            func.count(SambaCollectedProduct.id),
+        ).group_by(
+            SambaCollectedProduct.source_site,
+            SambaCollectedProduct.monitor_priority,
+            SambaCollectedProduct.sale_status,
+        )
+        combo_result = await self.session.execute(combo_stmt)
+        rows = combo_result.all()
+
+        total = 0
+        by_source: Dict[str, int] = {}
+        by_priority: Dict[str, int] = {}
+        by_sale_status: Dict[str, int] = {}
+        for src, pri, status, cnt in rows:
+            total += cnt
+            by_source[src] = by_source.get(src, 0) + cnt
+            by_priority[pri] = by_priority.get(pri, 0) + cnt
+            by_sale_status[status] = by_sale_status.get(status, 0) + cnt
+
+        # 마켓등록상품 수 (별도 조건)
         registered_stmt = select(func.count(SambaCollectedProduct.id)).where(
             *build_market_registered_conditions(SambaCollectedProduct),
         )
@@ -154,47 +137,32 @@ class SambaMonitorService:
         since_1h: datetime,
         since_24h: datetime,
     ) -> Dict[str, Any]:
-        """갱신 통계."""
+        """갱신 통계 — 단일 쿼리로 4개 값 동시 집계."""
         from backend.domain.samba.collector.model import SambaCollectedProduct
 
-        # 마지막 갱신 시각
-        last_stmt = (
-            select(SambaCollectedProduct.last_refreshed_at)
-            .where(SambaCollectedProduct.last_refreshed_at.isnot(None))
-            .order_by(SambaCollectedProduct.last_refreshed_at.desc())
-            .limit(1)
+        stmt = select(
+            func.max(SambaCollectedProduct.last_refreshed_at),
+            func.count(SambaCollectedProduct.id).filter(
+                SambaCollectedProduct.last_refreshed_at >= since_1h
+            ),
+            func.count(SambaCollectedProduct.id).filter(
+                SambaCollectedProduct.last_refreshed_at >= since_24h,
+                SambaCollectedProduct.registered_accounts != None,
+                func.length(cast(SambaCollectedProduct.registered_accounts, String))
+                > 2,
+            ),
+            func.count(SambaCollectedProduct.id).filter(
+                SambaCollectedProduct.refresh_error_count > 0
+            ),
         )
-        last_result = await self.session.execute(last_stmt)
-        last_refreshed = last_result.scalar()
-
-        # 1시간 내 갱신
-        r1h_stmt = select(func.count(SambaCollectedProduct.id)).where(
-            SambaCollectedProduct.last_refreshed_at >= since_1h
-        )
-        r1h_result = await self.session.execute(r1h_stmt)
-        refreshed_1h = r1h_result.scalar() or 0
-
-        # 24시간 내 갱신 (실제 등록된 상품만 — 빈 배열 제외)
-        r24h_stmt = select(func.count(SambaCollectedProduct.id)).where(
-            SambaCollectedProduct.last_refreshed_at >= since_24h,
-            SambaCollectedProduct.registered_accounts != None,
-            func.length(cast(SambaCollectedProduct.registered_accounts, String)) > 2,
-        )
-        r24h_result = await self.session.execute(r24h_stmt)
-        refreshed_24h = r24h_result.scalar() or 0
-
-        # 에러 상품 (refresh_error_count > 0)
-        err_stmt = select(func.count(SambaCollectedProduct.id)).where(
-            SambaCollectedProduct.refresh_error_count > 0
-        )
-        err_result = await self.session.execute(err_stmt)
-        error_products = err_result.scalar() or 0
+        row = (await self.session.execute(stmt)).one()
+        last_refreshed = row[0]
 
         return {
             "last_refreshed_at": last_refreshed.isoformat() if last_refreshed else None,
-            "refreshed_1h": refreshed_1h,
-            "refreshed_24h": refreshed_24h,
-            "error_products": error_products,
+            "refreshed_1h": row[1] or 0,
+            "refreshed_24h": row[2] or 0,
+            "error_products": row[3] or 0,
         }
 
     async def _get_price_change_stats(

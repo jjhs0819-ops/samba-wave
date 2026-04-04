@@ -1,0 +1,41 @@
+name: Export CLIP ONNX Model
+
+# 수동 트리거 (라벨 변경 시 실행)
+on:
+  workflow_dispatch:
+
+jobs:
+  export:
+    name: Export CLIP → ONNX → GCS
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install export dependencies
+        run: pip install --no-cache-dir open-clip-torch onnx onnxscript numpy
+
+      - name: Export ONNX model
+        run: |
+          CLIP_EXPORT_DIR=/tmp/clip_onnx python backend/scripts/export_clip_onnx.py
+
+      - name: Verify exported files
+        run: |
+          ls -lh /tmp/clip_onnx/
+          cat /tmp/clip_onnx/meta.json
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Upload to GCS
+        run: |
+          gcloud storage cp -r /tmp/clip_onnx/* gs://samba-wave-models/clip/
+          echo "✅ GCS 업로드 완료"
+          gcloud storage ls -l gs://samba-wave-models/clip/

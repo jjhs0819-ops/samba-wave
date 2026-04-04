@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { accountApi, orderApi, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api'
+import { useLocalStorageState } from '@/hooks/useLocalStorageState'
+import { STORAGE_KEYS } from '@/lib/samba/constants'
 
 const card = {
   background: 'rgba(30,30,30,0.5)',
@@ -25,6 +27,15 @@ const ORDER_STATUSES = [
 ]
 const COLORS = ['#FF8C00', '#4C9AFF', '#51CF66', '#CC5DE8', '#FFD93D', '#FF6B6B', '#20C997', '#F06595', '#845EF7', '#FFA94D', '#66D9E8', '#E599F7']
 
+/** 검색 조건 저장 구조 */
+interface AnalyticsSearch {
+  year: number
+  month: number
+  markets: string[]
+  sites: string[]
+  statuses: string[]
+}
+
 interface SalesRow {
   name: string
   orders: number
@@ -45,47 +56,43 @@ export default function AnalyticsPage() {
   const [marketAccounts, setMarketAccounts] = useState<SambaMarketAccount[]>([])
   const [orders, setOrders] = useState<SambaOrder[]>([])
 
-  // 검색 조건 (localStorage 복원)
+  // 검색 조건 (localStorage 자동 복원/저장)
   const now = new Date()
-  const [searchYear, setSearchYear] = useState(() => {
-    if (typeof window === 'undefined') return now.getFullYear()
-    try { const s = localStorage.getItem('samba_analytics_search'); return s ? JSON.parse(s).year ?? now.getFullYear() : now.getFullYear() } catch { return now.getFullYear() }
-  })
-  const [searchMonth, setSearchMonth] = useState(() => {
-    if (typeof window === 'undefined') return 0
-    try { const s = localStorage.getItem('samba_analytics_search'); return s ? JSON.parse(s).month ?? 0 : 0 } catch { return 0 }
-  })
-  const [selectedMarkets, setSelectedMarkets] = useState<string[]>(() => {
-    if (typeof window === 'undefined') return []
-    try { const s = localStorage.getItem('samba_analytics_search'); return s ? JSON.parse(s).markets ?? [] : [] } catch { return [] }
-  })
-  const [selectedSites, setSelectedSites] = useState<string[]>(() => {
-    if (typeof window === 'undefined') return [...SOURCE_SITES]
-    try { const s = localStorage.getItem('samba_analytics_search'); return s ? JSON.parse(s).sites ?? [...SOURCE_SITES] : [...SOURCE_SITES] } catch { return [...SOURCE_SITES] }
-  })
-  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(() => {
-    if (typeof window === 'undefined') return ORDER_STATUSES.map(s => s.key)
-    try { const s = localStorage.getItem('samba_analytics_search'); return s ? JSON.parse(s).statuses ?? ORDER_STATUSES.map(s => s.key) : ORDER_STATUSES.map(s => s.key) } catch { return ORDER_STATUSES.map(s => s.key) }
-  })
+  const defaultSearch: AnalyticsSearch = {
+    year: now.getFullYear(),
+    month: 0,
+    markets: [],
+    sites: [...SOURCE_SITES],
+    statuses: ORDER_STATUSES.map(s => s.key),
+  }
+  const [search, setSearch] = useLocalStorageState<AnalyticsSearch>(
+    STORAGE_KEYS.ANALYTICS_SEARCH,
+    defaultSearch,
+  )
+  const searchYear = search.year
+  const searchMonth = search.month
+  const selectedMarkets = search.markets
+  const selectedSites = search.sites
+  const selectedStatuses = search.statuses
+  const setSearchYear = (v: number) => setSearch(prev => ({ ...prev, year: v }))
+  const setSearchMonth = (v: number) => setSearch(prev => ({ ...prev, month: v }))
+  const setSelectedMarkets = (v: string[]) => setSearch(prev => ({ ...prev, markets: v }))
+  const setSelectedSites = (v: string[]) => setSearch(prev => ({ ...prev, sites: v }))
+  const setSelectedStatuses = (v: string[]) => setSearch(prev => ({ ...prev, statuses: v }))
 
   const toggleItem = (arr: string[], setArr: (v: string[]) => void, item: string) => {
     setArr(arr.includes(item) ? arr.filter(x => x !== item) : [...arr, item])
   }
 
   const load = useCallback(async () => {
-    try {
-      localStorage.setItem('samba_analytics_search', JSON.stringify({
-        year: searchYear, month: searchMonth, markets: selectedMarkets, sites: selectedSites, statuses: selectedStatuses,
-      }))
-    } catch {}
-
+    // localStorage 저장은 useLocalStorageState 훅이 자동 처리
     setLoading(true)
     try {
       const allOrders = await orderApi.list(0, 500).catch(() => [])
       setOrders(allOrders)
     } catch {}
     setLoading(false)
-  }, [searchYear, searchMonth, selectedMarkets, selectedSites, selectedStatuses])
+  }, [search])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { accountApi.listActive().then(setMarketAccounts).catch(() => {}) }, [])

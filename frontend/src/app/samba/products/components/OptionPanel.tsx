@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useCallback } from 'react'
 import {
   collectorApi,
   type SambaCollectedProduct,
@@ -14,13 +14,35 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
   const [localOpts, setLocalOpts] = useState(options as Record<string, unknown>[])
   const [bulkModal, setBulkModal] = useState<'price' | 'stock' | 'addOption' | null>(null)
   const [bulkValue, setBulkValue] = useState('')
+  // 개별 옵션 가격/재고 편집 상태 (인덱스 → 표시값)
+  const [editingPrices, setEditingPrices] = useState<Record<number, string>>({})
+  const [editingStocks, setEditingStocks] = useState<Record<number, string>>({})
   const opts = localOpts
 
   // 옵션 변경 시 즉시 API 저장
-  const saveOptions = (newOpts: Record<string, unknown>[]) => {
+  const saveOptions = useCallback((newOpts: Record<string, unknown>[]) => {
     setLocalOpts(newOpts)
     collectorApi.updateProduct(productId, { options: newOpts } as Partial<SambaCollectedProduct>).catch(() => {})
-  }
+  }, [productId])
+
+  // 일괄수정 적용 (가격 또는 재고)
+  const applyBulk = useCallback((mode: 'price' | 'stock', value: string) => {
+    const v = parseInt(value, 10)
+    if (isNaN(v)) return
+    if (mode === 'price') {
+      // React 상태로 가격 입력값 일괄 갱신
+      const newPrices: Record<number, string> = {}
+      opts.forEach((_, idx) => { newPrices[idx] = v.toLocaleString() })
+      setEditingPrices(newPrices)
+      saveOptions(opts.map(o => ({ ...o, salePrice: v })))
+    } else {
+      // React 상태로 재고 입력값 일괄 갱신
+      const newStocks: Record<number, string> = {}
+      opts.forEach((_, idx) => { newStocks[idx] = String(v) })
+      setEditingStocks(newStocks)
+      saveOptions(opts.map(o => ({ ...o, stock: v })))
+    }
+  }, [opts, saveOptions])
 
   return (
     <div>
@@ -95,6 +117,11 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                 const optionSalePrice = Math.ceil(optionCost * 1.15)
                 const isChecked = !isSoldOut
 
+                // 가격 표시: 편집 상태값 > salePrice > 계산값
+                const priceDisplay = editingPrices[idx] ?? (
+                  optionSalePrice > 0 ? optionSalePrice.toLocaleString() : '0'
+                )
+
                 let stockDisplay: React.ReactNode
                 if (isBrandDelivery) {
                   stockDisplay = <span style={{ color: '#6B8AFF', fontWeight: 600, fontSize: '0.78rem' }}>브랜드배송</span>
@@ -103,14 +130,25 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                 } else if (stock < 0 || stock >= 999) {
                   stockDisplay = (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      <input type="number" data-option-stock="" placeholder="" style={{ width: '70px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }} />
+                      <input
+                        type="number"
+                        value={editingStocks[idx] ?? ''}
+                        placeholder=""
+                        onChange={(e) => setEditingStocks(prev => ({ ...prev, [idx]: e.target.value }))}
+                        style={{ width: '70px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
+                      />
                       <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>{stock >= 999 ? '충분' : '재고있음'}</span>
                     </span>
                   )
                 } else {
                   stockDisplay = (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      <input type="number" data-option-stock="" defaultValue={stock} style={{ width: '60px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }} />
+                      <input
+                        type="number"
+                        value={editingStocks[idx] ?? String(stock)}
+                        onChange={(e) => setEditingStocks(prev => ({ ...prev, [idx]: e.target.value }))}
+                        style={{ width: '60px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
+                      />
                       <span>개</span>
                     </span>
                   )
@@ -152,12 +190,18 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                       <input
                         type="text"
                         inputMode="numeric"
-                        data-option-price=""
-                        defaultValue={optionSalePrice > 0 ? optionSalePrice.toLocaleString() : '0'}
-                        onFocus={(e) => { e.target.value = e.target.value.replace(/,/g, '') }}
+                        value={priceDisplay}
+                        onChange={(e) => {
+                          setEditingPrices(prev => ({ ...prev, [idx]: e.target.value }))
+                        }}
+                        onFocus={(e) => {
+                          // 포커스 시 콤마 제거하여 편집 용이하게
+                          setEditingPrices(prev => ({ ...prev, [idx]: e.target.value.replace(/,/g, '') }))
+                        }}
                         onBlur={(e) => {
+                          // 블러 시 숫자 포맷팅 적용
                           const v = parseInt(e.target.value.replace(/,/g, ''), 10)
-                          e.target.value = isNaN(v) ? '0' : v.toLocaleString()
+                          setEditingPrices(prev => ({ ...prev, [idx]: isNaN(v) ? '0' : v.toLocaleString() }))
                         }}
                         style={{ width: '80px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
                       />
@@ -202,15 +246,7 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                           setBulkModal(null)
                         }
                       } else {
-                        const v = parseInt(bulkValue, 10)
-                        if (isNaN(v)) return
-                        if (bulkModal === 'price') {
-                          document.querySelectorAll<HTMLInputElement>('[data-option-price]').forEach(el => { el.value = v.toLocaleString() })
-                          saveOptions(opts.map(o => ({ ...o, salePrice: v })))
-                        } else {
-                          document.querySelectorAll<HTMLInputElement>('[data-option-stock]').forEach(el => { el.value = String(v) })
-                          saveOptions(opts.map(o => ({ ...o, stock: v })))
-                        }
+                        applyBulk(bulkModal, bulkValue)
                         setBulkModal(null)
                       }
                     }}
@@ -227,15 +263,7 @@ const OptionPanel = React.memo(function OptionPanel({ options, productCost, prod
                         saveOptions([...opts, { name: bulkValue.trim(), price: productCost, stock: 0, isSoldOut: false }])
                       }
                     } else {
-                      const v = parseInt(bulkValue, 10)
-                      if (isNaN(v)) return
-                      if (bulkModal === 'price') {
-                        document.querySelectorAll<HTMLInputElement>('[data-option-price]').forEach(el => { el.value = v.toLocaleString() })
-                        saveOptions(opts.map(o => ({ ...o, salePrice: v })))
-                      } else {
-                        document.querySelectorAll<HTMLInputElement>('[data-option-stock]').forEach(el => { el.value = String(v) })
-                        saveOptions(opts.map(o => ({ ...o, stock: v })))
-                      }
+                      applyBulk(bulkModal, bulkValue)
                     }
                     setBulkModal(null)
                   }} style={{ padding: '6px 16px', fontSize: '0.8rem', borderRadius: '6px', border: 'none', background: '#FF8C00', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>

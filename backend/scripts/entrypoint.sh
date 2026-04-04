@@ -37,9 +37,9 @@ if [ "$ENVIRONMENT" = "production" ]; then
     fi
   done
 
-  # Uvicorn 단일 프로세스 — 인메모리 잡 로그 + 워커 중복 실행 방지
+  # Uvicorn 단일 프로세스 — --no-dev: 런타임에 dev 패키지 재설치 방지
   echo "Starting production server with Uvicorn (single process)..."
-  exec uv run -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
+  exec uv run --no-dev -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
 else
   # Run the development server with Uvicorn and --reload
   echo "Starting development server with Uvicorn..."

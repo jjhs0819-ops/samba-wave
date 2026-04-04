@@ -220,6 +220,52 @@ export default function WarroomPage() {
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
   const prevCyclesRef = useRef(0)
   const falseCountRef = useRef(0)
+
+  // 소싱처별 인터벌 설정
+  const INTERVAL_SITES = [
+    { key: 'MUSINSA', label: '무신사' },
+    { key: 'KREAM', label: 'KREAM' },
+    { key: 'DANAWA', label: '다나와' },
+    { key: 'FashionPlus', label: '패션플러스' },
+    { key: 'Nike', label: 'Nike' },
+    { key: 'Adidas', label: 'Adidas' },
+    { key: 'ABCmart', label: 'ABC마트' },
+    { key: 'GrandStage', label: '그랜드스테이지' },
+    { key: 'OKmall', label: 'OKmall' },
+    { key: 'SSG', label: 'SSG' },
+    { key: 'LOTTEON', label: '롯데ON' },
+    { key: 'GSShop', label: 'GSShop' },
+    { key: 'ElandMall', label: '이랜드몰' },
+    { key: 'SSF', label: 'SSF샵' },
+  ]
+  const [siteIntervals, setSiteIntervals] = useState<Record<string, string>>({})
+  const intervalTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+
+  // 마운트 시 서버에서 현재 인터벌 로드
+  useEffect(() => {
+    collectorApi.autotuneStatus().then(res => {
+      if (res.site_intervals) {
+        const init: Record<string, string> = {}
+        for (const [site, val] of Object.entries(res.site_intervals)) {
+          init[site] = String(val)
+        }
+        setSiteIntervals(init)
+      }
+    }).catch(() => {})
+  }, [])
+
+  const handleIntervalChange = useCallback((site: string, value: string) => {
+    setSiteIntervals(prev => ({ ...prev, [site]: value }))
+    // 디바운스 — 0.5초 후 자동 저장
+    if (intervalTimerRef.current[site]) clearTimeout(intervalTimerRef.current[site])
+    intervalTimerRef.current[site] = setTimeout(async () => {
+      const num = parseFloat(value)
+      if (isNaN(num) || num < 0 || num > 60) return
+      try {
+        await collectorApi.autotuneUpdateInterval(site, num)
+      } catch { /* ignore */ }
+    }, 500)
+  }, [])
   const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number) => {
     // 별도 스레드 타이밍 차이 대응 — 3회 연속 false일 때만 정지 표시
     if (!running) {
@@ -341,20 +387,21 @@ export default function WarroomPage() {
           ...card,
           padding: '0.75rem 1.25rem',
           display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
+          flexDirection: 'column',
+          gap: '0.5rem',
           borderColor: '#FF8C00',
           borderWidth: '1px',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: autotuneRunning ? '#51CF66' : '#FF6B6B', display: 'inline-block' }} />
-          <span style={{ fontWeight: 700, color: '#FF8C00', fontSize: '0.875rem' }}>오토튠 실시간 모니터링</span>
-          {autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중 ({autotuneCycles}회)</span>}
-          {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
-          <button
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: autotuneRunning ? '#51CF66' : '#FF6B6B', display: 'inline-block' }} />
+            <span style={{ fontWeight: 700, color: '#FF8C00', fontSize: '0.875rem' }}>오토튠 실시간 모니터링</span>
+            {autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중 ({autotuneCycles}회)</span>}
+            {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
+            <button
             onClick={async () => {
               try {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
@@ -394,7 +441,36 @@ export default function WarroomPage() {
               fontWeight: 600,
               cursor: 'pointer',
             }}
-          >강제중단</button>
+            >강제중단</button>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>수집인터벌</span>
+          {INTERVAL_SITES.map(({ key, label }) => (
+            <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+              <span style={{ fontSize: '0.7rem', color: '#aaa', whiteSpace: 'nowrap' }}>{label}</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={siteIntervals[key] ?? ''}
+                onChange={e => handleIntervalChange(key, e.target.value)}
+                style={{
+                  width: '2.5rem',
+                  padding: '0.1rem 0.25rem',
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  borderRadius: '4px',
+                  color: '#FF8C00',
+                  fontSize: '0.75rem',
+                  textAlign: 'center',
+                  outline: 'none',
+                }}
+                onFocus={e => { e.target.style.borderColor = '#FF8C00' }}
+                onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.15)' }}
+              />
+            </span>
+          ))}
+          <span style={{ fontSize: '0.65rem', color: '#666' }}>초</span>
         </div>
       </div>
 

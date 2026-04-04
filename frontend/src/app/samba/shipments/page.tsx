@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, type SambaShipment, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
+import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
 import { MARKET_TYPE_TO_POLICY_KEY as SHARED_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
@@ -26,7 +26,6 @@ export default function ShipmentsPage() {
   const searchParams = useSearchParams()
   const [products, setProducts] = useState<SambaCollectedProduct[]>([])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
-  const [shipments, setShipments] = useState<SambaShipment[]>([])
   const [filters, setFilters] = useState<SambaSearchFilter[]>([])
   const [policies, setPolicies] = useState<SambaPolicy[]>([])
   const [loading, setLoading] = useState(true)
@@ -95,25 +94,20 @@ export default function ShipmentsPage() {
         })
       } catch { /* ignore */ }
     }
-    fetchJobQueue()
-    jobQueuePollRef.current = setInterval(fetchJobQueue, 5000)
-    return () => { if (jobQueuePollRef.current) clearInterval(jobQueuePollRef.current) }
+    // 초기 로딩 차단 방지: 3초 후 첫 호출
+    const delayTimer = setTimeout(() => {
+      fetchJobQueue()
+      jobQueuePollRef.current = setInterval(fetchJobQueue, 5000)
+    }, 3000)
+    return () => { clearTimeout(delayTimer); if (jobQueuePollRef.current) clearInterval(jobQueuePollRef.current) }
   }, [])
 
-  // 페이지 로드 시 링 버퍼에서 기존 로그 복원 + 실행 중인 Job 자동 연결
+  // 마운트 시 실행 중인 Job 감지 → 자동 폴링 (오토튠과 동일 패턴)
   useEffect(() => {
     (async () => {
       try {
         const { API_BASE_URL: apiBase } = await import('@/config/api')
-        // 1) 링 버퍼에서 기존 로그 복원
-        const bufRes = await fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=0`)
-        const bufData = await bufRes.json()
-        const prevLogs = (bufData.logs || []) as string[]
-        sinceIdxRef.current = bufData.current_idx || 0
-        if (prevLogs.length > 0) {
-          setLogMessages(prevLogs.map(l => `[이전] ${l}`).slice(-30))
-        }
-        // 2) 실행 중인 Job 확인
+        // 실행 중인 Job 확인 (가벼운 호출만)
         const res = await fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`)
         const jobs = await res.json()
         const job = Array.isArray(jobs) ? jobs.find((j: Record<string, unknown>) => j.job_type === 'transmit') : null
@@ -123,9 +117,9 @@ export default function ShipmentsPage() {
         activeJobIdRef.current = jobId
         setTransmitting(true)
         setProgress({ current: (job.current || 0) as number, total: (job.total || 0) as number })
-        // 3) 링 버퍼 기반 증분 폴링 시작
+        // 증분 폴링 즉시 시작 (500ms)
         let polling = false
-        jobPollRef.current = setInterval(async () => {
+        const poll = async () => {
           if (polling) return
           polling = true
           try {
@@ -139,7 +133,7 @@ export default function ShipmentsPage() {
             const newLogs = (logData.logs || []) as string[]
             sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
             if (newLogs.length > 0) {
-              for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
+              for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
             }
             if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
               if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
@@ -149,7 +143,9 @@ export default function ShipmentsPage() {
             }
           } catch { /* ignore */ }
           polling = false
-        }, 500)
+        }
+        poll()
+        jobPollRef.current = setInterval(poll, 500)
       } catch { /* ignore */ }
     })()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -219,21 +215,26 @@ export default function ShipmentsPage() {
       ? collectorApi.getProductsByIds(preIds).catch(() => [] as SambaCollectedProduct[])
       : collectorApi.scrollProducts(scrollParams).then(r => { setTotalCount(r.total || 0); return r.items }).catch(() => [] as SambaCollectedProduct[])
 
-    const [p, a, s, f, pol, cm] = await Promise.all([
+    // 필수 데이터(상품+계정)만 먼저 로드 → 즉시 화면 표시
+    const [p, a] = await Promise.all([
       productPromise,
       accountApi.listActive().catch(() => []),
-      shipmentApi.list(0, 100).catch(() => []),
+    ])
+    if (preIds.length > 0) setTotalCount(p.length)
+    setProducts(p)
+    setAccounts(a)
+    setLoading(false)
+
+    // 나머지는 백그라운드 로드 (화면 차단 없음)
+    Promise.all([
       collectorApi.listFilters().catch(() => []),
       policyApi.list().catch(() => []),
       categoryApi.listMappings().catch(() => []),
-    ])
-    setProducts(p)
-    setAccounts(a)
-    setShipments(s)
-    setFilters(f)
-    setPolicies(pol)
-    setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
-    setLoading(false)
+    ]).then(([f, pol, cm]) => {
+      setFilters(f)
+      setPolicies(pol)
+      setCategoryMappings(Array.isArray(cm) ? cm as typeof categoryMappings : [])
+    })
   }, [searchText, searchField, siteFilter, registrationFilter, sortBy, currentPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load])
@@ -475,7 +476,7 @@ export default function ShipmentsPage() {
     }
     const effectiveLabels = [...effectiveAccountSet].map(aid => accountLabelMap[aid] || aid)
     abortRef.current = false
-    addLog(`[${ts()}] 전송 시작 — 상품 ${total}개, ${effectiveLabels.length > 0 ? effectiveLabels.join(', ') : '연결 계정 없음'}`)
+    addLog(`[${ts()}] 전송 시작 — 상품 ${total.toLocaleString()}개, ${effectiveLabels.length > 0 ? effectiveLabels.join(', ') : '연결 계정 없음'}`)
 
     const items: string[] = []
     if (updateItems.price) items.push('price', 'stock')
@@ -555,7 +556,7 @@ export default function ShipmentsPage() {
           sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
           if (newLogs.length > 0) {
             for (const log of newLogs) {
-              setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
+              setLogMessages(prev => [...prev, log].slice(-30))
             }
           }
           if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
@@ -788,7 +789,7 @@ export default function ShipmentsPage() {
             <button disabled={!!stopping} onClick={async () => {
                 setStopping('emergency')
                 const ts = new Date().toLocaleTimeString()
-                setLogMessages(prev => [...prev, `[${ts}] 전체 중단 요청...`].slice(-30))
+                setLogMessages(prev => [...prev, `[${ts}] 작업중단 요청...`].slice(-30))
                 abortRef.current = true
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                 try {
@@ -797,15 +798,15 @@ export default function ShipmentsPage() {
                   await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   await fetch(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
                   activeJobIdRef.current = ''
-                  setLogMessages(prev => [...prev, `[${ts}] 전체 중단 완료 — 모든 전송/대기 잡 취소됨`].slice(-30))
+                  setLogMessages(prev => [...prev, `[${ts}] 작업중단 완료`].slice(-30))
                 } catch {
-                  setLogMessages(prev => [...prev, `[${ts}] 전체 중단 실패`].slice(-30))
+                  setLogMessages(prev => [...prev, `[${ts}] 작업중단 실패`].slice(-30))
                 }
                 setTransmitting(false)
                 setStopping('')
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'emergency' ? 'rgba(255,50,50,0.6)' : 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: stopping ? 0.7 : 1 }}
-              >{stopping === 'emergency' ? '중단중...' : '전체 중단'}</button>
+              >{stopping === 'emergency' ? '중단중...' : '작업중단'}</button>
             {<>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: loopEnabled ? '#FF8C00' : '#666', cursor: 'pointer' }}>
                 <input type="checkbox" checked={loopEnabled} onChange={() => setLoopEnabled(!loopEnabled)} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
@@ -864,7 +865,7 @@ export default function ShipmentsPage() {
                     const acc = accounts.find(a => a.id === aid)
                     return acc ? `${acc.market_name}(${acc.seller_id || '-'})` : aid
                   }).join(', ')
-                  addLog(`[${ts()}] 전송 시작 — 상품 ${allIds.length}개, ${accLabels || '연결 계정 없음'}`)
+                  addLog(`[${ts()}] 전송 시작 — 상품 ${allIds.length.toLocaleString()}개, ${accLabels || '연결 계정 없음'}`)
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
                     method: 'POST',
@@ -894,7 +895,7 @@ export default function ShipmentsPage() {
                       const newLogs = (logData.logs || []) as string[]
                       sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
                       if (newLogs.length > 0) {
-                        for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
+                        for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
                       }
                       if (j.status === 'completed' || j.status === 'failed') {
                         if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }

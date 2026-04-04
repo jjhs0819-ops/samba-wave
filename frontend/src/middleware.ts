@@ -7,8 +7,8 @@ import type { NextRequest } from "next/server";
  * Protects routes that require authentication.
  */
 
-// Routes that require authentication (none for now since we removed admin/form/match)
-const PROTECTED_PATHS: string[] = [];
+// Samba 경로 인증 필수 (로그인 없이 접근 차단)
+const PROTECTED_PATHS: string[] = ["/samba"];
 
 // Routes that should redirect to home if already authenticated
 const AUTH_PATHS = ["/login", "/signup"];
@@ -33,21 +33,24 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Get the access token from cookies
+  // Get the access token from cookies (Samba 유저는 samba_user 쿠키 사용)
   const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value;
-  const isAuthenticated = !!accessToken;
+  const sambaUser = request.cookies.get("samba_user")?.value;
+  const isAuthenticated = !!accessToken || !!sambaUser;
 
-  // Check if current path is protected
-  const isProtectedPath = PROTECTED_PATHS.some((path) =>
-    pathname.startsWith(path)
-  );
+  // Check if current path is protected (로그인 페이지는 제외)
+  const isProtectedPath =
+    PROTECTED_PATHS.some((path) => pathname.startsWith(path)) &&
+    !pathname.startsWith("/samba/login");
 
   // Check if current path is an auth path (login/signup)
   const isAuthPath = AUTH_PATHS.some((path) => pathname.startsWith(path));
 
   // Redirect unauthenticated users from protected routes to login
   if (isProtectedPath && !isAuthenticated) {
-    const loginUrl = new URL("/login", request.url);
+    // Samba 경로는 Samba 전용 로그인으로 리다이렉트
+    const loginPath = pathname.startsWith("/samba") ? "/samba/login" : "/login";
+    const loginUrl = new URL(loginPath, request.url);
     loginUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(loginUrl);
   }

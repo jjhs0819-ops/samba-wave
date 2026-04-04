@@ -4,13 +4,27 @@
 """
 
 import asyncio
+import ctypes
+import gc
 import logging
 import threading
 from collections import deque
 from datetime import datetime, timezone
 
+from backend.domain.samba.job.model import JobStatus
+
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
+
+
+def _force_free_memory():
+    """gc.collect() + glibc malloc_trim으로 해제된 메모리를 OS에 반환."""
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass  # Windows/macOS에서는 무시
+
 
 # Job별 실시간 로그 버퍼 (인메모리, 최근 500줄)
 _job_logs: dict[str, list[str]] = {}
@@ -60,6 +74,10 @@ def get_job_logs(job_id: str, since: int = 0) -> list[str]:
 
 def _add_job_log(job_id: str, msg: str):
     """Job 로그 추가 (최대 _MAX_JOB_LOGS 유지) + 전송 링 버퍼에도 저장."""
+    # 백엔드 타임스탬프 (KST) — 프론트 폴링 시각이 아닌 실제 처리 시각 기록
+    from datetime import datetime as _dt, timezone, timedelta
+
+    msg = f"[{(_dt.now(timezone.utc) + timedelta(hours=9)).strftime('%H:%M:%S')}] {msg}"
     if job_id not in _job_logs:
         _job_logs[job_id] = []
     buf = _job_logs[job_id]
@@ -123,7 +141,9 @@ class JobWorker:
 
     def __init__(self):
         self._running = True
+        self._shutting_down = False  # SIGTERM 수신 시 True — 전송 루프가 체크
         self._active_types: set[str] = set()  # 현재 실행 중인 잡 타입
+        self._active_job_id: str | None = None  # 현재 실행 중인 잡 ID (shutdown 복구용)
         self._poll_count = 0
 
     async def start(self):
@@ -164,6 +184,7 @@ class JobWorker:
                     threshold_sec=self.STUCK_THRESHOLD_SEC,
                 )
                 if recovered:
+                    await session.commit()
                     logger.info(
                         f"[잡워커] stuck running 잡 {recovered}건 → pending 복구"
                     )
@@ -173,8 +194,47 @@ class JobWorker:
     def stop(self):
         self._running = False
 
+    async def graceful_stop(self, timeout: int = 30):
+        """배포 시 호출 — 전송 루프에 종료 신호 보내고 대기.
+
+        1) _shutting_down 플래그 세팅 → 전송 루프가 현재 건 완료 후 탈출
+        2) 최대 timeout초 대기 → 전송 루프 종료 확인
+        3) running transmit Job → pending으로 전환 (current 보존)
+        """
+        self._shutting_down = True
+        self._running = False
+        logger.info("[잡워커] graceful_stop — 전송 루프 종료 대기")
+
+        # 전송 루프가 자연 종료될 때까지 대기
+        for _ in range(timeout):
+            if not self._active_types:
+                break
+            await asyncio.sleep(1)
+
+        # running 상태인 transmit Job → pending 복구 (current 보존, attempt 유지)
+        if self._active_job_id:
+            try:
+                from backend.db.orm import get_write_session
+                from sqlalchemy import text
+
+                async with get_write_session() as session:
+                    await session.execute(
+                        text(
+                            "UPDATE samba_jobs SET status = 'pending', "
+                            "started_at = NULL "
+                            "WHERE id = :jid AND status = 'running'"
+                        ),
+                        {"jid": self._active_job_id},
+                    )
+                    await session.commit()
+                    logger.info(
+                        f"[잡워커] 배포 종료 — 잡 {self._active_job_id} → pending 복구"
+                    )
+            except Exception as e:
+                logger.error(f"[잡워커] 배포 종료 잡 복구 실패: {e}")
+
     async def _poll_once(self) -> bool:
-        """pending 잡을 타입별로 1개씩 병렬 실행. 같은 타입은 순차."""
+        """OOM 방지: 한 번에 1개 잡만 실행 (수집+전송 동시 실행 차단)."""
         _worker_status["last_poll"] = datetime.now(UTC).isoformat()
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
@@ -185,31 +245,25 @@ class JobWorker:
             if not jobs:
                 return False
 
-            # 실행 중이 아닌 타입의 잡만 선택 (타입별 1개)
-            to_run = []
-            for job in jobs:
-                if job.job_type not in self._active_types:
-                    to_run.append(job)
-                    self._active_types.add(job.job_type)
-                else:
-                    # 실행 안 할 잡은 pending으로 되돌림
-                    job.status = "pending"
+            # OOM 방지: 이미 실행 중인 잡이 있으면 대기
+            if self._active_types:
+                for job in jobs:
+                    job.status = JobStatus.PENDING
                     job.started_at = None
-            if not to_run:
-                # 전부 되돌림
                 await session.commit()
                 return False
 
-            # running 상태를 DB에 커밋 → 다음 폴링에서 중복 선택 방지
+            # 1개만 선택, 나머지는 pending으로 되돌림
+            selected = jobs[0]
+            self._active_types.add(selected.job_type)
+            for job in jobs[1:]:
+                job.status = JobStatus.PENDING
+                job.started_at = None
+
             await session.commit()
 
-        # 선택된 잡들 병렬 실행 (각각 독립 세션)
-        if len(to_run) == 1:
-            await self._execute_job(to_run[0])
-        else:
-            await asyncio.gather(
-                *[self._execute_job(j) for j in to_run], return_exceptions=True
-            )
+        # 1개 잡만 실행
+        await self._execute_job(selected)
         return True
 
     async def _execute_job(self, job):
@@ -232,6 +286,11 @@ class JobWorker:
                 thread.start()
                 elapsed = 0
                 while thread.is_alive() and elapsed < 600:
+                    if self._shutting_down:
+                        logger.info(
+                            f"[잡워커] 배포 종료 — 수집 스레드 대기 중단: {_job_id}"
+                        )
+                        break
                     await asyncio.sleep(2)
                     elapsed += 2
                 if thread.is_alive():
@@ -254,6 +313,7 @@ class JobWorker:
             # 전송 + 기타: 메인 루프 직접 실행 (인메모리 로그 공유)
             _job_id = job.id
             _job_type = job.job_type
+            self._active_job_id = _job_id
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
                 # detached 객체 대신 현재 세션에서 job 재조회
@@ -286,6 +346,7 @@ class JobWorker:
                             f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {_job_id} — {fail_exc}"
                         )
         finally:
+            self._active_job_id = None
             self._active_types.discard(_job_type)
             # 프론트 폴링이 로그를 읽을 시간 확보 후 삭제 (60초)
             try:
@@ -395,9 +456,11 @@ class JobWorker:
         start_from = job.current or 0
         await repo.update_progress(job.id, start_from, total)
 
-        results = []
-        success_count = 0
-        fail_count = 0
+        # 이어하기: 이전 실행의 카운트 복원
+        prev_result = job.result or {}
+        success_count = prev_result.get("success", 0) if start_from > 0 else 0
+        fail_count = prev_result.get("failed", 0) if start_from > 0 else 0
+        skip_count = prev_result.get("skipped", 0) if start_from > 0 else 0
         failed_pids: list[str] = []  # 재시도 대상
 
         # 상품별 전송 루프
@@ -408,11 +471,29 @@ class JobWorker:
             # 비상정지 + Job 취소 + 전송중단 플래그 체크 (건별)
             from backend.domain.samba.emergency import is_emergency_stopped
 
-            if (
-                is_emergency_stopped()
-                or is_cancel_requested()
-                or await repo.is_cancelled(job.id)
-            ):
+            try:
+                _is_cancelled = await repo.is_cancelled(job.id)
+            except Exception:
+                _is_cancelled = False
+
+            # 배포 종료 감지 — progress 저장 후 정상 탈출 (pending 유지)
+            if self._shutting_down:
+                remaining = len(product_ids) - i
+                _add_job_log(
+                    job.id,
+                    f"배포 종료 — {i}건 완료, {remaining}건 남음 (다음 인스턴스에서 재개)",
+                )
+                logger.info(
+                    f"[잡워커] 배포 종료 감지: {job.id} — {i}/{total}건, pending 유지"
+                )
+                try:
+                    await repo.update_progress(job.id, i, total)
+                    await session.commit()
+                except Exception:
+                    pass
+                return  # fail 아닌 정상 리턴 — graceful_stop이 pending으로 전환
+
+            if is_emergency_stopped() or is_cancel_requested() or _is_cancelled:
                 cancelled = len(product_ids) - i
                 reason = "비상정지" if is_emergency_stopped() else "취소"
                 _add_job_log(job.id, f"{reason} — {i}건 완료, {cancelled}건 중단")
@@ -472,12 +553,13 @@ class JobWorker:
                             success_count += 1
                             _add_job_log(
                                 job.id,
-                                f"[{i + 1}/{total}] {prod_name} → {acc_label}: 전송{rl}",
+                                f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: 전송{rl}",
                             )
                         elif acc_status == "skipped":
+                            skip_count += 1
                             _add_job_log(
                                 job.id,
-                                f"[{i + 1}/{total}] {prod_name} → {acc_label}: 스킵{rl}",
+                                f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: 스킵{rl}",
                             )
                         else:
                             fail_count += 1
@@ -486,10 +568,11 @@ class JobWorker:
                                 err = "전송 동시성 오류"
                             _add_job_log(
                                 job.id,
-                                f"[{i + 1}/{total}] {prod_name} → {acc_label}: {err}",
+                                f"[{i + 1}/{total:,}] {prod_name} → {acc_label}: {err}",
                             )
                     if not tx_result:
                         if status == "skipped":
+                            skip_count += 1
                             refresh_info = r.get("update_result", {})
                             rl = (
                                 refresh_info.get("refresh", "")
@@ -512,16 +595,40 @@ class JobWorker:
                     # 1차 실패 → 재시도 대상
                     if not any_success and status not in ("skipped", "completed"):
                         failed_pids.append(pid)
-                    results.append(result)
                     await item_session.commit()
             except Exception as e:
                 fail_count += 1
                 _add_job_log(job.id, f"[{i + 1}/{total}] {prod_name}: {e}")
-                results.append({"error": str(e)})
                 failed_pids.append(pid)
-            # 잡 progress는 외부 세션으로 업데이트
-            await repo.update_progress(job.id, i + 1, total)
-            await session.commit()
+            # OOM 방지: 50건마다 gc + malloc_trim으로 RSS 회수
+            if (i + 1) % 50 == 0:
+                _force_free_memory()
+                logger.info(f"[잡워커] 메모리 회수 ({i + 1}/{total}건)")
+            # 잡 progress는 매 건마다 업데이트 (재시작 시 재처리 최소화)
+            if True:
+                try:
+                    await repo.update_progress(job.id, i + 1, total)
+                    # 중간 카운트 저장 — 이어하기 시 복원용
+                    _job = await repo.get_async(job.id)
+                    if _job:
+                        _job.result = {
+                            "success": success_count,
+                            "skipped": skip_count,
+                            "failed": fail_count,
+                        }
+                    await session.commit()
+                except Exception as pg_err:
+                    logger.error(
+                        f"[잡워커] progress 업데이트 실패: {job.id} — {pg_err}"
+                    )
+                    _add_job_log(
+                        job.id,
+                        f"[{i + 1}/{total}] DB 세션 오류 — 다음 건 계속 진행",
+                    )
+                    try:
+                        await session.rollback()
+                    except Exception:
+                        pass
 
         # 2차 재시도 — 실패 상품만 (건별 독립 세션)
         retry_success = 0
@@ -556,6 +663,7 @@ class JobWorker:
                         any_ok = any(s == "success" for s in tx2.values())
                         if any_ok:
                             retry_success += 1
+                            success_count += 1
                             fail_count = prev_fail - 1
                             _add_job_log(
                                 job.id,
@@ -577,11 +685,17 @@ class JobWorker:
                 )
 
         final_fail = fail_count
-        _add_job_log(job.id, f"전송 완료 — 성공 {success_count}건, 실패 {final_fail}건")
-        await repo.complete_job(
-            job.id, {"success": success_count, "failed": final_fail}
+        _add_job_log(
+            job.id,
+            f"전송 완료 — 성공 {success_count}건, 스킵 {skip_count}건, 실패 {final_fail}건",
         )
-        logger.info(f"[잡워커] 전송 완료: {job.id} (성공 {success_count}/{total}건)")
+        await repo.complete_job(
+            job.id,
+            {"success": success_count, "skipped": skip_count, "failed": final_fail},
+        )
+        logger.info(
+            f"[잡워커] 전송 완료: {job.id} (성공 {success_count}, 스킵 {skip_count}, 실패 {final_fail}/{total}건)"
+        )
 
     async def _run_collect(self, job, repo, session):
         """수집 잡 실행 — collector_collection의 _stream_musinsa 로직 이식."""
@@ -715,13 +829,14 @@ class JobWorker:
         total_skipped = 0
         search_page = 1
         empty_pages = 0  # 연속 신규 0건 페이지 카운터 (잡 간 오염 방지용 로컬 변수)
+        max_pages = 100  # API totalPages 기반으로 동적 조정 (초기값)
 
-        while total_saved < remaining and search_page <= 20:
+        while total_saved < remaining and search_page <= max_pages:
             # 취소 확인 (DB에서 상태 재조회)
             from backend.domain.samba.job.model import SambaJob as _SJ
 
             _job_check = await session.get(_SJ, job.id)
-            if _job_check and _job_check.status == "failed":
+            if _job_check and _job_check.status == JobStatus.FAILED:
                 logger.info(f"[잡워커] 수집 취소됨: {job.id}")
                 return
 
@@ -738,6 +853,19 @@ class JobWorker:
                     gf=_gf_filter,
                 )
                 search_items = data.get("data", [])
+                # 첫 페이지에서 totalPages로 최대 페이지 동적 설정
+                if search_page == 1:
+                    api_total_pages = data.get("totalPages", 0)
+                    api_total_count = data.get("totalCount", 0)
+                    if api_total_pages > 0:
+                        max_pages = api_total_pages
+                    else:
+                        logger.warning(
+                            f"[잡워커] totalPages={api_total_pages}, totalCount={api_total_count} → 초기값({max_pages}) 유지"
+                        )
+                    logger.info(
+                        f"[잡워커] API 총 {api_total_count}건, {api_total_pages}페이지 → max_pages={max_pages}"
+                    )
                 logger.info(
                     f"[잡워커] 검색 p{search_page}: {len(search_items)}건 (kw={keyword}, brand={_brand_filter})"
                 )
@@ -748,14 +876,14 @@ class JobWorker:
                 logger.error(f"[잡워커] 검색 실패: {e}")
                 break
 
-            # 중복 필터링
+            # 중복 필터링 (현재 필터 기준 — 다른 그룹과 독립적으로 수집)
             candidate_ids = [
                 str(item.get("siteProductId", item.get("goodsNo", "")))
                 for item in search_items
             ]
             existing_result = await session.execute(
                 select(CPModel.site_product_id).where(
-                    CPModel.source_site == "MUSINSA",
+                    CPModel.search_filter_id == filter_id,
                     CPModel.site_product_id.in_(candidate_ids),
                 )
             )
@@ -775,9 +903,9 @@ class JobWorker:
                 f"[잡워커] 중복={len(existing_ids)}, 타겟={len(targets)}, 스킵={total_skipped}"
             )
             if not targets:
-                # 연속 3페이지 신규 0건이면 조기 종료 (나머지도 중복일 가능성 높음)
+                # 연속 5페이지 신규 0건이면 조기 종료
                 empty_pages += 1
-                if empty_pages >= 3:
+                if empty_pages >= 5:
                     logger.info(
                         f"[잡워커] 연속 {empty_pages}페이지 신규 0건 → 조기 종료"
                     )
@@ -912,8 +1040,14 @@ class JobWorker:
             )
         ).scalar() or 0
         _upd_vals: dict = {"last_collected_at": datetime.now(UTC)}
-        if _actual > 0:
+        # requested_count는 실제 수집수가 더 클 때만 갱신 (축소 방지)
+        if _actual > requested_count:
             _upd_vals["requested_count"] = _actual
+            logger.info(f"[잡워커] requested_count 갱신: {requested_count} → {_actual}")
+        elif _actual < requested_count:
+            logger.info(
+                f"[잡워커] 실제 {_actual}건 < 요청 {requested_count}건 (축소 방지로 유지)"
+            )
         await session.execute(
             _sa_upd(SambaSearchFilter)
             .where(SambaSearchFilter.id == filter_id)
@@ -1116,7 +1250,7 @@ class JobWorker:
             from backend.domain.samba.job.model import SambaJob as _SJ2
 
             _job_chk = await session.get(_SJ2, job.id)
-            if _job_chk and _job_chk.status == "failed":
+            if _job_chk and _job_chk.status == JobStatus.FAILED:
                 logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
                 return
 

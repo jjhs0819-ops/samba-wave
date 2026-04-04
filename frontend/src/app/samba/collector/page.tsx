@@ -18,7 +18,7 @@ import {
   type AISourcingCombination,
 } from "@/lib/samba/api";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { SITE_COLORS } from '@/lib/samba/constants'
+import { SITE_COLORS, SOURCING_SEARCH_URLS } from '@/lib/samba/constants'
 import { fmtDate as _fmtDate } from '@/lib/samba/utils'
 
 const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
@@ -184,11 +184,12 @@ export default function CollectorPage() {
   const [aiJobTitle, setAiJobTitle] = useState('')
   const [aiJobLogs, setAiJobLogs] = useState<string[]>([])
   const [aiJobDone, setAiJobDone] = useState(false)
+  const aiJobAbortRef = useRef(false)
   const aiJobLogRef = useRef<HTMLDivElement>(null)
 
   // 이미지 필터링 (모델컷/연출컷/배너 제거)
   const [imgFiltering, setImgFiltering] = useState(false)
-  const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['images']))
+  const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['detail_images']))
 
   // 카테고리 매핑 모달
   const [showMappingModal, setShowMappingModal] = useState(false)
@@ -1126,6 +1127,7 @@ export default function CollectorPage() {
               if (!ok) return
               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
               setAiImgTransforming(true)
+              aiJobAbortRef.current = false
               setAiJobTitle(`AI 이미지변환 (${productIds.length}개)`)
               setAiJobLogs([])
               setAiJobDone(false)
@@ -1136,6 +1138,7 @@ export default function CollectorPage() {
               let success = 0
               let fail = 0
               for (let i = 0; i < productIds.length; i++) {
+                if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i}/${productIds.length})`); break }
                 const label = productIds[i].slice(-8)
                 setAiJobTitle(`AI 이미지변환 [${i + 1}/${productIds.length}]`)
                 try {
@@ -1186,11 +1189,14 @@ export default function CollectorPage() {
               if (!ok) return
               const scope = imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') && imgFilterScopes.has('detail') ? 'all' : imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') ? 'images' : imgFilterScopes.has('detail') ? 'detail' : [...imgFilterScopes][0] || 'images'
               setImgFiltering(true)
+              aiJobAbortRef.current = false
               setAiJobTitle(`이미지 필터링 (${activeGroupIds.length}개 그룹)`)
               setAiJobLogs([])
               setAiJobDone(false)
               setAiJobModal(true)
               const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
+              const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              const startTime = ts()
               let success = 0
               let fail = 0
               let totalTall = 0
@@ -1201,6 +1207,7 @@ export default function CollectorPage() {
                 let totalProducts = 0
                 let processedProducts = 0
                 for (let gi = 0; gi < groupIds.length; gi++) {
+                  if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단`); break }
                   const gid = groupIds[gi]
                   const groupLabel = tree.find(t => t.id === gid)?.keyword?.slice(0, 20) || gid.slice(-8)
                   addLog(`\n[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — 상품 조회중...`)
@@ -1208,11 +1215,16 @@ export default function CollectorPage() {
                     const { items: products } = await collectorApi.scrollProducts({ search_filter_id: gid, limit: 10000 })
                     totalProducts += products.length
                     addLog(`[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — ${products.length}개 상품`)
+                    if (gi === 0 && products.length > 0) addLog(`\n시작: ${startTime} (${totalProducts}개 상품)\n`)
                     for (let i = 0; i < products.length; i++) {
+                      if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${processedProducts}/${totalProducts})`); break }
                       const prod = products[i]
-                      const label = prod.name?.slice(0, 30) || prod.id.slice(-8)
+                      const prodName = prod.name?.slice(0, 25) || '이름없음'
+                      const prodNo = prod.site_product_id || prod.id.slice(-8)
+                      const prodBrand = prod.brand || '-'
+                      const label = `${prodBrand} / ${prodNo} / ${prodName}${prod.name && prod.name.length > 25 ? '...' : ''}`
                       processedProducts++
-                      setAiJobTitle(`이미지 필터링 [${processedProducts}/${totalProducts}] ${label}`)
+                      setAiJobTitle(`이미지 필터링 [${processedProducts}/${totalProducts}] ${prodBrand} / ${prodNo}`)
                       try {
                         const steps: string[] = []
                         // 1) 프론트에서 추가이미지 비율 체크 (세로 2배 이상 → 제거)
@@ -1240,17 +1252,17 @@ export default function CollectorPage() {
                             }
                           }
                         }
-                        // 2) 백엔드 Claude Vision 필터링
+                        // 2) 백엔드 이미지 필터링 (CLIP)
                         const r = await proxyApi.filterProductImages([prod.id], '', scope)
                         if (r.success) {
                           success++
                           const removed = r.total_removed || 0
                           totalVisionRemoved += removed
-                          if (removed > 0) steps.push(`Vision ${removed}장 제거`)
-                          else steps.push('Vision 변동없음')
-                          addLog(`[${processedProducts}/${totalProducts}] ${label} — ${steps.join(' → ')}`)
-                        } else { fail++; addLog(`[${processedProducts}/${totalProducts}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
-                      } catch (e) { fail++; addLog(`[${processedProducts}/${totalProducts}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                          if (removed > 0) steps.push(`CLIP ${removed}장 제거`)
+                          else steps.push('CLIP 변동없음')
+                          addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — ${steps.join(' → ')}`)
+                        } else { fail++; addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
+                      } catch (e) { fail++; addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
                     }
                   } catch (e) {
                     addLog(`[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — 상품 조회 실패: ${e instanceof Error ? e.message : ''}`)
@@ -1258,9 +1270,11 @@ export default function CollectorPage() {
                 }
                 const summary = [`성공 ${success}개`, `실패 ${fail}개`]
                 if (totalTall > 0) summary.push(`긴이미지 ${totalTall}장 제거`)
-                if (totalVisionRemoved > 0) summary.push(`Vision ${totalVisionRemoved}장 제거`)
+                if (totalVisionRemoved > 0) summary.push(`CLIP ${totalVisionRemoved}장 제거`)
+                const endTime = ts()
                 setAiJobTitle(`이미지 필터링 완료 (${success}/${totalProducts})`)
                 addLog(`\n완료: ${summary.join(' / ')}`)
+                addLog(`시작 ${startTime} → 종료 ${endTime}`)
               } catch (e) { addLog(`오류: ${e instanceof Error ? e.message : '오류'}`) }
               finally {
                 setAiJobDone(true)
@@ -1691,14 +1705,9 @@ export default function CollectorPage() {
                     const storedUrl = (selectedFilter as unknown as Record<string, string>).category_filter || ''
                     const kw = selectedFilter.keyword || ''
                     const site = selectedFilter.source_site || ''
-                    const siteSearchUrls: Record<string, string> = {
-                      MUSINSA: 'https://www.musinsa.com/search/musinsa/integration?q=',
-                      KREAM: 'https://kream.co.kr/search?keyword=',
-                      ABCmart: 'https://abcmart.a-rt.com/search?q=',
-                    }
                     // keyword가 이미 URL이면 그대로 사용
                     const kwIsUrl = kw.startsWith('http://') || kw.startsWith('https://')
-                    const linkUrl = storedUrl || (kwIsUrl ? kw : (siteSearchUrls[site] ? siteSearchUrls[site] + encodeURIComponent(kw) : ''))
+                    const linkUrl = storedUrl || (kwIsUrl ? kw : (SOURCING_SEARCH_URLS[site] ? SOURCING_SEARCH_URLS[site] + encodeURIComponent(kw) : ''))
                     return (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         {linkUrl ? (
@@ -2730,9 +2739,14 @@ export default function CollectorPage() {
                 return <div key={i} style={{ color }}>{msg}</div>
               })}
             </div>
-            {aiJobDone && (
-              <button onClick={() => setAiJobModal(false)} style={{ marginTop: '0.75rem', padding: '0.5rem', background: '#333', border: '1px solid #555', borderRadius: '6px', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.8rem' }}>닫기</button>
-            )}
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+              {!aiJobDone && (
+                <button onClick={() => { aiJobAbortRef.current = true }} style={{ flex: 1, padding: '0.5rem', background: 'rgba(255,107,107,0.15)', border: '1px solid rgba(255,107,107,0.4)', borderRadius: '6px', color: '#FF6B6B', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>중단</button>
+              )}
+              {aiJobDone && (
+                <button onClick={() => setAiJobModal(false)} style={{ flex: 1, padding: '0.5rem', background: '#333', border: '1px solid #555', borderRadius: '6px', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.8rem' }}>닫기</button>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -99,6 +99,11 @@ class SambaSearchFilter(SQLModel, table=True):
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
 
+    # 생성자 추적
+    created_by: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),

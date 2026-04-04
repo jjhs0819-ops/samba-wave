@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.job.model import JobStatus
 from backend.domain.samba.job.repository import SambaJobRepository
 from backend.domain.samba.job.service import SambaJobService
 
@@ -39,7 +40,9 @@ async def create_job(
                     await session.execute(
                         select(SambaJob).where(
                             SambaJob.job_type == "collect",
-                            col(SambaJob.status).in_(["pending", "running"]),
+                            col(SambaJob.status).in_(
+                                [JobStatus.PENDING, JobStatus.RUNNING]
+                            ),
                             SambaJob.payload["source_site"].as_string() == source_site,
                         )
                     )
@@ -64,7 +67,9 @@ async def create_job(
                     select(SambaJob)
                     .where(
                         SambaJob.job_type == "transmit",
-                        col(SambaJob.status).in_(["failed", "cancelled"]),
+                        col(SambaJob.status).in_(
+                            [JobStatus.FAILED, JobStatus.CANCELLED]
+                        ),
                         SambaJob.total > 0,
                         SambaJob.current > 0,
                     )
@@ -81,7 +86,7 @@ async def create_job(
             and prev.payload.get("product_ids") == body.payload.get("product_ids")
         ):
             # 같은 상품 목록 → 기존 잡을 pending으로 리셋하여 이어하기
-            prev.status = "pending"
+            prev.status = JobStatus.PENDING
             prev.started_at = None
             prev.error = None
             prev.completed_at = None
@@ -90,7 +95,7 @@ async def create_job(
             await session.commit()
             return {
                 "id": prev.id,
-                "status": "pending",
+                "status": JobStatus.PENDING,
                 "job_type": "transmit",
                 "resumed_from": prev.current,
             }
@@ -172,8 +177,8 @@ async def cancel_all_jobs(
     # 2) DB 상태 일괄 취소
     r = await session.execute(
         text(
-            "UPDATE samba_jobs SET status = 'cancelled', completed_at = now() "
-            "WHERE status IN ('pending', 'running')"
+            f"UPDATE samba_jobs SET status = '{JobStatus.CANCELLED}', completed_at = now() "
+            f"WHERE status IN ('{JobStatus.PENDING}', '{JobStatus.RUNNING}')"
         )
     )
     await session.commit()

@@ -14,8 +14,9 @@ from backend.utils.logger import logger
 
 import math
 
-# 마켓타입 → 정책키 매핑
-MARKET_TYPE_TO_POLICY_KEY = {
+# 마켓타입(영문 코드) → 정책키(한글 표시명) 매핑
+# 마켓 계정의 market_type 필드 값을 정책 설정의 per_market 키로 변환할 때 사용
+MARKET_TYPE_TO_POLICY_KEY: dict[str, str] = {
     "coupang": "쿠팡",
     "ssg": "신세계몰",
     "smartstore": "스마트스토어",
@@ -347,7 +348,8 @@ class SambaShipmentService:
             # 상품 데이터 준비 (가격 계산, 이미지 업로드)
             product_dicts = []
             for p in products:
-                pd = p.model_dump()
+                # OOM 방지: 전송에 불필요한 대용량 필드 제외
+                pd = p.model_dump(exclude={"last_sent_data", "extra_data"})
 
                 # 상세 HTML 재생성
                 pd["detail_html"] = await self._build_detail_html(pd)
@@ -564,7 +566,8 @@ class SambaShipmentService:
             )
             return shipment
 
-        product_dict = product_row.model_dump()
+        # OOM 방지: 전송에 불필요한 대용량 필드 제외
+        product_dict = product_row.model_dump(exclude={"last_sent_data", "extra_data"})
 
         # 업데이트 항목이 체크되어 있으면 소싱처 최신화 먼저 실행
         has_update = bool(update_items) and len(update_items) > 0
@@ -714,14 +717,18 @@ class SambaShipmentService:
                     return shipment
 
         # 이미지/상세페이지 전송 판단
-        # 오토튠 재전송(price/stock만) → 이미지 불필요
-        # 그 외(수동 전송) → 항상 이미지 전송 (DB 현재 이미지 사용)
-        is_price_stock_only = update_items and set(update_items) <= {"price", "stock"}
+        is_price_stock_only = bool(update_items) and set(update_items) <= {
+            "price",
+            "stock",
+        }
         needs_image = not is_price_stock_only
 
-        # 2-1. 정책의 상세 템플릿으로 detail_html 재생성 (이미지/상세 업데이트 시에만)
-        if needs_image:
-            product_dict["detail_html"] = await self._build_detail_html(product_dict)
+        # price/stock만 업데이트 시 이미지 다운로드/업로드 완전 스킵
+        if is_price_stock_only:
+            product_dict["_skip_image_upload"] = True
+
+        # 상세 HTML은 항상 정책 기반으로 재생성 (원문 상세이미지 유출 방지)
+        product_dict["detail_html"] = await self._build_detail_html(product_dict)
 
         # 3. 카테고리 매핑 자동 조회 (성별 + category1~4 조합)
         cat_parts = [
@@ -865,9 +872,7 @@ class SambaShipmentService:
                     )
                     # 마켓별 상품명 조합이 있으면 _dispatch_one에서 덮어쓸 수 있도록 name_rule 보관
                     product_dict["_name_rule"] = name_rule
-                    product_dict["_original_name"] = product_row.model_dump().get(
-                        "name", ""
-                    )
+                    product_dict["_original_name"] = product_row.name or ""
 
         # 글로벌 삭제어 적용 (상품명에서 금칙어 제거)
         # DB 실제 데이터: type='deletion', scope='all'
@@ -1263,10 +1268,10 @@ class SambaShipmentService:
                 # 마켓 API 호출 (계정별 세마포어 — 30초 타임아웃)
                 account_sem = _get_account_semaphore(account_id)
                 try:
-                    await asyncio.wait_for(account_sem.acquire(), timeout=30)
+                    await asyncio.wait_for(account_sem.acquire(), timeout=60)
                 except asyncio.TimeoutError:
-                    res["error"] = f"계정 사용 중 (30초 타임아웃, {market_type})"
-                    logger.warning(f"[전송] 계정 {account_id} 세마포어 30초 타임아웃")
+                    res["error"] = f"계정 사용 중 (60초 타임아웃, {market_type})"
+                    logger.warning(f"[전송] 계정 {account_id} 세마포어 60초 타임아웃")
                     return res
                 try:
                     logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
@@ -1588,7 +1593,7 @@ class SambaShipmentService:
             "sub": True,
             "title": False,
             "option": False,
-            "detail": True,
+            "detail": False,
             "bottomImg": True,
         }
         img_order: list[str] = [
@@ -1774,7 +1779,8 @@ class SambaShipmentService:
         product_row = await product_repo.get_async(shipment.product_id)
         if not product_row:
             return shipment
-        product_dict = product_row.model_dump()
+        # OOM 방지: 전송에 불필요한 대용량 필드 제외
+        product_dict = product_row.model_dump(exclude={"last_sent_data", "extra_data"})
 
         # 재전송
         await self.repo.update_async(shipment_id, status="transmitting")
@@ -1908,7 +1914,10 @@ class SambaShipmentService:
                 )
                 continue
 
-            product_dict = product_row.model_dump()
+            # OOM 방지: 삭제에 불필요한 대용량 필드 제외
+            product_dict = product_row.model_dump(
+                exclude={"last_sent_data", "extra_data"}
+            )
             market_product_nos = product_row.market_product_nos or {}
             reg_accounts = product_row.registered_accounts or []
             delete_results: dict[str, str] = {}

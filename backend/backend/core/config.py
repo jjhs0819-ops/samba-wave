@@ -140,4 +140,16 @@ class BackendSettings(BaseSettings):
         return self.environment != "production"
 
 
-settings = BackendSettings()
+_settings = BackendSettings()
+
+# ── 개발 환경에서 운영 DB 접속 차단 ──
+_PRODUCTION_DB_HOSTS = ["34.47.96.236", "/cloudsql/fresh-sanctuary"]
+if _settings.is_development:
+    for _h in _PRODUCTION_DB_HOSTS:
+        if _h in _settings.write_db_host or _h in _settings.read_db_host:
+            raise RuntimeError(
+                f"[보안 차단] 개발 환경(APP_ENV=development)에서 운영 DB 호스트({_h}) 접속이 감지되었습니다. "
+                "운영 DB는 Cloud Run 배포를 통해서만 접근해야 합니다."
+            )
+
+settings = _settings

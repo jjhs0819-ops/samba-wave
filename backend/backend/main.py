@@ -59,25 +59,68 @@ async def lifespan(app: FastAPI):
 
     await cache.connect()
 
-    # 서버 시작 시 좀비 running Job → pending 복구 (배포 중 끊긴 Job 재처리)
+    # 서버 시작 시 리비전/커밋 로그 — 어떤 코드가 돌고 있는지 즉시 확인
     import logging as _startup_logging
+    import os as _os
 
     _startup_log = _startup_logging.getLogger("backend.startup")
+    _revision = _os.environ.get("K_REVISION", "local")
+    _commit = _os.environ.get("COMMIT_SHA", "unknown")
+    _startup_log.info(f"[startup] 리비전={_revision}, 커밋={_commit}")
+
+    # 서버 시작 시 좀비 running Job 처리
+    # - transmit: attempt < 3이면 pending 복구 (배포 중단 → 자동 재개)
+    #             attempt >= 3이면 failed (OOM 무한루프 방지)
+    # - collect 등 나머지: pending 복구
+    _MAX_TRANSMIT_ATTEMPTS = 3
     for _attempt in range(3):
         try:
             from backend.db.orm import get_write_session
             from sqlalchemy import text
 
             async with get_write_session() as session:
-                r = await session.execute(
+                # transmit Job: attempt 기반 분기
+                # attempt < 3 → pending 복구 + attempt 증가 (current 보존 → 이어서 전송)
+                r_resume = await session.execute(
                     text(
-                        "UPDATE samba_jobs SET status = 'pending', started_at = NULL "
-                        "WHERE status = 'running'"
+                        "UPDATE samba_jobs "
+                        "SET status = 'pending', started_at = NULL, "
+                        "attempt = COALESCE(attempt, 0) + 1 "
+                        "WHERE status = 'running' AND job_type = 'transmit' "
+                        f"AND COALESCE(attempt, 0) < {_MAX_TRANSMIT_ATTEMPTS}"
                     )
                 )
-                if r.rowcount > 0:
+                if r_resume.rowcount > 0:
                     _startup_log.info(
-                        f"[startup] 좀비 running Job {r.rowcount}건 → pending 복구"
+                        f"[startup] 좀비 transmit Job {r_resume.rowcount}건 → pending 복구 (재개 예정)"
+                    )
+
+                # attempt >= 3 → failed (OOM 반복 의심)
+                r_fail = await session.execute(
+                    text(
+                        "UPDATE samba_jobs "
+                        "SET status = 'failed', "
+                        "error = 'OOM 반복 재시작 (attempt >= 3) — 수동 확인 필요', "
+                        "completed_at = now() "
+                        "WHERE status = 'running' AND job_type = 'transmit' "
+                        f"AND COALESCE(attempt, 0) >= {_MAX_TRANSMIT_ATTEMPTS}"
+                    )
+                )
+                if r_fail.rowcount > 0:
+                    _startup_log.info(
+                        f"[startup] 좀비 transmit Job {r_fail.rowcount}건 → failed (attempt >= {_MAX_TRANSMIT_ATTEMPTS})"
+                    )
+
+                # collect 등 나머지 → pending 복구 (기존 동작 유지)
+                r_other = await session.execute(
+                    text(
+                        "UPDATE samba_jobs SET status = 'pending', started_at = NULL "
+                        "WHERE status = 'running' AND job_type != 'transmit'"
+                    )
+                )
+                if r_other.rowcount > 0:
+                    _startup_log.info(
+                        f"[startup] 좀비 running Job {r_other.rowcount}건 → pending 복구"
                     )
                 await session.commit()
             break
@@ -140,30 +183,13 @@ async def lifespan(app: FastAPI):
         )
 
     yield
-    # Graceful Shutdown — 진행 중인 작업 완료 대기 후 종료
+    # Graceful Shutdown — 진행 중인 전송을 안전하게 중단하고 pending으로 보존
     import logging
 
     _log = logging.getLogger("backend.shutdown")
     _log.info("[shutdown] SIGTERM 수신 — graceful shutdown 시작")
 
-    # 1) running 잡 → pending 복구 (최우선 — 10초 안에 완료해야 함)
-    try:
-        from backend.db.orm import get_write_session
-        from sqlalchemy import text
-
-        async with get_write_session() as session:
-            r = await session.execute(
-                text(
-                    "UPDATE samba_jobs SET status = 'pending' WHERE status = 'running'"
-                )
-            )
-            if r.rowcount > 0:
-                _log.info(f"[shutdown] running Job {r.rowcount}건 → pending 복구")
-            await session.commit()
-    except Exception as e:
-        _log.warning(f"[shutdown] Job 복구 실패: {e}")
-
-    # 2) 오토튠 + 잡 워커 즉시 정지 (대기 없음)
+    # 1) 오토튠 즉시 정지
     from backend.api.v1.routers.samba.collector_autotune import (
         _autotune_running_event,
         _autotune_task,
@@ -175,9 +201,17 @@ async def lifespan(app: FastAPI):
     if _autotune_task and not _autotune_task.done():
         _autotune_task.cancel()
     watchdog_task.cancel()
-    worker.stop()
-    worker_task.cancel()
 
+    # 2) 잡 워커 graceful 종료 — 전송 루프가 현재 건 완료 후 pending 보존
+    #    최대 30초 대기 (Cloud Run graceful-timeout=300초 내)
+    try:
+        await worker.graceful_stop(timeout=30)
+    except Exception as gs_err:
+        _log.error(f"[shutdown] graceful_stop 실패: {gs_err}")
+        # 폴백: 강제 종료
+        worker.stop()
+
+    worker_task.cancel()
     _log.info("[shutdown] graceful shutdown 완료")
 
 
@@ -190,7 +224,7 @@ def create_application() -> FastAPI:
         description="Backend API",
         docs_url="/docs" if settings.is_development else None,
         redoc_url="/redoc" if settings.is_development else None,
-        openapi_url="/openapi.json",
+        openapi_url="/openapi.json" if settings.is_development else None,
         lifespan=lifespan,
     )
 
@@ -211,7 +245,7 @@ def create_application() -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(user_router, prefix="/api/v1")
 
-    # SambaWave routers (no auth required)
+    # SambaWave routers (개별 엔드포인트에서 인증 의존성 적용)
     app.include_router(samba_product_router, prefix="/api/v1/samba")
     app.include_router(samba_order_router, prefix="/api/v1/samba")
     app.include_router(samba_channel_router, prefix="/api/v1/samba")

@@ -55,7 +55,7 @@ def _build_db_url(user: str, password: str, host: str, port: int, name: str) -> 
     if host.startswith("/cloudsql/"):
         return f"postgresql+asyncpg://{user}:{password}@/{name}?host={host}"
     base_url = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{name}"
-    if settings.db_ssl_required:
+    if settings.use_db_ssl:
         return f"{base_url}?ssl=require"
     return base_url
 
@@ -72,8 +72,8 @@ def _create_write_async_engine() -> AsyncEngine:
         future=True,
         echo=False,  # Disable SQL echo to reduce noise
         pool_pre_ping=True,  # Check connection validity before using
-        pool_size=8,  # 기본 연결 수
-        max_overflow=7,  # 추가 허용 (write 최대 15개)
+        pool_size=15,  # 기본 연결 수 (전송+오토튠+API 동시 사용 대응)
+        max_overflow=10,  # 추가 허용 (write 최대 25개)
         pool_recycle=3600,
         pool_timeout=30,
     )

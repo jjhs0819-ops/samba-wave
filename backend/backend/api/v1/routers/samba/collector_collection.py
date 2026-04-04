@@ -11,6 +11,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.user.auth_service import get_user_id
 from backend.domain.samba.proxy.musinsa import RateLimitError
 from backend.domain.samba.collector.grouping import (
     generate_group_key,
@@ -582,9 +583,9 @@ async def collect_by_url(
                     }
                 )
 
-            created = []
+            created_count = 0
             if bulk_items:
-                created = await svc.bulk_create_collected_products(bulk_items)
+                created_count = await svc.bulk_create_products(bulk_items)
 
             # 검색그룹에 최근수집일 업데이트
             from datetime import datetime, timezone
@@ -602,8 +603,8 @@ async def collect_by_url(
                 "filter_id": filter_id,
                 "filter_name": keyword,
                 "total_found": len(items_list),
-                "saved": len(created),
-                "skipped_duplicates": len(items_list) - len(created),
+                "saved": created_count,
+                "skipped_duplicates": len(items_list) - created_count,
             }
 
         else:
@@ -1287,6 +1288,7 @@ class BrandCreateGroupsRequest(BaseModel):
 async def brand_create_groups(
     req: BrandCreateGroupsRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
+    user_id: str = Depends(get_user_id),
 ):
     """선택된 카테고리별로 검색그룹 일괄 생성."""
     from backend.api.v1.routers.samba.collector_common import _get_services
@@ -1330,6 +1332,7 @@ async def brand_create_groups(
             "name": group_name,
             "requested_count": req_count,
             "applied_policy_id": req.applied_policy_id,
+            "created_by": user_id,
         }
         try:
             sf = await svc.create_filter(filter_data)
