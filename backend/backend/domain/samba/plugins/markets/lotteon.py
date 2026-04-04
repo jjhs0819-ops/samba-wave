@@ -1595,22 +1595,32 @@ class LotteonPlugin(MarketPlugin):
                                                 f"[롯데ON] 수정 pdItmsCd={_pdi.get('pdItmsCd')} 실패 → 38(기타재화)로 교체"
                                             )
                                             _pdi["pdItmsCd"] = "38"
+                                            # 롯데ON 공식 품목고시 PDF 기준 기타재화 항목코드
                                             _pdi["pdItmsArtlLst"] = [
                                                 {
-                                                    "pdArtlCd": c,
+                                                    "pdArtlCd": "0210",
                                                     "pdArtlCnts": "상세페이지 참조",
-                                                }
-                                                for c in [
-                                                    "0010",
-                                                    "0020",
-                                                    "0030",
-                                                    "0040",
-                                                    "0050",
-                                                    "0060",
-                                                    "0070",
-                                                    "0080",
-                                                    "0090",
-                                                ]
+                                                },
+                                                {
+                                                    "pdArtlCd": "1400",
+                                                    "pdArtlCnts": "상세페이지 참조",
+                                                },
+                                                {
+                                                    "pdArtlCd": "1420",
+                                                    "pdArtlCnts": "상세페이지 참조",
+                                                },
+                                                {
+                                                    "pdArtlCd": "0070",
+                                                    "pdArtlCnts": "상세페이지 참조",
+                                                },
+                                                {
+                                                    "pdArtlCd": "1440",
+                                                    "pdArtlCnts": "상세페이지 참조",
+                                                },
+                                                {
+                                                    "pdArtlCd": "0200",
+                                                    "pdArtlCnts": "상세페이지 참조",
+                                                },
                                             ]
                                             # pdItmsCd=38 교체 후 항목코드 제거 루프
                                             for _artl38_try in range(15):
@@ -1868,22 +1878,32 @@ class LotteonPlugin(MarketPlugin):
                                                 f"[롯데ON] pdItmsCd={_pdi.get('pdItmsCd')} 실패 → 38(기타재화)로 교체"
                                             )
                                             _pdi["pdItmsCd"] = "38"
+                                            # 롯데ON 공식 품목고시 PDF 기준 기타재화 항목코드
                                             _pdi["pdItmsArtlLst"] = [
                                                 {
-                                                    "pdArtlCd": c,
+                                                    "pdArtlCd": "0210",
                                                     "pdArtlCnts": "상세페이지 참조",
-                                                }
-                                                for c in [
-                                                    "0010",
-                                                    "0020",
-                                                    "0030",
-                                                    "0040",
-                                                    "0050",
-                                                    "0060",
-                                                    "0070",
-                                                    "0080",
-                                                    "0090",
-                                                ]
+                                                },
+                                                {
+                                                    "pdArtlCd": "1400",
+                                                    "pdArtlCnts": "상세페이지 참조",
+                                                },
+                                                {
+                                                    "pdArtlCd": "1420",
+                                                    "pdArtlCnts": "상세페이지 참조",
+                                                },
+                                                {
+                                                    "pdArtlCd": "0070",
+                                                    "pdArtlCnts": "상세페이지 참조",
+                                                },
+                                                {
+                                                    "pdArtlCd": "1440",
+                                                    "pdArtlCnts": "상세페이지 참조",
+                                                },
+                                                {
+                                                    "pdArtlCd": "0200",
+                                                    "pdArtlCnts": "상세페이지 참조",
+                                                },
                                             ]
                                             # pdItmsCd=38 교체 후 항목코드 제거 루프
                                             for _artl38_try in range(15):

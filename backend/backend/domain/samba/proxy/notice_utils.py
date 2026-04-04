@@ -639,7 +639,7 @@ def build_lotteon_notice(product: dict[str, Any], **kwargs: str) -> dict[str, An
     _log = _logging.getLogger(__name__)
 
     group = detect_notice_group(product)
-    code = _LOTTEON_NOTICE_CODE.get(group, "35")
+    code = _LOTTEON_NOTICE_CODE.get(group, "38")
     _log.info(
         f"[롯데ON 고시정보] category1={product.get('category1')} group={group} pdItmsCd={code}"
     )
@@ -712,14 +712,42 @@ def build_lotteon_notice(product: dict[str, Any], **kwargs: str) -> dict[str, An
             {"pdArtlCd": "0080", "pdArtlCnts": quality},
             {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
         ]
-    else:
-        # 기타 (18화장품/21가공식품/25스포츠/38기타재화 등)
-        # 유효하지 않은 항목코드는 lotteon.py의 fallback 루프가 자동 제거
+    elif code == "25":
+        # 스포츠용품: 공식 고시코드표 기준 (롯데ON 품목고시 현행화 PDF)
+        # 0210품명 0780크기/중량 0220출시년월 0150제품구성 0020색상 0410재질
+        # 0810세부사양 0060제조국 0070제조자 0080품질보증 0090A/S 0200안전인증
         articles = [
+            {"pdArtlCd": "0210", "pdArtlCnts": fallback},
+            {"pdArtlCd": "0780", "pdArtlCnts": size_text},
+            {"pdArtlCd": "0220", "pdArtlCnts": manufacture_ym},
+            {"pdArtlCd": "0150", "pdArtlCnts": fallback},
+            {"pdArtlCd": "0020", "pdArtlCnts": color_text},
+            {"pdArtlCd": "0410", "pdArtlCnts": material},
+            {"pdArtlCd": "0810", "pdArtlCnts": fallback},
             {"pdArtlCd": "0060", "pdArtlCnts": origin},
             {"pdArtlCd": "0070", "pdArtlCnts": mfr},
             {"pdArtlCd": "0080", "pdArtlCnts": quality},
             {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
+            {"pdArtlCd": "0200", "pdArtlCnts": fallback},
+        ]
+    elif code == "38":
+        # 기타재화: 공식 고시코드표 기준 (롯데ON 품목고시 현행화 PDF)
+        # 0210품명 1400인증/허가 1420제조국/원산지 0070제조자 1440A/S 0200안전인증
+        articles = [
+            {"pdArtlCd": "0210", "pdArtlCnts": fallback},
+            {"pdArtlCd": "1400", "pdArtlCnts": fallback},
+            {"pdArtlCd": "1420", "pdArtlCnts": origin},
+            {"pdArtlCd": "0070", "pdArtlCnts": mfr},
+            {"pdArtlCd": "1440", "pdArtlCnts": as_contact},
+            {"pdArtlCd": "0200", "pdArtlCnts": fallback},
+        ]
+    else:
+        # 기타 미분류 — 기타재화(38)와 동일 코드셋으로 fallback
+        articles = [
+            {"pdArtlCd": "0210", "pdArtlCnts": fallback},
+            {"pdArtlCd": "1420", "pdArtlCnts": origin},
+            {"pdArtlCd": "0070", "pdArtlCnts": mfr},
+            {"pdArtlCd": "1440", "pdArtlCnts": as_contact},
         ]
 
     return {"pdItmsCd": code, "pdItmsArtlLst": articles}
