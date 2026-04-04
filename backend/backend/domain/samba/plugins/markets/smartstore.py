@@ -436,6 +436,12 @@ class SmartStorePlugin(MarketPlugin):
         except Exception:
             pass
 
+        # 디버그: 전송 직전 detail_html 로그
+        _dh = product_copy.get("detail_html", "")
+        logger.info(
+            f"[스마트스토어] detailContent 전송 직전 — 길이:{len(_dh)}, 미리보기:{_dh[:300]}"
+        )
+
         data = SmartStoreClient.transform_product(product_copy, category_id)
 
         # PUT은 전체 데이터가 필요 → 기존 상품 GET 후 변경 필드만 덮어쓰기
