@@ -1,16 +1,4 @@
-# ══════════════════════════════════════════════
-# Stage 1: CLIP 모델 ONNX 변환 (빌드 후 버려짐)
-# ══════════════════════════════════════════════
-FROM python:3.12.3-slim AS clip-export
-
-RUN pip install --no-cache-dir open-clip-torch onnx numpy
-
-COPY scripts/export_clip_onnx.py /export_clip_onnx.py
-RUN python /export_clip_onnx.py
-
-# ══════════════════════════════════════════════
-# Stage 2: 프로덕션 이미지 (torch 없음)
-# ══════════════════════════════════════════════
+# Base Image
 FROM python:3.12.3-slim
 
 # Set environment variables for non-interactive installs and unbuffered python output.
@@ -45,8 +33,12 @@ COPY README.md ./README.md
 COPY uv.lock ./uv.lock
 RUN uv sync --compile-bytecode --no-dev
 
-# CLIP ONNX 모델 복사 (Stage 1에서 변환된 ~85MB)
-COPY --from=clip-export /clip_onnx/ /app/models/clip/
+# CLIP ONNX 모델 다운로드 (GCS 공개 버킷, 패키지 변경 없으면 캐시 유지)
+ENV CLIP_MODEL_DIR="/app/models/clip"
+RUN mkdir -p ${CLIP_MODEL_DIR} && \
+    wget -q https://storage.googleapis.com/samba-wave-models/clip/visual.onnx -O ${CLIP_MODEL_DIR}/visual.onnx && \
+    wget -q https://storage.googleapis.com/samba-wave-models/clip/text_features.npy -O ${CLIP_MODEL_DIR}/text_features.npy && \
+    wget -q https://storage.googleapis.com/samba-wave-models/clip/meta.json -O ${CLIP_MODEL_DIR}/meta.json
 
 COPY backend ./backend
 COPY scripts ./scripts
