@@ -20,6 +20,34 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      # Artifact Registry 인증 설정
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker asia-northeast3-docker.pkg.dev --quiet
+
+      # 레포지토리 없으면 자동 생성
+      - name: Ensure Artifact Registry repository exists
+        run: |
+          gcloud artifacts repositories create samba-wave \
+            --repository-format=docker \
+            --location=asia-northeast3 \
+            --project=fresh-sanctuary-489804-v4 \
+            --quiet 2>/dev/null || true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Docker 레이어 캐시 활용 빌드 + Artifact Registry push
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/samba-wave/api:latest
+            asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/samba-wave/api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Write env vars file
         run: |
           cat > /tmp/cloudrun-env.yaml << EOF
@@ -41,16 +69,16 @@ jobs:
           COMMIT_SHA: "${{ github.sha }}"
           EOF
 
+      # 사전 빌드된 이미지로 배포 (--source 제거 → 빌드 캐시 활용)
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy samba-wave-api \
-            --source ./backend \
+            --image asia-northeast3-docker.pkg.dev/fresh-sanctuary-489804-v4/samba-wave/api:${{ github.sha }} \
             --region asia-northeast3 \
             --project fresh-sanctuary-489804-v4 \
             --env-vars-file /tmp/cloudrun-env.yaml \
             --memory 2Gi \
             --min-instances=1 \
-            --clear-base-image \
             --quiet
 
       - name: Verify traffic on latest revision
@@ -84,7 +112,6 @@ jobs:
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://samba-wave-api-363598397345.asia-northeast3.run.app/api/v1/health)
           if [ "$STATUS" != "200" ]; then
             echo "❌ Health check 실패 (HTTP $STATUS)"
-            # 실패 시 어떤 리비전이 서빙 중인지 로그
             gcloud run services describe samba-wave-api \
               --region=asia-northeast3 \
               --project=fresh-sanctuary-489804-v4 \
