@@ -25,12 +25,10 @@ jobs:
           cat > /tmp/cloudrun-env.yaml << EOF
           ENVIRONMENT: "production"
           WRITE_DB_USER: "postgres"
-          WRITE_DB_PASSWORD: "${{ secrets.WRITE_DB_PASSWORD }}"
           WRITE_DB_HOST: "/cloudsql/fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
           WRITE_DB_PORT: "5432"
           WRITE_DB_NAME: "railway"
           READ_DB_USER: "postgres"
-          READ_DB_PASSWORD: "${{ secrets.READ_DB_PASSWORD }}"
           READ_DB_HOST: "/cloudsql/fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
           READ_DB_PORT: "5432"
           READ_DB_NAME: "railway"
