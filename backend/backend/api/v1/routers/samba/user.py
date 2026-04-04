@@ -154,6 +154,7 @@ async def login_user(
     # JWT 토큰 생성 (7일 유효)
     token_payload = {
         "sub": user.id,
+        "type": "access",
         "exp": datetime.now(tz=timezone.utc) + timedelta(days=7),
     }
     access_token = jwt.encode(
