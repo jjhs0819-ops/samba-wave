@@ -956,9 +956,7 @@ class JobWorker:
             import httpx as _httpx
 
             # 브랜드 소싱: 동시성 1 (상품당 5~6개 API 호출 → rate limit 방지), 일반: 기존값
-            _concurrency = (
-                1 if _brand_filter else SITE_CONCURRENCY.get("MUSINSA", 5)
-            )
+            _concurrency = 1 if _brand_filter else SITE_CONCURRENCY.get("MUSINSA", 5)
             _collect_sem = asyncio.Semaphore(_concurrency)
             _collect_results: list[dict | None] = []
             _rate_limited = False
