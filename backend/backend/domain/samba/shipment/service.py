@@ -1296,7 +1296,9 @@ class SambaShipmentService:
                 if result.get("success"):
                     res["status"] = "success"
                     # 상품번호 추출
-                    product_no = result.get("spdNo") or ""
+                    # product_no: 플러그인이 "product_no" 키로 반환 (롯데ON 등)
+                    # spdNo: 이전 방식 또는 일부 마켓 직접 반환 — 둘 다 확인
+                    product_no = result.get("product_no") or result.get("spdNo") or ""
                     api_data: dict[str, Any] = {}
                     if not product_no:
                         result_data = result.get("data", {})

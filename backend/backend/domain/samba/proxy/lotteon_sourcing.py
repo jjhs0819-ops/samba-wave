@@ -92,7 +92,7 @@ class LotteonSourcingClient:
     """
 
     BASE = "https://www.lotteon.com"
-    SEARCH_URL = "https://www.lotteon.com/search/search/search.ecn"
+    SEARCH_URL = "https://www.lotteon.com/csearch/search/search"
     PRODUCT_URL = "https://www.lotteon.com/p/product"
     IMAGE_CDN = "contents.lotteon.com"
 
@@ -148,7 +148,7 @@ class LotteonSourcingClient:
 
         search_url = (
             f"{self.SEARCH_URL}?render=search&platform=pc"
-            f"&q={quote(keyword)}&page={page}&size={min(size, 60)}"
+            f"&q={quote(keyword)}&page={page}&size={min(size, 60)}&mallId=2"
         )
         logger.info(f'[LOTTEON] 검색 시작: "{keyword}" (page={page})')
 
@@ -932,6 +932,45 @@ class LotteonSourcingClient:
         decoded = html_module.unescape(html)
         m = re.search(r'"sitmNo"\s*:\s*"([A-Z]{2}[0-9]+_[0-9]+)"', decoded)
         return m.group(1) if m else ""
+
+    async def search_popular(
+        self,
+        limit: int = 50,
+        keyword: str = "패션",
+    ) -> list[dict[str, Any]]:
+        """롯데ON 인기상품 검색 (AI 소싱기 연동용).
+
+        인기순 정렬(sortType=BEST)로 검색하여 인기상품 목록을 반환한다.
+        """
+        search_url = (
+            f"{self.SEARCH_URL}?render=search&platform=pc"
+            f"&q={quote(keyword)}&size={min(limit, 60)}&mallId=2&sortType=BEST"
+        )
+        logger.info(f"[LOTTEON] 인기상품 검색 시작: keyword={keyword}, limit={limit}")
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout, follow_redirects=True
+            ) as client:
+                resp = await client.get(search_url, headers=self.HEADERS)
+
+                if resp.status_code in (429, 403):
+                    retry_after = int(resp.headers.get("Retry-After", "60"))
+                    logger.warning(f"[LOTTEON] 인기상품 검색 차단 HTTP {resp.status_code}")
+                    raise RateLimitError(resp.status_code, retry_after)
+
+                if resp.status_code != 200:
+                    logger.warning(f"[LOTTEON] 인기상품 검색 HTTP {resp.status_code}")
+                    return []
+
+            products = self._parse_search_html(resp.text, keyword)
+            logger.info(f"[LOTTEON] 인기상품 검색 완료: {len(products)}개")
+            return products
+        except RateLimitError:
+            raise
+        except Exception as e:
+            logger.error(f"[LOTTEON] 인기상품 검색 실패: {keyword} — {e}")
+            return []
 
     async def fetch_pbf_standalone(self, sitm_no: str) -> Optional[dict[str, Any]]:
         """pbf.lotteon.com API 독립 호출 (새 HTTP 세션 생성) — refresh 빠른경로용."""

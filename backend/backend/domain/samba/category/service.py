@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+
+import httpx
 from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
@@ -21,6 +23,37 @@ logger = logging.getLogger(__name__)
 
 # 해외 관련 카테고리 필터 키워드
 _OVERSEAS_KEYWORDS = ("해외", "직구", "해외직구", "해외호텔", "해외여행")
+
+# 소싱처 카테고리 키워드 ↔ 마켓 카테고리 동의어 (표기 차이 대응)
+_KW_SYNONYMS: dict[str, list[str]] = {
+    "러닝화": ["런닝화", "러닝", "런닝"],
+    "런닝화": ["러닝화", "러닝", "런닝"],
+    "스포츠화": ["운동화", "스포츠신발"],
+    "운동화": ["스포츠화", "스포츠신발"],
+    "라이프스타일화": ["캐주얼화", "스니커즈", "라이프스타일"],
+    "패션스니커즈화": ["스니커즈", "캐주얼화", "패션화"],
+    "스니커즈화": ["스니커즈"],
+    "등산화": ["트레킹화", "등산"],
+    "트레킹화": ["등산화", "트레킹"],
+    "워킹화": ["워킹", "걷기", "컴포트"],
+    "슬립온화": ["슬립온"],
+    "캔버스화": ["캔버스", "스니커즈"],
+}
+
+
+def _kw_in_cat(kw: str, cat: str) -> bool:
+    """카테고리 경로에서 키워드를 세그먼트 단위로 매칭.
+    '한복신발'처럼 복합어 내 부분 문자열 오매핑을 방지한다.
+    """
+    for seg in cat.split(">"):
+        seg = seg.strip()
+        if kw == seg:
+            return True
+        if kw in seg.split():
+            return True
+        if len(kw) >= 3 and kw in seg:
+            return True
+    return False
 
 
 def _filter_overseas(categories: list[str]) -> list[str]:
@@ -2088,14 +2121,14 @@ class SambaCategoryService:
             try:
                 result = await asyncio.wait_for(
                     self.sync_market_from_api(market, session),
-                    timeout=60,
+                    timeout=120,
                 )
                 results[market] = {"ok": True, **result}
                 logger.info(
                     "[카테고리 동기화] %s 완료: %d개", market, result.get("count", 0)
                 )
             except asyncio.TimeoutError:
-                results[market] = {"ok": False, "error": "타임아웃 (60초 초과)"}
+                results[market] = {"ok": False, "error": "타임아웃 (120초 초과)"}
                 logger.warning("[카테고리 동기화] %s 타임아웃", market)
             except Exception as e:
                 results[market] = {"ok": False, "error": str(e)}
@@ -2246,7 +2279,11 @@ class SambaCategoryService:
         return categories, code_map
 
     async def _sync_lotteon(self, account) -> tuple:
-        """롯데ON 카테고리 동기화. (카테고리목록, 코드맵) 반환."""
+        """롯데ON 카테고리 동기화. (카테고리목록, 코드맵) 반환.
+
+        depth 파라미터만으로는 API가 100개씩 페이지네이션하여 e쿠폰만 반환.
+        parent_id BFS로 각 루트별 자식을 순회해 전체 트리를 수집.
+        """
         from backend.domain.samba.proxy.lotteon import LotteonClient
 
         extra = account.additional_fields or {}
@@ -2255,41 +2292,105 @@ class SambaCategoryService:
             raise ValueError("롯데ON API Key가 없습니다")
         client = LotteonClient(api_key=api_key)
 
-        # 롯데ON은 페이지당 100건, 전체 뎁스 반복 조회
         node_map: Dict[str, str] = {}  # std_cat_id → std_cat_nm
         parent_map: Dict[str, str] = {}  # std_cat_id → upr_std_cat_id
         leaf_ids: List[str] = []
 
-        for depth in ["1", "2", "3", "4"]:
-            skip = 0
-            page_size = 500
-            while True:
-                try:
-                    raw = await client.get_categories(
-                        depth=depth, skip=skip, limit=page_size
-                    )
-                    items = raw.get("itemList", [])
+        def _add_item(d: dict, pid: str) -> str:
+            cat_id = d.get("std_cat_id", "")
+            cat_nm = d.get("std_cat_nm", "")
+            if cat_id and cat_nm and cat_id not in node_map:
+                node_map[cat_id] = cat_nm
+                parent_map[cat_id] = pid
+            return cat_id
+
+        # 1단계: depth=1 루트 카테고리 획득
+        try:
+            raw = await client.get_categories(depth="1")
+            root_items = raw.get("itemList", [])
+            logger.info("[롯데ON 동기화] depth=1 루트 %d개", len(root_items))
+            if root_items:
+                logger.info("[롯데ON 동기화] 루트 샘플: %s", str(root_items[0])[:250])
+            for item in root_items:
+                d = item.get("data", item)
+                _add_item(d, "0")
+        except Exception as e:
+            logger.warning("[롯데ON 동기화] depth=1 실패: %s", e)
+
+        if not node_map:
+            raise ValueError("롯데ON 카테고리 루트를 가져올 수 없습니다. 계정 인증 정보를 확인해주세요.")
+
+        root_ids = list(node_map.keys())
+        logger.info("[롯데ON 동기화] 루트 카테고리: %s", [node_map[i] for i in root_ids[:10]])
+
+        # shared httpx 세션으로 TCP 연결 재사용
+        _timeout = httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
+        _sem = asyncio.Semaphore(15)
+
+        async with httpx.AsyncClient(timeout=_timeout) as _http:
+            async def _fetch(pid: str) -> tuple:
+                async with _sem:
+                    try:
+                        result = await asyncio.wait_for(
+                            client.get_categories(parent_id=pid, _shared_client=_http),
+                            timeout=12.0,
+                        )
+                        return pid, result.get("itemList", [])
+                    except Exception as e:
+                        logger.warning("[롯데ON 동기화] parent=%s 실패: %s", pid, type(e).__name__)
+                        return pid, []
+
+            # 2단계: 각 루트 자식을 병렬 조회
+            d2_results = await asyncio.gather(*[_fetch(rid) for rid in root_ids])
+            depth2_non_leaf: List[str] = []
+            for parent_id, items in d2_results:
+                for item in items:
+                    d = item.get("data", item)
+                    cid = _add_item(d, parent_id)
+                    if cid:
+                        if d.get("leaf_yn") == "Y":
+                            leaf_ids.append(cid)
+                        else:
+                            depth2_non_leaf.append(cid)
+
+            logger.info("[롯데ON 동기화] depth=2 완료: 비리프=%d개, leaf=%d개",
+                        len(depth2_non_leaf), len(leaf_ids))
+
+            # 3단계: 필요한 카테고리만 선택적으로 조회
+            _SKIP_KEYWORDS = ("e쿠폰", "티켓", "상품권", "쿠폰", "여행", "숙박", "항공", "렌터카")
+            _NEED_KEYWORDS = ("패션", "의류", "신발", "가방", "잡화", "스포츠", "레저",
+                              "아웃도어", "뷰티", "화장품", "헬스", "생활", "홈", "주방",
+                              "식품", "전자", "완구", "도서", "반려", "유아", "남성", "여성")
+            depth2_to_fetch: List[str] = []
+            for d2id in depth2_non_leaf:
+                nm = node_map.get(d2id, "")
+                parent_nm = node_map.get(parent_map.get(d2id, ""), "")
+                path_nm = f"{parent_nm} {nm}"
+                if any(kw in path_nm for kw in _SKIP_KEYWORDS):
+                    leaf_ids.append(d2id)
+                elif any(kw in path_nm for kw in _NEED_KEYWORDS):
+                    depth2_to_fetch.append(d2id)
+                else:
+                    leaf_ids.append(d2id)
+
+            logger.info("[롯데ON 동기화] depth=3 대상: %d개", len(depth2_to_fetch))
+
+            if depth2_to_fetch:
+                d3_results = await asyncio.gather(*[_fetch(d2id) for d2id in depth2_to_fetch])
+                for parent_id, items in d3_results:
                     if not items:
-                        break
+                        leaf_ids.append(parent_id)
+                        continue
                     for item in items:
                         d = item.get("data", item)
-                        cat_id = d.get("std_cat_id", "")
-                        cat_nm = d.get("std_cat_nm", "")
-                        parent_id = d.get("upr_std_cat_id", "0")
-                        if cat_id and cat_nm:
-                            node_map[cat_id] = cat_nm
-                            parent_map[cat_id] = parent_id
-                            if depth == "4" or d.get("leaf_yn") == "Y":
-                                leaf_ids.append(cat_id)
-                    # 다음 페이지 없으면 종료
-                    if len(items) < page_size:
-                        break
-                    skip += page_size
-                except Exception:
-                    break
-            logger.info(f"[롯데ON 카테고리] depth {depth}: {len(node_map)}개 누적")
+                        cid = _add_item(d, parent_id)
+                        if cid:
+                            leaf_ids.append(cid)
 
-        # leaf가 없으면 가장 깊은 뎁스를 leaf로 사용
+        logger.info("[롯데ON 동기화] 완료: node_map=%d개, leaf_ids=%d개",
+                    len(node_map), len(leaf_ids))
+
+        # leaf가 없으면 모든 노드를 leaf로
         if not leaf_ids:
             leaf_ids = list(node_map.keys())
 
@@ -2307,7 +2408,7 @@ class SambaCategoryService:
         code_map: Dict[str, str] = {}
         for cat_id in leaf_ids:
             path = build_path(cat_id)
-            if path:
+            if path and path not in code_map:
                 categories.append(path)
                 code_map[path] = cat_id
 
