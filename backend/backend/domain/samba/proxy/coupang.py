@@ -91,7 +91,7 @@ def _build_display_product_name(product: dict[str, Any]) -> str:
 
     # 원본 상품명에서 특성 추출 (브랜드/카테고리 제외, 불용어 제외)
     original_name = product.get("name") or ""
-    name_tokens = re.split(r"[\s/\-_]+", original_name)
+    name_tokens = re.split(r"[\s/\-_#]+", original_name)
     existing_lower = {p.lower() for p in parts}
     for token in name_tokens:
         token_clean = token.strip()
@@ -329,11 +329,14 @@ class CoupangClient:
             except Exception:
                 data = {"raw": resp.text}
 
-            logger.info(f"[쿠팡] {method} {path} → {resp.status_code}")
+            logger.info(f"[쿠팡] {method} {url} → {resp.status_code}")
 
             if not resp.is_success:
                 msg = (
                     data.get("message", "") or data.get("reason", "") or resp.text[:200]
+                )
+                logger.error(
+                    f"[쿠팡] API 에러 — {method} {url} → {resp.status_code} | body: {resp.text[:500]}"
                 )
                 raise CoupangApiError(f"HTTP {resp.status_code}: {msg}")
 
@@ -602,7 +605,9 @@ class CoupangClient:
 
         result: dict[str, Any] = {
             "displayCategoryCode": display_category,
-            "sellerProductName": product.get("name", "")[:100],
+            "sellerProductName": re.sub(
+                r"\s{2,}", " ", re.sub(r"[#_]+", " ", product.get("name", ""))
+            ).strip()[:100],
             "vendorId": "",  # 런타임에 디스패처에서 채움
             "saleStartedAt": now,
             "saleEndedAt": "2099-01-01T23:59:59",
@@ -618,7 +623,7 @@ class CoupangClient:
             "deliveryChargeOnReturn": 2500,
             "remoteAreaDeliverable": "N",
             "unionDeliveryType": "NOT_UNION_DELIVERY",
-            "returnCenterCode": return_center_code or "NO_RETURN_CENTERCODE",
+            "returnCenterCode": return_center_code,
             "returnChargeName": "반품지",
             "companyContactNumber": product.get("_as_phone", "") or "상세페이지 참조",
             "returnZipCode": "00000",
