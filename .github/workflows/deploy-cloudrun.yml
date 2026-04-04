@@ -24,6 +24,14 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker asia-northeast3-docker.pkg.dev --quiet
 
+      # BuildKit용 Artifact Registry 인증
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: asia-northeast3-docker.pkg.dev
+          username: _json_key
+          password: ${{ secrets.GCP_SA_KEY }}
+
       # 레포지토리 없으면 자동 생성
       - name: Ensure Artifact Registry repository exists
         run: |
