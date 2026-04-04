@@ -835,6 +835,7 @@ class JobWorker:
         empty_pages = 0  # 연속 신규 0건 페이지 카운터 (잡 간 오염 방지용 로컬 변수)
         max_pages = 100  # API totalPages 기반으로 동적 조정 (초기값)
         _search_rl_retries = 0  # 검색 API rate limit 연속 재시도 카운터
+        _failed_ids: list[str] = []  # 전체수집 모드: 실패 상품 재시도용
 
         while search_page <= max_pages:
             # 일반 모드: remaining 충족 시 종료 / 전체수집 모드: 페이지 소진까지 계속
@@ -949,7 +950,6 @@ class JobWorker:
                 search_page += 1
                 continue
             empty_pages = 0  # 신규 상품 발견 시 카운터 리셋
-            _failed_ids: list[str] = []  # 전체수집 모드: 실패 상품 재시도용
 
             # 상세 수집 (병렬 — SITE_CONCURRENCY + 공유 HTTP 클라이언트)
             from backend.domain.samba.collector.refresher import SITE_CONCURRENCY
