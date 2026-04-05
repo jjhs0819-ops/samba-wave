@@ -1,5 +1,6 @@
 """SambaWave Order API router."""
 
+from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -816,6 +817,55 @@ async def sync_orders_from_markets(
                     }
                 )
                 continue
+            elif market_type == "playauto":
+                from backend.domain.samba.proxy.playauto import PlayAutoClient
+
+                api_key = extras.get("apiKey", "") or account.api_key or ""
+                if not api_key:
+                    results.append(
+                        {"account": label, "status": "skip", "message": "API Key 없음"}
+                    )
+                    continue
+                pa_client = PlayAutoClient(api_key)
+                try:
+                    start_date = (
+                        datetime.now(UTC) - timedelta(days=body.days)
+                    ).strftime("%Y%m%d")
+                    raw_orders = await pa_client.get_orders(
+                        start_date=start_date,
+                        states="신규주문",
+                        count=500,
+                    )
+                    # 모든 주문 상태 조회 (송장입력, 배송중 등)
+                    for state in [
+                        "송장입력",
+                        "출고",
+                        "배송중",
+                        "수취확인",
+                        "취소",
+                        "반품요청",
+                        "교환요청",
+                    ]:
+                        try:
+                            more = await pa_client.get_orders(
+                                start_date=start_date,
+                                states=state,
+                                count=500,
+                            )
+                            if more:
+                                raw_orders.extend(more)
+                        except Exception:
+                            pass
+                    for ro in raw_orders:
+                        orders_data.append(_parse_playauto_order(ro, account.id, label))
+                except Exception as e:
+                    logger.warning(f"[주문동기화] {label}: 플레이오토 조회 실패 — {e}")
+                    results.append(
+                        {"account": label, "status": "error", "message": str(e)[:100]}
+                    )
+                    continue
+                finally:
+                    await pa_client.close()
             else:
                 results.append(
                     {
@@ -1211,4 +1261,59 @@ def _parse_smartstore_order(
         "shipping_company": po.get("deliveryCompany", ""),
         "tracking_number": po.get("trackingNumber", ""),
         "source": "smartstore",
+    }
+
+
+def _parse_playauto_order(
+    ro: dict, account_id: str, account_label: str
+) -> dict[str, Any]:
+    """플레이오토 EMP 주문 → SambaOrder 데이터 변환."""
+    status_map = {
+        "신규주문": "pending",
+        "송장출력": "pending",
+        "송장입력": "processing",
+        "출고": "shipped",
+        "배송중": "shipped",
+        "수취확인": "delivered",
+        "정산완료": "delivered",
+        "주문확인": "pending",
+        "취소": "cancelled",
+        "취소마감": "cancelled",
+        "반품요청": "return_requested",
+        "반품마감": "returned",
+        "교환요청": "exchange_requested",
+        "교환마감": "exchanged",
+        "보류": "pending",
+    }
+
+    order_state = ro.get("OrderState", "")
+    sale_price = int(ro.get("Price", 0) or 0)
+    quantity = int(ro.get("Count", 1) or 1)
+
+    return {
+        "order_number": ro.get("OrderCode", ""),
+        "shipment_id": str(ro.get("Number", "")),
+        "channel_id": account_id,
+        "channel_name": account_label,
+        "product_id": ro.get("ProdCode", ""),
+        "product_name": ro.get("ProdName", ""),
+        "product_option": ro.get("Option", ""),
+        "product_image": "",
+        "customer_name": ro.get("OrderName", ""),
+        "customer_phone": ro.get("OrderHtel", "") or ro.get("OrderTel", ""),
+        "customer_address": ro.get("RecipientAddress", ""),
+        "recipient_name": ro.get("RecipientName", ""),
+        "recipient_phone": ro.get("RecipientHtel", "") or ro.get("RecipientTel", ""),
+        "quantity": quantity,
+        "sale_price": sale_price * quantity,
+        "cost": int(ro.get("CostPrice", 0) or 0),
+        "fee_rate": 0,
+        "revenue": sale_price * quantity,
+        "status": status_map.get(order_state, "pending"),
+        "shipping_status": order_state,
+        "shipping_company": ro.get("Sender", ""),
+        "tracking_number": ro.get("SenderNo", ""),
+        "source": "playauto",
+        "market_name": ro.get("SiteName", ""),
+        "market_order_id": ro.get("OrderCode", ""),
     }
