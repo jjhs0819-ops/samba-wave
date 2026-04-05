@@ -797,6 +797,10 @@ export default function PoliciesPage() {
             setImgChecks(next)
             try {
               await detailTemplateApi.update(t.id, { img_checks: next })
+              // detailTemplates state도 갱신하여 재선택 시 stale 값 방지
+              setDetailTemplates(prev => prev.map(dt =>
+                dt.id === t.id ? { ...dt, img_checks: next } : dt
+              ))
             } catch (e) {
               console.error('img_checks 저장 실패:', e)
             }
@@ -937,7 +941,11 @@ export default function PoliciesPage() {
                       onDrop={() => {
                         setDragIdx(null)
                         // 드래그 완료 시 순서 DB 저장
-                        detailTemplateApi.update(t.id, { img_order: imgOrder }).catch(e => console.error('img_order 저장 실패:', e))
+                        detailTemplateApi.update(t.id, { img_order: imgOrder }).then(() => {
+                          setDetailTemplates(prev => prev.map(dt =>
+                            dt.id === t.id ? { ...dt, img_order: imgOrder } : dt
+                          ))
+                        }).catch(e => console.error('img_order 저장 실패:', e))
                       }}
                       onDragEnd={() => setDragIdx(null)}
                       style={{
@@ -959,8 +967,8 @@ export default function PoliciesPage() {
                             <img key={i} src={url} alt={`서브${i + 1}`} style={{ width: '60px', height: '60px', borderRadius: '4px', objectFit: 'cover' }} />
                           ))}
                         </div>
-                      ) : /* 상세이미지 */ isDetail && previewProduct?.detail_html ? (
-                        <span style={{ color: item.color, fontSize: '0.8rem', padding: '0.75rem 0', display: 'block' }}>상세이미지 ({(previewProduct.detail_html.match(/<img/gi) || []).length}장)</span>
+                      ) : /* 상세이미지 */ isDetail && previewProduct?.detail_images?.length ? (
+                        <span style={{ color: item.color, fontSize: '0.8rem', padding: '0.75rem 0', display: 'block' }}>상세이미지 ({previewProduct.detail_images.length}장)</span>
                       ) : (
                         <span style={{ color: item.color, fontSize: '0.8rem', padding: '0.75rem 0', display: 'block' }}>{item.label}</span>
                       )}
