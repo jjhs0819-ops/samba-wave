@@ -35,11 +35,25 @@ class PlayAutoClient:
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
+            # Cloud Run → PlayAuto 직접 연결 차단 시 프록시 사용
+            proxy = self._get_proxy_url()
             self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(60.0, connect=10.0),
+                timeout=httpx.Timeout(60.0, connect=15.0),
                 follow_redirects=True,
+                proxy=proxy if proxy else None,
             )
         return self._client
+
+    @staticmethod
+    def _get_proxy_url() -> str:
+        """수집용 프록시 URL 가져오기."""
+        try:
+            from backend.core.config import get_settings
+
+            settings = get_settings()
+            return settings.collect_proxy_url or ""
+        except Exception:
+            return ""
 
     async def close(self):
         if self._client and not self._client.is_closed:
