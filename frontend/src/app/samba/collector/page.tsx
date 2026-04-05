@@ -158,6 +158,9 @@ export default function CollectorPage() {
   const [showBrandModal, setShowBrandModal] = useState(false)
   const [pendingKeyword, setPendingKeyword] = useState("")
   const [detectedBrandCode, setDetectedBrandCode] = useState("")
+  // 브랜드 선택 후 실행할 액션: 'scan' = 카테고리 스캔, 'create' = 그룹 생성
+  const [brandModalAction, setBrandModalAction] = useState<'scan' | 'create'>('create')
+  const pendingScanGf = useRef("A")
 
   // 카테고리 자동분류 옵션
   const [brandScanning, setBrandScanning] = useState(false)
@@ -436,6 +439,7 @@ export default function CollectorPage() {
             }
             setPendingKeyword(input)
             setBrandSearchResults(res.brands)
+            setBrandModalAction('create')
             setShowBrandModal(true)
             setCollecting(false)
             return
@@ -451,12 +455,32 @@ export default function CollectorPage() {
     await executeCreateGroup()
   }
 
-  // 브랜드 선택 모달에서 선택 시 그룹 생성
+  // 브랜드 선택 모달에서 선택 시 액션 실행
   const handleBrandSelect = async (brandCode?: string) => {
     setShowBrandModal(false)
     setBrandSearchResults([])
     if (brandCode) setDetectedBrandCode(brandCode)
-    await executeCreateGroup(brandCode)
+
+    if (brandModalAction === 'scan') {
+      // 카테고리 스캔 실행
+      setBrandScanning(true)
+      try {
+        const keyword = pendingKeyword
+        const gf = pendingScanGf.current
+        const res = await collectorApi.brandScan(brandCode || '', gf, keyword)
+        setBrandCategories(res.categories)
+        setBrandTotal(res.total)
+        setBrandSelectedCats(new Set(res.categories.map((c: { categoryCode: string }) => c.categoryCode)))
+        if (brandCode) {
+          addLog(`[카테고리스캔] 브랜드: ${brandCode}, ${keyword}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+        } else {
+          addLog(`[카테고리스캔] ${keyword}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+        }
+      } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+      setBrandScanning(false)
+    } else {
+      await executeCreateGroup(brandCode)
+    }
   }
 
   const handleDeleteSelectedGroups = async () => {
@@ -940,14 +964,18 @@ export default function CollectorPage() {
                 const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : '')
                 const gf = parsed?.searchParams.get('gf') || 'A'
                 if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
-                // 평문 키워드이고 브랜드 코드가 없으면 자동 감지
+                // 평문 키워드이고 브랜드 코드가 없으면 브랜드 검색 모달 표시
                 if (!brand && !parsed) {
                   try {
                     const brandRes = await proxyApi.brandSearch(keyword)
                     if (brandRes.brands && brandRes.brands.length > 0) {
-                      brand = brandRes.brands[0].brandCode
-                      setDetectedBrandCode(brand)
-                      addLog(`[카테고리스캔] 브랜드 자동 감지: ${brandRes.brands[0].brandName} (${brand})`)
+                      setPendingKeyword(keyword)
+                      pendingScanGf.current = gf
+                      setBrandSearchResults(brandRes.brands)
+                      setBrandModalAction('scan')
+                      setShowBrandModal(true)
+                      setBrandScanning(false)
+                      return
                     }
                   } catch { /* 브랜드 검색 실패 시 키워드로 진행 */ }
                 }
