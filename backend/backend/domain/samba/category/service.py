@@ -374,6 +374,16 @@ _MUSINSA_LOTTEON_RULES: dict[str, str] = {
     "소품 > 모자 > 버킷/사파리햇": "__SKIP__",
     "소품 > 모자 > 캡/야구모자": "__SKIP__",
     "소품 > 모자 > 비니": "__SKIP__",
+    # ── 소품 > 기능성 잡화 — 넥워머/장갑/팔토시/바라클라바/양말 ──
+    "소품 > 양말": "스포츠의류/운동화 > 스포츠잡화 > 스포츠양말",
+    "소품 > 장갑": "스포츠의류/운동화 > 스포츠잡화 > 스포츠장갑",
+    "소품 > 글러브": "스포츠의류/운동화 > 스포츠잡화 > 스포츠장갑",
+    "소품 > 넥워머": "스포츠의류/운동화 > 스포츠잡화 > 스포츠스카프/넥워머",
+    "소품 > 머플러": "스포츠의류/운동화 > 스포츠잡화 > 스포츠스카프/넥워머",
+    "소품 > 바라클라바": "스포츠의류/운동화 > 스포츠잡화 > 스포츠마스크/바라클라바",
+    "소품 > 마스크": "스포츠의류/운동화 > 스포츠잡화 > 스포츠마스크/바라클라바",
+    "소품 > 팔토시": "스포츠의류/운동화 > 스포츠잡화 > 스포츠장갑",
+    "소품 > 토시": "스포츠의류/운동화 > 스포츠잡화 > 스포츠장갑",
     # ── 상의 > 기타 상의 — 분류 불명확한 상의는 긴팔티셔츠 폴백 ──
     "상의 > 기타 상의": "스포츠의류/운동화 > 남성스포츠의류 > 긴팔티셔츠",
     # ── 스포츠/레저 비의류 — 등록 불가(스킵), 계단식 매칭으로 하위 전체 커버 ──
@@ -2318,16 +2328,21 @@ class SambaCategoryService:
             logger.warning("[롯데ON 동기화] depth=1 실패: %s", e)
 
         if not node_map:
-            raise ValueError("롯데ON 카테고리 루트를 가져올 수 없습니다. 계정 인증 정보를 확인해주세요.")
+            raise ValueError(
+                "롯데ON 카테고리 루트를 가져올 수 없습니다. 계정 인증 정보를 확인해주세요."
+            )
 
         root_ids = list(node_map.keys())
-        logger.info("[롯데ON 동기화] 루트 카테고리: %s", [node_map[i] for i in root_ids[:10]])
+        logger.info(
+            "[롯데ON 동기화] 루트 카테고리: %s", [node_map[i] for i in root_ids[:10]]
+        )
 
         # shared httpx 세션으로 TCP 연결 재사용
         _timeout = httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
         _sem = asyncio.Semaphore(15)
 
         async with httpx.AsyncClient(timeout=_timeout) as _http:
+
             async def _fetch(pid: str) -> tuple:
                 async with _sem:
                     try:
@@ -2337,7 +2352,9 @@ class SambaCategoryService:
                         )
                         return pid, result.get("itemList", [])
                     except Exception as e:
-                        logger.warning("[롯데ON 동기화] parent=%s 실패: %s", pid, type(e).__name__)
+                        logger.warning(
+                            "[롯데ON 동기화] parent=%s 실패: %s", pid, type(e).__name__
+                        )
                         return pid, []
 
             # 2단계: 각 루트 자식을 병렬 조회
@@ -2353,14 +2370,47 @@ class SambaCategoryService:
                         else:
                             depth2_non_leaf.append(cid)
 
-            logger.info("[롯데ON 동기화] depth=2 완료: 비리프=%d개, leaf=%d개",
-                        len(depth2_non_leaf), len(leaf_ids))
+            logger.info(
+                "[롯데ON 동기화] depth=2 완료: 비리프=%d개, leaf=%d개",
+                len(depth2_non_leaf),
+                len(leaf_ids),
+            )
 
             # 3단계: 필요한 카테고리만 선택적으로 조회
-            _SKIP_KEYWORDS = ("e쿠폰", "티켓", "상품권", "쿠폰", "여행", "숙박", "항공", "렌터카")
-            _NEED_KEYWORDS = ("패션", "의류", "신발", "가방", "잡화", "스포츠", "레저",
-                              "아웃도어", "뷰티", "화장품", "헬스", "생활", "홈", "주방",
-                              "식품", "전자", "완구", "도서", "반려", "유아", "남성", "여성")
+            _SKIP_KEYWORDS = (
+                "e쿠폰",
+                "티켓",
+                "상품권",
+                "쿠폰",
+                "여행",
+                "숙박",
+                "항공",
+                "렌터카",
+            )
+            _NEED_KEYWORDS = (
+                "패션",
+                "의류",
+                "신발",
+                "가방",
+                "잡화",
+                "스포츠",
+                "레저",
+                "아웃도어",
+                "뷰티",
+                "화장품",
+                "헬스",
+                "생활",
+                "홈",
+                "주방",
+                "식품",
+                "전자",
+                "완구",
+                "도서",
+                "반려",
+                "유아",
+                "남성",
+                "여성",
+            )
             depth2_to_fetch: List[str] = []
             for d2id in depth2_non_leaf:
                 nm = node_map.get(d2id, "")
@@ -2376,7 +2426,9 @@ class SambaCategoryService:
             logger.info("[롯데ON 동기화] depth=3 대상: %d개", len(depth2_to_fetch))
 
             if depth2_to_fetch:
-                d3_results = await asyncio.gather(*[_fetch(d2id) for d2id in depth2_to_fetch])
+                d3_results = await asyncio.gather(
+                    *[_fetch(d2id) for d2id in depth2_to_fetch]
+                )
                 for parent_id, items in d3_results:
                     if not items:
                         leaf_ids.append(parent_id)
@@ -2387,8 +2439,11 @@ class SambaCategoryService:
                         if cid:
                             leaf_ids.append(cid)
 
-        logger.info("[롯데ON 동기화] 완료: node_map=%d개, leaf_ids=%d개",
-                    len(node_map), len(leaf_ids))
+        logger.info(
+            "[롯데ON 동기화] 완료: node_map=%d개, leaf_ids=%d개",
+            len(node_map),
+            len(leaf_ids),
+        )
 
         # leaf가 없으면 모든 노드를 leaf로
         if not leaf_ids:
