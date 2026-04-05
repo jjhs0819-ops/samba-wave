@@ -437,26 +437,31 @@ class PlayAutoClient:
         if model:
             data["Model"] = str(model)
 
-        # 이미지 (최대 10개, URL 직접 전달)
+        # 이미지 (최대 10개, 빈 항목 건너뛰고 순차 배치)
         # EMP는 JPG/JPEG/PNG/GIF/BMP 확장자만 허용
         images = product.get("images") or []
+        img_idx = 1
         if isinstance(images, list):
-            for i, img_url in enumerate(images[:10], 1):
+            for img_url in images:
+                if img_idx > 10:
+                    break
                 url = img_url if isinstance(img_url, str) else img_url.get("url", "")
-                if url:
-                    # 프로토콜 보정
-                    if url.startswith("//"):
-                        url = f"https:{url}"
-                    # 확장자 없는 URL에 .jpg 추가 (R2/CDN URL 대응)
-                    if not any(
-                        url.lower().endswith(ext)
-                        for ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
-                    ):
-                        url = url + ".jpg"
-                    # WebP → JPG 변환 (EMP 미지원)
-                    if url.lower().endswith(".webp"):
-                        url = url[:-5] + ".jpg"
-                    data[f"Image{i}"] = url
+                if not url:
+                    continue
+                # 프로토콜 보정
+                if url.startswith("//"):
+                    url = f"https:{url}"
+                # 확장자 없는 URL에 .jpg 추가 (R2/CDN URL 대응)
+                if not any(
+                    url.lower().endswith(ext)
+                    for ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
+                ):
+                    url = url + ".jpg"
+                # WebP → JPG 변환 (EMP 미지원)
+                if url.lower().endswith(".webp"):
+                    url = url[:-5] + ".jpg"
+                data[f"Image{img_idx}"] = url
+                img_idx += 1
 
         # 상세설명 HTML
         content = product.get("detail_html", "") or product.get("description", "")
