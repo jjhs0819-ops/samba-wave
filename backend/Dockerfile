@@ -37,6 +37,7 @@ RUN uv sync --compile-bytecode --no-dev
 ENV CLIP_MODEL_DIR="/app/models/clip"
 RUN mkdir -p ${CLIP_MODEL_DIR} && \
     wget -q https://storage.googleapis.com/samba-wave-models/clip/visual.onnx -O ${CLIP_MODEL_DIR}/visual.onnx && \
+    wget -q https://storage.googleapis.com/samba-wave-models/clip/visual.onnx.data -O ${CLIP_MODEL_DIR}/visual.onnx.data && \
     wget -q https://storage.googleapis.com/samba-wave-models/clip/text_features.npy -O ${CLIP_MODEL_DIR}/text_features.npy && \
     wget -q https://storage.googleapis.com/samba-wave-models/clip/meta.json -O ${CLIP_MODEL_DIR}/meta.json
 
