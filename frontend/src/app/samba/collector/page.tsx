@@ -158,6 +158,7 @@ export default function CollectorPage() {
   const [showBrandModal, setShowBrandModal] = useState(false)
   const [pendingKeyword, setPendingKeyword] = useState("")
   const [detectedBrandCode, setDetectedBrandCode] = useState("")
+  const [selectedBrandCodes, setSelectedBrandCodes] = useState<Set<string>>(new Set())
   // 브랜드 선택 후 실행할 액션: 'scan' = 카테고리 스캔, 'create' = 그룹 생성
   const [brandModalAction, setBrandModalAction] = useState<'scan' | 'create'>('create')
   const pendingScanGf = useRef("A")
@@ -439,6 +440,7 @@ export default function CollectorPage() {
             }
             setPendingKeyword(input)
             setBrandSearchResults(res.brands)
+            setSelectedBrandCodes(new Set())
             setBrandModalAction('create')
             setShowBrandModal(true)
             setCollecting(false)
@@ -455,31 +457,38 @@ export default function CollectorPage() {
     await executeCreateGroup()
   }
 
-  // 브랜드 선택 모달에서 선택 시 액션 실행
-  const handleBrandSelect = async (brandCode?: string) => {
+  // 브랜드 선택 모달 확인 — 선택된 브랜드들로 액션 실행
+  const handleBrandConfirm = async (codes: Set<string>) => {
     setShowBrandModal(false)
     setBrandSearchResults([])
-    if (brandCode) setDetectedBrandCode(brandCode)
+    const brandList = [...codes]
+    if (brandList.length > 0) setDetectedBrandCode(brandList[0])
 
     if (brandModalAction === 'scan') {
-      // 카테고리 스캔 실행
       setBrandScanning(true)
       try {
         const keyword = pendingKeyword
         const gf = pendingScanGf.current
-        const res = await collectorApi.brandScan(brandCode || '', gf, keyword)
-        setBrandCategories(res.categories)
-        setBrandTotal(res.total)
-        setBrandSelectedCats(new Set(res.categories.map((c: { categoryCode: string }) => c.categoryCode)))
-        if (brandCode) {
-          addLog(`[카테고리스캔] 브랜드: ${brandCode}, ${keyword}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
-        } else {
-          addLog(`[카테고리스캔] ${keyword}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+        // 각 브랜드별로 스캔 후 결과 병합
+        const allCategories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[] = []
+        let totalCount = 0
+        for (const code of brandList.length > 0 ? brandList : ['']) {
+          const res = await collectorApi.brandScan(code, gf, keyword)
+          allCategories.push(...res.categories)
+          totalCount += res.total
+          if (code) addLog(`[카테고리스캔] ${code}: ${res.groupCount}개 카테고리, ${res.total}건`)
         }
+        setBrandCategories(allCategories)
+        setBrandTotal(totalCount)
+        setBrandSelectedCats(new Set(allCategories.map(c => c.categoryCode)))
+        addLog(`[카테고리스캔] 합계: ${allCategories.length}개 카테고리, 총 ${totalCount.toLocaleString()}건`)
       } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
       setBrandScanning(false)
     } else {
-      await executeCreateGroup(brandCode)
+      // 각 브랜드별 그룹 생성
+      for (const code of brandList.length > 0 ? brandList : [undefined]) {
+        await executeCreateGroup(code)
+      }
     }
   }
 
@@ -972,6 +981,7 @@ export default function CollectorPage() {
                       setPendingKeyword(keyword)
                       pendingScanGf.current = gf
                       setBrandSearchResults(brandRes.brands)
+                      setSelectedBrandCodes(new Set())
                       setBrandModalAction('scan')
                       setShowBrandModal(true)
                       setBrandScanning(false)
@@ -2060,21 +2070,36 @@ export default function CollectorPage() {
             onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 4px', fontSize: '1rem', fontWeight: 600, color: '#E5E5E5' }}>브랜드 선택</h3>
             <p style={{ margin: '0 0 16px', fontSize: '0.78rem', color: '#888' }}>
-              &quot;{pendingKeyword}&quot; 검색 결과 — 브랜드를 선택하면 해당 브랜드 상품만 수집합니다
+              &quot;{pendingKeyword}&quot; 검색 결과 — 복수 선택 가능
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {brandSearchResults.map(b => (
-                <button key={b.brandCode} onClick={() => handleBrandSelect(b.brandCode)}
-                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', background: '#222', border: '1px solid #333', borderRadius: '8px', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.85rem', transition: 'border-color 0.15s' }}
-                  onMouseEnter={e => (e.currentTarget.style.borderColor = '#FF8C00')}
-                  onMouseLeave={e => (e.currentTarget.style.borderColor = '#333')}>
-                  <span style={{ fontWeight: 600 }}>{b.brandName}</span>
-                  <span style={{ color: '#888', fontSize: '0.78rem' }}>{b.brandCode}</span>
-                </button>
-              ))}
-              <button onClick={() => handleBrandSelect(undefined)}
-                style={{ padding: '10px 16px', background: 'transparent', border: '1px dashed #555', borderRadius: '8px', color: '#888', cursor: 'pointer', fontSize: '0.82rem', marginTop: '4px' }}>
-                브랜드 필터 없이 전체 검색
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {brandSearchResults.map(b => {
+                const checked = selectedBrandCodes.has(b.brandCode)
+                return (
+                  <label key={b.brandCode}
+                    style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 16px', background: checked ? '#2A2000' : '#222', border: `1px solid ${checked ? '#FF8C00' : '#333'}`, borderRadius: '8px', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.85rem', transition: 'border-color 0.15s' }}>
+                    <input type="checkbox" checked={checked}
+                      onChange={() => setSelectedBrandCodes(prev => {
+                        const next = new Set(prev)
+                        if (next.has(b.brandCode)) next.delete(b.brandCode); else next.add(b.brandCode)
+                        return next
+                      })}
+                      style={{ accentColor: '#FF8C00', width: '15px', height: '15px', cursor: 'pointer' }} />
+                    <span style={{ fontWeight: 600, flex: 1 }}>{b.brandName}</span>
+                    <span style={{ color: '#888', fontSize: '0.78rem' }}>{b.brandCode}</span>
+                  </label>
+                )
+              })}
+            </div>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+              <button onClick={() => handleBrandConfirm(selectedBrandCodes)}
+                disabled={selectedBrandCodes.size === 0}
+                style={{ flex: 1, padding: '10px', background: selectedBrandCodes.size > 0 ? 'linear-gradient(135deg, #FF8C00, #FFB84D)' : '#333', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: 600, fontSize: '0.85rem', cursor: selectedBrandCodes.size > 0 ? 'pointer' : 'not-allowed' }}>
+                선택 확인 ({selectedBrandCodes.size}개)
+              </button>
+              <button onClick={() => handleBrandConfirm(new Set())}
+                style={{ padding: '10px 16px', background: 'transparent', border: '1px dashed #555', borderRadius: '8px', color: '#888', cursor: 'pointer', fontSize: '0.82rem' }}>
+                전체 검색
               </button>
             </div>
           </div>
