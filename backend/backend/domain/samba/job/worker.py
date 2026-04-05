@@ -1477,6 +1477,11 @@ class JobWorker:
                         if val and not getattr(prod, field, ""):
                             setattr(prod, field, val)
                             changed = True
+                    # 브랜드
+                    brd = detail.get("brand", "")
+                    if brd and not (prod.brand or ""):
+                        prod.brand = brd
+                        changed = True
                     # 품번 (style_code)
                     sc = detail.get("style_code") or detail.get("styleCode") or ""
                     if sc and not (prod.style_code or ""):
@@ -1486,6 +1491,11 @@ class JobWorker:
                     mfr = detail.get("manufacturer", "")
                     if mfr and not (prod.manufacturer or ""):
                         prod.manufacturer = mfr
+                        changed = True
+                    # 카테고리
+                    cat = detail.get("category", "")
+                    if cat and not (prod.category or "" == "-"):
+                        prod.category = cat
                         changed = True
                     # 이미지 보강
                     d_imgs = detail.get("images") or []
