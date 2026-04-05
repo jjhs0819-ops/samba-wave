@@ -718,7 +718,7 @@ async def sync_returns_from_markets(
 
                 elevenst_client = ElevenstExchangeClient(api_key)
 
-                from datetime import datetime, timedelta
+                from datetime import UTC, datetime, timedelta
 
                 end_dt = datetime.now()  # 로컬 KST 기준 (11번가 API는 KST 시각 사용)
                 start_dt = end_dt - timedelta(days=body.days)

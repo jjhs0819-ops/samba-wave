@@ -855,6 +855,7 @@ class JobWorker:
         while total_saved < remaining and search_page <= 20:
             # 취소 확인 (현재 세션에서 재조회)
             from backend.domain.samba.job.model import SambaJob as _SambaJob
+
             _job_check = await session.get(_SambaJob, job.id)
             if _job_check and _job_check.status == "failed":
                 logger.info(f"[잡워커] 수집 취소됨: {job.id}")
@@ -1240,6 +1241,7 @@ class JobWorker:
 
             # 취소 확인 (현재 세션에서 재조회)
             from backend.domain.samba.job.model import SambaJob as _SambaJob
+
             _job_check = await session.get(_SambaJob, job.id)
             if _job_check and _job_check.status == "failed":
                 logger.info(f"[잡워커] {site} 수집 취소됨: {job.id}")
