@@ -851,7 +851,7 @@ export default function OrdersPage() {
                         <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
                         <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
                       </div>
-                      <span style={{ fontSize: '2.25rem', fontWeight: 700, color: '#888' }}>수량: <span style={{ color: '#E5E5E5' }}>{o.quantity}</span></span>
+                      <span style={{ fontSize: o.quantity > 1 ? '2.25rem' : '1.575rem', fontWeight: 700, color: o.quantity > 1 ? '#F5A623' : '#888' }}>수량: <span style={{ color: o.quantity > 1 ? '#F5A623' : '#E5E5E5' }}>{o.quantity}</span></span>
                     </div>
 
                     {/* 상품 이미지 (100x100) + 마켓/주문번호 */}
