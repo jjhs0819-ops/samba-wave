@@ -1374,7 +1374,47 @@ export default function CollectorPage() {
             </button>
             <button
                 onClick={async () => {
-                  // 표시된 그룹에서 브랜드 정보 추출
+                  // 특정 카테고리 그룹 선택 시 → 해당 그룹만 바로 수집
+                  if (drillGroup) {
+                    const groupFilter = filters.find(f => f.id === drillGroup)
+                    if (!groupFilter) { showAlert('선택된 그룹을 찾을 수 없습니다'); return }
+                    const groupParsed = parseGroupName(groupFilter.name, groupFilter.source_site || '')
+                    const groupLabel = `${groupParsed.brand} > ${groupParsed.category}`
+                    const ok = await showConfirm(`${groupLabel} 추가수집을 실행하시겠습니까?\n\n• 해당 카테고리 그룹만 수집합니다`)
+                    if (!ok) return
+                    try {
+                      const abort = new AbortController()
+                      collectAbortRef.current = abort
+                      setCollecting(true)
+                      addLog(`[추가수집] [${groupFilter.name}] 수집 요청 중...`)
+                      const r = await fetch(`${API_BASE}/api/v1/samba/collector/collect-filter/${groupFilter.id}`, { method: 'POST' })
+                      if (!r.ok) { addLog(`[추가수집] [${groupFilter.name}] 수집 실패: HTTP ${r.status}`); setCollecting(false); return }
+                      const { job_id } = await r.json()
+                      let lastCurrent = 0
+                      while (!abort.signal.aborted) {
+                        await new Promise(r => setTimeout(r, 1000))
+                        if (abort.signal.aborted) break
+                        const jr = await fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+                        if (!jr.ok) break
+                        const job = await jr.json()
+                        if (job.current > lastCurrent) { addLog(`[추가수집] [${groupFilter.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
+                        if (job.status === 'completed') {
+                          const _s = job.result?.saved ?? 0, _sk = job.result?.skipped ?? 0, _p = job.result?.policy || ''
+                          const _parts = [`신규 ${_s}건`]
+                          if (_sk > 0) _parts.push(`중복 ${_sk}건`)
+                          if (_p) _parts.push(_p)
+                          addLog(`[추가수집] [${groupFilter.name}] 수집 완료: ${_parts.join(' | ')}`)
+                          break
+                        }
+                        if (job.status === 'failed') { addLog(`[추가수집] [${groupFilter.name}] 수집 실패: ${job.error || '오류'}`); break }
+                      }
+                      setCollecting(false)
+                      await syncRequestedCounts()
+                      load(); loadTree()
+                    } catch (e) { showAlert(e instanceof Error ? e.message : '추가수집 실패', 'error'); setCollecting(false) }
+                    return
+                  }
+                  // 브랜드 전체 추가수집
                   const sampleFilter = displayedFilters[0]
                   if (!sampleFilter) { showAlert('표시된 그룹이 없습니다'); return }
                   const parsed = (() => { try { return new URL(sampleFilter.keyword || '') } catch { return null } })()
