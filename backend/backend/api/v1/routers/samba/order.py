@@ -836,6 +836,21 @@ async def sync_orders_from_markets(
                         states="신규주문",
                         count=500,
                     )
+                    # 디버그: 첫 주문 원본 데이터 확인
+                    if raw_orders:
+                        sample = raw_orders[0]
+                        logger.info(
+                            f"[주문동기화] 플레이오토 샘플 키: {list(sample.keys())[:20]}"
+                        )
+                        logger.info(
+                            f"[주문동기화] 플레이오토 샘플 값: "
+                            f"OrderCode={sample.get('OrderCode')}, "
+                            f"ProdName={sample.get('ProdName')}, "
+                            f"Price={sample.get('Price')}, "
+                            f"OrderName={sample.get('OrderName')}, "
+                            f"RecipientName={sample.get('RecipientName')}, "
+                            f"OrderState={sample.get('OrderState')}"
+                        )
                     # 모든 주문 상태 조회 (송장입력, 배송중 등)
                     for state in [
                         "송장입력",
