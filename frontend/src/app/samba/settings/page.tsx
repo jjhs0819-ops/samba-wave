@@ -752,8 +752,9 @@ const STORE_MARKETS: MarketConfig[] = [
   { key: 'playauto', label: '플레이오토', authField: 'apiKey', guideUrl: 'https://www.plto.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '판매자 ID', type: 'text' },
+    { name: 'password', label: 'PASSWORD', type: 'password' },
     { name: 'apiKey', label: 'API Key', type: 'text' },
-    { name: 'apiSecret', label: 'API Secret', type: 'password' },
+    { name: 'apiSecret', label: '솔루션코드', type: 'password' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '010-1234-5678' },
     { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '상세페이지 참조' },
     { name: 'discountRate', label: '즉시할인율(%)', type: 'number', placeholder: '0 (미설정)' },

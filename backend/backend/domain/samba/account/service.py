@@ -85,7 +85,7 @@ SUPPORTED_MARKETS: List[Dict[str, Any]] = [
         "id": "playauto",
         "name": "플레이오토",
         "group": "연동솔루션",
-        "api_fields": ["apiKey", "userId"],
+        "api_fields": ["apiKey", "solutionCode", "userId", "password"],
     },
     # Overseas
     {
