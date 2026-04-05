@@ -1328,11 +1328,12 @@ def _parse_playauto_order(
         "product_name": ro.get("ProdName", ""),
         "product_option": ro.get("Option", ""),
         "product_image": "",
-        "customer_name": ro.get("OrderName", ""),
-        "customer_phone": ro.get("OrderHtel", "") or ro.get("OrderTel", ""),
+        "customer_name": ro.get("RecipientName", "") or ro.get("OrderName", ""),
+        "customer_phone": ro.get("RecipientHtel", "")
+        or ro.get("RecipientTel", "")
+        or ro.get("OrderHtel", "")
+        or ro.get("OrderTel", ""),
         "customer_address": ro.get("RecipientAddress", ""),
-        "recipient_name": ro.get("RecipientName", ""),
-        "recipient_phone": ro.get("RecipientHtel", "") or ro.get("RecipientTel", ""),
         "quantity": quantity,
         "sale_price": sale_price * quantity,
         "cost": int(ro.get("CostPrice", 0) or 0),
