@@ -1523,17 +1523,26 @@ class LotteonSourcingClient:
         _ARTL_MAP: dict[str, str] = {
             "색상": "color",
             "제조국": "origin",
+            # 소재/재질 (카테고리별 필드명이 다름)
+            "제품소재": "material",
             "제품 주소재": "material",
             "상품 주소재": "material",
             "소재": "material",
             "재질": "material",
+            "주소재": "material",
+            # 제조사
             "제조자, 수입자": "manufacturer",
             "제조자(수입자)": "manufacturer",
             "제조자": "manufacturer",
+            # 세탁/취급 (카테고리별 필드명이 다름)
+            "세탁방법 및 취급시 주의사항": "care_instructions",
             "취급시 주의사항": "care_instructions",
             "취급 시 주의사항": "care_instructions",
+            "세탁방법": "care_instructions",
+            # 기타
             "품질보증기준": "quality_guarantee",
             "A/S책임자와 전화번호": "as_contact",
+            "제조년월": "manufacture_date",
         }
 
         for item in artl_list:
@@ -1541,10 +1550,17 @@ class LotteonSourcingClient:
             val = (item.get("pdArtlCnts") or "").strip()
             if not nm or not val:
                 continue
-            # 무의미한 값 제외
-            if "상세" in val and "참조" in val:
-                continue
+            # 무의미한 값 제외 (단, 색상은 괄호 앞 실제 값 추출 시도)
             if "별 상이" in val or val in ("해당없음", "해당 없음", "-", "없음"):
+                continue
+            # "상세페이지 참조" 패턴 처리
+            if "상세" in val and "참조" in val:
+                # 색상: "블랙(상세페이지 이미지참조)" → "블랙" 추출
+                target = _ARTL_MAP.get(nm)
+                if target == "color" and "(" in val:
+                    color_part = val.split("(")[0].strip()
+                    if color_part and not detail.get("color"):
+                        detail["color"] = color_part
                 continue
             target = _ARTL_MAP.get(nm)
             if target and not detail.get(target):
@@ -1552,6 +1568,62 @@ class LotteonSourcingClient:
 
         if artl_list:
             logger.debug(f"[LOTTEON] artlInfo 파싱: {len(artl_list)}개 항목")
+
+        # ── 카테고리별 기본값 보완 (SEO 최적화) ────────────────────────
+        # artlInfo에 "상품상세페이지 참조"만 있거나 필드 자체가 없는 경우 기본 문구 삽입
+        artl_cat_cd = artl.get(
+            "pdItmsCd", ""
+        )  # "01"=의류, "02"=구두/신발, "03"=가방 등
+        _DEFAULT_CARE: dict[str, str] = {
+            "01": (
+                "찬물에 단독 손세탁을 권장합니다. "
+                "세탁 시 뒤집어서 세탁하고, 표백제 사용을 피해주세요. "
+                "건조기 사용을 삼가고 그늘에서 건조해 주세요."
+            ),
+            "02": (
+                "오염 시 부드러운 솔이나 젖은 천으로 가볍게 닦아주세요. "
+                "세탁기 사용을 피하고, 직사광선을 피해 통풍이 잘 되는 곳에서 건조해 주세요."
+            ),
+            "03": (
+                "오염 시 부드러운 천으로 가볍게 닦아주세요. "
+                "물세탁을 피하고, 직사광선을 피해 서늘한 곳에 보관해 주세요."
+            ),
+            "04": (
+                "오염 시 부드러운 천으로 가볍게 닦아주세요. "
+                "물세탁을 피하고, 직사광선을 피해 서늘한 곳에 보관해 주세요."
+            ),
+        }
+        if not detail.get("care_instructions") and artl_cat_cd:
+            default_care = _DEFAULT_CARE.get(artl_cat_cd)
+            if default_care:
+                detail["care_instructions"] = default_care
+
+        # ── 상품명에서 소재 힌트 추출 (material 비어있을 때) ────────────
+        if not detail.get("material"):
+            product_name = detail.get("name", "")
+            _MATERIAL_HINTS: dict[str, str] = {
+                "스웨이드": "스웨이드",
+                "suede": "스웨이드",
+                "레더": "천연가죽",
+                "leather": "천연가죽",
+                "메시": "메시",
+                "mesh": "메시",
+                "캔버스": "캔버스",
+                "canvas": "캔버스",
+                "데님": "데님",
+                "denim": "데님",
+                "플리스": "폴리에스터(플리스)",
+                "fleece": "폴리에스터(플리스)",
+                "니트": "니트",
+                "knit": "니트",
+                "우븐": "우븐",
+                "woven": "우븐",
+            }
+            name_lower = product_name.lower()
+            for hint, mat_val in _MATERIAL_HINTS.items():
+                if hint.lower() in name_lower:
+                    detail["material"] = mat_val
+                    break
 
         # ── dispCategoryInfo (카테고리 경로) ──────────────────────────
         disp_cat = pd_data.get("dispCategoryInfo") or {}
@@ -2101,10 +2173,18 @@ class LotteonSourcingClient:
         return result
 
     def _extract_style_code_from_name(self, name: str) -> str:
-        """상품명에서 품번 추출 (나이키형/아디다스형 패턴)."""
+        """상품명에서 품번 추출 (나이키/아디다스/푸마/뉴발란스 등)."""
         BLACKLIST = {"BC", "LO", "PD", "LE"}
         for pattern in [
+            # 나이키: HF0015-002, IO7727-100
             r"\b([A-Z]{2}\d{4}-\d{3})\b",
+            # 뉴발란스: NBNEG21203_60, NBPDGS114W_10
+            r"\b(NB[A-Z]{3,6}\d{3,5}[A-Z]?_\d{2})\b",
+            # 뉴발란스: U188W98U, NBPQGS154L
+            r"\b(NB[A-Z]{3,6}\d{3,5}[A-Z]?)\b",
+            # 푸마: 528564-48, 399827-01
+            r"\b(\d{6}-\d{2})\b",
+            # 아디다스/일반: AB12345, ABC1234
             r"\b([A-Z]{2,3}\d{4,5}[A-Z]?\d?)\b",
         ]:
             for m in re.finditer(pattern, name):
