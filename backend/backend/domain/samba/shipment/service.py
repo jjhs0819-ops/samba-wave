@@ -351,8 +351,10 @@ class SambaShipmentService:
                 # OOM 방지: 전송에 불필요한 대용량 필드 제외
                 pd = p.model_dump(exclude={"last_sent_data", "extra_data"})
 
-                # 상세 HTML 재생성
-                pd["detail_html"] = await self._build_detail_html(pd)
+                # 상세 HTML 재생성 (스마트스토어 그룹전송)
+                pd["detail_html"] = await self._build_detail_html(
+                    pd, market_type="smartstore"
+                )
 
                 # 정책 기반 판매가 계산 (기존 _transmit_product 라인 313-341 동일 패턴)
                 if policy and policy.pricing:
@@ -1183,6 +1185,21 @@ class SambaShipmentService:
                 # 마켓별 판매가 계산 (product_dict 원본 보호를 위해 복사본 사용)
                 acct_product = dict(product_dict)
 
+                # 마켓별 상세페이지 템플릿이 있으면 재생성
+                _policy_extras = {}
+                if product_row.applied_policy_id:
+                    _pol_repo = SambaPolicyRepository(acct_session)
+                    _pol = await _pol_repo.get_async(product_row.applied_policy_id)
+                    if _pol and _pol.extras:
+                        _policy_extras = _pol.extras
+                _mkt_templates = _policy_extras.get("market_detail_templates") or {}
+                if _mkt_templates.get(market_type):
+                    # 마켓 전용 템플릿 존재 → 해당 마켓용 상세 HTML 재생성
+                    _svc = SambaShipmentService(acct_session)
+                    acct_product["detail_html"] = await _svc._build_detail_html(
+                        acct_product, market_type=market_type
+                    )
+
                 # 마켓별 상품명 조합 덮어쓰기
                 _nr = product_dict.get("_name_rule")
                 if _nr and getattr(_nr, "market_name_compositions", None):
@@ -1587,8 +1604,13 @@ class SambaShipmentService:
 
     # ==================== 상세페이지 HTML 생성 ====================
 
-    async def _build_detail_html(self, product: dict[str, Any]) -> str:
+    async def _build_detail_html(
+        self, product: dict[str, Any], market_type: str = ""
+    ) -> str:
         """정책의 상세 템플릿(상단/하단 이미지)과 상품 이미지를 조합하여 상세 HTML 생성.
+
+        market_type이 주어지면 마켓별 전용 템플릿을 우선 사용하고,
+        없으면 공통 템플릿으로 fallback.
 
         구조: 상단이미지 → 대표이미지 → 추가이미지 → 하단이미지
         """
@@ -1627,8 +1649,14 @@ class SambaShipmentService:
             policy_repo = SambaPolicyRepository(self.session)
             policy = await policy_repo.get_async(policy_id)
             if policy and policy.extras:
-                template_id = policy.extras.get("detail_template_id")
-                logger.info(f"[상세HTML] 정책 {policy_id} 템플릿ID: {template_id}")
+                # 마켓별 전용 템플릿 우선, 없으면 공통 템플릿 fallback
+                market_templates = policy.extras.get("market_detail_templates") or {}
+                template_id = (
+                    market_templates.get(market_type) if market_type else None
+                ) or policy.extras.get("detail_template_id")
+                logger.info(
+                    f"[상세HTML] 정책 {policy_id} 마켓={market_type} 템플릿ID: {template_id}"
+                )
                 if template_id:
                     tpl_repo = BaseRepository(self.session, SambaDetailTemplate)
                     tpl = await tpl_repo.get_async(template_id)

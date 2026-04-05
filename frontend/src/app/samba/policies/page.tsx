@@ -98,6 +98,7 @@ export default function PoliciesPage() {
   const nameRulesRef = useRef<SambaNameRule[]>([])
   nameRulesRef.current = nameRules
   const [selectedDetailTemplateId, setSelectedDetailTemplateId] = useState('')
+  const [marketDetailTemplates, setMarketDetailTemplates] = useState<Record<string, string>>({})
   const [selectedNameRuleId, setSelectedNameRuleId] = useState('')
   const [showTemplateEditor, setShowTemplateEditor] = useState(false)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
@@ -222,6 +223,7 @@ export default function PoliciesPage() {
     setMarketPolicies(mp)
     // extras 복원
     setSelectedDetailTemplateId(p.extras?.detail_template_id || '')
+    setMarketDetailTemplates(p.extras?.market_detail_templates || {})
     setSelectedNameRuleId(p.extras?.name_rule_id || '')
     setShowForm(true)
   }
@@ -247,6 +249,7 @@ export default function PoliciesPage() {
         market_policies: marketPolicies,
         extras: {
           detail_template_id: selectedDetailTemplateId || undefined,
+          market_detail_templates: Object.keys(marketDetailTemplates).length > 0 ? marketDetailTemplates : undefined,
           name_rule_id: selectedNameRuleId || undefined,
         },
       }
@@ -969,7 +972,69 @@ export default function PoliciesPage() {
           )
         })()}
 
-        {!selectedDetailTemplateId && (
+        {/* ── 마켓별 개별 상세페이지 ── */}
+        <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', marginTop: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#51CF66' }}>마켓별 개별 설정</span>
+            <span style={{ fontSize: '0.72rem', color: '#666' }}>특정 마켓에 다른 상세페이지 템플릿을 적용합니다</span>
+          </div>
+          {/* 설정된 마켓 목록 */}
+          {Object.entries(marketDetailTemplates).map(([mkt, tplId]) => {
+            const mLabel = MARKETS.find(m => m.id === mkt)?.label || mkt
+            const tplName = detailTemplates.find(t => t.id === tplId)?.name || '(미선택)'
+            return (
+              <div key={mkt} style={{ marginBottom: '0.5rem', padding: '0.5rem', background: 'rgba(81,207,102,0.05)', border: '1px solid rgba(81,207,102,0.15)', borderRadius: '6px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#51CF66' }}>{mLabel}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <select
+                      value={tplId || ''}
+                      onChange={(e) => {
+                        const next = { ...marketDetailTemplates }
+                        if (e.target.value) {
+                          next[mkt] = e.target.value
+                        } else {
+                          delete next[mkt]
+                        }
+                        setMarketDetailTemplates(Object.keys(next).length > 0 ? next : {})
+                      }}
+                      style={{ ...inputStyle, width: '180px', fontSize: '0.75rem' }}
+                    >
+                      <option value="">공통 템플릿 사용</option>
+                      {detailTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                    <button onClick={() => {
+                      const next = { ...marketDetailTemplates }
+                      delete next[mkt]
+                      setMarketDetailTemplates(Object.keys(next).length > 0 ? next : {})
+                    }} style={{ fontSize: '0.65rem', color: '#FF6B6B', background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '1px 6px', cursor: 'pointer' }}>삭제</button>
+                  </div>
+                </div>
+                {tplId && (
+                  <span style={{ fontSize: '0.68rem', color: '#888', marginTop: '0.25rem', display: 'block' }}>
+                    템플릿: {tplName}
+                  </span>
+                )}
+              </div>
+            )
+          })}
+          {/* 마켓 추가 드롭다운 */}
+          <select
+            value=""
+            onChange={async (e) => {
+              if (!e.target.value) return
+              setMarketDetailTemplates(prev => ({ ...prev, [e.target.value]: '' }))
+            }}
+            style={{ ...inputStyle, width: 'auto', fontSize: '0.75rem' }}
+          >
+            <option value="">+ 마켓 추가</option>
+            {MARKETS.filter(m => !marketDetailTemplates[m.id]).map(m => (
+              <option key={m.id} value={m.id}>{m.label}</option>
+            ))}
+          </select>
+        </div>
+
+        {!selectedDetailTemplateId && Object.keys(marketDetailTemplates).length === 0 && (
           <p style={{ textAlign: 'center', color: '#555', padding: '2rem 0', fontSize: '0.875rem' }}>템플릿을 선택하거나 신규생성하세요</p>
         )}
       </div>

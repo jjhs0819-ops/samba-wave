@@ -159,6 +159,7 @@ export interface SambaPolicy {
   market_policies?: Record<string, unknown>;
   extras?: {
     detail_template_id?: string;
+    market_detail_templates?: Record<string, string>;
     name_rule_id?: string;
     forbidden_text?: string;
     deletion_text?: string;
