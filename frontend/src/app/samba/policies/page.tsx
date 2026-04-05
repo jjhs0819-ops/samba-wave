@@ -49,6 +49,8 @@ interface MarketPolicyForm {
   // 스마트스토어 전용
   discountRate: number  // 즉시할인율 (%)
   maxStock: number      // 최대 재고수량 (0=무제한)
+  // 플레이오토 전용
+  origin: string        // 원산지
 }
 
 
