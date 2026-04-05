@@ -1011,6 +1011,40 @@ class ImageTransformService:
                             product_result["failed"] += 1
                     update_data["detail_images"] = new_details
 
+            # ── 모델→상품 모드: CLIP으로 모델컷만 식별하여 rembg 적용 ──
+            elif mode == "model_to_product" and product_images:
+                from backend.domain.samba.image.image_filter_service import (
+                    ImageFilterService,
+                )
+
+                filter_svc = ImageFilterService(self.session)
+                classifications = await filter_svc.classify_images_clip(product_images)
+                # 모델컷 URL 집합
+                model_cut_urls = {
+                    c["url"] for c in classifications if c["type"] == "other"
+                }
+                logger.info(
+                    f"[모델→상품] {pid} — 총 {len(product_images)}장 중 "
+                    f"모델컷 {len(model_cut_urls)}장 변환 대상"
+                )
+
+                updated_images = list(product_images)
+                for idx, img_url in enumerate(updated_images):
+                    if img_url not in model_cut_urls:
+                        continue  # 상품컷은 그대로 유지
+                    try:
+                        img = await self._download_image(img_url, client=_dl_client)
+                        transformed = await self._remove_background_rembg(img)
+                        new_url = await self._save_image(transformed, img_url)
+                        updated_images[idx] = new_url
+                        product_result["transformed"] += 1
+                    except Exception as e:
+                        logger.error(f"[모델→상품] {pid} 이미지 변환 실패: {e}")
+                        product_result["failed"] += 1
+
+                if product_result["transformed"] > 0:
+                    update_data["images"] = updated_images
+
             # ── 배경제거 등 기본 모드: scope 그대로 사용 ──
             else:
                 use_thumbnail = scope.get("thumbnail", False)

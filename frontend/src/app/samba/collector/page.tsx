@@ -1073,6 +1073,7 @@ export default function CollectorPage() {
           <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
           <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
             <option value="background">배경 제거</option>
+            <option value="model_to_product">모델→상품</option>
             <option value="scene">연출컷</option>
             <option value="model">모델 착용</option>
           </select>
