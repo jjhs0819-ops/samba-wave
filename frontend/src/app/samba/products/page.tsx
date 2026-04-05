@@ -1039,7 +1039,7 @@ export default function ProductsPage() {
             const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
             // allProducts에 없는 상품 정보 미리 로드
             const missingIds = ids.filter(id => !allProducts.find(p => p.id === id))
-            let productMap: Record<string, typeof allProducts[0]> = {}
+            const productMap: Record<string, typeof allProducts[0]> = {}
             allProducts.forEach(p => { productMap[p.id] = p })
             if (missingIds.length > 0) {
               try {
