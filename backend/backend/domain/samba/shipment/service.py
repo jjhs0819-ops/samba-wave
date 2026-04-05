@@ -1195,7 +1195,9 @@ class SambaShipmentService:
                 _mkt_templates = _policy_extras.get("market_detail_templates") or {}
                 if _mkt_templates.get(market_type):
                     # 마켓 전용 템플릿 존재 → 해당 마켓용 상세 HTML 재생성
-                    _svc = SambaShipmentService(acct_session)
+                    _svc = SambaShipmentService(
+                        SambaShipmentRepository(acct_session), acct_session
+                    )
                     acct_product["detail_html"] = await _svc._build_detail_html(
                         acct_product, market_type=market_type
                     )
