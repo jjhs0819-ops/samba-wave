@@ -332,7 +332,7 @@ def _build_market_product_url(
 async def sync_cs_from_markets(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """마켓에서 CS 문의 동기화 (스마트스토어 고객문의 + 톡톡)."""
+    """마켓에서 CS 문의 동기화 (스마트스토어 + 플레이오토)."""
     import logging
     from datetime import datetime, timedelta
     from sqlmodel import select
