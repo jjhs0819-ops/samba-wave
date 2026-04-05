@@ -1214,6 +1214,17 @@ class JobWorker:
                 await repo.fail_job(job.id, f"검색 실패: {e}")
                 return
 
+        # LOTTEON: category_filter(BC코드, 콤마 구분)로 검색 결과 사후 필터링
+        if site == "LOTTEON" and sf.category_filter:
+            bc_set = set(sf.category_filter.split(","))
+            before = len(items_list)
+            items_list = [
+                item for item in items_list if (item.get("scat_no") or "") in bc_set
+            ]
+            logger.info(
+                f"[잡워커] LOTTEON BC코드 필터 {sf.category_filter}: {before}→{len(items_list)}건"
+            )
+
         await repo.update_progress(job.id, 0, remaining)
 
         # 카테고리 매핑 (패션플러스)
@@ -1264,9 +1275,33 @@ class JobWorker:
             if not p_name and not sale_price:
                 continue
 
+            # LOTTEON: search 결과의 scat_no로 카테고리 미리 매핑
+            _lotteon_cat = ""
+            _lotteon_cat1 = ""
+            _lotteon_cat2 = ""
+            _lotteon_cat3 = ""
+            _lotteon_scat_no = ""
+            if site == "LOTTEON":
+                from backend.domain.samba.proxy.lotteon_sourcing import (
+                    _LOTTEON_SCAT_NAMES,
+                )
+
+                _lotteon_scat_no = item.get("scat_no") or item.get("scatNo") or ""
+                if _lotteon_scat_no:
+                    _cat_name = _LOTTEON_SCAT_NAMES.get(_lotteon_scat_no, "")
+                    if _cat_name:
+                        _lotteon_cat = _cat_name
+                        _parts = _cat_name.split(" > ")
+                        _lotteon_cat1 = _parts[0] if len(_parts) > 0 else ""
+                        _lotteon_cat2 = _parts[1] if len(_parts) > 1 else ""
+                        _lotteon_cat3 = _parts[2] if len(_parts) > 2 else ""
+
             # 상세 페이지에서 추가 이미지/고시정보 보충 (서버 HTTP 우선)
+            # LOTTEON: qapi 검색 결과에 이름/가격/이미지/BC코드/혜택가가 포함되므로 상세 스킵
             detail = {}
             _skip_detail = _search_kwargs.get("_skip_detail", False)
+            if site == "LOTTEON":
+                _skip_detail = True
             if not _skip_detail:
                 # 서버 HTTP 상세 조회 (빠르고 안정적)
                 if hasattr(client, "get_detail"):
@@ -1303,11 +1338,18 @@ class JobWorker:
                 "images": images,
                 "options": detail.get("options") or item.get("options", []),
                 "category": detail.get("category")
+                or _lotteon_cat
                 or item.get("category", "")
                 or _category1_name,
-                "category1": detail.get("category1") or item.get("category1", ""),
-                "category2": detail.get("category2") or item.get("category2", ""),
-                "category3": detail.get("category3") or item.get("category3", ""),
+                "category1": detail.get("category1")
+                or _lotteon_cat1
+                or item.get("category1", ""),
+                "category2": detail.get("category2")
+                or _lotteon_cat2
+                or item.get("category2", ""),
+                "category3": detail.get("category3")
+                or _lotteon_cat3
+                or item.get("category3", ""),
                 "detail_html": detail.get("detail_html") or item.get("detail_html", ""),
                 "detail_images": detail.get("detail_images")
                 if len(detail.get("detail_images") or []) > len(images)
@@ -1391,6 +1433,87 @@ class JobWorker:
         logger.info(
             f"[잡워커] {site} 수집 완료: {job.id} ({total_saved}건{policy_msg})"
         )
+
+        # LOTTEON: 수집 완료 후 상세 보강 (품번/제조국/성별/시즌/색상/재질)
+        # 10건 병렬로 get_detail 호출하여 속도 개선
+        if site == "LOTTEON" and total_saved > 0 and client:
+            logger.info(f"[잡워커] LOTTEON 상세 보강 시작: {total_saved}건 (10건 병렬)")
+            enrich_stmt = select(CPModel).where(
+                CPModel.search_filter_id == filter_id,
+                CPModel.source_site == "LOTTEON",
+            )
+            products_to_enrich = (await session.execute(enrich_stmt)).scalars().all()
+
+            BATCH_SIZE = 10
+            enriched = 0
+            total = len(products_to_enrich)
+
+            for batch_start in range(0, total, BATCH_SIZE):
+                batch = products_to_enrich[batch_start : batch_start + BATCH_SIZE]
+                # 10건 동시 get_detail 호출
+                details = await asyncio.gather(
+                    *(client.get_detail(p.site_product_id) for p in batch),
+                    return_exceptions=True,
+                )
+                for prod, detail in zip(batch, details):
+                    if isinstance(detail, Exception):
+                        logger.warning(
+                            f"[잡워커] LOTTEON 상세 보강 실패 {prod.site_product_id}: {detail}"
+                        )
+                        continue
+                    if not detail:
+                        continue
+                    changed = False
+                    for field in (
+                        "material",
+                        "color",
+                        "origin",
+                        "sex",
+                        "season",
+                        "care_instructions",
+                        "quality_guarantee",
+                    ):
+                        val = detail.get(field, "")
+                        if val and not getattr(prod, field, ""):
+                            setattr(prod, field, val)
+                            changed = True
+                    # 품번 (style_code)
+                    sc = detail.get("style_code") or detail.get("styleCode") or ""
+                    if sc and not (prod.style_code or ""):
+                        prod.style_code = sc
+                        changed = True
+                    # 제조사
+                    mfr = detail.get("manufacturer", "")
+                    if mfr and not (prod.manufacturer or ""):
+                        prod.manufacturer = mfr
+                        changed = True
+                    # 이미지 보강
+                    d_imgs = detail.get("images") or []
+                    if len(d_imgs) > len(prod.images or []):
+                        prod.images = d_imgs
+                        changed = True
+                    d_detail_imgs = detail.get("detail_images") or []
+                    if d_detail_imgs and not (prod.detail_images or []):
+                        prod.detail_images = d_detail_imgs
+                        changed = True
+                    # 옵션 보강
+                    d_opts = detail.get("options") or []
+                    if d_opts and not (prod.options or []):
+                        prod.options = d_opts
+                        changed = True
+                    if changed:
+                        session.add(prod)
+                        enriched += 1
+                await session.commit()
+                done = min(batch_start + BATCH_SIZE, total)
+                logger.info(
+                    f"[잡워커] LOTTEON 상세 보강 [{done}/{total}] ({enriched}건 업데이트)"
+                )
+                await asyncio.sleep(0.3)
+
+            logger.info(
+                f"[잡워커] LOTTEON 상세 보강 완료: {enriched}/{total}건 업데이트"
+            )
 
     async def _run_stub(self, job, repo, name: str):
         """미구현 잡 타입 스텁."""

@@ -1995,7 +1995,9 @@ async def brand_create_groups(
             category_filter = code or None
         else:  # LOTTEON
             keyword = body.brand_name or body.brand or ""
-            category_filter = code or None
+            # 합산된 BC코드들을 콤마로 연결 (같은 path의 여러 BC코드)
+            bc_codes = cat.get("bc_codes") or ([code] if code else [])
+            category_filter = ",".join(bc_codes) if bc_codes else None
 
         filter_data: dict = {
             "source_site": body.source_site,

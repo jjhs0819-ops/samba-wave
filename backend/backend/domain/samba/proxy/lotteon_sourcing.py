@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -71,6 +72,84 @@ _LOTTEON_SCAT_NAMES: dict[str, str] = {
     # 스포츠신발 — 여성 (롯데ON 실제 브레드크럼 확인)
     "BC41090500": "스포츠/레저 > 신발 > 여성스포츠신발 > 스니커즈",
     "BC41090900": "스포츠/레저 > 신발 > 여성스포츠신발 > 운동화",
+    # ── 아래: pbf dispCategoryInfo 기반 자동 매핑 (2026-04-05) ──
+    # 가방/패션ACC
+    "BC04050400": "가방/패션ACC > 벨트 > 캐주얼벨트",
+    "BC35030600": "가방/패션ACC > 모자 > 야구모자",
+    "BC35040400": "가방/패션ACC > 선글라스/안경 > 선글라스",
+    # 슈즈 — 남성
+    "BC32020500": "슈즈 > 남성슈즈 > 샌들/슬리퍼",
+    "BC32020600": "슈즈 > 남성슈즈 > 스니커즈/운동화 > 스니커즈",
+    "BC32020700": "슈즈 > 남성슈즈 > 샌들/슬리퍼",
+    "BC41030300": "슈즈 > 남성슈즈 > 샌들/슬리퍼",
+    "BC41030500": "슈즈 > 남성슈즈 > 샌들/슬리퍼",
+    "BC41030900": "슈즈 > 남성슈즈 > 스니커즈/운동화 > 런닝화/워킹화",
+    # 슈즈 — 여성
+    "BC32040500": "슈즈 > 여성슈즈 > 스니커즈/운동화 > 스니커즈",
+    "BC32040600": "슈즈 > 여성슈즈 > 샌들/뮬/블로퍼",
+    "BC41090100": "슈즈 > 여성슈즈 > 스니커즈/운동화 > 런닝화/워킹화",
+    "BC41090400": "슈즈 > 여성슈즈 > 샌들/뮬/블로퍼",
+    # 스포츠/레저 — 의류
+    "BC41040800": "스포츠/레저 > 스포츠웨어/슈즈 > 남성스포츠의류 > 바람막이/자켓",
+    # 스포츠/레저 — 가방
+    "BC41050901": "스포츠/레저 > 스포츠웨어/슈즈 > 스포츠가방 > 백팩",
+    "BC41050902": "스포츠/레저 > 스포츠웨어/슈즈 > 스포츠가방 > 백팩",
+    "BC41051001": "스포츠/레저 > 스포츠웨어/슈즈 > 스포츠가방 > 숄더백",
+    "BC41051101": "스포츠/레저 > 스포츠웨어/슈즈 > 스포츠가방 > 크로스백",
+    "BC41051102": "스포츠/레저 > 스포츠웨어/슈즈 > 스포츠가방 > 크로스백",
+    "BC41051202": "스포츠/레저 > 스포츠웨어/슈즈 > 스포츠가방 > 토트백",
+    # 스포츠/레저 — 모자
+    "BC41060200": "스포츠/레저 > 스포츠웨어/슈즈 > 스포츠모자 > 스냅백",
+    "BC41060300": "스포츠/레저 > 스포츠웨어/슈즈 > 스포츠모자 > 스냅백",
+    "BC41060400": "스포츠/레저 > 스포츠웨어/슈즈 > 스포츠모자 > 스냅백",
+    # 스포츠/레저 — 잡화/신발
+    "BC41081501": "스포츠/레저 > 스포츠웨어/슈즈 > 스포츠잡화 > 양말",
+    "BC41081502": "스포츠/레저 > 스포츠웨어/슈즈 > 스포츠잡화 > 양말",
+    "BC41090200": "스포츠/레저 > 스포츠웨어/슈즈 > 여성스포츠슈즈 > 뮬",
+    "BC41090600": "스포츠/레저 > 스포츠웨어/슈즈 > 여성스포츠슈즈 > 슬리퍼",
+    "BC41091000": "슈즈 > 여성슈즈 > 스니커즈/운동화 > 런닝화/워킹화",
+    # ── 등산 카테고리 (노스페이스 등) ──
+    "BC20020200": "등산 > 남성등산의류 > 긴바지",
+    "BC20020300": "등산 > 남성등산의류 > 다운/패딩",
+    "BC20020600": "등산 > 남성등산의류 > 바람막이/재킷",
+    "BC20020900": "등산 > 남성등산의류 > 조끼/베스트",
+    "BC20021000": "등산 > 남성등산의류 > 집업/후리스",
+    "BC20021201": "등산 > 남성등산의류 > 티셔츠",
+    "BC20021202": "등산 > 남성등산의류 > 티셔츠",
+    "BC20021203": "등산 > 남성등산의류 > 티셔츠",
+    "BC20030300": "등산 > 등산배낭/잡화 > 등산모자",
+    "BC20030800": "등산 > 등산배낭/잡화 > 소형배낭",
+    "BC20030900": "등산 > 등산배낭/잡화 > 대형배낭",
+    "BC20041000": "등산 > 등산용품/장비 > 기타등산용품",
+    "BC20050100": "등산 > 등산화/트래킹화 > 등산화",
+    "BC20050500": "등산 > 등산화/트래킹화 > 트레킹화",
+    "BC20060100": "등산 > 여성등산의류 > 긴바지",
+    "BC20060200": "등산 > 여성등산의류 > 다운/패딩",
+    "BC20060500": "등산 > 여성등산의류 > 바람막이/재킷",
+    "BC20060800": "등산 > 여성등산의류 > 조끼/베스트",
+    "BC20061202": "등산 > 여성등산의류 > 티셔츠",
+    # ── 스포츠 의류 (아디다스 등) ──
+    "BC41040100": "스포츠/레저 > 스포츠웨어/슈즈 > 남성스포츠의류 > 긴바지",
+    "BC41040200": "스포츠/레저 > 스포츠웨어/슈즈 > 남성스포츠의류 > 티셔츠",
+    "BC41040700": "스포츠/레저 > 스포츠웨어/슈즈 > 남성스포츠의류 > 민소매/탑",
+    "BC41040900": "스포츠/레저 > 스포츠웨어/슈즈 > 남성스포츠의류 > 반바지",
+    "BC41041000": "스포츠/레저 > 스포츠웨어/슈즈 > 남성스포츠의류 > 티셔츠",
+    "BC41041200": "스포츠/레저 > 스포츠웨어/슈즈 > 남성스포츠의류 > 조끼/베스트",
+    "BC41041300": "스포츠/레저 > 스포츠웨어/슈즈 > 남성스포츠의류 > 집업/후리스",
+    "BC41041400": "스포츠/레저 > 스포츠웨어/슈즈 > 남성스포츠의류 > 트레이닝복",
+    "BC41051301": "스포츠/레저 > 스포츠웨어/슈즈 > 스포츠가방 > 힙색",
+    "BC41100100": "스포츠/레저 > 스포츠웨어/슈즈 > 여성스포츠의류 > 긴바지",
+    "BC41100200": "스포츠/레저 > 스포츠웨어/슈즈 > 여성스포츠의류 > 티셔츠",
+    "BC41100700": "스포츠/레저 > 스포츠웨어/슈즈 > 여성스포츠의류 > 민소매/탑",
+    "BC41100800": "스포츠/레저 > 스포츠웨어/슈즈 > 여성스포츠의류 > 자켓/점퍼",
+    "BC41100900": "스포츠/레저 > 스포츠웨어/슈즈 > 여성스포츠의류 > 반바지/스커트",
+    "BC41101000": "스포츠/레저 > 스포츠웨어/슈즈 > 여성스포츠의류 > 티셔츠",
+    "BC41101200": "스포츠/레저 > 스포츠웨어/슈즈 > 여성스포츠의류 > 자켓/점퍼",
+    "BC41101400": "스포츠/레저 > 스포츠웨어/슈즈 > 여성스포츠의류 > 집업/후리스",
+    "BC41101500": "스포츠/레저 > 스포츠웨어/슈즈 > 여성스포츠의류 > 트레이닝복",
+    "BC41101800": "스포츠/레저 > 스포츠웨어/슈즈 > 여성스포츠의류 > 반바지/스커트",
+    # ── 기타 ──
+    "BC23040500": "패션의류 > 남성의류 > 티셔츠",
 }
 
 
@@ -116,22 +195,25 @@ class LotteonSourcingClient:
     # 검색
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # qapi JSON 검색 API (페이지네이션 지원)
+    # ------------------------------------------------------------------
+
     async def search_products(
         self,
         keyword: str,
         page: int = 1,
-        size: int = 40,
-        display_category_id: str = "",
+        size: int = 60,
         **filters: Any,
     ) -> list[dict[str, Any]]:
-        """롯데ON 상품 검색.
+        """롯데ON 상품 검색 — qapi JSON API 사용.
 
-        검색 페이지 HTML을 파싱하여 상품 목록을 추출한다.
+        csearch qapi 엔드포인트로 JSON 직접 호출. offset 기반 페이지네이션.
 
         Args:
-          keyword: 검색 키워드
-          page: 페이지 번호 (1부터)
-          size: 페이지당 결과 수
+          keyword: 검색 키워드 (브랜드명 등)
+          page: 페이지 번호 (1부터, offset = (page-1)*size 로 변환)
+          size: 페이지당 결과 수 (최대 60)
           **filters: 추가 필터
 
         Returns:
@@ -147,22 +229,22 @@ class LotteonSourcingClient:
             _qs = _pq(_up(keyword).query)
             keyword = _qs.get("q", [keyword])[0]
 
+        offset = (page - 1) * min(size, 60)
         search_url = (
-            f"{self.SEARCH_URL}?render=search&platform=pc"
-            f"&q={quote(keyword)}&page={page}&size={min(size, 60)}&mallId=2"
+            f"{self.SEARCH_URL}?render=qapi&platform=pc"
+            f"&collection_id=201&q={quote(keyword)}"
+            f"&mallId=2&u2={offset}&u3={min(size, 60)}"
         )
-        # 카테고리 필터 (displayCategoryId)
-        if display_category_id:
-            search_url += f"&dpCtgrNo={quote(display_category_id)}"
         logger.info(
-            f'[LOTTEON] 검색 시작: "{keyword}" (page={page}, cat={display_category_id or "전체"})'
+            f'[LOTTEON] qapi 검색: "{keyword}" (offset={offset}, size={min(size, 60)})'
         )
 
         try:
+            qapi_headers = {**self.HEADERS, "Accept": "application/json, */*"}
             async with httpx.AsyncClient(
                 timeout=self._timeout, follow_redirects=True
             ) as client:
-                resp = await client.get(search_url, headers=self.HEADERS)
+                resp = await client.get(search_url, headers=qapi_headers)
 
                 # 차단 감지
                 if resp.status_code in (429, 403):
@@ -171,22 +253,127 @@ class LotteonSourcingClient:
                     raise RateLimitError(resp.status_code, retry_after)
 
                 if resp.status_code != 200:
-                    logger.warning(f"[LOTTEON] 검색 페이지 HTTP {resp.status_code}")
+                    logger.warning(f"[LOTTEON] qapi HTTP {resp.status_code}")
                     return []
 
-            html = resp.text
-            products = self._parse_search_html(html, keyword)
-            logger.info(f'[LOTTEON] 검색 완료: "{keyword}" -> {len(products)}개')
+            data = resp.json()
+            items = data.get("itemList", [])
+            total = data.get("total", 0)
+            now_iso = datetime.now(tz=timezone.utc).isoformat()
+
+            products = self._convert_qapi_items(items, now_iso)
+            logger.info(
+                f'[LOTTEON] qapi 완료: "{keyword}" -> {len(products)}개 (total={total})'
+            )
             return products
 
         except RateLimitError:
             raise
         except httpx.TimeoutException:
-            logger.error(f"[LOTTEON] 검색 타임아웃: {keyword}")
+            logger.error(f"[LOTTEON] qapi 타임아웃: {keyword}")
             return []
         except Exception as e:
-            logger.error(f"[LOTTEON] 검색 실패: {keyword} — {e}")
+            logger.error(f"[LOTTEON] qapi 실패: {keyword} — {e}")
             return []
+
+    async def search_products_total(self, keyword: str) -> int:
+        """키워드 검색 결과의 전체 상품 수(total)만 조회."""
+        if keyword.startswith("http") and "lotteon.com" in keyword:
+            from urllib.parse import urlparse as _up, parse_qs as _pq
+
+            _qs = _pq(_up(keyword).query)
+            keyword = _qs.get("q", [keyword])[0]
+
+        url = (
+            f"{self.SEARCH_URL}?render=qapi&platform=pc"
+            f"&collection_id=201&q={quote(keyword)}&mallId=2&u2=0&u3=1"
+        )
+        try:
+            qapi_headers = {**self.HEADERS, "Accept": "application/json, */*"}
+            async with httpx.AsyncClient(
+                timeout=self._timeout, follow_redirects=True
+            ) as client:
+                resp = await client.get(url, headers=qapi_headers)
+                if resp.status_code == 200:
+                    return resp.json().get("total", 0)
+        except Exception as e:
+            logger.error(f"[LOTTEON] total 조회 실패: {keyword} — {e}")
+        return 0
+
+    def _convert_qapi_items(
+        self, items: list[dict[str, Any]], now_iso: str
+    ) -> list[dict[str, Any]]:
+        """qapi itemList를 표준 상품 dict로 변환."""
+        from urllib.parse import unquote
+
+        products: list[dict[str, Any]] = []
+        for item in items:
+            inner = item.get("data", {})
+            spd_no = inner.get("spd_no", "")
+            if not spd_no:
+                # key 형식: "LE1219458697_1316330136" → spd_no 추출
+                key = item.get("key", "")
+                spd_no = key.split("_")[0] if "_" in key else key
+
+            if not spd_no:
+                continue
+
+            # 가격 추출
+            price_map: dict[str, int] = {}
+            for p in item.get("priceInfo", []):
+                price_map[p.get("type", "")] = p.get("num", 0)
+
+            original_price = price_map.get("original", 0)
+            final_price = price_map.get("final", 0)
+
+            # 카드 할인율 추출 → 최대혜택가 계산
+            card_discount = 0
+            for promo in item.get("promotionInfo", []):
+                if promo.get("type") == "card":
+                    card_discount = promo.get("num", 0)
+                    break
+            best_benefit_price = round(final_price * (1 - card_discount / 100))
+
+            # 이미지
+            thumbnail = item.get("productImage", "")
+
+            # 상품명 (qapi는 디코딩된 텍스트, inner.name은 URL인코딩)
+            name = item.get("productName", "")
+            if not name and inner.get("name"):
+                name = unquote(inner["name"])
+
+            # 브랜드
+            brand = item.get("brandName", "")
+            if not brand and inner.get("brand"):
+                brand = unquote(inner["brand"])
+
+            # BC 카테고리 코드 (scatNo) — 검색 단계에서 바로 카테고리 매핑 가능
+            scat_no = inner.get("category", "")
+
+            products.append(
+                {
+                    "siteProductId": spd_no,
+                    "site_product_id": spd_no,
+                    "name": name,
+                    "brand": brand,
+                    "salePrice": final_price,
+                    "sale_price": final_price,
+                    "originalPrice": original_price,
+                    "original_price": original_price,
+                    "thumbnailImageUrl": thumbnail,
+                    "thumbnail_image_url": thumbnail,
+                    "sourceUrl": f"{self.PRODUCT_URL}/{inner.get('pd_no', spd_no)}",
+                    "source_url": f"{self.PRODUCT_URL}/{inner.get('pd_no', spd_no)}",
+                    "spdNo": spd_no,
+                    "scatNo": scat_no,
+                    "scat_no": scat_no,
+                    "bestBenefitPrice": best_benefit_price,
+                    "best_benefit_price": best_benefit_price,
+                    "collectedAt": now_iso,
+                    "collected_at": now_iso,
+                }
+            )
+        return products
 
     def _parse_search_html(self, html: str, keyword: str) -> list[dict[str, Any]]:
         """검색 결과 HTML에서 상품 정보 추출.
@@ -754,19 +941,38 @@ class LotteonSourcingClient:
                 if not detail:
                     return {}
 
-                # 2단계: pbf API로 옵션/재고/이미지 보완
+                # 2단계: pbf API로 옵션/재고/이미지 보완 + artlInfo 파싱
                 sitm_no = self._extract_sitmno_from_html(html)
+                pd_no_from_pbf = ""
                 if sitm_no:
                     pbf_data = await self._fetch_pbf_detail(sitm_no, client)
                     if pbf_data:
                         self._enrich_from_pbf(detail, pbf_data)
+                        # sitm 응답에도 artlInfo가 포함됨 — 고시정보 파싱
+                        self._enrich_from_pbf_pd(detail, pbf_data)
+                        # pdNo 추출 (3단계 폴백용)
+                        pd_no_from_pbf = str(
+                            (pbf_data.get("basicInfo") or {}).get("pdNo", "")
+                        ).strip()
                         logger.info(
-                            f"[LOTTEON] pbf 보완 완료: {product_no} (sitmNo={sitm_no})"
+                            f"[LOTTEON] pbf 보완 완료: {product_no} (sitmNo={sitm_no}, pdNo={pd_no_from_pbf})"
                         )
                     else:
                         logger.debug(f"[LOTTEON] pbf 데이터 없음: {sitm_no}")
                 else:
                     logger.debug(f"[LOTTEON] sitmNo 추출 실패: {product_no}")
+
+                # 3단계: artlInfo가 아직 비어있으면 pd API로 재시도
+                # sitm에서 이미 artlInfo를 파싱했으면 스킵
+                if not detail.get("origin") and not detail.get("manufacturer"):
+                    # pdNo: sitm basicInfo에서 추출 또는 PD 접두사 상품번호
+                    pd_no = pd_no_from_pbf or (
+                        product_no if product_no.startswith("PD") else ""
+                    )
+                    if pd_no:
+                        pd_data = await self._fetch_pbf_pd_detail(pd_no, client)
+                        if pd_data:
+                            self._enrich_from_pbf_pd(detail, pd_data)
 
                 return detail
 
@@ -782,46 +988,71 @@ class LotteonSourcingClient:
     async def search(
         self, keyword: str, max_count: int = 100, **kwargs: Any
     ) -> dict[str, Any]:
-        """worker.py 직접 API 패턴 호환 래퍼 — search_products() 결과를 snake_case 표준 포맷으로 반환.
+        """worker.py 직접 API 패턴 호환 래퍼 — qapi offset 기반 멀티페이지 검색.
 
-        _parse_search_econjs가 camelCase 키(siteProductId, salePrice 등)를 반환하므로
-        worker.py가 기대하는 snake_case 키(site_product_id, sale_price 등)로 변환한다.
+        max_count까지 u2 offset을 증가시키며 상품을 수집한다.
         """
-        category_filter = kwargs.pop("category_filter", "")
-        raw = await self.search_products(
-            keyword, size=min(max_count, 60), display_category_id=category_filter
-        )
-        products = []
-        for item in raw:
-            # camelCase → snake_case 정규화
-            site_product_id = (
-                item.get("site_product_id")
-                or item.get("siteProductId")
-                or item.get("spdNo")
-                or ""
-            )
-            if not site_product_id:
-                continue
-            thumbnail = (
-                item.get("thumbnailImageUrl") or item.get("thumbnail_image_url") or ""
-            )
-            products.append(
-                {
-                    "site_product_id": site_product_id,
-                    "name": item.get("name", ""),
-                    "brand": item.get("brand", ""),
-                    "sale_price": item.get("sale_price") or item.get("salePrice") or 0,
-                    "original_price": item.get("original_price")
-                    or item.get("originalPrice")
-                    or 0,
-                    "images": [thumbnail] if thumbnail else [],
-                    "source_url": item.get("source_url")
-                    or item.get("sourceUrl")
-                    or f"{self.PRODUCT_URL}/{site_product_id}",
-                    "free_shipping": item.get("free_shipping", False),
-                    "options": item.get("options", []),
-                }
-            )
+        kwargs.pop("category_filter", None)
+        kwargs.pop("dispCatNo", None)
+        products: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        offset = 0
+        page_size = 60
+
+        while len(products) < max_count:
+            page_num = (offset // page_size) + 1
+            raw = await self.search_products(keyword, page=page_num, size=page_size)
+            if not raw:
+                break  # 더 이상 결과 없음
+
+            new_count = 0
+            for item in raw:
+                if len(products) >= max_count:
+                    break
+                site_product_id = (
+                    item.get("site_product_id")
+                    or item.get("siteProductId")
+                    or item.get("spdNo")
+                    or ""
+                )
+                if not site_product_id or site_product_id in seen:
+                    continue
+                seen.add(site_product_id)
+                new_count += 1
+                thumbnail = (
+                    item.get("thumbnailImageUrl")
+                    or item.get("thumbnail_image_url")
+                    or ""
+                )
+                products.append(
+                    {
+                        "site_product_id": site_product_id,
+                        "name": item.get("name", ""),
+                        "brand": item.get("brand", ""),
+                        "sale_price": item.get("sale_price")
+                        or item.get("salePrice")
+                        or 0,
+                        "original_price": item.get("original_price")
+                        or item.get("originalPrice")
+                        or 0,
+                        "images": [thumbnail] if thumbnail else [],
+                        "source_url": item.get("source_url")
+                        or item.get("sourceUrl")
+                        or f"{self.PRODUCT_URL}/{site_product_id}",
+                        "free_shipping": item.get("free_shipping", False),
+                        "options": item.get("options", []),
+                        "scat_no": item.get("scat_no") or item.get("scatNo") or "",
+                        "best_benefit_price": item.get("best_benefit_price")
+                        or item.get("bestBenefitPrice")
+                        or 0,
+                    }
+                )
+
+            # 새로운 상품이 0개면 더 이상 가져올 게 없음
+            if new_count == 0:
+                break
+            offset += page_size
+
         return {"products": products, "total": len(products)}
 
     async def get_detail(self, product_id: str) -> dict[str, Any]:
@@ -829,38 +1060,119 @@ class LotteonSourcingClient:
         return await self.get_product_detail(product_id)
 
     async def scan_categories(self, keyword: str, **_kwargs: Any) -> dict[str, Any]:
-        """롯데ON 카테고리 스캔 — 검색 HTML의 displayCategoryFilter에서 전체 카테고리 트리 추출.
+        """롯데ON 카테고리 스캔 — qapi 검색 결과의 BC코드(scat_no)로 카테고리 분포 집계.
 
-        무신사의 필터 API와 동일한 원리: 검색 1회 요청으로 카테고리 트리 + 상품 수를 한번에 가져온다.
-        econJs.SearchApp.create() 안의 displayCategoryFilter 객체를 파싱한다.
+        qapi 검색으로 상품을 가져온 뒤, data.category(BC코드)를 기준으로
+        카테고리별 상품 수를 집계한다. _LOTTEON_SCAT_NAMES로 카테고리 경로를 매핑.
 
         Returns:
             {
-                "categories": [{"categoryCode", "path", "count", "category1", "category2", "category3", "category4"}],
+                "categories": [{"categoryCode", "path", "count", "category1", "category2", "category3"}],
                 "total": int,
                 "groupCount": int,
             }
         """
-        search_url = (
-            f"{self.SEARCH_URL}?render=search&platform=pc"
-            f"&q={quote(keyword)}&page=1&size=1&mallId=2"
-        )
-        logger.info(f'[LOTTEON] 카테고리 스캔 시작: "{keyword}"')
+        logger.info(f'[LOTTEON] 카테고리 스캔 시작 (qapi BC코드): "{keyword}"')
 
-        try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=True
-            ) as client:
-                resp = await client.get(search_url, headers=self.HEADERS)
-                if resp.status_code != 200:
-                    logger.warning(f"[LOTTEON] 카테고리 스캔 HTTP {resp.status_code}")
-                    return {"categories": [], "total": 0, "groupCount": 0}
-                html = resp.text
-        except Exception as e:
-            logger.error(f"[LOTTEON] 카테고리 스캔 요청 실패: {e}")
-            return {"categories": [], "total": 0, "groupCount": 0}
+        # qapi로 최대 500개 상품 검색하여 BC코드 분포 집계
+        cat_counter: dict[str, int] = {}
+        scan_pages = 100  # 100페이지 × 60 = 6,000개
+        for page_num in range(1, scan_pages + 1):
+            try:
+                items = await self.search_products(keyword, page=page_num, size=60)
+                if not items:
+                    break
+                for item in items:
+                    scat = item.get("scatNo") or item.get("scat_no") or ""
+                    if scat:
+                        cat_counter[scat] = cat_counter.get(scat, 0) + 1
+            except Exception as e:
+                logger.warning(f"[LOTTEON] 카테고리 스캔 p{page_num} 실패: {e}")
+                break
 
-        categories = self._parse_display_category_filter(html)
+        # 미매핑 BC코드 자동 매핑: 상품 HTML breadcrumb에서 카테고리 경로 추출
+        unmapped_codes = [bc for bc in cat_counter if bc not in _LOTTEON_SCAT_NAMES]
+        if unmapped_codes:
+            logger.info(
+                f"[LOTTEON] 미매핑 BC코드 {len(unmapped_codes)}개 자동 매핑 시도"
+            )
+            # 미매핑 BC코드별 대표 상품 1개씩 수집 (스캔 중 이미 저장해둔 데이터 활용)
+            bc_to_product: dict[str, str] = {}
+            for page_num in range(1, min(scan_pages + 1, 20)):
+                try:
+                    items = await self.search_products(keyword, page=page_num, size=60)
+                    if not items:
+                        break
+                    for item in items:
+                        scat = item.get("scatNo") or item.get("scat_no") or ""
+                        pid = item.get("spdNo") or item.get("site_product_id") or ""
+                        if scat in unmapped_codes and scat not in bc_to_product and pid:
+                            bc_to_product[scat] = pid
+                    if len(bc_to_product) >= len(unmapped_codes):
+                        break
+                except Exception:
+                    break
+
+            # 병렬로 HTML breadcrumb 추출
+            async def _resolve_bc(bc_code: str, pid: str) -> tuple[str, str]:
+                try:
+                    detail = await self.get_product_detail(pid)
+                    cats = detail.get("categories", [])
+                    if not cats:
+                        cat_str = detail.get("category", "")
+                        if cat_str:
+                            cats = [c.strip() for c in cat_str.split(">") if c.strip()]
+                    if cats:
+                        path = " > ".join(cats[:4])
+                        return bc_code, path
+                except Exception as e:
+                    logger.debug(f"[LOTTEON] BC 자동매핑 실패 {bc_code}: {e}")
+                return bc_code, ""
+
+            resolve_tasks = [_resolve_bc(bc, pid) for bc, pid in bc_to_product.items()]
+            if resolve_tasks:
+                results = await asyncio.gather(*resolve_tasks, return_exceptions=True)
+                mapped_count = 0
+                for r in results:
+                    if isinstance(r, Exception):
+                        continue
+                    bc_code, path = r
+                    if path:
+                        _LOTTEON_SCAT_NAMES[bc_code] = path
+                        mapped_count += 1
+                logger.info(
+                    f"[LOTTEON] 자동 매핑 완료: {mapped_count}/{len(unmapped_codes)}개"
+                )
+
+        # BC코드 → 카테고리 경로 매핑 (같은 path 합산, 미매핑 제외)
+        path_merged: dict[str, dict[str, Any]] = {}
+        for bc_code, count in cat_counter.items():
+            path = _LOTTEON_SCAT_NAMES.get(bc_code, "")
+            if not path:
+                continue  # 미매핑 제외
+            if path in path_merged:
+                path_merged[path]["count"] += count
+                path_merged[path]["bc_codes"].append(bc_code)
+            else:
+                path_merged[path] = {
+                    "bc_codes": [bc_code],
+                    "count": count,
+                }
+
+        categories: list[dict[str, Any]] = []
+        for path, info in sorted(path_merged.items(), key=lambda x: -x[1]["count"]):
+            parts = path.split(" > ")
+            categories.append(
+                {
+                    "categoryCode": info["bc_codes"][0],
+                    "bc_codes": info["bc_codes"],
+                    "path": path,
+                    "count": info["count"],
+                    "category1": parts[0] if len(parts) > 0 else "",
+                    "category2": parts[1] if len(parts) > 1 else "",
+                    "category3": parts[2] if len(parts) > 2 else "",
+                }
+            )
 
         total = sum(c["count"] for c in categories)
         logger.info(
@@ -1043,6 +1355,31 @@ class LotteonSourcingClient:
             logger.debug(f"[LOTTEON] pbf API 실패: {sitm_no} — {e}")
             return None
 
+    async def _fetch_pbf_pd_detail(
+        self, pd_no: str, client: httpx.AsyncClient
+    ) -> Optional[dict[str, Any]]:
+        """pbf /base/pd/ API — artlInfo(고시정보), dispCategoryInfo 포함."""
+        url = (
+            f"{self.PBF_BASE}/product/v2/detail/search/base/pd"
+            f"/{pd_no}?isNotContainOptMapping=true"
+        )
+        pbf_headers = {
+            **self.HEADERS,
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://www.lotteon.com",
+        }
+        try:
+            resp = await client.get(url, headers=pbf_headers)
+            if resp.status_code != 200:
+                return None
+            body = resp.json()
+            if body.get("returnCode") != "200" and body.get("returnCode") != 200:
+                return None
+            return body.get("data")
+        except Exception as e:
+            logger.debug(f"[LOTTEON] pbf pd API 실패: {pd_no} — {e}")
+            return None
+
     def _enrich_from_pbf(self, detail: dict[str, Any], pbf: dict[str, Any]) -> None:
         """pbf API 데이터로 detail dict 보완 (옵션/재고/이미지/가격/카테고리)."""
         # ── 가격 보완 ──────────────────────────────────────────────
@@ -1076,6 +1413,11 @@ class LotteonSourcingClient:
                 parts = cat_name.split(" > ")
                 for i, part in enumerate(parts[:4], 1):
                     detail[f"category{i}"] = part
+
+        # ── 브랜드 보완 (basicInfo.brdNm) ──────────────────────────
+        brd_nm = str(basic.get("brdNm", "") or "").strip()
+        if brd_nm and not detail.get("brand"):
+            detail["brand"] = brd_nm
 
         # ── 스펙 필드 (basicInfo 다중 후보 키) ─────────────────────
         _SPEC_CANDIDATES: dict[str, list[str]] = {
@@ -1168,6 +1510,61 @@ class LotteonSourcingClient:
             detail["images"] = pbf_images[:9]
         elif pbf_images and len(detail.get("images", [])) < 2:
             detail["images"] = pbf_images[:9]
+
+    def _enrich_from_pbf_pd(
+        self, detail: dict[str, Any], pd_data: dict[str, Any]
+    ) -> None:
+        """pbf /base/pd/ API 데이터로 고시정보(artlInfo) + 카테고리 보완."""
+        # ── artlInfo (상품필수정보/고시정보) ──────────────────────────
+        artl = pd_data.get("artlInfo") or {}
+        artl_list = artl.get("pdItmsArtlJsn") or []
+
+        # artlInfo 필드명 → detail 키 매핑
+        _ARTL_MAP: dict[str, str] = {
+            "색상": "color",
+            "제조국": "origin",
+            "제품 주소재": "material",
+            "상품 주소재": "material",
+            "소재": "material",
+            "재질": "material",
+            "제조자, 수입자": "manufacturer",
+            "제조자(수입자)": "manufacturer",
+            "제조자": "manufacturer",
+            "취급시 주의사항": "care_instructions",
+            "취급 시 주의사항": "care_instructions",
+            "품질보증기준": "quality_guarantee",
+            "A/S책임자와 전화번호": "as_contact",
+        }
+
+        for item in artl_list:
+            nm = (item.get("pdArtlCdNm") or "").strip()
+            val = (item.get("pdArtlCnts") or "").strip()
+            if not nm or not val:
+                continue
+            # 무의미한 값 제외
+            if "상세" in val and "참조" in val:
+                continue
+            if "별 상이" in val or val in ("해당없음", "해당 없음", "-", "없음"):
+                continue
+            target = _ARTL_MAP.get(nm)
+            if target and not detail.get(target):
+                detail[target] = val
+
+        if artl_list:
+            logger.debug(f"[LOTTEON] artlInfo 파싱: {len(artl_list)}개 항목")
+
+        # ── dispCategoryInfo (카테고리 경로) ──────────────────────────
+        disp_cat = pd_data.get("dispCategoryInfo") or {}
+        if disp_cat and not detail.get("category"):
+            parts = []
+            for key in ["dispCatNm", "dispCatNm0", "dispCatNm1", "dispCatNm2"]:
+                nm = (disp_cat.get(key) or "").strip()
+                if nm:
+                    parts.append(nm)
+            if parts:
+                detail["category"] = " > ".join(parts)
+                for i, part in enumerate(parts[:4], 1):
+                    detail[f"category{i}"] = part
 
     # ------------------------------------------------------------------
     # JSON-LD 파싱 (상세)
