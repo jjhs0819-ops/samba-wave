@@ -15,32 +15,10 @@ from backend.utils.logger import logger
 import math
 
 # 마켓타입(영문 코드) → 정책키(한글 표시명) 매핑
-# 마켓 계정의 market_type 필드 값을 정책 설정의 per_market 키로 변환할 때 사용
-MARKET_TYPE_TO_POLICY_KEY: dict[str, str] = {
-    "coupang": "쿠팡",
-    "ssg": "신세계몰",
-    "smartstore": "스마트스토어",
-    "11st": "11번가",
-    "gmarket": "지마켓",
-    "auction": "옥션",
-    "gsshop": "GS샵",
-    "lotteon": "롯데ON",
-    "lottehome": "롯데홈쇼핑",
-    "homeand": "홈앤쇼핑",
-    "hmall": "HMALL",
-    "kream": "KREAM",
-    "playauto": "플레이오토",
-    "ebay": "eBay",
-    "lazada": "Lazada",
-    "qoo10": "Qoo10",
-    "shopee": "Shopee",
-    "shopify": "Shopify",
-    "zoom": "Zum(줌)",
-    "toss": "토스",
-    "rakuten": "라쿠텐",
-    "amazon": "아마존",
-    "buyma": "바이마",
-}
+# 플러그인 레지스트리에서 자동 생성 — 새 마켓 추가 시 플러그인만 만들면 자동 반영
+from backend.domain.samba.plugins import (
+    MARKET_TYPE_TO_POLICY_KEY,
+)
 
 
 def calc_market_price(
