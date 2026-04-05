@@ -8,11 +8,13 @@ import { PERIOD_BUTTONS, DELIVERY_TRACKING_URLS, SOURCING_PRODUCT_URLS, SOURCING
 import { inputStyle } from '@/lib/samba/styles'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
+  new_order:  { label: '신규주문', bg: 'rgba(255,235,59,0.15)', text: '#FFEB3B' },
+  invoice_printed: { label: '송장출력', bg: 'rgba(255,183,77,0.15)', text: '#FFB74D' },
   pending:    { label: '주문접수', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
   wait_ship:  { label: '배송대기중', bg: 'rgba(100,149,237,0.15)', text: '#6495ED' },
   arrived:    { label: '사무실도착', bg: 'rgba(72,209,204,0.15)', text: '#48D1CC' },
   ship_failed: { label: '송장전송실패', bg: 'rgba(255,50,50,0.2)', text: '#FF3232' },
-  shipping:   { label: '국내배송중', bg: 'rgba(76,154,255,0.15)', text: '#4C9AFF' },
+  shipping:   { label: '배송중', bg: 'rgba(76,154,255,0.15)', text: '#4C9AFF' },
   delivered:  { label: '배송완료', bg: 'rgba(81,207,102,0.15)', text: '#51CF66' },
   cancelling: { label: '취소중', bg: 'rgba(255,165,0,0.15)', text: '#FFA500' },
   returning:  { label: '반품중', bg: 'rgba(200,100,200,0.15)', text: '#CC5DE8' },
@@ -598,7 +600,7 @@ export default function OrdersPage() {
     }
     if (statusFilter) {
       if (statusFilter === 'active') {
-        if (!['pending', 'wait_ship', 'arrived'].includes(o.status)) return false
+        if (!['new_order', 'invoice_printed', 'pending', 'wait_ship', 'arrived'].includes(o.status)) return false
       } else if (o.status !== statusFilter) return false
     }
     if (inputFilter) {
