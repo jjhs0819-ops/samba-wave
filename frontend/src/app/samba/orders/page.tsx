@@ -872,6 +872,7 @@ export default function OrdersPage() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
                           <span style={{ fontSize: '0.75rem', color: '#888', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
+                          {o.source_site && <span style={{ fontSize: '0.75rem', color: '#4C9AFF', background: 'rgba(76,154,255,0.1)', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid rgba(76,154,255,0.2)' }}>{o.source_site}</span>}
                           <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '4px', color: '#4C9AFF', cursor: 'pointer' }}>주문번호복사</button>
                           <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>SMS</button>
                           <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(255,211,61,0.1)', border: '1px solid rgba(255,211,61,0.3)', borderRadius: '4px', color: '#FFD93D', cursor: 'pointer' }}>KAKAO</button>

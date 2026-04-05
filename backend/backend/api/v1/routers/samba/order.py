@@ -840,16 +840,21 @@ async def sync_orders_from_markets(
                     if raw_orders:
                         sample = raw_orders[0]
                         logger.info(
-                            f"[주문동기화] 플레이오토 샘플 키: {list(sample.keys())[:20]}"
+                            f"[주문동기화] 플레이오토 샘플 전체키: {list(sample.keys())}"
                         )
                         logger.info(
-                            f"[주문동기화] 플레이오토 샘플 값: "
-                            f"OrderCode={sample.get('OrderCode')}, "
-                            f"ProdName={sample.get('ProdName')}, "
+                            f"[주문동기화] 플레이오토 샘플: "
+                            f"SiteName={sample.get('SiteName')}, "
+                            f"SiteId={sample.get('SiteId')}, "
                             f"Price={sample.get('Price')}, "
+                            f"SupplyPrice={sample.get('SupplyPrice')}, "
+                            f"CostPrice={sample.get('CostPrice')}, "
+                            f"DelivPrice={sample.get('DelivPrice')}, "
                             f"OrderName={sample.get('OrderName')}, "
                             f"RecipientName={sample.get('RecipientName')}, "
-                            f"OrderState={sample.get('OrderState')}"
+                            f"RecipientAddress={sample.get('RecipientAddress')}, "
+                            f"Sender={sample.get('Sender')}, "
+                            f"SenderNo={sample.get('SenderNo')}"
                         )
                     # 모든 주문 상태 조회 (송장입력, 배송중 등)
                     for state in [
@@ -1305,6 +1310,10 @@ def _parse_playauto_order(
     sale_price = int(ro.get("Price", 0) or 0)
     quantity = int(ro.get("Count", 1) or 1)
 
+    site_name = ro.get("SiteName", "")
+    site_id = ro.get("SiteId", "")
+    supply_price = int(ro.get("SupplyPrice", 0) or 0)
+
     return {
         "order_number": ro.get("OrderCode", ""),
         "shipment_id": str(ro.get("Number", "")),
@@ -1323,12 +1332,12 @@ def _parse_playauto_order(
         "sale_price": sale_price * quantity,
         "cost": int(ro.get("CostPrice", 0) or 0),
         "fee_rate": 0,
-        "revenue": sale_price * quantity,
+        "revenue": supply_price * quantity if supply_price else sale_price * quantity,
         "status": status_map.get(order_state, "pending"),
         "shipping_status": order_state,
         "shipping_company": ro.get("Sender", ""),
         "tracking_number": ro.get("SenderNo", ""),
         "source": "playauto",
-        "market_name": ro.get("SiteName", ""),
-        "market_order_id": ro.get("OrderCode", ""),
+        # 판매처(사업자) 정보
+        "source_site": f"{site_name}({site_id})" if site_name else "",
     }
