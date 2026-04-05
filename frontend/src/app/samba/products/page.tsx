@@ -1037,15 +1037,16 @@ export default function ProductsPage() {
             setAiJobModal(true)
             const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
             const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
-            // allProducts에 없는 상품 정보 미리 로드
+            // allProducts에 없는 상품 정보 미리 로드 (500개씩 청크)
             const missingIds = ids.filter(id => !allProducts.find(p => p.id === id))
             const productMap: Record<string, typeof allProducts[0]> = {}
             allProducts.forEach(p => { productMap[p.id] = p })
-            if (missingIds.length > 0) {
+            for (let ci = 0; ci < missingIds.length; ci += 500) {
               try {
-                const fetched = await collectorApi.getProductsByIds(missingIds)
+                const chunk = missingIds.slice(ci, ci + 500)
+                const fetched = await collectorApi.getProductsByIds(chunk)
                 if (Array.isArray(fetched)) fetched.forEach(p => { productMap[p.id] = p })
-              } catch { /* 조회 실패 시 기존 fallback 사용 */ }
+              } catch { /* 조회 실패 시 기존 fallback */ }
             }
             let success = 0
             let fail = 0
