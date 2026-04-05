@@ -419,19 +419,40 @@ export default function OrdersPage() {
     const storeSlug = (acc?.additional_fields as Record<string, string> | undefined)?.storeSlug || ''
     const productNo = o.product_id || ''
 
-    // 마켓 상품번호가 있으면 구매페이지 직접 이동
+    // 마켓 상품번호 → 구매페이지 직접 이동
+    const urlMap: Record<string, string> = {
+      smartstore: `https://smartstore.naver.com/${storeSlug || sellerId}/products/${productNo}`,
+      coupang: `https://www.coupang.com/vp/products/${productNo}`,
+      '11st': `https://www.11st.co.kr/products/${productNo}`,
+      gmarket: `https://item.gmarket.co.kr/Item?goodscode=${productNo}`,
+      auction: `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${productNo}`,
+      ssg: `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`,
+      lotteon: `https://www.lotteon.com/p/product/${productNo}`,
+      kream: `https://kream.co.kr/products/${productNo}`,
+      ebay: `https://www.ebay.com/itm/${productNo}`,
+    }
+
     if (productNo) {
-      const urlMap: Record<string, string> = {
-        smartstore: `https://smartstore.naver.com/${storeSlug || sellerId}/products/${productNo}`,
-        coupang: `https://www.coupang.com/vp/products/${productNo}`,
-        '11st': `https://www.11st.co.kr/products/${productNo}`,
-        gmarket: `https://item.gmarket.co.kr/Item?goodscode=${productNo}`,
-        auction: `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${productNo}`,
-        ssg: `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`,
-        lotteon: `https://www.lotteon.com/p/product/${productNo}`,
-        kream: `https://kream.co.kr/products/${productNo}`,
-        ebay: `https://www.ebay.com/itm/${productNo}`,
+      // 플레이오토: source_site에서 실제 판매처 추출 → 해당 마켓 URL 사용
+      if (marketType === 'playauto' && o.source_site) {
+        const site = o.source_site.split('(')[0]
+        const siteUrlMap: Record<string, (no: string) => string> = {
+          'GS이숍': (no) => `https://www.gsshop.com/prd/prd.gs?prdid=${no}`,
+          'G마켓': (no) => `https://item.gmarket.co.kr/Item?goodscode=${no}`,
+          '옥션': (no) => `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${no}`,
+          '11번가': (no) => `https://www.11st.co.kr/products/${no}`,
+          '스마트스토어': (no) => `https://smartstore.naver.com/search?q=${encodeURIComponent(no)}`,
+          '쿠팡': (no) => `https://www.coupang.com/vp/products/${no}`,
+          'SSG': (no) => `https://www.ssg.com/item/itemView.ssg?itemId=${no}`,
+          '롯데ON': (no) => `https://www.lotteon.com/p/product/${no}`,
+          '롯데홈쇼핑': (no) => `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${no}`,
+          '홈앤쇼핑': (no) => `https://www.hmall.com/p/pda/itemPtc.do?slitmCd=${no}`,
+          'HMALL': (no) => `https://www.hmall.com/p/pda/itemPtc.do?slitmCd=${no}`,
+        }
+        const builder = siteUrlMap[site]
+        if (builder) { window.open(builder(productNo), '_blank'); return }
       }
+
       const url = urlMap[marketType]
       if (url) { window.open(url, '_blank'); return }
     }
