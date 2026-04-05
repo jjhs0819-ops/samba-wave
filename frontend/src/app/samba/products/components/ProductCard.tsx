@@ -277,10 +277,9 @@ const ProductCard = React.memo(function ProductCard({
   const [zoomImg, setZoomImg] = useState<string | null>(null)
   const [zoomIdx, setZoomIdx] = useState(0)
   const [zoomList, setZoomList] = useState<string[]>([])
-  const openZoom = (url: string, images?: string[]) => {
-    const list = images || productImages || p.images || []
-    setZoomList(list)
-    const idx = list.indexOf(url)
+  const openZoom = (url: string, images: string[]) => {
+    setZoomList(images)
+    const idx = images.indexOf(url)
     setZoomIdx(idx >= 0 ? idx : 0)
     setZoomImg(url)
   }
@@ -623,7 +622,7 @@ const ProductCard = React.memo(function ProductCard({
             border: label ? '1px solid rgba(255,140,0,0.2)' : '1px solid #2D2D2D',
           }}>
             <div
-              onClick={() => openZoom(img)}
+              onClick={() => openZoom(img, list)}
               style={{ width: 64, height: 64, borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer', overflow: 'hidden', background: '#1A1A1A', position: 'relative' }}
             >
               <img src={img} alt="" loading="lazy" referrerPolicy="no-referrer"
@@ -707,7 +706,7 @@ const ProductCard = React.memo(function ProductCard({
                           <div>
                             <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 대표이미지]</p>
                             <img src={mainImg} alt="대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                              onClick={() => openZoom(mainImg)}
+                              onClick={() => openZoom(mainImg, productImages)}
                               style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #2D2D2D', cursor: 'pointer' }} />
                             <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{mainImg}</p>
                           </div>
@@ -785,7 +784,7 @@ const ProductCard = React.memo(function ProductCard({
                           <div>
                             <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 쿠팡 대표이미지]</p>
                             <img src={coupangMainImg} alt="쿠팡 대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                              onClick={() => openZoom(coupangMainImg)}
+                              onClick={() => openZoom(coupangMainImg, productImages)}
                               style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #00B4D8', cursor: 'pointer' }} />
                             <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{coupangMainImg}</p>
                           </div>
@@ -960,7 +959,7 @@ const ProductCard = React.memo(function ProductCard({
                     style={{ maxWidth: '85vw', maxHeight: '80vh', objectFit: 'contain', borderRadius: '8px' }}
                   />
                   <span style={{ color: '#888', fontSize: '0.8rem' }}>
-                    {zoomIdx === 0 ? '대표' : `추가 ${zoomIdx}`} ({zoomIdx + 1}/{zoomList.length})
+                    {zoomList === productImages ? (zoomIdx === 0 ? '대표' : `추가 ${zoomIdx}`) : `상세 ${zoomIdx + 1}`} ({zoomIdx + 1}/{zoomList.length})
                   </span>
                 </div>
                 {/* 오른쪽 화살표 */}
