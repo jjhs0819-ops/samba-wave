@@ -357,6 +357,11 @@ class PlayAutoPlugin(MarketPlugin):
         client = PlayAutoClient(api_key)
         try:
             results = await client.soldout_product([product_no])
+            if not results:
+                return {
+                    "success": False,
+                    "message": "플레이오토 품절 실패: 상품이 판매중 상태가 아닙니다 (EMP에서 직접 삭제 필요)",
+                }
             result = results[0] if isinstance(results, list) else results
             status = str(result.get("status", "false")).lower()
             msg = result.get("msg", "")
