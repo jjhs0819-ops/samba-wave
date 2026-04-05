@@ -145,21 +145,32 @@ class PlayAutoPlugin(MarketPlugin):
         finally:
             await client.close()
 
+    @staticmethod
+    def _get_proxy_for_download() -> str:
+        """이미지 다운로드용 프록시 (Cloud Run에서 소싱처 직접 접근 차단 대응)."""
+        try:
+            from backend.core.config import settings
+
+            return settings.collect_proxy_url or ""
+        except Exception:
+            return ""
+
     async def _upload_images_to_r2(self, session, product: dict) -> dict:
-        """소싱처 이미지 → 외부 접근 불가 시에만 R2 업로드."""
+        """소싱처 이미지 → R2 업로드 → 공개 URL로 교체."""
         r2 = await self._get_r2_client(session)
         if not r2:
             logger.warning("[플레이오토] R2 설정 없음 — 이미지 원본 URL 사용")
             return product
 
         s3_client, bucket_name, public_url = r2
+        proxy = self._get_proxy_for_download()
 
-        # 대표/추가 이미지: 접근 불가한 URL만 R2 업로드
+        # 대표/추가 이미지 R2 업로드
         images = product.get("images") or []
         if images:
             uploaded = []
             async with httpx.AsyncClient(
-                timeout=15, follow_redirects=True
+                timeout=30, follow_redirects=True, proxy=proxy if proxy else None
             ) as dl_client:
                 for img_url in images[:10]:
                     url = (
@@ -181,7 +192,7 @@ class PlayAutoPlugin(MarketPlugin):
         detail_html = product.get("detail_html", "")
         if detail_html:
             product["detail_html"] = await self._replace_detail_images(
-                detail_html, s3_client, bucket_name, public_url
+                detail_html, s3_client, bucket_name, public_url, proxy
             )
 
         return product
@@ -288,6 +299,7 @@ class PlayAutoPlugin(MarketPlugin):
         s3_client,
         bucket_name: str,
         public_url: str,
+        proxy: str = "",
     ) -> str:
         """상세설명 HTML 내 외부 이미지 URL을 R2 URL로 교체."""
         img_pattern = re.compile(r'src=["\']([^"\']+)["\']')
@@ -296,7 +308,9 @@ class PlayAutoPlugin(MarketPlugin):
         if not urls:
             return html
 
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as dl_client:
+        async with httpx.AsyncClient(
+            timeout=30, follow_redirects=True, proxy=proxy if proxy else None
+        ) as dl_client:
             for url in urls:
                 if not url or url.startswith("data:"):
                     continue
