@@ -960,7 +960,7 @@ export default function CollectorPage() {
               try {
                 const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
                 const pathBrandMatch = parsed?.pathname.match(/\/brand\/([^/]+)/)
-                let brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || ''
+                const brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || ''
                 const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : '')
                 const gf = parsed?.searchParams.get('gf') || 'A'
                 if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
