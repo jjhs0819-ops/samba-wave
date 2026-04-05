@@ -968,7 +968,17 @@ export default function PoliciesPage() {
                           ))}
                         </div>
                       ) : /* 상세이미지 */ isDetail && previewProduct?.detail_images?.length ? (
-                        <span style={{ color: item.color, fontSize: '0.8rem', padding: '0.75rem 0', display: 'block' }}>상세이미지 ({previewProduct.detail_images.length}장)</span>
+                        <div>
+                          <span style={{ color: item.color, fontSize: '0.75rem', display: 'block', marginBottom: '0.375rem' }}>상세이미지 ({previewProduct.detail_images.length}장)</span>
+                          <div style={{ display: 'flex', gap: '0.375rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                            {previewProduct.detail_images.slice(0, 4).map((url, i) => (
+                              <img key={i} src={url} alt={`상세${i + 1}`} style={{ width: '60px', height: '60px', borderRadius: '4px', objectFit: 'cover' }} />
+                            ))}
+                            {previewProduct.detail_images.length > 4 && (
+                              <span style={{ width: '60px', height: '60px', borderRadius: '4px', background: 'rgba(177,151,252,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', color: '#B197FC' }}>+{previewProduct.detail_images.length - 4}</span>
+                            )}
+                          </div>
+                        </div>
                       ) : (
                         <span style={{ color: item.color, fontSize: '0.8rem', padding: '0.75rem 0', display: 'block' }}>{item.label}</span>
                       )}
