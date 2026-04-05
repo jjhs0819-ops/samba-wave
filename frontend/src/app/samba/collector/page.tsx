@@ -153,10 +153,11 @@ export default function CollectorPage() {
     maxDiscount: true,
   });
 
-  // 브랜드 선택 모달
+  // 브랜드 선택 모달 + 자동 감지된 브랜드 코드
   const [brandSearchResults, setBrandSearchResults] = useState<Array<{ brandCode: string; brandName: string }>>([])
   const [showBrandModal, setShowBrandModal] = useState(false)
   const [pendingKeyword, setPendingKeyword] = useState("")
+  const [detectedBrandCode, setDetectedBrandCode] = useState("")
 
   // 카테고리 자동분류 옵션
   const [brandScanning, setBrandScanning] = useState(false)
@@ -454,6 +455,7 @@ export default function CollectorPage() {
   const handleBrandSelect = async (brandCode?: string) => {
     setShowBrandModal(false)
     setBrandSearchResults([])
+    if (brandCode) setDetectedBrandCode(brandCode)
     await executeCreateGroup(brandCode)
   }
 
@@ -913,7 +915,7 @@ export default function CollectorPage() {
           <input
             type="text"
             value={collectUrl}
-            onChange={(e) => setCollectUrl(e.target.value)}
+            onChange={(e) => { setCollectUrl(e.target.value); setDetectedBrandCode('') }}
             onKeyDown={(e) => e.key === "Enter" && handleCreateGroup()}
             placeholder={
               selectedSite === "MUSINSA" ? "브랜드명 또는 URL (예: 나이키, https://www.musinsa.com/search/goods?keyword=나이키)" :
@@ -933,12 +935,22 @@ export default function CollectorPage() {
               setBrandCategories([]); setBrandSelectedCats(new Set())
               try {
                 const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
-                // /brand/{name}/products 경로 패턴 지원
                 const pathBrandMatch = parsed?.pathname.match(/\/brand\/([^/]+)/)
-                const brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || ''
+                let brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || ''
                 const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : '')
                 const gf = parsed?.searchParams.get('gf') || 'A'
                 if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
+                // 평문 키워드이고 브랜드 코드가 없으면 자동 감지
+                if (!brand && !parsed) {
+                  try {
+                    const brandRes = await proxyApi.brandSearch(keyword)
+                    if (brandRes.brands && brandRes.brands.length > 0) {
+                      brand = brandRes.brands[0].brandCode
+                      setDetectedBrandCode(brand)
+                      addLog(`[카테고리스캔] 브랜드 자동 감지: ${brandRes.brands[0].brandName} (${brand})`)
+                    }
+                  } catch { /* 브랜드 검색 실패 시 키워드로 진행 */ }
+                }
                 const res = await collectorApi.brandScan(brand, gf, keyword)
                 setBrandCategories(res.categories)
                 setBrandTotal(res.total)
@@ -959,8 +971,8 @@ export default function CollectorPage() {
                 if (selected.length === 0) { showAlert('카테고리를 선택하세요'); return }
                 const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
                 const pathBrandMatch = parsed?.pathname.match(/\/brand\/([^/]+)/)
-                const brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || ''
-                const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : '')
+                const brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || detectedBrandCode || ''
+                const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : (!parsed ? collectUrl.trim() : ''))
                 const gf = parsed?.searchParams.get('gf') || 'A'
                 try {
                   const res = await collectorApi.brandCreateGroups({
