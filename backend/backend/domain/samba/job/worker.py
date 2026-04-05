@@ -1253,6 +1253,47 @@ class JobWorker:
         svc = _get_services(session)
         total_saved = 0
 
+        # LOTTEON: 저장 전 10건 병렬로 상세 정보 선취합 (1단계 통합 수집)
+        _lotteon_details: dict[str, dict[str, Any]] = {}
+        if site == "LOTTEON" and client:
+            # 중복 제외한 신규 상품만 상세 조회
+            new_items = [
+                it
+                for it in items_list
+                if str(it.get("site_product_id", "")) not in existing_ids
+            ][:remaining]
+            if new_items:
+                logger.info(
+                    f"[잡워커] LOTTEON 상세 선취합 시작: {len(new_items)}건 (10건 병렬)"
+                )
+                BATCH_SIZE = 10
+                for batch_start in range(0, len(new_items), BATCH_SIZE):
+                    batch = new_items[batch_start : batch_start + BATCH_SIZE]
+                    details = await asyncio.gather(
+                        *(
+                            client.get_detail(str(it.get("site_product_id", "")))
+                            for it in batch
+                        ),
+                        return_exceptions=True,
+                    )
+                    for it, det in zip(batch, details):
+                        pid = str(it.get("site_product_id", ""))
+                        if isinstance(det, Exception):
+                            logger.warning(
+                                f"[잡워커] LOTTEON 상세 선취합 실패 {pid}: {det}"
+                            )
+                            continue
+                        if det:
+                            _lotteon_details[pid] = det
+                    done = min(batch_start + BATCH_SIZE, len(new_items))
+                    logger.info(
+                        f"[잡워커] LOTTEON 상세 선취합 [{done}/{len(new_items)}]"
+                    )
+                    await asyncio.sleep(0.3)
+                logger.info(
+                    f"[잡워커] LOTTEON 상세 선취합 완료: {len(_lotteon_details)}/{len(new_items)}건 성공"
+                )
+
         for item in items_list:
             if total_saved >= remaining:
                 break
@@ -1296,13 +1337,13 @@ class JobWorker:
                         _lotteon_cat2 = _parts[1] if len(_parts) > 1 else ""
                         _lotteon_cat3 = _parts[2] if len(_parts) > 2 else ""
 
-            # 상세 페이지에서 추가 이미지/고시정보 보충 (서버 HTTP 우선)
-            # LOTTEON: qapi 검색 결과에 이름/가격/이미지/BC코드/혜택가가 포함되므로 상세 스킵
+            # 상세 페이지에서 추가 이미지/고시정보 보충
             detail = {}
+            # LOTTEON: 선취합된 상세 데이터 사용
+            if site == "LOTTEON" and p_id in _lotteon_details:
+                detail = _lotteon_details[p_id]
             _skip_detail = _search_kwargs.get("_skip_detail", False)
-            if site == "LOTTEON":
-                _skip_detail = True
-            if not _skip_detail:
+            if not _skip_detail and not detail:
                 # 서버 HTTP 상세 조회 (빠르고 안정적)
                 if hasattr(client, "get_detail"):
                     try:
@@ -1436,11 +1477,14 @@ class JobWorker:
 
         # LOTTEON: 수집 완료 후 상세 보강 (품번/제조국/성별/시즌/색상/재질)
         # 10건 병렬로 get_detail 호출하여 속도 개선
-        if site == "LOTTEON" and total_saved > 0 and client:
-            logger.info(f"[잡워커] LOTTEON 상세 보강 시작: {total_saved}건 (10건 병렬)")
+        # LOTTEON: 선취합 실패분만 보강 (폴백)
+        _enrich_needed = total_saved - len(_lotteon_details) if site == "LOTTEON" else 0
+        if site == "LOTTEON" and _enrich_needed > 0 and client:
+            logger.info(f"[잡워커] LOTTEON 보강(폴백): 선취합 실패 {_enrich_needed}건")
             enrich_stmt = select(CPModel).where(
                 CPModel.search_filter_id == filter_id,
                 CPModel.source_site == "LOTTEON",
+                CPModel.brand == None,  # noqa: E711 — 선취합 안 된 상품
             )
             products_to_enrich = (await session.execute(enrich_stmt)).scalars().all()
 
