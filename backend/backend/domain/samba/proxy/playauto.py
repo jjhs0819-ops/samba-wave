@@ -54,9 +54,8 @@ class PlayAutoClient:
     def _get_proxy_url() -> str:
         """수집용 프록시 URL 가져오기."""
         try:
-            from backend.core.config import get_settings
+            from backend.core.config import settings
 
-            settings = get_settings()
             url = settings.collect_proxy_url or ""
             return url.strip()
         except Exception as e:
