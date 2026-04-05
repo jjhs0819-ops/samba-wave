@@ -294,21 +294,7 @@ class SambaShipmentService:
         if not category_id:
             raise ValueError("카테고리 매핑을 찾을 수 없습니다")
 
-        # 정책 조회 (가격 계산용)
-        MARKET_TYPE_TO_POLICY_KEY = {
-            "coupang": "쿠팡",
-            "ssg": "신세계몰",
-            "smartstore": "스마트스토어",
-            "11st": "11번가",
-            "gmarket": "지마켓",
-            "auction": "옥션",
-            "gsshop": "GS샵",
-            "lotteon": "롯데ON",
-            "lottehome": "롯데홈쇼핑",
-            "homeand": "홈앤쇼핑",
-            "hmall": "HMALL",
-            "kream": "KREAM",
-        }
+        # 정책 조회 (가격 계산용) — 모듈 레벨 MARKET_TYPE_TO_POLICY_KEY 사용
         policy = None
         policy_market_data: dict[str, Any] = {}
         if first.applied_policy_id:
