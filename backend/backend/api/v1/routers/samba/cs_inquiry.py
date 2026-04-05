@@ -695,6 +695,107 @@ async def sync_cs_from_markets(
     except Exception as e:
         logger.warning(f"[CS동기화] 미연결 매칭 중 오류: {e}")
 
+    # ── 플레이오토 EMP 문의 동기화 ──
+    try:
+        from backend.domain.samba.account.model import SambaMarketAccount
+        from backend.domain.samba.proxy.playauto import PlayAutoClient
+
+        pa_stmt = select(SambaMarketAccount).where(
+            SambaMarketAccount.market_type == "playauto",
+            SambaMarketAccount.is_active == True,  # noqa: E712
+        )
+        pa_result = await session.execute(pa_stmt)
+        pa_accounts = pa_result.scalars().all()
+
+        for pa_acc in pa_accounts:
+            pa_extras = pa_acc.additional_fields or {}
+            pa_api_key = pa_extras.get("apiKey", "") or pa_acc.api_key or ""
+            if not pa_api_key:
+                continue
+            pa_label = pa_acc.account_label or pa_acc.business_name or "플레이오토"
+            pa_client = PlayAutoClient(pa_api_key)
+            try:
+                from zoneinfo import ZoneInfo
+
+                kst = ZoneInfo("Asia/Seoul")
+                now_kst = datetime.now(kst)
+                pa_start = (now_kst - timedelta(days=30)).strftime("%Y%m%d")
+                pa_end = (now_kst + timedelta(days=1)).strftime("%Y%m%d")
+
+                # 신규 + 답변완료 문의 조회
+                pa_qnas = await pa_client.get_qnas(
+                    start_date=pa_start, end_date=pa_end, count=100
+                )
+
+                pa_synced = 0
+                for qna in pa_qnas:
+                    qna_no = str(qna.get("Number", ""))
+                    if not qna_no:
+                        continue
+
+                    # 중복 체크
+                    existing = await session.execute(
+                        select(SambaCSInquiry).where(
+                            SambaCSInquiry.market == "플레이오토",
+                            SambaCSInquiry.market_inquiry_no == qna_no,
+                        )
+                    )
+                    if existing.scalar_one_or_none():
+                        continue
+
+                    state = qna.get("State", "")
+                    is_answered = state in ("답변완료", "전송완료")
+
+                    raw_date = qna.get("WriteDate") or qna.get("QDate")
+                    parsed_date = None
+                    if raw_date:
+                        try:
+                            from dateutil.parser import parse as parse_dt
+
+                            parsed_date = parse_dt(raw_date)
+                        except Exception:
+                            pass
+
+                    site_name = qna.get("SiteName", "")
+                    inquiry_data = {
+                        "market": "플레이오토",
+                        "market_inquiry_no": qna_no,
+                        "market_answer_no": None,
+                        "market_order_id": qna.get("OrderCode"),
+                        "market_product_no": qna.get("ProdCode")
+                        or qna.get("MasterCode"),
+                        "account_name": f"{pa_label} ({site_name})"
+                        if site_name
+                        else pa_label,
+                        "inquiry_type": qna.get("QType", "문의"),
+                        "questioner": qna.get("QName", ""),
+                        "product_name": "",
+                        "product_image": "",
+                        "product_link": "",
+                        "original_link": "",
+                        "collected_product_id": None,
+                        "content": qna.get("QContent", "") or qna.get("QSubject", ""),
+                        "reply": qna.get("AContent", "") if is_answered else None,
+                        "reply_status": "replied" if is_answered else "pending",
+                        "inquiry_date": parsed_date,
+                        "replied_at": None,
+                    }
+                    await svc.create_inquiry(inquiry_data)
+                    pa_synced += 1
+
+                if pa_synced > 0:
+                    logger.info(
+                        f"[CS동기화] 플레이오토({pa_label}): {pa_synced}건 동기화"
+                    )
+                synced += pa_synced
+            except Exception as e:
+                logger.warning(f"[CS동기화] 플레이오토({pa_label}) 실패: {e}")
+                errors.append(f"플레이오토({pa_label}): {e}")
+            finally:
+                await pa_client.close()
+    except Exception as e:
+        logger.warning(f"[CS동기화] 플레이오토 계정 조회 실패: {e}")
+
     return {
         "success": True,
         "synced": synced,
