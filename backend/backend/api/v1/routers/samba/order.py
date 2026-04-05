@@ -831,56 +831,12 @@ async def sync_orders_from_markets(
                     start_date = (
                         datetime.now(UTC) - timedelta(days=body.days)
                     ).strftime("%Y%m%d")
+                    # 전체 상태 한번에 조회 (상태 필터 없이)
                     raw_orders = await pa_client.get_orders(
                         start_date=start_date,
-                        states="신규주문",
                         count=500,
                     )
-                    # 디버그: 첫 주문 원본 데이터 확인
-                    if raw_orders:
-                        sample = raw_orders[0]
-                        logger.info(
-                            f"[주문동기화] 플레이오토 샘플 전체키: {list(sample.keys())}"
-                        )
-                        logger.info(
-                            f"[주문동기화] 플레이오토 샘플: "
-                            f"SiteName={sample.get('SiteName')}, "
-                            f"SiteId={sample.get('SiteId')}, "
-                            f"Price={sample.get('Price')}, "
-                            f"SupplyPrice={sample.get('SupplyPrice')}, "
-                            f"CostPrice={sample.get('CostPrice')}, "
-                            f"DelivPrice={sample.get('DelivPrice')}, "
-                            f"OrderName={sample.get('OrderName')}, "
-                            f"RecipientName={sample.get('RecipientName')}, "
-                            f"RecipientAddress={sample.get('RecipientAddress')}, "
-                            f"Sender={sample.get('Sender')}, "
-                            f"SenderNo={sample.get('SenderNo')}"
-                        )
-                    # 모든 주문 상태 조회
-                    for state in [
-                        "송장출력",
-                        "송장입력",
-                        "주문확인",
-                        "출고",
-                        "배송중",
-                        "수취확인",
-                        "정산완료",
-                        "취소",
-                        "취소마감",
-                        "반품요청",
-                        "반품마감",
-                        "교환요청",
-                    ]:
-                        try:
-                            more = await pa_client.get_orders(
-                                start_date=start_date,
-                                states=state,
-                                count=500,
-                            )
-                            if more:
-                                raw_orders.extend(more)
-                        except Exception:
-                            pass
+                    logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
                     for ro in raw_orders:
                         orders_data.append(_parse_playauto_order(ro, account.id, label))
                 except Exception as e:
