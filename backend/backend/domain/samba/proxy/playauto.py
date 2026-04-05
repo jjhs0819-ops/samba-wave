@@ -7,7 +7,7 @@ import httpx
 from backend.utils.logger import logger
 
 # EMP API 기본 URL
-EMP_BASE_URL = "http://playauto-api.playauto.co.kr/emp/v1"
+EMP_BASE_URL = "https://playauto-api.playauto.co.kr/emp/v1"
 # 공통 API 기본 URL
 COMMON_BASE_URL = "https://playapi.api.plto.com/restApi/empapi"
 
