@@ -1,29 +1,42 @@
 """로컬 DB → Cloud SQL 데이터 이전 스크립트"""
+
 import asyncio
 import asyncpg
 
-LOCAL = dict(host='localhost', port=5432, user='hosoo_kim', password='123456', database='hosoo_samba')
-CLOUD = dict(host='34.64.205.34', port=5432, user='samba-user', password='SambaWave2024x', database='samba-wave')
+LOCAL = dict(
+    host="localhost",
+    port=5432,
+    user="hosoo_kim",
+    password="123456",
+    database="hosoo_samba",
+)
+CLOUD = dict(
+    host="34.64.205.34",
+    port=5432,
+    user="samba-user",
+    password="SambaWave2024x",
+    database="samba-wave",
+)
 
 # 이전할 테이블 목록 (순서 중요)
 TABLES = [
-    'samba_settings',
-    'samba_search_filter',
-    'samba_policy',
-    'samba_market_account',
-    'samba_category_mapping',
-    'samba_category_tree',
-    'samba_detail_template',
-    'samba_name_rule',
-    'samba_collected_product',
-    'samba_shipment',
-    'samba_order',
-    'samba_return',
-    'samba_cs_inquiry',
-    'samba_wholesale_product',
-    'samba_sourcing_account',
-    'samba_forbidden_word',
-    'samba_user',
+    "samba_settings",
+    "samba_search_filter",
+    "samba_policy",
+    "samba_market_account",
+    "samba_category_mapping",
+    "samba_category_tree",
+    "samba_detail_template",
+    "samba_name_rule",
+    "samba_collected_product",
+    "samba_shipment",
+    "samba_order",
+    "samba_return",
+    "samba_cs_inquiry",
+    "samba_wholesale_product",
+    "samba_sourcing_account",
+    "samba_forbidden_word",
+    "samba_user",
 ]
 
 
@@ -31,9 +44,9 @@ async def get_columns(conn, table):
     rows = await conn.fetch(
         "SELECT column_name FROM information_schema.columns "
         "WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position",
-        table
+        table,
     )
-    return [r['column_name'] for r in rows]
+    return [r["column_name"] for r in rows]
 
 
 async def migrate():
@@ -57,7 +70,7 @@ async def migrate():
                 print(f"  ⚠ {table}: 공통 컬럼 없음, 건너뜀")
                 continue
 
-            col_str = ', '.join(f'"{c}"' for c in cols)
+            col_str = ", ".join(f'"{c}"' for c in cols)
 
             # 로컬에서 데이터 가져오기
             rows = await local.fetch(f'SELECT {col_str} FROM "{table}"')
@@ -66,7 +79,7 @@ async def migrate():
                 continue
 
             # Cloud SQL에 삽입 (NULL → 기본값 처리)
-            placeholders = ', '.join(f'${i+1}' for i in range(len(cols)))
+            placeholders = ", ".join(f"${i + 1}" for i in range(len(cols)))
             insert_sql = f'INSERT INTO "{table}" ({col_str}) VALUES ({placeholders}) ON CONFLICT DO NOTHING'
 
             data = []
@@ -75,7 +88,7 @@ async def migrate():
                 for col in cols:
                     val = row[col]
                     # sourcing_shipping_fee NULL 처리
-                    if col == 'sourcing_shipping_fee' and val is None:
+                    if col == "sourcing_shipping_fee" and val is None:
                         val = 0.0
                     values.append(val)
                 data.append(values)

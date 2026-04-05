@@ -2487,10 +2487,19 @@ class SambaCategoryService:
             try:
                 cats = await self._get_market_categories(m)
                 if cats:
-                    # 11번가는 국내 배송 전용 — 제외 키워드로 시작하는 카테고리 필터링
-                    if m == "11st":
-                        _exclude_prefixes = ("해외직구", "브랜드", "명품", "디자이너")
-                        cats = [c for c in cats if not any(c.startswith(p) for p in _exclude_prefixes)]
+                    # 모든 마켓 공통: 브랜드/명품/디자이너/해외직구 접두어 카테고리 제외
+                    _exclude_prefixes = (
+                        "해외직구",
+                        "브랜드",
+                        "명품",
+                        "수입명품",
+                        "디자이너",
+                    )
+                    cats = [
+                        c
+                        for c in cats
+                        if not any(c.startswith(p) for p in _exclude_prefixes)
+                    ]
                     market_cat_lists[m] = cats
             except Exception:
                 pass
@@ -2630,17 +2639,25 @@ class SambaCategoryService:
                         + "\n".join(lines)
                         + "\n"
                     )
-                    cat_rule = "각 마켓별로 위 목록에 있는 카테고리 문자열을 정확히 그대로 복사하여 선택. 목록에 없는 카테고리를 임의로 만들거나 변형 금지. 모든 마켓에 반드시 값을 채울 것."
+                    cat_rule = "각 마켓별로 위 목록에 있는 카테고리 문자열을 정확히 그대로 복사하여 선택. 목록에 없는 카테고리를 임의로 만들거나 변형 금지."
                 else:
                     cat_list_section = ""
-                    cat_rule = "각 마켓의 허용된 카테고리 중에서만 선택. 존재하지 않는 카테고리 생성 금지. 모든 마켓에 반드시 값을 채울 것."
+                    cat_rule = "각 마켓의 허용된 카테고리 중에서만 선택. 존재하지 않는 카테고리 생성 금지."
 
             prompt = f"""소싱 카테고리를 판매 마켓 카테고리에 매핑.
 소비자가 검색할 키워드와 가장 일치하는 카테고리를 선택하세요.
 
 {chr(10).join(cat_entries)}
 {cat_list_section}
-규칙: {cat_rule} 빈값 금지.
+규칙:
+- {cat_rule}
+- 소싱 카테고리의 상품 유형(가방/신발/의류/스포츠 등)을 반드시 유지. 가방→가방, 신발→신발, 의류→의류로만 매핑.
+- 성별 정보가 없거나 남녀공용인 경우 반드시 여성 카테고리로 매핑.
+- 주니어/아동/유아 카테고리는 절대 선택 금지. KC인증 문제가 있음.
+- 도서/음반/교재/학술 카테고리는 절대 선택 금지. 의류학 교재도 포함.
+- 의류/패션과 무관한 카테고리(식품, 인테리어, 여행, 자동차, 반려동물 등)는 절대 선택 금지.
+- 키워드 단순 매칭 금지. '웨이스트 백'은 허리에 차는 가방이지 바지가 아님. '기타'는 악기가 아닌 기타 등등을 의미함. 상품의 실제 의미를 파악하여 매핑.
+- 확신이 없으면 빈 문자열("")로 남길 것. 억지로 맞지 않는 카테고리 선택 금지.
 JSON만 응답:
 {json.dumps({str(i + 1): {m: "" for m in target_markets} for i in range(len(batch))}, ensure_ascii=False)}"""
 
@@ -2685,8 +2702,35 @@ JSON만 응답:
                         validated: Dict[str, str] = {}
                         for market, suggested in result[key_str].items():
                             if market in target_set and suggested:
+                                # 패션 상품에 어울리지 않는 카테고리 접두어 차단
+                                _fashion_exclude = (
+                                    "인테리어소품",
+                                    "식품",
+                                    "출산/육아",
+                                    "반려동물",
+                                    "자동차용품",
+                                    "도서/음반",
+                                    "디지털/가전",
+                                    "생활/건강",
+                                    "스포츠/레저용품",
+                                    "여행/숙박",
+                                    "e쿠폰/티켓",
+                                    "취미/컬렉션",
+                                    "수입명품",
+                                    "주니어의류",
+                                    "아동의류",
+                                    "유아의류",
+                                    "베이비의류",
+                                )
+                                if any(
+                                    suggested.startswith(p) for p in _fashion_exclude
+                                ):
+                                    logger.warning(
+                                        f"[벌크매핑] '{suggested}' 패션 무관 카테고리 → 스킵"
+                                    )
+                                    continue
                                 # 동기화된 카테고리 목록에 있는지 검증
-                                market_cat_list = all_market_cats.get(market, [])  # noqa: F821
+                                market_cat_list = market_cat_lists.get(market, [])
                                 if not market_cat_list or suggested in market_cat_list:
                                     validated[market] = suggested
                                 else:

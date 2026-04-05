@@ -32,46 +32,11 @@ class SSGPlugin(SourcingPlugin):
         """SSG 키워드 검색."""
         from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
 
-    client = SSGSourcingClient()
-    page = filters.get("page", 1)
-    size = filters.get("size", 40)
-    return await self.safe_call(
-      client.search_products(keyword, page=page, size=size, **filters)
-    )
-
-  async def get_detail(self, site_product_id: str) -> dict:
-    """SSG 상품 상세 조회."""
-    from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
-
-    client = SSGSourcingClient()
-    return await self.safe_call(client.get_product_detail(site_product_id))
-
-  async def refresh(self, product) -> "RefreshResult":
-    """가격/재고 갱신 — 상세 페이지 재조회로 최신 데이터 추출."""
-    from backend.domain.samba.collector.refresher import RefreshResult
-    from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
-
-    product_id = getattr(product, "id", "")
-    site_product_id = getattr(product, "site_product_id", "") or getattr(
-      product, "siteProductId", ""
-    )
-
-    if not site_product_id:
-      return RefreshResult(
-        product_id=product_id,
-        error="SSG 상품 ID 없음",
-      )
-
-    try:
-      client = SSGSourcingClient()
-      detail = await self.safe_call(
-        client.get_product_detail(site_product_id, refresh_only=True)
-      )
-
-      if not detail:
-        return RefreshResult(
-          product_id=product_id,
-          error=f"SSG 상세 조회 실패: {site_product_id}",
+        client = SSGSourcingClient()
+        page = filters.get("page", 1)
+        size = filters.get("size", 40)
+        return await self.safe_call(
+            client.search_products(keyword, page=page, size=size, **filters)
         )
 
     async def get_detail(self, site_product_id: str) -> dict:

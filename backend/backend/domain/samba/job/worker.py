@@ -752,7 +752,7 @@ class JobWorker:
         site = sf.source_site
 
         # 직접 API 소싱처 (서버 HTTP)
-        DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas"}
+        DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas", "SSG"}
         # 확장앱 기반 소싱처 (소싱큐)
         EXTENSION_SITES = {
             "ABCmart",
@@ -762,7 +762,6 @@ class JobWorker:
             "GSShop",
             "ElandMall",
             "SSF",
-            "SSG",
         }
 
         if site in DIRECT_API_SITES:
@@ -1039,17 +1038,10 @@ class JobWorker:
 
             search_page += 1
 
-        # 수집 완료 → last_collected_at 갱신 + 요청수를 실제 수집수로 보정
+        # 수집 완료 → last_collected_at 갱신
         from sqlalchemy import update as _sa_upd
 
-        _actual = (
-            await session.execute(
-                select(_func.count()).where(CPModel.search_filter_id == filter_id)
-            )
-        ).scalar() or 0
         _upd_vals: dict = {"last_collected_at": datetime.now(UTC)}
-        if _actual > 0:
-            _upd_vals["requested_count"] = _actual
         await session.execute(
             _sa_upd(SambaSearchFilter)
             .where(SambaSearchFilter.id == filter_id)
@@ -1115,7 +1107,16 @@ class JobWorker:
             parsed = urlparse(keyword)
             if parsed.scheme:
                 qs = parse_qs(parsed.query)
-                keyword = qs.get("searchWord", [keyword])[0]
+                # SSG URL 파싱: query + repBrandId
+                if site == "SSG":
+                    ssg_query = qs.get("query", [""])[0]
+                    if ssg_query:
+                        keyword = ssg_query
+                    ssg_brand_ids_raw = qs.get("repBrandId", [""])[0]
+                    if ssg_brand_ids_raw:
+                        _search_kwargs["brand_ids"] = ssg_brand_ids_raw.split("|")
+                else:
+                    keyword = qs.get("searchWord", [keyword])[0]
                 # 패션플러스 필터 파라미터
                 for k in (
                     "category1Id",
@@ -1165,6 +1166,95 @@ class JobWorker:
             from backend.domain.samba.proxy.adidas import AdidasClient
 
             client = AdidasClient()
+
+        elif site == "SSG":
+            from backend.domain.samba.proxy.ssg_sourcing import (
+                SSGSourcingClient as _SSGRaw,
+            )
+
+            _ssg_raw = _SSGRaw()
+            _ssg_brand_ids = list(_search_kwargs.get("brand_ids", []))
+
+            class _SSGAdapter:
+                """SSGSourcingClient를 _collect_direct_api 인터페이스에 맞게 감싸는 어댑터."""
+
+                async def search(
+                    self, kw: str, max_count: int = 100, **kw_filters
+                ) -> dict:
+                    all_prods: list = []
+                    page = 1
+                    while len(all_prods) < max_count:
+                        extra: dict = {}
+                        if page > 1 and _ssg_brand_ids:
+                            extra["brand_ids"] = _ssg_brand_ids
+                        try:
+                            prods = await _ssg_raw.search_products(
+                                kw, page=page, size=40, **extra
+                            )
+                        except Exception as e:
+                            # 429/차단 등 오류 시 지금까지 수집된 데이터로 부분 반환
+                            logger.warning(
+                                f"[SSG 어댑터] page={page} 검색 중단 ({e}), "
+                                f"{len(all_prods)}개 부분 반환"
+                            )
+                            break
+                        if not prods:
+                            break
+                        all_prods.extend(prods)
+                        if len(prods) < 40:
+                            break
+                        page += 1
+                        await asyncio.sleep(1.0)
+
+                    items = []
+                    for p in all_prods[:max_count]:
+                        imgs = p.get("images", []) or (
+                            [p["image"]] if p.get("image") else []
+                        )
+                        items.append(
+                            {
+                                "site_product_id": p.get("siteProductId", ""),
+                                "name": p.get("name", ""),
+                                "brand": p.get("brand", ""),
+                                "sale_price": p.get("salePrice", 0),
+                                "original_price": p.get("originalPrice", 0),
+                                "cost": p.get("bestBenefitPrice", 0)
+                                or p.get("salePrice", 0),
+                                "images": imgs,
+                                "source_url": p.get("sourceUrl", ""),
+                                "free_shipping": p.get("freeShipping", False),
+                                "options": p.get("options", []),
+                                "category": p.get("category", ""),
+                                "category1": p.get("category1", ""),
+                                "category2": p.get("category2", ""),
+                                "category3": p.get("category3", ""),
+                            }
+                        )
+                    return {"products": items, "total": len(items)}
+
+                async def get_detail(self, pid: str) -> dict:
+                    d = await _ssg_raw.get_product_detail(pid)
+                    if not d:
+                        return {}
+                    return {
+                        "images": d.get("images", []),
+                        "detail_images": d.get("detailImages", []),
+                        "detail_html": d.get("detailHtml", ""),
+                        "source_url": d.get("sourceUrl", ""),
+                        "free_shipping": d.get("freeShipping", False),
+                        "options": d.get("options", []),
+                        "category": d.get("category", ""),
+                        "category1": d.get("category1", ""),
+                        "category2": d.get("category2", ""),
+                        "category3": d.get("category3", ""),
+                        "material": d.get("material", ""),
+                        "color": d.get("color", ""),
+                        "sale_price": d.get("salePrice", 0),
+                        "original_price": d.get("originalPrice", 0),
+                        "cost": d.get("bestBenefitPrice", 0) or d.get("salePrice", 0),
+                    }
+
+            client = _SSGAdapter()
 
         # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
         if not client:
@@ -1275,7 +1365,8 @@ class JobWorker:
             images = (
                 _detail_imgs if len(_detail_imgs) > len(_search_imgs) else _search_imgs
             )
-            cost = int(item.get("cost", 0)) or sale_price
+            # detail.cost 우선 (카드혜택가 등 상세 파싱값), 없으면 검색 결과 cost, 둘 다 없으면 sale_price
+            cost = int(detail.get("cost") or item.get("cost", 0)) or sale_price
             # 배송비 원가 가산 (무료배송 아닌 경우)
             _sourcing_ship_fee = 0
             if not item.get("free_shipping", False):
@@ -1340,17 +1431,10 @@ class JobWorker:
             except Exception as e:
                 logger.warning(f"[잡워커] {site} 저장 실패 {p_id}: {e}")
 
-        # last_collected_at 갱신 + 요청수를 실제 수집수로 보정 (카테고리 중복 제거)
+        # last_collected_at 갱신
         from sqlalchemy import update as sa_update
 
-        actual_count = (
-            await session.execute(
-                select(_func.count()).where(CPModel.search_filter_id == filter_id)
-            )
-        ).scalar() or 0
         update_vals: dict = {"last_collected_at": datetime.now(UTC)}
-        if actual_count > 0:
-            update_vals["requested_count"] = actual_count
         from backend.domain.samba.collector.model import SambaSearchFilter as _SF
 
         await session.execute(

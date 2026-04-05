@@ -67,10 +67,15 @@ class SSGSourcingClient:
         "Referer": "https://department.ssg.com/",
     }
 
-    def __init__(self, cookie: str = "") -> None:
-        """cookie가 있으면 로그인 상태로 최대혜택가 정밀 계산 가능."""
-        self._timeout = httpx.Timeout(20.0, connect=10.0)
+    def __init__(self, cookie: str = "", *, proxy_url: str | None = None) -> None:
+        """cookie가 있으면 로그인 상태로 최대혜택가 정밀 계산 가능.
+        proxy_url이 있으면 SSG 차단 우회에 사용한다.
+        """
+        from backend.core.config import settings
+
+        self._timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         self.cookie = cookie
+        self.proxy_url = proxy_url
 
     def _headers(self, extra: Optional[dict[str, str]] = None) -> dict[str, str]:
         """요청 헤더 생성. 쿠키가 있으면 포함."""
@@ -90,6 +95,7 @@ class SSGSourcingClient:
         keyword: str,
         page: int = 1,
         size: int = 40,
+        _shared_client: Optional[httpx.AsyncClient] = None,
         **filters: Any,
     ) -> list[dict[str, Any]]:
         """신세계백화점 브랜드 검색.
@@ -98,55 +104,67 @@ class SSGSourcingClient:
         2단계: 수집된 repBrandId를 파이프(|)로 결합한 URL로 상품 수집
 
         예) keyword='아디다스' → 아디다스|아디다스오리지널스|아디다스키즈|아디다스골프
+        _shared_client: 외부에서 공유 클라이언트를 넘기면 TCP 연결 재사용 (대량 수집 성능 향상)
         """
         logger.info(f'[SSG] 검색 시작: "{keyword}" (page={page})')
 
-        try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=True
-            ) as client:
-                # 1단계: page=1로 브랜드 필터 목록 조회
-                if page == 1:
-                    first_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
-                    resp = await client.get(first_url, headers=self._headers())
-                    if resp.status_code in (429, 403):
-                        raise RateLimitError(int(resp.status_code))
-                    if resp.status_code != 200:
-                        logger.warning(f"[SSG] 검색 페이지 HTTP {resp.status_code}")
-                        return []
-                    first_html = resp.text
-                    brand_ids = self._extract_matching_brand_ids(first_html, keyword)
-                    logger.info(f'[SSG] 매칭 브랜드: {len(brand_ids)}개 → {brand_ids}')
-                else:
-                    # page > 1: filters에서 brand_ids 전달받음
-                    brand_ids = filters.get("brand_ids", [])
-                    first_html = None
+        _client_kwargs: dict[str, Any] = {
+            "timeout": self._timeout,
+            "follow_redirects": True,
+        }
+        if self.proxy_url:
+            _client_kwargs["proxy"] = self.proxy_url
 
-                # 2단계: 브랜드 필터 적용 URL로 수집
-                search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page={page}"
-                if brand_ids:
-                    search_url += f"&repBrandId={'|'.join(brand_ids)}"
+        async def _run(client: httpx.AsyncClient) -> list[dict[str, Any]]:
+            # 1단계: page=1로 브랜드 필터 목록 조회
+            if page == 1:
+                first_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
+                resp = await client.get(first_url, headers=self._headers())
+                if resp.status_code in (429, 403):
+                    raise RateLimitError(int(resp.status_code))
+                if resp.status_code != 200:
+                    logger.warning(f"[SSG] 검색 페이지 HTTP {resp.status_code}")
+                    return []
+                first_html = resp.text
+                brand_ids = self._extract_matching_brand_ids(first_html, keyword)
+                logger.info(f"[SSG] 매칭 브랜드: {len(brand_ids)}개 → {brand_ids}")
+            else:
+                # page > 1: filters에서 brand_ids 전달받음
+                brand_ids = filters.get("brand_ids", [])
+                first_html = None
 
-                # page=1은 이미 가져온 HTML 재사용, page>1은 새로 요청
-                if page == 1 and brand_ids:
-                    # 브랜드 필터 적용 URL로 재요청
-                    resp2 = await client.get(search_url, headers=self._headers())
-                    if resp2.status_code in (429, 403):
-                        raise RateLimitError(int(resp2.status_code))
-                    html = resp2.text if resp2.status_code == 200 else first_html
-                elif page == 1:
-                    html = first_html
-                else:
-                    resp = await client.get(search_url, headers=self._headers())
-                    if resp.status_code in (429, 403):
-                        raise RateLimitError(int(resp.status_code))
-                    if resp.status_code != 200:
-                        return []
-                    html = resp.text
+            # 2단계: 브랜드 필터 적용 URL로 수집
+            search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page={page}"
+            if brand_ids:
+                search_url += f"&repBrandId={'|'.join(brand_ids)}"
+
+            # page=1은 이미 가져온 HTML 재사용, page>1은 새로 요청
+            if page == 1 and brand_ids:
+                resp2 = await client.get(search_url, headers=self._headers())
+                if resp2.status_code in (429, 403):
+                    raise RateLimitError(int(resp2.status_code))
+                html = resp2.text if resp2.status_code == 200 else first_html
+            elif page == 1:
+                html = first_html
+            else:
+                resp = await client.get(search_url, headers=self._headers())
+                if resp.status_code in (429, 403):
+                    raise RateLimitError(int(resp.status_code))
+                if resp.status_code != 200:
+                    return []
+                html = resp.text
 
             products = self._parse_search_html(html, keyword)
-            logger.info(f'[SSG] 검색 완료: "{keyword}" page={page} -> {len(products)}개')
+            logger.info(
+                f'[SSG] 검색 완료: "{keyword}" page={page} -> {len(products)}개'
+            )
             return products
+
+        try:
+            if _shared_client:
+                return await _run(_shared_client)
+            async with httpx.AsyncClient(**_client_kwargs) as client:
+                return await _run(client)
 
         except RateLimitError:
             raise
@@ -203,9 +221,7 @@ class SSGSourcingClient:
 
         return brand_ids
 
-    def _parse_search_html(
-        self, html: str, keyword: str
-    ) -> list[dict[str, Any]]:
+    def _parse_search_html(self, html: str, keyword: str) -> list[dict[str, Any]]:
         """검색 결과 HTML에서 상품 정보 추출.
 
         1순위: Next.js script 태그 내 dataList JSON 파싱
@@ -280,13 +296,18 @@ class SSGSourcingClient:
 
             # 가격 파싱 (문자열 "135,360" → 정수 135360)
             sale_price = self._safe_int(
-                str(item.get("finalPrice", "") or item.get("sellprc", 0))
-                .replace(",", "")
+                str(item.get("finalPrice", "") or item.get("sellprc", 0)).replace(
+                    ",", ""
+                )
             )
-            original_price = self._safe_int(
-                str(item.get("strikeOutPrice", "") or item.get("norprc", 0))
-                .replace(",", "")
-            ) or sale_price
+            original_price = (
+                self._safe_int(
+                    str(
+                        item.get("strikeOutPrice", "") or item.get("norprc", 0)
+                    ).replace(",", "")
+                )
+                or sale_price
+            )
 
             # 할인율 (문자열 "20" 또는 "20%" → 정수 20)
             discount_rate_raw = str(item.get("discountRate", "0")).replace("%", "")
@@ -296,7 +317,9 @@ class SSGSourcingClient:
             image = self._normalize_image(item.get("itemImgUrl", ""))
 
             # 무료배송 여부
-            shipping_list = item.get("shippingCostInfo") or item.get("itemFeatureList") or []
+            shipping_list = (
+                item.get("shippingCostInfo") or item.get("itemFeatureList") or []
+            )
             free_shipping = any(
                 "무료배송" in str(s.get("text", "")) for s in shipping_list
             )
@@ -305,26 +328,30 @@ class SSGSourcingClient:
             is_sold_out = bool(item.get("soldOutMessage", "").strip())
 
             # itemUrl이 department.ssg.com 도메인인지 확인
-            item_url = item.get("itemDetailLink") or item.get("itemUrl") or (
-                f"{self.ITEM_URL}?itemId={item_id}&siteNo={self.SITE_NO}"
+            item_url = (
+                item.get("itemDetailLink")
+                or item.get("itemUrl")
+                or (f"{self.ITEM_URL}?itemId={item_id}&siteNo={self.SITE_NO}")
             )
 
-            products.append({
-                "siteProductId": item_id,
-                "goodsNo": item_id,
-                "name": item_name,
-                "brand": item.get("brandName", ""),
-                "brandEngNm": item.get("brandEngNm", ""),
-                "salePrice": sale_price,
-                "originalPrice": original_price,
-                "discountRate": discount_rate,
-                "image": image,
-                "freeShipping": free_shipping,
-                "isSoldOut": is_sold_out,
-                "sourceUrl": item_url,
-                "siteNo": item.get("siteNo", self.SITE_NO),
-                "salestrNo": str(item.get("salestrNo", "")),
-            })
+            products.append(
+                {
+                    "siteProductId": item_id,
+                    "goodsNo": item_id,
+                    "name": item_name,
+                    "brand": item.get("brandName", ""),
+                    "brandEngNm": item.get("brandEngNm", ""),
+                    "salePrice": sale_price,
+                    "originalPrice": original_price,
+                    "discountRate": discount_rate,
+                    "image": image,
+                    "freeShipping": free_shipping,
+                    "isSoldOut": is_sold_out,
+                    "sourceUrl": item_url,
+                    "siteNo": item.get("siteNo", self.SITE_NO),
+                    "salestrNo": str(item.get("salestrNo", "")),
+                }
+            )
 
         return products
 
@@ -334,7 +361,7 @@ class SSGSourcingClient:
         seen: set[str] = set()
 
         item_pattern = re.compile(
-            r'itemView\.ssg\?itemId=(\d{10,13})',
+            r"itemView\.ssg\?itemId=(\d{10,13})",
             re.IGNORECASE,
         )
 
@@ -342,17 +369,19 @@ class SSGSourcingClient:
             if item_id in seen:
                 continue
             seen.add(item_id)
-            products.append({
-                "siteProductId": item_id,
-                "goodsNo": item_id,
-                "name": "",
-                "brand": "",
-                "salePrice": 0,
-                "originalPrice": 0,
-                "image": "",
-                "isSoldOut": False,
-                "sourceUrl": f"{self.ITEM_URL}?itemId={item_id}",
-            })
+            products.append(
+                {
+                    "siteProductId": item_id,
+                    "goodsNo": item_id,
+                    "name": "",
+                    "brand": "",
+                    "salePrice": 0,
+                    "originalPrice": 0,
+                    "image": "",
+                    "isSoldOut": False,
+                    "sourceUrl": f"{self.ITEM_URL}?itemId={item_id}",
+                }
+            )
 
         return products
 
@@ -361,7 +390,10 @@ class SSGSourcingClient:
     # ------------------------------------------------------------------
 
     async def get_product_detail(
-        self, item_id: str, refresh_only: bool = False
+        self,
+        item_id: str,
+        refresh_only: bool = False,
+        _shared_client: Optional[httpx.AsyncClient] = None,
     ) -> dict[str, Any]:
         """SSG 상품 상세 정보 조회.
 
@@ -371,6 +403,7 @@ class SSGSourcingClient:
         Args:
             item_id: SSG 상품 ID (13자리 숫자)
             refresh_only: True이면 가격/재고만 빠르게 갱신
+            _shared_client: TCP 연결 재사용용 공유 클라이언트 (대량 수집 성능 향상)
 
         Returns:
             표준 상품 상세 dict (무신사 프록시 반환 형식과 동일)
@@ -381,22 +414,33 @@ class SSGSourcingClient:
         url = f"{self.ITEM_URL}?itemId={item_id}&siteNo={self.SITE_NO}"
         logger.info(f"[SSG] 상세 조회: {item_id}")
 
+        _client_kwargs: dict[str, Any] = {
+            "timeout": self._timeout,
+            "follow_redirects": True,
+        }
+        if self.proxy_url:
+            _client_kwargs["proxy"] = self.proxy_url
+
+        async def _fetch(client: httpx.AsyncClient) -> str:
+            resp = await client.get(url, headers=self._headers())
+            if resp.status_code in (429, 403):
+                retry_after = int(resp.headers.get("Retry-After", "60"))
+                logger.warning(f"[SSG] 차단 감지 HTTP {resp.status_code}: {item_id}")
+                raise RateLimitError(resp.status_code, retry_after)
+            if resp.status_code != 200:
+                logger.warning(f"[SSG] 상세 페이지 HTTP {resp.status_code}: {item_id}")
+                return ""
+            return resp.text
+
         try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=True
-            ) as client:
-                resp = await client.get(url, headers=self._headers())
+            if _shared_client:
+                html = await _fetch(_shared_client)
+            else:
+                async with httpx.AsyncClient(**_client_kwargs) as client:
+                    html = await _fetch(client)
 
-                if resp.status_code in (429, 403):
-                    retry_after = int(resp.headers.get("Retry-After", "60"))
-                    logger.warning(f"[SSG] 차단 감지 HTTP {resp.status_code}: {item_id}")
-                    raise RateLimitError(resp.status_code, retry_after)
-
-                if resp.status_code != 200:
-                    logger.warning(f"[SSG] 상세 페이지 HTTP {resp.status_code}: {item_id}")
-                    return {}
-
-            html = resp.text
+            if not html:
+                return {}
 
             # 1순위: resultItemObj JS 변수 파싱
             result = self._parse_result_item_obj(html, item_id, refresh_only)
@@ -426,7 +470,7 @@ class SSGSourcingClient:
         JSON 파싱 대신 개별 필드 직접 추출 방식을 사용한다.
         """
         # resultItemObj 블록 추출 (브라켓 카운터)
-        start_marker = re.search(r'var\s+resultItemObj\s*=\s*\{', html)
+        start_marker = re.search(r"var\s+resultItemObj\s*=\s*\{", html)
         if not start_marker:
             return {}
 
@@ -436,19 +480,19 @@ class SSGSourcingClient:
         i = start
         while i < len(html):
             ch = html[i]
-            if ch == '\\':
+            if ch == "\\":
                 i += 2
                 continue
             if ch in ('"', "'"):
                 q = ch
                 i += 1
                 while i < len(html) and html[i] != q:
-                    if html[i] == '\\':
+                    if html[i] == "\\":
                         i += 1
                     i += 1
-            elif ch == '{':
+            elif ch == "{":
                 depth += 1
-            elif ch == '}':
+            elif ch == "}":
                 depth -= 1
                 if depth == 0:
                     end = i + 1
@@ -513,7 +557,9 @@ class SSGSourcingClient:
         if original_price > 0 and sell_price < original_price:
             discount_rate = round((original_price - sell_price) / original_price * 100)
 
-        best_amt = self._safe_int(obj.get("bestAmt", 0)) or sell_price
+        # 카드혜택가 우선 (JS bestAmt는 일반 최적가이므로 카드혜택가보다 높을 수 있음)
+        _card_price = self._extract_card_benefit_price(html)
+        best_amt = _card_price or self._safe_int(obj.get("bestAmt", 0)) or sell_price
 
         # 품절 판단: soldOut 필드 (Y/N)
         is_sold_out = str(obj.get("soldOut", "N")).upper() == "Y"
@@ -541,6 +587,13 @@ class SSGSourcingClient:
         detail_html = ""
         if not refresh_only:
             detail_html, detail_images = self._parse_detail_content(html)
+            # 이미지 9장 미만 시 상세 이미지로 보충 (무신사 동일 패턴)
+            if len(images) < 9 and detail_images:
+                existing = set(images)
+                for di in detail_images:
+                    if di not in existing and len(images) < 9:
+                        images.append(di)
+                        existing.add(di)
 
         # 옵션/재고: uitemObjList 파싱
         options = self._parse_uitem_options(obj)
@@ -553,10 +606,10 @@ class SSGSourcingClient:
         deli_type = str(obj.get("deliType", ""))
         # shppTypeDtlCd: 22=무료배송, deliType: 10=일반, 20=당일
         free_shipping = shpp_type in ("22",) or bool(
-            re.search(r'무료배송', html[:5000])
+            re.search(r"무료배송", html[:5000])
         )
         same_day_delivery = deli_type == "20" or bool(
-            re.search(r'(?:당일배송|쓱배송|새벽배송)', html[:5000])
+            re.search(r"(?:당일배송|쓱배송|새벽배송)", html[:5000])
         )
 
         # 판매 상태
@@ -633,12 +686,14 @@ class SSGSourcingClient:
             is_soldout = uitem.get("isSoldOut", False) or stock == 0
             sell_price = self._safe_int(uitem.get("price", 0))
 
-            options.append({
-                "name": opt_name,
-                "price": sell_price,
-                "stock": stock,
-                "isSoldOut": bool(is_soldout),
-            })
+            options.append(
+                {
+                    "name": opt_name,
+                    "price": sell_price,
+                    "stock": stock,
+                    "isSoldOut": bool(is_soldout),
+                }
+            )
 
         return options
 
@@ -654,12 +709,12 @@ class SSGSourcingClient:
 
         if base_img_url:
             # _i1_36.jpg → _i1_1200.jpg 변환
-            high_res = re.sub(r'_i1_\d+\.jpg', '_i1_1200.jpg', base_img_url)
+            high_res = re.sub(r"_i1_\d+\.jpg", "_i1_1200.jpg", base_img_url)
             if high_res:
                 images.append(self._normalize_image(high_res))
 
             # i2~i9 이미지 URL 생성 (CDN 경로 동일, 인덱스만 변경)
-            base_path = re.sub(r'_i\d+_\d+\.jpg', '', base_img_url)
+            base_path = re.sub(r"_i\d+_\d+\.jpg", "", base_img_url)
             for i in range(2, 10):
                 candidate = f"{base_path}_i{i}_1200.jpg"
                 images.append(self._normalize_image(candidate))
@@ -701,18 +756,14 @@ class SSGSourcingClient:
 
         return detail_html, detail_images
 
-    def _parse_detail_fallback(
-        self, html: str, item_id: str
-    ) -> dict[str, Any]:
+    def _parse_detail_fallback(self, html: str, item_id: str) -> dict[str, Any]:
         """resultItemObj 없을 때 메타태그 + CSS 패턴 폴백."""
         now_iso = datetime.now(tz=timezone.utc).isoformat()
         timestamp = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
 
         name = self._extract_meta(html, "og:title") or ""
         name = name.replace(" - SSG.COM", "").strip()
-        thumbnail = self._normalize_image(
-            self._extract_meta(html, "og:image") or ""
-        )
+        thumbnail = self._normalize_image(self._extract_meta(html, "og:image") or "")
 
         sale_price = self._parse_sale_price(html)
         original_price = self._parse_original_price(html) or sale_price
@@ -778,8 +829,10 @@ class SSGSourcingClient:
             "isOutOfStock": is_out_of_stock,
             "isSale": not is_out_of_stock,
             "saleStatus": "sold_out" if is_out_of_stock else "in_stock",
-            "freeShipping": bool(re.search(r'무료배송', html[:5000])),
-            "sameDayDelivery": bool(re.search(r'(?:당일배송|쓱배송|새벽배송)', html[:5000])),
+            "freeShipping": bool(re.search(r"무료배송", html[:5000])),
+            "sameDayDelivery": bool(
+                re.search(r"(?:당일배송|쓱배송|새벽배송)", html[:5000])
+            ),
             "status": "collected",
             "appliedPolicyId": None,
             "marketPrices": {},
@@ -797,13 +850,26 @@ class SSGSourcingClient:
     # ------------------------------------------------------------------
 
     def _parse_sale_price(self, html: str) -> int:
-        """판매가 추출 (폴백)."""
+        """판매가 추출 (폴백).
+
+        우선순위:
+          1순위: 카드혜택가 (존재할 때만)
+          2순위: meta product:price:amount
+          3순위: CSS 패턴 (ssg_price, sale_price, cdtl_price)
+        """
+        # 1순위: 카드혜택가
+        card_price = self._extract_card_benefit_price(html)
+        if card_price > 0:
+            return card_price
+
+        # 2순위: meta 태그
         price_meta = self._extract_meta(html, "product:price:amount")
         if price_meta:
             price = self._safe_int(re.sub(r"[^\d]", "", price_meta))
             if price > 0:
                 return price
 
+        # 3순위: CSS 패턴
         for pattern in [
             r'class="[^"]*ssg_price[^"]*"[^>]*>.*?(\d[\d,]+)',
             r'class="[^"]*sale[_-]?price[^"]*"[^>]*>.*?(\d[\d,]+)',
@@ -831,7 +897,7 @@ class SSGSourcingClient:
         for pattern in [
             r'class="[^"]*best[_-]?benefit[^"]*"[^>]*>.*?(\d[\d,]+)',
             r'class="[^"]*coupon[_-]?price[^"]*"[^>]*>.*?(\d[\d,]+)',
-            r'(?:최대혜택가|쿠폰적용가)[^<]*?(\d[\d,]+)',
+            r"(?:최대혜택가|쿠폰적용가)[^<]*?(\d[\d,]+)",
         ]:
             price = self._extract_price(html, pattern)
             if price > 0:
@@ -860,7 +926,7 @@ class SSGSourcingClient:
         if bc:
             cats = [
                 t.strip()
-                for t in re.findall(r'<a[^>]*>([^<]+)</a>', bc.group(1))
+                for t in re.findall(r"<a[^>]*>([^<]+)</a>", bc.group(1))
                 if t.strip() and t.strip() not in ("홈", "HOME", "SSG.COM")
             ]
             if cats:
@@ -873,7 +939,7 @@ class SSGSourcingClient:
 
         # JSON 옵션 데이터
         opt_pattern = re.compile(
-            r'(?:optionData|itemOptList|optionList)\s*[=:]\s*(\[.*?\]);',
+            r"(?:optionData|itemOptList|optionList)\s*[=:]\s*(\[.*?\]);",
             re.DOTALL,
         )
         j = opt_pattern.search(html)
@@ -881,19 +947,19 @@ class SSGSourcingClient:
             try:
                 opt_list = json.loads(j.group(1))
                 for opt in opt_list:
-                    opt_name = (
-                        opt.get("optNm", "") or opt.get("name", "")
-                    ).strip()
+                    opt_name = (opt.get("optNm", "") or opt.get("name", "")).strip()
                     if not opt_name:
                         continue
                     stock = self._safe_int(opt.get("stockQty", 0))
                     is_soldout = opt.get("soldOutYn", "N") == "Y" or stock == 0
-                    options.append({
-                        "name": opt_name,
-                        "price": self._safe_int(opt.get("sellprc", 0)),
-                        "stock": stock,
-                        "isSoldOut": bool(is_soldout),
-                    })
+                    options.append(
+                        {
+                            "name": opt_name,
+                            "price": self._safe_int(opt.get("sellprc", 0)),
+                            "stock": stock,
+                            "isSoldOut": bool(is_soldout),
+                        }
+                    )
                 return options
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -901,23 +967,27 @@ class SSGSourcingClient:
         # select 박스 폴백
         option_area = re.search(
             r'class="[^"]*option[_-]?select[^"]*"[^>]*>(.*?)</select>',
-            html, re.DOTALL | re.IGNORECASE,
+            html,
+            re.DOTALL | re.IGNORECASE,
         )
         if option_area:
             for value, text in re.findall(
                 r'<option[^>]+value="([^"]*)"[^>]*>([^<]+)</option>',
-                option_area.group(1), re.IGNORECASE,
+                option_area.group(1),
+                re.IGNORECASE,
             ):
                 text = text.strip()
                 if not value or "선택" in text:
                     continue
                 is_soldout = "품절" in text
-                options.append({
-                    "name": text,
-                    "price": 0,
-                    "stock": 0 if is_soldout else 1,
-                    "isSoldOut": is_soldout,
-                })
+                options.append(
+                    {
+                        "name": text,
+                        "price": 0,
+                        "stock": 0 if is_soldout else 1,
+                        "isSoldOut": is_soldout,
+                    }
+                )
 
         return options
 
@@ -954,7 +1024,7 @@ class SSGSourcingClient:
     def _extract_uitem_list(self, js_block: str) -> list[dict]:
         """uitemObjList 배열에서 옵션 목록 추출."""
         # uitemObjList 배열 시작 탐색
-        m = re.search(r'uitemObjList\s*:\s*\[', js_block)
+        m = re.search(r"uitemObjList\s*:\s*\[", js_block)
         if not m:
             return []
 
@@ -964,19 +1034,19 @@ class SSGSourcingClient:
         i = start
         while i < len(js_block):
             ch = js_block[i]
-            if ch == '\\':
+            if ch == "\\":
                 i += 2
                 continue
             if ch in ('"', "'"):
                 q = ch
                 i += 1
                 while i < len(js_block) and js_block[i] != q:
-                    if js_block[i] == '\\':
+                    if js_block[i] == "\\":
                         i += 1
                     i += 1
-            elif ch == '[':
+            elif ch == "[":
                 depth += 1
-            elif ch == ']':
+            elif ch == "]":
                 depth -= 1
                 if depth == 0:
                     end = i + 1
@@ -990,18 +1060,20 @@ class SSGSourcingClient:
 
         # 각 객체({...}) 추출
         items = []
-        obj_pattern = re.compile(r'\{[^{}]+\}', re.DOTALL)
+        obj_pattern = re.compile(r"\{[^{}]+\}", re.DOTALL)
         for obj_m in obj_pattern.finditer(array_block):
             block = obj_m.group(0)
 
             def gs(k: str) -> str:
-                pm = re.search(rf"[,\{{]\s*{re.escape(k)}\s*:\s*['\"]([^'\"]*)['\"]", block)
+                pm = re.search(
+                    rf"[,\{{]\s*{re.escape(k)}\s*:\s*['\"]([^'\"]*)['\"]", block
+                )
                 return pm.group(1).strip() if pm else ""
 
             def gn(k: str) -> int:
                 pm = re.search(
                     rf"[,\{{]\s*{re.escape(k)}\s*:\s*(?:parseInt\s*\(\s*['\"](\d+)['\"]|['\"](\d+)['\"]|(\d+))",
-                    block
+                    block,
                 )
                 if pm:
                     v = pm.group(1) or pm.group(2) or pm.group(3)
@@ -1009,7 +1081,7 @@ class SSGSourcingClient:
                 return 0
 
             # isSoldout 불리언
-            soldout_m = re.search(r'isSoldout\s*:\s*(true|false)', block)
+            soldout_m = re.search(r"isSoldout\s*:\s*(true|false)", block)
             is_soldout = soldout_m.group(1) == "true" if soldout_m else False
 
             uitem_id = gs("uitemId")
@@ -1018,16 +1090,20 @@ class SSGSourcingClient:
                 is_soldout = True
 
             opt_name = "/".join(
-                p for p in [gs("uitemOptnNm1"), gs("uitemOptnNm2"), gs("uitemOptnNm3")] if p
+                p
+                for p in [gs("uitemOptnNm1"), gs("uitemOptnNm2"), gs("uitemOptnNm3")]
+                if p
             ) or gs("uitemNm")
 
-            items.append({
-                "_uitemId": uitem_id,
-                "name": opt_name,
-                "price": gn("sellprc"),
-                "stock": stock,
-                "isSoldOut": is_soldout,
-            })
+            items.append(
+                {
+                    "_uitemId": uitem_id,
+                    "name": opt_name,
+                    "price": gn("sellprc"),
+                    "stock": stock,
+                    "isSoldOut": is_soldout,
+                }
+            )
 
         return items
 
@@ -1055,10 +1131,10 @@ class SSGSourcingClient:
                 chars: list[str] = ['"']
                 while j < length:
                     c = js_str[j]
-                    if c == '\\' and j + 1 < length:
+                    if c == "\\" and j + 1 < length:
                         nc = js_str[j + 1]
                         if nc == "'":
-                            chars.append("'")   # \' → '
+                            chars.append("'")  # \' → '
                         elif nc == '"':
                             chars.append('\\"')  # \" → \"
                         else:
@@ -1070,36 +1146,71 @@ class SSGSourcingClient:
                         j += 1
                         break
                     elif c == '"':
-                        chars.append('\\"')      # 내부 " 이스케이프
+                        chars.append('\\"')  # 내부 " 이스케이프
                         j += 1
                     else:
                         chars.append(c)
                         j += 1
-                result.append(''.join(chars))
+                result.append("".join(chars))
                 i = j
             else:
                 result.append(ch)
                 i += 1
 
-        converted = ''.join(result)
+        converted = "".join(result)
 
         # Step 2: 미인용 키 → 이중따옴표 키 (예: itemId: → "itemId":)
-        converted = re.sub(r'([{,]\s*)([a-zA-Z_]\w*)\s*:', r'\1"\2":', converted)
+        converted = re.sub(r"([{,]\s*)([a-zA-Z_]\w*)\s*:", r'\1"\2":', converted)
 
         # Step 3: 후행 콤마 제거 (예: {..., } → {...})
-        converted = re.sub(r',\s*([}\]])', r'\1', converted)
+        converted = re.sub(r",\s*([}\]])", r"\1", converted)
 
         return converted
 
     @staticmethod
-    def _extract_dept_sale_price(html: str) -> int:
-        """department.ssg.com 상세 페이지에서 최적가(할인가) 추출.
+    def _extract_card_benefit_price(html: str) -> int:
+        """카드혜택가 추출.
 
-        resultItemObj.sellprc는 정상가이므로, HTML의 cdtl_price point 클래스에서
-        실제 할인가를 추출한다.
+        <dt class="mndtl_dl_tit">카드혜택가</dt> 가 존재할 때만 해당 가격을 반환한다.
+        카드혜택가는 매일 변동되므로 존재하지 않으면 0을 반환한다.
         """
         m = re.search(
-            r'cdtl_price\s+point[^>]*>.*?ssg_price[^>]*>([\d,]+)',
+            r'<dt[^>]+class="[^"]*mndtl_dl_tit[^"]*"[^>]*>\s*카드혜택가\s*</dt>'
+            r'.*?<em[^>]+class="ssg_price"[^>]*>([\d,]+)</em>',
+            html,
+            re.DOTALL,
+        )
+        if m:
+            return int(m.group(1).replace(",", ""))
+        return 0
+
+    @staticmethod
+    def _extract_dept_sale_price(html: str) -> int:
+        """department.ssg.com 상세 페이지에서 실질 판매가 추출.
+
+        우선순위:
+          1순위: 카드혜택가 (mndtl_dl_tit > 카드혜택가 섹션) — 존재할 때만
+          2순위: cdtl_new_price notranslate — 항상 현재 최저 비카드가격 표시
+                 (최적가가 있으면 최적가, 없으면 세일가를 자동으로 표시)
+          3순위: cdtl_price point — 최적가 tooltip fallback
+        """
+        # 1순위: 카드혜택가
+        card_price = SSGSourcingClient._extract_card_benefit_price(html)
+        if card_price > 0:
+            return card_price
+
+        # 2순위: 메인 표시 가격 (최적가 or 세일가 — 항상 현재 최저 비카드가격)
+        m = re.search(
+            r"cdtl_new_price\s+notranslate[^>]*>.*?ssg_price[^>]*>([\d,]+)",
+            html,
+            re.DOTALL,
+        )
+        if m:
+            return int(m.group(1).replace(",", ""))
+
+        # 3순위: 최적가 tooltip (cdtl_price point)
+        m = re.search(
+            r"cdtl_price\s+point[^>]*>.*?ssg_price[^>]*>([\d,]+)",
             html,
             re.DOTALL,
         )
@@ -1121,11 +1232,15 @@ class SSGSourcingClient:
     @staticmethod
     def _extract_meta(html: str, prop: str) -> Optional[str]:
         """og/product 메타 태그에서 content 추출."""
-        pattern = rf'<meta[^>]+(?:property|name)="{re.escape(prop)}"[^>]+content="([^"]*)"'
+        pattern = (
+            rf'<meta[^>]+(?:property|name)="{re.escape(prop)}"[^>]+content="([^"]*)"'
+        )
         m = re.search(pattern, html, re.IGNORECASE)
         if m:
             return m.group(1)
-        pattern2 = rf'<meta[^>]+content="([^"]*)"[^>]+(?:property|name)="{re.escape(prop)}"'
+        pattern2 = (
+            rf'<meta[^>]+content="([^"]*)"[^>]+(?:property|name)="{re.escape(prop)}"'
+        )
         m2 = re.search(pattern2, html, re.IGNORECASE)
         return m2.group(1) if m2 else None
 

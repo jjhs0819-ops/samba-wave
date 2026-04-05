@@ -473,7 +473,8 @@ async def exchange_action(
         )
         from backend.domain.samba.returns.repository import SambaReturnRepository
 
-        api_key = account.api_key or ""
+        extras = account.additional_fields or {}
+        api_key = account.api_key or extras.get("apiKey", "")
         if not api_key:
             raise HTTPException(status_code=400, detail="11번가 API 키가 없습니다")
 
