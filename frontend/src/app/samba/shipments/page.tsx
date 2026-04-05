@@ -261,7 +261,7 @@ export default function ShipmentsPage() {
     if (autoAll && accounts.length > 0) {
       setUpdateItems(priceOnly
         ? { all: false, price: true, thumb: false, detail: false }
-        : { all: true, price: true, thumb: true, detail: true }
+        : { all: false, price: false, thumb: false, detail: false }
       )
       // 선택된 상품의 카테고리 매핑에 연결된 마켓만 체크
       const selectedProds = preSelectedIds.map(id => products.find(p => p.id === id)).filter(Boolean)

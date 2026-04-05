@@ -1105,14 +1105,17 @@ class SambaShipmentService:
                                 f"[ESM 크로스매핑] {other}({other_id}) → {market_type}({category_id})"
                             )
 
-                if not category_id:
+                if not category_id and market_type != "playauto":
                     res["error"] = "카테고리 매핑 없음"
                     logger.warning(
                         f"[전송] 상품 {product_id} → {market_type} 카테고리 매핑 없음 (스킵)"
                     )
                     return res
 
-                if market_type != "coupang" and not str(category_id).isdigit():
+                if (
+                    market_type not in ("coupang", "playauto")
+                    and not str(category_id).isdigit()
+                ):
                     res["error"] = f"최하단 카테고리 매핑 필요 (현재: {category_id})"
                     logger.warning(
                         f"[전송] 상품 {product_id} → {market_type} 최하단 카테고리 미매핑: '{category_id}' (스킵)"
