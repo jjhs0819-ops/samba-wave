@@ -452,8 +452,18 @@ export default function CategoriesPage() {
       try {
         const existing = mappings.find(m => m.source_site === selectedSite && m.source_category === sourceCategory)
         if (existing) {
-          await categoryApi.updateMapping(existing.id, { target_mappings: targetMappings })
-          setMappings(prev => prev.map(m => m.id === existing.id ? { ...m, target_mappings: targetMappings } : m))
+          try {
+            await categoryApi.updateMapping(existing.id, { target_mappings: targetMappings })
+            setMappings(prev => prev.map(m => m.id === existing.id ? { ...m, target_mappings: targetMappings } : m))
+          } catch {
+            // PUT 실패 시 새로 생성
+            await categoryApi.createMapping({
+              source_site: selectedSite,
+              source_category: sourceCategory,
+              target_mappings: targetMappings,
+            })
+            load()
+          }
         } else {
           await categoryApi.createMapping({
             source_site: selectedSite,
@@ -641,9 +651,19 @@ export default function CategoriesPage() {
       try {
         await categoryApi.updateMapping(id, { target_mappings: updatedTargets })
         setMappings(prev => prev.map(m => m.id === id ? { ...m, target_mappings: updatedTargets } : m))
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : '수정 실패'
-        showAlert(`매핑 수정 실패: ${msg}`, 'error')
+      } catch {
+        // PUT 실패 시 새로 생성
+        try {
+          await categoryApi.createMapping({
+            source_site: row.source_site,
+            source_category: row.source_category,
+            target_mappings: updatedTargets,
+          })
+          load()
+        } catch (e2) {
+          const msg = e2 instanceof Error ? e2.message : '수정 실패'
+          showAlert(`매핑 수정 실패: ${msg}`, 'error')
+        }
       }
     }
     setEditingCell(null)
@@ -671,9 +691,19 @@ export default function CategoriesPage() {
       try {
         await categoryApi.updateMapping(id, { target_mappings: updatedTargets })
         setMappings(prev => prev.map(m => m.id === id ? { ...m, target_mappings: updatedTargets } : m))
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : '수정 실패'
-        showAlert(`매핑 수정 실패: ${msg}`, 'error')
+      } catch {
+        // PUT 실패 시 새로 생성
+        try {
+          await categoryApi.createMapping({
+            source_site: row.source_site,
+            source_category: row.source_category,
+            target_mappings: updatedTargets,
+          })
+          load()
+        } catch (e2) {
+          const msg = e2 instanceof Error ? e2.message : '수정 실패'
+          showAlert(`매핑 수정 실패: ${msg}`, 'error')
+        }
       }
     }
     setEditingCell(null)
@@ -810,9 +840,23 @@ export default function CategoriesPage() {
             }
           } else {
             const updatedTargets = { ...row.target_mappings, [market]: newCat }
-            await categoryApi.updateMapping(row.id, { target_mappings: updatedTargets })
-            const idx = updatedMappings.findIndex(m => m.id === row.id)
-            if (idx >= 0) updatedMappings[idx] = { ...updatedMappings[idx], target_mappings: updatedTargets }
+            try {
+              await categoryApi.updateMapping(row.id, { target_mappings: updatedTargets })
+              const idx = updatedMappings.findIndex(m => m.id === row.id)
+              if (idx >= 0) updatedMappings[idx] = { ...updatedMappings[idx], target_mappings: updatedTargets }
+            } catch {
+              // PUT 실패 시 새로 생성
+              const created = await categoryApi.createMapping({
+                source_site: row.source_site,
+                source_category: row.source_category,
+                target_mappings: updatedTargets,
+              })
+              if (created && typeof created === 'object' && 'id' in created) {
+                const idx = updatedMappings.findIndex(m => m.id === row.id)
+                if (idx >= 0) updatedMappings[idx] = created as typeof row
+                else updatedMappings.push(created as typeof row)
+              }
+            }
           }
           successCount++
         }

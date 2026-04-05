@@ -183,11 +183,14 @@ export default function ShipmentsPage() {
     setSelectedProducts([])
     // URL에서 selected 파라미터 제거
     const url = new URL(window.location.href)
-    if (url.searchParams.has('selected')) {
+    if (url.searchParams.has('selected') || url.searchParams.has('fromStorage')) {
       url.searchParams.delete('selected')
       url.searchParams.delete('sites')
+      url.searchParams.delete('fromStorage')
       url.searchParams.delete('autoAll')
       url.searchParams.delete('priceOnly')
+      sessionStorage.removeItem('shipment_selected')
+      sessionStorage.removeItem('shipment_sites')
       window.history.replaceState({}, '', url.toString())
     }
   }, [])
@@ -240,9 +243,14 @@ export default function ShipmentsPage() {
   useEffect(() => { load() }, [load])
   useEffect(() => { return () => { if (progressRef.current) clearInterval(progressRef.current) } }, [])
 
-  // URL에서 선택된 상품 ID 자동 적용 + 필터링
-  const preSelectedIds = searchParams.get('selected')?.split(',') || []
-  const preSelectedSites = searchParams.get('sites')?.split(',') || []
+  // sessionStorage 또는 URL에서 선택된 상품 ID 자동 적용 + 필터링
+  const fromStorage = searchParams.get('fromStorage') === '1'
+  const preSelectedIds = fromStorage
+    ? (sessionStorage.getItem('shipment_selected')?.split(',') || [])
+    : (searchParams.get('selected')?.split(',') || [])
+  const preSelectedSites = fromStorage
+    ? (sessionStorage.getItem('shipment_sites')?.split(',') || [])
+    : (searchParams.get('sites')?.split(',') || [])
   const autoAll = searchParams.get('autoAll') === '1'
   const priceOnly = searchParams.get('priceOnly') === '1'
   const initializedRef = useRef(false)
@@ -250,6 +258,14 @@ export default function ShipmentsPage() {
     if (initializedRef.current) return
     if (products.length === 0 || policies.length === 0) return
     initializedRef.current = true
+    // sessionStorage 정리
+    if (fromStorage) {
+      sessionStorage.removeItem('shipment_selected')
+      sessionStorage.removeItem('shipment_sites')
+      const url = new URL(window.location.href)
+      url.searchParams.delete('fromStorage')
+      window.history.replaceState({}, '', url.toString())
+    }
 
     if (preSelectedIds.length > 0) {
       const ids = preSelectedIds.filter(id => products.some(p => p.id === id))

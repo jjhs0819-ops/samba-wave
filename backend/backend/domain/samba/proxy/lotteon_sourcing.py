@@ -121,6 +121,7 @@ class LotteonSourcingClient:
         keyword: str,
         page: int = 1,
         size: int = 40,
+        display_category_id: str = "",
         **filters: Any,
     ) -> list[dict[str, Any]]:
         """롯데ON 상품 검색.
@@ -150,7 +151,12 @@ class LotteonSourcingClient:
             f"{self.SEARCH_URL}?render=search&platform=pc"
             f"&q={quote(keyword)}&page={page}&size={min(size, 60)}&mallId=2"
         )
-        logger.info(f'[LOTTEON] 검색 시작: "{keyword}" (page={page})')
+        # 카테고리 필터 (displayCategoryId)
+        if display_category_id:
+            search_url += f"&dpCtgrNo={quote(display_category_id)}"
+        logger.info(
+            f'[LOTTEON] 검색 시작: "{keyword}" (page={page}, cat={display_category_id or "전체"})'
+        )
 
         try:
             async with httpx.AsyncClient(
@@ -781,7 +787,10 @@ class LotteonSourcingClient:
         _parse_search_econjs가 camelCase 키(siteProductId, salePrice 등)를 반환하므로
         worker.py가 기대하는 snake_case 키(site_product_id, sale_price 등)로 변환한다.
         """
-        raw = await self.search_products(keyword, size=min(max_count, 60))
+        category_filter = kwargs.pop("category_filter", "")
+        raw = await self.search_products(
+            keyword, size=min(max_count, 60), display_category_id=category_filter
+        )
         products = []
         for item in raw:
             # camelCase → snake_case 정규화
@@ -819,111 +828,144 @@ class LotteonSourcingClient:
         """worker.py get_detail 패턴 호환 래퍼 — get_product_detail() 결과 반환."""
         return await self.get_product_detail(product_id)
 
-    async def scan_categories(self, keyword: str, max_scan: int = 20) -> dict[str, Any]:
-        """롯데ON 카테고리 스캔 — 검색 결과 상위 max_scan개 상품에서 카테고리 분포 집계.
+    async def scan_categories(self, keyword: str, **_kwargs: Any) -> dict[str, Any]:
+        """롯데ON 카테고리 스캔 — 검색 HTML의 displayCategoryFilter에서 전체 카테고리 트리 추출.
 
-        전략:
-        1. search_products()로 상품 목록 취득
-        2. sitmNo 있는 상품은 fetch_pbf_standalone() 직접 호출 (HTTP 1회/건)
-        3. sitmNo 없는 상품은 get_product_detail() 폴백 (HTML + pbf)
-        4. asyncio.Semaphore(3)으로 동시성 제어
-        5. 실패 항목 건너뜀 (부분 결과 반환)
+        무신사의 필터 API와 동일한 원리: 검색 1회 요청으로 카테고리 트리 + 상품 수를 한번에 가져온다.
+        econJs.SearchApp.create() 안의 displayCategoryFilter 객체를 파싱한다.
 
         Returns:
             {
-                "categories": [{"categoryCode", "path", "count", "category1", "category2", "category3"}],
+                "categories": [{"categoryCode", "path", "count", "category1", "category2", "category3", "category4"}],
                 "total": int,
                 "groupCount": int,
             }
         """
-        import asyncio
-        from collections import Counter
+        search_url = (
+            f"{self.SEARCH_URL}?render=search&platform=pc"
+            f"&q={quote(keyword)}&page=1&size=1&mallId=2"
+        )
+        logger.info(f'[LOTTEON] 카테고리 스캔 시작: "{keyword}"')
 
-        products = await self.search_products(keyword, size=60)
-        if not products:
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout, follow_redirects=True
+            ) as client:
+                resp = await client.get(search_url, headers=self.HEADERS)
+                if resp.status_code != 200:
+                    logger.warning(f"[LOTTEON] 카테고리 스캔 HTTP {resp.status_code}")
+                    return {"categories": [], "total": 0, "groupCount": 0}
+                html = resp.text
+        except Exception as e:
+            logger.error(f"[LOTTEON] 카테고리 스캔 요청 실패: {e}")
             return {"categories": [], "total": 0, "groupCount": 0}
 
-        targets = products[:max_scan]
-        sem = asyncio.Semaphore(3)
+        categories = self._parse_display_category_filter(html)
 
-        async def fetch_one(item: dict) -> Optional[tuple[str, str]]:
-            """(categoryCode, path) 반환, 실패 시 None."""
-            async with sem:
-                sitm_no = str(item.get("sitmNo", "") or "").strip()
-                try:
-                    if sitm_no:
-                        # pbf 직접 경로 (HTTP 1회 — 빠른경로)
-                        pbf = await asyncio.wait_for(
-                            self.fetch_pbf_standalone(sitm_no), timeout=20
-                        )
-                        if pbf:
-                            scat_no = str(
-                                (pbf.get("basicInfo") or {}).get("scatNo", "") or ""
-                            ).strip()
-                            if scat_no:
-                                path = _LOTTEON_SCAT_NAMES.get(
-                                    scat_no, f"미분류({scat_no})"
-                                )
-                                return scat_no, path
-
-                    # pbf 실패 또는 sitmNo 없음 → HTML 전체 경로 폴백
-                    site_product_id = str(
-                        item.get("siteProductId") or item.get("site_product_id") or ""
-                    ).strip()
-                    if not site_product_id:
-                        return None
-                    detail = await asyncio.wait_for(
-                        self.get_product_detail(site_product_id), timeout=20
-                    )
-                    scat_no = str(detail.get("_lotteonScatNo", "") or "").strip()
-                    if scat_no:
-                        path = _LOTTEON_SCAT_NAMES.get(scat_no, f"미분류({scat_no})")
-                        return scat_no, path
-                    category = str(detail.get("category", "") or "").strip()
-                    if category:
-                        return category, category
-                    return None
-
-                except Exception as e:
-                    logger.debug(f"[LOTTEON scan] 카테고리 조회 건너뜀: {e}")
-                    return None
-
-        raw_results = await asyncio.gather(
-            *[fetch_one(p) for p in targets], return_exceptions=True
-        )
-
-        counter: Counter = Counter()
-        success_count = 0
-        for r in raw_results:
-            if isinstance(r, Exception) or r is None:
-                continue
-            counter[r] += 1
-            success_count += 1
-
-        categories = []
-        for (code, path), count in counter.most_common():
-            parts = path.split(" > ")
-            categories.append(
-                {
-                    "categoryCode": code,
-                    "path": path,
-                    "count": count,
-                    "category1": parts[0] if len(parts) > 0 else "",
-                    "category2": parts[1] if len(parts) > 1 else "",
-                    "category3": parts[2] if len(parts) > 2 else "",
-                }
-            )
-
+        total = sum(c["count"] for c in categories)
         logger.info(
             f"[LOTTEON] 카테고리 스캔 완료: keyword={keyword!r}, "
-            f"스캔={len(targets)}건, 성공={success_count}건, 카테고리={len(categories)}개"
+            f"카테고리={len(categories)}개, 총 상품={total}개"
         )
 
         return {
             "categories": categories,
-            "total": success_count,
+            "total": total,
             "groupCount": len(categories),
         }
+
+    def _parse_display_category_filter(self, html: str) -> list[dict[str, Any]]:
+        """검색 HTML의 displayCategoryFilter에서 카테고리 트리를 평탄화하여 반환.
+
+        leaf 카테고리(최하위)만 반환하되, 상위 경로를 category1~4에 포함한다.
+        """
+        # displayCategoryFilter의 items 배열 위치 찾기
+        m = re.search(
+            r"displayCategoryFilter:\s*\{[^}]*?items:\s*(\[)",
+            html,
+            re.DOTALL,
+        )
+        if not m:
+            logger.debug("[LOTTEON] displayCategoryFilter not found")
+            return []
+
+        # 대괄호 깊이 추적으로 items 배열 전체 추출
+        start = m.start(1)
+        depth = 0
+        end = start
+        for i in range(start, min(start + 200000, len(html))):
+            ch = html[i]
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+
+        raw = html[start:end]
+        # 후행 콤마 제거 (JSON 비표준)
+        raw = re.sub(r",\s*([}\]])", r"\1", raw)
+
+        try:
+            items = json.loads(raw)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.debug(f"[LOTTEON] displayCategoryFilter JSON 파싱 실패: {e}")
+            return []
+
+        # 트리 → 평탄 리스트 (depth 3 기준 집계 — 중분류 단위로 묶기)
+        # depth 3 노드: 하위 leaf 카운트를 합산하여 하나의 카테고리로 반환
+        # depth 3이 leaf이면 그대로 반환
+        results: list[dict[str, Any]] = []
+
+        def _sum_count(node: dict) -> int:
+            """노드와 모든 하위 노드의 count 합산."""
+            total = int(node.get("count", 0) or 0)
+            for child in node.get("children", []):
+                total += _sum_count(child)
+            return total
+
+        def _flatten(nodes: list, path_parts: list[str], current_depth: int) -> None:
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                name = str(node.get("displayCategoryName", "") or "").strip()
+                cat_id = str(node.get("displayCategoryId", "") or "").strip()
+                children = node.get("children", [])
+                current_path = path_parts + [name] if name else path_parts
+
+                # depth 3 이상이면 여기서 집계 (하위를 합산)
+                if current_depth >= 3 or not children:
+                    count = (
+                        _sum_count(node) if children else int(node.get("count", 0) or 0)
+                    )
+                    if not cat_id or count <= 0:
+                        continue
+                    path_str = " > ".join(current_path)
+                    results.append(
+                        {
+                            "categoryCode": cat_id,
+                            "path": path_str,
+                            "count": count,
+                            "category1": current_path[0]
+                            if len(current_path) > 0
+                            else "",
+                            "category2": current_path[1]
+                            if len(current_path) > 1
+                            else "",
+                            "category3": current_path[2]
+                            if len(current_path) > 2
+                            else "",
+                        }
+                    )
+                else:
+                    _flatten(children, current_path, current_depth + 1)
+
+        _flatten(items, [], 1)
+
+        # 상품 수 내림차순 정렬
+        results.sort(key=lambda x: x["count"], reverse=True)
+        return results
 
     def _extract_sitmno_from_html(self, html: str) -> str:
         """HTML에서 sitmNo 추출 (HTML 엔티티 디코딩 후 파싱)."""
@@ -956,7 +998,9 @@ class LotteonSourcingClient:
 
                 if resp.status_code in (429, 403):
                     retry_after = int(resp.headers.get("Retry-After", "60"))
-                    logger.warning(f"[LOTTEON] 인기상품 검색 차단 HTTP {resp.status_code}")
+                    logger.warning(
+                        f"[LOTTEON] 인기상품 검색 차단 HTTP {resp.status_code}"
+                    )
                     raise RateLimitError(resp.status_code, retry_after)
 
                 if resp.status_code != 200:

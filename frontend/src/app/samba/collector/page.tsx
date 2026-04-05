@@ -417,11 +417,12 @@ export default function CollectorPage() {
       return
     }
 
-    // 선택된 그룹 + 하위 그룹 모두 수집
+    // 선택된 그룹 + 하위 그룹 모두 수집 (사이트 필터 적용 시 같은 사이트만)
     const allIds = new Set(baseIds)
     const findChildren = (parentId: string) => {
       for (const f of filters) {
         if (f.parent_id === parentId && !allIds.has(f.id)) {
+          if (siteFilter && f.source_site && f.source_site !== siteFilter) continue
           allIds.add(f.id)
           findChildren(f.id)
         }
@@ -864,6 +865,7 @@ export default function CollectorPage() {
             placeholder={
               selectedSite === "MUSINSA" ? "브랜드명 또는 URL (예: 나이키, https://www.musinsa.com/search/goods?keyword=나이키)" :
               selectedSite === "KREAM" ? "https://kream.co.kr/search?keyword=나이키" :
+              selectedSite === "LOTTEON" ? "키워드 또는 URL (예: 나이키, https://www.lotteon.com/search/...)" :
               "URL을 입력하세요"
             }
             style={{
@@ -915,6 +917,7 @@ export default function CollectorPage() {
                     requested_count_per_group: -1,
                     real_total: brandTotal,
                     options: checkedOptions,
+                    source_site: selectedSite,
                   })
                   addLog(`[카테고리분류] ${res.created}개 그룹 생성 완료`)
                   showAlert(`${res.created}개 그룹이 생성되었습니다`, 'success')

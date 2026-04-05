@@ -1082,14 +1082,13 @@ class LotteonPlugin(MarketPlugin):
                 "message": "롯데ON API Key가 비어있습니다. 설정에서 해당 계정을 수정 후 저장해주세요.",
             }
 
-        # ── 성별 오버라이드: sex == "여성"이면 남성→여성 카테고리 변환 ──
-        # 경로 문자열(">" 포함)과 BC코드 모두 처리
-        # (shipment.service에서 미리 BC코드로 변환된 경우도 대응)
-        if (product.get("sex") or "").strip() == "여성" and category_id:
+        # ── 성별 오버라이드: sex에 따라 남성/여성 카테고리 강제 변환 ──
+        # sex='여성' → 여성스포츠의류, 그 외(남성/유니섹스/라이프 등) → 남성스포츠의류
+        _sex_val = (product.get("sex") or "").strip()
+        if _sex_val == "여성" and category_id:
             from backend.domain.samba.category.service import _LOTTEON_M_TO_F
 
             if ">" in category_id:
-                # 경로 문자열 레벨 변환
                 female_cat = _LOTTEON_M_TO_F.get(category_id)
                 if female_cat:
                     logger.info(
@@ -1103,18 +1102,30 @@ class LotteonPlugin(MarketPlugin):
                     )
                     category_id = female_cat
             elif category_id.startswith("BC4104"):
-                # BC코드 레벨 변환 — 명시적 매핑 우선, 알 수 없는 코드는 BC4104→BC4110 치환
                 female_bc = _BC_M_TO_F.get(category_id)
                 if female_bc:
                     logger.info(f"[롯데ON] 성별 보정(BC): {category_id} → {female_bc}")
                     category_id = female_bc
                 else:
-                    # 알려지지 않은 남성 BC41040xxx: BC4110 치환 시도
                     candidate = "BC4110" + category_id[6:]
                     logger.info(
                         f"[롯데ON] 성별 보정(BC fallback): {category_id} → {candidate}"
                     )
                     category_id = candidate
+        elif _sex_val != "여성" and category_id:
+            # 여성이 아닌 경우 → 남성스포츠의류로 강제 변환
+            if ">" in category_id and "여성스포츠의류" in category_id:
+                male_cat = category_id.replace("여성스포츠의류", "남성스포츠의류")
+                logger.info(
+                    f"[롯데ON] 남성 강제 변환: {category_id!r} → {male_cat!r} (sex={_sex_val})"
+                )
+                category_id = male_cat
+            elif category_id.startswith("BC4110"):
+                candidate = "BC4104" + category_id[6:]
+                logger.info(
+                    f"[롯데ON] 남성 강제 변환(BC): {category_id} → {candidate} (sex={_sex_val})"
+                )
+                category_id = candidate
 
         # ── FC05 권한없음 방지: 패션의류 경로/BC23코드 → 스포츠의류 강제 변환 ──────────
         if category_id and category_id in _FASHION_TO_SPORTS:
@@ -1241,6 +1252,7 @@ class LotteonPlugin(MarketPlugin):
                     ),
                 }
 
+        logger.info(f"[롯데ON] 최종 카테고리 코드: {category_id} (상품: {product.get('name', '')[:30]})")
         client = LotteonClient(api_key)
         # 거래처 정보 자동 획득 (trGrpCd, trNo)
         await client.test_auth()

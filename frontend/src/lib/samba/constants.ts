@@ -37,6 +37,7 @@ export const SOURCING_SEARCH_URLS: Record<string, string> = {
   MUSINSA: 'https://www.musinsa.com/search/musinsa/integration?q=',
   KREAM: 'https://kream.co.kr/search?keyword=',
   ABCmart: 'https://abcmart.a-rt.com/search?q=',
+  LOTTEON: 'https://www.lotteon.com/search/search/search.ecn?render=search&platform=pc&q=',
 }
 
 /** 소싱처 상품 상세 URL (상품번호 뒤에 붙여 사용) */
@@ -46,6 +47,7 @@ export const SOURCING_PRODUCT_URLS: Record<string, string> = {
   FashionPlus: 'https://www.fashionplus.co.kr/goods/detail/',
   ABCmart: 'https://www.a-rt.com/product?prdtNo=',
   Nike: 'https://www.nike.com/kr/t/',
+  LOTTEON: 'https://www.lotteon.com/p/product/',
 }
 
 /** 소싱처 주문 상세 URL (주문번호 뒤에 붙여 사용) */
