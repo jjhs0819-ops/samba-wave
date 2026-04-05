@@ -181,7 +181,7 @@ class PlayAutoPlugin(MarketPlugin):
         public_url: str,
         image_url: str,
     ) -> str:
-        """URL 접근 가능하면 그대로, 불가하면 R2 업로드 후 R2 URL 반환."""
+        """소싱처 이미지 → R2 업로드 (EMP 서버에서 접근 가능하도록)."""
         # 이미 R2 URL이면 스킵
         if public_url and public_url in image_url:
             return image_url
@@ -197,7 +197,7 @@ class PlayAutoPlugin(MarketPlugin):
         r2_key = f"playauto/{url_hash}{ext}"
         r2_url = f"{public_url}/{r2_key}"
 
-        # R2에 이미 존재하는지 확인 (중복 업로드 방지)
+        # R2에 이미 존재하면 재업로드 스킵
         try:
             await asyncio.to_thread(
                 partial(s3_client.head_object, Bucket=bucket_name, Key=r2_key)
@@ -206,17 +206,7 @@ class PlayAutoPlugin(MarketPlugin):
         except Exception:
             pass
 
-        # 소싱처 URL 외부 접근 테스트
-        try:
-            head_resp = await dl_client.head(image_url)
-            if head_resp.status_code == 200:
-                ct = head_resp.headers.get("content-type", "")
-                if "image" in ct:
-                    return image_url
-        except Exception:
-            pass
-
-        # 접근 불가 → 다운로드 후 R2 업로드
+        # 소싱처 이미지는 무조건 R2 업로드 (EMP 서버에서 소싱처 직접 접근 불가)
         return await self._upload_single_image(
             dl_client, s3_client, bucket_name, public_url, image_url, r2_key
         )
