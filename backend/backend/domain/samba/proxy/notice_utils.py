@@ -663,9 +663,7 @@ def build_lotteon_notice(product: dict[str, Any], **kwargs: str) -> dict[str, An
         as_message or as_phone or (f"{brand} 고객센터" if brand else "판매자 문의")
     )
     care = product.get("care_instructions", "") or fallback
-    manufacture_ym = (
-        product.get("_manufacture_ym", "") or ""
-    ).strip() or _dt.now().strftime("%Y%m")
+    manufacture_ym = _dt.now().strftime("%Y%m")  # 등록일 기준 yyyyMM
 
     if code == "01":
         # 의류: 0010소재 0020색상 0030치수 0040제조년월 0050세탁취급 0060제조국 0070제조자 0080품질보증 0090A/S

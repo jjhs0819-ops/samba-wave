@@ -1274,8 +1274,6 @@ class LotteonPlugin(MarketPlugin):
             product_copy["_as_phone"] = extras["asPhone"]
         if extras.get("asMessage"):
             product_copy["_as_message"] = extras["asMessage"]
-        if extras.get("releaseYearMonth"):
-            product_copy["_manufacture_ym"] = str(extras["releaseYearMonth"]).strip()
         if extras.get("discountRate"):
             product_copy["_discount_rate"] = int(extras["discountRate"])
         if extras.get("returnFee"):

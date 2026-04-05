@@ -169,9 +169,7 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'dispatchDays', label: '발송완료 N일 이내', type: 'select', options: [
       { value: '1', label: '1일' }, { value: '2', label: '2일' }, { value: '3', label: '3일' },
     ]},
-    { name: 'releaseYearMonth', label: '출시년월 (yyyyMM)', type: 'text', placeholder: '예: 202504 (미입력 시 등록일 자동)' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '010-1234-5678' },
-    { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '상세페이지 참조' },
     { name: 'promotionMessage', label: '상품홍보문구', type: 'text', placeholder: '홍보 문구 입력' },
     { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '3000' },
     { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '6000' },
