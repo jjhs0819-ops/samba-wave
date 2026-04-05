@@ -856,12 +856,15 @@ async def sync_orders_from_markets(
                             f"Sender={sample.get('Sender')}, "
                             f"SenderNo={sample.get('SenderNo')}"
                         )
-                    # 모든 주문 상태 조회 (송장입력, 배송중 등)
+                    # 모든 주문 상태 조회
                     for state in [
+                        "송장출력",
                         "송장입력",
+                        "주문확인",
                         "출고",
                         "배송중",
                         "수취확인",
+                        "정산완료",
                         "취소",
                         "반품요청",
                         "교환요청",
