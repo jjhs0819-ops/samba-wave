@@ -323,7 +323,7 @@ class ImageFilterService:
     # ------------------------------------------------------------------
 
     async def classify_images_clip(
-        self, urls: list[str], threshold: float = 0.08
+        self, urls: list[str], threshold: float = 0.02
     ) -> list[dict[str, Any]]:
         """CLIP ONNX zero-shot으로 이미지 분류 (무료, 로컬).
 
@@ -606,13 +606,24 @@ class ImageFilterService:
                 cls_detail = [
                     {"url": c["url"][-60:], "type": c["type"]} for c in classifications
                 ]
-                removed = len(additional) - len(product_cuts)
-                update_data["images"] = [main_image] + product_cuts
-                result_info["images"] = {
-                    "kept": len(product_cuts),
-                    "removed": removed,
-                    "classifications": cls_detail,
-                }
+                if not product_cuts:
+                    # 이미지컷 0장 → 작업하지 않음 (원본 보존)
+                    logger.warning(
+                        f"[이미지필터] 상품 {product_id} 추가이미지 — 이미지컷 0장, 필터링 스킵"
+                    )
+                    result_info["images"] = {
+                        "action": "skipped",
+                        "reason": "no_product_cuts",
+                        "classifications": cls_detail,
+                    }
+                else:
+                    removed = len(additional) - len(product_cuts)
+                    update_data["images"] = [main_image] + product_cuts
+                    result_info["images"] = {
+                        "kept": len(product_cuts),
+                        "removed": removed,
+                        "classifications": cls_detail,
+                    }
 
         # 상세페이지 이미지 필터링 (제거 발생 시 자동 2회차 재검증)
         if scope in ("detail", "all"):
