@@ -866,7 +866,9 @@ async def sync_orders_from_markets(
                         "수취확인",
                         "정산완료",
                         "취소",
+                        "취소마감",
                         "반품요청",
+                        "반품마감",
                         "교환요청",
                     ]:
                         try:
