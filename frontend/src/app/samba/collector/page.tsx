@@ -916,7 +916,7 @@ export default function CollectorPage() {
             type="text"
             value={collectUrl}
             onChange={(e) => { setCollectUrl(e.target.value); setDetectedBrandCode('') }}
-            onKeyDown={(e) => e.key === "Enter" && handleCreateGroup()}
+            onKeyDown={(e) => e.key === "Enter" && selectedSite !== "MUSINSA" && handleCreateGroup()}
             placeholder={
               selectedSite === "MUSINSA" ? "브랜드명 또는 URL (예: 나이키, https://www.musinsa.com/search/goods?keyword=나이키)" :
               selectedSite === "KREAM" ? "https://kream.co.kr/search?keyword=나이키" :
@@ -988,8 +988,11 @@ export default function CollectorPage() {
                   setBrandCategories([]); setBrandSelectedCats(new Set())
                   load(); loadTree()
                 } catch (e) { showAlert(e instanceof Error ? e.message : '그룹 생성 실패', 'error') }
+              } else if (selectedSite === 'MUSINSA') {
+                // 무신사는 카테고리 스캔 먼저 필요
+                showAlert('카테고리 스캔을 먼저 실행하세요')
               } else {
-                // 카테고리 스캔 없으면 기존 단일 그룹 생성
+                // 기존 단일 그룹 생성
                 handleCreateGroup()
               }
             }}
