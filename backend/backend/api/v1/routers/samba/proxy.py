@@ -2382,6 +2382,22 @@ async def musinsa_goods_detail(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.get("/brand-search")
+async def brand_search(
+    keyword: str = Query(...),
+    gf: str = Query("A"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """무신사 키워드로 브랜드 코드 검색."""
+    try:
+        client = await _get_musinsa_client(session)
+        brands = await client.search_brands(keyword, gf)
+        return {"brands": brands}
+    except Exception as exc:
+        logger.error(f"[무신사 브랜드검색] 실패: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.get("/search-count")
 async def search_count(
     source_site: str = Query(...),

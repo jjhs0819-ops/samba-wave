@@ -153,6 +153,11 @@ export default function CollectorPage() {
     maxDiscount: true,
   });
 
+  // 브랜드 선택 모달
+  const [brandSearchResults, setBrandSearchResults] = useState<Array<{ brandCode: string; brandName: string }>>([])
+  const [showBrandModal, setShowBrandModal] = useState(false)
+  const [pendingKeyword, setPendingKeyword] = useState("")
+
   // 카테고리 자동분류 옵션
   const [brandScanning, setBrandScanning] = useState(false)
   const [brandCategories, setBrandCategories] = useState<{ categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]>([])
@@ -304,16 +309,16 @@ export default function CollectorPage() {
     }, 50);
   }, []);
 
-  // URL → 그룹 생성만 (수집 X)
-  const handleCreateGroup = async () => {
-    if (!collectUrl.trim()) return;
-    setCollecting(true);
-    addLog(`그룹 생성 중: ${collectUrl}`);
+  // 브랜드 코드를 포함하여 그룹 생성 (내부 실행)
+  const executeCreateGroup = async (brandCode?: string) => {
+    const input = collectUrl.trim()
+    if (!input) return
+    setCollecting(true)
+    addLog(`그룹 생성 중: ${input}${brandCode ? ` (브랜드: ${brandCode})` : ''}`)
     try {
-      // URL 도메인과 선택된 소싱처 불일치 검증
       const site = selectedSite
       try {
-        const host = new URL(collectUrl).hostname
+        const host = new URL(input).hostname
         const siteHostMap: Record<string, string[]> = {
           MUSINSA: ['musinsa.com'], KREAM: ['kream.co.kr'], FashionPlus: ['fashionplus.co.kr'],
           Nike: ['nike.com'], Adidas: ['adidas.co.kr', 'adidas.com'],
@@ -329,11 +334,10 @@ export default function CollectorPage() {
         }
       } catch { /* URL이 아닌 경우 검증 스킵 */ }
 
-      // URL에서 키워드 추출 (소싱처별 파라미터)
       let keyword = ""
       let isUrl = false
       try {
-        const parsed = new URL(collectUrl)
+        const parsed = new URL(input)
         isUrl = true
         keyword = parsed.searchParams.get("keyword")
           || parsed.searchParams.get("searchWord")
@@ -344,30 +348,27 @@ export default function CollectorPage() {
           || parsed.searchParams.get("tab")
           || ""
       } catch {
-        // URL이 아닌 경우 검색어 자체를 키워드로 사용
-        keyword = collectUrl.trim()
+        keyword = input
       }
 
-      // 그룹이름 자동 생성: 소싱처_키워드
-      const groupName = keyword ? `${site}_${keyword.replace(/\s+/g, '_')}` : `${site}_${new Date().toLocaleDateString("ko-KR")}`;
+      const groupName = keyword ? `${site}_${keyword.replace(/\s+/g, '_')}` : `${site}_${new Date().toLocaleDateString("ko-KR")}`
 
-      // 무신사 옵션 URL 파라미터로 저장
-      let keywordUrl = collectUrl;
+      let keywordUrl = input
       if (site === "MUSINSA") {
-        // 평문 키워드인 경우 무신사 검색 URL 자동 구성
         let u: URL
         if (!isUrl) {
           u = new URL("https://www.musinsa.com/search/goods")
           u.searchParams.set("keyword", keyword)
         } else {
-          try { u = new URL(collectUrl) } catch { u = new URL("https://www.musinsa.com/search/goods"); u.searchParams.set("keyword", keyword) }
+          try { u = new URL(input) } catch { u = new URL("https://www.musinsa.com/search/goods"); u.searchParams.set("keyword", keyword) }
         }
-        if (checkedOptions['excludePreorder']) u.searchParams.set("excludePreorder", "1");
-        if (checkedOptions['excludeBoutique']) u.searchParams.set("excludeBoutique", "1");
-        if (checkedOptions['maxDiscount']) u.searchParams.set("maxDiscount", "1");
-        keywordUrl = u.toString();
+        // 브랜드 코드 추가
+        if (brandCode) u.searchParams.set("brand", brandCode)
+        if (checkedOptions['excludePreorder']) u.searchParams.set("excludePreorder", "1")
+        if (checkedOptions['excludeBoutique']) u.searchParams.set("excludeBoutique", "1")
+        if (checkedOptions['maxDiscount']) u.searchParams.set("maxDiscount", "1")
+        keywordUrl = u.toString()
       }
-      // 패션플러스: 평문 키워드 → 검색 URL 자동 구성
       if (site === 'FashionPlus' && !isUrl) {
         const u = new URL('https://www.fashionplus.co.kr/search/goods/result')
         u.searchParams.set('searchWord', keyword)
@@ -379,10 +380,9 @@ export default function CollectorPage() {
         keywordUrl = u.toString()
       }
 
-      // 소싱처 범용 검색 총 상품수 조회
       let requestedCount = 100
       try {
-        const countResult = await proxyApi.searchCount(site, keyword, isUrl ? keywordUrl : '')
+        const countResult = await proxyApi.searchCount(site, keyword, keywordUrl)
         if (countResult.totalCount > 0) {
           requestedCount = countResult.totalCount
           addLog(`검색 결과: ${requestedCount.toLocaleString()}개 상품`)
@@ -394,16 +394,68 @@ export default function CollectorPage() {
         name: groupName,
         keyword: keywordUrl,
         requested_count: requestedCount,
-      });
+      })
 
-      addLog(`그룹 생성 완료: "${created.name}" (${site}, ${requestedCount.toLocaleString()}개)`);
-      setCollectUrl("");
-      load(); loadTree();
+      addLog(`그룹 생성 완료: "${created.name}" (${site}, ${requestedCount.toLocaleString()}개)`)
+      setCollectUrl("")
+      load(); loadTree()
     } catch (e) {
-      addLog(`그룹 생성 실패: ${e instanceof Error ? e.message : "오류"}`);
+      addLog(`그룹 생성 실패: ${e instanceof Error ? e.message : "오류"}`)
     }
-    setCollecting(false);
-  };
+    setCollecting(false)
+  }
+
+  // URL → 그룹 생성 (무신사 평문 키워드 시 브랜드 검색 먼저)
+  const handleCreateGroup = async () => {
+    const input = collectUrl.trim()
+    if (!input) return
+
+    // 무신사 + 평문 키워드인 경우 브랜드 검색
+    if (selectedSite === 'MUSINSA') {
+      let isUrl = false
+      let hasBrand = false
+      try {
+        const parsed = new URL(input)
+        isUrl = true
+        hasBrand = !!parsed.searchParams.get('brand')
+      } catch { /* 평문 키워드 */ }
+
+      // URL에 이미 brand가 있거나, URL이 아닌 평문 키워드일 때만 브랜드 검색
+      if (!isUrl && !hasBrand) {
+        try {
+          setCollecting(true)
+          addLog(`브랜드 검색 중: ${input}`)
+          const res = await proxyApi.brandSearch(input)
+          if (res.brands && res.brands.length > 0) {
+            // 브랜드가 1개면 자동 선택, 여러개면 모달 표시
+            if (res.brands.length === 1) {
+              addLog(`브랜드 자동 선택: ${res.brands[0].brandName} (${res.brands[0].brandCode})`)
+              await executeCreateGroup(res.brands[0].brandCode)
+              return
+            }
+            setPendingKeyword(input)
+            setBrandSearchResults(res.brands)
+            setShowBrandModal(true)
+            setCollecting(false)
+            return
+          }
+          // 브랜드 없으면 키워드 검색으로 진행
+          addLog('매칭 브랜드 없음 → 키워드 검색으로 진행')
+        } catch {
+          // 브랜드 검색 실패 시 키워드로 진행
+        }
+        setCollecting(false)
+      }
+    }
+    await executeCreateGroup()
+  }
+
+  // 브랜드 선택 모달에서 선택 시 그룹 생성
+  const handleBrandSelect = async (brandCode?: string) => {
+    setShowBrandModal(false)
+    setBrandSearchResults([])
+    await executeCreateGroup(brandCode)
+  }
 
   const handleDeleteSelectedGroups = async () => {
     // 체크된 그룹이 없으면 현재 보이는 그룹 전체를 대상으로
@@ -1953,6 +2005,35 @@ export default function CollectorPage() {
             >
               확인
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ 브랜드 선택 모달 ═══ */}
+      {showBrandModal && brandSearchResults.length > 0 && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => { setShowBrandModal(false); setCollecting(false) }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', padding: '24px 28px', minWidth: '360px', maxWidth: '500px' }}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 4px', fontSize: '1rem', fontWeight: 600, color: '#E5E5E5' }}>브랜드 선택</h3>
+            <p style={{ margin: '0 0 16px', fontSize: '0.78rem', color: '#888' }}>
+              &quot;{pendingKeyword}&quot; 검색 결과 — 브랜드를 선택하면 해당 브랜드 상품만 수집합니다
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {brandSearchResults.map(b => (
+                <button key={b.brandCode} onClick={() => handleBrandSelect(b.brandCode)}
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', background: '#222', border: '1px solid #333', borderRadius: '8px', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.85rem', transition: 'border-color 0.15s' }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = '#FF8C00')}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = '#333')}>
+                  <span style={{ fontWeight: 600 }}>{b.brandName}</span>
+                  <span style={{ color: '#888', fontSize: '0.78rem' }}>{b.brandCode}</span>
+                </button>
+              ))}
+              <button onClick={() => handleBrandSelect(undefined)}
+                style={{ padding: '10px 16px', background: 'transparent', border: '1px dashed #555', borderRadius: '8px', color: '#888', cursor: 'pointer', fontSize: '0.82rem', marginTop: '4px' }}>
+                브랜드 필터 없이 전체 검색
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1384,3 +1384,36 @@ class MusinsaClient:
                 f"[무신사 브랜드스캔] {brand}: {len(results)}개 카테고리, 총 {total}건"
             )
             return results
+
+    async def search_brands(
+        self,
+        keyword: str,
+        gf: str = "A",
+    ) -> list[dict[str, str]]:
+        """키워드로 무신사 브랜드 코드/이름 검색.
+
+        필터 API를 호출하여 매칭되는 브랜드 목록을 반환한다.
+        """
+        timeout = httpx.Timeout(15.0, connect=10.0)
+        params = {
+            "caller": "SEARCH",
+            "keyword": keyword,
+            "gf": gf,
+        }
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(
+                "https://api.musinsa.com/api2/dp/v1/plp/filter",
+                params=params,
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            detail = resp.json().get("data", {}).get("detail", {})
+            brand_data = detail.get("brand", {}).get("list", [])
+            results = []
+            for b in brand_data:
+                code = b.get("value", "")
+                name = b.get("displayText", "")
+                if code:
+                    results.append({"brandCode": code, "brandName": name})
+            logger.info(f"[무신사 브랜드검색] '{keyword}': {len(results)}개 브랜드")
+            return results

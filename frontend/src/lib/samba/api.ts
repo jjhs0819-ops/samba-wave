@@ -670,6 +670,11 @@ export const proxyApi = {
     const qs = new URLSearchParams({ keyword, size: '1', ...params })
     return request<{ success: boolean; totalCount: number }>(`${SAMBA_PREFIX}/proxy/musinsa/search-api?${qs}`)
   },
+  // 무신사 브랜드 코드 검색
+  brandSearch: (keyword: string, gf?: string) => {
+    const qs = new URLSearchParams({ keyword, gf: gf || 'A' })
+    return request<{ brands: Array<{ brandCode: string; brandName: string }> }>(`${SAMBA_PREFIX}/proxy/brand-search?${qs}`)
+  },
   // 범용 소싱처 검색 카운트
   searchCount: (sourceSite: string, keyword: string, url?: string) => {
     const qs = new URLSearchParams({ source_site: sourceSite, keyword })
