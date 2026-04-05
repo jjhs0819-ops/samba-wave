@@ -30,6 +30,16 @@ MARKET_TYPE_TO_POLICY_KEY: dict[str, str] = {
     "hmall": "HMALL",
     "kream": "KREAM",
     "playauto": "플레이오토",
+    "ebay": "eBay",
+    "lazada": "Lazada",
+    "qoo10": "Qoo10",
+    "shopee": "Shopee",
+    "shopify": "Shopify",
+    "zoom": "Zum(줌)",
+    "toss": "토스",
+    "rakuten": "라쿠텐",
+    "amazon": "아마존",
+    "buyma": "바이마",
 }
 
 
@@ -819,30 +829,7 @@ class SambaShipmentService:
         # 정책 기반 계정 필터링: 정책이 있으면 참조하되, 사용자 선택 계정은 보존
         policy = None
         policy_market_data: dict[str, Any] = {}
-        MARKET_TYPE_TO_POLICY_KEY = {
-            "coupang": "쿠팡",
-            "ssg": "신세계몰",
-            "smartstore": "스마트스토어",
-            "11st": "11번가",
-            "gmarket": "지마켓",
-            "auction": "옥션",
-            "gsshop": "GS샵",
-            "lotteon": "롯데ON",
-            "lottehome": "롯데홈쇼핑",
-            "homeand": "홈앤쇼핑",
-            "hmall": "HMALL",
-            "kream": "KREAM",
-            "ebay": "eBay",
-            "lazada": "Lazada",
-            "qoo10": "Qoo10",
-            "shopee": "Shopee",
-            "shopify": "Shopify",
-            "zoom": "Zum(줌)",
-            "toss": "토스",
-            "rakuten": "라쿠텐",
-            "amazon": "아마존",
-            "buyma": "바이마",
-        }
+        # 모듈 레벨 MARKET_TYPE_TO_POLICY_KEY 사용
         if not product_row.applied_policy_id:
             logger.warning(f"[전송] 상품 {product_id} 정책 미설정 — 전송 차단")
             await self.repo.update_async(
