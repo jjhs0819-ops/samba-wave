@@ -408,15 +408,13 @@ class PlayAutoClient:
         if cost:
             data["CostPrice"] = str(int(cost))
 
-        # 시중가: 정책의 streetPriceRate(%) 적용, 없으면 original_price
+        # 시중가: 정책의 streetPriceRate(%) 적용, 0이면 판매가와 동일
         sale_price = int(product.get("sale_price", 0))
         street_rate = product.get("_street_price_rate", 0)
         if street_rate and sale_price:
             data["StreetPrice"] = str(int(sale_price * (1 + street_rate / 100)))
         else:
-            original = product.get("original_price")
-            if original:
-                data["StreetPrice"] = str(int(original))
+            data["StreetPrice"] = str(sale_price)
 
         # 카테고리
         if category_id:
