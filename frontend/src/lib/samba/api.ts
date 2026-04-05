@@ -418,8 +418,8 @@ export const collectorApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}/reset-registration`, { method: "POST" }),
   bulkResetRegistration: (ids: string[]) =>
     request<{ reset: number }>(`${SAMBA_PREFIX}/collector/products/bulk-reset-registration`, { method: "POST", body: JSON.stringify({ ids }) }),
-  bulkRemoveImage: (imageUrl: string, field: string = "images") =>
-    request<{ removed: number }>(`${SAMBA_PREFIX}/collector/products/images/bulk-remove`, { method: "POST", body: JSON.stringify({ image_url: imageUrl, field }) }),
+  bulkRemoveImage: (imageUrl: string, fields: string[] = ['images']) =>
+    request<{ removed: number }>(`${SAMBA_PREFIX}/collector/products/images/bulk-remove`, { method: "POST", body: JSON.stringify({ image_url: imageUrl, fields }) }),
   bulkUpdateTags: (ids: string[], tags: string[] | null, seoKeywords: string[] | null) =>
     request<{ updated: number }>(`${SAMBA_PREFIX}/collector/products/bulk-update-tags`, {
       method: "POST",
