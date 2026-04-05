@@ -51,6 +51,7 @@ interface MarketPolicyForm {
   maxStock: number      // 최대 재고수량 (0=무제한)
   // 플레이오토 전용
   origin: string        // 원산지
+  streetPriceRate: number // 시중가 비율 (%)
 }
 
 
@@ -627,14 +628,21 @@ export default function PoliciesPage() {
                 <NumInput value={mp.shippingDays || 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingDays: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="일" />
               </div>
               )}
-              {/* 플레이오토 전용: 원산지 */}
+              {/* 플레이오토 전용: 원산지, 시중가 */}
               {marketPolicyTab === '플레이오토' && (
+              <>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>원산지</span>
                 <input type="text" value={mp.origin || ''} onChange={(e) => { setCurrentMarketPolicy({ ...mp, origin: e.target.value }); triggerAutoSave() }}
                   placeholder="국내=서울=서울시" style={{ padding: '0.375rem 0.5rem', fontSize: '0.8125rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', outline: 'none', width: '200px' }} />
                 <span style={{ color: '#555', fontSize: '0.72rem' }}>예: 국내=서울=서울시, 기타=기타=기타</span>
               </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>시중가</span>
+                <NumInput value={mp.streetPriceRate || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, streetPriceRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                <span style={{ color: '#555', fontSize: '0.72rem' }}>판매가 대비 시중가 비율 (예: 150 → 판매가의 1.5배)</span>
+              </div>
+              </>
               )}
               {/* 신세계몰 전용: 마진율, 브랜드 */}
               {marketPolicyTab === '신세계몰' && (

@@ -4,7 +4,15 @@
 EMP에 마스터 상품을 등록하면, EMP 스케줄러가 연결된 쇼핑몰에 자동 전송.
 """
 
+import asyncio
+import hashlib
+import io
+import re
+from functools import partial
 from typing import Any
+from urllib.parse import urlparse
+
+import httpx
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.domain.samba.proxy.playauto import PlayAutoClient, PlayAutoApiError
@@ -20,7 +28,6 @@ class PlayAutoPlugin(MarketPlugin):
 
     def _validate_category(self, category_id: str) -> str:
         """플레이오토 카테고리는 8자리 숫자 코드 — 빈 값도 허용."""
-        # 카테고리 없어도 등록 가능 (EMP에서 매핑)
         if not category_id:
             return "__SKIP__"
         return category_id
@@ -51,6 +58,24 @@ class PlayAutoPlugin(MarketPlugin):
                 "message": "플레이오토 API Key가 비어있습니다. 설정에서 API Key를 입력해주세요.",
             }
 
+        # 정책의 플레이오토 전용 설정 주입 (원산지, 시중가비율)
+        policy_id = product.get("applied_policy_id")
+        if policy_id:
+            from backend.domain.samba.policy.repository import SambaPolicyRepository
+
+            policy_repo = SambaPolicyRepository(session)
+            policy = await policy_repo.get_async(policy_id)
+            if policy and policy.market_policies:
+                mp = policy.market_policies.get(self.policy_key, {})
+                if mp.get("origin") and not product.get("origin"):
+                    product["origin"] = mp["origin"]
+                if mp.get("streetPriceRate"):
+                    product["_street_price_rate"] = int(mp["streetPriceRate"])
+
+        # 이미지를 R2에 업로드 후 공개 URL로 교체 (소싱처 URL은 외부 접근 불가)
+        if not product.get("_skip_image_upload"):
+            product = await self._upload_images_to_r2(session, product)
+
         client = PlayAutoClient(api_key)
 
         try:
@@ -58,14 +83,11 @@ class PlayAutoPlugin(MarketPlugin):
             emp_data = self.transform(product, category_id)
 
             if existing_no:
-                # 수정: MasterCode를 기존 코드로 교체
                 emp_data["MasterCode"] = existing_no
                 results = await client.update_product([emp_data])
             else:
-                # 신규 등록
                 results = await client.register_product([emp_data])
 
-            # 응답 처리
             if not results:
                 return {
                     "success": False,
@@ -73,13 +95,10 @@ class PlayAutoPlugin(MarketPlugin):
                 }
 
             result = results[0] if isinstance(results, list) else results
-
-            # 성공 여부 판단
             status = str(result.get("status", "false")).lower()
             msg = result.get("msg", result.get("message", ""))
 
             if status == "true":
-                # 등록 성공 — msg에 MasterCode가 들어옴
                 master_code = msg if not existing_no else existing_no
                 logger.info(
                     f"[플레이오토] {'수정' if existing_no else '등록'} 성공: "
@@ -112,6 +131,218 @@ class PlayAutoPlugin(MarketPlugin):
             }
         finally:
             await client.close()
+
+    async def _upload_images_to_r2(self, session, product: dict) -> dict:
+        """소싱처 이미지 → 외부 접근 불가 시에만 R2 업로드."""
+        r2 = await self._get_r2_client(session)
+        if not r2:
+            logger.warning("[플레이오토] R2 설정 없음 — 이미지 원본 URL 사용")
+            return product
+
+        s3_client, bucket_name, public_url = r2
+
+        # 대표/추가 이미지: 접근 불가한 URL만 R2 업로드
+        images = product.get("images") or []
+        if images:
+            uploaded = []
+            async with httpx.AsyncClient(
+                timeout=15, follow_redirects=True
+            ) as dl_client:
+                for img_url in images[:10]:
+                    url = (
+                        img_url if isinstance(img_url, str) else img_url.get("url", "")
+                    )
+                    if not url:
+                        continue
+                    try:
+                        final_url = await self._ensure_accessible(
+                            dl_client, s3_client, bucket_name, public_url, url
+                        )
+                        uploaded.append(final_url)
+                    except Exception as e:
+                        logger.warning(f"[플레이오토] 이미지 처리 실패: {e}")
+                        uploaded.append(url)
+            product["images"] = uploaded
+
+        # 상세설명 HTML 내 이미지도 동일 처리
+        detail_html = product.get("detail_html", "")
+        if detail_html:
+            product["detail_html"] = await self._replace_detail_images(
+                detail_html, s3_client, bucket_name, public_url
+            )
+
+        return product
+
+    async def _ensure_accessible(
+        self,
+        dl_client: httpx.AsyncClient,
+        s3_client,
+        bucket_name: str,
+        public_url: str,
+        image_url: str,
+    ) -> str:
+        """URL 접근 가능하면 그대로, 불가하면 R2 업로드 후 R2 URL 반환."""
+        # 이미 R2 URL이면 스킵
+        if public_url and public_url in image_url:
+            return image_url
+
+        # 해시 기반 중복 방지 — 동일 소싱처 URL은 같은 R2 파일로
+        url_hash = hashlib.md5(image_url.encode()).hexdigest()[:12]
+        ext = ".jpg"
+        low = image_url.lower()
+        if low.endswith(".png"):
+            ext = ".png"
+        elif low.endswith(".gif"):
+            ext = ".gif"
+        r2_key = f"playauto/{url_hash}{ext}"
+        r2_url = f"{public_url}/{r2_key}"
+
+        # R2에 이미 존재하는지 확인 (중복 업로드 방지)
+        try:
+            await asyncio.to_thread(
+                partial(s3_client.head_object, Bucket=bucket_name, Key=r2_key)
+            )
+            return r2_url
+        except Exception:
+            pass
+
+        # 소싱처 URL 외부 접근 테스트
+        try:
+            head_resp = await dl_client.head(image_url)
+            if head_resp.status_code == 200:
+                ct = head_resp.headers.get("content-type", "")
+                if "image" in ct:
+                    return image_url
+        except Exception:
+            pass
+
+        # 접근 불가 → 다운로드 후 R2 업로드
+        return await self._upload_single_image(
+            dl_client, s3_client, bucket_name, public_url, image_url, r2_key
+        )
+
+    async def _upload_single_image(
+        self,
+        dl_client: httpx.AsyncClient,
+        s3_client,
+        bucket_name: str,
+        public_url: str,
+        image_url: str,
+        r2_key: str = "",
+    ) -> str:
+        """이미지 1장 다운로드 → R2 업로드 → 공개 URL 반환."""
+        if public_url and public_url in image_url:
+            return image_url
+
+        # 다운로드 (소싱처별 Referer 설정)
+        parsed = urlparse(image_url)
+        referer = f"{parsed.scheme}://{parsed.netloc}/"
+        if "msscdn.net" in (parsed.netloc or "") or "musinsa" in (parsed.netloc or ""):
+            referer = "https://www.musinsa.com/"
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": referer,
+        }
+        resp = await dl_client.get(image_url, headers=headers)
+        resp.raise_for_status()
+        image_bytes = resp.content
+        if len(image_bytes) < 1000:
+            raise ValueError(f"이미지 비정상 크기: {len(image_bytes)}B")
+
+        # R2 키 (해시 기반 중복 방지)
+        if not r2_key:
+            url_hash = hashlib.md5(image_url.encode()).hexdigest()[:12]
+            ext = ".jpg"
+            if image_url.lower().endswith(".png"):
+                ext = ".png"
+            elif image_url.lower().endswith(".gif"):
+                ext = ".gif"
+            r2_key = f"playauto/{url_hash}{ext}"
+
+        content_type = "image/jpeg"
+        if r2_key.endswith(".png"):
+            content_type = "image/png"
+        elif r2_key.endswith(".gif"):
+            content_type = "image/gif"
+
+        await asyncio.to_thread(
+            partial(
+                s3_client.upload_fileobj,
+                io.BytesIO(image_bytes),
+                bucket_name,
+                r2_key,
+                ExtraArgs={"ContentType": content_type},
+            )
+        )
+
+        r2_url = f"{public_url}/{r2_key}"
+        return r2_url
+
+    async def _replace_detail_images(
+        self,
+        html: str,
+        s3_client,
+        bucket_name: str,
+        public_url: str,
+    ) -> str:
+        """상세설명 HTML 내 외부 이미지 URL을 R2 URL로 교체."""
+        img_pattern = re.compile(r'src=["\']([^"\']+)["\']')
+        urls = img_pattern.findall(html)
+
+        if not urls:
+            return html
+
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as dl_client:
+            for url in urls:
+                if not url or url.startswith("data:"):
+                    continue
+                if public_url and public_url in url:
+                    continue
+                try:
+                    r2_url = await self._ensure_accessible(
+                        dl_client, s3_client, bucket_name, public_url, url
+                    )
+                    html = html.replace(url, r2_url)
+                except Exception as e:
+                    logger.warning(f"[플레이오토] 상세 이미지 R2 업로드 실패: {e}")
+
+        return html
+
+    async def _get_r2_client(self, session):
+        """R2 클라이언트 가져오기."""
+        from backend.domain.samba.forbidden.model import SambaSettings
+        from sqlmodel import select
+
+        stmt = select(SambaSettings).where(SambaSettings.key == "cloudflare_r2")
+        result = await session.execute(stmt)
+        row = result.scalars().first()
+        if not row or not isinstance(row.value, dict):
+            return None
+
+        creds = row.value
+        account_id = str(creds.get("accountId", "")).strip()
+        access_key = str(creds.get("accessKey", "")).strip()
+        secret_key = str(creds.get("secretKey", "")).strip()
+        bucket_name = str(creds.get("bucketName", "")).strip()
+        r2_public_url = str(creds.get("publicUrl", "")).strip().rstrip("/")
+
+        if not access_key or not secret_key or not bucket_name:
+            return None
+
+        try:
+            import boto3
+
+            client = boto3.client(
+                "s3",
+                endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                region_name="auto",
+            )
+            return client, bucket_name, r2_public_url
+        except Exception:
+            return None
 
     async def delete(self, session, product_no: str, account) -> dict[str, Any]:
         """상품 품절 처리 (EMP는 삭제 = 품절/취소대기 전환)."""

@@ -29,6 +29,7 @@ MARKET_TYPE_TO_POLICY_KEY: dict[str, str] = {
     "homeand": "홈앤쇼핑",
     "hmall": "HMALL",
     "kream": "KREAM",
+    "playauto": "플레이오토",
 }
 
 

@@ -374,34 +374,52 @@ class PlayAutoClient:
             "ProdName": str(product.get("name", ""))[:200],
             "Price": str(int(product.get("sale_price", 0))),
             "Count": str(stock_qty),
-            "MadeIn": product.get("origin", "기타=기타=기타"),
+            "MadeIn": _normalize_origin(product.get("origin")),
             "TaxType": "Y",
         }
 
-        # 원가/공급가/시중가
-        cost = product.get("cost_price") or product.get("source_price")
+        # 원가 (소싱처 원가 = cost 필드)
+        cost = (
+            product.get("cost")
+            or product.get("cost_price")
+            or product.get("source_price")
+        )
         if cost:
             data["CostPrice"] = str(int(cost))
-        supply = product.get("supply_price")
-        if supply:
-            data["SupplyPrice"] = str(int(supply))
-        original = product.get("original_price")
-        if original:
-            data["StreetPrice"] = str(int(original))
+
+        # 시중가: 정책의 streetPriceRate(%) 적용, 없으면 original_price
+        sale_price = int(product.get("sale_price", 0))
+        street_rate = product.get("_street_price_rate", 0)
+        if street_rate and sale_price:
+            data["StreetPrice"] = str(int(sale_price * (1 + street_rate / 100)))
+        else:
+            original = product.get("original_price")
+            if original:
+                data["StreetPrice"] = str(int(original))
 
         # 카테고리
         if category_id:
             data["CateCode"] = str(category_id)
 
-        # 브랜드/제조사
+        # 브랜드/제조사/모델명
         brand = product.get("brand", "")
         if brand:
             data["Brand"] = str(brand)
         maker = product.get("maker", "") or product.get("manufacturer", "")
         if maker:
             data["Maker"] = str(maker)
+        # 모델명 = 품번 (site_product_id 또는 product_code)
+        model = (
+            product.get("product_code")
+            or product.get("site_product_id")
+            or product.get("sku_code")
+            or ""
+        )
+        if model:
+            data["Model"] = str(model)
 
         # 이미지 (최대 10개, URL 직접 전달)
+        # EMP는 JPG/JPEG/PNG/GIF/BMP 확장자만 허용
         images = product.get("images") or []
         if isinstance(images, list):
             for i, img_url in enumerate(images[:10], 1):
@@ -410,6 +428,15 @@ class PlayAutoClient:
                     # 프로토콜 보정
                     if url.startswith("//"):
                         url = f"https:{url}"
+                    # 확장자 없는 URL에 .jpg 추가 (R2/CDN URL 대응)
+                    if not any(
+                        url.lower().endswith(ext)
+                        for ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
+                    ):
+                        url = url + ".jpg"
+                    # WebP → JPG 변환 (EMP 미지원)
+                    if url.lower().endswith(".webp"):
+                        url = url[:-5] + ".jpg"
                     data[f"Image{i}"] = url
 
         # 상세설명 HTML
@@ -433,7 +460,16 @@ class PlayAutoClient:
         # 재고수량 정책 반영
         max_stock = product.get("_max_stock")
         if max_stock:
-            data["Count"] = str(int(max_stock))
+            stock_qty = int(max_stock)
+            data["Count"] = str(stock_qty)
+
+        # 키워드 (태그에서 최대 5개)
+        tags = product.get("tags") or []
+        if isinstance(tags, list):
+            for i, tag in enumerate(tags[:5], 1):
+                tag_str = str(tag).strip() if tag else ""
+                if tag_str:
+                    data[f"Keyword{i}"] = tag_str
 
         # 옵션 변환
         options = product.get("options") or []
@@ -445,18 +481,20 @@ class PlayAutoClient:
                 has_two_axes = any(o.get("title2") for o in emp_opts)
                 data["OptSelectType"] = "SM" if has_two_axes else "SS"
 
-        # 품목정보고시 (기본값: 상세설명참조)
+        # 품목정보고시 — 상품 데이터로 채우기 (code=35: 기타재화)
+        as_phone = product.get("_as_phone", "")
+        origin_str = _normalize_origin(product.get("origin"))
         data["SiilData"] = [
             {
                 "code": "35",
-                "data1": "[상세설명참조]",
-                "data2": "[상세설명참조]",
+                "data1": str(product.get("name", ""))[:100] or "[상세설명참조]",
+                "data2": data.get("Model", "[상세설명참조]"),
                 "data3": "[상세설명참조]",
-                "data4": "[상세설명참조]",
-                "data5": "[상세설명참조]",
-                "data6": "[상세설명참조]",
+                "data4": origin_str,
+                "data5": data.get("Maker", "[상세설명참조]"),
+                "data6": "N",
                 "data7": "[상세설명참조]",
-                "data8": "[상세설명참조]",
+                "data8": as_phone or "[상세설명참조]",
             }
         ]
 
@@ -495,8 +533,10 @@ def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
         opt_price = opt.get("option_price", 0) or opt.get("add_price", 0)
         emp_opt["price"] = str(int(opt_price))
 
-        # 옵션 재고
+        # 옵션 재고 (max_stock 제한 적용)
         opt_stock = opt.get("stock", opt.get("quantity", default_stock))
+        if default_stock > 0:
+            opt_stock = min(int(opt_stock), default_stock)
         if opt.get("is_sold_out") or opt.get("sold_out"):
             emp_opt["soldout"] = "1"
             emp_opt["stock"] = "0"
@@ -511,3 +551,38 @@ def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
         emp_opts.append(emp_opt)
 
     return emp_opts
+
+
+_DOMESTIC_KEYWORDS = {"국내", "한국", "대한민국", "Korea"}
+_ETC_KEYWORDS = {"기타", "해당없음", "없음", "미상"}
+
+
+def _normalize_origin(origin: str | None) -> str:
+    """원산지 값을 EMP 포맷(국가구분=시도=시군구)으로 정규화.
+
+    입력 예시:
+        "기타" → "기타=기타=기타"
+        "국내" → "국내=기타=기타"
+        "국내=서울=서울시" → 그대로
+        "인도네시아" → "해외=인도네시아=인도네시아"
+        "중국" → "해외=중국=중국"
+        None / "" → "기타=기타=기타"
+    """
+    if not origin or not origin.strip():
+        return "기타=기타=기타"
+    origin = origin.strip()
+
+    # 이미 "=" 포함된 완전한 형식
+    parts = origin.split("=")
+    if len(parts) >= 3:
+        return origin
+    if len(parts) == 2:
+        return f"{parts[0]}={parts[1]}={parts[1]}"
+
+    # 단일 값 — 국내/기타/해외 자동 판별
+    if origin in _DOMESTIC_KEYWORDS:
+        return "국내=기타=기타"
+    if origin in _ETC_KEYWORDS:
+        return "기타=기타=기타"
+    # 그 외 국가명은 해외로 처리
+    return f"해외={origin}={origin}"
