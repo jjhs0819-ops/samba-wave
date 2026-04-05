@@ -502,17 +502,24 @@ class PlayAutoClient:
 
         # 품목정보고시 — 상품 데이터로 채우기 (code=35: 기타재화)
         as_phone = product.get("_as_phone", "")
-        origin_str = _normalize_origin(product.get("origin"))
+        # 품목정보의 원산지는 국가명만 (예: "중국", 비어있으면 "상세설명참조")
+        raw_origin = product.get("origin") or ""
+        siil_origin = (
+            raw_origin.strip()
+            if raw_origin.strip() not in ("기타", "국내", "")
+            else "[상세설명참조]"
+        )
+        maker = data.get("Maker", "")
         data["SiilData"] = [
             {
                 "code": "35",
                 "data1": str(product.get("name", ""))[:100] or "[상세설명참조]",
                 "data2": data.get("Model", "[상세설명참조]"),
                 "data3": "[상세설명참조]",
-                "data4": origin_str,
-                "data5": data.get("Maker", "[상세설명참조]"),
+                "data4": siil_origin,
+                "data5": maker or "[상세설명참조]",
                 "data6": "N",
-                "data7": "[상세설명참조]",
+                "data7": maker or "[상세설명참조]",
                 "data8": as_phone or "[상세설명참조]",
             }
         ]
