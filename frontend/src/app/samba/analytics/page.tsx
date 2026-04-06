@@ -93,7 +93,13 @@ export default function AnalyticsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const allOrders = await orderApi.list(0, 500).catch(() => [])
+      const start = searchMonth > 0
+        ? `${searchYear}-${String(searchMonth).padStart(2, '0')}-01`
+        : `${searchYear}-01-01`
+      const end = searchMonth > 0
+        ? `${searchYear}-${String(searchMonth).padStart(2, '0')}-${new Date(searchYear, searchMonth, 0).getDate()}`
+        : `${searchYear}-12-31`
+      const allOrders = await orderApi.listByDateRange(start, end).catch(() => [])
       setOrders(allOrders)
     } catch {}
     setLoading(false)
