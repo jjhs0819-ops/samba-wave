@@ -850,6 +850,21 @@ async def sync_orders_from_markets(
                         count=500,
                     )
                     logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
+                    # GS샵 ProdCode 디버깅 — 첫 주문 raw 필드 확인
+                    if raw_orders:
+                        sample = raw_orders[0]
+                        logger.info(
+                            f"[플레이오토 raw 샘플] keys={list(sample.keys())}, "
+                            f"ProdCode={sample.get('ProdCode')}, "
+                            f"MasterCode={sample.get('MasterCode')}, "
+                            f"SiteName={sample.get('SiteName')}, "
+                            f"SiteId={sample.get('SiteId')}, "
+                            f"GoodsCd={sample.get('GoodsCd')}, "
+                            f"ShopProdCode={sample.get('ShopProdCode')}, "
+                            f"SiteProdCode={sample.get('SiteProdCode')}, "
+                            f"SelProdCd={sample.get('SelProdCd')}, "
+                            f"OrgProdCd={sample.get('OrgProdCd')}"
+                        )
                     for ro in raw_orders:
                         orders_data.append(
                             _parse_playauto_order(ro, account.id, label, alias_map)
