@@ -81,16 +81,14 @@ async def lifespan(app: FastAPI):
                 await session.execute(
                     text(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS {_col} {_typ}")
                 )
-            # 사본-취소마감 주문 일괄 삭제 (원주문에 이미 취소 정보 포함)
+            # 파생 주문 일괄 삭제 (사본-취소마감 + ★교환주문 — 원주문에 이미 정보 포함)
             _del = await session.execute(
                 text(
-                    "DELETE FROM samba_order WHERE product_name LIKE '[사본-취소마감%'"
+                    "DELETE FROM samba_order WHERE product_name LIKE '[사본-취소마감%' OR product_name LIKE '★교환주문%'"
                 )
             )
             if _del.rowcount > 0:
-                _startup_log.info(
-                    f"[startup] 사본-취소마감 주문 {_del.rowcount}건 삭제"
-                )
+                _startup_log.info(f"[startup] 파생 주문 {_del.rowcount}건 삭제")
             await session.commit()
             _startup_log.info(
                 f"[startup] 스키마 마이그레이션 완료 ({len(_migrations)}건)"
