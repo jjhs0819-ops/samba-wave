@@ -1441,7 +1441,10 @@ def _parse_smartstore_order(
         "tracking_number": po.get("trackingNumber", ""),
         "source": "smartstore",
         "paid_at": _parse_datetime(
-            order_info.get("paymentDate") or order_info.get("orderDate")
+            order_info.get("paymentDate")
+            or po.get("paymentDate")
+            or order_info.get("orderDate")
+            or po.get("orderDate")
         ),
     }
 
