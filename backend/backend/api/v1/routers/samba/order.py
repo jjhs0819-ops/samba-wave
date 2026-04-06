@@ -1523,6 +1523,7 @@ def _parse_playauto_order(
             "신규주문": "주문접수",
             "송장출력": "배송대기중",
             "주문확인": "취소중",
+            "수취확인": "배송완료",
         }.get(order_state, order_state),
         "shipping_company": ro.get("Sender", ""),
         "tracking_number": ro.get("SenderNo", ""),
