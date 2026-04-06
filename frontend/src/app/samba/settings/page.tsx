@@ -755,6 +755,10 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'password', label: 'PASSWORD', type: 'password' },
     { name: 'apiKey', label: 'API Key', type: 'text' },
     { name: 'apiSecret', label: '솔루션코드', type: 'password' },
+    { name: '_divider_alias', label: '마켓번호 별칭 (주문페이지 표시용)', type: 'divider' },
+    { name: 'alias1', label: '별칭 1', type: 'text', placeholder: '037800LT-마놀' },
+    { name: 'alias2', label: '별칭 2', type: 'text', placeholder: '마켓번호-별칭' },
+    { name: 'alias3', label: '별칭 3', type: 'text', placeholder: '마켓번호-별칭' },
   ]},
   { key: 'cafe24', label: '카페24', authField: 'accessToken', guideUrl: 'https://developers.cafe24.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },

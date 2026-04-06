@@ -826,6 +826,19 @@ async def sync_orders_from_markets(
                         {"account": label, "status": "skip", "message": "API Key 없음"}
                     )
                     continue
+                # 별칭 매핑 로드 (store_playauto 설정에서)
+                alias_map: dict[str, str] = {}
+                try:
+                    settings_repo = SambaSettingsRepository(session)
+                    pa_setting = await settings_repo.find_by_async(key="store_playauto")
+                    if pa_setting and isinstance(pa_setting.value, dict):
+                        for ak in ("alias1", "alias2", "alias3"):
+                            av = pa_setting.value.get(ak, "")
+                            if av and "-" in av:
+                                code, nick = av.split("-", 1)
+                                alias_map[code.strip()] = nick.strip()
+                except Exception:
+                    pass
                 pa_client = PlayAutoClient(api_key)
                 try:
                     start_date = (
@@ -838,7 +851,9 @@ async def sync_orders_from_markets(
                     )
                     logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
                     for ro in raw_orders:
-                        orders_data.append(_parse_playauto_order(ro, account.id, label))
+                        orders_data.append(
+                            _parse_playauto_order(ro, account.id, label, alias_map)
+                        )
                 except Exception as e:
                     logger.warning(f"[주문동기화] {label}: 플레이오토 조회 실패 — {e}")
                     results.append(
@@ -1250,7 +1265,10 @@ def _parse_smartstore_order(
 
 
 def _parse_playauto_order(
-    ro: dict, account_id: str, account_label: str
+    ro: dict,
+    account_id: str,
+    account_label: str,
+    alias_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """플레이오토 EMP 주문 → SambaOrder 데이터 변환."""
     status_map = {
@@ -1304,6 +1322,12 @@ def _parse_playauto_order(
         "shipping_company": ro.get("Sender", ""),
         "tracking_number": ro.get("SenderNo", ""),
         "source": "playauto",
-        # 판매처(사업자) 정보
-        "source_site": f"{site_name}({site_id})" if site_name else "",
+        # 판매처(사업자) 정보 — 별칭 매핑 적용
+        "source_site": (
+            f"{site_name}({alias_map[site_id]})"
+            if alias_map and site_id in alias_map and site_name
+            else f"{site_name}({site_id})"
+            if site_name
+            else ""
+        ),
     }
