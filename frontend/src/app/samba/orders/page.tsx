@@ -431,7 +431,9 @@ export default function OrdersPage() {
           '쿠팡': (no) => `https://www.coupang.com/vp/products/${no}`,
           'SSG': (no) => `https://www.ssg.com/item/itemView.ssg?itemId=${no}`,
           '롯데ON': (no) => `https://www.lotteon.com/p/product/${no}`,
+          '롯데온': (no) => `https://www.lotteon.com/p/product/${no}`,
           '롯데홈쇼핑': (no) => `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${no}`,
+          '롯데아이몰': (no) => `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${no}`,
           '홈앤쇼핑': (no) => `https://www.hmall.com/p/pda/itemPtc.do?slitmCd=${no}`,
           'HMALL': (no) => `https://www.hmall.com/p/pda/itemPtc.do?slitmCd=${no}`,
         }
