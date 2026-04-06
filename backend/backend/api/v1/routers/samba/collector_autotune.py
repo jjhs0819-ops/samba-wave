@@ -29,6 +29,7 @@ _autotune_task: Optional[asyncio.Task] = None
 _autotune_running_event = threading.Event()  # 스레드 간 동기화
 _autotune_last_tick: Optional[str] = None
 _autotune_cycle_count = 0
+_autotune_restart_count = 0  # 사이클 재시작 횟수 추적
 
 # 소싱처별 품절 서킷브레이커
 SOLDOUT_BREAK_THRESHOLD = 10  # 연속 품절 N개 → 해당 소싱처 중단
@@ -122,7 +123,7 @@ async def _autotune_loop():
     순서: hot → warm → cold (소싱처별 병렬, 등급순 정렬)
     품절: 마켓 삭제(DELETE) → DB 삭제 (서킷브레이커: 소싱처별 연속 10건)
     """
-    global _autotune_last_tick, _autotune_cycle_count
+    global _autotune_last_tick, _autotune_cycle_count, _autotune_restart_count
     import logging
 
     log = logging.getLogger("autotune")
@@ -1024,13 +1025,40 @@ async def _autotune_loop():
                     log.info("[오토튠] 루프 취소됨 (정상 종료)")
                     break
                 # running 상태인데 CancelledError → 일시적 취소, 루프 계속
+                _autotune_restart_count += 1
                 log.warning(
-                    "[오토튠] CancelledError 발생했으나 running 상태 — 사이클 재시작"
+                    "[오토튠] CancelledError 발생했으나 running 상태 — 사이클 재시작 (누적 %d회)",
+                    _autotune_restart_count,
                 )
+                try:
+                    import backend.domain.samba.collector.refresher as _ref_cancel
+
+                    _now_cancel = datetime.now(timezone.utc)
+                    _kst_cancel = _now_cancel + timedelta(hours=9)
+                    _ref_cancel._refresh_log_buffer.append(
+                        {
+                            "ts": _now_cancel.isoformat(),
+                            "site": "",
+                            "product_id": "",
+                            "name": "",
+                            "msg": f"[{_kst_cancel.strftime('%H:%M:%S')}] !! CancelledError — 사이클 재시작 (누적 {_autotune_restart_count}회)",
+                            "level": "error",
+                            "source": "autotune",
+                        }
+                    )
+                    _ref_cancel._refresh_log_total += 1
+                except Exception:
+                    pass
                 await asyncio.sleep(2)
             except Exception as e:
-                log.error("[오토튠] tick 오류: %s", e, exc_info=True)
-                # 오토튠 실시간 로그에도 에러 표시 (이모지 제거 — cp949 에러 방지)
+                _autotune_restart_count += 1
+                log.error(
+                    "[오토튠] tick 오류 (누적 재시작 %d회): %s",
+                    _autotune_restart_count,
+                    e,
+                    exc_info=True,
+                )
+                # 오토튠 실시간 로그에도 에러 표시
                 try:
                     import backend.domain.samba.collector.refresher as _ref_err
 
@@ -1039,10 +1067,10 @@ async def _autotune_loop():
                     _ref_err._refresh_log_buffer.append(
                         {
                             "ts": _now_err.isoformat(),
-                            "site": "MUSINSA",
+                            "site": "",
                             "product_id": "",
                             "name": "",
-                            "msg": f"[{_kst_err.strftime('%H:%M:%S')}] tick 오류: {type(e).__name__}: {str(e)[:100]}",
+                            "msg": f"[{_kst_err.strftime('%H:%M:%S')}] !! tick 오류 (누적 {_autotune_restart_count}회): {type(e).__name__}: {str(e)[:100]}",
                             "level": "error",
                             "source": "autotune",
                         }
@@ -1132,13 +1160,14 @@ async def auto_start_if_enabled():
 @router.post("/autotune/start")
 async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     """오토튠 무한 루프 시작 — 메인 이벤트 루프에서 실행."""
-    global _autotune_task, _autotune_cycle_count
+    global _autotune_task, _autotune_cycle_count, _autotune_restart_count
     from backend.domain.samba.collector.refresher import clear_bulk_cancel
 
     if _autotune_running_event.is_set():
         return {"ok": True, "status": "already_running"}
     _autotune_running_event.set()
     _autotune_cycle_count = 0
+    _autotune_restart_count = 0
     clear_bulk_cancel()
     _autotune_task = asyncio.create_task(_autotune_loop())
     await _save_autotune_state(True)
@@ -1197,6 +1226,7 @@ async def autotune_status():
         and not _autotune_task.done(),
         "last_tick": _autotune_last_tick,
         "cycle_count": _autotune_cycle_count,
+        "restart_count": _autotune_restart_count,
         "refreshed_count": refreshed_24h,
         "target": "registered",
         "breaker_tripped": tripped,

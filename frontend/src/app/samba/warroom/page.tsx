@@ -216,6 +216,7 @@ export default function WarroomPage() {
   // 오토튠 상태
   const [autotuneRunning, setAutotuneRunning] = useState(false)
   const [autotuneCycles, setAutotuneCycles] = useState(0)
+  const [autotuneRestarts, setAutotuneRestarts] = useState(0)
   const [autotuneRefreshed, setAutotuneRefreshed] = useState(0)
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
   const prevCyclesRef = useRef(0)
@@ -308,6 +309,7 @@ export default function WarroomPage() {
       if (probeStatus && Object.keys(probeStatus).length > 0) setProbeData(probeStatus)
       // 오토튠 상태는 handleAutotuneStatus를 통해 처리 (falseCountRef 가드 적용, 경쟁 상태 방지)
       handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
+      setAutotuneRestarts(atStatus.restart_count || 0)
       if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
       setLastFetched(new Date())
       nextPollRef.current = POLL_INTERVAL / 1000
@@ -398,6 +400,7 @@ export default function WarroomPage() {
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: autotuneRunning ? '#51CF66' : '#FF6B6B', display: 'inline-block' }} />
             <span style={{ fontWeight: 700, color: '#FF8C00', fontSize: '0.875rem' }}>오토튠 실시간 모니터링</span>
             {autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중 ({autotuneCycles}회)</span>}
+            {autotuneRunning && autotuneRestarts > 0 && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>재시작 {autotuneRestarts}회</span>}
             {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
@@ -554,8 +557,10 @@ export default function WarroomPage() {
                   detailTags.push({ label: '변동', value: `${d.changed.toLocaleString()}건`, color: '#FFD93D' })
                 if (typeof d.sold_out === 'number' && d.sold_out > 0)
                   detailTags.push({ label: '품절', value: `${d.sold_out.toLocaleString()}건`, color: '#FF6B6B' })
-                if (typeof d.retransmitted === 'number' && d.retransmitted > 0)
-                  detailTags.push({ label: '재전송', value: `${d.retransmitted.toLocaleString()}건`, color: '#A78BFA' })
+                if (typeof d.price_transmit === 'number' && d.price_transmit > 0)
+                  detailTags.push({ label: '가격전송', value: `${d.price_transmit.toLocaleString()}건`, color: '#FFB347' })
+                if (typeof d.stock_transmit === 'number' && d.stock_transmit > 0)
+                  detailTags.push({ label: '재고전송', value: `${d.stock_transmit.toLocaleString()}건`, color: '#A78BFA' })
                 if (typeof d.deleted === 'number' && d.deleted > 0)
                   detailTags.push({ label: '삭제', value: `${d.deleted.toLocaleString()}건`, color: '#FF6B6B' })
                 if (typeof d.no_pid === 'number' && d.no_pid > 0)
