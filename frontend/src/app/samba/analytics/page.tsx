@@ -115,11 +115,14 @@ export default function AnalyticsPage() {
       const collectedSites = (productData.sites || []).filter(s => SOURCE_SITES.includes(s))
       if (collectedSites.length > 0) setSelectedSites(collectedSites)
 
-      // 마켓: 상품의 registered_accounts에서 계정 ID 추출 → 마켓명 매칭
+      // 마켓: registered_accounts + market_product_nos 양쪽에서 계정 ID 추출
       const registeredAccountIds = new Set<string>()
       for (const p of productData.items) {
         if (p.registered_accounts) {
           for (const aid of p.registered_accounts) registeredAccountIds.add(aid)
+        }
+        if (p.market_product_nos) {
+          for (const aid of Object.keys(p.market_product_nos)) registeredAccountIds.add(aid)
         }
       }
       const registeredMarkets = accounts
@@ -172,7 +175,11 @@ export default function AnalyticsPage() {
   }
 
   // 마켓별 통계
-  const marketTable = buildMonthlyTable(o => o.channel_name || '기타')
+  const marketTable = buildMonthlyTable(o => {
+    const name = o.channel_name || '기타'
+    const idx = name.indexOf('(')
+    return idx > 0 ? name.substring(0, idx) : name
+  })
   // 수집사이트별 통계
   const siteTable = buildMonthlyTable(o => o.source_site || '미등록상품')
   // 주문상태별 통계
