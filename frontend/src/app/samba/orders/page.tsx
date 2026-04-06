@@ -1172,7 +1172,7 @@ export default function OrdersPage() {
                           background: 'rgba(30,30,30,0.6)', border: '1px solid #2D2D2D', borderRadius: '6px',
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
-                          <span style={{ fontSize: '0.75rem', color: '#4C9AFF', fontWeight: 600 }}>{o.shipping_status || '-'}</span>
+                          <span style={{ fontSize: '0.75rem', color: '#4C9AFF', fontWeight: 600 }}>{o.shipping_status === '취소' ? '취소중' : o.shipping_status === '취소마감' ? '취소완료' : o.shipping_status || '-'}</span>
                         </div>
                       </div>
 
