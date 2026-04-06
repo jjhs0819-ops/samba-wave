@@ -71,13 +71,9 @@ export default function AnalyticsPage() {
     STORAGE_KEYS.ANALYTICS_SEARCH,
     defaultSearch,
   )
-  // localStorage에 저장된 이전 상태 키가 유효하지 않으면 전체 리셋
-  const validKeys = new Set(ORDER_STATUSES.map(s => s.key))
+  // 주문상태: 항상 기본값으로 초기화
   useEffect(() => {
-    const hasInvalid = search.statuses.some(k => !validKeys.has(k))
-    if (hasInvalid || search.statuses.length === 0) {
-      setSearch(prev => ({ ...prev, statuses: DEFAULT_STATUSES }))
-    }
+    setSearch(prev => ({ ...prev, statuses: DEFAULT_STATUSES }))
   }, [])
   const searchYear = search.year
   const searchMonth = search.month
