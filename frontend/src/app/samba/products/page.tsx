@@ -867,8 +867,21 @@ export default function ProductsPage() {
               <option value="market_unregistered">미등록상품</option>
               <option value="market_registered">등록상품</option>
             </optgroup>
+            {(() => {
+              const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name] as const)).entries()]
+              return marketTypes.length > 0 ? (
+                <optgroup label="── 마켓구분 ──">
+                  {marketTypes.map(([type, name]) => (
+                    <React.Fragment key={type}>
+                      <option value={`mtype_reg_${type}`}>{name} 등록</option>
+                      <option value={`mtype_unreg_${type}`}>{name} 미등록</option>
+                    </React.Fragment>
+                  ))}
+                </optgroup>
+              ) : null
+            })()}
             {accounts.length > 0 && (
-              <optgroup label="── 계정별 ──">
+              <optgroup label="── 계정구분 ──">
                 {accounts.map(a => (
                   <React.Fragment key={a.id}>
                     <option value={`reg_${a.id}`}>{a.market_name}({a.account_label}) 등록</option>

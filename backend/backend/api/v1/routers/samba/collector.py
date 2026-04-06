@@ -548,7 +548,15 @@ async def scroll_products(
     Returns: {items: [...], total: int, sites: [str]}
     """
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import inspect as _sa_inspect, func, cast, String
+    from sqlalchemy import (
+        inspect as _sa_inspect,
+        func,
+        cast,
+        String,
+        and_,
+        text,
+        select,
+    )
 
     mapper = _sa_inspect(_CP)
     light_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]
@@ -649,6 +657,49 @@ async def scroll_products(
         )
     elif status == "sold_out":
         conditions.append(_CP.sale_status == "sold_out")
+    elif status and status.startswith("mtype_reg_"):
+        # 마켓타입별 등록 필터: 해당 마켓타입의 계정 중 하나라도 등록된 상품
+        market_type = status[10:]
+        from backend.domain.samba.account.model import SambaMarketAccount as _MA
+
+        acc_result = await session.execute(
+            select(_MA.id).where(_MA.market_type == market_type, _MA.is_active == True)
+        )
+        acc_ids = acc_result.scalars().all()
+        if acc_ids:
+            conditions.append(
+                or_(
+                    *[
+                        cast(_CP.registered_accounts, String).like(f'%"{aid}"%')
+                        for aid in acc_ids
+                    ]
+                )
+            )
+        else:
+            conditions.append(text("1=0"))
+    elif status and status.startswith("mtype_unreg_"):
+        # 마켓타입별 미등록 필터: 해당 마켓타입의 계정이 하나도 등록되지 않은 상품
+        market_type = status[12:]
+        from backend.domain.samba.account.model import SambaMarketAccount as _MA
+
+        acc_result = await session.execute(
+            select(_MA.id).where(_MA.market_type == market_type, _MA.is_active == True)
+        )
+        acc_ids = acc_result.scalars().all()
+        if acc_ids:
+            conditions.append(
+                or_(
+                    _CP.registered_accounts.is_(None),
+                    cast(_CP.registered_accounts, String) == "null",
+                    cast(_CP.registered_accounts, String) == "[]",
+                    and_(
+                        *[
+                            ~cast(_CP.registered_accounts, String).like(f'%"{aid}"%')
+                            for aid in acc_ids
+                        ]
+                    ),
+                )
+            )
     elif status and status.startswith("reg_"):
         # 특정 계정에 등록된 상품: registered_accounts JSON에 account_id 포함
         account_id = status[4:]  # "reg_ma_xxx" → "ma_xxx"
