@@ -84,7 +84,7 @@ async def lifespan(app: FastAPI):
             # 파생 주문 일괄 삭제 (사본-* + ★교환주문 — 원주문에 이미 정보 포함)
             _del = await session.execute(
                 text(
-                    "DELETE FROM samba_order WHERE product_name LIKE '[사본-%' OR product_name LIKE '★교환주문%'"
+                    "DELETE FROM samba_order WHERE product_name LIKE '[사본-%' OR product_name LIKE '%★교환주문%'"
                 )
             )
             if _del.rowcount > 0:
