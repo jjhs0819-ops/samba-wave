@@ -106,15 +106,20 @@ export default function AnalyticsPage() {
       setMarketAccounts(accounts)
     }).catch(() => {})
   }, [])
-  // 마켓 + 소싱사이트: 주문 데이터에서 실제 사용된 것만 기본 선택
+  // 마켓: 주문이 존재하는 마켓만 선택 (channel_id/channel_name ↔ account 매칭)
+  // 소싱사이트: 주문에 존재하는 소싱처만 선택
   useEffect(() => {
-    if (orders.length === 0) return
-    const usedMarkets = [...new Set(orders.map(o => o.channel_name).filter((s): s is string => !!s))]
-    setSelectedMarkets(usedMarkets)
+    if (orders.length === 0 || marketAccounts.length === 0) return
+    const orderChannelIds = new Set(orders.map(o => o.channel_id).filter(Boolean))
+    const orderChannelNames = orders.map(o => o.channel_name).filter((s): s is string => !!s)
+    const matched = marketAccounts
+      .filter(a => orderChannelIds.has(a.id) || orderChannelNames.some(cn => cn.includes(a.market_name)))
+      .map(a => a.market_name)
+    setSelectedMarkets([...new Set(matched)])
     const collectedSites = [...new Set(orders.map(o => o.source_site).filter((s): s is string => !!s))]
       .filter(s => SOURCE_SITES.includes(s))
-    setSelectedSites(collectedSites.length > 0 ? collectedSites : [])
-  }, [orders])
+    setSelectedSites(collectedSites)
+  }, [orders, marketAccounts])
 
   // 기간 + 주문상태 필터링
   const filteredOrders = orders.filter(o => {
