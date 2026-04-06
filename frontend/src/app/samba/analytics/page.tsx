@@ -19,9 +19,6 @@ const ORDER_STATUSES = [
   { key: 'shipped', label: '배송중' },
   { key: 'office_arrived', label: '사무실도착' },
   { key: 'domestic', label: '국내배송' },
-  { key: 'cancel_req', label: '취소요청' },
-  { key: 'exchange_req', label: '교환요청' },
-  { key: 'return_req', label: '반품요청' },
   { key: 'cancel_done', label: '취소/반품/교환/완료' },
   { key: 'delivered', label: '배송완료' },
 ]
@@ -62,7 +59,7 @@ export default function AnalyticsPage() {
     year: now.getFullYear(),
     month: 0,
     markets: [],
-    sites: [...SOURCE_SITES],
+    sites: [],
     statuses: ORDER_STATUSES.map(s => s.key),
   }
   const [search, setSearch] = useLocalStorageState<AnalyticsSearch>(
@@ -90,12 +87,27 @@ export default function AnalyticsPage() {
     try {
       const allOrders = await orderApi.list(0, 500).catch(() => [])
       setOrders(allOrders)
+      // 소싱사이트 기본값: 수집된 소싱처만 선택
+      if (search.sites.length === 0) {
+        const collectedSites = [...new Set(allOrders.map(o => o.source_site).filter(Boolean))]
+          .filter(s => SOURCE_SITES.includes(s))
+        if (collectedSites.length > 0) setSelectedSites(collectedSites)
+      }
     } catch {}
     setLoading(false)
   }, [search])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { accountApi.listActive().then(setMarketAccounts).catch(() => {}) }, [])
+  useEffect(() => {
+    accountApi.listActive().then(accounts => {
+      setMarketAccounts(accounts)
+      // 마켓 기본값: 등록된 마켓만 선택
+      if (search.markets.length === 0) {
+        const registeredMarkets = [...new Set(accounts.map(a => a.market_name))]
+        if (registeredMarkets.length > 0) setSelectedMarkets(registeredMarkets)
+      }
+    }).catch(() => {})
+  }, [])
 
   // 기간 + 주문상태 필터링
   const filteredOrders = orders.filter(o => {
@@ -285,11 +297,11 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* 소싱처별 매출 */}
+      {/* 미등록 매출 */}
       <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-          <h3 style={{ fontSize: '0.9375rem', fontWeight: 600 }}>소싱처별 매출</h3>
-          <span style={{ fontSize: '0.75rem', color: '#666' }}>{siteRows.length}개 소싱처</span>
+          <h3 style={{ fontSize: '0.9375rem', fontWeight: 600 }}>미등록 매출</h3>
+          <span style={{ fontSize: '0.75rem', color: '#666' }}>{siteRows.length}건</span>
         </div>
         {renderBarTable(siteRows, '소싱처')}
       </div>
@@ -314,46 +326,44 @@ export default function AnalyticsPage() {
         ) : (
           <>
             {/* 바 차트 */}
-            <div style={{ overflowX: 'auto', marginBottom: '1rem' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', height: '140px', minWidth: `${dailyRows.length * 30}px` }}>
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '100px', maxWidth: '600px' }}>
                 {dailyRows.map((d, i) => {
                   const maxSales = Math.max(...dailyRows.map(r => r.sales), 1)
                   const pct = (d.sales / maxSales) * 100
                   return (
-                    <div key={d.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', height: '100%', justifyContent: 'flex-end', minWidth: '24px' }}>
-                      {d.sales > 0 && <span style={{ fontSize: '0.5625rem', color: '#555', whiteSpace: 'nowrap' }}>₩{(d.sales / 10000).toFixed(0)}만</span>}
+                    <div key={d.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', height: '100%', justifyContent: 'flex-end', minWidth: '16px', maxWidth: '48px' }}>
+                      {d.sales > 0 && <span style={{ fontSize: '0.5rem', color: '#555', whiteSpace: 'nowrap' }}>₩{(d.sales / 10000).toFixed(0)}만</span>}
                       <div
                         style={{ width: '100%', height: `${Math.max(pct, d.sales > 0 ? 4 : 1)}%`, background: d.sales > 0 ? '#FF8C00' : 'rgba(45,45,45,0.5)', borderRadius: '3px 3px 0 0', minHeight: '2px', transition: 'height 0.3s' }}
                         title={`${d.date}: ₩${d.sales.toLocaleString()} / ${d.orders}건 / 수익 ₩${d.profit.toLocaleString()}`}
                       />
-                      <span style={{ fontSize: '0.5625rem', color: '#555', whiteSpace: 'nowrap' }}>{d.date.slice(5)}</span>
+                      <span style={{ fontSize: '0.5rem', color: '#555', whiteSpace: 'nowrap' }}>{d.date.slice(5)}</span>
                     </div>
                   )
                 })}
               </div>
             </div>
             {/* 테이블 */}
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
-                    {['날짜', '주문수', '매출', '수익'].map((h, i) => (
-                      <th key={h} style={{ textAlign: i === 0 ? 'left' : 'right', padding: '0.5rem 0.75rem', color: '#888', fontWeight: 500, fontSize: '0.75rem' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...dailyRows].reverse().map(d => (
-                    <tr key={d.date} style={{ borderBottom: '1px solid rgba(45,45,45,0.3)' }}>
-                      <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5' }}>{d.date}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: '#888' }}>{d.orders}건</td>
-                      <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>₩{d.sales.toLocaleString()}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: d.profit >= 0 ? '#51CF66' : '#FF6B6B' }}>₩{d.profit.toLocaleString()}</td>
-                    </tr>
+            <table style={{ maxWidth: '600px', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
+                  {['날짜', '주문수', '매출', '수익'].map((h, i) => (
+                    <th key={h} style={{ textAlign: i === 0 ? 'left' : 'right', padding: '0.375rem 0.5rem', color: '#888', fontWeight: 500, fontSize: '0.75rem' }}>{h}</th>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </tr>
+              </thead>
+              <tbody>
+                {[...dailyRows].reverse().map(d => (
+                  <tr key={d.date} style={{ borderBottom: '1px solid rgba(45,45,45,0.3)' }}>
+                    <td style={{ padding: '0.375rem 0.5rem', color: '#E5E5E5' }}>{d.date}</td>
+                    <td style={{ padding: '0.375rem 0.5rem', textAlign: 'right', color: '#888' }}>{d.orders}건</td>
+                    <td style={{ padding: '0.375rem 0.5rem', textAlign: 'right' }}>₩{d.sales.toLocaleString()}</td>
+                    <td style={{ padding: '0.375rem 0.5rem', textAlign: 'right', color: d.profit >= 0 ? '#51CF66' : '#FF6B6B' }}>₩{d.profit.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </>
         )}
       </div>
