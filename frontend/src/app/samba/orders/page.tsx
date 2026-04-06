@@ -830,9 +830,9 @@ export default function OrdersPage() {
             <option value="gift">선물</option>
           </select>
           <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="active">접수/대기/사무실</option>
             <option value="">전체 주문상태</option>
-            {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
+            <option value="active">접수/대기/사무실</option>
+            {Object.entries(STATUS_MAP).filter(([k]) => k !== 'new_order' && k !== 'invoice_printed').map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
           </select>
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
           <select style={{ ...inputStyle, width: '88px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}><option>-- 정렬 --</option><option>주문일자▲</option><option>주문일자▼</option></select>
