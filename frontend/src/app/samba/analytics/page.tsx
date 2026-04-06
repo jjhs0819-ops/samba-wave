@@ -32,7 +32,7 @@ const ORDER_STATUSES = [
   { key: 'delivered', label: '배송완료' },
 ]
 // 기본 선택 상태
-const DEFAULT_STATUSES = ['pending', 'wait_ship', 'arrived', 'shipping', 'delivered', 'exchanged']
+const DEFAULT_STATUSES = ['pending', 'wait_ship', 'arrived', 'shipping', 'delivered', 'exchanged', 'exchanging']
 
 /** 검색 조건 저장 구조 */
 interface AnalyticsSearch {
