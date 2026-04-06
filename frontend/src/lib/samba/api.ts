@@ -32,11 +32,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 // ── Orders ──
 
 export interface DashboardStats {
-  thisMonth: { count: number; sales: number; delivered: number; fulfillment: number }
-  lastMonth: { count: number; sales: number; delivered: number; fulfillment: number }
+  thisMonth: { count: number; sales: number; fulfillmentSales: number; fulfillmentCount: number; fulfillment: number }
+  lastMonth: { count: number; sales: number; fulfillmentSales: number; fulfillmentCount: number; fulfillment: number }
   salesChange: number
-  weekly: { date: string; sales: number; count: number; delivered: number }[]
-  recentOrders: SambaOrder[]
+  weekly: { date: string; sales: number; count: number; fulfillmentSales: number; fulfillmentCount: number }[]
+  monthly: { month: number; sales: number; fulfillmentSales: number }[]
 }
 
 export interface SambaOrder {
