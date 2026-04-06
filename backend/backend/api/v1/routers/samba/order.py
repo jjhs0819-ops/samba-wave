@@ -1095,6 +1095,10 @@ async def sync_orders_from_markets(
                 await svc.create_order(order_data)
                 synced += 1
 
+            # 즉시 커밋 — Cloud Run 타임아웃으로 세션 롤백 방지
+            if synced > 0:
+                await session.commit()
+
             total_synced += synced
             confirmed_count = len(unconfirmed_ids) if market_type == "smartstore" else 0
             # 취소/반품/교환 요청 건수 (송장 미입력건만)
