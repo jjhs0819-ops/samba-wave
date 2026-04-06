@@ -866,6 +866,10 @@ async def sync_orders_from_markets(
                             f"OrgProdCd={sample.get('OrgProdCd')}"
                         )
                     for ro in raw_orders:
+                        # 사본-취소마감은 원주문에 이미 취소 정보가 있으므로 스킵
+                        _pname = ro.get("ProdName", "")
+                        if _pname.startswith("[사본-취소마감"):
+                            continue
                         orders_data.append(
                             _parse_playauto_order(ro, account.id, label, alias_map)
                         )
