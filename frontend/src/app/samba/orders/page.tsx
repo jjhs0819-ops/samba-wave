@@ -783,7 +783,7 @@ export default function OrdersPage() {
           <option value="product">상품</option>
           <option value="customer">고객</option>
           <option value="product_id">상품번호</option>
-          <option value="order_number">주문번호</option>
+          <option value="order_number">상품주문번호</option>
         </select>
         <input style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} />
         <button style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>검색</button>
@@ -864,7 +864,7 @@ export default function OrdersPage() {
                 <tr key={o.id} style={{ borderBottom: '1px solid #1C2333', verticalAlign: 'top' }}>
                   {/* 체크박스 */}
                   <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center', borderRight: '1px solid #1C2333' }}>
-                    <div style={{ fontSize: '0.65rem', color: '#666', marginBottom: '2px' }}>{(currentPage - 1) * pageSize + index + 1}</div>
+                    <div style={{ fontSize: '0.65rem', color: '#FFFFFF', fontWeight: 'bold', marginBottom: '2px' }}>{(currentPage - 1) * pageSize + index + 1}</div>
                     <input type="checkbox" style={{ accentColor: '#F59E0B' }} />
                   </td>
                   {/* 주문정보 */}
