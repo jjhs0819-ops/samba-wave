@@ -169,6 +169,32 @@ async def find_by_order_number(
     return {"id": order.id, "order_number": order.order_number}
 
 
+@router.get("/by-date-range", response_model=list[SambaOrder])
+async def list_orders_by_date_range(
+    start: str = Query(..., description="시작일 YYYY-MM-DD"),
+    end: str = Query(..., description="종료일 YYYY-MM-DD"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """기간별 주문 조회 — COALESCE(paid_at, created_at) 기준, 제한 없이 전체 반환."""
+    from sqlalchemy import func, select as sa_select
+
+    start_dt = datetime.strptime(start, "%Y-%m-%d").replace(
+        hour=0, minute=0, second=0, tzinfo=UTC
+    )
+    end_dt = datetime.strptime(end, "%Y-%m-%d").replace(
+        hour=23, minute=59, second=59, tzinfo=UTC
+    )
+
+    order_date = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
+    stmt = (
+        sa_select(SambaOrder)
+        .where(order_date >= start_dt, order_date <= end_dt)
+        .order_by(order_date.desc())
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 @router.get("/{order_id}", response_model=SambaOrder)
 async def get_order(
     order_id: str,

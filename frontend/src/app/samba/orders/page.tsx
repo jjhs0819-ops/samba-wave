@@ -153,10 +153,35 @@ export default function OrdersPage() {
   const [startLocked, setStartLocked] = useState(false)
   const [customEnd, setCustomEnd] = useState(new Date().toLocaleDateString('sv-SE'))
 
-  const loadOrders = useCallback(async () => {
+  // 기간 필터 계산
+  const getPeriodStart = (key: string): Date | null => {
+    const now = new Date()
+    now.setHours(0, 0, 0, 0)
+    switch (key) {
+      case 'today': return now
+      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
+      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() - 7); return d }
+      case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
+      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d }
+      case '1month': { const d = new Date(now); d.setDate(d.getDate() - 30); return d }
+      case 'thisyear': return new Date(now.getFullYear(), 0, 1)
+      default: return null
+    }
+  }
+
+  // 유효 시작일 계산
+  const effectiveStart = useMemo(() => {
+    if (startLocked && customStart) return customStart
+    const ps = getPeriodStart(period)
+    return ps ? ps.toLocaleDateString('sv-SE') : `${new Date().getFullYear()}-01-01`
+  }, [startLocked, customStart, period])
+
+  const loadOrders = useCallback(async (start: string, end: string) => {
     setLoading(true)
     try {
-      setOrders(await orderApi.list(0, 5000))
+      setOrders(await orderApi.listByDateRange(start, end))
       setEditingTrackings({})
     } catch { /* ignore */ }
     setLoading(false)
@@ -173,7 +198,7 @@ export default function OrdersPage() {
 
   // 플레이오토 마켓번호 별칭 매핑
   const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
-  useEffect(() => { loadOrders() }, [loadOrders])
+  useEffect(() => { loadOrders(effectiveStart, customEnd) }, [loadOrders, effectiveStart, customEnd])
   useEffect(() => { channelApi.list().then(setChannels).catch(() => {}) }, [])
   useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
   useEffect(() => { sourcingAccountApi.list().then(accs => setSourcingAccounts(accs.filter(a => a.is_active))).catch(() => {}) }, [])
@@ -231,7 +256,7 @@ export default function OrdersPage() {
       if (totalCancelRequested > 0) {
         showNotification(`주문 취소요청 ${totalCancelRequested}건이 감지되었습니다. 확인이 필요합니다.`)
       }
-      await loadOrders()
+      await loadOrders(effectiveStart, customEnd)
     } catch (e) {
       setLogMessages(prev => [...prev, `[${ts()}] 오류: ${e}`])
     }
@@ -256,7 +281,7 @@ export default function OrdersPage() {
       const payload = { ...form, channel_name: ch?.name, fee_rate: form.fee_rate || ch?.fee_rate || 0 }
       if (editingId) await orderApi.update(editingId, payload)
       else await orderApi.create(payload)
-      setShowForm(false); setEditingId(null); setForm({ ...emptyForm }); loadOrders()
+      setShowForm(false); setEditingId(null); setForm({ ...emptyForm }); loadOrders(effectiveStart, customEnd)
     } catch (e) { showAlert(e instanceof Error ? e.message : '저장 실패', 'error') }
   }
 
@@ -533,42 +558,9 @@ export default function OrdersPage() {
     }))
   }
 
-  // 기간 필터 계산
-  const getPeriodStart = (key: string): Date | null => {
-    const now = new Date()
-    now.setHours(0, 0, 0, 0)
-    switch (key) {
-      case 'today': return now
-      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() - 7); return d }
-      case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
-      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d }
-      case '1month': { const d = new Date(now); d.setDate(d.getDate() - 30); return d }
-      case 'thisyear': return new Date(now.getFullYear(), 0, 1)
-      default: return null
-    }
-  }
 
-  // 필터링된 주문 목록 (메모이제이션)
+  // 필터링된 주문 목록 (메모이제이션) — 날짜는 서버에서 필터링 완료
   const filteredOrders = useMemo(() => orders.filter(o => {
-    const orderDate = o.paid_at ? new Date(o.paid_at) : new Date(o.created_at)
-    // 시작일 고정이면 customStart 우선
-    if (startLocked && customStart) {
-      const start = new Date(customStart)
-      start.setHours(0, 0, 0, 0)
-      if (orderDate < start) return false
-    } else {
-      const periodStart = getPeriodStart(period)
-      if (periodStart && orderDate < periodStart) return false
-    }
-    // 종료일 필터
-    if (customEnd) {
-      const end = new Date(customEnd)
-      end.setHours(23, 59, 59, 999)
-      if (orderDate > end) return false
-    }
     if (marketFilter) {
       if (marketFilter.startsWith('acc:')) {
         // 개별 계정 필터
@@ -623,7 +615,7 @@ export default function OrdersPage() {
     const aTime = a.paid_at ? new Date(a.paid_at).getTime() : new Date(a.created_at).getTime()
     const bTime = b.paid_at ? new Date(b.paid_at).getTime() : new Date(b.created_at).getTime()
     return bTime - aTime
-  }), [orders, startLocked, customStart, customEnd, period, marketFilter, accounts, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory])
+  }), [orders, marketFilter, accounts, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory])
 
   // 필터 변경 시 1페이지로 리셋
   useEffect(() => { setCurrentPage(1) }, [marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, searchText, searchCategory, period])
@@ -884,7 +876,7 @@ export default function OrdersPage() {
                       )}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
-                        <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
+                        <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', color: '#B0B0B0', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
                       </div>
                       <span style={{ fontSize: o.quantity > 1 ? '2.25rem' : '0.95rem', fontWeight: 700, color: o.quantity > 1 ? '#F5A623' : '#888' }}>수량: <span style={{ color: o.quantity > 1 ? '#F5A623' : '#E5E5E5' }}>{o.quantity}</span></span>
                     </div>

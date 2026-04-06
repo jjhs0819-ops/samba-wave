@@ -84,6 +84,8 @@ export const orderApi = {
     if (status) params.set("status", status);
     return request<SambaOrder[]>(`${SAMBA_PREFIX}/orders?${params}`);
   },
+  listByDateRange: (start: string, end: string) =>
+    request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/by-date-range?start=${start}&end=${end}`),
   dashboardStats: () => request<DashboardStats>(`${SAMBA_PREFIX}/orders/dashboard-stats`),
   get: (id: string) => request<SambaOrder>(`${SAMBA_PREFIX}/orders/${id}`),
   search: (q: string) => request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/search?q=${encodeURIComponent(q)}`),
