@@ -107,42 +107,48 @@ export default function AnalyticsPage() {
       const accounts = await accountApi.listActive().catch(() => [] as SambaMarketAccount[])
       setMarketAccounts(accounts)
 
-      // 2) 상품 데이터에서 등록된 마켓 + 수집된 소싱처 추출
-      const productData = await collectorApi.scrollProducts({ limit: 200 }).catch(() => null)
-      if (!productData) return
+      // 2) 마켓등록 상품(market_registered)에서 등록 마켓 추출
+      //    전체 상품에서 소싱처 추출
+      const [registeredData, allData] = await Promise.all([
+        collectorApi.scrollProducts({ limit: 50, status: 'market_registered' }).catch(() => null),
+        collectorApi.scrollProducts({ limit: 1 }).catch(() => null),
+      ])
 
-      // 소싱사이트: scrollProducts가 반환하는 sites 배열 사용
-      const collectedSites = (productData.sites || []).filter(s => SOURCE_SITES.includes(s))
-      if (collectedSites.length > 0) setSelectedSites(collectedSites)
+      // 소싱사이트: 전체 상품의 sites 배열
+      const sitesSource = allData || registeredData
+      if (sitesSource) {
+        const collectedSites = (sitesSource.sites || []).filter(s => SOURCE_SITES.includes(s))
+        if (collectedSites.length > 0) setSelectedSites(collectedSites)
+      }
 
-      // 마켓: 상품 데이터의 모든 필드에서 등록 마켓 추출
-      const registeredAccountIds = new Set<string>()
-      const registeredMarketNames = new Set<string>()
-      for (const p of productData.items) {
-        // 계정 ID 기반 필드
-        if (p.registered_accounts) {
-          for (const aid of p.registered_accounts) registeredAccountIds.add(aid)
-        }
-        if (p.market_product_nos) {
-          for (const aid of Object.keys(p.market_product_nos)) registeredAccountIds.add(aid)
-        }
-        // 마켓명 기반 필드
-        if (p.market_enabled) {
-          for (const [name, enabled] of Object.entries(p.market_enabled)) {
-            if (enabled) registeredMarketNames.add(name)
+      // 마켓: 등록 상품의 모든 필드에서 마켓 추출
+      if (registeredData && registeredData.items.length > 0) {
+        const registeredAccountIds = new Set<string>()
+        const registeredMarketNames = new Set<string>()
+        for (const p of registeredData.items) {
+          if (p.registered_accounts) {
+            for (const aid of p.registered_accounts) registeredAccountIds.add(aid)
+          }
+          if (p.market_product_nos) {
+            for (const aid of Object.keys(p.market_product_nos)) registeredAccountIds.add(aid)
+          }
+          if (p.market_enabled) {
+            for (const [name, enabled] of Object.entries(p.market_enabled)) {
+              if (enabled) registeredMarketNames.add(name)
+            }
+          }
+          if (p.market_prices) {
+            for (const name of Object.keys(p.market_prices)) registeredMarketNames.add(name)
+          }
+          if (p.market_names) {
+            for (const name of Object.values(p.market_names)) registeredMarketNames.add(name)
           }
         }
-        if (p.market_prices) {
-          for (const name of Object.keys(p.market_prices)) registeredMarketNames.add(name)
-        }
-        if (p.market_names) {
-          for (const name of Object.values(p.market_names)) registeredMarketNames.add(name)
-        }
+        const registeredMarkets = accounts
+          .filter(a => registeredAccountIds.has(a.id) || registeredMarketNames.has(a.market_name))
+          .map(a => a.market_name)
+        setSelectedMarkets([...new Set(registeredMarkets)])
       }
-      const registeredMarkets = accounts
-        .filter(a => registeredAccountIds.has(a.id) || registeredMarketNames.has(a.market_name))
-        .map(a => a.market_name)
-      setSelectedMarkets([...new Set(registeredMarkets)])
     }
     init()
   }, [])
@@ -163,25 +169,26 @@ export default function AnalyticsPage() {
   const totalOrders = filteredOrders.length
 
   // ──────────────────────────────────────────────
-  // 월별 집계 함수: groupKey로 12개월 × 카테고리 집계
+  // 집계 함수: 월 선택 시 일별, 전체 시 월별
   // ──────────────────────────────────────────────
-  const buildMonthlyTable = (
+  const isDaily = searchMonth > 0
+  const rowCount = isDaily ? new Date(searchYear, searchMonth, 0).getDate() : 12
+
+  const buildTable = (
     getKey: (o: SambaOrder) => string,
   ): { columns: string[], data: Record<number, Record<string, MonthlyCell>> } => {
     const colSet = new Set<string>()
-    // data[month][column] = { sales, orders }
     const data: Record<number, Record<string, MonthlyCell>> = {}
-    for (let m = 1; m <= 12; m++) data[m] = {}
+    for (let r = 1; r <= rowCount; r++) data[r] = {}
 
     for (const o of filteredOrders) {
       const d = new Date(o.created_at)
-      if (d.getFullYear() !== searchYear) continue
-      const month = d.getMonth() + 1
+      const row = isDaily ? d.getDate() : d.getMonth() + 1
       const key = getKey(o)
       colSet.add(key)
-      if (!data[month][key]) data[month][key] = { sales: 0, orders: 0 }
-      data[month][key].sales += o.sale_price || 0
-      data[month][key].orders += 1
+      if (!data[row][key]) data[row][key] = { sales: 0, orders: 0 }
+      data[row][key].sales += o.sale_price || 0
+      data[row][key].orders += 1
     }
 
     const columns = [...colSet].sort()
@@ -189,13 +196,13 @@ export default function AnalyticsPage() {
   }
 
   // 마켓별 통계
-  const marketTable = buildMonthlyTable(o => {
+  const marketTable = buildTable(o => {
     const name = o.channel_name || '기타'
     const idx = name.indexOf('(')
     return idx > 0 ? name.substring(0, idx) : name
   })
   // 소싱처별 통계
-  const siteTable = buildMonthlyTable(o => {
+  const siteTable = buildTable(o => {
     const site = o.source_site
     if (!site || !SOURCE_SITES.includes(site)) return '미등록상품'
     return site
@@ -203,7 +210,7 @@ export default function AnalyticsPage() {
   // 주문상태별 통계
   const statusLabelMap: Record<string, string> = {}
   for (const s of ORDER_STATUSES) statusLabelMap[s.key] = s.label
-  const statusTable = buildMonthlyTable(o => statusLabelMap[o.status] || o.status)
+  const statusTable = buildTable(o => statusLabelMap[o.status] || o.status)
 
   // 테이블 셀 스타일
   const thStyle: React.CSSProperties = {
@@ -241,8 +248,8 @@ export default function AnalyticsPage() {
     const colTotals: Record<string, MonthlyCell> = {}
     for (const col of columns) {
       colTotals[col] = { sales: 0, orders: 0 }
-      for (let m = 1; m <= 12; m++) {
-        const cell = data[m]?.[col]
+      for (let r = 1; r <= rowCount; r++) {
+        const cell = data[r]?.[col]
         if (cell) {
           colTotals[col].sales += cell.sales
           colTotals[col].orders += cell.orders
@@ -255,15 +262,15 @@ export default function AnalyticsPage() {
       grandTotal.sales += colTotals[col].sales
       grandTotal.orders += colTotals[col].orders
     }
-    // 월별 합계
-    const monthTotals: Record<number, MonthlyCell> = {}
-    for (let m = 1; m <= 12; m++) {
-      monthTotals[m] = { sales: 0, orders: 0 }
+    // 행별 합계
+    const rowTotals: Record<number, MonthlyCell> = {}
+    for (let r = 1; r <= rowCount; r++) {
+      rowTotals[r] = { sales: 0, orders: 0 }
       for (const col of columns) {
-        const cell = data[m]?.[col]
+        const cell = data[r]?.[col]
         if (cell) {
-          monthTotals[m].sales += cell.sales
-          monthTotals[m].orders += cell.orders
+          rowTotals[r].sales += cell.sales
+          rowTotals[r].orders += cell.orders
         }
       }
     }
@@ -283,15 +290,15 @@ export default function AnalyticsPage() {
               </tr>
             </thead>
             <tbody>
-              {Array.from({ length: 12 }, (_, i) => i + 1).map(month => {
-                const hasData = monthTotals[month].orders > 0
+              {Array.from({ length: rowCount }, (_, i) => i + 1).map(row => {
+                const hasData = rowTotals[row].orders > 0
                 return (
-                  <tr key={month} style={{ background: hasData ? 'transparent' : 'rgba(40,50,40,0.15)' }}>
+                  <tr key={row} style={{ background: hasData ? 'transparent' : 'rgba(40,50,40,0.15)' }}>
                     <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 600, position: 'sticky', left: 0, background: hasData ? '#1E1E1E' : 'rgba(30,40,30,0.6)', zIndex: 1 }}>
-                      {month}월
+                      {isDaily ? `${row}일` : `${row}월`}
                     </td>
                     {columns.map(col => {
-                      const cell = data[month]?.[col]
+                      const cell = data[row]?.[col]
                       if (!cell || cell.orders === 0) {
                         return <td key={col} style={tdEmptyStyle}>-</td>
                       }
@@ -305,8 +312,8 @@ export default function AnalyticsPage() {
                     <td style={{ ...tdStyle, fontWeight: 700, color: '#FF8C00' }}>
                       {hasData ? (
                         <>
-                          <div>{fmt(monthTotals[month].sales)}</div>
-                          <div style={{ fontSize: '0.625rem', color: '#888' }}>({fmt(monthTotals[month].orders)}건)</div>
+                          <div>{fmt(rowTotals[row].sales)}</div>
+                          <div style={{ fontSize: '0.625rem', color: '#888' }}>({fmt(rowTotals[row].orders)}건)</div>
                         </>
                       ) : '-'}
                     </td>
