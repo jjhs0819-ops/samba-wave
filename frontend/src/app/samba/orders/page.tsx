@@ -201,13 +201,15 @@ export default function OrdersPage() {
     const diffDays = (key: string) => {
       const start = getPeriodStart(key)
       if (!start) return 7
-      return Math.max(1, Math.ceil((now.getTime() - start.getTime()) / 86400000))
+      const today = new Date(now)
+      today.setHours(0, 0, 0, 0)
+      return Math.round((today.getTime() - start.getTime()) / 86400000)
     }
     const days = diffDays(period)
     const isAll = !syncAccountId
     const acc = isAll ? null : accounts.find(a => a.id === syncAccountId)
     const label = isAll ? '전체 계정' : (acc ? `${acc.market_name}(${acc.seller_id || '-'})` : syncAccountId)
-    setLogMessages(prev => [...prev, `[${ts()}] ${label} 주문 가져오기 시작 (최근 ${days}일)...`])
+    setLogMessages(prev => [...prev, `[${ts()}] ${label} 주문 가져오기 시작 (${days === 0 ? '오늘' : `최근 ${days}일`})...`])
     try {
       const res = await orderApi.syncFromMarkets(days, isAll ? undefined : syncAccountId)
       for (const r of res.results) {
