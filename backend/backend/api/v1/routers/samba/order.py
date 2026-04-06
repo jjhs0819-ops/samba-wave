@@ -269,17 +269,16 @@ async def list_orders_by_date_range(
     end: str = Query(..., description="종료일 YYYY-MM-DD"),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
-    """기간별 주문 조회 — COALESCE(paid_at, created_at) 기준, 제한 없이 전체 반환."""
-    from sqlalchemy import func, select as sa_select
+    """기간별 주문 조회 — COALESCE(paid_at, created_at) KST 기준, 제한 없이 전체 반환."""
+    from sqlalchemy import func, select as sa_select, text
 
-    start_dt = datetime.strptime(start, "%Y-%m-%d").replace(
-        hour=0, minute=0, second=0, tzinfo=UTC
-    )
-    end_dt = datetime.strptime(end, "%Y-%m-%d").replace(
-        hour=23, minute=59, second=59, tzinfo=UTC
-    )
+    # KST 기준 날짜 범위 (naive datetime으로 DB 컬럼+9h과 비교)
+    start_dt = datetime.strptime(start, "%Y-%m-%d").replace(hour=0, minute=0, second=0)
+    end_dt = datetime.strptime(end, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
 
-    order_date = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
+    # 고객결제일 우선, KST 변환 (대시보드와 동일 기준)
+    order_date_utc = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
+    order_date = order_date_utc + text("INTERVAL '9 hours'")
     stmt = (
         sa_select(SambaOrder)
         .where(order_date >= start_dt, order_date <= end_dt)

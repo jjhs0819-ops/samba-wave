@@ -773,7 +773,7 @@ export default function OrdersPage() {
       {/* 필터 바 */}
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
         <span style={{ fontSize: '0.72rem', color: '#aaa', whiteSpace: 'nowrap', marginRight: '4px' }}>
-          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.length}</span>건 / ₩<span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.reduce((s, o) => s + o.sale_price * o.quantity, 0).toLocaleString()}</span>
+          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.length}</span>건 / ₩<span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.reduce((s, o) => s + o.sale_price, 0).toLocaleString()}</span>
         </span>
         <select style={{ ...inputStyle, width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품</option>
