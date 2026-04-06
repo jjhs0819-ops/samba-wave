@@ -289,6 +289,108 @@ async def list_orders_by_date_range(
     return list(result.scalars().all())
 
 
+@router.post("/backfill-paid-at")
+async def backfill_paid_at(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """paid_at이 NULL인 스마트스토어 주문의 결제시간을 네이버 API로 보충."""
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    account_repo = SambaMarketAccountRepository(session)
+    svc = _write_service(session)
+
+    from sqlalchemy import select as sa_select
+
+    stmt = sa_select(SambaOrder).where(
+        SambaOrder.paid_at.is_(None),
+        SambaOrder.source == "smartstore",
+    )
+    result = await session.execute(stmt)
+    null_orders = list(result.scalars().all())
+
+    if not null_orders:
+        return {"updated": 0, "message": "paid_at이 NULL인 스마트스토어 주문 없음"}
+
+    logger.info(
+        f"[paid_at 백필] paid_at=NULL 스마트스토어 주문 {len(null_orders)}건 발견"
+    )
+
+    account_orders: dict[str, list[SambaOrder]] = {}
+    for o in null_orders:
+        aid = o.channel_id or ""
+        if aid not in account_orders:
+            account_orders[aid] = []
+        account_orders[aid].append(o)
+
+    updated = 0
+    for account_id, orders_list in account_orders.items():
+        account = await account_repo.get_async(account_id) if account_id else None
+        if not account or account.market_type != "smartstore":
+            continue
+
+        extras = account.additional_fields or {}
+        client_id = extras.get("clientId", "") or account.api_key or ""
+        client_secret = extras.get("clientSecret", "") or account.api_secret or ""
+        if not client_id or not client_secret:
+            continue
+
+        from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
+        client = SmartStoreClient(client_id, client_secret)
+
+        po_ids = [o.order_number for o in orders_list if o.order_number]
+        if not po_ids:
+            continue
+
+        try:
+            for i in range(0, len(po_ids), 300):
+                batch = po_ids[i : i + 300]
+                details_result = await client._call_api(
+                    "POST",
+                    "/v1/pay-order/seller/product-orders/query",
+                    body={"productOrderIds": batch},
+                )
+                details_data = (
+                    details_result.get("data", details_result)
+                    if isinstance(details_result, dict)
+                    else details_result
+                )
+                if isinstance(details_data, dict):
+                    details_data = details_data.get("productOrders", [])
+                if not isinstance(details_data, list):
+                    continue
+
+                paid_map: dict[str, datetime | None] = {}
+                for ro in details_data:
+                    po = ro.get("productOrder", ro)
+                    order_info = ro.get("order", {})
+                    po_id = po.get("productOrderId", "")
+                    paid_val = _parse_datetime(
+                        order_info.get("paymentDate")
+                        or po.get("paymentDate")
+                        or order_info.get("orderDate")
+                        or po.get("orderDate")
+                    )
+                    if po_id and paid_val:
+                        paid_map[po_id] = paid_val
+
+                for o in orders_list:
+                    if o.order_number in paid_map:
+                        await svc.update_order(
+                            o.id, {"paid_at": paid_map[o.order_number]}
+                        )
+                        updated += 1
+                        logger.info(
+                            f"[paid_at 백필] {o.order_number} → {paid_map[o.order_number]}"
+                        )
+
+            await session.commit()
+        except Exception as e:
+            logger.error(f"[paid_at 백필] {account_id} 실패: {e}")
+
+    return {"updated": updated, "total_null": len(null_orders)}
+
+
 @router.get("/{order_id}", response_model=SambaOrder)
 async def get_order(
     order_id: str,
@@ -1329,114 +1431,6 @@ async def sync_orders_from_markets(
             results.append({"account": label, "status": "error", "message": str(e)})
 
     return {"total_synced": total_synced, "results": results}
-
-
-@router.post("/backfill-paid-at")
-async def backfill_paid_at(
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """paid_at이 NULL인 스마트스토어 주문의 결제시간을 네이버 API로 보충."""
-    from backend.domain.samba.account.repository import SambaMarketAccountRepository
-
-    account_repo = SambaMarketAccountRepository(session)
-    svc = _write_service(session)
-
-    # paid_at이 NULL인 스마트스토어 주문 조회
-    from sqlalchemy import select as sa_select
-
-    stmt = sa_select(SambaOrder).where(
-        SambaOrder.paid_at.is_(None),
-        SambaOrder.source == "smartstore",
-    )
-    result = await session.execute(stmt)
-    null_orders = list(result.scalars().all())
-
-    if not null_orders:
-        return {"updated": 0, "message": "paid_at이 NULL인 스마트스토어 주문 없음"}
-
-    logger.info(
-        f"[paid_at 백필] paid_at=NULL 스마트스토어 주문 {len(null_orders)}건 발견"
-    )
-
-    # 계정별로 그룹핑
-    account_orders: dict[str, list[SambaOrder]] = {}
-    for o in null_orders:
-        aid = o.channel_id or ""
-        if aid not in account_orders:
-            account_orders[aid] = []
-        account_orders[aid].append(o)
-
-    updated = 0
-    for account_id, orders_list in account_orders.items():
-        account = await account_repo.get_async(account_id) if account_id else None
-        if not account or account.market_type != "smartstore":
-            continue
-
-        extras = account.additional_fields or {}
-        client_id = extras.get("clientId", "") or account.api_key or ""
-        client_secret = extras.get("clientSecret", "") or account.api_secret or ""
-        if not client_id or not client_secret:
-            continue
-
-        from backend.domain.samba.proxy.smartstore import SmartStoreClient
-
-        client = SmartStoreClient(client_id, client_secret)
-
-        # productOrderId 목록으로 상세 조회
-        po_ids = [o.order_number for o in orders_list if o.order_number]
-        if not po_ids:
-            continue
-
-        try:
-            # 300건씩 분할 조회
-            for i in range(0, len(po_ids), 300):
-                batch = po_ids[i : i + 300]
-                details_result = await client._call_api(
-                    "POST",
-                    "/v1/pay-order/seller/product-orders/query",
-                    body={"productOrderIds": batch},
-                )
-                details_data = (
-                    details_result.get("data", details_result)
-                    if isinstance(details_result, dict)
-                    else details_result
-                )
-                if isinstance(details_data, dict):
-                    details_data = details_data.get("productOrders", [])
-                if not isinstance(details_data, list):
-                    continue
-
-                # productOrderId → paymentDate 매핑
-                paid_map: dict[str, datetime | None] = {}
-                for ro in details_data:
-                    po = ro.get("productOrder", ro)
-                    order_info = ro.get("order", {})
-                    po_id = po.get("productOrderId", "")
-                    paid_val = _parse_datetime(
-                        order_info.get("paymentDate")
-                        or po.get("paymentDate")
-                        or order_info.get("orderDate")
-                        or po.get("orderDate")
-                    )
-                    if po_id and paid_val:
-                        paid_map[po_id] = paid_val
-
-                # DB 업데이트
-                for o in orders_list:
-                    if o.order_number in paid_map:
-                        await svc.update_order(
-                            o.id, {"paid_at": paid_map[o.order_number]}
-                        )
-                        updated += 1
-                        logger.info(
-                            f"[paid_at 백필] {o.order_number} → {paid_map[o.order_number]}"
-                        )
-
-            await session.commit()
-        except Exception as e:
-            logger.error(f"[paid_at 백필] {account_id} 실패: {e}")
-
-    return {"updated": updated, "total_null": len(null_orders)}
 
 
 def _parse_datetime(val: str | datetime | None) -> datetime | None:
