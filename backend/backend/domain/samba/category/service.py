@@ -2601,6 +2601,8 @@ class SambaCategoryService:
                         "명품",
                         "수입명품",
                         "디자이너",
+                        "도서",
+                        "음반",
                     )
                     cats = [
                         c
