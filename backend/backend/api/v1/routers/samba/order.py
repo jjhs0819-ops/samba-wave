@@ -847,7 +847,7 @@ async def sync_orders_from_markets(
                     # 전체 상태 한번에 조회 (상태 필터 없이)
                     raw_orders = await pa_client.get_orders(
                         start_date=start_date,
-                        count=500,
+                        count=5000,
                     )
                     logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
                     # 디버깅: 첫 주문의 날짜 필드 확인
