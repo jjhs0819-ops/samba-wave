@@ -49,14 +49,16 @@ async def dashboard_stats(
     from sqlalchemy import select, func, case, and_, extract, text
     from datetime import datetime, timedelta, timezone as tz
 
-    # 이행매출 대상 상태
+    # 이행매출 대상 상태 (주문상태 드롭박스 기준)
     FULFILLMENT_STATUSES = (
         "pending",
         "wait_ship",
         "arrived",
+        "ship_failed",
         "shipping",
         "delivered",
         "exchanged",
+        "exchanging",
     )
 
     # KST 기준 (UTC+9)
@@ -286,6 +288,94 @@ async def list_orders_by_date_range(
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+@router.get("/sales-breakdown")
+async def sales_breakdown(
+    date: str = Query(..., description="조회일 YYYY-MM-DD"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """특정일 status별 매출 분해 — 마이그레이션 후 기준."""
+    from sqlalchemy import func, select, text
+
+    FULFILLMENT_STATUSES = (
+        "pending",
+        "wait_ship",
+        "arrived",
+        "ship_failed",
+        "shipping",
+        "delivered",
+        "exchanged",
+        "exchanging",
+    )
+
+    order_date_utc = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
+    order_date = order_date_utc + text("INTERVAL '9 hours'")
+
+    q = (
+        select(
+            SambaOrder.status.label("status"),
+            func.count().label("cnt"),
+            func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
+        )
+        .where(func.date(order_date) == date)
+        .group_by(SambaOrder.status)
+        .order_by(func.sum(SambaOrder.sale_price).desc())
+    )
+    rows = (await session.execute(q)).all()
+
+    breakdown = []
+    total_sales = 0
+    total_count = 0
+    f_sales = 0
+    f_count = 0
+    for r in rows:
+        s = float(r.sales)
+        is_fulfill = r.status in FULFILLMENT_STATUSES
+        breakdown.append(
+            {
+                "status": r.status,
+                "count": r.cnt,
+                "sales": s,
+                "fulfillment": is_fulfill,
+            }
+        )
+        total_sales += s
+        total_count += r.cnt
+        if is_fulfill:
+            f_sales += s
+            f_count += r.cnt
+
+    return {
+        "date": date,
+        "breakdown": breakdown,
+        "total": {"count": total_count, "sales": total_sales},
+        "fulfillment": {"count": f_count, "sales": f_sales},
+        "rate": round(f_sales / total_sales * 100, 1) if total_sales else 0,
+    }
+
+
+@router.post("/migrate-legacy-status")
+async def migrate_legacy_status(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """기존 주문의 레거시 status 값을 표준 값으로 일괄 변환."""
+    from sqlalchemy import update
+
+    mapping = {
+        "new_order": "pending",
+        "invoice_printed": "wait_ship",
+        "processing": "wait_ship",
+        "shipped": "shipping",
+    }
+    total = 0
+    for old, new in mapping.items():
+        result = await session.execute(
+            update(SambaOrder).where(SambaOrder.status == old).values(status=new)
+        )
+        total += result.rowcount
+    await session.commit()
+    return {"migrated": total, "mapping": mapping}
 
 
 @router.post("/backfill-paid-at")
@@ -1454,7 +1544,7 @@ def _parse_smartstore_order(
     """스마트스토어 productOrder + order → SambaOrder 데이터 변환."""
     status_map = {
         "PAYED": "pending",
-        "DELIVERING": "shipped",
+        "DELIVERING": "shipping",
         "DELIVERED": "delivered",
         "PURCHASE_DECIDED": "delivered",
         "EXCHANGED": "delivered",
@@ -1581,11 +1671,11 @@ def _parse_playauto_order(
 ) -> dict[str, Any]:
     """플레이오토 EMP 주문 → SambaOrder 데이터 변환."""
     status_map = {
-        "신규주문": "new_order",
-        "송장출력": "invoice_printed",
-        "송장입력": "processing",
-        "출고": "shipped",
-        "배송중": "shipped",
+        "신규주문": "pending",
+        "송장출력": "wait_ship",
+        "송장입력": "wait_ship",
+        "출고": "shipping",
+        "배송중": "shipping",
         "수취확인": "delivered",
         "정산완료": "delivered",
         "주문확인": "pending",
