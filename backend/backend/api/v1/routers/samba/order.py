@@ -850,6 +850,14 @@ async def sync_orders_from_markets(
                         count=500,
                     )
                     logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
+                    # 디버깅: 첫 주문의 날짜 필드 확인
+                    if raw_orders:
+                        _s = raw_orders[0]
+                        logger.info(
+                            f"[플레이오토 날짜] OrderDate={_s.get('OrderDate')!r}, "
+                            f"CashDate={_s.get('CashDate')!r}, "
+                            f"WriteDate={_s.get('WriteDate')!r}"
+                        )
                     for ro in raw_orders:
                         # 파생 주문 스킵 (사본-*, ★교환주문 — 원주문에 이미 정보 포함)
                         _pname = ro.get("ProdName", "")
