@@ -28,6 +28,8 @@ const ORDER_STATUSES = [
   { key: 'returned', label: '반품완료' },
   { key: 'exchanged', label: '교환완료' },
 ]
+// 기본 선택 상태: 배송중, 배송완료만
+const DEFAULT_STATUSES = ['shipping', 'delivered']
 
 /** 검색 조건 저장 구조 */
 interface AnalyticsSearch {
@@ -60,18 +62,18 @@ export default function AnalyticsPage() {
     month: 0,
     markets: [],
     sites: [],
-    statuses: ORDER_STATUSES.map(s => s.key),
+    statuses: DEFAULT_STATUSES,
   }
   const [search, setSearch] = useLocalStorageState<AnalyticsSearch>(
     STORAGE_KEYS.ANALYTICS_SEARCH,
     defaultSearch,
   )
-  // localStorage에 저장된 이전 상태 키가 유효하지 않으면 기본값으로 리셋
+  // localStorage에 저장된 이전 상태 키가 유효하지 않으면 전체 리셋
   const validKeys = new Set(ORDER_STATUSES.map(s => s.key))
   useEffect(() => {
     const hasInvalid = search.statuses.some(k => !validKeys.has(k))
     if (hasInvalid || search.statuses.length === 0) {
-      setSearch(prev => ({ ...prev, statuses: ORDER_STATUSES.map(s => s.key) }))
+      setSearch(prev => ({ ...prev, statuses: DEFAULT_STATUSES, markets: [], sites: [] }))
     }
   }, [])
   const searchYear = search.year
