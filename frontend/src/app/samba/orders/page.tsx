@@ -68,6 +68,7 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState('active')
   const [searchText, setSearchText] = useState('')
   const [pageSize, setPageSize] = useState(50)
+  const [currentPage, setCurrentPage] = useState(1)
   const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
   const setLogMessages: typeof _setLogMessagesRaw = (v) => _setLogMessagesRaw(prev => {
     const next = typeof v === 'function' ? v(prev) : v
@@ -623,6 +624,9 @@ export default function OrdersPage() {
     return true
   }), [orders, startLocked, customStart, customEnd, period, marketFilter, accounts, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory])
 
+  // 필터 변경 시 1페이지로 리셋
+  useEffect(() => { setCurrentPage(1) }, [marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, searchText, searchCategory, period])
+
   // 숫자 콤마 포맷 헬퍼
   const fmtNum = (v: string) => {
     const num = v.replace(/[^\d]/g, '')
@@ -832,8 +836,8 @@ export default function OrdersPage() {
           </select>
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
           <select style={{ ...inputStyle, width: '88px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}><option>-- 정렬 --</option><option>주문일자▲</option><option>주문일자▼</option></select>
-          <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
-            <option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
+          <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }}>
+            <option value={20}>20개 보기</option><option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
           </select>
         </div>
       </div>
@@ -856,7 +860,7 @@ export default function OrdersPage() {
               <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
             ) : filteredOrders.length === 0 ? (
               <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>주문이 없습니다</td></tr>
-            ) : filteredOrders.map(o => {
+            ) : filteredOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(o => {
               const costDisplay = editingCosts[o.id] !== undefined ? fmtNum(editingCosts[o.id]) : (o.cost ? o.cost.toLocaleString() : '')
               const shipFeeDisplay = editingShipFees[o.id] !== undefined ? fmtNum(editingShipFees[o.id]) : (o.shipping_fee ? o.shipping_fee.toLocaleString() : '')
               const liveProfit = calcProfit(o)
@@ -1307,6 +1311,43 @@ export default function OrdersPage() {
           </tbody>
         </table>
       </div>
+
+      {/* 페이지네이션 */}
+      {filteredOrders.length > pageSize && (() => {
+        const totalPages = Math.ceil(filteredOrders.length / pageSize)
+        const pages: (number | string)[] = []
+        if (totalPages <= 7) {
+          for (let i = 1; i <= totalPages; i++) pages.push(i)
+        } else {
+          pages.push(1)
+          if (currentPage > 3) pages.push('...')
+          for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) pages.push(i)
+          if (currentPage < totalPages - 2) pages.push('...')
+          pages.push(totalPages)
+        }
+        const btnStyle = (active: boolean) => ({
+          background: active ? '#FF8C00' : 'rgba(30,30,30,0.9)',
+          color: active ? '#fff' : '#aaa',
+          border: active ? 'none' : '1px solid #333',
+          borderRadius: '6px',
+          padding: '0.3rem 0.6rem',
+          fontSize: '0.75rem',
+          cursor: 'pointer' as const,
+          minWidth: '32px',
+          fontWeight: active ? 600 : 400,
+        })
+        return (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '1rem 0' }}>
+            <button style={btnStyle(false)} disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>‹</button>
+            {pages.map((p, i) =>
+              typeof p === 'string'
+                ? <span key={`dot-${i}`} style={{ color: '#555', padding: '0 4px' }}>…</span>
+                : <button key={p} style={btnStyle(p === currentPage)} onClick={() => setCurrentPage(p)}>{p}</button>
+            )}
+            <button style={btnStyle(false)} disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)}>›</button>
+          </div>
+        )
+      })()}
 
       {/* 주문 수정 모달 */}
       {showForm && (
