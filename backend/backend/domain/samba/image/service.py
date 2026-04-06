@@ -147,6 +147,31 @@ def _get_category_prompt(category: str, mode: str, model_desc: str) -> str:
     if mode == "background":
         return "이 상품 사진에서 배경을 제거하고, 순수 흰색 배경 위에 상품만 깔끔하게 배치해주세요. 상품의 색상, 디자인, 디테일을 100% 정확하게 유지해주세요. 그림자 없이 깨끗하게."
 
+    if mode == "model_to_product":
+        m2p_map = {
+            "hiking_shoes": "이 사진에서 사람을 완전히 제거하고, 신발만 순수 흰색 배경 위에 45도 각도로 놓인 상품 사진으로 변환해주세요.",
+            "sneakers": "이 사진에서 사람을 완전히 제거하고, 운동화만 순수 흰색 배경 위에 45도 각도로 놓인 상품 사진으로 변환해주세요.",
+            "dress_shoes": "이 사진에서 사람을 완전히 제거하고, 구두만 순수 흰색 배경 위에 45도 각도로 놓인 상품 사진으로 변환해주세요.",
+            "sandals": "이 사진에서 사람을 완전히 제거하고, 샌들만 순수 흰색 배경 위에 45도 각도로 놓인 상품 사진으로 변환해주세요.",
+            "boots": "이 사진에서 사람을 완전히 제거하고, 부츠만 순수 흰색 배경 위에 45도 각도로 놓인 상품 사진으로 변환해주세요.",
+            "shoes": "이 사진에서 사람을 완전히 제거하고, 신발만 순수 흰색 배경 위에 45도 각도로 놓인 상품 사진으로 변환해주세요.",
+            "outer": "이 사진에서 사람을 완전히 제거하고, 아우터만 보이지 않는 마네킹에 걸린 것처럼 순수 흰색 배경 위에 정면으로 보여주세요. 고스트 마네킹 스타일.",
+            "top": "이 사진에서 사람을 완전히 제거하고, 상의만 보이지 않는 마네킹에 걸린 것처럼 순수 흰색 배경 위에 정면으로 보여주세요. 고스트 마네킹 스타일.",
+            "bottom": "이 사진에서 사람을 완전히 제거하고, 하의만 순수 흰색 배경 위에 평평하게 펼쳐놓은 플랫레이 스타일로 보여주세요.",
+            "bag": "이 사진에서 사람을 완전히 제거하고, 가방만 순수 흰색 배경 위에 정면으로 놓인 상품 사진으로 변환해주세요.",
+            "hat": "이 사진에서 사람을 완전히 제거하고, 모자만 순수 흰색 배경 위에 놓인 상품 사진으로 변환해주세요.",
+            "beauty": "이 사진에서 사람을 완전히 제거하고, 제품만 순수 흰색 배경 위에 정면으로 놓인 상품 사진으로 변환해주세요.",
+            "general": "이 사진에서 사람을 완전히 제거하고, 상품만 순수 흰색 배경 위에 놓인 깔끔한 상품 사진으로 변환해주세요.",
+        }
+        prompt = m2p_map.get(cat_type, m2p_map["general"])
+        return (
+            prompt
+            + " 상품의 색상, 디자인, 로고, 패턴, 소재 질감을 100% 정확하게 유지해주세요."
+            " 쇼핑몰 상품 상세페이지에 사용할 전문 상품 사진 스타일."
+            " 절대 금지: 사람의 신체 일부(손, 발, 얼굴, 피부)가 남아있으면 안 됩니다."
+            " 절대 금지: 원본에 없는 로고, 텍스트, 브랜드 마크를 추가하지 마세요."
+        )
+
     if mode == "scene":
         scene_map = {
             "hiking_shoes": "산길 옆 나무 벤치 위에 자연스럽게 놓인 모습, 아웃도어 감성",
@@ -1011,39 +1036,29 @@ class ImageTransformService:
                             product_result["failed"] += 1
                     update_data["detail_images"] = new_details
 
-            # ── 모델→상품 모드: CLIP으로 모델컷만 식별하여 rembg 적용 ──
+            # ── 모델→상품 모드: Gemini로 모델 제거 → 상품컷 생성 ──
             elif mode == "model_to_product" and product_images:
-                from backend.domain.samba.image.image_filter_service import (
-                    ImageFilterService,
-                )
+                if not gemini_key:
+                    product_result["failed"] += 1
+                    logger.error(f"[모델→상품] {pid} Gemini 설정 필요")
+                else:
+                    m2p_prompt = _get_category_prompt(category, "model_to_product", "")
+                    updated_images = list(product_images)
+                    for idx, img_url in enumerate(updated_images):
+                        try:
+                            img = await self._download_image(img_url, client=_dl_client)
+                            transformed = await self._transform_image_gemini(
+                                gemini_key, gemini_model_name, img, m2p_prompt, None
+                            )
+                            new_url = await self._save_image(transformed, img_url)
+                            updated_images[idx] = new_url
+                            product_result["transformed"] += 1
+                        except Exception as e:
+                            logger.error(f"[모델→상품] {pid} 이미지 변환 실패: {e}")
+                            product_result["failed"] += 1
 
-                filter_svc = ImageFilterService(self.session)
-                classifications = await filter_svc.classify_images_clip(product_images)
-                # 모델컷 URL 집합
-                model_cut_urls = {
-                    c["url"] for c in classifications if c["type"] == "other"
-                }
-                logger.info(
-                    f"[모델→상품] {pid} — 총 {len(product_images)}장 중 "
-                    f"모델컷 {len(model_cut_urls)}장 변환 대상"
-                )
-
-                updated_images = list(product_images)
-                for idx, img_url in enumerate(updated_images):
-                    if img_url not in model_cut_urls:
-                        continue  # 상품컷은 그대로 유지
-                    try:
-                        img = await self._download_image(img_url, client=_dl_client)
-                        transformed = await self._remove_background_rembg(img)
-                        new_url = await self._save_image(transformed, img_url)
-                        updated_images[idx] = new_url
-                        product_result["transformed"] += 1
-                    except Exception as e:
-                        logger.error(f"[모델→상품] {pid} 이미지 변환 실패: {e}")
-                        product_result["failed"] += 1
-
-                if product_result["transformed"] > 0:
-                    update_data["images"] = updated_images
+                    if product_result["transformed"] > 0:
+                        update_data["images"] = updated_images
 
             # ── 배경제거 등 기본 모드: scope 그대로 사용 ──
             else:
