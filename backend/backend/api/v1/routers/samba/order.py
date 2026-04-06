@@ -1107,7 +1107,7 @@ async def sync_orders_from_markets(
                     continue
                 lotteon_client = LotteonClient(api_key)
                 await lotteon_client.test_auth()
-                raw_orders = await lotteon_client.get_delivery_orders(days=body.days)
+                raw_orders = await lotteon_client.get_orders(days=body.days)
                 logger.info(
                     f"[주문동기화] {label}: 롯데ON 주문 {len(raw_orders)}건 조회"
                 )
