@@ -68,6 +68,26 @@ async def lifespan(app: FastAPI):
     _commit = _os.environ.get("COMMIT_SHA", "unknown")
     _startup_log.info(f"[startup] 리비전={_revision}, 커밋={_commit}")
 
+    # 누락 컬럼 자동 추가 (CI/CD가 DB를 건드리지 않으므로 앱에서 보완)
+    _migrations = [
+        ("samba_order", "paid_at", "TIMESTAMPTZ"),
+    ]
+    try:
+        from backend.db.orm import get_write_session
+        from sqlalchemy import text
+
+        async with get_write_session() as session:
+            for _tbl, _col, _typ in _migrations:
+                await session.execute(
+                    text(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS {_col} {_typ}")
+                )
+            await session.commit()
+            _startup_log.info(
+                f"[startup] 스키마 마이그레이션 완료 ({len(_migrations)}건)"
+            )
+    except Exception as _mig_err:
+        _startup_log.warning(f"[startup] 스키마 마이그레이션 실패: {_mig_err}")
+
     # 서버 시작 시 좀비 running Job 처리
     # - transmit: attempt < 3이면 pending 복구 (배포 중단 → 자동 재개)
     #             attempt >= 3이면 failed (OOM 무한루프 방지)
