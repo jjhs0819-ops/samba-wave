@@ -198,11 +198,13 @@ export default function OrdersPage() {
     const ts = () => new Date().toLocaleTimeString()
     const acc = accounts.find(a => a.id === syncAccountId)
     const label = acc ? `${acc.market_name}(${acc.seller_id || '-'})` : syncAccountId
-    const daysMap: Record<string, number> = {
-      today: 1, '1week': 7, '15days': 15, '1month': 30,
-      '3months': 90, '6months': 180, thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
+    const now = new Date()
+    const diffDays = (key: string) => {
+      const start = getPeriodStart(key)
+      if (!start) return 7
+      return Math.ceil((now.getTime() - start.getTime()) / 86400000) + 1
     }
-    const days = daysMap[period] || 7
+    const days = diffDays(period)
     setLogMessages(prev => [...prev, `[${ts()}] ${label} 주문 가져오기 시작 (최근 ${days}일)...`])
     try {
       const res = await orderApi.syncFromMarkets(days, syncAccountId)
@@ -234,11 +236,13 @@ export default function OrdersPage() {
   const handleSyncFromMarkets = async () => {
     setSyncing(true)
     const ts = () => new Date().toLocaleTimeString()
-    const daysMap: Record<string, number> = {
-      today: 1, '1week': 7, '15days': 15, '1month': 30,
-      '3months': 90, '6months': 180, thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
+    const now = new Date()
+    const diffDays = (key: string) => {
+      const start = getPeriodStart(key)
+      if (!start) return 7
+      return Math.ceil((now.getTime() - start.getTime()) / 86400000) + 1
     }
-    const days = daysMap[period] || 7
+    const days = diffDays(period)
     setLogMessages(prev => [...prev, `[${ts()}] 전체마켓 주문 동기화 시작 (최근 ${days}일)...`])
 
     try {
