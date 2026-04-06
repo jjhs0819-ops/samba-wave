@@ -1298,6 +1298,9 @@ async def sync_orders_from_markets(
             # 중복 확인 후 저장 (기존 주문은 금액/상태 업데이트)
             synced = 0
             for order_data in orders_data:
+                # tenant_id 주입 (멀티테넌트 격리)
+                if account.tenant_id:
+                    order_data["tenant_id"] = account.tenant_id
                 # 수집상품 매칭 — product_image, source_site, source_url 보충
                 _pid = str(order_data.get("product_id", ""))
                 _matched = _mpn_cache.get(_pid)
@@ -1389,6 +1392,9 @@ async def sync_orders_from_markets(
                 if existing:
                     # 기존 주문: sale_price, 이미지, 상태, 마켓주문상태 업데이트
                     update_fields: dict[str, Any] = {}
+                    # tenant_id 보충 (기존 NULL 데이터 대응)
+                    if order_data.get("tenant_id") and not existing.tenant_id:
+                        update_fields["tenant_id"] = order_data["tenant_id"]
                     if (
                         order_data.get("sale_price")
                         and order_data["sale_price"] != existing.sale_price
