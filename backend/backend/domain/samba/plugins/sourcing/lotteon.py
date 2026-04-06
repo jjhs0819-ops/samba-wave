@@ -184,10 +184,11 @@ class LotteonSourcingPlugin(SourcingPlugin):
         detail = None
 
         # sitmNo 빠른경로: product 객체 → 인메모리 캐시 순서로 조회
+        # extra_data는 autotune에서 defer() 처리되어 접근 불가 (greenlet 에러)
+        # 인메모리 캐시만 사용
         sitm_no = (
             getattr(product, "sitmNo", "")
             or getattr(product, "sitm_no", "")
-            or (getattr(product, "extra_data", None) or {}).get("sitmNo", "")
             or _sitm_no_cache.get(site_product_id, "")
         )
 
