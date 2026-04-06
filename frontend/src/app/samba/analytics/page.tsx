@@ -89,7 +89,7 @@ export default function AnalyticsPage() {
       setOrders(allOrders)
       // 소싱사이트 기본값: 수집된 소싱처만 선택
       if (search.sites.length === 0) {
-        const collectedSites = [...new Set(allOrders.map(o => o.source_site).filter(Boolean))]
+        const collectedSites = [...new Set(allOrders.map(o => o.source_site).filter((s): s is string => !!s))]
           .filter(s => SOURCE_SITES.includes(s))
         if (collectedSites.length > 0) setSelectedSites(collectedSites)
       }
