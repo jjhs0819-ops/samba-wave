@@ -588,7 +588,7 @@ export default function OrdersPage() {
     }
     if (statusFilter) {
       if (statusFilter === 'active') {
-        if (!['pending', 'wait_ship', 'arrived'].includes(o.status)) return false
+        if (!['new_order', 'invoice_printed', 'pending', 'wait_ship', 'arrived'].includes(o.status)) return false
         const ss = o.shipping_status || ''
         if (['취소중', '취소요청', '취소완료', '취소처리중', '취소', '취소마감', '반품요청', '반품완료', '반품마감', '교환요청', '교환완료', '교환마감'].includes(ss)) return false
       } else if (o.status !== statusFilter) return false
