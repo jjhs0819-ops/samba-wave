@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { accountApi, orderApi, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api'
+import { accountApi, collectorApi, orderApi, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api'
 import { useLocalStorageState } from '@/hooks/useLocalStorageState'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
 
@@ -32,7 +32,7 @@ const ORDER_STATUSES = [
   { key: 'exchanged', label: '교환완료' },
 ]
 // 기본 선택 상태
-const DEFAULT_STATUSES = ['pending', 'wait_ship', 'arrived', 'shipping', 'delivered']
+const DEFAULT_STATUSES = ['pending', 'wait_ship', 'arrived', 'shipping', 'delivered', 'exchanged']
 
 /** 검색 조건 저장 구조 */
 interface AnalyticsSearch {
@@ -100,26 +100,35 @@ export default function AnalyticsPage() {
   }, [searchYear, searchMonth])
 
   useEffect(() => { load() }, [load])
-  // 마켓 계정 목록 (체크박스 표시용)
+  // 마켓 계정 목록 (체크박스 표시용) + 상품 데이터에서 등록 마켓/소싱처 추출
   useEffect(() => {
-    accountApi.listActive().then(accounts => {
+    const init = async () => {
+      // 1) 마켓 계정 목록
+      const accounts = await accountApi.listActive().catch(() => [] as SambaMarketAccount[])
       setMarketAccounts(accounts)
-    }).catch(() => {})
+
+      // 2) 상품 데이터에서 등록된 마켓 + 수집된 소싱처 추출
+      const productData = await collectorApi.scrollProducts({ limit: 200 }).catch(() => null)
+      if (!productData) return
+
+      // 소싱사이트: scrollProducts가 반환하는 sites 배열 사용
+      const collectedSites = (productData.sites || []).filter(s => SOURCE_SITES.includes(s))
+      if (collectedSites.length > 0) setSelectedSites(collectedSites)
+
+      // 마켓: 상품의 registered_accounts에서 계정 ID 추출 → 마켓명 매칭
+      const registeredAccountIds = new Set<string>()
+      for (const p of productData.items) {
+        if (p.registered_accounts) {
+          for (const aid of p.registered_accounts) registeredAccountIds.add(aid)
+        }
+      }
+      const registeredMarkets = accounts
+        .filter(a => registeredAccountIds.has(a.id))
+        .map(a => a.market_name)
+      setSelectedMarkets([...new Set(registeredMarkets)])
+    }
+    init()
   }, [])
-  // 마켓: 주문이 존재하는 마켓만 선택 (channel_id/channel_name ↔ account 매칭)
-  // 소싱사이트: 주문에 존재하는 소싱처만 선택
-  useEffect(() => {
-    if (orders.length === 0 || marketAccounts.length === 0) return
-    const orderChannelIds = new Set(orders.map(o => o.channel_id).filter(Boolean))
-    const orderChannelNames = orders.map(o => o.channel_name).filter((s): s is string => !!s)
-    const matched = marketAccounts
-      .filter(a => orderChannelIds.has(a.id) || orderChannelNames.some(cn => cn.includes(a.market_name)))
-      .map(a => a.market_name)
-    setSelectedMarkets([...new Set(matched)])
-    const collectedSites = [...new Set(orders.map(o => o.source_site).filter((s): s is string => !!s))]
-      .filter(s => SOURCE_SITES.includes(s))
-    setSelectedSites(collectedSites)
-  }, [orders, marketAccounts])
 
   // 기간 + 주문상태 필터링
   const filteredOrders = orders.filter(o => {
