@@ -99,25 +99,26 @@ export default function AnalyticsPage() {
     try {
       const allOrders = await orderApi.list(0, 500).catch(() => [])
       setOrders(allOrders)
-      if (search.sites.length === 0) {
-        const collectedSites = [...new Set(allOrders.map(o => o.source_site).filter((s): s is string => !!s))]
-          .filter(s => SOURCE_SITES.includes(s))
-        if (collectedSites.length > 0) setSelectedSites(collectedSites)
-      }
     } catch {}
     setLoading(false)
-  }, [search])
+  }, [searchYear, searchMonth])
 
   useEffect(() => { load() }, [load])
+  // 마켓: 항상 등록된 마켓만 선택
   useEffect(() => {
     accountApi.listActive().then(accounts => {
       setMarketAccounts(accounts)
-      if (search.markets.length === 0) {
-        const registeredMarkets = [...new Set(accounts.map(a => a.market_name))]
-        if (registeredMarkets.length > 0) setSelectedMarkets(registeredMarkets)
-      }
+      const registeredMarkets = [...new Set(accounts.map(a => a.market_name))]
+      setSelectedMarkets(registeredMarkets)
     }).catch(() => {})
   }, [])
+  // 소싱사이트: 항상 수집된 소싱처만 선택
+  useEffect(() => {
+    if (orders.length === 0) return
+    const collectedSites = [...new Set(orders.map(o => o.source_site).filter((s): s is string => !!s))]
+      .filter(s => SOURCE_SITES.includes(s))
+    if (collectedSites.length > 0) setSelectedSites(collectedSites)
+  }, [orders])
 
   // 기간 + 주문상태 필터링
   const filteredOrders = orders.filter(o => {
