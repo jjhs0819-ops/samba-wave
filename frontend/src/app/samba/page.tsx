@@ -41,16 +41,16 @@ export default function SambaDashboard() {
   const thisMonthSales = stats?.thisMonth.sales || 0
   const thisMonthCount = stats?.thisMonth.count || 0
   const thisMonthFulfillmentSales = stats?.thisMonth.fulfillmentSales || 0
-  const thisMonthFulfillment = stats?.thisMonth.fulfillment || 0
+  const thisMonthFulfillment = thisMonthSales > 0 ? Math.round(thisMonthFulfillmentSales / thisMonthSales * 100) : 0
   const lastMonthSales = stats?.lastMonth.sales || 0
   const lastMonthFulfillmentSales = stats?.lastMonth.fulfillmentSales || 0
-  const lastMonthFulfillment = stats?.lastMonth.fulfillment || 0
+  const lastMonthFulfillment = lastMonthSales > 0 ? Math.round(lastMonthFulfillmentSales / lastMonthSales * 100) : 0
   const salesChange = stats?.salesChange || 0
   const weeklyData = (stats?.weekly || []).map(w => ({
     date: new Date(w.date),
     totalSale: w.sales,
     fulfillmentSale: w.fulfillmentSales,
-    rate: w.count > 0 ? Math.round(w.fulfillmentCount / w.count * 100) : 0,
+    rate: w.sales > 0 ? Math.round(w.fulfillmentSales / w.sales * 100) : 0,
   }))
   const monthlyData = stats?.monthly || []
 
