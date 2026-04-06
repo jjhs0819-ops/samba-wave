@@ -756,9 +756,9 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'apiKey', label: 'API Key', type: 'text' },
     { name: 'apiSecret', label: '솔루션코드', type: 'password' },
     { name: '_divider_alias', label: '마켓번호 별칭 (주문페이지 표시용)', type: 'divider' },
-    { name: 'alias1', label: '별칭 1', type: 'text', placeholder: '037800LT-마놀' },
-    { name: 'alias2', label: '별칭 2', type: 'text', placeholder: '마켓번호-별칭' },
-    { name: 'alias3', label: '별칭 3', type: 'text', placeholder: '마켓번호-별칭' },
+    { name: 'alias1', label: '계정 1', type: 'alias', placeholder: '037800LT' },
+    { name: 'alias2', label: '계정 2', type: 'alias', placeholder: '마켓번호' },
+    { name: 'alias3', label: '계정 3', type: 'alias', placeholder: '마켓번호' },
   ]},
   { key: 'cafe24', label: '카페24', authField: 'accessToken', guideUrl: 'https://developers.cafe24.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
@@ -1473,6 +1473,37 @@ export default function SettingsPage() {
                   ) : field.type === 'info' ? (
                     <div key={field.name} style={{ padding: '0.4rem 0.6rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '4px' }}>
                       <span style={{ fontSize: '0.75rem', color: '#FF8C00' }}>{field.label}</span>
+                    </div>
+                  ) : field.type === 'alias' ? (
+                    <div key={field.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>{field.label}</label>
+                      <input
+                        type="text"
+                        style={{ ...inputStyle, flex: 1 }}
+                        value={(() => {
+                          const v = storeData[market.key]?.[field.name] || ''
+                          return v.includes('-') ? v.split('-')[0] : v
+                        })()}
+                        onChange={(e) => {
+                          const nick = (storeData[market.key]?.[field.name] || '').split('-').slice(1).join('-')
+                          updateStoreField(market.key, field.name, nick ? `${e.target.value}-${nick}` : e.target.value)
+                        }}
+                        placeholder={field.placeholder || '마켓번호'}
+                      />
+                      <span style={{ color: '#555', fontSize: '0.8rem', flexShrink: 0 }}>—</span>
+                      <input
+                        type="text"
+                        style={{ ...inputStyle, width: '120px', flexShrink: 0 }}
+                        value={(() => {
+                          const v = storeData[market.key]?.[field.name] || ''
+                          return v.includes('-') ? v.split('-').slice(1).join('-') : ''
+                        })()}
+                        onChange={(e) => {
+                          const code = (storeData[market.key]?.[field.name] || '').split('-')[0]
+                          updateStoreField(market.key, field.name, e.target.value ? `${code}-${e.target.value}` : code)
+                        }}
+                        placeholder="사업자"
+                      />
                     </div>
                   ) : (
                     <div key={field.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
