@@ -1175,10 +1175,11 @@ def _parse_datetime(val: str | datetime | None) -> datetime | None:
         return None
     if isinstance(val, datetime):
         return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+    s = str(val).strip()
+    if not s:
+        return None
     try:
-        from dateutil import parser as _dp
-
-        dt = _dp.parse(str(val))
+        dt = datetime.fromisoformat(s)
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except Exception:
         return None
