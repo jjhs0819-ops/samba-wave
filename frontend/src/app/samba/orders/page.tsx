@@ -904,15 +904,15 @@ export default function OrdersPage() {
                       )}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: '0.75rem', color: '#888', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
-                          {o.source_site && <span style={{ fontSize: '0.75rem', color: '#888', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D' }}>{(() => {
+                          <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
+                          {o.source_site && <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D' }}>{(() => {
                             const m = o.source_site.match(/^(.+)\(([^)]+)\)$/)
                             if (m && siteAliasMap[m[2]]) return `${m[1]}(${siteAliasMap[m[2]]})`
                             return o.source_site
                           })()}</span>}
-                          <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>주문번호복사</button>
-                          <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>SMS</button>
-                          <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>KAKAO</button>
+                          <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>주문번호복사</button>
+                          <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>SMS</button>
+                          <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>KAKAO</button>
                         </div>
                         {/* 상품주문번호 + 주문번호 같은 행 */}
                         <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
@@ -925,7 +925,7 @@ export default function OrdersPage() {
                         <div style={{ minWidth: 0 }}>
                           <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{o.product_name || '-'}</span>
                           {o.product_option && (
-                            <span style={{ color: '#888', fontSize: '0.75rem', display: 'block', marginTop: '0.125rem' }}>[옵션] {o.product_option}</span>
+                            <span style={{ color: '#B0B0B0', fontSize: '0.75rem', display: 'block', marginTop: '0.125rem' }}>[옵션] {o.product_option}</span>
                           )}
                         </div>
                       </div>
@@ -953,8 +953,8 @@ export default function OrdersPage() {
 
                     {/* 버튼 */}
                     <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                      <button onClick={() => handleDanawa(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>다나와</button>
-                      <button onClick={() => handleNaver(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>네이버</button>
+                      <button onClick={() => handleDanawa(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>다나와</button>
+                      <button onClick={() => handleNaver(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>네이버</button>
                       <button onClick={async () => {
                         if (o.product_id) {
                           try {
@@ -981,7 +981,7 @@ export default function OrdersPage() {
                         } else {
                           showAlert('상품 정보가 없습니다', 'info')
                         }
-                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>상품정보</button>
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>상품정보</button>
                       <button onClick={async () => {
                         if (!o.product_id) { showAlert('상품 정보가 없습니다', 'info'); return }
                         try {
@@ -993,11 +993,11 @@ export default function OrdersPage() {
                           const history = await collectorApi.getPriceHistory(lookup.id)
                           setPriceHistoryData(history || [])
                         } catch { showAlert('가격이력 조회 실패', 'error') }
-                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>가격변경이력</button>
-                      <button onClick={() => handleSourceLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>원문링크</button>
-                      <button onClick={() => handleMarketLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>판매링크</button>
-                      <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>미등록 입력</button>
-                      <button onClick={() => handleTracking(o.shipping_company || '', o.tracking_number || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>배송조회</button>
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>가격변경이력</button>
+                      <button onClick={() => handleSourceLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>원문링크</button>
+                      <button onClick={() => handleMarketLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>판매링크</button>
+                      <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>미등록 입력</button>
+                      <button onClick={() => handleTracking(o.shipping_company || '', o.tracking_number || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>배송조회</button>
                       <button onClick={async () => {
                         // 마켓상품번호 → 수집상품 ID 역추적 → enrich 호출
                         let cpId = ''
@@ -1032,8 +1032,8 @@ export default function OrdersPage() {
                             showAlert(data.message || '업데이트 실패', 'error')
                           }
                         } catch (e) { showAlert(e instanceof Error ? e.message : '업데이트 실패', 'error') }
-                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>업데이트</button>
-                      <button onClick={() => showAlert('마켓상품삭제 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>마켓상품삭제</button>
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>업데이트</button>
+                      <button onClick={() => showAlert('마켓상품삭제 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>마켓상품삭제</button>
                       <button onClick={() => {
                         if (o.ext_order_number) { window.open(o.ext_order_number, '_blank'); return }
                         const srcNo = o.sourcing_order_number || ''
@@ -1042,7 +1042,7 @@ export default function OrdersPage() {
                         const url = orderBaseUrl ? `${orderBaseUrl}${srcNo}` : undefined
                         if (!url) { showAlert(`${o.source_site || '알수없는'} 소싱처는 원주문링크를 지원하지 않습니다`, 'info'); return }
                         window.open(url, '_blank')
-                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>원주문링크</button>
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>원주문링크</button>
                     </div>
 
                     {/* 주문자/수령인/연락처/주소 한 줄 */}
@@ -1093,8 +1093,8 @@ export default function OrdersPage() {
                     </div>
                     {/* 가격X/재고X/직배/까대기/선물 */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '0.375rem', borderTop: '1px solid #1C2333', paddingTop: '0.375rem' }}>
-                      <button onClick={() => showAlert('가격X 기능 준비중입니다', 'info')} style={{ fontSize: '0.68rem', padding: '0.125rem 0', background: 'transparent', border: '1px solid #2D2D2D', color: '#888', borderRadius: '4px', cursor: 'pointer', textAlign: 'center' }}>가격X</button>
-                      <button onClick={() => showAlert('재고X 기능 준비중입니다', 'info')} style={{ fontSize: '0.68rem', padding: '0.125rem 0', background: 'transparent', border: '1px solid #2D2D2D', color: '#888', borderRadius: '4px', cursor: 'pointer', textAlign: 'center' }}>재고X</button>
+                      <button onClick={() => showAlert('가격X 기능 준비중입니다', 'info')} style={{ fontSize: '0.68rem', padding: '0.125rem 0', background: 'transparent', border: '1px solid #2D2D2D', color: '#B0B0B0', borderRadius: '4px', cursor: 'pointer', textAlign: 'center' }}>가격X</button>
+                      <button onClick={() => showAlert('재고X 기능 준비중입니다', 'info')} style={{ fontSize: '0.68rem', padding: '0.125rem 0', background: 'transparent', border: '1px solid #2D2D2D', color: '#B0B0B0', borderRadius: '4px', cursor: 'pointer', textAlign: 'center' }}>재고X</button>
                       {ACTION_BUTTONS.map(btn => {
                         const isActive = activeAction === btn.key
                         return (
