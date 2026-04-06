@@ -601,7 +601,7 @@ export default function OrdersPage() {
     }
     if (statusFilter) {
       if (statusFilter === 'active') {
-        if (!['new_order', 'invoice_printed', 'pending', 'wait_ship', 'arrived'].includes(o.status)) return false
+        if (!['pending', 'wait_ship', 'arrived'].includes(o.status)) return false
       } else if (o.status !== statusFilter) return false
     }
     if (inputFilter) {
@@ -1120,7 +1120,7 @@ export default function OrdersPage() {
                             color: o.status === 'ship_failed' ? '#FF3232' : inputStyle.color,
                           }}
                         >
-                          {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
+                          {Object.entries(STATUS_MAP).filter(([k]) => k !== 'new_order' && k !== 'invoice_printed').map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
                         </select>
                         <input
                           type="text"
