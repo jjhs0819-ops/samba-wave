@@ -7,10 +7,31 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
+
+# ── test_auth 캐싱 (60초 TTL) — 오토튠 품절 배치 시 인증 API 중복 호출 방지 ──
+_auth_cache: dict[str, tuple[float, Any]] = {}  # {api_key: (timestamp, client)}
+_AUTH_TTL = 60  # 초
+
+
+async def _get_cached_client(api_key: str):
+    """test_auth 결과를 60초간 캐싱하여 재사용."""
+    from backend.domain.samba.proxy.lotteon import LotteonClient
+
+    now = time.time()
+    if api_key in _auth_cache:
+        ts, client = _auth_cache[api_key]
+        if now - ts < _AUTH_TTL:
+            return client
+    client = LotteonClient(api_key)
+    await client.test_auth()
+    _auth_cache[api_key] = (now, client)
+    return client
+
 
 # 브랜드명 접미사 목록 — 검색 전 자동 제거
 _BRAND_SUFFIXES = [
@@ -1082,6 +1103,96 @@ class LotteonPlugin(MarketPlugin):
                 "message": "롯데ON API Key가 비어있습니다. 설정에서 해당 계정을 수정 후 저장해주세요.",
             }
 
+        # ── 경량 가격/재고 업데이트 (오토튠 최적화) ──────────────────────
+        # _skip_image_upload=True → price/stock만 변경된 경우
+        # 카테고리/브랜드/속성 재계산 없이 경량 API로 직접 업데이트
+        if product.get("_skip_image_upload") and existing_no:
+            try:
+                client = await _get_cached_client(api_key)
+
+                # 기존 상품에서 단품번호(itmNo) 조회
+                prod_resp = await client.get_product(existing_no)
+                inner = prod_resp.get("data", prod_resp)
+                if isinstance(inner, dict):
+                    spd_info = inner.get("spdLst") or inner.get("spdInfo") or inner
+                    if isinstance(spd_info, list) and spd_info:
+                        spd_info = spd_info[0]
+                else:
+                    spd_info = {}
+
+                itm_lst = (
+                    (spd_info.get("itmLst") or []) if isinstance(spd_info, dict) else []
+                )
+                if not itm_lst:
+                    logger.warning(
+                        f"[롯데ON] 경량 업데이트 실패 — 단품 목록 없음, 전체 수정으로 폴백: {existing_no}"
+                    )
+                    # 폴백: 아래 전체 로직으로 진행
+                else:
+                    new_price = int(product.get("sale_price") or 0)
+                    new_options = product.get("options") or []
+                    # 옵션명 → 재고 매핑
+                    opt_stock_map = {
+                        o.get("name", ""): o.get("stock", 0) for o in new_options
+                    }
+
+                    # 가격 변경 요청
+                    itm_prc_lst = []
+                    itm_stk_lst = []
+                    for itm in itm_lst:
+                        itm_no = itm.get("itmNo") or itm.get("sitmNo")
+                        if not itm_no:
+                            continue
+                        # 가격 업데이트
+                        if new_price > 0:
+                            itm_prc_lst.append(
+                                {
+                                    "itmNo": str(itm_no),
+                                    "slPrc": new_price,
+                                }
+                            )
+                        # 재고 업데이트 (옵션명으로 매칭)
+                        itm_name = (itm.get("itmNm") or itm.get("optNm") or "").strip()
+                        if itm_name in opt_stock_map:
+                            stk = opt_stock_map[itm_name]
+                        elif new_options:
+                            # 옵션명 매칭 실패 → 전체 재고 중 최솟값 사용
+                            stk = min(
+                                (o.get("stock", 0) for o in new_options), default=0
+                            )
+                        else:
+                            stk = 0
+                        itm_stk_lst.append(
+                            {
+                                "itmNo": str(itm_no),
+                                "itmStkQty": max(0, int(stk)),
+                            }
+                        )
+
+                    _updated = []
+                    if itm_prc_lst:
+                        await client.update_price(itm_prc_lst)
+                        _updated.append(f"가격({new_price:,}원)")
+                    if itm_stk_lst:
+                        await client.update_stock(itm_stk_lst)
+                        _updated.append(f"재고({len(itm_stk_lst)}건)")
+
+                    logger.info(
+                        f"[롯데ON] 경량 업데이트 완료: {existing_no} — {', '.join(_updated)}"
+                    )
+                    return {
+                        "success": True,
+                        "product_no": existing_no,
+                        "message": f"경량 업데이트: {', '.join(_updated)}",
+                        "data": {"spdNo": existing_no},
+                    }
+
+            except Exception as e:
+                logger.warning(
+                    f"[롯데ON] 경량 업데이트 실패, 전체 수정으로 폴백: {existing_no} — {e}"
+                )
+                # 폴백: 아래 전체 로직으로 계속 진행
+
         # ── 성별 오버라이드: sex에 따라 남성/여성 카테고리 강제 변환 ──
         # sex='여성' → 여성스포츠의류, 그 외(남성/유니섹스/라이프 등) → 남성스포츠의류
         _sex_val = (product.get("sex") or "").strip()
@@ -1252,10 +1363,11 @@ class LotteonPlugin(MarketPlugin):
                     ),
                 }
 
-        logger.info(f"[롯데ON] 최종 카테고리 코드: {category_id} (상품: {product.get('name', '')[:30]})")
-        client = LotteonClient(api_key)
-        # 거래처 정보 자동 획득 (trGrpCd, trNo)
-        await client.test_auth()
+        logger.info(
+            f"[롯데ON] 최종 카테고리 코드: {category_id} (상품: {product.get('name', '')[:30]})"
+        )
+        # 거래처 정보 자동 획득 (trGrpCd, trNo) — 캐싱으로 중복 호출 방지
+        client = await _get_cached_client(api_key)
 
         product_copy = dict(product)
 
@@ -2222,9 +2334,10 @@ class LotteonPlugin(MarketPlugin):
                     logger.warning(f"[롯데ON] 살수록할인 설정 실패 (무시): {e}")
 
     async def delete(self, session, product_no: str, account) -> dict[str, Any]:
-        """롯데ON 상품 판매중지 (SOUT 상태 변경)."""
-        from backend.domain.samba.proxy.lotteon import LotteonClient
+        """롯데ON 상품 판매중지 (SOUT 상태 변경).
 
+        _get_cached_client로 test_auth 캐싱 — 오토튠 품절 배치 시 인증 API 1회만 호출.
+        """
         creds = await self._load_auth(session, account)
         if not creds:
             return {"success": False, "message": "롯데ON 인증정보 없음"}
@@ -2234,8 +2347,7 @@ class LotteonPlugin(MarketPlugin):
             return {"success": False, "message": "롯데ON API Key 없음"}
 
         try:
-            client = LotteonClient(api_key)
-            await client.test_auth()
+            client = await _get_cached_client(api_key)
             # SOUT = 품절 처리 (롯데ON은 완전 삭제 API 없음, 품절 상태로 변경)
             await client.change_status([{"spdNo": product_no, "slStatCd": "SOUT"}])
             return {"success": True, "message": "롯데ON 판매종료 완료"}

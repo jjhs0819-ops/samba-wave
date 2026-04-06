@@ -18,6 +18,10 @@ _lotteon_interval: float = 0.5  # 현재 인터벌 (초)
 _lotteon_consecutive_errors: int = 0  # 연속 차단 횟수
 _lotteon_safe_interval: float = 999.0  # 차단 없는 최소 인터벌 기록
 
+# sitmNo 인메모리 캐시 — HTML 폴백 시 추출하여 다음 사이클부터 pbf 빠른경로 사용
+# {site_product_id: sitmNo} 형태, 프로세스 수명 동안 유지
+_sitm_no_cache: dict[str, str] = {}
+
 
 class LotteonSourcingPlugin(SourcingPlugin):
     """롯데ON 소싱처 플러그인.
@@ -26,13 +30,13 @@ class LotteonSourcingPlugin(SourcingPlugin):
     bestBenefitPrice(최대혜택가)를 new_cost에 반영하여
     정책 적용 시 실질 매입가 기준으로 마진 계산이 가능하다.
 
-    concurrency=2: 비교적 여유 있는 차단 정책
-    request_interval=0.5: 요청 간 500ms 딜레이
+    concurrency=4: pbf API는 부하가 적어 동시 4건 처리
+    request_interval=0.3: 요청 간 300ms 딜레이 (pbf 빠른경로 기준)
     """
 
     site_name = "LOTTEON"
-    concurrency = 2
-    request_interval = 0.5
+    concurrency = 4
+    request_interval = 0.3
 
     async def search(self, keyword: str, **filters) -> list[dict]:
         """롯데ON 키워드 검색."""
@@ -179,11 +183,12 @@ class LotteonSourcingPlugin(SourcingPlugin):
         client = LotteonSourcingClient()
         detail = None
 
-        # sitmNo 빠른경로: product 객체에 sitmNo가 있으면 pbf 직접 호출 (HTML 스킵)
+        # sitmNo 빠른경로: product 객체 → 인메모리 캐시 순서로 조회
         sitm_no = (
             getattr(product, "sitmNo", "")
             or getattr(product, "sitm_no", "")
             or (getattr(product, "extra_data", None) or {}).get("sitmNo", "")
+            or _sitm_no_cache.get(site_product_id, "")
         )
 
         try:
@@ -212,6 +217,15 @@ class LotteonSourcingPlugin(SourcingPlugin):
                     client.get_product_detail(site_product_id),
                     timeout=45,
                 )
+                # HTML 폴백 성공 시 sitmNo 추출 → 인메모리 캐시 저장
+                # 다음 사이클부터 pbf 빠른경로 사용
+                if detail:
+                    _extracted_sitm = detail.get("sitmNo", "")
+                    if _extracted_sitm and site_product_id:
+                        _sitm_no_cache[site_product_id] = _extracted_sitm
+                        logger.info(
+                            f"[LOTTEON] sitmNo 캐시 저장: {site_product_id} → {_extracted_sitm}"
+                        )
             # 성공 → 인터벌 점진 복원 (최소 0.3초까지)
             _lotteon_interval = max(0.3, _lotteon_interval - 0.3)
             _lotteon_consecutive_errors = 0

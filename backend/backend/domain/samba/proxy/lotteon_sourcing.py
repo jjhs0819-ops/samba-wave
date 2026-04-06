@@ -943,6 +943,9 @@ class LotteonSourcingClient:
 
                 # 2단계: pbf API로 옵션/재고/이미지 보완 + artlInfo 파싱
                 sitm_no = self._extract_sitmno_from_html(html)
+                # sitmNo를 반환 dict에 포함 (소싱 플러그인 캐시 저장용)
+                if sitm_no:
+                    detail["sitmNo"] = sitm_no
                 pd_no_from_pbf = ""
                 if sitm_no:
                     pbf_data = await self._fetch_pbf_detail(sitm_no, client)
@@ -1328,10 +1331,22 @@ class LotteonSourcingClient:
             logger.error(f"[LOTTEON] 인기상품 검색 실패: {keyword} — {e}")
             return []
 
+    # 공유 httpx 클라이언트 — refresh 빠른경로에서 커넥션 풀 재사용
+    _pbf_shared_client: Optional[httpx.AsyncClient] = None
+
+    async def _get_pbf_client(self) -> httpx.AsyncClient:
+        """pbf refresh용 공유 클라이언트 (커넥션 풀 재사용으로 TCP 핸드셰이크 절감)."""
+        if self._pbf_shared_client is None or self._pbf_shared_client.is_closed:
+            LotteonSourcingClient._pbf_shared_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(15.0, connect=5.0),
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            )
+        return self._pbf_shared_client
+
     async def fetch_pbf_standalone(self, sitm_no: str) -> Optional[dict[str, Any]]:
-        """pbf.lotteon.com API 독립 호출 (새 HTTP 세션 생성) — refresh 빠른경로용."""
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            return await self._fetch_pbf_detail(sitm_no, client)
+        """pbf.lotteon.com API — 공유 클라이언트로 커넥션 풀 재사용."""
+        client = await self._get_pbf_client()
+        return await self._fetch_pbf_detail(sitm_no, client)
 
     async def _fetch_pbf_detail(
         self, sitm_no: str, client: httpx.AsyncClient
