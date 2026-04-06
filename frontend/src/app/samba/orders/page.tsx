@@ -53,6 +53,8 @@ const emptyForm: OrderForm = {
 
 // 직배/까대기/선물 버튼 색상
 const ACTION_BUTTONS = [
+  { key: 'no_price', label: '가격X', activeColor: '#DC2626' },
+  { key: 'no_stock', label: '재고X', activeColor: '#CA8A04' },
   { key: 'direct', label: '직배', activeColor: '#2563EB' },
   { key: 'kkadaegi', label: '까대기', activeColor: '#D97706' },
   { key: 'gift', label: '선물', activeColor: '#059669' },
@@ -1093,8 +1095,6 @@ export default function OrdersPage() {
                     </div>
                     {/* 가격X/재고X/직배/까대기/선물 */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '0.375rem', borderTop: '1px solid #1C2333', paddingTop: '0.375rem' }}>
-                      <button onClick={() => showAlert('가격X 기능 준비중입니다', 'info')} style={{ fontSize: '0.68rem', padding: '0.125rem 0', background: 'transparent', border: '1px solid #2D2D2D', color: '#B0B0B0', borderRadius: '4px', cursor: 'pointer', textAlign: 'center' }}>가격X</button>
-                      <button onClick={() => showAlert('재고X 기능 준비중입니다', 'info')} style={{ fontSize: '0.68rem', padding: '0.125rem 0', background: 'transparent', border: '1px solid #2D2D2D', color: '#B0B0B0', borderRadius: '4px', cursor: 'pointer', textAlign: 'center' }}>재고X</button>
                       {ACTION_BUTTONS.map(btn => {
                         const isActive = activeAction === btn.key
                         return (
