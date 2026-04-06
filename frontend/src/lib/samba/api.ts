@@ -742,7 +742,7 @@ export const proxyApi = {
     request<{ success: boolean; results: Record<string, { action: string; removed?: number; kept?: number; count?: number }>; total: number; total_removed?: number; errors: Record<string, string> }>(
       `${SAMBA_PREFIX}/proxy/image-filter/filter`, {
         method: 'POST',
-        body: JSON.stringify({ product_ids: productIds, filter_id: filterId || '', scope: scope || 'images', method: filterMethod || 'clip' }),
+        body: JSON.stringify({ product_ids: productIds, filter_id: filterId || '', scope: scope || 'images', method: filterMethod || 'gemma' }),
       }),
   // 소싱처 검색/상세
   sourcingSearch: (site: string, keyword: string, page = 1) =>

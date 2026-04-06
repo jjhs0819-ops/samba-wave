@@ -1478,7 +1478,7 @@ async def generate_ai_tags(
 
     product_ids = request.get("product_ids", [])
     req_group_ids = request.get("group_ids", [])
-    method: str = request.get("method", "gemini")  # gemini | claude
+    method: str = request.get("method", "gemma")  # gemma | gemini | claude
     logger.info(
         f"[AI태그] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}, method={method}"
     )
@@ -1487,12 +1487,15 @@ async def generate_ai_tags(
         return {"success": False, "message": "상품 또는 그룹을 선택해주세요"}
 
     # API 키 조회 (method에 따라 분기)
-    if method == "gemini":
+    if method in ("gemma", "gemini"):
         creds = await _get_setting(session, "gemini")
         if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
             return {"success": False, "message": "Gemini API 설정이 없습니다"}
         api_key = str(creds["apiKey"]).strip()
-        model = str(creds.get("model", "gemini-2.5-flash"))
+        if method == "gemma":
+            model = "gemma-4-26b-a4b-it"
+        else:
+            model = str(creds.get("model", "gemini-2.5-flash"))
     else:
         creds = await _get_setting(session, "claude")
         if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
@@ -1596,7 +1599,7 @@ async def generate_ai_tags(
                 resp = None
                 text = ""
                 for _attempt in range(3):
-                    if method == "gemini":
+                    if method in ("gemma", "gemini"):
                         resp = await http_client.post(
                             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
                             headers={"content-type": "application/json"},
@@ -1637,7 +1640,7 @@ async def generate_ai_tags(
                     continue
 
                 data = resp.json()
-                if method == "gemini":
+                if method in ("gemma", "gemini"):
                     usage = data.get("usageMetadata", {})
                     total_input_tokens += usage.get("promptTokenCount", 0)
                     total_output_tokens += usage.get("candidatesTokenCount", 0)
@@ -1784,7 +1787,7 @@ async def preview_ai_tags(
 
     product_ids = request.get("product_ids", [])
     req_group_ids = request.get("group_ids", [])
-    method: str = request.get("method", "gemini")  # gemini | claude
+    method: str = request.get("method", "gemma")  # gemma | gemini | claude
     logger.info(
         f"[AI태그 미리보기] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}, method={method}"
     )
@@ -1793,12 +1796,15 @@ async def preview_ai_tags(
         return {"success": False, "message": "상품 또는 그룹을 선택해주세요"}
 
     # API 키 조회 (method에 따라 분기)
-    if method == "gemini":
+    if method in ("gemma", "gemini"):
         creds = await _get_setting(session, "gemini")
         if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
             return {"success": False, "message": "Gemini API 설정이 없습니다"}
         api_key = str(creds["apiKey"]).strip()
-        model = str(creds.get("model", "gemini-2.5-flash"))
+        if method == "gemma":
+            model = "gemma-4-26b-a4b-it"
+        else:
+            model = str(creds.get("model", "gemini-2.5-flash"))
     else:
         creds = await _get_setting(session, "claude")
         if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
@@ -1907,7 +1913,7 @@ async def preview_ai_tags(
                 resp = None
                 text = ""
                 for _attempt in range(3):
-                    if method == "gemini":
+                    if method in ("gemma", "gemini"):
                         resp = await http_client.post(
                             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
                             headers={"content-type": "application/json"},
@@ -1948,7 +1954,7 @@ async def preview_ai_tags(
                     continue
 
                 data = resp.json()
-                if method == "gemini":
+                if method in ("gemma", "gemini"):
                     usage = data.get("usageMetadata", {})
                     total_input_tokens += usage.get("promptTokenCount", 0)
                     total_output_tokens += usage.get("candidatesTokenCount", 0)

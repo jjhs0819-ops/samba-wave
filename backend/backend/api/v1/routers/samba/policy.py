@@ -198,21 +198,13 @@ async def ai_change_policy(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     """자연어 명령으로 관련 마켓의 모든 정책을 일괄 변경."""
-    from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+    from backend.domain.samba.ai.gemma_client import _get_gemma_api_key
 
-    settings_repo = SambaSettingsRepository(session)
-    row = await settings_repo.find_by_async(key="claude")
-    api_key = ""
-    if row and isinstance(row.value, dict):
-        api_key = row.value.get("apiKey", "")
-    if not api_key:
-        from backend.core.config import settings as app_settings
+    try:
+        api_key = await _get_gemma_api_key(session)
+    except ValueError:
+        raise HTTPException(400, "Gemini/Gemma API Key가 설정되지 않았습니다")
 
-        api_key = app_settings.anthropic_api_key
-    if not api_key:
-        raise HTTPException(400, "Claude API Key가 설정되지 않았습니다")
-
-    import anthropic
     import json
 
     svc = _get_service(session)
@@ -288,30 +280,11 @@ JSON만 응답:
   ]
 }}"""
 
-    client = anthropic.AsyncAnthropic(api_key=api_key)
-    try:
-        # 429 rate limit 대비 재시도
-        for attempt in range(3):
-            try:
-                response = await client.messages.create(
-                    model="claude-sonnet-4-20250514",
-                    max_tokens=2048,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                break
-            except anthropic.RateLimitError:
-                if attempt < 2:
-                    import asyncio
+    from backend.domain.samba.ai.gemma_client import generate_text, extract_json
 
-                    await asyncio.sleep(60 * (attempt + 1))
-                else:
-                    raise
-        text = response.content[0].text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[:-3].strip()
-        result = json.loads(text)
+    try:
+        raw_text = await generate_text(api_key, prompt, max_tokens=2048)
+        result = extract_json(raw_text)
         changes = result.get("changes", [])
 
         applied = 0
@@ -340,8 +313,8 @@ JSON만 응답:
         return {"ok": True, "applied": applied, "changes": changes}
     except json.JSONDecodeError as e:
         raise HTTPException(400, f"AI 응답 파싱 실패: {e}") from e
-    except anthropic.APIError as e:
-        raise HTTPException(400, f"Claude API 오류: {e}") from e
+    except RuntimeError as e:
+        raise HTTPException(400, f"Gemma API 오류: {e}") from e
 
 
 # ── Policy CRUD (파라미터 경로는 정적 경로 뒤에 등록) ─────────────────────────
