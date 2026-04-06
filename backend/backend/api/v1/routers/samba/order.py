@@ -1327,7 +1327,7 @@ def _parse_playauto_order(
         "shipping_status": {
             "신규주문": "주문접수",
             "송장출력": "배송대기중",
-            "주문확인": "취소대기",
+            "주문확인": "취소중",
         }.get(order_state, order_state),
         "shipping_company": ro.get("Sender", ""),
         "tracking_number": ro.get("SenderNo", ""),
