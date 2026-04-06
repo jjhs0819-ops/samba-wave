@@ -46,8 +46,8 @@ async def dashboard_stats(
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """대시보드 집계 — DB에서 SUM/COUNT 후 결과만 반환 (빠름)."""
-    from sqlalchemy import select, func, case, and_, extract
-    from datetime import datetime, timedelta
+    from sqlalchemy import select, func, case, and_, extract, text
+    from datetime import datetime, timedelta, timezone as tz
 
     # 이행매출 대상 상태
     FULFILLMENT_STATUSES = (
@@ -59,7 +59,9 @@ async def dashboard_stats(
         "exchanged",
     )
 
-    now = datetime.utcnow()
+    # KST 기준 (UTC+9)
+    KST = tz(timedelta(hours=9))
+    now = datetime.now(KST).replace(tzinfo=None)
     this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if now.month == 1:
         last_month_start = this_month_start.replace(year=now.year - 1, month=12)
@@ -69,8 +71,9 @@ async def dashboard_stats(
         hour=0, minute=0, second=0, microsecond=0
     )
 
-    # 날짜 기준: 고객결제일 우선
-    order_date = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
+    # 날짜 기준: 고객결제일 우선, KST 변환
+    order_date_utc = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
+    order_date = order_date_utc + text("INTERVAL '9 hours'")
 
     # 금월 집계
     this_month_q = select(

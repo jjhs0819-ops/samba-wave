@@ -171,12 +171,8 @@ export default function OrdersPage() {
     }
   }
 
-  // 유효 시작일 계산
-  const effectiveStart = useMemo(() => {
-    if (startLocked && customStart) return customStart
-    const ps = getPeriodStart(period)
-    return ps ? ps.toLocaleDateString('sv-SE') : `${new Date().getFullYear()}-01-01`
-  }, [startLocked, customStart, period])
+  // 유효 시작일: customStart를 직접 사용
+  const effectiveStart = customStart
 
   const loadOrders = useCallback(async (start: string, end: string) => {
     setLoading(true)
@@ -726,7 +722,7 @@ export default function OrdersPage() {
             >{pb.label}</button>
           ))}
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 4px' }} />
-          <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)}
+          <input type="date" value={customStart} onChange={e => { setCustomStart(e.target.value); setPeriod('') }}
             style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: '#C0392B', color: '#FF8C00' } : {}) }} />
           <button
             onClick={() => setStartLocked(prev => !prev)}
@@ -738,7 +734,7 @@ export default function OrdersPage() {
             }}
           >고정</button>
           <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
-          <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)}
+          <input type="date" value={customEnd} onChange={e => { setCustomEnd(e.target.value); setPeriod('') }}
             style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
           <button
             onClick={() => setDateLocked(prev => !prev)}
