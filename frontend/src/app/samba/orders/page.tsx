@@ -201,7 +201,7 @@ export default function OrdersPage() {
     const diffDays = (key: string) => {
       const start = getPeriodStart(key)
       if (!start) return 7
-      return Math.ceil((now.getTime() - start.getTime()) / 86400000) + 1
+      return Math.max(1, Math.ceil((now.getTime() - start.getTime()) / 86400000))
     }
     const days = diffDays(period)
     const isAll = !syncAccountId
@@ -438,7 +438,11 @@ export default function OrdersPage() {
           'HMALL': (no) => `https://www.hmall.com/p/pda/itemPtc.do?slitmCd=${no}`,
         }
         const builder = siteUrlMap[site]
-        if (builder) { window.open(builder(productNo), '_blank'); return }
+        if (builder) {
+          // 플레이오토 ProdCode = 마켓상품번호 + 사이트코드(3자리) → 뒤 3자리 제거
+          const cleanNo = productNo.length > 3 ? productNo.slice(0, -3) : productNo
+          window.open(builder(cleanNo), '_blank'); return
+        }
       }
 
       const url = urlMap[marketType]
