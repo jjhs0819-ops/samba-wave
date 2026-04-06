@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { accountApi, collectorApi, orderApi, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api'
 import { useLocalStorageState } from '@/hooks/useLocalStorageState'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
@@ -14,14 +14,12 @@ const card = {
 
 const SOURCE_SITES = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
-// 주문상태 목록
+// 주문상태 목록 (배송중/배송완료는 가장 우측)
 const ORDER_STATUSES = [
   { key: 'pending', label: '주문접수' },
   { key: 'wait_ship', label: '배송대기중' },
   { key: 'arrived', label: '사무실도착' },
   { key: 'ship_failed', label: '송장전송실패' },
-  { key: 'shipping', label: '배송중' },
-  { key: 'delivered', label: '배송완료' },
   { key: 'cancelling', label: '취소중' },
   { key: 'returning', label: '반품중' },
   { key: 'exchanging', label: '교환중' },
@@ -30,6 +28,8 @@ const ORDER_STATUSES = [
   { key: 'cancelled', label: '취소완료' },
   { key: 'returned', label: '반품완료' },
   { key: 'exchanged', label: '교환완료' },
+  { key: 'shipping', label: '배송중' },
+  { key: 'delivered', label: '배송완료' },
 ]
 // 기본 선택 상태
 const DEFAULT_STATUSES = ['pending', 'wait_ship', 'arrived', 'shipping', 'delivered', 'exchanged']
@@ -106,65 +106,47 @@ export default function AnalyticsPage() {
   }, [searchYear, searchMonth])
 
   useEffect(() => { load() }, [load])
-  // 마켓 계정 목록 (체크박스 표시용) + 상품 데이터에서 등록 마켓/소싱처 추출
+  // 마켓 계정 목록 + 소싱사이트 기본값
   useEffect(() => {
     const init = async () => {
-      // 1) 마켓 계정 목록
       const accounts = await accountApi.listActive().catch(() => [] as SambaMarketAccount[])
       setMarketAccounts(accounts)
 
-      // 2) 마켓등록 상품(market_registered)에서 등록 마켓 추출
-      //    전체 상품에서 소싱처 추출
-      const [registeredData, allData] = await Promise.all([
-        collectorApi.scrollProducts({ limit: 50, status: 'market_registered' }).catch(() => null),
-        collectorApi.scrollProducts({ limit: 1 }).catch(() => null),
-      ])
-
-      // 소싱사이트: 전체 상품의 sites 배열
-      const sitesSource = allData || registeredData
-      if (sitesSource) {
-        const collectedSites = (sitesSource.sites || []).filter(s => SOURCE_SITES.includes(s))
+      // 소싱사이트 기본값: 상품 데이터에서 추출
+      const allData = await collectorApi.scrollProducts({ limit: 1 }).catch(() => null)
+      if (allData) {
+        const collectedSites = (allData.sites || []).filter((s: string) => SOURCE_SITES.includes(s))
         if (collectedSites.length > 0) setSelectedSites(collectedSites)
-      }
-
-      // 마켓: 등록 상품의 모든 필드에서 마켓 추출
-      if (registeredData && registeredData.items.length > 0) {
-        const registeredAccountIds = new Set<string>()
-        const registeredMarketNames = new Set<string>()
-        for (const p of registeredData.items) {
-          if (p.registered_accounts) {
-            for (const aid of p.registered_accounts) registeredAccountIds.add(aid)
-          }
-          if (p.market_product_nos) {
-            for (const aid of Object.keys(p.market_product_nos)) registeredAccountIds.add(aid)
-          }
-          if (p.market_enabled) {
-            for (const [name, enabled] of Object.entries(p.market_enabled)) {
-              if (enabled) registeredMarketNames.add(name)
-            }
-          }
-          if (p.market_prices) {
-            for (const name of Object.keys(p.market_prices)) registeredMarketNames.add(name)
-          }
-          if (p.market_names) {
-            for (const name of Object.values(p.market_names)) registeredMarketNames.add(name)
-          }
-        }
-        const registeredMarkets = accounts
-          .filter(a => registeredAccountIds.has(a.id) || registeredMarketNames.has(a.market_name))
-          .map(a => a.market_name)
-        setSelectedMarkets([...new Set(registeredMarkets)])
       }
     }
     init()
   }, [])
 
-  // 기간 + 주문상태 필터링
+  // 마켓 기본값: 주문 데이터에서 마켓 추출
+  const initialMarketSet = useRef(false)
+  useEffect(() => {
+    if (!initialMarketSet.current && orders.length > 0) {
+      initialMarketSet.current = true
+      const orderMarkets = new Set<string>()
+      for (const o of orders) {
+        if (o.channel_name) {
+          const name = o.channel_name
+          const idx = name.indexOf('(')
+          orderMarkets.add(idx > 0 ? name.substring(0, idx) : name)
+        }
+      }
+      if (orderMarkets.size > 0) {
+        setSelectedMarkets([...orderMarkets])
+      }
+    }
+  }, [orders])
+
+  // 기간 + 주문상태 필터링 (고객결제일 기준)
   const filteredOrders = orders.filter(o => {
-    const d = new Date(o.created_at)
+    const d = new Date(o.paid_at || o.created_at)
     if (d.getFullYear() !== searchYear) return false
     if (searchMonth > 0 && d.getMonth() + 1 !== searchMonth) return false
-    if (selectedStatuses.length > 0 && selectedStatuses.length < ORDER_STATUSES.length) {
+    if (selectedStatuses.length < ORDER_STATUSES.length) {
       if (!selectedStatuses.includes(o.status)) return false
     }
     return true
@@ -188,7 +170,7 @@ export default function AnalyticsPage() {
     for (let r = 1; r <= rowCount; r++) data[r] = {}
 
     for (const o of filteredOrders) {
-      const d = new Date(o.created_at)
+      const d = new Date(o.paid_at || o.created_at)
       const row = isDaily ? d.getDate() : d.getMonth() + 1
       const key = getKey(o)
       colSet.add(key)
@@ -217,6 +199,11 @@ export default function AnalyticsPage() {
   const statusLabelMap: Record<string, string> = {}
   for (const s of ORDER_STATUSES) statusLabelMap[s.key] = s.label
   const statusTable = buildTable(o => statusLabelMap[o.status] || o.status)
+  // 주문상태별 컬럼을 ORDER_STATUSES 정의 순서로 정렬
+  const statusColumnOrder = ORDER_STATUSES.map(s => s.label)
+  const orderedStatusColumns = statusColumnOrder.filter(label => statusTable.columns.includes(label))
+  const extraStatusColumns = statusTable.columns.filter(col => !statusColumnOrder.includes(col))
+  const finalStatusColumns = [...orderedStatusColumns, ...extraStatusColumns]
 
   // 테이블 셀 스타일
   const thStyle: React.CSSProperties = {
@@ -470,7 +457,7 @@ export default function AnalyticsPage() {
       {renderMonthlyTable('소싱처별 통계', siteTable.columns, siteTable.data)}
 
       {/* 주문상태별 통계 */}
-      {renderMonthlyTable('주문상태별 통계', statusTable.columns, statusTable.data)}
+      {renderMonthlyTable('주문상태별 통계', finalStatusColumns, statusTable.data)}
     </div>
   )
 }
