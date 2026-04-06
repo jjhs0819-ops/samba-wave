@@ -154,7 +154,7 @@ export default function OrdersPage() {
   const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
-      setOrders(await orderApi.list(0, 500))
+      setOrders(await orderApi.list(0, 5000))
       setEditingTrackings({})
     } catch { /* ignore */ }
     setLoading(false)
