@@ -1058,6 +1058,12 @@ async def sync_orders_from_markets(
                         update_fields["product_id"] = order_data["product_id"]
                     if order_data.get("shipping_status"):
                         update_fields["shipping_status"] = order_data["shipping_status"]
+                    # 플레이오토 주문: 실구매가/배송비는 사용자 입력 전용 — API 값 덮어쓰기 방지 + 기존 값 리셋
+                    if order_data.get("source") == "playauto":
+                        if existing.cost and existing.cost > 0:
+                            update_fields["cost"] = 0
+                        if existing.shipping_fee and existing.shipping_fee > 0:
+                            update_fields["shipping_fee"] = 0
                     # 내부 status도 갱신 (취소/반품 등 상태 변화 반영)
                     if (
                         order_data.get("status")
@@ -1314,7 +1320,7 @@ def _parse_playauto_order(
         "customer_address": ro.get("RecipientAddress", ""),
         "quantity": quantity,
         "sale_price": sale_price * quantity,
-        "cost": int(ro.get("CostPrice", 0) or 0),
+        "cost": 0,
         "fee_rate": 0,
         "revenue": supply_price * quantity if supply_price else sale_price * quantity,
         "status": status_map.get(order_state, "pending"),
