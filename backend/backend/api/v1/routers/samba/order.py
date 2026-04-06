@@ -1272,8 +1272,8 @@ def _parse_playauto_order(
 ) -> dict[str, Any]:
     """플레이오토 EMP 주문 → SambaOrder 데이터 변환."""
     status_map = {
-        "신규주문": "pending",
-        "송장출력": "wait_ship",
+        "신규주문": "new_order",
+        "송장출력": "invoice_printed",
         "송장입력": "processing",
         "출고": "shipped",
         "배송중": "shipped",
@@ -1318,7 +1318,9 @@ def _parse_playauto_order(
         "fee_rate": 0,
         "revenue": supply_price * quantity if supply_price else sale_price * quantity,
         "status": status_map.get(order_state, "pending"),
-        "shipping_status": order_state,
+        "shipping_status": {"신규주문": "주문접수", "송장출력": "배송대기중"}.get(
+            order_state, order_state
+        ),
         "shipping_company": ro.get("Sender", ""),
         "tracking_number": ro.get("SenderNo", ""),
         "source": "playauto",
