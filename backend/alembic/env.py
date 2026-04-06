@@ -43,6 +43,15 @@ db_host = os.getenv("WRITE_DB_HOST", "localhost")
 db_port = os.getenv("WRITE_DB_PORT", "5432")
 db_name = os.getenv("WRITE_DB_NAME", "railway")
 
+# ── 운영 DB 마이그레이션 안전장치 ──
+_PRODUCTION_DB_HOSTS = ["34.47.96.236", "/cloudsql/fresh-sanctuary"]
+if any(h in db_host for h in _PRODUCTION_DB_HOSTS):
+    if not os.getenv("ALEMBIC_PRODUCTION_CONFIRMED", "").lower() == "true":
+        raise RuntimeError(
+            f"[보안 차단] 운영 DB({db_host})에 대한 마이그레이션이 감지되었습니다. "
+            "운영 마이그레이션은 환경변수 ALEMBIC_PRODUCTION_CONFIRMED=true 설정이 필요합니다."
+        )
+
 config.set_main_option(
     "sqlalchemy.url",
     f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}",

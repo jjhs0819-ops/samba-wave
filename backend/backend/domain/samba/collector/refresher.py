@@ -59,20 +59,20 @@ SITE_BASE_INTERVAL: dict[str, float] = {
 }
 # 소싱처별 최소 인터벌 (초)
 SITE_MIN_INTERVAL: dict[str, float] = {
-    "MUSINSA": 1.0,
-    "KREAM": 0.5,
-    "DANAWA": 0.5,
-    "FashionPlus": 0.5,
-    "Nike": 0.5,
-    "Adidas": 0.5,
-    "ABCmart": 0.5,
-    "GrandStage": 0.5,
-    "OKmall": 0.5,
-    "SSG": 0.5,
-    "LOTTEON": 0.3,
-    "GSShop": 0.5,
-    "ElandMall": 0.5,
-    "SSF": 0.5,
+    "MUSINSA": 0,
+    "KREAM": 0,
+    "DANAWA": 0,
+    "FashionPlus": 0,
+    "Nike": 0,
+    "Adidas": 0,
+    "ABCmart": 0,
+    "GrandStage": 0,
+    "OKmall": 0,
+    "SSG": 0,
+    "LOTTEON": 0,
+    "GSShop": 0,
+    "ElandMall": 0,
+    "SSF": 0,
 }
 # 소싱처별 인터벌 복원 스텝 (성공 시 감소량)
 SITE_INTERVAL_STEP: dict[str, float] = {
@@ -253,7 +253,7 @@ def _log_refresh(
     now = datetime.now(timezone.utc)
     kst = now + timedelta(hours=9)
     ts_str = kst.strftime("%H:%M:%S")
-    prefix = f"[{idx}/{total}] " if idx and total else ""
+    prefix = f"[{idx:,}/{total:,}] " if idx and total else ""
     name_label = f"{product_name[:80]}: " if product_name else ""
     full_msg = f"[{ts_str}] {prefix}{name_label}{message}"
     _refresh_log_buffer.append(
@@ -312,37 +312,26 @@ def get_site_intervals_info() -> Dict[str, Any]:
     }
 
 
-def set_site_base_interval(site: str, interval: float) -> None:
-    """소싱처 기본 인터벌 동적 변경 (초)."""
+async def set_site_base_interval(site: str, interval: float) -> None:
+    """소싱처 기본 인터벌 동적 변경 (초). DB에 동기적으로 저장."""
     SITE_BASE_INTERVAL[site] = interval
     # 현재 적응형 인터벌도 함께 갱신
     _site_intervals[site] = interval
-    # DB에 영속화 (비동기 fire-and-forget)
-    _persist_intervals_to_db()
+    # DB에 영속화 (await로 저장 보장)
+    await _persist_intervals_to_db()
 
 
-def _persist_intervals_to_db() -> None:
-    """현재 SITE_BASE_INTERVAL을 DB에 비동기 저장."""
-    import asyncio
-
-    async def _save():
-        try:
-            from backend.db.orm import get_write_session
-            from backend.api.v1.routers.samba.proxy import _set_setting
-
-            async with get_write_session() as session:
-                await _set_setting(
-                    session, "autotune_intervals", dict(SITE_BASE_INTERVAL)
-                )
-                await session.commit()
-        except Exception:
-            pass  # 저장 실패해도 인메모리는 유지
-
+async def _persist_intervals_to_db() -> None:
+    """현재 SITE_BASE_INTERVAL을 DB에 저장."""
     try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_save())
-    except RuntimeError:
-        pass  # 이벤트 루프 없으면 무시
+        from backend.db.orm import get_write_session
+        from backend.api.v1.routers.samba.proxy import _set_setting
+
+        async with get_write_session() as session:
+            await _set_setting(session, "autotune_intervals", dict(SITE_BASE_INTERVAL))
+            await session.commit()
+    except Exception as e:
+        logger.warning("[오토튠] 인터벌 DB 저장 실패: %s", e)
 
 
 async def load_site_intervals_from_db() -> None:
@@ -355,7 +344,7 @@ async def load_site_intervals_from_db() -> None:
             saved = await _get_setting(session, "autotune_intervals")
         if saved and isinstance(saved, dict):
             for site, val in saved.items():
-                if isinstance(val, (int, float)) and 0.1 <= val <= 60:
+                if isinstance(val, (int, float)) and 0 <= val <= 60:
                     SITE_BASE_INTERVAL[site] = float(val)
                     _site_intervals[site] = float(val)
     except Exception:
@@ -558,12 +547,11 @@ async def _parse_musinsa(product: Any) -> RefreshResult:
             ),
             timeout=45,
         )
-        # 성공 → 인터벌 점진 복원
+        # 성공 → 인터벌 점진 복원 (사용자 설정 base_interval을 하한으로 사용)
         base = SITE_BASE_INTERVAL.get("MUSINSA", 1.0)
-        min_iv = SITE_MIN_INTERVAL.get("MUSINSA", base)
         step = SITE_INTERVAL_STEP.get("MUSINSA", 0.5)
         prev_interval = _site_intervals.get("MUSINSA", base)
-        new_interval = max(min_iv, prev_interval - step)
+        new_interval = max(base, prev_interval - step)
         _site_intervals["MUSINSA"] = new_interval
         _site_consecutive_errors["MUSINSA"] = 0
         # 차단 안 당하는 최소 인터벌 기록
@@ -964,11 +952,20 @@ async def _parse_fashionplus(product: Any) -> RefreshResult:
         f"원가 {old_cost}→{new_cost}, 판매가 {old_sale}→{new_sale}, 배송비 {shipping_fee}"
     )
     new_options = detail.get("options") or None
+    # 옵션 기반 품절 판정: 모든 옵션 재고 0이면 sold_out
+    is_sold_out = False
+    if new_options:
+        is_sold_out = all(
+            (opt.get("stock", 0) if isinstance(opt, dict) else 0) <= 0
+            for opt in new_options
+        )
+    new_sale_status = "sold_out" if is_sold_out else "in_stock"
     return RefreshResult(
         product_id=product.id,
         new_sale_price=new_sale,
         new_original_price=new_orig,
         new_cost=new_cost,
+        new_sale_status=new_sale_status,
         new_options=new_options,
         changed=changed,
         stock_changed=bool(
@@ -1076,7 +1073,7 @@ async def refresh_products_bulk(
                     )
                 # 실패 시 1회 재시도 (오토튠만)
                 if r.error and source == "autotune":
-                    interval = _site_intervals.get(site, base_interval)
+                    interval = max(0.1, _site_intervals.get(site, base_interval))
                     await asyncio.sleep(interval)
                     try:
                         r = await asyncio.wait_for(
@@ -1104,14 +1101,34 @@ async def refresh_products_bulk(
                             )
                     except asyncio.TimeoutError:
                         pass  # 재시도도 실패 → 원래 에러 유지
+                # 에러 건도 로그에 표시 (on_result 콜백 전)
+                if r.error and source == "autotune":
+                    _rb = getattr(p, "brand", "") or ""
+                    _rn = getattr(p, "name", "") or ""
+                    _rs = getattr(p, "site_product_id", "") or ""
+                    _rl = (
+                        f"{_rb} {_rn} ({_rs})".strip()
+                        if _rs
+                        else f"{_rb} {_rn}".strip()
+                    )
+                    _err_short = (r.error or "")[:60]
+                    _log_refresh(
+                        site,
+                        getattr(p, "id", "unknown"),
+                        _rl,
+                        f"실패: {_err_short}",
+                        level="warning",
+                        idx=_idx,
+                        total=_site_total,
+                    )
                 # 콜백 호출 (리프레시 직후 즉시 전송 등)
                 if on_result and not r.error:
                     try:
                         await on_result(p, r, _idx, _site_total)
                     except Exception as cb_err:
                         logger.warning("[오토튠] on_result 콜백 오류: %s", cb_err)
-                # 소싱처별 적응형 인터벌 (기본값은 소싱처별 base_interval)
-                interval = _site_intervals.get(site, base_interval)
+                # 소싱처별 적응형 인터벌 (기본값은 소싱처별 base_interval, 최소 0.1초)
+                interval = max(0.1, _site_intervals.get(site, base_interval))
                 await asyncio.sleep(interval)
                 return r
 

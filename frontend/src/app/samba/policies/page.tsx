@@ -49,6 +49,9 @@ interface MarketPolicyForm {
   // 스마트스토어 전용
   discountRate: number  // 즉시할인율 (%)
   maxStock: number      // 최대 재고수량 (0=무제한)
+  // 플레이오토 전용
+  origin: string        // 원산지
+  streetPriceRate: number // 시중가 비율 (%)
 }
 
 
@@ -95,6 +98,7 @@ export default function PoliciesPage() {
   const nameRulesRef = useRef<SambaNameRule[]>([])
   nameRulesRef.current = nameRules
   const [selectedDetailTemplateId, setSelectedDetailTemplateId] = useState('')
+  const [marketDetailTemplates, setMarketDetailTemplates] = useState<Record<string, string>>({})
   const [selectedNameRuleId, setSelectedNameRuleId] = useState('')
   const [showTemplateEditor, setShowTemplateEditor] = useState(false)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
@@ -219,6 +223,7 @@ export default function PoliciesPage() {
     setMarketPolicies(mp)
     // extras 복원
     setSelectedDetailTemplateId(p.extras?.detail_template_id || '')
+    setMarketDetailTemplates(p.extras?.market_detail_templates || {})
     setSelectedNameRuleId(p.extras?.name_rule_id || '')
     setShowForm(true)
   }
@@ -244,6 +249,7 @@ export default function PoliciesPage() {
         market_policies: marketPolicies,
         extras: {
           detail_template_id: selectedDetailTemplateId || undefined,
+          market_detail_templates: Object.keys(marketDetailTemplates).length > 0 ? marketDetailTemplates : undefined,
           name_rule_id: selectedNameRuleId || undefined,
         },
       }
@@ -619,10 +625,28 @@ export default function PoliciesPage() {
                 <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>배송비</span>
                 <NumInput value={mp.shippingCost} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingCost: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
               </div>
+              {marketPolicyTab !== '플레이오토' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>출고일</span>
                 <NumInput value={mp.shippingDays || 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingDays: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="일" />
               </div>
+              )}
+              {/* 플레이오토 전용: 원산지, 시중가 */}
+              {marketPolicyTab === '플레이오토' && (
+              <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>원산지</span>
+                <input type="text" value={mp.origin || ''} onChange={(e) => { setCurrentMarketPolicy({ ...mp, origin: e.target.value }); triggerAutoSave() }}
+                  placeholder="국내=서울=서울시" style={{ padding: '0.375rem 0.5rem', fontSize: '0.8125rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', outline: 'none', width: '200px' }} />
+                <span style={{ color: '#555', fontSize: '0.72rem' }}>예: 국내=서울=서울시, 기타=기타=기타</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>시중가</span>
+                <NumInput value={mp.streetPriceRate || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, streetPriceRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                <span style={{ color: '#555', fontSize: '0.72rem' }}>판매가 대비 시중가 비율 (예: 150 → 판매가의 1.5배)</span>
+              </div>
+              </>
+              )}
               {/* 신세계몰 전용: 마진율, 브랜드 */}
               {marketPolicyTab === '신세계몰' && (
                 <>
@@ -773,6 +797,10 @@ export default function PoliciesPage() {
             setImgChecks(next)
             try {
               await detailTemplateApi.update(t.id, { img_checks: next })
+              // detailTemplates state도 갱신하여 재선택 시 stale 값 방지
+              setDetailTemplates(prev => prev.map(dt =>
+                dt.id === t.id ? { ...dt, img_checks: next } : dt
+              ))
             } catch (e) {
               console.error('img_checks 저장 실패:', e)
             }
@@ -913,7 +941,11 @@ export default function PoliciesPage() {
                       onDrop={() => {
                         setDragIdx(null)
                         // 드래그 완료 시 순서 DB 저장
-                        detailTemplateApi.update(t.id, { img_order: imgOrder }).catch(e => console.error('img_order 저장 실패:', e))
+                        detailTemplateApi.update(t.id, { img_order: imgOrder }).then(() => {
+                          setDetailTemplates(prev => prev.map(dt =>
+                            dt.id === t.id ? { ...dt, img_order: imgOrder } : dt
+                          ))
+                        }).catch(e => console.error('img_order 저장 실패:', e))
                       }}
                       onDragEnd={() => setDragIdx(null)}
                       style={{
@@ -935,8 +967,18 @@ export default function PoliciesPage() {
                             <img key={i} src={url} alt={`서브${i + 1}`} style={{ width: '60px', height: '60px', borderRadius: '4px', objectFit: 'cover' }} />
                           ))}
                         </div>
-                      ) : /* 상세이미지 */ isDetail && previewProduct?.detail_html ? (
-                        <span style={{ color: item.color, fontSize: '0.8rem', padding: '0.75rem 0', display: 'block' }}>상세이미지 ({(previewProduct.detail_html.match(/<img/gi) || []).length}장)</span>
+                      ) : /* 상세이미지 */ isDetail && previewProduct?.detail_images?.length ? (
+                        <div>
+                          <span style={{ color: item.color, fontSize: '0.75rem', display: 'block', marginBottom: '0.375rem' }}>상세이미지 ({previewProduct.detail_images.length}장)</span>
+                          <div style={{ display: 'flex', gap: '0.375rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                            {previewProduct.detail_images.slice(0, 4).map((url, i) => (
+                              <img key={i} src={url} alt={`상세${i + 1}`} style={{ width: '60px', height: '60px', borderRadius: '4px', objectFit: 'cover' }} />
+                            ))}
+                            {previewProduct.detail_images.length > 4 && (
+                              <span style={{ width: '60px', height: '60px', borderRadius: '4px', background: 'rgba(177,151,252,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', color: '#B197FC' }}>+{previewProduct.detail_images.length - 4}</span>
+                            )}
+                          </div>
+                        </div>
                       ) : (
                         <span style={{ color: item.color, fontSize: '0.8rem', padding: '0.75rem 0', display: 'block' }}>{item.label}</span>
                       )}
@@ -948,7 +990,69 @@ export default function PoliciesPage() {
           )
         })()}
 
-        {!selectedDetailTemplateId && (
+        {/* ── 마켓별 개별 상세페이지 ── */}
+        <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', marginTop: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#51CF66' }}>마켓별 개별 설정</span>
+            <span style={{ fontSize: '0.72rem', color: '#666' }}>특정 마켓에 다른 상세페이지 템플릿을 적용합니다</span>
+          </div>
+          {/* 설정된 마켓 목록 */}
+          {Object.entries(marketDetailTemplates).map(([mkt, tplId]) => {
+            const mLabel = MARKETS.find(m => m.id === mkt)?.label || mkt
+            const tplName = detailTemplates.find(t => t.id === tplId)?.name || '(미선택)'
+            return (
+              <div key={mkt} style={{ marginBottom: '0.5rem', padding: '0.5rem', background: 'rgba(81,207,102,0.05)', border: '1px solid rgba(81,207,102,0.15)', borderRadius: '6px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#51CF66' }}>{mLabel}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <select
+                      value={tplId || ''}
+                      onChange={(e) => {
+                        const next = { ...marketDetailTemplates }
+                        if (e.target.value) {
+                          next[mkt] = e.target.value
+                        } else {
+                          delete next[mkt]
+                        }
+                        setMarketDetailTemplates(Object.keys(next).length > 0 ? next : {})
+                      }}
+                      style={{ ...inputStyle, width: '180px', fontSize: '0.75rem' }}
+                    >
+                      <option value="">공통 템플릿 사용</option>
+                      {detailTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                    <button onClick={() => {
+                      const next = { ...marketDetailTemplates }
+                      delete next[mkt]
+                      setMarketDetailTemplates(Object.keys(next).length > 0 ? next : {})
+                    }} style={{ fontSize: '0.65rem', color: '#FF6B6B', background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '1px 6px', cursor: 'pointer' }}>삭제</button>
+                  </div>
+                </div>
+                {tplId && (
+                  <span style={{ fontSize: '0.68rem', color: '#888', marginTop: '0.25rem', display: 'block' }}>
+                    템플릿: {tplName}
+                  </span>
+                )}
+              </div>
+            )
+          })}
+          {/* 마켓 추가 드롭다운 */}
+          <select
+            value=""
+            onChange={async (e) => {
+              if (!e.target.value) return
+              setMarketDetailTemplates(prev => ({ ...prev, [e.target.value]: '' }))
+            }}
+            style={{ ...inputStyle, width: 'auto', fontSize: '0.75rem' }}
+          >
+            <option value="">+ 마켓 추가</option>
+            {MARKETS.filter(m => !marketDetailTemplates[m.id]).map(m => (
+              <option key={m.id} value={m.id}>{m.label}</option>
+            ))}
+          </select>
+        </div>
+
+        {!selectedDetailTemplateId && Object.keys(marketDetailTemplates).length === 0 && (
           <p style={{ textAlign: 'center', color: '#555', padding: '2rem 0', fontSize: '0.875rem' }}>템플릿을 선택하거나 신규생성하세요</p>
         )}
       </div>

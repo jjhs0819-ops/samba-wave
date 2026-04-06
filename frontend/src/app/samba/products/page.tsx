@@ -104,13 +104,14 @@ export default function ProductsPage() {
   const [aiPresetList, setAiPresetList] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
   const [aiImgTransforming, setAiImgTransforming] = useState(false)
   const [imgFiltering, setImgFiltering] = useState(false)
-  const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['images']))
+  const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['detail_images']))
 
   // AI 작업 진행 모달
   const [aiJobModal, setAiJobModal] = useState(false)
   const [aiJobTitle, setAiJobTitle] = useState('')
   const [aiJobLogs, setAiJobLogs] = useState<string[]>([])
   const [aiJobDone, setAiJobDone] = useState(false)
+  const aiJobAbortRef = useRef(false)
   const aiJobLogRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
@@ -577,15 +578,22 @@ export default function ProductsPage() {
                 <p style={{ margin: 0, color: '#FFB84D' }}>처리 중...</p>
               )}
             </div>
-            {aiJobDone && (
-              <div style={{ padding: '12px 20px', borderTop: '1px solid #2D2D2D', textAlign: 'right' }}>
+            <div style={{ padding: '12px 20px', borderTop: '1px solid #2D2D2D', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              {!aiJobDone && (
+                <button onClick={() => { aiJobAbortRef.current = true }} style={{
+                  padding: '6px 20px', borderRadius: '6px', fontSize: '0.56rem',
+                  background: 'rgba(255,107,107,0.15)', border: '1px solid rgba(255,107,107,0.4)',
+                  color: '#FF6B6B', cursor: 'pointer', fontWeight: 600,
+                }}>중단</button>
+              )}
+              {aiJobDone && (
                 <button onClick={() => setAiJobModal(false)} style={{
                   padding: '6px 20px', borderRadius: '6px', fontSize: '0.56rem',
                   background: 'rgba(81,207,102,0.15)', border: '1px solid rgba(81,207,102,0.4)',
                   color: '#51CF66', cursor: 'pointer', fontWeight: 600,
                 }}>확인</button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -924,6 +932,7 @@ export default function ProductsPage() {
         <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
         <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
           <option value="background">배경 제거</option>
+          <option value="model_to_product">모델→상품</option>
           <option value="scene">연출컷</option>
           <option value="model">모델 착용</option>
         </select>
@@ -961,6 +970,7 @@ export default function ProductsPage() {
             const ids = [...selectedIds]
             const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
             setAiImgTransforming(true)
+            aiJobAbortRef.current = false
             setAiJobTitle(`AI 이미지변환 (${ids.length}개)`)
             setAiJobLogs([])
             setAiJobDone(false)
@@ -971,6 +981,7 @@ export default function ProductsPage() {
             let success = 0
             let fail = 0
             for (let i = 0; i < ids.length; i++) {
+              if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i}/${ids.length})`); break }
               const prod = allProducts.find(p => p.id === ids[i])
               const label = prod?.name?.slice(0, 30) || ids[i].slice(-8)
               setAiJobTitle(`AI 이미지변환 [${i + 1}/${ids.length}] ${label}`)
@@ -1019,19 +1030,37 @@ export default function ProductsPage() {
             if (!ok) return
             const ids = [...selectedIds]
             setImgFiltering(true)
+            aiJobAbortRef.current = false
             setAiJobTitle(`이미지 필터링 (${ids.length}개)`)
             setAiJobLogs([])
             setAiJobDone(false)
             setAiJobModal(true)
             const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
+            const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            // allProducts에 없는 상품 정보 미리 로드 (500개씩 청크)
+            const missingIds = ids.filter(id => !allProducts.find(p => p.id === id))
+            const productMap: Record<string, typeof allProducts[0]> = {}
+            allProducts.forEach(p => { productMap[p.id] = p })
+            for (let ci = 0; ci < missingIds.length; ci += 500) {
+              try {
+                const chunk = missingIds.slice(ci, ci + 500)
+                const fetched = await collectorApi.getProductsByIds(chunk)
+                if (Array.isArray(fetched)) fetched.forEach(p => { productMap[p.id] = p })
+              } catch { /* 조회 실패 시 기존 fallback */ }
+            }
             let success = 0
             let fail = 0
             let totalTall = 0
             let totalVisionRemoved = 0
+            const startTime = ts()
             for (let i = 0; i < ids.length; i++) {
-              const prod = allProducts.find(p => p.id === ids[i])
-              const label = prod?.name?.slice(0, 30) || ids[i].slice(-8)
-              setAiJobTitle(`이미지 필터링 [${i + 1}/${ids.length}] ${label}`)
+              if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i}/${ids.length})`); break }
+              const prod = productMap[ids[i]] || null
+              const prodName = prod?.name?.slice(0, 25) || ids[i].slice(-8)
+              const prodNo = prod?.site_product_id || ids[i].slice(-8)
+              const prodBrand = prod?.brand || '-'
+              const label = `${prodBrand} / ${prodNo} / ${prodName}${prod?.name && prod.name.length > 25 ? '...' : ''}`
+              setAiJobTitle(`이미지 필터링 [${i + 1}/${ids.length}] ${prodBrand} / ${prodNo}`)
               try {
                 const steps: string[] = []
                 // 1) 프론트에서 추가이미지 비율 체크 (세로 2배 이상 → 제거)
@@ -1059,23 +1088,24 @@ export default function ProductsPage() {
                     }
                   }
                 }
-                // 2) 백엔드 Claude Vision 필터링
+                // 2) 백엔드 이미지 필터링
                 const r = await proxyApi.filterProductImages([ids[i]], '', scope)
                 if (r.success) {
                   success++
                   const removed = r.total_removed || 0
                   totalVisionRemoved += removed
-                  if (removed > 0) steps.push(`Vision ${removed}장 제거`)
-                  else steps.push('Vision 변동없음')
-                  addLog(`[${i + 1}/${ids.length}] ${label} — ${steps.join(' → ')}`)
-                } else { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
-              } catch (e) { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                  if (removed > 0) steps.push(`필터 ${removed}장 제거`)
+                  else steps.push('필터 변동없음')
+                  addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — ${steps.join(' → ')}`)
+                } else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
+              } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
             }
             const summary = [`성공 ${success}개`, `실패 ${fail}개`]
             if (totalTall > 0) summary.push(`긴이미지 ${totalTall}장 제거`)
-            if (totalVisionRemoved > 0) summary.push(`Vision ${totalVisionRemoved}장 제거`)
+            if (totalVisionRemoved > 0) summary.push(`필터 ${totalVisionRemoved}장 제거`)
             setAiJobTitle(`이미지 필터링 완료 (${success}/${ids.length})`)
             addLog(`\n완료: ${summary.join(' / ')}`)
+            addLog(`시작 ${startTime} → 종료 ${ts()}`)
             setAiJobDone(true)
             setImgFiltering(false)
             const apiCalls = success + fail
@@ -1175,7 +1205,7 @@ export default function ProductsPage() {
               const sites = [...new Set(
                 Array.from(selectedIds).map(id => products.find(p => p.id === id)?.source_site).filter(Boolean)
               )].join(',')
-              window.location.href = `/samba/shipments?selected=${encodeURIComponent(ids)}&sites=${encodeURIComponent(sites)}&autoAll=1&priceOnly=1`
+              window.location.href = `/samba/shipments?selected=${encodeURIComponent(ids)}&sites=${encodeURIComponent(sites)}&autoAll=1`
             }}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
@@ -1214,6 +1244,7 @@ export default function ProductsPage() {
               const targets = allProducts.filter(p => selectedIds.has(p.id) && (p.registered_accounts?.length ?? 0) > 0)
               if (!targets.length) { showAlert('마켓에 등록된 상품이 없습니다.'); return }
               if (!await showConfirm(`${targets.length}개 상품을 마켓에서 삭제(판매중지)하시겠습니까?`)) return
+              aiJobAbortRef.current = false
               setAiJobTitle(`마켓삭제 (${targets.length}건)`)
               setAiJobLogs([])
               setAiJobDone(false)
@@ -1226,6 +1257,7 @@ export default function ProductsPage() {
               const successMap = new Map<string, string[]>()
               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
               for (let i = 0; i < targets.length; i++) {
+                if (aiJobAbortRef.current) { logsRef.push(`\n⛔ 사용자 중단 (${i}/${targets.length})`); flushLogs(); break }
                 const t = targets[i]
                 const name = t.name.slice(0, 20)
                 try {

@@ -213,6 +213,12 @@ async def get_user_id(
             settings.jwt_secret_key,
             algorithms=[settings.jwt_algorithm],
         )
+        # refresh 토큰으로 API 인증 우회 방지
+        if payload.get("type") != "access":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type",
+            )
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(

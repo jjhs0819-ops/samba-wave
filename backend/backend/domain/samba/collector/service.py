@@ -251,15 +251,6 @@ class SambaCollectorService:
     ) -> List[SambaCollectedProduct]:
         return await self.product_repo.search(query, limit)
 
-    async def bulk_create_collected_products(
-        self, items: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """구 방식 호환 래퍼 — bulk_create_products로 위임.
-        반환값은 len() 호환용으로 입력 items를 그대로 반환.
-        """
-        await self.bulk_create_products(items)
-        return items
-
     async def apply_policy_to_filter_products(
         self,
         filter_id: str,

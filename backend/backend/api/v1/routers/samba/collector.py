@@ -15,6 +15,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.cache import cache
+from backend.domain.user.auth_service import get_user_id
 
 from backend.api.v1.routers.samba.collector_common import (
     _HEAVY_FIELDS,
@@ -125,7 +126,8 @@ class MoveFilterRequest(BaseModel):
 
 class BulkImageRemoveRequest(BaseModel):
     image_url: str
-    field: str = "images"  # images 또는 detail_images
+    field: str = "images"  # 하위호환
+    fields: Optional[list[str]] = None  # ['images', 'detail_images'] 선택 가능
 
 
 class BulkTagUpdateRequest(BaseModel):
@@ -257,9 +259,12 @@ async def list_filters(session: AsyncSession = Depends(get_read_session_dependen
 async def create_filter(
     body: SearchFilterCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    user_id: str = Depends(get_user_id),
 ):
     svc = _get_services(session)
-    return await svc.create_filter(body.model_dump(exclude_unset=True))
+    data = body.model_dump(exclude_unset=True)
+    data["created_by"] = user_id
+    return await svc.create_filter(data)
 
 
 @router.put("/filters/{filter_id}")
@@ -1103,10 +1108,10 @@ async def bulk_create_collected_products(
 ):
     svc = _get_services(session)
     items = [item.model_dump(exclude_unset=True) for item in body.items]
-    created = await svc.bulk_create_collected_products(items)
+    created_count = await svc.bulk_create_products(items)
     # 상품 일괄 생성 시 캐시 무효화
     await cache.clear_pattern("products:*")
-    return {"created": len(created)}
+    return {"created": created_count}
 
 
 @router.post("/products/images/bulk-remove")
@@ -1119,22 +1124,36 @@ async def bulk_remove_image(
     from sqlalchemy import cast, String
     from sqlmodel import select
 
-    # DB 레벨에서 해당 이미지 URL을 포함하는 상품만 필터링 (전체 로드 방지)
+    # fields 우선, 없으면 기존 field 하위호환
+    target_fields = body.fields if body.fields else [body.field]
     image_url = body.image_url
-    stmt = select(SambaCollectedProduct).where(
-        or_(
-            cast(SambaCollectedProduct.images, String).like(f"%{image_url}%"),
-            cast(SambaCollectedProduct.detail_images, String).like(f"%{image_url}%"),
+
+    # DB 레벨에서 해당 이미지 URL을 포함하는 상품만 필터링 (전체 로드 방지)
+    conditions = []
+    if "images" in target_fields:
+        conditions.append(
+            cast(SambaCollectedProduct.images, String).like(f"%{image_url}%")
         )
-    )
+    if "detail_images" in target_fields:
+        conditions.append(
+            cast(SambaCollectedProduct.detail_images, String).like(f"%{image_url}%")
+        )
+    if not conditions:
+        return {"removed": 0}
+
+    stmt = select(SambaCollectedProduct).where(or_(*conditions))
     result = await session.exec(stmt)
     removed_count = 0
     for p in result.all():
         found = False
-        if p.images and image_url in p.images:
+        if "images" in target_fields and p.images and image_url in p.images:
             p.images = [u for u in p.images if u != image_url]
             found = True
-        if p.detail_images and image_url in p.detail_images:
+        if (
+            "detail_images" in target_fields
+            and p.detail_images
+            and image_url in p.detail_images
+        ):
             p.detail_images = [u for u in p.detail_images if u != image_url]
             found = True
         if found:

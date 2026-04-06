@@ -8,9 +8,11 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from backend.domain.user.auth_service import get_user_id
 
 from backend.db.orm import get_write_session
 from backend.domain.samba.ai_sourcing.service import (
@@ -520,7 +522,7 @@ async def analyze_full(
 
 
 @router.post("/create-groups")
-async def create_groups(req: CreateGroupsRequest):
+async def create_groups(req: CreateGroupsRequest, user_id: str = Depends(get_user_id)):
     """선택된 조합으로 검색그룹(SambaSearchFilter) 일괄 생성."""
     created_ids: list[str] = []
 
@@ -548,6 +550,7 @@ async def create_groups(req: CreateGroupsRequest):
                 requested_count=estimated_count,
                 exclude_sold_out=True,
                 is_active=True,
+                created_by=user_id,
             )
             created_ids.append(created.id)
 

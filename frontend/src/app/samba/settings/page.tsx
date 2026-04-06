@@ -758,31 +758,13 @@ const STORE_MARKETS: MarketConfig[] = [
   { key: 'playauto', label: '플레이오토', authField: 'apiKey', guideUrl: 'https://www.plto.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '판매자 ID', type: 'text' },
+    { name: 'password', label: 'PASSWORD', type: 'password' },
     { name: 'apiKey', label: 'API Key', type: 'text' },
-    { name: 'apiSecret', label: 'API Secret', type: 'password' },
-    { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '010-1234-5678' },
-    { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '상세페이지 참조' },
-    { name: 'discountRate', label: '즉시할인율(%)', type: 'number', placeholder: '0 (미설정)' },
-    { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '3000' },
-    { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '6000' },
-    { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
-    { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
-    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
-    { name: '_divider_purchase', label: '구매/리뷰 혜택 조건', type: 'divider' },
-    { name: 'multiPurchaseDiscount', label: '복수구매할인', type: 'select', options: [
-      { value: '', label: '설정안함' }, { value: 'true', label: '설정함' },
-    ]},
-    { name: 'multiPurchaseQty', label: '복수구매 수량 (N개 이상)', type: 'number', placeholder: '2' },
-    { name: 'multiPurchaseRate', label: '복수구매 할인율 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_point', label: '포인트', type: 'divider' },
-    { name: 'purchasePointEnabled', label: '상품 구매 시 지급', type: 'checkbox' },
-    { name: 'purchasePointRate', label: '구매 적립률 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_review', label: '상품리뷰 작성시 지급', type: 'divider' },
-    { name: 'reviewPointEnabled', label: '리뷰 포인트 지급', type: 'checkbox' },
-    { name: 'reviewTextPoint', label: '텍스트 리뷰 작성', type: 'number', placeholder: '원' },
-    { name: 'reviewPhotoPoint', label: '포토/동영상 리뷰 작성', type: 'number', placeholder: '원' },
-    { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
-    { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
+    { name: 'apiSecret', label: '솔루션코드', type: 'password' },
+    { name: '_divider_alias', label: '마켓번호 별칭 (주문페이지 표시용)', type: 'divider' },
+    { name: 'alias1', label: '별칭 1', type: 'text', placeholder: '037800LT-마놀' },
+    { name: 'alias2', label: '별칭 2', type: 'text', placeholder: '마켓번호-별칭' },
+    { name: 'alias3', label: '별칭 3', type: 'text', placeholder: '마켓번호-별칭' },
   ]},
   { key: 'cafe24', label: '카페24', authField: 'accessToken', guideUrl: 'https://developers.cafe24.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
@@ -853,7 +835,7 @@ export default function SettingsPage() {
   const [claudeStatus, setClaudeStatus] = useState('')
   const [aiFeatures, setAiFeatures] = useState<Record<string, boolean>>({ productName: true })
 
-  // Gemini AI 설정 (모델컷 생성 전용)
+  // Gemini AI 설정 (이미지 변환 / AI태그)
   const [geminiApiKey, setGeminiApiKey] = useState('')
   const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash')
   const [geminiStatus, setGeminiStatus] = useState('')
@@ -1283,7 +1265,7 @@ export default function SettingsPage() {
     }
   }
 
-  // Gemini AI 저장 (모델컷 생성 전용)
+  // Gemini AI 저장 (이미지 변환 / AI태그)
   const saveGeminiSettings = async () => {
     if (!geminiApiKey) { showAlert('API Key를 입력해주세요', 'error'); return }
     try {
@@ -1875,10 +1857,10 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Gemini AI (모델컷 생성 전용) */}
+      {/* Gemini AI (이미지 변환 / AI태그) */}
       <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#4285F4' }}>Gemini AI (모델컷 전용)</span>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#4285F4' }}>Gemini AI (이미지 변환 / AI태그)</span>
           <span style={{ fontSize: '0.8125rem', color: '#666' }}>상품사진 → 모델착용컷 생성 (₩430/장)</span>
           <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4285F4', textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
           <button onClick={saveGeminiSettings} style={{ marginLeft: 'auto', background: 'rgba(50,50,50,0.8)', border: '1px solid #3D3D3D', color: '#C5C5C5', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>설정저장</button>

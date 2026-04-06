@@ -76,8 +76,6 @@ async def _get_musinsa_client(session: AsyncSession) -> MusinsaClient:
 @router.get("/musinsa/ip-check")
 async def musinsa_ip_check():
     """무신사 CDN 차단 여부 테스트 — 서버 IP 기준."""
-    import httpx
-
     test_url = "https://image.msscdn.net/images/goods_img/20260309/6099644/6099644_17736397410885_500.jpg"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=5)) as client:
@@ -1063,7 +1061,6 @@ async def regenerate_preset_image(
         MODEL_PRESETS,
         PRESET_IMAGE_DIR,
     )
-    import httpx
 
     preset_key = request.get("preset_key", "")
     custom_desc = request.get("desc", "")
@@ -1474,26 +1471,34 @@ async def generate_ai_tags(
     request: dict[str, Any],
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
-    """선택 상품을 그룹별로 묶어 대표 1개로 Claude 태그 생성 후 태그사전 검증 → 그룹 전체에 적용."""
+    """선택 상품을 그룹별로 묶어 대표 1개로 AI 태그 생성 후 태그사전 검증 → 그룹 전체에 적용."""
     from backend.domain.samba.collector.repository import (
         SambaCollectedProductRepository,
     )
 
     product_ids = request.get("product_ids", [])
     req_group_ids = request.get("group_ids", [])
+    method: str = request.get("method", "gemini")  # gemini | claude
     logger.info(
-        f"[AI태그] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}"
+        f"[AI태그] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}, method={method}"
     )
 
     if not product_ids and not req_group_ids:
         return {"success": False, "message": "상품 또는 그룹을 선택해주세요"}
 
-    # Claude API 키 조회
-    creds = await _get_setting(session, "claude")
-    if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
-        return {"success": False, "message": "Claude API 설정이 없습니다"}
-    api_key = str(creds["apiKey"]).strip()
-    model = str(creds.get("model", "claude-sonnet-4-6"))
+    # API 키 조회 (method에 따라 분기)
+    if method == "gemini":
+        creds = await _get_setting(session, "gemini")
+        if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
+            return {"success": False, "message": "Gemini API 설정이 없습니다"}
+        api_key = str(creds["apiKey"]).strip()
+        model = str(creds.get("model", "gemini-2.5-flash"))
+    else:
+        creds = await _get_setting(session, "claude")
+        if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
+            return {"success": False, "message": "Claude API 설정이 없습니다"}
+        api_key = str(creds["apiKey"]).strip()
+        model = str(creds.get("model", "claude-sonnet-4-6"))
 
     repo = SambaCollectedProductRepository(session)
 
@@ -1587,44 +1592,64 @@ async def generate_ai_tags(
             )
 
             try:
-                # Claude API 호출 (429 rate limit 대비 최대 3회 재시도)
+                # AI API 호출 (429 rate limit 대비 최대 3회 재시도)
                 resp = None
+                text = ""
                 for _attempt in range(3):
-                    resp = await http_client.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers={
-                            "x-api-key": api_key,
-                            "anthropic-version": "2023-06-01",
-                            "content-type": "application/json",
-                        },
-                        json={
-                            "model": model,
-                            "max_tokens": 400,
-                            "messages": [{"role": "user", "content": prompt}],
-                        },
-                    )
+                    if method == "gemini":
+                        resp = await http_client.post(
+                            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
+                            headers={"content-type": "application/json"},
+                            json={
+                                "contents": [{"parts": [{"text": prompt}]}],
+                                "generationConfig": {"maxOutputTokens": 400},
+                            },
+                        )
+                    else:
+                        resp = await http_client.post(
+                            "https://api.anthropic.com/v1/messages",
+                            headers={
+                                "x-api-key": api_key,
+                                "anthropic-version": "2023-06-01",
+                                "content-type": "application/json",
+                            },
+                            json={
+                                "model": model,
+                                "max_tokens": 400,
+                                "messages": [{"role": "user", "content": prompt}],
+                            },
+                        )
                     api_calls += 1
                     if resp.status_code == 429 and _attempt < 2:
                         import asyncio as _aio_tag
 
                         logger.warning(
-                            f"[AI태그] Claude 429 rate limit — {30 * (_attempt + 1)}초 대기"
+                            f"[AI태그] {method} 429 rate limit — {30 * (_attempt + 1)}초 대기"
                         )
                         await _aio_tag.sleep(30 * (_attempt + 1))
                         continue
                     break
                 if not resp or resp.status_code != 200:
                     logger.warning(
-                        f"[AI태그] Claude 호출 실패: {resp.status_code if resp else 'no response'}"
+                        f"[AI태그] {method} 호출 실패: {resp.status_code if resp else 'no response'}"
                     )
                     failed_groups += 1
                     continue
 
                 data = resp.json()
-                usage = data.get("usage", {})
-                total_input_tokens += usage.get("input_tokens", 0)
-                total_output_tokens += usage.get("output_tokens", 0)
-                text = data.get("content", [{}])[0].get("text", "")
+                if method == "gemini":
+                    usage = data.get("usageMetadata", {})
+                    total_input_tokens += usage.get("promptTokenCount", 0)
+                    total_output_tokens += usage.get("candidatesTokenCount", 0)
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        text = parts[0].get("text", "") if parts else ""
+                else:
+                    usage = data.get("usage", {})
+                    total_input_tokens += usage.get("input_tokens", 0)
+                    total_output_tokens += usage.get("output_tokens", 0)
+                    text = data.get("content", [{}])[0].get("text", "")
 
                 # 금지어 집합 생성
                 banned, name_words, brand_words, ss_banned = _build_banned_set(
@@ -1752,26 +1777,34 @@ async def preview_ai_tags(
     request: dict[str, Any],
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict[str, Any]:
-    """선택 상품의 그룹별 대표 1개로 Claude 태그 20개 생성 → 적용하지 않고 미리보기 반환."""
+    """선택 상품의 그룹별 대표 1개로 AI 태그 25개 생성 → 적용하지 않고 미리보기 반환."""
     from backend.domain.samba.collector.repository import (
         SambaCollectedProductRepository,
     )
 
     product_ids = request.get("product_ids", [])
     req_group_ids = request.get("group_ids", [])
+    method: str = request.get("method", "gemini")  # gemini | claude
     logger.info(
-        f"[AI태그 미리보기] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}"
+        f"[AI태그 미리보기] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}, method={method}"
     )
 
     if not product_ids and not req_group_ids:
         return {"success": False, "message": "상품 또는 그룹을 선택해주세요"}
 
-    # Claude API 키 조회
-    creds = await _get_setting(session, "claude")
-    if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
-        return {"success": False, "message": "Claude API 설정이 없습니다"}
-    api_key = str(creds["apiKey"]).strip()
-    model = str(creds.get("model", "claude-sonnet-4-6"))
+    # API 키 조회 (method에 따라 분기)
+    if method == "gemini":
+        creds = await _get_setting(session, "gemini")
+        if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
+            return {"success": False, "message": "Gemini API 설정이 없습니다"}
+        api_key = str(creds["apiKey"]).strip()
+        model = str(creds.get("model", "gemini-2.5-flash"))
+    else:
+        creds = await _get_setting(session, "claude")
+        if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
+            return {"success": False, "message": "Claude API 설정이 없습니다"}
+        api_key = str(creds["apiKey"]).strip()
+        model = str(creds.get("model", "claude-sonnet-4-6"))
 
     repo = SambaCollectedProductRepository(session)
 
@@ -1870,44 +1903,64 @@ async def preview_ai_tags(
             )
 
             try:
-                # Claude API 호출 (429 rate limit 대비 최대 3회 재시도)
+                # AI API 호출 (429 rate limit 대비 최대 3회 재시도)
                 resp = None
+                text = ""
                 for _attempt in range(3):
-                    resp = await http_client.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers={
-                            "x-api-key": api_key,
-                            "anthropic-version": "2023-06-01",
-                            "content-type": "application/json",
-                        },
-                        json={
-                            "model": model,
-                            "max_tokens": 400,
-                            "messages": [{"role": "user", "content": prompt}],
-                        },
-                    )
+                    if method == "gemini":
+                        resp = await http_client.post(
+                            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
+                            headers={"content-type": "application/json"},
+                            json={
+                                "contents": [{"parts": [{"text": prompt}]}],
+                                "generationConfig": {"maxOutputTokens": 400},
+                            },
+                        )
+                    else:
+                        resp = await http_client.post(
+                            "https://api.anthropic.com/v1/messages",
+                            headers={
+                                "x-api-key": api_key,
+                                "anthropic-version": "2023-06-01",
+                                "content-type": "application/json",
+                            },
+                            json={
+                                "model": model,
+                                "max_tokens": 400,
+                                "messages": [{"role": "user", "content": prompt}],
+                            },
+                        )
                     api_calls += 1
                     if resp.status_code == 429 and _attempt < 2:
                         import asyncio as _aio_tag
 
                         logger.warning(
-                            f"[AI태그 미리보기] Claude 429 rate limit — {30 * (_attempt + 1)}초 대기"
+                            f"[AI태그 미리보기] {method} 429 rate limit — {30 * (_attempt + 1)}초 대기"
                         )
                         await _aio_tag.sleep(30 * (_attempt + 1))
                         continue
                     break
                 if not resp or resp.status_code != 200:
                     logger.warning(
-                        f"[AI태그 미리보기] Claude 호출 실패: {resp.status_code if resp else 'no response'}"
+                        f"[AI태그 미리보기] {method} 호출 실패: {resp.status_code if resp else 'no response'}"
                     )
                     failed_groups += 1
                     continue
 
                 data = resp.json()
-                usage = data.get("usage", {})
-                total_input_tokens += usage.get("input_tokens", 0)
-                total_output_tokens += usage.get("output_tokens", 0)
-                text = data.get("content", [{}])[0].get("text", "")
+                if method == "gemini":
+                    usage = data.get("usageMetadata", {})
+                    total_input_tokens += usage.get("promptTokenCount", 0)
+                    total_output_tokens += usage.get("candidatesTokenCount", 0)
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        text = parts[0].get("text", "") if parts else ""
+                else:
+                    usage = data.get("usage", {})
+                    total_input_tokens += usage.get("input_tokens", 0)
+                    total_output_tokens += usage.get("output_tokens", 0)
+                    text = data.get("content", [{}])[0].get("text", "")
 
                 # 금지어 집합 생성
                 banned, name_words, brand_words, ss_banned = _build_banned_set(
@@ -2140,11 +2193,12 @@ async def filter_product_images(
     product_ids: list[str] = request.get("product_ids", [])
     filter_id: str = request.get("filter_id", "")
     scope: str = request.get("scope", "images")  # images | detail | all
+    method: str = request.get("method", "claude")  # claude | clip
 
     # filter_id로 요청 시 해당 그룹의 상품 ID 조회 (product_ids 우선)
     if filter_id and not product_ids:
         try:
-            result = await svc.filter_by_group(filter_id, scope=scope)
+            result = await svc.filter_by_group(filter_id, scope=scope, method=method)
             return result
         except Exception as exc:
             logger.error(f"[이미지필터] 그룹 필터링 실패: {exc}")
@@ -2154,14 +2208,48 @@ async def filter_product_images(
         return {"success": False, "message": "product_ids 또는 filter_id를 입력하세요."}
 
     try:
-        result = await svc.batch_filter(product_ids, scope=scope)
+        result = await svc.batch_filter(product_ids, scope=scope, method=method)
         return result
     except Exception as exc:
         logger.error(f"[이미지필터] 배치 필터링 실패: {exc}")
         return {"success": False, "message": str(exc)[:300]}
 
 
-# ═══════════════════════════════════════════════
+@router.post("/image-filter/compare")
+async def compare_image_filter_methods(
+    request: dict[str, Any],
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """Claude vs CLIP 정확도 비교 — 같은 이미지에 둘 다 돌려서 결과 비교."""
+    from backend.domain.samba.image.image_filter_service import ImageFilterService
+
+    svc = ImageFilterService(session)
+    urls: list[str] = request.get("urls", [])
+    product_id: str = request.get("product_id", "")
+
+    # product_id가 있으면 해당 상품 이미지 URL 조회
+    if product_id and not urls:
+        from backend.domain.samba.collector.repository import (
+            SambaCollectedProductRepository,
+        )
+
+        repo = SambaCollectedProductRepository(session)
+        product = await repo.get_async(product_id)
+        if not product:
+            return {"success": False, "message": "상품을 찾을 수 없습니다."}
+        urls = product.images or []
+
+    if not urls:
+        return {"success": False, "message": "urls 또는 product_id를 입력하세요."}
+
+    try:
+        result = await svc.compare_methods(urls)
+        return {"success": True, **result}
+    except Exception as exc:
+        logger.error(f"[이미지필터] 비교 실패: {exc}")
+        return {"success": False, "message": str(exc)[:300]}
+
+
 # ═══════════════════════════════════════════════
 # 통합 소싱 (패션플러스: 직접 API / 나머지 5개: 확장앱 큐)
 # ═══════════════════════════════════════════════
@@ -2291,6 +2379,22 @@ async def musinsa_goods_detail(
         return {"success": True, "data": product}
     except Exception as exc:
         logger.error(f"[무신사] {goods_no} 수집 실패: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/brand-search")
+async def brand_search(
+    keyword: str = Query(...),
+    gf: str = Query("A"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """무신사 키워드로 브랜드 코드 검색."""
+    try:
+        client = await _get_musinsa_client(session)
+        brands = await client.search_brands(keyword, gf)
+        return {"brands": brands}
+    except Exception as exc:
+        logger.error(f"[무신사 브랜드검색] 실패: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -3408,7 +3512,6 @@ async def image_proxy(
     """외부 이미지 프록시 (핫링크 차단 우회)."""
     if not url:
         raise HTTPException(status_code=400, detail="URL 필요")
-    import httpx
     from urllib.parse import unquote
 
     target = unquote(url)

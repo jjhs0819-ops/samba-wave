@@ -31,3 +31,44 @@ export const PERIOD_BUTTONS = [
   { key: 'today', label: '오늘' },
   { key: 'thisyear', label: '올해' },
 ] as const
+
+/** 소싱처 검색 URL (키워드 뒤에 붙여 사용) */
+export const SOURCING_SEARCH_URLS: Record<string, string> = {
+  MUSINSA: 'https://www.musinsa.com/search/musinsa/integration?q=',
+  KREAM: 'https://kream.co.kr/search?keyword=',
+  ABCmart: 'https://abcmart.a-rt.com/search?q=',
+}
+
+/** 소싱처 상품 상세 URL (상품번호 뒤에 붙여 사용) */
+export const SOURCING_PRODUCT_URLS: Record<string, string> = {
+  MUSINSA: 'https://www.musinsa.com/products/',
+  KREAM: 'https://kream.co.kr/products/',
+  FashionPlus: 'https://www.fashionplus.co.kr/goods/detail/',
+  ABCmart: 'https://www.a-rt.com/product?prdtNo=',
+  Nike: 'https://www.nike.com/kr/t/',
+}
+
+/** 소싱처 주문 상세 URL (주문번호 뒤에 붙여 사용) */
+export const SOURCING_ORDER_URLS: Record<string, string> = {
+  MUSINSA: 'https://www.musinsa.com/order/order-detail/',
+  KREAM: 'https://kream.co.kr/my/purchasing/',
+  FashionPlus: 'https://www.fashionplus.co.kr/mypage/order/detail/',
+  ABCmart: 'https://www.a-rt.com/mypage/order-detail/',
+  Nike: 'https://www.nike.com/kr/orders/',
+}
+
+/** 택배사별 배송 추적 URL (운송장번호 뒤에 붙여 사용) */
+export const DELIVERY_TRACKING_URLS: Record<string, string> = {
+  'CJ대한통운': 'https://trace.cjlogistics.com/next/tracking.html?wblNo=',
+  '한진택배': 'https://www.hanjin.com/kor/CMS/DeliveryMgr/WaybillResult.do?mession=&searchType=General&wblnumText2=',
+  '롯데택배': 'https://www.lotteglogis.com/home/reservation/tracking/link498?InvNo=',
+  '로젠택배': 'https://www.ilogen.com/web/personal/trace/',
+  '우체국택배': 'https://service.epost.go.kr/trace.RetrieveDomRi498.postal?sid1=',
+  '경동택배': 'https://kdexp.com/deliverySearch?barcode=',
+}
+
+/** localStorage 키 상수 */
+export const STORAGE_KEYS = {
+  SAMBA_USER: 'samba_user',
+  ANALYTICS_SEARCH: 'samba_analytics_search',
+} as const

@@ -261,7 +261,7 @@ export default function ShipmentsPage() {
     if (autoAll && accounts.length > 0) {
       setUpdateItems(priceOnly
         ? { all: false, price: true, thumb: false, detail: false }
-        : { all: true, price: true, thumb: true, detail: true }
+        : { all: false, price: false, thumb: false, detail: false }
       )
       // 선택된 상품의 카테고리 매핑에 연결된 마켓만 체크
       const selectedProds = preSelectedIds.map(id => products.find(p => p.id === id)).filter(Boolean)
@@ -279,6 +279,22 @@ export default function ShipmentsPage() {
             if (mapping.target_mappings[marketKey]) {
               mappedMarketTypes.add(marketKey)
             }
+          }
+        }
+      }
+      // 플레이오토: 카테고리 매핑 불필요 — 정책에 연결되어 있으면 자동 체크
+      for (const prod of selectedProds) {
+        if (!prod?.applied_policy_id) continue
+        const policy = policies.find(p => p.id === prod.applied_policy_id)
+        if (!policy?.market_policies || typeof policy.market_policies !== 'object') continue
+        const mp = policy.market_policies as Record<string, { accountId?: string; accountIds?: string[] }>
+        for (const marketPolicy of Object.values(mp)) {
+          const ids = Array.isArray(marketPolicy.accountIds)
+            ? marketPolicy.accountIds
+            : marketPolicy.accountId ? [marketPolicy.accountId] : []
+          for (const aid of ids) {
+            const acc = accounts.find(a => a.id === aid)
+            if (acc?.market_type === 'playauto') mappedMarketTypes.add('playauto')
           }
         }
       }
@@ -556,7 +572,7 @@ export default function ShipmentsPage() {
           sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
           if (newLogs.length > 0) {
             for (const log of newLogs) {
-              setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
+              setLogMessages(prev => [...prev, log].slice(-30))
             }
           }
           if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
@@ -789,7 +805,7 @@ export default function ShipmentsPage() {
             <button disabled={!!stopping} onClick={async () => {
                 setStopping('emergency')
                 const ts = new Date().toLocaleTimeString()
-                setLogMessages(prev => [...prev, `[${ts}] 전체 중단 요청...`].slice(-30))
+                setLogMessages(prev => [...prev, `[${ts}] 작업중단 요청...`].slice(-30))
                 abortRef.current = true
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                 try {
@@ -798,15 +814,15 @@ export default function ShipmentsPage() {
                   await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   await fetch(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
                   activeJobIdRef.current = ''
-                  setLogMessages(prev => [...prev, `[${ts}] 전체 중단 완료 — 모든 전송/대기 잡 취소됨`].slice(-30))
+                  setLogMessages(prev => [...prev, `[${ts}] 작업중단 완료`].slice(-30))
                 } catch {
-                  setLogMessages(prev => [...prev, `[${ts}] 전체 중단 실패`].slice(-30))
+                  setLogMessages(prev => [...prev, `[${ts}] 작업중단 실패`].slice(-30))
                 }
                 setTransmitting(false)
                 setStopping('')
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'emergency' ? 'rgba(255,50,50,0.6)' : 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: stopping ? 0.7 : 1 }}
-              >{stopping === 'emergency' ? '중단중...' : '전체 중단'}</button>
+              >{stopping === 'emergency' ? '중단중...' : '작업중단'}</button>
             {<>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: loopEnabled ? '#FF8C00' : '#666', cursor: 'pointer' }}>
                 <input type="checkbox" checked={loopEnabled} onChange={() => setLoopEnabled(!loopEnabled)} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
@@ -895,7 +911,7 @@ export default function ShipmentsPage() {
                       const newLogs = (logData.logs || []) as string[]
                       sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
                       if (newLogs.length > 0) {
-                        for (const log of newLogs) setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`].slice(-30))
+                        for (const log of newLogs) setLogMessages(prev => [...prev, log].slice(-30))
                       }
                       if (j.status === 'completed' || j.status === 'failed') {
                         if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }

@@ -27,8 +27,10 @@
 - 위 파일 외 다른 파일 수정이 필요하면 → 수정하지 말고 "이 파일도 수정이 필요합니다. 팀장에게 확인하세요"라고 안내
 - `__init__.py`, `market_base.py`, `sourcing_base.py`, `collector/` 폴더는 절대 수정 금지
 
-## 푸시 전 필수 [중요]
-- 백엔드 Python 파일 수정 시 `ruff format` 반드시 실행 후 푸시
+## 푸시 전 필수 [최우선]
+- 백엔드 Python 파일 수정 시 **반드시** `cd backend && .venv/Scripts/python.exe -m ruff format .` 실행 후 푸시
+- `ruff format` 누락 = CI 빌드 실패. git add 전에 무조건 실행할 것
+- `ruff check --fix .`도 함께 실행
 - 로컬 빌드(`pnpm build`)는 불필요 — CI + Vercel이 검증함
 
 ## 코드 반영 규칙 [중요]

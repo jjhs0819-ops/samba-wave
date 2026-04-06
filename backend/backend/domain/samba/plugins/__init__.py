@@ -7,6 +7,8 @@ logger = logging.getLogger(__name__)
 
 MARKET_PLUGINS: dict[str, "MarketPlugin"] = {}  # noqa: F821
 SOURCING_PLUGINS: dict[str, "SourcingPlugin"] = {}  # noqa: F821
+# 플러그인에서 자동 생성 — market_type → policy_key (한글 표시명)
+MARKET_TYPE_TO_POLICY_KEY: dict[str, str] = {}
 
 
 def discover_plugins():
@@ -51,6 +53,12 @@ def discover_plugins():
             ):
                 instance = cls()
                 SOURCING_PLUGINS[instance.site_name] = instance
+
+    # market_type → policy_key 매핑 자동 생성
+    MARKET_TYPE_TO_POLICY_KEY.clear()
+    for mt, plugin in MARKET_PLUGINS.items():
+        if hasattr(plugin, "policy_key") and plugin.policy_key:
+            MARKET_TYPE_TO_POLICY_KEY[mt] = plugin.policy_key
 
     logger.info(
         f"[플러그인] 마켓 {len(MARKET_PLUGINS)}개, 소싱 {len(SOURCING_PLUGINS)}개 등록 완료"

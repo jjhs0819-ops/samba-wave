@@ -28,6 +28,17 @@ def _filter_overseas(categories: list[str]) -> list[str]:
     return [c for c in categories if not any(kw in c for kw in _OVERSEAS_KEYWORDS)]
 
 
+def _filter_to_leaves(categories: list[str]) -> list[str]:
+    """리프 카테고리만 필터링 (하위 카테고리가 없는 경로만 반환)."""
+    # 모든 부모 경로를 미리 추출하여 O(n) 조회
+    parent_set: set[str] = set()
+    for c in categories:
+        parts = c.split(" > ")
+        for i in range(1, len(parts)):
+            parent_set.add(" > ".join(parts[:i]))
+    return [c for c in categories if c not in parent_set]
+
+
 # ══════════════════════════════════════════════
 # 성별 감지
 # ══════════════════════════════════════════════
@@ -1354,8 +1365,8 @@ class SambaCategoryService:
         if not keywords:
             return []
 
-        # DB에서 카테고리 목록 조회
-        categories = await self._get_market_categories(target_market)
+        # DB에서 카테고리 목록 조회 (리프만 — 비-리프 매핑 방지)
+        categories = _filter_to_leaves(await self._get_market_categories(target_market))
         if not categories:
             logger.warning(
                 "[카테고리 추천] %s: 동기화된 카테고리 없음 — 카테고리 동기화를 먼저 실행해주세요",
@@ -1508,20 +1519,33 @@ class SambaCategoryService:
             return 0
 
         # 3) 상품의 registered_accounts에 해당 마켓 계정이 있는지 확인
-        stmt = select(SambaCollectedProduct)
+        # OOM 방지: 전체 상품을 메모리에 올리지 않고 SQL 필터로 범위 축소
+        target_sites = {site for site, _ in target_cats}
+        stmt = select(
+            SambaCollectedProduct.source_site,
+            SambaCollectedProduct.category,
+            SambaCollectedProduct.category1,
+            SambaCollectedProduct.category2,
+            SambaCollectedProduct.category3,
+            SambaCollectedProduct.category4,
+            SambaCollectedProduct.registered_accounts,
+        ).where(
+            SambaCollectedProduct.source_site.in_(target_sites),
+            SambaCollectedProduct.registered_accounts.isnot(None),
+        )
         result = await session.execute(stmt)
         count = 0
-        for p in result.scalars().all():
-            site = p.source_site or ""
-            cats = [p.category1, p.category2, p.category3, p.category4]
+        for row in result.all():
+            site = row.source_site or ""
+            cats = [row.category1, row.category2, row.category3, row.category4]
             cats = [c for c in cats if c]
-            if not cats and p.category:
-                cats = [c.strip() for c in p.category.split(">") if c.strip()]
+            if not cats and row.category:
+                cats = [c.strip() for c in row.category.split(">") if c.strip()]
             leaf = " > ".join(cats)
             if (site, leaf) not in target_cats:
                 continue
             # registered_accounts에 해당 마켓 계정이 있는지 확인
-            reg_accs = p.registered_accounts or []
+            reg_accs = row.registered_accounts or []
             if any(aid in account_ids for aid in reg_accs):
                 count += 1
         return count
@@ -1827,27 +1851,75 @@ class SambaCategoryService:
         )
         return {"count": len(categories), "updated_at": datetime.now(UTC).isoformat()}
 
+    @staticmethod
+    def _edit_distance(a: str, b: str) -> int:
+        """두 문자열 간 편집 거리 (Levenshtein distance)."""
+        if len(a) < len(b):
+            return SambaCategoryService._edit_distance(b, a)
+        if len(b) == 0:
+            return len(a)
+        prev = list(range(len(b) + 1))
+        for i, ca in enumerate(a):
+            curr = [i + 1]
+            for j, cb in enumerate(b):
+                curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (ca != cb)))
+            prev = curr
+        return prev[len(b)]
+
     async def resolve_category_code(self, market_type: str, category_path: str) -> str:
         """경로 문자열 → 마켓 숫자 코드 변환. cat2에 저장된 코드맵 사용.
 
         매칭 우선순위:
         1. 정확 매칭
+        1.5. 상위 경로 일치 + 마지막 세그먼트 유사 매칭 (자켓↔재킷 등)
         2. 마지막 세그먼트 키워드 기반 퍼지 매칭 (leaf 카테고리 유사도)
         """
         tree = await self.tree_repo.get_by_site(market_type)
+        # cat2가 없으면 ESM JSON 파일 폴백 (auction/gmarket)
         if not tree or not tree.cat2:
+            if market_type in ("auction", "gmarket"):
+                from backend.domain.samba.proxy.esmplus import esm_find_category_by_path
+
+                code = esm_find_category_by_path(category_path, market_type)
+                if code:
+                    return code
             return ""
         code_map = tree.cat2
         # 1. 정확 매칭
         if category_path in code_map:
             return str(code_map[category_path])
 
-        # 2. 키워드 기반 퍼지 매칭
-        # 입력 경로의 세그먼트 추출 (예: "패션의류 > 남성의류 > 아우터/코트")
         input_segments = [s.strip() for s in category_path.split(">") if s.strip()]
         if not input_segments:
             return ""
 
+        # 1.5. 상위 경로 일치 + 마지막 세그먼트 유사 매칭
+        if len(input_segments) >= 2:
+            input_prefix = " > ".join(input_segments[:-1])
+            input_last = input_segments[-1]
+            prefix_matches = []
+            for path, code in code_map.items():
+                path_segs = [s.strip() for s in path.split(">") if s.strip()]
+                if len(path_segs) == len(input_segments):
+                    path_prefix = " > ".join(path_segs[:-1])
+                    if path_prefix == input_prefix:
+                        dist = self._edit_distance(input_last, path_segs[-1])
+                        prefix_matches.append((path, code, path_segs[-1], dist))
+            # 편집거리 3 이하인 후보만
+            close_matches = [m for m in prefix_matches if m[3] <= 3]
+            if close_matches:
+                best = min(close_matches, key=lambda x: x[3])
+                logger.info(
+                    "[카테고리 코드] 유사 매칭: '%s' → %s ('%s'↔'%s', dist=%d)",
+                    category_path,
+                    best[1],
+                    input_last,
+                    best[2],
+                    best[3],
+                )
+                return str(best[1])
+
+        # 2. 키워드 기반 퍼지 매칭
         # 마지막 세그먼트의 키워드 추출 (슬래시 분리 포함)
         last_seg = input_segments[-1]
         input_keywords = set()
@@ -1905,7 +1977,41 @@ class SambaCategoryService:
                 best_code,
                 best_score,
             )
-        return best_code
+            return best_code
+
+        # 3. 비-리프 폴백: 하위 리프 카테고리 중 최적 선택
+        prefix = category_path + " > "
+        descendants = {p: c for p, c in code_map.items() if p.startswith(prefix)}
+        if descendants:
+            # 리프만 추출 (하위 자식이 없는 경로)
+            leaf_descs = [
+                (p, c)
+                for p, c in descendants.items()
+                if not any(d.startswith(p + " > ") for d in descendants)
+            ]
+            if leaf_descs:
+                # "기타" 하위 카테고리 우선
+                for p, c in leaf_descs:
+                    last_seg = p.split(" > ")[-1]
+                    if "기타" in last_seg:
+                        logger.info(
+                            "[카테고리 코드] 비-리프 → 기타: '%s' → %s (%s)",
+                            category_path,
+                            c,
+                            p,
+                        )
+                        return str(c)
+                # 없으면 최단 경로(가장 직접적인 하위) 선택
+                leaf_descs.sort(key=lambda x: len(x[0]))
+                logger.info(
+                    "[카테고리 코드] 비-리프 → 리프: '%s' → %s (%s)",
+                    category_path,
+                    leaf_descs[0][1],
+                    leaf_descs[0][0],
+                )
+                return str(leaf_descs[0][1])
+
+        return ""
 
     async def sync_all_markets(self, session: "AsyncSession") -> Dict[str, Any]:
         """등록된 모든 마켓의 카테고리를 API에서 일괄 동기화.
@@ -1951,7 +2057,8 @@ class SambaCategoryService:
             raise ValueError("스마트스토어 clientId/clientSecret이 없습니다")
 
         client = SmartStoreClient(client_id, client_secret)
-        raw = await client.get_categories(last_only=True)
+        # 전체 카테고리 조회 (비-리프 포함 — 코드맵 완전성 보장)
+        raw = await client.get_categories(last_only=False)
 
         categories: List[str] = []
         code_map: Dict[str, str] = {}
@@ -3059,9 +3166,23 @@ JSON만:
                 all_market_cats[mk] = cats
 
         # 1) 수집 상품에서 고유 (site, leaf_category, 대표 상품명) 추출
-        stmt = select(SambaCollectedProduct)
+        # OOM 방지: 필요한 컬럼만 조회 + source_site 필터 적용
+        stmt = select(
+            SambaCollectedProduct.source_site,
+            SambaCollectedProduct.category,
+            SambaCollectedProduct.category1,
+            SambaCollectedProduct.category2,
+            SambaCollectedProduct.category3,
+            SambaCollectedProduct.category4,
+            SambaCollectedProduct.name,
+            SambaCollectedProduct.tags,
+            SambaCollectedProduct.seo_keywords,
+            SambaCollectedProduct.group_key,
+        )
+        if source_site:
+            stmt = stmt.where(SambaCollectedProduct.source_site == source_site)
         result = await session.execute(stmt)
-        products = list(result.scalars().all())
+        products = result.all()
 
         # (site, leaf_path) → 태그 + SEO키워드 + 그룹명
         cat_samples: Dict[tuple, List[str]] = {}
@@ -3071,9 +3192,6 @@ JSON만:
         for p in products:
             site = p.source_site or ""
             if not site:
-                continue
-            # 범위 필터
-            if source_site and site != source_site:
                 continue
             cats = [p.category1, p.category2, p.category3, p.category4]
             cats = [c for c in cats if c]
@@ -3126,10 +3244,10 @@ JSON만:
         similarity_mapped = 0
         errors: List[str] = []
 
-        # DB 스마트스토어 카테고리 목록 (2단계 유사도 매칭용)
+        # DB 스마트스토어 카테고리 목록 (2단계 유사도 매칭용 — 리프만)
         ss_cats: list[str] = []
         if "smartstore" in all_market_keys:
-            ss_cats = await self._get_market_categories("smartstore")
+            ss_cats = _filter_to_leaves(await self._get_market_categories("smartstore"))
 
         # ── 3단계 매핑 전략 ──
         # AI 호출 대상만 별도 수집
@@ -3168,7 +3286,7 @@ JSON만:
                 mk_cats = (
                     ss_cats
                     if mk == "smartstore"
-                    else await self._get_market_categories(mk)
+                    else _filter_to_leaves(await self._get_market_categories(mk))
                 )
                 if mk_cats:
                     # ESM 마켓은 SS 매핑 결과를 브릿지로 사용 (SS 카테고리 이름이 ESM과 더 유사)

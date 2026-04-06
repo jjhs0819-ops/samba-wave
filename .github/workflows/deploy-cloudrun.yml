@@ -18,99 +18,74 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Configure Docker
-        run: gcloud auth configure-docker asia-northeast3-docker.pkg.dev --quiet
-
-      - name: Build Docker image
-        run: docker build -t asia-northeast3-docker.pkg.dev/glass-sight-452013-n6/samba-wave/backend:latest ./backend
-
-      - name: Push Docker image
-        run: docker push asia-northeast3-docker.pkg.dev/glass-sight-452013-n6/samba-wave/backend:latest
-
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Run DB Migrations
+      - name: Write env vars file
         run: |
-          pip install uv
-          cd backend
-          uv venv
-          source .venv/bin/activate
-          uv pip install -e . --quiet
-          export write_db_user=${{ secrets.DB_WRITE_USER }}
-          export write_db_password=${{ secrets.DB_WRITE_PASSWORD }}
-          export write_db_host=${{ secrets.DB_WRITE_HOST }}
-          export write_db_port=5432
-          export write_db_name=samba-wave
-          export read_db_user=${{ secrets.DB_READ_USER }}
-          export read_db_password=${{ secrets.DB_READ_PASSWORD }}
-          export read_db_host=${{ secrets.DB_READ_HOST }}
-          export read_db_port=5432
-          export read_db_name=samba-wave
-          export db_ssl_required=false
-          export jwt_secret_key=${{ secrets.JWT_SECRET_KEY }}
-          export environment=production
-          alembic upgrade head
+          cat > /tmp/cloudrun-env.yaml << EOF
+          ENVIRONMENT: "production"
+          WRITE_DB_USER: "postgres"
+          WRITE_DB_HOST: "/cloudsql/fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
+          WRITE_DB_PORT: "5432"
+          WRITE_DB_NAME: "railway"
+          READ_DB_USER: "postgres"
+          READ_DB_HOST: "/cloudsql/fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
+          READ_DB_PORT: "5432"
+          READ_DB_NAME: "railway"
+          DB_SSL_REQUIRED: "false"
+          WEB_CONCURRENCY: "1"
+          GUNICORN_CMD_ARGS: "--timeout 300 --graceful-timeout 300"
+          TERMINATION_GRACE_HACK: "1"
+          PROXY_URLS: "${{ secrets.PROXY_URLS }}"
+          COLLECT_PROXY_URL: "${{ secrets.COLLECT_PROXY_URL }}"
+          COMMIT_SHA: "${{ github.sha }}"
+          EOF
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy samba-wave-backend \
-            --image asia-northeast3-docker.pkg.dev/glass-sight-452013-n6/samba-wave/backend:latest \
+          gcloud run deploy samba-wave-api \
+            --source ./backend \
             --region asia-northeast3 \
-            --platform managed \
-            --allow-unauthenticated \
-            --port 8080 \
-            --memory 1Gi \
-            --set-env-vars ENVIRONMENT=production,write_db_user=${{ secrets.DB_WRITE_USER }},write_db_password=${{ secrets.DB_WRITE_PASSWORD }},write_db_host=${{ secrets.DB_WRITE_HOST }},write_db_port=5432,write_db_name=samba-wave,read_db_user=${{ secrets.DB_READ_USER }},read_db_password=${{ secrets.DB_READ_PASSWORD }},read_db_host=${{ secrets.DB_READ_HOST }},read_db_port=5432,read_db_name=samba-wave,db_ssl_required=false,jwt_secret_key=${{ secrets.JWT_SECRET_KEY }},AWS_EC2_METADATA_DISABLED=true,COMMIT_SHA=${{ github.sha }} \
-            --project glass-sight-452013-n6 \
+            --project fresh-sanctuary-489804-v4 \
+            --env-vars-file /tmp/cloudrun-env.yaml \
+            --memory 2Gi \
+            --min-instances=1 \
             --quiet
 
-      - name: Verify deployment (새 리비전이 실제로 서비스 중인지 확인)
+      - name: Verify traffic on latest revision
         run: |
-          PROJECT=glass-sight-452013-n6
-          REGION=asia-northeast3
-          SERVICE=samba-wave-backend
-
-          echo "[검증] 최신 리비전 확인 중..."
-
-          # 최신 리비전 이름 조회
-          LATEST_REVISION=$(gcloud run revisions list \
-            --service=$SERVICE \
-            --region=$REGION \
-            --project=$PROJECT \
-            --format="value(name)" \
-            --sort-by="~creationTimestamp" \
-            --limit=1)
-          echo "[검증] 최신 리비전: $LATEST_REVISION"
-
-          # 현재 트래픽을 받고 있는 리비전 조회
-          SERVING_REVISION=$(gcloud run services describe $SERVICE \
-            --region=$REGION \
-            --project=$PROJECT \
+          LATEST=$(gcloud run revisions list \
+            --service=samba-wave-api \
+            --region=asia-northeast3 \
+            --project=fresh-sanctuary-489804-v4 \
+            --sort-by=~createTime \
+            --limit=1 \
+            --format="value(name)")
+          SERVING=$(gcloud run services describe samba-wave-api \
+            --region=asia-northeast3 \
+            --project=fresh-sanctuary-489804-v4 \
             --format="value(status.traffic[0].revisionName)")
-          echo "[검증] 트래픽 수신 중인 리비전: $SERVING_REVISION"
-
-          # 최신 리비전이 트래픽을 받고 있지 않으면 강제 전환
-          if [ "$LATEST_REVISION" != "$SERVING_REVISION" ]; then
-            echo "[경고] 새 리비전이 트래픽을 받지 못하고 있습니다. 강제 전환 시도..."
-            gcloud run services update-traffic $SERVICE \
-              --region=$REGION \
-              --project=$PROJECT \
-              --to-revisions=$LATEST_REVISION=100
-
-            # 전환 후 재확인
-            SERVING_REVISION=$(gcloud run services describe $SERVICE \
-              --region=$REGION \
-              --project=$PROJECT \
-              --format="value(status.traffic[0].revisionName)")
-
-            if [ "$LATEST_REVISION" != "$SERVING_REVISION" ]; then
-              echo "[오류] 강제 전환 실패 — 구 코드가 여전히 서비스 중입니다!"
-              echo "[오류] 서빙 리비전: $SERVING_REVISION"
-              echo "[오류] 커밋: ${{ github.sha }}"
-              exit 1
-            fi
+          echo "최신 리비전: $LATEST"
+          echo "트래픽 리비전: $SERVING"
+          if [ "$LATEST" != "$SERVING" ]; then
+            echo "⚠️ 트래픽이 구 리비전에 고정됨 — 강제 전환"
+            gcloud run services update-traffic samba-wave-api \
+              --region=asia-northeast3 \
+              --project=fresh-sanctuary-489804-v4 \
+              --to-latest --quiet
+            echo "✅ 최신 리비전으로 트래픽 전환 완료"
           fi
 
-          echo "[완료] 배포 검증 성공 ✅"
-          echo "[완료] 서빙 리비전: $SERVING_REVISION"
-          echo "[완료] 커밋 SHA: ${{ github.sha }}"
+      - name: Health Check
+        run: |
+          sleep 15
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://samba-wave-api-363598397345.asia-northeast3.run.app/api/v1/health)
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ Health check 실패 (HTTP $STATUS)"
+            gcloud run services describe samba-wave-api \
+              --region=asia-northeast3 \
+              --project=fresh-sanctuary-489804-v4 \
+              --format="value(status.traffic)"
+            exit 1
+          fi
+          echo "✅ Health check 통과"

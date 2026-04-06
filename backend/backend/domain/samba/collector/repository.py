@@ -1,6 +1,6 @@
 """SambaWave Collector repository."""
 
-from typing import List, Optional
+from typing import List
 
 from sqlalchemy import or_
 from sqlmodel import select
@@ -15,11 +15,6 @@ from backend.domain.samba.collector.model import (
 class SambaSearchFilterRepository(BaseRepository[SambaSearchFilter]):
     def __init__(self, session):
         super().__init__(session, SambaSearchFilter)
-
-    async def list_by_site(self, source_site: str) -> List[SambaSearchFilter]:
-        return await self.filter_by_async(
-            source_site=source_site, order_by="created_at", order_by_desc=True
-        )
 
 
 class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
@@ -84,10 +79,3 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         result = await self.session.execute(stmt)
         await self.session.commit()
         return result.rowcount
-
-    async def find_by_site_product_id(
-        self, source_site: str, site_product_id: str
-    ) -> Optional[SambaCollectedProduct]:
-        return await self.find_by_async(
-            source_site=source_site, site_product_id=site_product_id
-        )

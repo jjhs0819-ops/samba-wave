@@ -150,16 +150,3 @@ class SambaCSInquiryService:
             "by_market": market_counts,
             "by_type": type_counts,
         }
-
-    # ==================== 템플릿 ====================
-
-    @staticmethod
-    def get_reply_templates() -> Dict[str, Dict[str, str]]:
-        """CS 답변 템플릿 목록 반환."""
-        return CS_REPLY_TEMPLATES
-
-    @staticmethod
-    def get_template_content(template_key: str) -> Optional[str]:
-        """특정 템플릿 내용 반환."""
-        tpl = CS_REPLY_TEMPLATES.get(template_key)
-        return tpl["content"] if tpl else None

@@ -267,23 +267,36 @@ class SmartStorePlugin(MarketPlugin):
                         for url in all_src_urls
                         if "naver.net" not in url and "pstatic.net" not in url
                     )
-                )
+                )[:20]  # OOM 방지: 상세이미지 최대 20장 제한 (50→20 축소)
 
             all_img_urls = list(images_raw[:5]) + detail_img_urls
 
             async def _upload_all_images():
-                """대표 + 상세 이미지 4장씩 배치 업로드 (API 호출 1/4 감소)."""
+                """1장씩 순차 업로드 — OOM 방지 (피크 메모리 최소화)."""
                 results: list[str | None] = []
-                for i in range(0, len(all_img_urls), 4):
-                    batch = all_img_urls[i : i + 4]
-                    try:
-                        batch_results = await client.upload_images_batch(batch)
-                        results.extend(batch_results)
-                        # 부족분 None 채우기
-                        results.extend([None] * (len(batch) - len(batch_results)))
-                    except Exception as e:
-                        logger.warning(f"[스마트스토어] 배치 이미지 업로드 실패: {e}")
-                        results.extend([None] * len(batch))
+                import httpx as _img_httpx
+                from backend.core.config import settings as _img_settings
+
+                _dl = _img_httpx.AsyncClient(
+                    timeout=_img_settings.http_timeout_default,
+                    follow_redirects=True,
+                )
+                _ul = _img_httpx.AsyncClient(
+                    timeout=_img_settings.http_timeout_default,
+                )
+                try:
+                    for url in all_img_urls:
+                        try:
+                            naver_url = await client.upload_image_from_url(
+                                url, _dl_client=_dl, _ul_client=_ul
+                            )
+                            results.append(naver_url)
+                        except Exception as e:
+                            logger.warning(f"[스마트스토어] 이미지 업로드 실패: {e}")
+                            results.append(None)
+                finally:
+                    await _dl.aclose()
+                    await _ul.aclose()
                 return results
 
             # 이미지 업로드 + 5개 API 조회 동시 실행
@@ -312,20 +325,33 @@ class SmartStorePlugin(MarketPlugin):
                 detail_map = img_results[thumb_count:]
                 replaced = 0
                 removed = 0
+                # OOM 방지: 한 번에 치환 맵 구성 후 일괄 replace
+                _replace_map: dict[str, str] = {}
+                _remove_patterns: list[str] = []
                 for orig, naver_url in zip(detail_img_urls, detail_map):
                     if naver_url:
-                        detail_html = detail_html.replace(orig, naver_url)
+                        _replace_map[orig] = naver_url
                         replaced += 1
                     else:
-                        # 업로드 실패 이미지 → 상세설명에서 해당 img 태그 제거 (소싱처 CDN 차단 방지)
-                        img_tag_pat = re.compile(
-                            r'<img[^>]*src=["\']'
-                            + re.escape(orig)
-                            + r'["\'][^>]*/?\s*>',
-                            re.I,
-                        )
-                        detail_html = img_tag_pat.sub("", detail_html)
+                        _remove_patterns.append(re.escape(orig))
                         removed += 1
+                # 성공 이미지 일괄 치환
+                if _replace_map:
+                    _rep_pat = re.compile(
+                        "|".join(re.escape(k) for k in _replace_map), re.I
+                    )
+                    detail_html = _rep_pat.sub(
+                        lambda m: _replace_map[m.group(0)], detail_html
+                    )
+                # 실패 이미지 img 태그 일괄 제거
+                if _remove_patterns:
+                    _rm_pat = re.compile(
+                        r'<img[^>]*src=["\'](?:'
+                        + "|".join(_remove_patterns)
+                        + r')["\'][^>]*/?\s*>',
+                        re.I,
+                    )
+                    detail_html = _rm_pat.sub("", detail_html)
                 product_copy["detail_html"] = detail_html
                 logger.info(
                     f"[스마트스토어] 이미지 업로드 완료 — 대표 {len(naver_images)}장, 상세 {replaced}장, 제거 {removed}장"

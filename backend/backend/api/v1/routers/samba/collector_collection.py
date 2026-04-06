@@ -582,9 +582,9 @@ async def collect_by_url(
                     }
                 )
 
-            created = []
+            created_count = 0
             if bulk_items:
-                created = await svc.bulk_create_collected_products(bulk_items)
+                created_count = await svc.bulk_create_products(bulk_items)
 
             # 검색그룹에 최근수집일 업데이트
             from datetime import datetime, timezone
@@ -602,8 +602,8 @@ async def collect_by_url(
                 "filter_id": filter_id,
                 "filter_name": keyword,
                 "total_found": len(items_list),
-                "saved": len(created),
-                "skipped_duplicates": len(items_list) - len(created),
+                "saved": created_count,
+                "skipped_duplicates": len(items_list) - created_count,
             }
 
         else:
@@ -1288,12 +1288,35 @@ async def brand_create_groups(
     req: BrandCreateGroupsRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """선택된 카테고리별로 검색그룹 일괄 생성."""
+    """선택된 카테고리별로 검색그룹 일괄 생성 (기존 그룹 중복 방지)."""
     from backend.api.v1.routers.samba.collector_common import _get_services
+    from urllib.parse import urlencode, urlparse, parse_qs
 
     svc = _get_services(session)
     created = []
 
+    # 기존 그룹 조회 — URL의 brand 파라미터 기준 동일 브랜드 중복 방지
+    all_filters = await svc.list_filters()
+    existing_names: set[str] = set()
+    existing_cat_codes: set[str] = set()
+    for f in all_filters:
+        if f.source_site != "MUSINSA":
+            continue
+        try:
+            _p = urlparse(f.keyword or "")
+            _qs = parse_qs(_p.query)
+            _fb = _qs.get("brand", [""])[0]
+            # brand 코드 기준으로 동일 브랜드만 필터링
+            if _fb != req.brand:
+                continue
+            existing_names.add(f.name or "")
+            _c = _qs.get("category", [""])[0]
+            if _c:
+                existing_cat_codes.add(_c)
+        except Exception:
+            pass
+
+    skipped = 0
     for cat in req.categories:
         cat_code = cat.get("categoryCode", "")
         path = cat.get("path", "")
@@ -1301,8 +1324,10 @@ async def brand_create_groups(
         cat_name = path.replace(" > ", "_").replace("/", "_")
         group_name = f"MUSINSA_{req.brand_name or req.brand}_{cat_name}"
 
-        # 검색 URL 구성
-        from urllib.parse import urlencode
+        # 이름 또는 카테고리코드 기준 중복 스킵
+        if group_name in existing_names or cat_code in existing_cat_codes:
+            skipped += 1
+            continue
 
         params = {
             "keyword": req.brand_name or req.brand,
@@ -1339,8 +1364,11 @@ async def brand_create_groups(
         except Exception as e:
             logger.warning(f"[브랜드소싱] 그룹 생성 실패 {group_name}: {e}")
 
-    logger.info(f"[브랜드소싱] {req.brand}: {len(created)}개 그룹 생성")
-    return {"created": len(created), "groups": created}
+    # 전체 보정 그룹은 초기 생성 시 만들지 않음 (추가수집 brand_refresh에서 생성)
+    logger.info(
+        f"[브랜드소싱] {req.brand}: 신규 {len(created)}개 생성, 기존 {skipped}개 스킵"
+    )
+    return {"created": len(created), "skipped": skipped, "groups": created}
 
 
 class BrandRefreshRequest(BaseModel):
@@ -1376,9 +1404,11 @@ async def brand_refresh(
     # 2) 기존 그룹 조회 — brand + category 코드로 매칭
     all_filters = await svc.list_filters()
     existing_cat_codes: dict[str, Any] = {}  # categoryCode → filter
+    existing_names: set[str] = set()
     for f in all_filters:
         if f.source_site != "MUSINSA":
             continue
+        existing_names.add(f.name or "")
         try:
             parsed = urlparse(f.keyword or "")
             qs = parse_qs(parsed.query)
@@ -1404,9 +1434,11 @@ async def brand_refresh(
                 await svc.update_filter(f.id, {"requested_count": count})
                 updated_groups += 1
         else:
-            # 신규 카테고리 — 그룹 생성
+            # 신규 카테고리 — 이름 중복 확인 후 그룹 생성
             cat_name = path.replace(" > ", "_").replace("/", "_")
             group_name = f"MUSINSA_{req.brand_name or req.brand}_{cat_name}"
+            if group_name in existing_names:
+                continue
             params = {
                 "keyword": req.brand_name or req.brand,
                 "brand": req.brand,

@@ -14,21 +14,11 @@ from backend.utils.logger import logger
 
 import math
 
-# 마켓타입 → 정책키 매핑
-MARKET_TYPE_TO_POLICY_KEY = {
-    "coupang": "쿠팡",
-    "ssg": "신세계몰",
-    "smartstore": "스마트스토어",
-    "11st": "11번가",
-    "gmarket": "지마켓",
-    "auction": "옥션",
-    "gsshop": "GS샵",
-    "lotteon": "롯데ON",
-    "lottehome": "롯데홈쇼핑",
-    "homeand": "홈앤쇼핑",
-    "hmall": "HMALL",
-    "kream": "KREAM",
-}
+# 마켓타입(영문 코드) → 정책키(한글 표시명) 매핑
+# 플러그인 레지스트리에서 자동 생성 — 새 마켓 추가 시 플러그인만 만들면 자동 반영
+from backend.domain.samba.plugins import (
+    MARKET_TYPE_TO_POLICY_KEY,
+)
 
 
 def calc_market_price(
@@ -282,21 +272,7 @@ class SambaShipmentService:
         if not category_id:
             raise ValueError("카테고리 매핑을 찾을 수 없습니다")
 
-        # 정책 조회 (가격 계산용)
-        MARKET_TYPE_TO_POLICY_KEY = {
-            "coupang": "쿠팡",
-            "ssg": "신세계몰",
-            "smartstore": "스마트스토어",
-            "11st": "11번가",
-            "gmarket": "지마켓",
-            "auction": "옥션",
-            "gsshop": "GS샵",
-            "lotteon": "롯데ON",
-            "lottehome": "롯데홈쇼핑",
-            "homeand": "홈앤쇼핑",
-            "hmall": "HMALL",
-            "kream": "KREAM",
-        }
+        # 정책 조회 (가격 계산용) — 모듈 레벨 MARKET_TYPE_TO_POLICY_KEY 사용
         policy = None
         policy_market_data: dict[str, Any] = {}
         if first.applied_policy_id:
@@ -346,10 +322,13 @@ class SambaShipmentService:
             # 상품 데이터 준비 (가격 계산, 이미지 업로드)
             product_dicts = []
             for p in products:
-                pd = p.model_dump()
+                # OOM 방지: 전송에 불필요한 대용량 필드 제외
+                pd = p.model_dump(exclude={"last_sent_data", "extra_data"})
 
-                # 상세 HTML 재생성
-                pd["detail_html"] = await self._build_detail_html(pd)
+                # 상세 HTML 재생성 (스마트스토어 그룹전송)
+                pd["detail_html"] = await self._build_detail_html(
+                    pd, market_type="smartstore"
+                )
 
                 # 정책 기반 판매가 계산 (기존 _transmit_product 라인 313-341 동일 패턴)
                 if policy and policy.pricing:
@@ -558,7 +537,8 @@ class SambaShipmentService:
             )
             return shipment
 
-        product_dict = product_row.model_dump()
+        # OOM 방지: 전송에 불필요한 대용량 필드 제외
+        product_dict = product_row.model_dump(exclude={"last_sent_data", "extra_data"})
 
         # 업데이트 항목이 체크되어 있으면 소싱처 최신화 먼저 실행
         # skip_refresh=True이면 오토튠에서 이미 리프레시 완료 → 이중 호출 방지
@@ -813,30 +793,7 @@ class SambaShipmentService:
         # 정책 기반 계정 필터링: 정책이 있으면 참조하되, 사용자 선택 계정은 보존
         policy = None
         policy_market_data: dict[str, Any] = {}
-        MARKET_TYPE_TO_POLICY_KEY = {
-            "coupang": "쿠팡",
-            "ssg": "신세계몰",
-            "smartstore": "스마트스토어",
-            "11st": "11번가",
-            "gmarket": "지마켓",
-            "auction": "옥션",
-            "gsshop": "GS샵",
-            "lotteon": "롯데ON",
-            "lottehome": "롯데홈쇼핑",
-            "homeand": "홈앤쇼핑",
-            "hmall": "HMALL",
-            "kream": "KREAM",
-            "ebay": "eBay",
-            "lazada": "Lazada",
-            "qoo10": "Qoo10",
-            "shopee": "Shopee",
-            "shopify": "Shopify",
-            "zoom": "Zum(줌)",
-            "toss": "토스",
-            "rakuten": "라쿠텐",
-            "amazon": "아마존",
-            "buyma": "바이마",
-        }
+        # 모듈 레벨 MARKET_TYPE_TO_POLICY_KEY 사용
         if not product_row.applied_policy_id:
             logger.warning(f"[전송] 상품 {product_id} 정책 미설정 — 전송 차단")
             await self.repo.update_async(
@@ -869,9 +826,7 @@ class SambaShipmentService:
                     )
                     # 마켓별 상품명 조합이 있으면 _dispatch_one에서 덮어쓸 수 있도록 name_rule 보관
                     product_dict["_name_rule"] = name_rule
-                    product_dict["_original_name"] = product_row.model_dump().get(
-                        "name", ""
-                    )
+                    product_dict["_original_name"] = product_row.name or ""
 
         # 글로벌 삭제어 적용 (상품명에서 금칙어 제거)
         # DB 실제 데이터: type='deletion', scope='all'
@@ -1104,14 +1059,17 @@ class SambaShipmentService:
                                 f"[ESM 크로스매핑] {other}({other_id}) → {market_type}({category_id})"
                             )
 
-                if not category_id:
+                if not category_id and market_type != "playauto":
                     res["error"] = "카테고리 매핑 없음"
                     logger.warning(
                         f"[전송] 상품 {product_id} → {market_type} 카테고리 매핑 없음 (스킵)"
                     )
                     return res
 
-                if market_type != "coupang" and not str(category_id).isdigit():
+                if (
+                    market_type not in ("coupang", "playauto")
+                    and not str(category_id).isdigit()
+                ):
                     res["error"] = f"최하단 카테고리 매핑 필요 (현재: {category_id})"
                     logger.warning(
                         f"[전송] 상품 {product_id} → {market_type} 최하단 카테고리 미매핑: '{category_id}' (스킵)"
@@ -1177,6 +1135,23 @@ class SambaShipmentService:
 
                 # 마켓별 판매가 계산 (product_dict 원본 보호를 위해 복사본 사용)
                 acct_product = dict(product_dict)
+
+                # 마켓별 상세페이지 템플릿이 있으면 재생성
+                _policy_extras = {}
+                if product_row.applied_policy_id:
+                    _pol_repo = SambaPolicyRepository(acct_session)
+                    _pol = await _pol_repo.get_async(product_row.applied_policy_id)
+                    if _pol and _pol.extras:
+                        _policy_extras = _pol.extras
+                _mkt_templates = _policy_extras.get("market_detail_templates") or {}
+                if _mkt_templates.get(market_type):
+                    # 마켓 전용 템플릿 존재 → 해당 마켓용 상세 HTML 재생성
+                    _svc = SambaShipmentService(
+                        SambaShipmentRepository(acct_session), acct_session
+                    )
+                    acct_product["detail_html"] = await _svc._build_detail_html(
+                        acct_product, market_type=market_type
+                    )
 
                 # 마켓별 상품명 조합 덮어쓰기
                 _nr = product_dict.get("_name_rule")
@@ -2144,8 +2119,13 @@ class SambaShipmentService:
 
     # ==================== 상세페이지 HTML 생성 ====================
 
-    async def _build_detail_html(self, product: dict[str, Any]) -> str:
+    async def _build_detail_html(
+        self, product: dict[str, Any], market_type: str = ""
+    ) -> str:
         """정책의 상세 템플릿(상단/하단 이미지)과 상품 이미지를 조합하여 상세 HTML 생성.
+
+        market_type이 주어지면 마켓별 전용 템플릿을 우선 사용하고,
+        없으면 공통 템플릿으로 fallback.
 
         구조: 상단이미지 → 대표이미지 → 추가이미지 → 하단이미지
         """
@@ -2184,8 +2164,14 @@ class SambaShipmentService:
             policy_repo = SambaPolicyRepository(self.session)
             policy = await policy_repo.get_async(policy_id)
             if policy and policy.extras:
-                template_id = policy.extras.get("detail_template_id")
-                logger.info(f"[상세HTML] 정책 {policy_id} 템플릿ID: {template_id}")
+                # 마켓별 전용 템플릿 우선, 없으면 공통 템플릿 fallback
+                market_templates = policy.extras.get("market_detail_templates") or {}
+                template_id = (
+                    market_templates.get(market_type) if market_type else None
+                ) or policy.extras.get("detail_template_id")
+                logger.info(
+                    f"[상세HTML] 정책 {policy_id} 마켓={market_type} 템플릿ID: {template_id}"
+                )
                 if template_id:
                     tpl_repo = BaseRepository(self.session, SambaDetailTemplate)
                     tpl = await tpl_repo.get_async(template_id)
@@ -2351,7 +2337,8 @@ class SambaShipmentService:
         product_row = await product_repo.get_async(shipment.product_id)
         if not product_row:
             return shipment
-        product_dict = product_row.model_dump()
+        # OOM 방지: 전송에 불필요한 대용량 필드 제외
+        product_dict = product_row.model_dump(exclude={"last_sent_data", "extra_data"})
 
         # 재전송
         await self.repo.update_async(shipment_id, status="transmitting")
@@ -2484,7 +2471,10 @@ class SambaShipmentService:
                 )
                 continue
 
-            product_dict = product_row.model_dump()
+            # OOM 방지: 삭제에 불필요한 대용량 필드 제외
+            product_dict = product_row.model_dump(
+                exclude={"last_sent_data", "extra_data"}
+            )
             market_product_nos = product_row.market_product_nos or {}
             reg_accounts = product_row.registered_accounts or []
             delete_results: dict[str, str] = {}

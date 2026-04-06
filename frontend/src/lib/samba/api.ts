@@ -163,6 +163,7 @@ export interface SambaPolicy {
   market_policies?: Record<string, unknown>;
   extras?: {
     detail_template_id?: string;
+    market_detail_templates?: Record<string, string>;
     name_rule_id?: string;
     forbidden_text?: string;
     deletion_text?: string;
@@ -421,8 +422,8 @@ export const collectorApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}/reset-registration`, { method: "POST" }),
   bulkResetRegistration: (ids: string[]) =>
     request<{ reset: number }>(`${SAMBA_PREFIX}/collector/products/bulk-reset-registration`, { method: "POST", body: JSON.stringify({ ids }) }),
-  bulkRemoveImage: (imageUrl: string, field: string = "images") =>
-    request<{ removed: number }>(`${SAMBA_PREFIX}/collector/products/images/bulk-remove`, { method: "POST", body: JSON.stringify({ image_url: imageUrl, field }) }),
+  bulkRemoveImage: (imageUrl: string, fields: string[] = ['images']) =>
+    request<{ removed: number }>(`${SAMBA_PREFIX}/collector/products/images/bulk-remove`, { method: "POST", body: JSON.stringify({ image_url: imageUrl, fields }) }),
   bulkUpdateTags: (ids: string[], tags: string[] | null, seoKeywords: string[] | null) =>
     request<{ updated: number }>(`${SAMBA_PREFIX}/collector/products/bulk-update-tags`, {
       method: "POST",
@@ -674,6 +675,11 @@ export const proxyApi = {
     const qs = new URLSearchParams({ keyword, size: '1', ...params })
     return request<{ success: boolean; totalCount: number }>(`${SAMBA_PREFIX}/proxy/musinsa/search-api?${qs}`)
   },
+  // 무신사 브랜드 코드 검색
+  brandSearch: (keyword: string, gf?: string) => {
+    const qs = new URLSearchParams({ keyword, gf: gf || 'A' })
+    return request<{ brands: Array<{ brandCode: string; brandName: string }> }>(`${SAMBA_PREFIX}/proxy/brand-search?${qs}`)
+  },
   // 범용 소싱처 검색 카운트
   searchCount: (sourceSite: string, keyword: string, url?: string) => {
     const qs = new URLSearchParams({ source_site: sourceSite, keyword })
@@ -735,11 +741,11 @@ export const proxyApi = {
         body: JSON.stringify({ groups, removed_tags: removedTags || [] }),
       }),
   // 이미지 필터링 (모델컷/연출컷/배너 자동 제거)
-  filterProductImages: (productIds: string[], filterId?: string, scope?: string) =>
+  filterProductImages: (productIds: string[], filterId?: string, scope?: string, filterMethod?: string) =>
     request<{ success: boolean; results: Record<string, { action: string; removed?: number; kept?: number; count?: number }>; total: number; total_removed?: number; errors: Record<string, string> }>(
       `${SAMBA_PREFIX}/proxy/image-filter/filter`, {
         method: 'POST',
-        body: JSON.stringify({ product_ids: productIds, filter_id: filterId || '', scope: scope || 'images' }),
+        body: JSON.stringify({ product_ids: productIds, filter_id: filterId || '', scope: scope || 'images', method: filterMethod || 'clip' }),
       }),
   // 소싱처 검색/상세
   sourcingSearch: (site: string, keyword: string, page = 1) =>
@@ -1234,6 +1240,7 @@ export interface SambaUser {
   name?: string
   is_admin: boolean
   status: string
+  access_token?: string
   created_at: string
   updated_at: string
 }

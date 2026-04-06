@@ -260,7 +260,7 @@ export default function WarroomPage() {
     if (intervalTimerRef.current[site]) clearTimeout(intervalTimerRef.current[site])
     intervalTimerRef.current[site] = setTimeout(async () => {
       const num = parseFloat(value)
-      if (isNaN(num) || num < 0.1 || num > 60) return
+      if (isNaN(num) || num < 0 || num > 60) return
       try {
         await collectorApi.autotuneUpdateInterval(site, num)
       } catch { /* ignore */ }

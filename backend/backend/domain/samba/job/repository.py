@@ -7,7 +7,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.domain.shared.base_repository import BaseRepository
-from .model import SambaJob
+from .model import JobStatus, SambaJob
 
 UTC = timezone.utc
 
@@ -20,14 +20,14 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         """가장 오래된 pending 잡 1개를 running으로 변경 후 반환."""
         stmt = (
             select(SambaJob)
-            .where(SambaJob.status == "pending")
+            .where(SambaJob.status == JobStatus.PENDING)
             .order_by(SambaJob.created_at.asc())
             .limit(1)
         )
         result = await self.session.execute(stmt)
         job = result.scalars().first()
         if job:
-            job.status = "running"
+            job.status = JobStatus.RUNNING
             job.started_at = datetime.now(UTC)
             self.session.add(job)
             await self.session.flush()
@@ -37,14 +37,14 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         """pending 잡을 오래된 순으로 조회 (running 변경 포함)."""
         stmt = (
             select(SambaJob)
-            .where(SambaJob.status == "pending")
+            .where(SambaJob.status == JobStatus.PENDING)
             .order_by(SambaJob.created_at.asc())
             .limit(limit)
         )
         result = await self.session.execute(stmt)
         jobs = list(result.scalars().all())
         for job in jobs:
-            job.status = "running"
+            job.status = JobStatus.RUNNING
             job.started_at = datetime.now(UTC)
             self.session.add(job)
         if jobs:
@@ -62,11 +62,12 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             await self.session.flush()
 
     async def complete_job(self, job_id: str, result: dict | None = None):
-        """잡 완료 처리."""
+        """잡 완료 처리 — attempt 리셋 포함."""
         job = await self.get_async(job_id)
         if job:
-            job.status = "completed"
+            job.status = JobStatus.COMPLETED
             job.progress = 100
+            job.attempt = 0  # 성공 → attempt 리셋
             job.completed_at = datetime.now(UTC)
             if result:
                 job.result = result
@@ -77,7 +78,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         """잡 실패 처리."""
         job = await self.get_async(job_id)
         if job:
-            job.status = "failed"
+            job.status = JobStatus.FAILED
             job.error = error
             job.completed_at = datetime.now(UTC)
             self.session.add(job)
@@ -86,9 +87,9 @@ class SambaJobRepository(BaseRepository[SambaJob]):
     async def cancel_job(self, job_id: str) -> bool:
         """잡 취소 (pending/running 모두 가능)."""
         job = await self.get_async(job_id)
-        if not job or job.status not in ("pending", "running"):
+        if not job or job.status not in (JobStatus.PENDING, JobStatus.RUNNING):
             return False
-        job.status = "cancelled"
+        job.status = JobStatus.CANCELLED
         job.completed_at = datetime.now(UTC)
         self.session.add(job)
         await self.session.flush()
@@ -111,7 +112,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
                 timeout=5,
             )
             row = result.first()
-            return row[0] == "cancelled" if row else False
+            return row[0] == JobStatus.CANCELLED if row else False
         except (asyncio.TimeoutError, Exception):
             return False
 
@@ -127,7 +128,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         """
         from sqlalchemy import and_
 
-        conditions = [SambaJob.status == "running"]
+        conditions = [SambaJob.status == JobStatus.RUNNING]
         if exclude_types:
             conditions.append(SambaJob.job_type.notin_(list(exclude_types)))
         if threshold_sec > 0:
@@ -139,9 +140,9 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         result = await self.session.execute(stmt)
         stuck = list(result.scalars().all())
         for job in stuck:
-            job.status = "pending"
+            job.status = JobStatus.PENDING
             job.started_at = None
-            job.progress = 0
+            # current/progress 보존 — 전송 잡이 이어서 재개할 수 있도록
             self.session.add(job)
         if stuck:
             await self.session.flush()

@@ -85,7 +85,7 @@ SUPPORTED_MARKETS: List[Dict[str, Any]] = [
         "id": "playauto",
         "name": "플레이오토",
         "group": "연동솔루션",
-        "api_fields": ["apiKey", "userId"],
+        "api_fields": ["apiKey", "solutionCode", "userId", "password"],
     },
     # Overseas
     {
@@ -199,9 +199,3 @@ class SambaAccountService:
             if market["id"] == market_type:
                 return market
         return None
-
-    @staticmethod
-    def format_account_label(account: SambaMarketAccount) -> str:
-        market_info = SambaAccountService.get_market_info(account.market_type)
-        market_name = market_info["name"] if market_info else account.market_type
-        return f"{account.business_name or market_name}-{account.seller_id or ''}"

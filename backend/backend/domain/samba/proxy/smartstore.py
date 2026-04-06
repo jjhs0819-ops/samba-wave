@@ -1005,10 +1005,7 @@ class SmartStoreClient:
             if not _dl_client:
                 await dl.aclose()
 
-        # EXIF 메타데이터 제거
-        from backend.domain.samba.image.exif import strip_exif
-
-        img_bytes = strip_exif(img_bytes)
+        # EXIF 제거 스킵 — 소싱처 CDN 이미지에 EXIF 없음, PIL 디코딩이 OOM 유발
 
         # content_type 불명확 시 바이트 시그니처로 감지
         if not content_type.startswith("image/"):
@@ -1031,15 +1028,8 @@ class SmartStoreClient:
         elif "gif" in content_type:
             ext = "gif"
         elif "webp" in content_type or image_url.endswith(".webp"):
-            from PIL import Image as _PILImage
-            import io as _io
-
-            pil_img = _PILImage.open(_io.BytesIO(img_bytes)).convert("RGB")
-            buf = _io.BytesIO()
-            pil_img.save(buf, format="PNG")
-            img_bytes = buf.getvalue()
-            ext = "png"
-            upload_type = "image/png"
+            ext = "webp"
+            upload_type = "image/webp"
 
         # 네이버 업로드 (클라이언트 재사용 + 429 재시도)
         import asyncio as _aio_retry
@@ -1063,12 +1053,15 @@ class SmartStoreClient:
                     raise SmartStoreApiError(
                         f"이미지 업로드 실패: {resp.status_code} {resp.text[:200]}"
                     )
+                del img_bytes  # OOM 방지: 업로드 완료 후 bytes 즉시 해제
                 data = resp.json()
                 images = data.get("images", [])
                 if not images:
                     raise SmartStoreApiError("이미지 업로드 응답에 URL 없음")
                 return images[0].get("url", "")
         finally:
+            # OOM 방지: 예외 시에도 bytes 해제
+            img_bytes = None  # noqa: F841
             if not _ul_client:
                 await ul.aclose()
         raise SmartStoreApiError(
@@ -1081,7 +1074,6 @@ class SmartStoreClient:
             return []
         token = await self._ensure_token()
         from urllib.parse import urlparse
-        from backend.domain.samba.image.exif import strip_exif
 
         # 이미지 다운로드 + 전처리
         def _mem_mb():
@@ -1121,7 +1113,7 @@ class SmartStoreClient:
                             f"[스마트스토어] 이미지 다운로드 실패: {url[:60]}"
                         )
                         continue
-                    img_bytes = strip_exif(resp.content)
+                    img_bytes = resp.content
                     content_type = resp.headers.get("content-type", "image/jpeg")
 
                     # content_type 불명확 시 바이트 시그니처로 감지
@@ -1142,15 +1134,8 @@ class SmartStoreClient:
                     elif "gif" in content_type:
                         ext = "gif"
                     elif "webp" in content_type or url.endswith(".webp"):
-                        from PIL import Image as _PILImage
-                        import io as _io
-
-                        pil_img = _PILImage.open(_io.BytesIO(img_bytes)).convert("RGB")
-                        buf = _io.BytesIO()
-                        pil_img.save(buf, format="PNG")
-                        img_bytes = buf.getvalue()
-                        ext = "png"
-                        content_type = "image/png"
+                        ext = "webp"
+                        content_type = "image/webp"
                     files_list.append(
                         (f"image_{len(files_list)}.{ext}", img_bytes, content_type)
                     )
@@ -1184,9 +1169,17 @@ class SmartStoreClient:
                     raise SmartStoreApiError(
                         f"이미지 업로드 실패: {resp.status_code} {resp.text[:200]}"
                     )
+                # OOM 방지: 업로드 완료 후 bytes 즉시 해제
+                for _f in files_list:
+                    del _f
+                files_list.clear()
                 logger.info(f"[메모리] 네이버업로드 후: {_mem_mb()}MB")
                 data = resp.json()
                 return [img.get("url", "") for img in data.get("images", [])]
+        # OOM 방지: 예외 시에도 bytes 해제
+        for _f in files_list:
+            del _f
+        files_list.clear()
         raise SmartStoreApiError("이미지 업로드 실패: 429 Rate Limit 초과")
 
     async def register_product(self, product_data: dict[str, Any]) -> dict[str, Any]:
