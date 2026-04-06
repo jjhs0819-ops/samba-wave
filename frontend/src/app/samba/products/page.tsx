@@ -154,7 +154,8 @@ export default function ProductsPage() {
     try {
       const skip = (targetPage - 1) * pageSize
       // status 필터에서 특수값 분리
-      const statusParam = (statusFilter === 'has_orders' || statusFilter === 'free_ship' || statusFilter === 'same_day' || statusFilter === 'free_same' || statusFilter === 'market_registered' || statusFilter === 'market_unregistered' || statusFilter === 'sold_out')
+      const knownStatus = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
+      const statusParam = (knownStatus.includes(statusFilter) || statusFilter.startsWith('reg_') || statusFilter.startsWith('unreg_'))
         ? statusFilter : statusFilter || undefined
       const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
       const res = await collectorApi.scrollProducts({
@@ -190,7 +191,8 @@ export default function ProductsPage() {
     setLoading(true)
     try {
       // 메타데이터 8개 + 상품 scroll 동시 호출
-      const statusParam = (statusFilter === 'has_orders' || statusFilter === 'free_ship' || statusFilter === 'same_day' || statusFilter === 'free_same' || statusFilter === 'market_registered' || statusFilter === 'market_unregistered' || statusFilter === 'sold_out')
+      const knownStatus2 = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
+      const statusParam = (knownStatus2.includes(statusFilter) || statusFilter.startsWith('reg_') || statusFilter.startsWith('unreg_'))
         ? statusFilter : statusFilter || undefined
       const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
       const [pol, filters, words, accs, orderPids, rules, mappings, tpls, productsRes] = await Promise.all([
@@ -860,9 +862,21 @@ export default function ProductsPage() {
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "rgba(22,22,22,0.95)", border: "1px solid #353535", color: "#C5C5C5", borderRadius: "6px" }}>
             <option value="">판매현황</option>
-            <option value="market_registered">마켓등록</option>
-            <option value="market_unregistered">미등록</option>
-            <option value="sold_out">품절상품</option>
+            <optgroup label="── 전체 ──">
+              <option value="sold_out">품절상품</option>
+              <option value="market_unregistered">미등록상품</option>
+              <option value="market_registered">등록상품</option>
+            </optgroup>
+            {accounts.length > 0 && (
+              <optgroup label="── 계정별 ──">
+                {accounts.map(a => (
+                  <React.Fragment key={a.id}>
+                    <option value={`reg_${a.id}`}>{a.market_name}({a.account_label}) 등록</option>
+                    <option value={`unreg_${a.id}`}>{a.market_name}({a.account_label}) 미등록</option>
+                  </React.Fragment>
+                ))}
+              </optgroup>
+            )}
           </select>
           <select value={searchType} onChange={(e) => setSearchType(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px", color: "#C5C5C5", width: "90px" }}>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
 import { MARKET_TYPE_TO_POLICY_KEY as SHARED_POLICY_KEY } from '@/lib/samba/markets'
@@ -207,7 +207,13 @@ export default function ShipmentsPage() {
       scrollParams.search_type = typeMap[searchField] || 'name'
     }
     if (siteFilter !== '전체') scrollParams.source_site = siteFilter
-    if (registrationFilter !== '전체') scrollParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
+    if (registrationFilter !== '전체') {
+      if (registrationFilter.startsWith('reg_') || registrationFilter.startsWith('unreg_')) {
+        scrollParams.status = registrationFilter
+      } else {
+        scrollParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
+      }
+    }
     if (sortBy) scrollParams.sort_by = sortBy
 
     // 선택된 상품이 있으면 해당 상품만 조회, 없으면 scroll API
@@ -628,8 +634,23 @@ export default function ShipmentsPage() {
         {/* 마켓등록 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>마켓등록</span>
-          <select value={registrationFilter} onChange={e => { onFilterChange(); setRegistrationFilter(e.target.value) }} style={{ ...inputStyle, width: '100px' }}>
-            <option>전체</option><option>등록</option><option>미등록</option><option>품절</option>
+          <select value={registrationFilter} onChange={e => { onFilterChange(); setRegistrationFilter(e.target.value) }} style={{ ...inputStyle, width: '180px' }}>
+            <option value="전체">전체</option>
+            <optgroup label="── 전체 ──">
+              <option value="품절">품절상품</option>
+              <option value="미등록">미등록상품</option>
+              <option value="등록">등록상품</option>
+            </optgroup>
+            {accounts.length > 0 && (
+              <optgroup label="── 계정별 ──">
+                {accounts.map(a => (
+                  <React.Fragment key={a.id}>
+                    <option value={`reg_${a.id}`}>{a.market_name}({a.account_label}) 등록</option>
+                    <option value={`unreg_${a.id}`}>{a.market_name}({a.account_label}) 미등록</option>
+                  </React.Fragment>
+                ))}
+              </optgroup>
+            )}
           </select>
         </div>
         {/* 실패건처리 */}
@@ -846,7 +867,13 @@ export default function ShipmentsPage() {
                   allParams.search_type = typeMap[searchField] || 'name'
                 }
                 if (siteFilter !== '전체') allParams.source_site = siteFilter
-                if (registrationFilter !== '전체') allParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : ''
+                if (registrationFilter !== '전체') {
+                  if (registrationFilter.startsWith('reg_') || registrationFilter.startsWith('unreg_')) {
+                    allParams.status = registrationFilter
+                  } else {
+                    allParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
+                  }
+                }
                 try {
                   const all = await collectorApi.scrollProducts(allParams)
                   // 소싱사이트 필터

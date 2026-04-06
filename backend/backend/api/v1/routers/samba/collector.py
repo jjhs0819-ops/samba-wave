@@ -649,6 +649,23 @@ async def scroll_products(
         )
     elif status == "sold_out":
         conditions.append(_CP.sale_status == "sold_out")
+    elif status and status.startswith("reg_"):
+        # 특정 계정에 등록된 상품: registered_accounts JSON에 account_id 포함
+        account_id = status[4:]  # "reg_ma_xxx" → "ma_xxx"
+        conditions.append(
+            cast(_CP.registered_accounts, String).like(f'%"{account_id}"%')
+        )
+    elif status and status.startswith("unreg_"):
+        # 특정 계정에 미등록된 상품: registered_accounts에 account_id 미포함
+        account_id = status[6:]  # "unreg_ma_xxx" → "ma_xxx"
+        conditions.append(
+            or_(
+                _CP.registered_accounts.is_(None),
+                cast(_CP.registered_accounts, String) == "null",
+                cast(_CP.registered_accounts, String) == "[]",
+                ~cast(_CP.registered_accounts, String).like(f'%"{account_id}"%'),
+            )
+        )
     elif status and status in _KNOWN_STATUS_VALUES:
         conditions.append(_CP.status == status)
 
