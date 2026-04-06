@@ -301,7 +301,7 @@ export default function WarroomPage() {
         monitorApi.dashboard().catch(() => null),
         monitorApi.recentEvents(10).catch(() => []),
         collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>,
-        collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, restart_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number> })),
+        collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null as string | null, cycle_count: 0, restart_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number>, site_intervals: undefined as Record<string, number> | undefined, traffic: undefined as { collecting: boolean; transmitting: boolean; busy: boolean } | undefined })),
         monitorApi.storeScores().catch(() => ({})),
       ])
       if (dashboard) setStats(dashboard)
