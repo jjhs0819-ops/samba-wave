@@ -169,6 +169,11 @@ export default function CollectorPage() {
   const [brandSelectedCats, setBrandSelectedCats] = useState<Set<string>>(new Set())
   const [brandTotal, setBrandTotal] = useState(0)
 
+  // SSG 브랜드 스캔
+  const [ssgBrandScanning, setSsgBrandScanning] = useState(false)
+  const [ssgBrands, setSsgBrands] = useState<{ name: string; value: string; count: number }[]>([])
+  const [ssgSelectedBrands, setSsgSelectedBrands] = useState<Set<string>>(new Set())
+
   // 일괄 갱신
   const [refreshing, setRefreshing] = useState(false)
   const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null)
@@ -953,6 +958,7 @@ export default function CollectorPage() {
             placeholder={
               selectedSite === "MUSINSA" ? "브랜드명 또는 URL (예: 나이키, https://www.musinsa.com/search/goods?keyword=나이키)" :
               selectedSite === "KREAM" ? "https://kream.co.kr/search?keyword=나이키" :
+              selectedSite === "SSG" ? "브랜드명 입력 (예: 다이나핏, 나이키)" :
               "URL을 입력하세요"
             }
             style={{
@@ -961,6 +967,24 @@ export default function CollectorPage() {
               color: "#E5E5E5", outline: "none",
             }}
           />
+          {selectedSite === 'SSG' && (
+            <button onClick={async () => {
+              const keyword = collectUrl.trim()
+              if (!keyword) { showAlert('브랜드명을 입력하세요'); return }
+              setSsgBrandScanning(true)
+              setSsgBrands([]); setSsgSelectedBrands(new Set())
+              try {
+                const res = await collectorApi.ssgBrandScan(keyword)
+                setSsgBrands(res.brands)
+                setSsgSelectedBrands(new Set(res.brands.map(b => b.value)))
+                addLog(`[SSG 브랜드스캔] "${keyword}": ${res.total}개 브랜드 발견`)
+              } catch (e) { showAlert(e instanceof Error ? e.message : '브랜드 스캔 실패', 'error') }
+              setSsgBrandScanning(false)
+            }} disabled={ssgBrandScanning}
+              style={{ padding: '0.6rem 1rem', background: ssgBrandScanning ? '#333' : 'transparent', border: '1px solid #FF8C00', borderRadius: '6px', color: '#FF8C00', fontSize: '0.82rem', fontWeight: 600, cursor: ssgBrandScanning ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>
+              {ssgBrandScanning ? '스캔 중...' : '브랜드 스캔'}
+            </button>
+          )}
           {selectedSite === 'MUSINSA' && (
             <button onClick={async () => {
               if (!collectUrl.trim()) { showAlert('URL 또는 키워드를 입력하세요'); return }
@@ -1003,6 +1027,23 @@ export default function CollectorPage() {
           )}
           <button
             onClick={async () => {
+              // SSG 브랜드 스캔 결과가 있으면 선택된 브랜드별 그룹 생성
+              if (selectedSite === 'SSG' && ssgBrands.length > 0) {
+                const selected = ssgBrands.filter(b => ssgSelectedBrands.has(b.value))
+                if (selected.length === 0) { showAlert('브랜드를 선택하세요'); return }
+                try {
+                  const res = await collectorApi.ssgBrandCreateGroups({
+                    keyword: collectUrl.trim(),
+                    brands: selected,
+                    max_discount: checkedOptions['maxDiscount'] ?? true,
+                  })
+                  addLog(`[SSG 브랜드] ${res.created}개 그룹 생성 완료`)
+                  showAlert(`${res.created}개 그룹이 생성되었습니다`, 'success')
+                  setSsgBrands([]); setSsgSelectedBrands(new Set())
+                  load(); loadTree()
+                } catch (e) { showAlert(e instanceof Error ? e.message : '그룹 생성 실패', 'error') }
+                return
+              }
               // 카테고리 스캔 결과가 있으면 선택된 카테고리별 그룹 생성
               if (brandCategories.length > 0 && brandSelectedCats.size > 0) {
                 const selected = brandCategories.filter(c => brandSelectedCats.has(c.categoryCode))
@@ -1042,9 +1083,45 @@ export default function CollectorPage() {
               border: "none", opacity: collecting ? 0.6 : 1,
             }}
           >
-            {collecting ? "생성중..." : brandCategories.length > 0 ? `그룹 생성 (${brandSelectedCats.size}개)` : "그룹 생성"}
+            {collecting ? "생성중..." :
+              ssgBrands.length > 0 ? `그룹 생성 (${ssgSelectedBrands.size}개)` :
+              brandCategories.length > 0 ? `그룹 생성 (${brandSelectedCats.size}개)` :
+              "그룹 생성"}
           </button>
         </div>
+
+        {/* SSG 브랜드 스캔 결과 */}
+        {ssgBrands.length > 0 && (
+          <div style={{ marginTop: '0.5rem' }}>
+            <div style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.75rem', maxHeight: '350px', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <span style={{ fontSize: '0.78rem', color: '#888' }}>
+                  {ssgBrands.length}개 브랜드 (선택 {ssgSelectedBrands.size}개)
+                </span>
+                <div style={{ display: 'flex', gap: '0.25rem' }}>
+                  <button onClick={() => setSsgSelectedBrands(new Set(ssgBrands.map(b => b.value)))}
+                    style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}>전체선택</button>
+                  <button onClick={() => setSsgSelectedBrands(new Set())}
+                    style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}>전체해제</button>
+                  <button onClick={() => { setSsgBrands([]); setSsgSelectedBrands(new Set()) }}
+                    style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}>초기화</button>
+                </div>
+              </div>
+              {ssgBrands.map(brand => (
+                <label key={brand.value} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.2rem 0', cursor: 'pointer', fontSize: '0.78rem' }}>
+                  <input type="checkbox" checked={ssgSelectedBrands.has(brand.value)}
+                    onChange={e => {
+                      const next = new Set(ssgSelectedBrands)
+                      if (e.target.checked) next.add(brand.value); else next.delete(brand.value)
+                      setSsgSelectedBrands(next)
+                    }} style={{ accentColor: '#FF8C00' }} />
+                  <span style={{ color: '#E5E5E5', flex: 1 }}>{brand.name}</span>
+                  <span style={{ color: '#FF8C00', fontWeight: 600, fontSize: '0.72rem' }}>{brand.count.toLocaleString()}건</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* 카테고리 스캔 결과 */}
         {brandCategories.length > 0 && (

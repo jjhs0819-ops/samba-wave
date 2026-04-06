@@ -457,6 +457,16 @@ export const collectorApi = {
     request<{ running: boolean; last_tick: string | null; cycle_count: number; target: string; refreshed_count: number; breaker_tripped: Record<string, number>; site_intervals?: Record<string, number>; traffic?: { collecting: boolean; transmitting: boolean; busy: boolean } }>(`${SAMBA_PREFIX}/collector/autotune/status`),
   autotuneUpdateInterval: (site: string, interval: number) =>
     request<{ ok: boolean; site: string; interval: number }>(`${SAMBA_PREFIX}/collector/autotune/interval`, { method: 'POST', body: JSON.stringify({ site, interval }) }),
+  ssgBrandScan: (keyword: string) =>
+    request<{ brands: { name: string; value: string; count: number }[]; total: number }>(
+      `${SAMBA_PREFIX}/collector/ssg-brand-scan`,
+      { method: 'POST', body: JSON.stringify({ keyword }) }
+    ),
+  ssgBrandCreateGroups: (data: { keyword: string; brands: { name: string; value: string }[]; max_discount?: boolean }) =>
+    request<{ created: number }>(
+      `${SAMBA_PREFIX}/collector/ssg-brand-create-groups`,
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
 }
 
 // ── Market Accounts ──
@@ -469,6 +479,7 @@ export interface SambaMarketAccount {
   seller_id?: string;
   business_name?: string;
   is_active: boolean;
+  sort_order: number;
   additional_fields?: Record<string, unknown>;
   created_at: string;
 }
@@ -486,6 +497,8 @@ export const accountApi = {
     request<SambaMarketAccount>(`${SAMBA_PREFIX}/accounts/${id}/toggle`, { method: "PUT" }),
   delete: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/accounts/${id}`, { method: "DELETE" }),
+  reorder: (orders: { id: string; sort_order: number }[]) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/accounts/reorder`, { method: "PUT", body: JSON.stringify(orders) }),
 };
 
 // ── Shipments ──

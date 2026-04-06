@@ -1270,6 +1270,72 @@ async def brand_scan(
     }
 
 
+class SSGBrandScanRequest(BaseModel):
+    keyword: str
+
+
+@router.post("/ssg-brand-scan")
+async def ssg_brand_scan(req: SSGBrandScanRequest):
+    """SSG 키워드 검색 → 브랜드 필터 목록 반환."""
+    from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
+
+    client = SSGSourcingClient()
+    try:
+        brands = await client.get_brand_filters(req.keyword)
+    except Exception as e:
+        raise HTTPException(500, f"SSG 브랜드 스캔 실패: {e}")
+
+    if not brands:
+        raise HTTPException(
+            404, f"'{req.keyword}' 검색 결과에서 브랜드를 찾을 수 없습니다"
+        )
+
+    return {"brands": brands, "total": len(brands)}
+
+
+class SSGBrandGroup(BaseModel):
+    name: str
+    value: str
+
+
+class SSGBrandCreateGroupsRequest(BaseModel):
+    keyword: str
+    brands: list[SSGBrandGroup]
+    max_discount: bool = True
+
+
+@router.post("/ssg-brand-create-groups")
+async def ssg_brand_create_groups(
+    req: SSGBrandCreateGroupsRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """선택한 SSG 브랜드별 검색그룹 생성."""
+    svc = _get_services(session)
+    created = 0
+
+    for brand in req.brands:
+        brand_url = (
+            f"https://department.ssg.com/search?query={req.keyword}"
+            f"&repBrandId={brand.value}"
+        )
+        if req.max_discount:
+            brand_url += "&maxDiscount=1"
+
+        group_name = f"{req.keyword} - {brand.name}"
+        await svc.create_filter(
+            {
+                "source_site": "SSG",
+                "name": group_name,
+                "keyword": brand_url,
+                "requested_count": 100,
+            }
+        )
+        created += 1
+
+    await session.commit()
+    return {"created": created}
+
+
 class BrandCreateGroupsRequest(BaseModel):
     brand: str
     brand_name: str = ""
