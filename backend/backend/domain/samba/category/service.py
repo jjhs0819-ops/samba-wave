@@ -3488,3 +3488,113 @@ JSON만:
             "rule_mapped": rule_mapped,
             "errors": errors,
         }
+
+    # ==================== 불량 카테고리 감지 & 재매핑 ====================
+
+    # 패션/스포츠 상품에 절대 사용 불가한 금지 카테고리 접두어
+    _BAD_CATEGORY_PREFIXES = (
+        "도서/음반",
+        "식품",
+        "반려동물",
+        "디지털/가전",
+        "자동차",
+        "출산/육아",
+        "여행",
+        "인테리어",
+        "생활/건강",
+        "전자책",
+        "완구/취미",
+        "문구/사무",
+    )
+
+    def _is_bad_mapping(self, path: str) -> bool:
+        """카테고리 경로가 금지 카테고리로 시작하는지 확인."""
+        if not path:
+            return False
+        return any(path.startswith(prefix) for prefix in self._BAD_CATEGORY_PREFIXES)
+
+    async def fix_bad_mappings(
+        self,
+        api_key: str,
+        session: "AsyncSession",
+        target_markets: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """불량 카테고리 매핑을 감지하고 AI 재매핑한다.
+
+        불량 기준: 11번가 등 마켓 타겟이 패션과 무관한 카테고리(도서/음반, 식품 등)로
+        매핑된 경우.
+        해당 마켓의 타겟값만 초기화한 뒤 bulk_ai_mapping으로 재매핑한다.
+        """
+        # 1) 전체 매핑 조회
+        all_mappings = await self.mapping_repo.list_all()
+
+        bad_found: List[Dict[str, Any]] = []
+        fixed_count = 0
+        errors: List[str] = []
+
+        # 2) 불량 매핑 감지 및 해당 마켓 타겟값 초기화
+        for mapping in all_mappings:
+            targets: Dict[str, str] = mapping.target_mappings or {}
+            bad_markets = [
+                market for market, path in targets.items() if self._is_bad_mapping(path)
+            ]
+            if not bad_markets:
+                continue
+
+            # 불량 마켓만 필터링하여 기록
+            bad_found.append(
+                {
+                    "id": mapping.id,
+                    "source_site": mapping.source_site,
+                    "source_category": mapping.source_category,
+                    "bad_markets": {m: targets[m] for m in bad_markets},
+                }
+            )
+
+            # 불량 마켓 타겟값만 제거 (나머지 올바른 매핑은 유지)
+            new_targets = {k: v for k, v in targets.items() if k not in bad_markets}
+            try:
+                await self.mapping_repo.update_async(
+                    mapping.id, target_mappings=new_targets
+                )
+                fixed_count += 1
+                logger.info(
+                    "[불량매핑] 초기화: %s > %s → 제거 마켓: %s",
+                    mapping.source_site,
+                    mapping.source_category,
+                    bad_markets,
+                )
+            except Exception as e:
+                errors.append(f"{mapping.source_site} > {mapping.source_category}: {e}")
+
+        if not bad_found:
+            return {
+                "detected": 0,
+                "fixed": 0,
+                "remapped": 0,
+                "bad_list": [],
+                "errors": errors,
+                "message": "불량 카테고리가 없습니다.",
+            }
+
+        logger.info(
+            "[불량매핑] 감지=%d건, 초기화=%d건 — AI 재매핑 시작",
+            len(bad_found),
+            fixed_count,
+        )
+
+        # 3) 초기화된 카테고리들을 AI 재매핑
+        remap_result = await self.bulk_ai_mapping(
+            api_key=api_key,
+            session=session,
+            target_markets=target_markets,
+        )
+
+        return {
+            "detected": len(bad_found),
+            "fixed": fixed_count,
+            "remapped": remap_result.get("mapped", 0) + remap_result.get("updated", 0),
+            "bad_list": bad_found,
+            "errors": errors + remap_result.get("errors", []),
+            "message": f"{len(bad_found)}개 불량 매핑 감지 → {fixed_count}개 초기화 → AI 재매핑 완료",
+        }

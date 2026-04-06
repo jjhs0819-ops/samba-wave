@@ -187,6 +187,35 @@ async def ai_suggest_bulk(
         raise HTTPException(400, str(e)) from e
 
 
+class FixBadMappingsRequest(BaseModel):
+    """불량 카테고리 재매핑 요청."""
+
+    target_markets: Optional[List[str]] = None
+
+
+@router.post("/fix-bad-mappings")
+async def fix_bad_mappings(
+    body: Optional[FixBadMappingsRequest] = None,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """불량 카테고리 매핑 감지 및 AI 재매핑.
+
+    패션/스포츠와 무관한 카테고리(도서/음반, 식품 등)로 잘못 매핑된 것을
+    자동 감지하여 초기화한 뒤 AI로 재매핑한다.
+    """
+    api_key = await _get_claude_api_key(session)
+    if not api_key:
+        raise HTTPException(400, "Claude API Key가 설정되지 않았습니다")
+    svc = _get_service(session)
+    target_markets = body.target_markets if body else None
+    try:
+        return await svc.fix_bad_mappings(
+            api_key, session, target_markets=target_markets
+        )
+    except Exception as e:
+        raise HTTPException(500, str(e)) from e
+
+
 @router.post("/markets/sync-smartstore")
 async def sync_smartstore_categories(
     session: AsyncSession = Depends(get_write_session_dependency),

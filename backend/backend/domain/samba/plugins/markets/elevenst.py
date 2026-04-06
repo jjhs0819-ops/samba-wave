@@ -58,21 +58,27 @@ class ElevenstPlugin(MarketPlugin):
                 "message": "11번가 카테고리 코드가 없습니다. 카테고리 매핑을 설정해주세요.",
             }
 
-    # 기존 상품번호가 있으면 수정, 없으면 신규등록
-    from backend.domain.samba.proxy.elevenst import ElevenstApiError
+        client = ElevenstClient(api_key)
+        account_settings = (account.additional_fields or {}) if account else {}
+        xml_data = ElevenstClient.transform_product(
+            product, cat_code, settings=account_settings
+        )
 
-    try:
-        if existing_no:
-            result = await client.update_product(existing_no, xml_data)
-            return {"success": True, "message": "11번가 수정 성공", "data": result}
-        else:
-            result = await client.register_product(xml_data)
-            return {"success": True, "message": "11번가 등록 성공", "data": result}
-    except ElevenstApiError as e:
-        err = str(e)
-        if "해외 쇼핑 카테고리" in err:
-            return {
-                "success": False,
-                "message": f"카테고리 오류: 코드 {cat_code}가 해외쇼핑 카테고리입니다. 카테고리매핑에서 국내 카테고리 코드로 수정해주세요.",
-            }
-        return {"success": False, "message": f"11번가 등록 실패: {err}"}
+        # 기존 상품번호가 있으면 수정, 없으면 신규등록
+        from backend.domain.samba.proxy.elevenst import ElevenstApiError
+
+        try:
+            if existing_no:
+                result = await client.update_product(existing_no, xml_data)
+                return {"success": True, "message": "11번가 수정 성공", "data": result}
+            else:
+                result = await client.register_product(xml_data)
+                return {"success": True, "message": "11번가 등록 성공", "data": result}
+        except ElevenstApiError as e:
+            err = str(e)
+            if "해외 쇼핑 카테고리" in err:
+                return {
+                    "success": False,
+                    "message": f"카테고리 오류: 코드 {cat_code}가 해외쇼핑 카테고리입니다. 카테고리매핑에서 국내 카테고리 코드로 수정해주세요.",
+                }
+            return {"success": False, "message": f"11번가 등록 실패: {err}"}

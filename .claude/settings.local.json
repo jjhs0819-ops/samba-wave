@@ -25,7 +25,9 @@
       "Skill(ppt-brand-guidelines)",
       "Skill(generate-image)",
       "Bash",
-      "WebFetch"
+      "WebFetch",
+      "WebSearch",
+      "mcp__codex__codex"
     ],
     "deny": [],
     "ask": []

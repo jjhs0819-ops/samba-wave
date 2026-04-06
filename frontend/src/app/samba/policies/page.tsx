@@ -453,8 +453,8 @@ export default function PoliciesPage() {
             style={{ fontSize: '0.8125rem', padding: '0.4rem 1rem', background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: '8px', color: '#A78BFA', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >✦ AI정책변경</button>
         </div>
-        {/* 정책명 표시/수정 */}
-        {editingId && (
+        {/* 정책명 표시/수정 — 신규/수정 모두 표시 */}
+        {showForm && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.75rem' }}>
             <span style={{ color: '#888', fontSize: '0.8125rem' }}>정책명</span>
             <input

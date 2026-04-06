@@ -1118,8 +1118,35 @@ class ElevenstClient:
         _orig = int(product.get("original_price", 0) or 0)
         # maktPrc(정가)는 판매가 이상이어야 함
         makt_prc = math.ceil(_orig / 10) * 10 if _orig > sale_price else sale_price
-        detail_html = product.get("detail_html", "") or f"<p>{name}</p>"
         images = product.get("images") or []
+        detail_images = product.get("detail_images") or []
+
+        # 11번가 이미지 필터: 3MB 초과 가능성 있는 이미지 제외
+        # - notice/공지 이미지: 300x300 미만으로 거부되거나 용량 초과
+        # - old.millet.co.kr/data/goods_set: 원본 고해상도 이미지로 3MB 초과 가능
+        # msscdn.net 썸네일(_500.jpg 등)만 안정적으로 사용
+        def _is_valid_detail_image(url: str) -> bool:
+            """3MB 초과 가능성 있는 이미지 제외."""
+            lower = url.lower()
+            if "/notice/" in lower or "notice" in lower.split("/")[-1]:
+                return False
+            # 밀레 원본 고해상도 이미지 (goods_set) 제외
+            if "old.millet.co.kr" in lower and "/data/goods_set/" in lower:
+                return False
+            return True
+
+        _img_tag = '<div style="text-align:center;"><img src="{url}" style="max-width:860px;width:100%;" /></div>'
+        _html_parts = [
+            _img_tag.format(url=u) for u in images if _is_valid_detail_image(u)
+        ]
+        _html_parts += [
+            _img_tag.format(url=u) for u in detail_images if _is_valid_detail_image(u)
+        ]
+        detail_html = (
+            "\n".join(_html_parts)
+            if _html_parts
+            else (product.get("detail_html", "") or f"<p>{name}</p>")
+        )
         brand = product.get("brand", "")
 
         # 아동 의류 여부 판별 (KC인증 분기용)
@@ -1205,11 +1232,11 @@ class ElevenstClient:
         mnp_buy_dsc_method = str(cfg.get("multiPurchaseDiscountMethod", "02") or "02")
         mnp_buy_qty = int(float(cfg.get("multiPurchaseQty") or 2))
         mnp_buy_amt = int(float(cfg.get("multiPurchaseAmt") or 0))
-        # 할인값이 10 미만이면 복수구매 할인 비활성화
-        _mnp_enabled = cfg.get("multiPurchaseDiscount") and str(
-            cfg.get("multiPurchaseDiscount")
-        ) not in ("", "false", "0")
-        mnp_buy_yn = "Y" if _mnp_enabled and mnp_buy_amt >= 10 else "N"
+        # 복수구매할인: 정액(won) 방식일 때만 활성화, 정률(%) 방식은 값 검증 어려워 비활성화
+        # pluDscMthdCd=01=정률(%), 02=정액(원) — 정액 방식(02)이고 10원 초과일 때만 허용
+        # 복수구매할인(PLU): 계정 설정 오류 시 등록 실패 원인이 되므로 기본 비활성화
+        # 11번가 셀러오피스에서 직접 설정 권장
+        mnp_buy_yn = "N"
         mnp_period_yn = (
             "Y"
             if cfg.get("multiPurchasePeriodEnabled")
@@ -1218,6 +1245,13 @@ class ElevenstClient:
         )
         mnp_start_dy = str(cfg.get("multiPurchaseStartDate", "") or "")
         mnp_end_dy = str(cfg.get("multiPurchaseEndDate", "") or "")
+        # 종료일이 오늘 이전이면 기간 설정 비활성화
+        if mnp_period_yn == "Y" and mnp_end_dy:
+            from datetime import date
+
+            today_str = date.today().strftime("%Y%m%d")
+            if mnp_end_dy < today_str:
+                mnp_period_yn = "N"
 
         # 즉시할인 (쿠폰) 설정 — discountRate(%) 값이 있으면 정률 쿠폰 적용
         # 11번가 API 필드: cuponcheck, dscAmtPercnt, cupnDscMthdCd(02=정률)
@@ -1225,10 +1259,12 @@ class ElevenstClient:
         instant_dsc_yn = "Y" if _discount_rate > 0 else "N"
 
         # 이미지 XML — 공식 필드명: prdImage01~04 (imageUrl 아님)
+        # _is_valid_detail_image와 동일한 필터 적용 (notice + 고해상도 원본 제외)
+        product_images = [u for u in images if _is_valid_detail_image(u)]
         image_xml = ""
-        if images:
-            image_xml += f"<prdImage01>{_escape_xml(images[0])}</prdImage01>"
-            for i, url in enumerate(images[1:4], start=2):
+        if product_images:
+            image_xml += f"<prdImage01>{_escape_xml(product_images[0])}</prdImage01>"
+            for i, url in enumerate(product_images[1:4], start=2):
                 image_xml += f"<prdImage0{i}>{_escape_xml(url)}</prdImage0{i}>"
 
         # 옵션 처리 (싱글옵션 방식 — 옵션개편 이후 공식 포맷)

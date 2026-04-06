@@ -788,6 +788,12 @@ export const categoryApi = {
           ...(categoryPrefix ? { category_prefix: categoryPrefix } : {}),
         }),
       }),
+  fixBadMappings: (targetMarkets?: string[]) =>
+    request<{ detected: number; fixed: number; remapped: number; bad_list: { source_site: string; source_category: string; bad_markets: Record<string, string> }[]; errors: string[]; message: string }>(
+      `${SAMBA_PREFIX}/categories/fix-bad-mappings`, {
+        method: 'POST',
+        body: JSON.stringify({ ...(targetMarkets ? { target_markets: targetMarkets } : {}) }),
+      }),
   seedMarketCategories: () =>
     request<{ ok: boolean; markets: Record<string, number> }>(
       `${SAMBA_PREFIX}/categories/markets/seed`, { method: 'POST' }),

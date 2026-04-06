@@ -830,6 +830,36 @@ export default function CategoriesPage() {
     if (skippedCount > 0) showAlert(`${skippedCount}건은 이미 매핑되어 건너뜀`, 'info')
   }
 
+  // ── 불량 카테고리 감지 & 재매핑 ──
+  const [fixBadLoading, setFixBadLoading] = useState(false)
+  const [fixBadResult, setFixBadResult] = useState<{
+    detected: number; fixed: number; remapped: number;
+    bad_list: { source_site: string; source_category: string; bad_markets: Record<string, string> }[];
+    errors: string[]; message: string
+  } | null>(null)
+
+  const handleFixBadMappings = async () => {
+    setFixBadLoading(true)
+    setFixBadResult(null)
+    try {
+      const result = await categoryApi.fixBadMappings()
+      setFixBadResult(result)
+      if (result.detected === 0) {
+        showAlert('불량 카테고리가 없습니다.', 'success')
+      } else {
+        showAlert(result.message, 'success')
+        // 매핑 목록 갱신
+        const refreshed = await categoryApi.listMappings() as MappingRow[]
+        setMappings(refreshed)
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '실패'
+      showAlert(`불량 매핑 수정 실패: ${msg}`, 'error')
+    } finally {
+      setFixBadLoading(false)
+    }
+  }
+
   // ESM 크로스매핑 복사 (지마켓→옥션)
   const [esmCopyLoading, setEsmCopyLoading] = useState(false)
 
@@ -1060,14 +1090,47 @@ export default function CategoriesPage() {
       {/* 매핑 현황 테이블 — 드릴다운 선택에 동적 반응 */}
       {(mappings.length > 0 || isLeafCategory) && (
         <div style={{ marginBottom: '1.25rem' }}>
-          <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.75rem' }}>
-            매핑 현황{' '}
-            <span style={{ fontSize: '0.875rem', fontWeight: 400, color: '#888' }}>
-              ({filteredMappings.length === mappings.length
-                ? `총 ${mappings.length}건`
-                : `${filteredMappings.length}건 / 전체 ${mappings.length}건`})
-            </span>
-          </h3>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, margin: 0 }}>
+              매핑 현황{' '}
+              <span style={{ fontSize: '0.875rem', fontWeight: 400, color: '#888' }}>
+                ({filteredMappings.length === mappings.length
+                  ? `총 ${mappings.length}건`
+                  : `${filteredMappings.length}건 / 전체 ${mappings.length}건`})
+              </span>
+            </h3>
+            <button
+              onClick={handleFixBadMappings}
+              disabled={fixBadLoading}
+              title="도서/음반·식품 등 패션과 무관한 카테고리로 잘못 매핑된 항목을 자동 감지하여 재매핑합니다"
+              style={{
+                padding: '0.375rem 0.875rem',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                background: fixBadLoading ? '#333' : 'rgba(255,107,107,0.12)',
+                border: `1px solid ${fixBadLoading ? '#444' : 'rgba(255,107,107,0.35)'}`,
+                borderRadius: '6px',
+                color: fixBadLoading ? '#666' : '#FF6B6B',
+                cursor: fixBadLoading ? 'not-allowed' : 'pointer',
+              }}
+            >{fixBadLoading ? '감지 & 재매핑 중...' : '불량 카테고리 재매핑'}</button>
+          </div>
+          {/* 불량 재매핑 결과 요약 */}
+          {fixBadResult && fixBadResult.detected > 0 && (
+            <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: 'rgba(255,107,107,0.08)', border: '1px solid rgba(255,107,107,0.25)', borderRadius: '6px', fontSize: '0.8125rem' }}>
+              <div style={{ color: '#FF6B6B', fontWeight: 600, marginBottom: '0.375rem' }}>
+                불량 감지: {fixBadResult.detected}건 → 초기화: {fixBadResult.fixed}건 → 재매핑: {fixBadResult.remapped}건
+              </div>
+              {fixBadResult.bad_list.slice(0, 5).map((item, i) => (
+                <div key={i} style={{ color: '#999', fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                  [{item.source_site}] {item.source_category} → {Object.entries(item.bad_markets).map(([m, v]) => `${m}: ${v}`).join(', ')}
+                </div>
+              ))}
+              {fixBadResult.bad_list.length > 5 && (
+                <div style={{ color: '#666', fontSize: '0.75rem', marginTop: '0.25rem' }}>...외 {fixBadResult.bad_list.length - 5}건</div>
+              )}
+            </div>
+          )}
           <div style={{ ...card, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead>

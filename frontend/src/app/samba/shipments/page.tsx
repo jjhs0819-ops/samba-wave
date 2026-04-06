@@ -241,8 +241,13 @@ export default function ShipmentsPage() {
   useEffect(() => { return () => { if (progressRef.current) clearInterval(progressRef.current) } }, [])
 
   // URL에서 선택된 상품 ID 자동 적용 + 필터링
-  const preSelectedIds = searchParams.get('selected')?.split(',') || []
-  const preSelectedSites = searchParams.get('sites')?.split(',') || []
+  const fromSession = searchParams.get('fromSession') === '1'
+  const preSelectedIds = fromSession
+    ? (typeof window !== 'undefined' ? sessionStorage.getItem('shipment_selected_ids')?.split(',').filter(Boolean) || [] : [])
+    : (searchParams.get('selected')?.split(',') || [])
+  const preSelectedSites = fromSession
+    ? (typeof window !== 'undefined' ? sessionStorage.getItem('shipment_selected_sites')?.split(',').filter(Boolean) || [] : [])
+    : (searchParams.get('sites')?.split(',') || [])
   const autoAll = searchParams.get('autoAll') === '1'
   const priceOnly = searchParams.get('priceOnly') === '1'
   const initializedRef = useRef(false)
