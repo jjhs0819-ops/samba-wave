@@ -14,13 +14,19 @@ const card = {
 
 const SOURCE_SITES = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
+// 접수/대기/사무실 제외한 주문상태 목록
 const ORDER_STATUSES = [
-  { key: 'pending', label: '주문확인' },
-  { key: 'shipped', label: '배송중' },
-  { key: 'office_arrived', label: '사무실도착' },
-  { key: 'domestic', label: '국내배송' },
-  { key: 'cancel_done', label: '취소/반품/교환/완료' },
+  { key: 'ship_failed', label: '송장전송실패' },
+  { key: 'shipping', label: '배송중' },
   { key: 'delivered', label: '배송완료' },
+  { key: 'cancelling', label: '취소중' },
+  { key: 'returning', label: '반품중' },
+  { key: 'exchanging', label: '교환중' },
+  { key: 'cancel_requested', label: '취소요청' },
+  { key: 'return_requested', label: '반품요청' },
+  { key: 'cancelled', label: '취소완료' },
+  { key: 'returned', label: '반품완료' },
+  { key: 'exchanged', label: '교환완료' },
 ]
 
 /** 검색 조건 저장 구조 */
@@ -60,6 +66,14 @@ export default function AnalyticsPage() {
     STORAGE_KEYS.ANALYTICS_SEARCH,
     defaultSearch,
   )
+  // localStorage에 저장된 이전 상태 키가 유효하지 않으면 기본값으로 리셋
+  const validKeys = new Set(ORDER_STATUSES.map(s => s.key))
+  useEffect(() => {
+    const hasInvalid = search.statuses.some(k => !validKeys.has(k))
+    if (hasInvalid || search.statuses.length === 0) {
+      setSearch(prev => ({ ...prev, statuses: ORDER_STATUSES.map(s => s.key) }))
+    }
+  }, [])
   const searchYear = search.year
   const searchMonth = search.month
   const selectedMarkets = search.markets
