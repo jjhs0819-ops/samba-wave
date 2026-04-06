@@ -1,6 +1,6 @@
 """SambaWave Order API router."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -1169,6 +1169,21 @@ async def sync_orders_from_markets(
     return {"total_synced": total_synced, "results": results}
 
 
+def _parse_datetime(val: str | datetime | None) -> datetime | None:
+    """문자열/datetime → timezone-aware datetime 변환. asyncpg는 str을 거부하므로 필수."""
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+    try:
+        from dateutil import parser as _dp
+
+        dt = _dp.parse(str(val))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
 def _parse_smartstore_order(
     po: dict, order_info: dict, account_id: str, account_label: str
 ) -> dict[str, Any]:
@@ -1285,7 +1300,9 @@ def _parse_smartstore_order(
         "shipping_company": po.get("deliveryCompany", ""),
         "tracking_number": po.get("trackingNumber", ""),
         "source": "smartstore",
-        "paid_at": order_info.get("paymentDate") or order_info.get("orderDate"),
+        "paid_at": _parse_datetime(
+            order_info.get("paymentDate") or order_info.get("orderDate")
+        ),
     }
 
 
@@ -1351,7 +1368,9 @@ def _parse_playauto_order(
         "shipping_company": ro.get("Sender", ""),
         "tracking_number": ro.get("SenderNo", ""),
         "source": "playauto",
-        "paid_at": ro.get("OrderDate") or ro.get("InsertDate") or ro.get("RegDate"),
+        "paid_at": _parse_datetime(
+            ro.get("OrderDate") or ro.get("InsertDate") or ro.get("RegDate")
+        ),
         # 판매처(사업자) 정보 — 별칭 매핑 적용
         "source_site": (
             f"{site_name}({alias_map[site_id]})"
