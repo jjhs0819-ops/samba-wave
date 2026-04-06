@@ -1053,6 +1053,13 @@ async def sync_orders_from_markets(
                             await svc.repo.update_async(
                                 existing.id, order_number=order_data["order_number"]
                             )
+                    # 디버깅: shipment_id 1005913 추적
+                    if order_data.get("shipment_id") == "1005913":
+                        logger.info(
+                            f"[디버깅 1005913] found={existing is not None}, "
+                            f"paid_at_data={order_data.get('paid_at')!r}, "
+                            f"paid_at_existing={getattr(existing, 'paid_at', 'N/A')!r}"
+                        )
                     if existing:
                         # 기존 주문: sale_price, 이미지, 상태, 마켓주문상태 업데이트
                         update_fields: dict[str, Any] = {}
@@ -1074,6 +1081,9 @@ async def sync_orders_from_markets(
                             update_fields["shipment_id"] = order_data["shipment_id"]
                         if order_data.get("paid_at") and not existing.paid_at:
                             update_fields["paid_at"] = order_data["paid_at"]
+                            logger.info(
+                                f"[paid_at 보충] {existing.order_number} → {order_data['paid_at']}"
+                            )
                         # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
                         if order_data.get("product_id") and not existing.product_id:
                             update_fields["product_id"] = order_data["product_id"]
