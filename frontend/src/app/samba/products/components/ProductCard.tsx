@@ -47,6 +47,8 @@ export const MARKETS = [
   { id: 'zoom', name: 'Zum(줌)', url: 'https://zum.com', searchUrl: 'https://search.zum.com/search.zum?method=uni&query=' },
   { id: 'ebay', name: 'eBay', url: 'https://www.ebay.com/sh/ovw', searchUrl: 'https://www.ebay.com/sch/i.html?_nkw=' },
   { id: 'amazon', name: '아마존', url: 'https://sellercentral.amazon.com', searchUrl: 'https://www.amazon.com/s?k=' },
+  // 종합솔루션
+  { id: 'playauto', name: '플레이오토', url: '', searchUrl: '' },
 ]
 
 // 마켓별 상품명 글자수 제한
@@ -1352,13 +1354,20 @@ const ProductCard = React.memo(function ProductCard({
                           const mappedCat = productCatMapping[marketKey] || ''
                           return (<>
                             {rm && (<>
-                              <button
-                                onClick={() => window.open(rm.url, '_blank')}
-                                style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
-                                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
-                                title={`${rm.label} 구매페이지`}
-                              >구매페이지</button>
+                              {rm.url ? (
+                                <button
+                                  onClick={() => window.open(rm.url, '_blank')}
+                                  style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
+                                  title={`${rm.label} 구매페이지`}
+                                >구매페이지</button>
+                              ) : (
+                                <span
+                                  style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', whiteSpace: 'nowrap' }}
+                                  title={`${rm.label} 등록됨`}
+                                >등록됨</span>
+                              )}
                               {(() => {
                                 const sentAt = p.last_sent_data?.[rm.accId]?.sent_at
                                 if (!sentAt) return null
