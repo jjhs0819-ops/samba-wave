@@ -176,15 +176,22 @@ export default function SambaDashboard() {
                 .reduce((s, o) => s + (o.sale_price || 0), 0)
             )
             const maxSales = Math.max(...monthlySales, 1)
+            const formatSales = (v: number) => {
+              const cheonman = v / 10_000_000
+              if (cheonman >= 1) return `${cheonman.toFixed(1)}천만`
+              if (cheonman >= 0.01) return `${cheonman.toFixed(2)}천만`
+              if (v > 0) return `${(v / 10_000).toFixed(1)}만`
+              return ''
+            }
             return monthlySales.map((monthSales, i) => {
-            const heightPct = (monthSales / maxSales) * 100
+            const barHeight = Math.max((monthSales / maxSales) * 120, 2)
 
             return (
               <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.375rem' }}>
                 {monthSales > 0 && (
-                  <span style={{ fontSize: '0.625rem', color: '#888' }}>₩{(monthSales / 1000).toFixed(0)}K</span>
+                  <span style={{ fontSize: '0.625rem', color: '#888' }}>{formatSales(monthSales)}</span>
                 )}
-                <div style={{ width: '100%', background: i === month ? '#FF8C00' : 'rgba(255,140,0,0.3)', borderRadius: '4px 4px 0 0', height: `${Math.max(heightPct, 2)}%`, minHeight: '2px', transition: 'height 0.3s' }} />
+                <div style={{ width: '100%', background: i === month ? '#FF8C00' : 'rgba(255,140,0,0.3)', borderRadius: '4px 4px 0 0', height: `${barHeight}px`, minHeight: '2px', transition: 'height 0.3s' }} />
                 <span style={{ fontSize: '0.6875rem', color: i === month ? '#FF8C00' : '#666' }}>{i + 1}월</span>
               </div>
             )
