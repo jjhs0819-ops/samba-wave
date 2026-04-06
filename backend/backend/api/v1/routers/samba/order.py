@@ -1212,10 +1212,17 @@ async def sync_orders_from_markets(
                             update_fields["source_url"] = order_data["source_url"]
                         if order_data.get("shipment_id") and not existing.shipment_id:
                             update_fields["shipment_id"] = order_data["shipment_id"]
-                        if order_data.get("paid_at") and not existing.paid_at:
-                            update_fields["paid_at"] = order_data["paid_at"]
+                        _od_paid = order_data.get("paid_at")
+                        logger.info(
+                            f"[paid_at 체크] order={existing.order_number} "
+                            f"data_paid_at={_od_paid!r} "
+                            f"existing_paid_at={existing.paid_at!r} "
+                            f"will_update={bool(_od_paid and not existing.paid_at)}"
+                        )
+                        if _od_paid and not existing.paid_at:
+                            update_fields["paid_at"] = _od_paid
                             logger.info(
-                                f"[paid_at 보충] {existing.order_number} → {order_data['paid_at']}"
+                                f"[paid_at 보충] {existing.order_number} → {_od_paid}"
                             )
                         # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
                         if order_data.get("product_id") and not existing.product_id:
