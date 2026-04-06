@@ -983,7 +983,10 @@ export default function ProductsPage() {
             for (let i = 0; i < ids.length; i++) {
               if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i}/${ids.length})`); break }
               const prod = allProducts.find(p => p.id === ids[i])
-              const label = prod?.name?.slice(0, 30) || ids[i].slice(-8)
+              const brand = prod?.brand || ''
+              const name = prod?.name?.slice(0, 30) || ''
+              const prodNo = prod?.site_product_id || ids[i].slice(-8)
+              const label = [brand, name, prodNo].filter(Boolean).join(' / ')
               setAiJobTitle(`AI 이미지변환 [${i + 1}/${ids.length}] ${label}`)
               try {
                 const autoScope = { thumbnail: true, additional: true, detail: true }
