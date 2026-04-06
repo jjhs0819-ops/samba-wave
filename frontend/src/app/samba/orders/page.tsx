@@ -67,7 +67,7 @@ export default function OrdersPage() {
   const [inputFilter, setInputFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('active')
   const [searchText, setSearchText] = useState('')
-  const [pageSize, setPageSize] = useState(50)
+  const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
   const setLogMessages: typeof _setLogMessagesRaw = (v) => _setLogMessagesRaw(prev => {
@@ -147,11 +147,11 @@ export default function OrdersPage() {
   const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
-      setOrders(await orderApi.list(0, pageSize))
+      setOrders(await orderApi.list(0, 500))
       setEditingTrackings({})
     } catch { /* ignore */ }
     setLoading(false)
-  }, [pageSize])
+  }, [])
 
   // 개별 주문 로컬 상태 업데이트 (전체 목록 재조회 방지)
   const updateOrderLocal = useCallback((id: string, updates: Partial<SambaOrder>) => {
