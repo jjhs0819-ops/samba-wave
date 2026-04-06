@@ -896,6 +896,19 @@ async def sync_orders_from_markets(
                 for ro in raw_orders:
                     po = ro.get("productOrder", ro)
                     order_info = ro.get("order", {})
+                    # 디버그: paid_at 파싱 확인
+                    _paid_raw = (
+                        order_info.get("paymentDate")
+                        or po.get("paymentDate")
+                        or order_info.get("orderDate")
+                        or po.get("orderDate")
+                    )
+                    logger.info(
+                        f"[paid_at 디버그] ro_keys={list(ro.keys())}, "
+                        f"po_keys(date관련)={[k for k in po.keys() if 'date' in k.lower() or 'Date' in k or 'time' in k.lower() or 'pay' in k.lower()]}, "
+                        f"order_info_keys={list(order_info.keys())}, "
+                        f"paid_raw={_paid_raw!r}"
+                    )
                     orders_data.append(
                         _parse_smartstore_order(po, order_info, account.id, label)
                     )
