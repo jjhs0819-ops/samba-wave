@@ -851,9 +851,9 @@ async def sync_orders_from_markets(
                     )
                     logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
                     for ro in raw_orders:
-                        # 사본-취소마감은 원주문에 이미 취소 정보가 있으므로 스킵
+                        # 파생 주문 스킵 (사본-*, ★교환주문 — 원주문에 이미 정보 포함)
                         _pname = ro.get("ProdName", "")
-                        if _pname.startswith("[사본-취소마감") or _pname.startswith(
+                        if _pname.startswith("[사본-") or _pname.startswith(
                             "★교환주문"
                         ):
                             continue
