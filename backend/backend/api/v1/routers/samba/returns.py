@@ -309,6 +309,48 @@ _CLAIM_STATUS_LABEL: dict[str, str] = {
     "EXCHANGE_REJECT": "교환 요청이 거부되었습니다.",
 }
 
+# ── 플레이오토 OrderState 매핑 ──
+
+# 플레이오토 OrderState → 클레임 타입
+_PA_CLAIM_TYPE_MAP: dict[str, str] = {
+    "취소": "cancel",
+    "취소마감": "cancel",
+    "반품요청": "return",
+    "반품마감": "return",
+    "교환요청": "exchange",
+    "교환마감": "exchange",
+}
+
+# 플레이오토 OrderState → SambaReturn status
+_PA_CLAIM_STATUS_MAP: dict[str, str] = {
+    "취소": "requested",
+    "취소마감": "completed",
+    "반품요청": "requested",
+    "반품마감": "completed",
+    "교환요청": "requested",
+    "교환마감": "completed",
+}
+
+# 플레이오토 OrderState → 한글 CS 표시명
+_PA_CLAIM_STATUS_DISPLAY: dict[str, str] = {
+    "취소": "취소요청",
+    "취소마감": "취소완료",
+    "반품요청": "반품요청",
+    "반품마감": "반품완료",
+    "교환요청": "교환요청",
+    "교환마감": "교환완료",
+}
+
+# 플레이오토 OrderState → 한글 타임라인 메시지
+_PA_CLAIM_STATUS_LABEL: dict[str, str] = {
+    "취소": "취소 요청이 접수되었습니다.",
+    "취소마감": "취소가 완료되었습니다.",
+    "반품요청": "반품 요청이 접수되었습니다.",
+    "반품마감": "반품이 완료되었습니다.",
+    "교환요청": "교환 요청이 접수되었습니다.",
+    "교환마감": "교환이 완료되었습니다.",
+}
+
 
 def _extract_city_district(address: Optional[str]) -> Optional[str]:
     """주소에서 시/군 단위를 추출한다.
@@ -373,6 +415,7 @@ async def sync_returns_from_markets(
         "lotteon": "롯데ON",
         "ssg": "SSG",
         "gsshop": "GS샵",
+        "playauto": "플레이오토",
     }
 
     # 주문 status → 반품 type 매핑
@@ -695,6 +738,241 @@ async def sync_returns_from_markets(
                 logger.info(
                     f"[반품동기화] {label}: API {api_fetched}건, 신규 {synced}건"
                 )
+
+            elif market_type == "playauto":
+                from backend.domain.samba.proxy.playauto import PlayAutoClient
+
+                api_key = extras.get("apiKey", "") or account.api_key or ""
+                if not api_key:
+                    results.append(
+                        {"account": label, "status": "skip", "message": "API Key 없음"}
+                    )
+                    continue
+
+                pa_client = PlayAutoClient(api_key)
+                try:
+                    from datetime import UTC, datetime, timedelta
+
+                    start_date = (
+                        datetime.now(UTC) - timedelta(days=body.days)
+                    ).strftime("%Y%m%d")
+                    raw_orders = await pa_client.get_orders(
+                        start_date=start_date,
+                        count=5000,
+                    )
+
+                    # 클레임 상태 주문만 필터
+                    claims_data: list[dict[str, Any]] = []
+                    for ro in raw_orders:
+                        order_state = ro.get("OrderState", "")
+                        if order_state not in _PA_CLAIM_TYPE_MAP:
+                            continue
+                        # 파생 주문 스킵
+                        _pname = ro.get("ProdName", "")
+                        if _pname.startswith("[사본-") or "★교환주문" in _pname:
+                            continue
+
+                        sale_price = int(ro.get("Price", 0) or 0)
+                        quantity = int(ro.get("Count", 1) or 1)
+
+                        claims_data.append(
+                            {
+                                "order_code": ro.get("OrderCode", ""),
+                                "type": _PA_CLAIM_TYPE_MAP[order_state],
+                                "status": _PA_CLAIM_STATUS_MAP[order_state],
+                                "order_state_raw": order_state,
+                                "display_status": _PA_CLAIM_STATUS_DISPLAY.get(
+                                    order_state, order_state
+                                ),
+                                "reason": ro.get("CancelReason", "")
+                                or ro.get("ReturnReason", "")
+                                or ro.get("ExchangeReason", "")
+                                or ro.get("Memo", "")
+                                or "",
+                                "quantity": quantity,
+                                "requested_amount": float(sale_price * quantity),
+                                "product_name": ro.get("ProdName", ""),
+                                "product_option": ro.get("Option", ""),
+                                "customer_name": ro.get("RecipientName", "")
+                                or ro.get("OrderName", ""),
+                                "customer_phone": ro.get("RecipientHtel", "")
+                                or ro.get("RecipientTel", "")
+                                or ro.get("OrderHtel", "")
+                                or "",
+                                "customer_address": ro.get("RecipientAddress", ""),
+                                "site_name": ro.get("SiteName", ""),
+                            }
+                        )
+
+                    # API 클레임 → 반품 레코드 생성/업데이트
+                    synced = 0
+                    for claim in claims_data:
+                        order_code = claim["order_code"]
+                        existing_order = await order_repo.find_by_async(
+                            order_number=order_code
+                        )
+                        if not existing_order:
+                            continue
+
+                        order_id = existing_order.id
+                        existing_returns = await svc.repo.filter_by_async(
+                            order_id=order_id
+                        )
+
+                        if existing_returns:
+                            # 기존 레코드 업데이트
+                            existing_ret = next(
+                                (
+                                    r
+                                    for r in existing_returns
+                                    if r.type == claim["type"]
+                                ),
+                                existing_returns[0],
+                            )
+                            if existing_ret.type != claim["type"]:
+                                await svc.repo.update_async(
+                                    existing_ret.id, type=claim["type"]
+                                )
+                            new_status = claim["status"]
+                            status_priority = {
+                                "requested": 0,
+                                "approved": 1,
+                                "completed": 2,
+                                "rejected": 2,
+                                "cancelled": 2,
+                            }
+                            if status_priority.get(new_status, 0) > status_priority.get(
+                                existing_ret.status, 0
+                            ):
+                                from datetime import UTC, datetime
+
+                                timeline = list(existing_ret.timeline or [])
+                                timeline.append(
+                                    {
+                                        "date": datetime.now(UTC).isoformat(),
+                                        "status": new_status,
+                                        "message": _PA_CLAIM_STATUS_LABEL.get(
+                                            claim["order_state_raw"],
+                                            f"상태: {new_status}",
+                                        ),
+                                    }
+                                )
+                                update_data: dict[str, Any] = {
+                                    "status": new_status,
+                                    "timeline": timeline,
+                                    "market_order_status": claim["display_status"],
+                                }
+                                if new_status == "approved":
+                                    update_data["approval_date"] = datetime.now(UTC)
+                                elif new_status == "completed":
+                                    update_data["completion_date"] = datetime.now(UTC)
+                                await svc.repo.update_async(
+                                    existing_ret.id, **update_data
+                                )
+                            # 보충 정보
+                            patch_fields: dict[str, Any] = {}
+                            if (
+                                claim["customer_phone"]
+                                and not existing_ret.customer_phone
+                            ):
+                                patch_fields["customer_phone"] = claim["customer_phone"]
+                            if claim["customer_address"]:
+                                new_loc = _extract_city_district(
+                                    claim["customer_address"]
+                                )
+                                if new_loc and new_loc != existing_ret.product_location:
+                                    patch_fields["product_location"] = new_loc
+                                if not existing_ret.customer_address:
+                                    patch_fields["customer_address"] = claim[
+                                        "customer_address"
+                                    ]
+                            if patch_fields:
+                                await svc.repo.update_async(
+                                    existing_ret.id, **patch_fields
+                                )
+                            continue
+
+                        # 신규 반품 생성
+                        from datetime import UTC, datetime
+
+                        order_state_raw = claim["order_state_raw"]
+                        # 마켓명: SiteName 우선, 없으면 플레이오토
+                        pa_market = claim["site_name"] or market_label_map.get(
+                            market_type, market_type
+                        )
+                        timeline_entries = [
+                            {
+                                "date": datetime.now(UTC).isoformat(),
+                                "status": claim["status"],
+                                "message": _PA_CLAIM_STATUS_LABEL.get(
+                                    order_state_raw,
+                                    f"{claim['type']} 요청이 접수되었습니다.",
+                                ),
+                            }
+                        ]
+
+                        return_data = {
+                            "order_id": order_id,
+                            "order_number": order_code,
+                            "type": claim["type"],
+                            "reason": claim["reason"] or None,
+                            "description": f"{claim['product_name']} {claim['product_option']}".strip()
+                            or None,
+                            "quantity": claim["quantity"],
+                            "requested_amount": claim["requested_amount"],
+                            "product_image": existing_order.product_image or "",
+                            "product_name": claim["product_name"]
+                            or existing_order.product_name,
+                            "customer_name": claim["customer_name"]
+                            or existing_order.customer_name,
+                            "customer_phone": claim["customer_phone"]
+                            or existing_order.customer_phone,
+                            "product_location": _extract_city_district(
+                                claim["customer_address"]
+                                or existing_order.customer_address
+                            ),
+                            "customer_address": claim["customer_address"]
+                            or existing_order.customer_address,
+                            "business_name": account.business_name
+                            or account.market_name
+                            or label,
+                            "market": pa_market,
+                            "market_order_status": claim["display_status"],
+                            "return_link": existing_order.source_url or "",
+                            "return_source": existing_order.source_site or "",
+                            "region": _extract_city_district(
+                                claim["customer_address"]
+                                or existing_order.customer_address
+                            ),
+                            "return_request_date": datetime.now(UTC),
+                            "order_date": existing_order.created_at,
+                            "status": claim["status"],
+                            "timeline": timeline_entries,
+                            "notes": [],
+                        }
+                        if claim["status"] in ("approved", "completed"):
+                            return_data["approval_date"] = datetime.now(UTC)
+                        if claim["status"] == "completed":
+                            return_data["completion_date"] = datetime.now(UTC)
+
+                        await svc.repo.create_async(**return_data)
+                        synced += 1
+
+                    api_fetched = len(claims_data)
+                    total_synced += synced
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "success",
+                            "fetched": api_fetched,
+                            "synced": synced,
+                        }
+                    )
+                    logger.info(
+                        f"[반품동기화] {label}: 플레이오토 API {api_fetched}건, 신규 {synced}건"
+                    )
+                finally:
+                    await pa_client.close()
 
             else:
                 results.append(
