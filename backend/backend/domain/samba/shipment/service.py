@@ -750,7 +750,7 @@ class SambaShipmentService:
             else raw_category
         )
 
-        # 그룹 매핑 조회
+        # 그룹 매핑 조회 + 검색필터명(플레이오토 임의분류용)
         group_mappings = None
         if product_row.search_filter_id:
             from backend.domain.samba.collector.repository import (
@@ -759,8 +759,11 @@ class SambaShipmentService:
 
             sf_repo = SambaSearchFilterRepository(self.session)
             sf = await sf_repo.get_async(product_row.search_filter_id)
-            if sf and sf.target_mappings:
-                group_mappings = sf.target_mappings
+            if sf:
+                if sf.target_mappings:
+                    group_mappings = sf.target_mappings
+                if sf.name:
+                    product_dict["_search_filter_name"] = sf.name
 
         mapped_categories = await self._resolve_category_mappings(
             product_row.source_site or "",
@@ -1794,7 +1797,7 @@ class SambaShipmentService:
         # 카테고리 매핑 재조회
         raw_category = product_row.category or ""
 
-        # 그룹 매핑 조회
+        # 그룹 매핑 조회 + 검색필터명(플레이오토 임의분류용)
         group_mappings = None
         if product_row.search_filter_id:
             from backend.domain.samba.collector.repository import (
@@ -1803,8 +1806,11 @@ class SambaShipmentService:
 
             sf_repo = SambaSearchFilterRepository(self.session)
             sf = await sf_repo.get_async(product_row.search_filter_id)
-            if sf and sf.target_mappings:
-                group_mappings = sf.target_mappings
+            if sf:
+                if sf.target_mappings:
+                    group_mappings = sf.target_mappings
+                if sf.name:
+                    product_dict["_search_filter_name"] = sf.name
 
         mapped_categories = await self._resolve_category_mappings(
             product_row.source_site or "",
