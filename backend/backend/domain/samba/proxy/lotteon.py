@@ -1180,7 +1180,7 @@ class LotteonClient:
     # 주문 조회
     # ------------------------------------------------------------------
 
-    async def get_orders(self, days: int = 7) -> list[dict]:
+    async def get_delivery_orders(self, days: int = 7) -> list[dict]:
         """최근 N일 배송 주문 조회 (SellerDeliveryOrdersSearch).
 
         API 제약: 조회 기간 1일 초과 불가 → 하루씩 병렬 조회 (동시 5건 제한).
