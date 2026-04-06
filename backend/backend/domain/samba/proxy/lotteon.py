@@ -1187,13 +1187,19 @@ class LotteonClient:
         """
         import asyncio
 
-        now = datetime.now(timezone.utc)
+        KST = timezone(timedelta(hours=9))
+        now = datetime.now(KST)
         actual_days = min(days, 30)
         sem = asyncio.Semaphore(5)
 
         async def _fetch_day(offset: int) -> list[dict]:
-            day_end = now - timedelta(days=offset)
-            day_start = day_end - timedelta(days=1)
+            base_date = (now - timedelta(days=offset)).date()
+            day_start = datetime(
+                base_date.year, base_date.month, base_date.day, 0, 0, 0
+            )
+            day_end = datetime(
+                base_date.year, base_date.month, base_date.day, 23, 59, 59
+            )
             srch_strt = day_start.strftime("%Y%m%d%H%M%S")
             srch_end = day_end.strftime("%Y%m%d%H%M%S")
             async with sem:
@@ -1234,6 +1240,68 @@ class LotteonClient:
         for items in day_results:
             result.extend(items)
         return result
+
+    # 판매자 취소 사유코드
+    SELLER_CANCEL_REASON_CODES: dict[str, str] = {
+        "soldout": "111",  # 판매자 취소(품절)
+        "price": "132",  # 가격오등록
+        "reseller": "133",  # 리셀러주문
+        "delivery": "137",  # 택배지원불가
+        "customer": "135",  # 판매자 취소(고객변심)
+    }
+
+    async def seller_cancel_order(
+        self,
+        od_no: str,
+        reason_code: str = "111",
+        reason_text: str = "",
+        od_seq: int = 1,
+        proc_seq: int = 1,
+    ) -> tuple[bool, str]:
+        """판매자 주도 주문 취소 (slrDirectCnclProc).
+
+        Args:
+            od_no: 주문번호
+            reason_code: 판매자 사유코드 (111=품절, 132=가격오등록, 133=리셀러, 135=고객변심, 137=택배불가)
+            reason_text: 판매자 사유 내용 (선택)
+            od_seq: 주문순번 (기본 1)
+            proc_seq: 처리순번 (기본 1)
+
+        Returns:
+            (성공여부, 메시지)
+        """
+        payload = {
+            "odNo": od_no,
+            "itemList": [
+                {
+                    "odSeq": od_seq,
+                    "procSeq": proc_seq,
+                    "slrRsnCd": reason_code,
+                    "slrRsnCnts": reason_text or "판매자 취소",
+                    "lrtrNo": "",
+                }
+            ],
+        }
+        logger.info(
+            f"[롯데ON][판매자취소] odNo={od_no} rsnCd={reason_code} rsnText={reason_text}"
+        )
+        try:
+            resp = await self._call_api(
+                "POST",
+                "/v1/openapi/claim/v1/cancellationOpenApi/slrDirectCnclProc",
+                body=payload,
+            )
+            data = resp.get("data") or resp
+            return_code = str(data.get("returnCode") or data.get("rsltCd") or "")
+            message = str(data.get("message") or data.get("rsltMsg") or "")
+            success = return_code == "0000"
+            logger.info(
+                f"[롯데ON][판매자취소] 응답: odNo={od_no} returnCode={return_code} message={message}"
+            )
+            return success, message or ("정상 처리" if success else "실패")
+        except Exception as e:
+            logger.warning(f"[롯데ON][판매자취소] 실패: odNo={od_no} / {e}")
+            return False, str(e)
 
     async def confirm_orders(self, order_items: list[dict]) -> bool:
         """발주 확인 처리 (SellerDeliveryProgressStateInform, odPrgsStepCd=11)."""

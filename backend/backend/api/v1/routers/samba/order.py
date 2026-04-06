@@ -321,6 +321,76 @@ async def approve_cancel(
         )
 
 
+# ══════════════════════════════════════════════
+# 판매자 주도 취소 (재고부족, 가격변동 등)
+# ══════════════════════════════════════════════
+
+
+class SellerCancelBody(BaseModel):
+    reason_code: str = (
+        "111"  # 111=품절, 132=가격오등록, 133=리셀러, 135=고객변심, 137=택배불가
+    )
+    reason_text: Optional[str] = None
+
+
+@router.post("/{order_id}/seller-cancel")
+async def seller_cancel(
+    order_id: str,
+    body: SellerCancelBody,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """판매자 주도 주문 취소 (재고부족/가격변동 등)."""
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    svc = _write_service(session)
+    order = await svc.get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+    if not order.order_number:
+        raise HTTPException(status_code=400, detail="상품주문번호가 없습니다")
+    if not order.channel_id:
+        raise HTTPException(status_code=400, detail="마켓 계정 정보가 없습니다")
+
+    account_repo = SambaMarketAccountRepository(session)
+    account = await account_repo.get_async(order.channel_id)
+    if not account:
+        raise HTTPException(status_code=400, detail="마켓 계정을 찾을 수 없습니다")
+
+    if account.market_type == "lotteon":
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+
+        api_key = account.api_key or ""
+        if not api_key:
+            raise HTTPException(status_code=400, detail="롯데ON API Key 없음")
+
+        client = LotteonClient(api_key)
+        try:
+            await client.test_auth()
+            success, message = await client.seller_cancel_order(
+                od_no=order.order_number,
+                reason_code=body.reason_code,
+                reason_text=body.reason_text or "",
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"판매자 취소 실패: {e}")
+
+        if not success:
+            raise HTTPException(status_code=500, detail=f"판매자 취소 실패: {message}")
+
+        await svc.update_order(
+            order_id,
+            {"shipping_status": "취소완료"},
+        )
+        logger.info(
+            f"[판매자취소] 롯데ON {order.order_number} 완료 (rsnCd={body.reason_code})"
+        )
+        return {"ok": True, "message": "판매자 취소 완료", "detail": message}
+
+    raise HTTPException(
+        status_code=400, detail=f"{account.market_type} 판매자 취소 미지원"
+    )
+
+
 class CancelSourceOrderRequest(BaseModel):
     order_number: str
     reason: str = "단순변심"
@@ -1107,7 +1177,7 @@ async def sync_orders_from_markets(
                     continue
                 lotteon_client = LotteonClient(api_key)
                 await lotteon_client.test_auth()
-                raw_orders = await lotteon_client.get_orders(days=body.days)
+                raw_orders = await lotteon_client.get_delivery_orders(days=body.days)
                 logger.info(
                     f"[주문동기화] {label}: 롯데ON 주문 {len(raw_orders)}건 조회"
                 )
