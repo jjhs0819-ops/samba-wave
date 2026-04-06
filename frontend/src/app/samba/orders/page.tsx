@@ -534,6 +534,8 @@ export default function OrdersPage() {
       case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() - 7); return d }
       case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
       case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d }
+      case '1month': { const d = new Date(now); d.setDate(d.getDate() - 30); return d }
       case 'thisyear': return new Date(now.getFullYear(), 0, 1)
       default: return null
     }
