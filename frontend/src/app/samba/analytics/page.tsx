@@ -14,8 +14,11 @@ const card = {
 
 const SOURCE_SITES = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
-// 접수/대기/사무실 제외한 주문상태 목록
+// 주문상태 목록
 const ORDER_STATUSES = [
+  { key: 'pending', label: '주문접수' },
+  { key: 'wait_ship', label: '배송대기중' },
+  { key: 'arrived', label: '사무실도착' },
   { key: 'ship_failed', label: '송장전송실패' },
   { key: 'shipping', label: '배송중' },
   { key: 'delivered', label: '배송완료' },
@@ -28,8 +31,8 @@ const ORDER_STATUSES = [
   { key: 'returned', label: '반품완료' },
   { key: 'exchanged', label: '교환완료' },
 ]
-// 기본 선택 상태: 배송중, 배송완료만
-const DEFAULT_STATUSES = ['shipping', 'delivered']
+// 기본 선택 상태
+const DEFAULT_STATUSES = ['pending', 'wait_ship', 'arrived', 'shipping', 'delivered']
 
 /** 검색 조건 저장 구조 */
 interface AnalyticsSearch {
