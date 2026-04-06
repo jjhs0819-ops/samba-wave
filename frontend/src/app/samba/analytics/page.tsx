@@ -76,7 +76,7 @@ export default function AnalyticsPage() {
   useEffect(() => {
     const hasInvalid = search.statuses.some(k => !validKeys.has(k))
     if (hasInvalid || search.statuses.length === 0) {
-      setSearch(prev => ({ ...prev, statuses: DEFAULT_STATUSES, markets: [], sites: [] }))
+      setSearch(prev => ({ ...prev, statuses: DEFAULT_STATUSES }))
     }
   }, [])
   const searchYear = search.year
@@ -104,20 +104,20 @@ export default function AnalyticsPage() {
   }, [searchYear, searchMonth])
 
   useEffect(() => { load() }, [load])
-  // 마켓: 항상 등록된 마켓만 선택
+  // 마켓 계정 목록 (체크박스 표시용)
   useEffect(() => {
     accountApi.listActive().then(accounts => {
       setMarketAccounts(accounts)
-      const registeredMarkets = [...new Set(accounts.map(a => a.market_name))]
-      setSelectedMarkets(registeredMarkets)
     }).catch(() => {})
   }, [])
-  // 소싱사이트: 항상 수집된 소싱처만 선택
+  // 마켓 + 소싱사이트: 주문 데이터에서 실제 사용된 것만 기본 선택
   useEffect(() => {
     if (orders.length === 0) return
+    const usedMarkets = [...new Set(orders.map(o => o.channel_name).filter((s): s is string => !!s))]
+    setSelectedMarkets(usedMarkets)
     const collectedSites = [...new Set(orders.map(o => o.source_site).filter((s): s is string => !!s))]
       .filter(s => SOURCE_SITES.includes(s))
-    if (collectedSites.length > 0) setSelectedSites(collectedSites)
+    setSelectedSites(collectedSites.length > 0 ? collectedSites : [])
   }, [orders])
 
   // 기간 + 주문상태 필터링
@@ -345,7 +345,7 @@ export default function AnalyticsPage() {
           {(() => {
             const marketNames = [...new Set([...marketAccounts.map(a => a.market_name)])]
             const allMarkets = marketNames.length > 0 ? marketNames : ['스마트스토어', '11번가']
-            const isAll = selectedMarkets.length === 0 || selectedMarkets.length === allMarkets.length
+            const isAll = allMarkets.length > 0 && selectedMarkets.length === allMarkets.length
             return (
               <>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: '#888', cursor: 'pointer' }}>
@@ -369,7 +369,7 @@ export default function AnalyticsPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.625rem 0', borderTop: '1px solid #2D2D2D', flexWrap: 'wrap' }}>
           <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '65px', flexShrink: 0 }}>소싱사이트</span>
           {(() => {
-            const isAll = selectedSites.length === SOURCE_SITES.length || selectedSites.length === 0
+            const isAll = selectedSites.length === SOURCE_SITES.length
             return (
               <>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: '#888', cursor: 'pointer' }}>
@@ -394,7 +394,7 @@ export default function AnalyticsPage() {
           <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '65px', flexShrink: 0 }}>주문상태</span>
           {(() => {
             const allKeys = ORDER_STATUSES.map(s => s.key)
-            const isAll = selectedStatuses.length === allKeys.length || selectedStatuses.length === 0
+            const isAll = selectedStatuses.length === allKeys.length
             return (
               <>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: '#888', cursor: 'pointer' }}>
