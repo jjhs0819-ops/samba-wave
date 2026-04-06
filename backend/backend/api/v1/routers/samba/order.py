@@ -1016,6 +1016,7 @@ class SyncOrdersRequest(BaseModel):
 async def sync_orders_from_markets(
     body: SyncOrdersRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """활성 마켓 계정에서 주문 데이터를 가져와 DB에 저장."""
     from backend.domain.samba.account.repository import SambaMarketAccountRepository
@@ -1298,9 +1299,10 @@ async def sync_orders_from_markets(
             # 중복 확인 후 저장 (기존 주문은 금액/상태 업데이트)
             synced = 0
             for order_data in orders_data:
-                # tenant_id 주입 (멀티테넌트 격리)
-                if account.tenant_id:
-                    order_data["tenant_id"] = account.tenant_id
+                # tenant_id 주입 (멀티테넌트 격리 — account 우선, JWT fallback)
+                _tid = account.tenant_id or tenant_id
+                if _tid:
+                    order_data["tenant_id"] = _tid
                 # 수집상품 매칭 — product_image, source_site, source_url 보충
                 _pid = str(order_data.get("product_id", ""))
                 _matched = _mpn_cache.get(_pid)
