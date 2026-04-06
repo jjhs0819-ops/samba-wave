@@ -73,6 +73,7 @@ export interface SambaOrder {
   sourcing_account_id?: string;
   source?: string;
   shipment_id?: string;
+  paid_at?: string;
   created_at: string;
   updated_at: string;
 }

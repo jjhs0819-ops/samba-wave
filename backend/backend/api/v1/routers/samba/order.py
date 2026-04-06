@@ -1053,6 +1053,8 @@ async def sync_orders_from_markets(
                         update_fields["source_url"] = order_data["source_url"]
                     if order_data.get("shipment_id") and not existing.shipment_id:
                         update_fields["shipment_id"] = order_data["shipment_id"]
+                    if order_data.get("paid_at") and not existing.paid_at:
+                        update_fields["paid_at"] = order_data["paid_at"]
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
                     if order_data.get("product_id") and not existing.product_id:
                         update_fields["product_id"] = order_data["product_id"]
@@ -1267,6 +1269,7 @@ def _parse_smartstore_order(
         "shipping_company": po.get("deliveryCompany", ""),
         "tracking_number": po.get("trackingNumber", ""),
         "source": "smartstore",
+        "paid_at": order_info.get("paymentDate") or order_info.get("orderDate"),
     }
 
 
@@ -1332,6 +1335,7 @@ def _parse_playauto_order(
         "shipping_company": ro.get("Sender", ""),
         "tracking_number": ro.get("SenderNo", ""),
         "source": "playauto",
+        "paid_at": ro.get("OrderDate") or ro.get("InsertDate") or ro.get("RegDate"),
         # 판매처(사업자) 정보 — 별칭 매핑 적용
         "source_site": (
             f"{site_name}({alias_map[site_id]})"

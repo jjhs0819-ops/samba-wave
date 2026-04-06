@@ -605,6 +605,10 @@ export default function OrdersPage() {
       if (searchCategory === 'order_number' && !o.order_number?.toLowerCase().includes(q)) return false
     }
     return true
+  }).sort((a, b) => {
+    const aTime = a.paid_at ? new Date(a.paid_at).getTime() : new Date(a.created_at).getTime()
+    const bTime = b.paid_at ? new Date(b.paid_at).getTime() : new Date(b.created_at).getTime()
+    return bTime - aTime
   }), [orders, startLocked, customStart, customEnd, period, marketFilter, accounts, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory])
 
   // 필터 변경 시 1페이지로 리셋
@@ -859,6 +863,11 @@ export default function OrdersPage() {
                   <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8125rem', position: 'relative' }}>
                     {/* 우측 상단: 주문일 + 수량 + 삭제 */}
                     <div style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
+                      {o.paid_at && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{ fontSize: '0.72rem', color: '#fff', fontWeight: 700 }}>{new Date(o.paid_at).toLocaleDateString('ko-KR')} {new Date(o.paid_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                      )}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
                         <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
