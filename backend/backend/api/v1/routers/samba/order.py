@@ -948,175 +948,190 @@ async def sync_orders_from_markets(
 
             # 중복 확인 후 저장 (기존 주문은 금액/상태 업데이트)
             synced = 0
+            skipped = 0
             for order_data in orders_data:
-                # 수집상품 매칭 — product_image, source_site, source_url 보충
-                _pid = str(order_data.get("product_id", ""))
-                _matched = _mpn_cache.get(_pid)
-                if _matched:
-                    if not order_data.get("product_image"):
-                        order_data["product_image"] = _matched["product_image"]
-                    if not order_data.get("source_site"):
-                        order_data["source_site"] = _matched["source_site"]
-                    if not order_data.get("source_url") and _matched.get(
-                        "original_link"
-                    ):
-                        order_data["source_url"] = _matched["original_link"]
-                # 미등록 입력 자동 적용: 동일 상품의 기존 source_url/product_image 복사
-                _ukey = f"{_pid}|{order_data.get('channel_name', '')}"
-                _unreg_matched = _unreg_cache.get(_ukey)
-                if _unreg_matched:
+                try:
+                    # 수집상품 매칭 — product_image, source_site, source_url 보충
+                    _pid = str(order_data.get("product_id", ""))
+                    _matched = _mpn_cache.get(_pid)
+                    if _matched:
+                        if not order_data.get("product_image"):
+                            order_data["product_image"] = _matched["product_image"]
+                        if not order_data.get("source_site"):
+                            order_data["source_site"] = _matched["source_site"]
+                        if not order_data.get("source_url") and _matched.get(
+                            "original_link"
+                        ):
+                            order_data["source_url"] = _matched["original_link"]
+                    # 미등록 입력 자동 적용: 동일 상품의 기존 source_url/product_image 복사
+                    _ukey = f"{_pid}|{order_data.get('channel_name', '')}"
+                    _unreg_matched = _unreg_cache.get(_ukey)
+                    if _unreg_matched:
+                        if not order_data.get("source_url"):
+                            order_data["source_url"] = _unreg_matched["source_url"]
+                        if (
+                            not order_data.get("product_image")
+                            and _unreg_matched["product_image"]
+                        ):
+                            order_data["product_image"] = _unreg_matched[
+                                "product_image"
+                            ]
+                    # 상품명에서 소싱처 상품번호 추출 → source_site/source_url 보충
                     if not order_data.get("source_url"):
-                        order_data["source_url"] = _unreg_matched["source_url"]
-                    if (
-                        not order_data.get("product_image")
-                        and _unreg_matched["product_image"]
-                    ):
-                        order_data["product_image"] = _unreg_matched["product_image"]
-                # 상품명에서 소싱처 상품번호 추출 → source_site/source_url 보충
-                if not order_data.get("source_url"):
-                    import re as _re
+                        import re as _re
 
-                    _pname = order_data.get("product_name", "")
-                    _id_match = _re.search(r"\b(\d{6,})\s*$", _pname)
-                    if _id_match:
-                        _sid = _id_match.group(1)
-                        # 1차: DB에서 수집상품 조회
-                        _cp_check = await session.execute(
-                            _sa_text(
-                                "SELECT source_site, images FROM samba_collected_product WHERE site_product_id = :sid LIMIT 1"
+                        _pname = order_data.get("product_name", "")
+                        _id_match = _re.search(r"\b(\d{6,})\s*$", _pname)
+                        if _id_match:
+                            _sid = _id_match.group(1)
+                            # 1차: DB에서 수집상품 조회
+                            _cp_check = await session.execute(
+                                _sa_text(
+                                    "SELECT source_site, images FROM samba_collected_product WHERE site_product_id = :sid LIMIT 1"
+                                ),
+                                {"sid": _sid},
+                            )
+                            _cp_row = _cp_check.fetchone()
+                            if _cp_row:
+                                order_data["source_site"] = _cp_row[0]
+                                order_data["source_url"] = _sourcing_urls.get(
+                                    _cp_row[0], ""
+                                ).format(_sid)
+                                if (
+                                    not order_data.get("product_image")
+                                    and _cp_row[1]
+                                    and isinstance(_cp_row[1], list)
+                                ):
+                                    order_data["product_image"] = _cp_row[1][0]
+                            else:
+                                # 2차: DB에 없어도 상품명 패턴으로 소싱처 추론
+                                if len(_sid) >= 9:  # 패션플러스 상품번호는 9자리 이상
+                                    order_data["source_site"] = "FashionPlus"
+                                    order_data["source_url"] = (
+                                        f"https://www.fashionplus.co.kr/goods/detail/{_sid}"
+                                    )
+                                elif len(_sid) >= 7:  # 무신사 상품번호는 7자리
+                                    order_data["source_site"] = "MUSINSA"
+                                    order_data["source_url"] = (
+                                        f"https://www.musinsa.com/products/{_sid}"
+                                    )
+                    # order_number 기준 중복 체크 + shipment_id 기반 2차 체크 (발주확인 후 productOrderId 변경 대응)
+                    existing = await svc.repo.find_by_async(
+                        order_number=order_data["order_number"]
+                    )
+                    if (
+                        not existing
+                        and order_data.get("shipment_id")
+                        and order_data.get("product_id")
+                    ):
+                        # 같은 orderId + 상품번호로 이미 있는 주문 검색
+                        _dup_candidates = await svc.repo.filter_by_async(
+                            shipment_id=order_data["shipment_id"], limit=10
+                        )
+                        existing = next(
+                            (
+                                d
+                                for d in _dup_candidates
+                                if d.product_id == order_data["product_id"]
                             ),
-                            {"sid": _sid},
+                            None,
                         )
-                        _cp_row = _cp_check.fetchone()
-                        if _cp_row:
-                            order_data["source_site"] = _cp_row[0]
-                            order_data["source_url"] = _sourcing_urls.get(
-                                _cp_row[0], ""
-                            ).format(_sid)
-                            if (
-                                not order_data.get("product_image")
-                                and _cp_row[1]
-                                and isinstance(_cp_row[1], list)
-                            ):
-                                order_data["product_image"] = _cp_row[1][0]
-                        else:
-                            # 2차: DB에 없어도 상품명 패턴으로 소싱처 추론
-                            if len(_sid) >= 9:  # 패션플러스 상품번호는 9자리 이상
-                                order_data["source_site"] = "FashionPlus"
-                                order_data["source_url"] = (
-                                    f"https://www.fashionplus.co.kr/goods/detail/{_sid}"
-                                )
-                            elif len(_sid) >= 7:  # 무신사 상품번호는 7자리
-                                order_data["source_site"] = "MUSINSA"
-                                order_data["source_url"] = (
-                                    f"https://www.musinsa.com/products/{_sid}"
-                                )
-                # order_number 기준 중복 체크 + shipment_id 기반 2차 체크 (발주확인 후 productOrderId 변경 대응)
-                existing = await svc.repo.find_by_async(
-                    order_number=order_data["order_number"]
-                )
-                if (
-                    not existing
-                    and order_data.get("shipment_id")
-                    and order_data.get("product_id")
-                ):
-                    # 같은 orderId + 상품번호로 이미 있는 주문 검색
-                    _dup_candidates = await svc.repo.filter_by_async(
-                        shipment_id=order_data["shipment_id"], limit=10
-                    )
-                    existing = next(
-                        (
-                            d
-                            for d in _dup_candidates
-                            if d.product_id == order_data["product_id"]
-                        ),
-                        None,
-                    )
+                        if existing:
+                            # order_number 갱신 (발주확인 후 변경된 productOrderId)
+                            await svc.repo.update_async(
+                                existing.id, order_number=order_data["order_number"]
+                            )
                     if existing:
-                        # order_number 갱신 (발주확인 후 변경된 productOrderId)
-                        await svc.repo.update_async(
-                            existing.id, order_number=order_data["order_number"]
+                        # 기존 주문: sale_price, 이미지, 상태, 마켓주문상태 업데이트
+                        update_fields: dict[str, Any] = {}
+                        if (
+                            order_data.get("sale_price")
+                            and order_data["sale_price"] != existing.sale_price
+                        ):
+                            update_fields["sale_price"] = order_data["sale_price"]
+                        if (
+                            order_data.get("product_image")
+                            and not existing.product_image
+                        ):
+                            update_fields["product_image"] = order_data["product_image"]
+                        if order_data.get("source_site") and not existing.source_site:
+                            update_fields["source_site"] = order_data["source_site"]
+                        if order_data.get("source_url") and not existing.source_url:
+                            update_fields["source_url"] = order_data["source_url"]
+                        if order_data.get("shipment_id") and not existing.shipment_id:
+                            update_fields["shipment_id"] = order_data["shipment_id"]
+                        if order_data.get("paid_at") and not existing.paid_at:
+                            update_fields["paid_at"] = order_data["paid_at"]
+                        # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
+                        if order_data.get("product_id") and not existing.product_id:
+                            update_fields["product_id"] = order_data["product_id"]
+                        if order_data.get("shipping_status"):
+                            update_fields["shipping_status"] = order_data[
+                                "shipping_status"
+                            ]
+                        # 플레이오토 주문: 실구매가/배송비는 사용자 입력 전용 — API 값 덮어쓰기 방지 + 기존 값 리셋
+                        if order_data.get("source") == "playauto":
+                            if existing.cost and existing.cost > 0:
+                                update_fields["cost"] = 0
+                            if existing.shipping_fee and existing.shipping_fee > 0:
+                                update_fields["shipping_fee"] = 0
+                        # 내부 status도 갱신 (취소/반품 등 상태 변화 반영)
+                        if (
+                            order_data.get("status")
+                            and order_data["status"] != existing.status
+                        ):
+                            update_fields["status"] = order_data["status"]
+                        # 정산금액(revenue) / 수수료율 갱신
+                        new_revenue = order_data.get("revenue")
+                        new_fee_rate = order_data.get("fee_rate")
+                        sp = float(
+                            update_fields.get("sale_price", existing.sale_price) or 0
                         )
-                if existing:
-                    # 기존 주문: sale_price, 이미지, 상태, 마켓주문상태 업데이트
-                    update_fields: dict[str, Any] = {}
-                    if (
-                        order_data.get("sale_price")
-                        and order_data["sale_price"] != existing.sale_price
-                    ):
-                        update_fields["sale_price"] = order_data["sale_price"]
-                    if order_data.get("product_image") and not existing.product_image:
-                        update_fields["product_image"] = order_data["product_image"]
-                    if order_data.get("source_site") and not existing.source_site:
-                        update_fields["source_site"] = order_data["source_site"]
-                    if order_data.get("source_url") and not existing.source_url:
-                        update_fields["source_url"] = order_data["source_url"]
-                    if order_data.get("shipment_id") and not existing.shipment_id:
-                        update_fields["shipment_id"] = order_data["shipment_id"]
-                    if order_data.get("paid_at") and not existing.paid_at:
-                        update_fields["paid_at"] = order_data["paid_at"]
-                    # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
-                    if order_data.get("product_id") and not existing.product_id:
-                        update_fields["product_id"] = order_data["product_id"]
-                    if order_data.get("shipping_status"):
-                        update_fields["shipping_status"] = order_data["shipping_status"]
-                    # 플레이오토 주문: 실구매가/배송비는 사용자 입력 전용 — API 값 덮어쓰기 방지 + 기존 값 리셋
-                    if order_data.get("source") == "playauto":
-                        if existing.cost and existing.cost > 0:
-                            update_fields["cost"] = 0
-                        if existing.shipping_fee and existing.shipping_fee > 0:
-                            update_fields["shipping_fee"] = 0
-                    # 내부 status도 갱신 (취소/반품 등 상태 변화 반영)
-                    if (
-                        order_data.get("status")
-                        and order_data["status"] != existing.status
-                    ):
-                        update_fields["status"] = order_data["status"]
-                    # 정산금액(revenue) / 수수료율 갱신
-                    new_revenue = order_data.get("revenue")
-                    new_fee_rate = order_data.get("fee_rate")
-                    sp = float(
-                        update_fields.get("sale_price", existing.sale_price) or 0
+                        if new_revenue and float(new_revenue) != float(
+                            existing.revenue or 0
+                        ):
+                            rev = float(new_revenue)
+                            update_fields["revenue"] = rev
+                            update_fields["fee_rate"] = (
+                                new_fee_rate
+                                if new_fee_rate is not None
+                                else (existing.fee_rate or 0)
+                            )
+                            cost = float(existing.cost or 0)
+                            ship_fee = float(existing.shipping_fee or 0)
+                            update_fields["profit"] = rev - cost - ship_fee
+                            update_fields["profit_rate"] = (
+                                f"{((rev - cost - ship_fee) / rev * 100):.2f}"
+                                if rev > 0
+                                else "0.00"
+                            )
+                        elif "sale_price" in update_fields:
+                            fr = float(
+                                new_fee_rate
+                                if new_fee_rate is not None
+                                else (existing.fee_rate or 0)
+                            )
+                            rev = sp * (1 - fr / 100)
+                            cost = float(existing.cost or 0)
+                            ship_fee = float(existing.shipping_fee or 0)
+                            update_fields["revenue"] = rev
+                            update_fields["profit"] = rev - cost - ship_fee
+                            update_fields["profit_rate"] = (
+                                f"{((rev - cost - ship_fee) / rev * 100):.2f}"
+                                if rev > 0
+                                else "0.00"
+                            )
+                        if update_fields:
+                            await svc.update_order(existing.id, update_fields)
+                        continue
+                    await svc.create_order(order_data)
+                    synced += 1
+                except Exception as _ord_err:
+                    await session.rollback()
+                    skipped += 1
+                    logger.warning(
+                        f"[주문동기화] 개별 주문 처리 실패 (order_number={order_data.get('order_number', '?')}): {_ord_err}"
                     )
-                    if new_revenue and float(new_revenue) != float(
-                        existing.revenue or 0
-                    ):
-                        rev = float(new_revenue)
-                        update_fields["revenue"] = rev
-                        update_fields["fee_rate"] = (
-                            new_fee_rate
-                            if new_fee_rate is not None
-                            else (existing.fee_rate or 0)
-                        )
-                        cost = float(existing.cost or 0)
-                        ship_fee = float(existing.shipping_fee or 0)
-                        update_fields["profit"] = rev - cost - ship_fee
-                        update_fields["profit_rate"] = (
-                            f"{((rev - cost - ship_fee) / rev * 100):.2f}"
-                            if rev > 0
-                            else "0.00"
-                        )
-                    elif "sale_price" in update_fields:
-                        fr = float(
-                            new_fee_rate
-                            if new_fee_rate is not None
-                            else (existing.fee_rate or 0)
-                        )
-                        rev = sp * (1 - fr / 100)
-                        cost = float(existing.cost or 0)
-                        ship_fee = float(existing.shipping_fee or 0)
-                        update_fields["revenue"] = rev
-                        update_fields["profit"] = rev - cost - ship_fee
-                        update_fields["profit_rate"] = (
-                            f"{((rev - cost - ship_fee) / rev * 100):.2f}"
-                            if rev > 0
-                            else "0.00"
-                        )
-                    if update_fields:
-                        await svc.update_order(existing.id, update_fields)
-                    continue
-                await svc.create_order(order_data)
-                synced += 1
 
             # 즉시 커밋 — Cloud Run 타임아웃으로 세션 롤백 방지
             if synced > 0:
@@ -1138,12 +1153,13 @@ async def sync_orders_from_markets(
                     "status": "success",
                     "fetched": len(orders_data),
                     "synced": synced,
+                    "skipped": skipped,
                     "confirmed": confirmed_count,
                     "cancel_requested": cancel_requested,
                 }
             )
             logger.info(
-                f"[주문동기화] {label}: {len(orders_data)}건 조회, {synced}건 저장, {confirmed_count}건 발주확인"
+                f"[주문동기화] {label}: {len(orders_data)}건 조회, {synced}건 저장, {skipped}건 스킵, {confirmed_count}건 발주확인"
             )
 
         except Exception as e:
