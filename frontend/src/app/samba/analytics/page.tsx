@@ -115,18 +115,32 @@ export default function AnalyticsPage() {
       const collectedSites = (productData.sites || []).filter(s => SOURCE_SITES.includes(s))
       if (collectedSites.length > 0) setSelectedSites(collectedSites)
 
-      // 마켓: registered_accounts + market_product_nos 양쪽에서 계정 ID 추출
+      // 마켓: 상품 데이터의 모든 필드에서 등록 마켓 추출
       const registeredAccountIds = new Set<string>()
+      const registeredMarketNames = new Set<string>()
       for (const p of productData.items) {
+        // 계정 ID 기반 필드
         if (p.registered_accounts) {
           for (const aid of p.registered_accounts) registeredAccountIds.add(aid)
         }
         if (p.market_product_nos) {
           for (const aid of Object.keys(p.market_product_nos)) registeredAccountIds.add(aid)
         }
+        // 마켓명 기반 필드
+        if (p.market_enabled) {
+          for (const [name, enabled] of Object.entries(p.market_enabled)) {
+            if (enabled) registeredMarketNames.add(name)
+          }
+        }
+        if (p.market_prices) {
+          for (const name of Object.keys(p.market_prices)) registeredMarketNames.add(name)
+        }
+        if (p.market_names) {
+          for (const name of Object.values(p.market_names)) registeredMarketNames.add(name)
+        }
       }
       const registeredMarkets = accounts
-        .filter(a => registeredAccountIds.has(a.id))
+        .filter(a => registeredAccountIds.has(a.id) || registeredMarketNames.has(a.market_name))
         .map(a => a.market_name)
       setSelectedMarkets([...new Set(registeredMarkets)])
     }
@@ -180,8 +194,12 @@ export default function AnalyticsPage() {
     const idx = name.indexOf('(')
     return idx > 0 ? name.substring(0, idx) : name
   })
-  // 수집사이트별 통계
-  const siteTable = buildMonthlyTable(o => o.source_site || '미등록상품')
+  // 소싱처별 통계
+  const siteTable = buildMonthlyTable(o => {
+    const site = o.source_site
+    if (!site || !SOURCE_SITES.includes(site)) return '미등록상품'
+    return site
+  })
   // 주문상태별 통계
   const statusLabelMap: Record<string, string> = {}
   for (const s of ORDER_STATUSES) statusLabelMap[s.key] = s.label
@@ -435,8 +453,8 @@ export default function AnalyticsPage() {
       {/* 마켓별 통계 */}
       {renderMonthlyTable('마켓별 통계', marketTable.columns, marketTable.data)}
 
-      {/* 수집사이트별 통계 */}
-      {renderMonthlyTable('수집사이트별 통계', siteTable.columns, siteTable.data)}
+      {/* 소싱처별 통계 */}
+      {renderMonthlyTable('소싱처별 통계', siteTable.columns, siteTable.data)}
 
       {/* 주문상태별 통계 */}
       {renderMonthlyTable('주문상태별 통계', statusTable.columns, statusTable.data)}
