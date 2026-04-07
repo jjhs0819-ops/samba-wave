@@ -236,6 +236,92 @@ class GsShopSourcingClient:
         return products
 
     # ------------------------------------------------------------------
+    # 카테고리 스캔 — 백화점 탭 사이드바 파싱
+    # ------------------------------------------------------------------
+
+    async def scan_categories(
+        self,
+        keyword: str,
+    ) -> dict[str, Any]:
+        """GS샵 카테고리 스캔 — 백화점 탭 사이드바에서 카테고리 분포 조회.
+
+        확장앱 SourcingQueue를 통해 백화점 탭 검색 페이지를 열고
+        좌측 사이드바의 카테고리별 상품 수를 파싱한다.
+
+        Returns:
+          {"categories": [...], "total": int, "groupCount": int}
+        """
+        import base64
+
+        from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+        logger.info(f'[GSSHOP] 카테고리 스캔 시작: "{keyword}"')
+
+        request_id = str(uuid.uuid4())[:8]
+        # 백화점 탭 필터 (eh 파라미터)
+        eh = base64.b64encode(
+            json.dumps({"part": "DEPT", "selected": "opt-part"}).encode()
+        ).decode()
+        url = f"{self.BASE_PC}/shop/search/main.gs?tq={keyword}&eh={eh}"
+
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+        SourcingQueue.queue.append(
+            {
+                "requestId": request_id,
+                "site": "GSShop",
+                "type": "category-scan",
+                "url": url,
+                "keyword": keyword,
+            }
+        )
+        SourcingQueue.resolvers[request_id] = future
+        logger.info(f"[GSSHOP] 카테고리 스캔 큐 등록: {request_id} → {url}")
+
+        try:
+            result = await asyncio.wait_for(future, timeout=60)
+        except asyncio.TimeoutError:
+            logger.warning(f'[GSSHOP] 카테고리 스캔 타임아웃: "{keyword}"')
+            return {"categories": [], "total": 0, "groupCount": 0}
+
+        raw_cats = result.get("categories", []) if isinstance(result, dict) else []
+        total = result.get("total", 0) if isinstance(result, dict) else 0
+
+        # 표준 카테고리 분포 포맷으로 변환
+        categories = []
+        for cat in raw_cats:
+            name = cat.get("name", "")
+            count = cat.get("count", 0)
+            code = cat.get("categoryCode", "")
+            href = cat.get("href", "")
+            if not name or count <= 0:
+                continue
+            categories.append(
+                {
+                    "categoryCode": code or name,
+                    "path": f"백화점 > {name}",
+                    "count": count,
+                    "category1": "백화점",
+                    "category2": name,
+                    "category3": "",
+                    "href": href,
+                }
+            )
+
+        # count 내림차순 정렬
+        categories.sort(key=lambda c: -c["count"])
+
+        logger.info(
+            f'[GSSHOP] 카테고리 스캔 완료: "{keyword}" → {len(categories)}개 카테고리, 총 {total}건'
+        )
+
+        return {
+            "categories": categories,
+            "total": total or sum(c["count"] for c in categories),
+            "groupCount": len(categories),
+        }
+
+    # ------------------------------------------------------------------
     # 상세 조회
     # ------------------------------------------------------------------
 

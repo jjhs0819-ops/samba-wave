@@ -1860,11 +1860,17 @@ async def brand_scan(
 ):
     """키워드/브랜드로 소싱처 카테고리 분포를 스캔하여 검색그룹 생성에 활용.
 
-    지원 소싱처: MUSINSA, LOTTEON
+    지원 소싱처: MUSINSA, LOTTEON, GSSHOP
     """
     keyword = body.keyword or body.brand
     if not keyword:
         raise HTTPException(400, "keyword 또는 brand가 필요합니다")
+
+    if body.source_site == "GSSHOP":
+        from backend.domain.samba.plugins.sourcing.gsshop import GsShopSourcingPlugin
+
+        plugin = GsShopSourcingPlugin()
+        return await plugin.scan_categories(keyword)
 
     if body.source_site == "LOTTEON":
         from backend.domain.samba.plugins.sourcing.lotteon import LotteonSourcingPlugin

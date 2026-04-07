@@ -39,6 +39,13 @@ class GsShopSourcingPlugin(SourcingPlugin):
         client = GsShopSourcingClient()
         return await client.search_products(keyword, size=size, url=url)
 
+    async def scan_categories(self, keyword: str, **kwargs: object) -> dict:
+        """GS샵 카테고리 스캔 — 백화점 탭 사이드바 카테고리 분포 조회."""
+        from backend.domain.samba.proxy.gsshop_sourcing import GsShopSourcingClient
+
+        client = GsShopSourcingClient()
+        return await client.scan_categories(keyword)
+
     async def get_detail(self, site_product_id: str) -> dict:
         """GS샵 상품 상세 조회."""
         from backend.domain.samba.proxy.gsshop_sourcing import GsShopSourcingClient
