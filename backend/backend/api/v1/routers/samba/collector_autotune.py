@@ -40,12 +40,6 @@ _site_breaker_tripped: dict[str, bool] = {}  # {소싱처: 중단 여부}
 # 등급 분류 기준 기간 (일)
 CLASSIFY_WINDOW_DAYS = 7
 
-# 연속 무변동 스킵 설정
-SKIP_AFTER_NO_CHANGE = 5  # 연속 N회 변동 없으면 스킵
-SKIP_CYCLES = 3  # 스킵 사이클 수
-_no_change_count: dict[str, int] = {}  # {상품ID: 연속 무변동 횟수}
-_skip_remaining: dict[str, int] = {}  # {상품ID: 남은 스킵 사이클}
-
 
 async def _classify_products(session) -> dict[str, int]:
     """마켓등록상품 대상 hot/warm/cold 자동 분류 (벌크 SQL 3건).
@@ -244,12 +238,6 @@ async def _autotune_loop():
                         from backend.domain.samba.account.repository import (
                             SambaMarketAccountRepository,
                         )
-                        from backend.domain.samba.shipment.repository import (
-                            SambaShipmentRepository,
-                        )
-                        from backend.domain.samba.shipment.service import (
-                            SambaShipmentService,
-                        )
                         from backend.domain.samba.shipment.dispatcher import (
                             delete_from_market,
                         )
@@ -277,9 +265,6 @@ async def _autotune_loop():
                             _acc_result = await session.exec(_acc_stmt)
                             for _acc in _acc_result.all():
                                 _account_cache[_acc.id] = _acc
-
-                        ship_repo = SambaShipmentRepository(session)
-                        ship_svc = SambaShipmentService(ship_repo, session)
 
                         retransmitted = 0
                         deleted_count = 0
@@ -609,18 +594,6 @@ async def _autotune_loop():
                                         f"{_idx_prefix}{_prod_label}: 스킵{_tail}",
                                     )
 
-                                # 연속 무변동 카운터 — 마켓 전송 기준
-                                _any_transmitted = len(_actions) > 0
-                                if _any_transmitted or r.stock_changed:
-                                    _no_change_count.pop(r.product_id, None)
-                                    _skip_remaining.pop(r.product_id, None)
-                                else:
-                                    cnt = _no_change_count.get(r.product_id, 0) + 1
-                                    _no_change_count[r.product_id] = cnt
-                                    if cnt >= SKIP_AFTER_NO_CHANGE:
-                                        _skip_remaining[r.product_id] = SKIP_CYCLES
-                                        _no_change_count[r.product_id] = 0
-
                             # lock 밖: 전송 큐에 수집 (사이클 후 일괄 처리)
                             for _tx_args in _transmit_queue:
                                 _pending_syncs.append(_tx_args)
@@ -639,7 +612,9 @@ async def _autotune_loop():
 
                         # ③ 소싱처별 병렬 갱신 + 결과 즉시 처리 (콜백)
                         results, summary = await refresh_products_bulk(
-                            products, max_concurrency=2, on_result=_on_result
+                            products,
+                            max_concurrency={"MUSINSA": 2},
+                            on_result=_on_result,
                         )
 
                         # 에러 결과 후처리 (콜백에서 처리 안 된 에러 건)
@@ -706,8 +681,13 @@ async def _autotune_loop():
                                                 )
                                                 await tx_s.commit()
                                         except Exception as _se:
+                                            _s_site = getattr(
+                                                product_map.get(s_pid),
+                                                "source_site",
+                                                "UNKNOWN",
+                                            )
                                             _log_line(
-                                                "MUSINSA",
+                                                _s_site,
                                                 s_pid,
                                                 f"{s_label} 동기실패: {str(_se)[:80]}",
                                                 "error",
@@ -1088,7 +1068,7 @@ async def _autotune_loop():
 
 
 class AutotuneStartRequest(BaseModel):
-    target: str = "registered"  # 하위 호환용 (무시됨, 항상 마켓등록상품만)
+    pass
 
 
 async def _save_autotune_state(enabled: bool):
