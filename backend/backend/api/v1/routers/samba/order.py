@@ -1573,7 +1573,7 @@ async def sync_orders_from_markets(
             cancel_requested = sum(
                 1
                 for od in orders_data
-                if od.get("shipping_status") in ("취소요청", "취소처리중")
+                if od.get("shipping_status") == "취소요청"
                 and not od.get("tracking_number")
             )
             results.append(
