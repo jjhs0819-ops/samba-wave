@@ -997,6 +997,26 @@ class LotteonSourcingClient:
                         if pd_data:
                             self._enrich_from_pbf_pd(detail, pd_data)
 
+                # 4단계: pbf API에 없는 필드(품번/시즌/성별)는 상품명·브랜드·카테고리에서 폴백 추출
+                _name = detail.get("name") or ""
+                if not detail.get("style_code"):
+                    _sc = self._extract_style_code_from_name(_name)
+                    if _sc:
+                        detail["style_code"] = _sc
+                if not detail.get("season"):
+                    _ss = self._extract_season_from_name(_name)
+                    if _ss:
+                        detail["season"] = _ss
+                if not detail.get("sex"):
+                    _sx = self._infer_sex(
+                        _name,
+                        detail.get("brand", ""),
+                        detail.get("category1", ""),
+                        detail.get("category", ""),
+                    )
+                    if _sx:
+                        detail["sex"] = _sx
+
                 return detail
 
         except RateLimitError:
@@ -2289,24 +2309,73 @@ class LotteonSourcingClient:
         return result
 
     def _extract_style_code_from_name(self, name: str) -> str:
-        """상품명에서 품번 추출 (나이키/아디다스/푸마/뉴발란스 등)."""
-        BLACKLIST = {"BC", "LO", "PD", "LE"}
-        for pattern in [
-            # 나이키: HF0015-002, IO7727-100
+        """상품명에서 품번 추출 (브랜드별 패턴 + 일반 폴백)."""
+        SPECIFIC = [
+            # 빈폴: BC6341C66H, BC5941C20A_LL (옵션 접미사 _XX 허용)
+            r"(?<![A-Z0-9])(BC\d{4}[A-Z]\d{2}[A-Z])(?:_[A-Z]{1,3})?(?![A-Z0-9])",
+            # 나이키: CD6404-105, HF0015-002
             r"\b([A-Z]{2}\d{4}-\d{3})\b",
-            # 뉴발란스: NBNEG21203_60, NBPDGS114W_10
+            # 라코스테: BF702E-56G-X6F
+            r"\b([A-Z]{2}\d{3}[A-Z]-\d{2}[A-Z]-[A-Z]\d[A-Z])\b",
+            # MLB: 3ATSB0163-50BKS
+            r"\b(\d[A-Z]{4}\d{4}-\d{2}[A-Z]{3})\b",
+            # 뉴발란스: NBNEG21203_60
             r"\b(NB[A-Z]{3,6}\d{3,5}[A-Z]?_\d{2})\b",
-            # 뉴발란스: U188W98U, NBPQGS154L
             r"\b(NB[A-Z]{3,6}\d{3,5}[A-Z]?)\b",
-            # 푸마: 528564-48, 399827-01
+            # 푸마: 528564-48
             r"\b(\d{6}-\d{2})\b",
-            # 아디다스/일반: AB12345, ABC1234
+            # 노스페이스: NJ3LQ37B (옵션 접미사 _CRE 허용)
+            r"(?<![A-Z0-9])(N[A-Z]\d[A-Z]{2}\d{2}[A-Z])(?:_[A-Z]{2,4})?(?![A-Z0-9])",
+            # 헤지스: HSJU6BC21
+            r"\b(HS[A-Z]{2}\d[A-Z]{2}\d{2})\b",
+            # 디스커버리: (DXSH5545N)
+            r"\(?(DX[A-Z]{2}\d{4}[A-Z])\)?",
+            # 타미: T32G0WJC10TWL1 (T로 시작 14자 영숫자 혼합)
+            r"\b(T\d{2}[A-Z0-9]{11})\b",
+            # 폴로: MNPOSWE16822569020
+            r"\b([A-Z]{4,8}\d{10,18})\b",
+            # 아디다스/일반: KC2649, AB12345
             r"\b([A-Z]{2,3}\d{4,5}[A-Z]?\d?)\b",
-        ]:
+        ]
+        BLACKLIST_PREFIX = {"LO", "PD", "LE", "SS", "FW"}
+        for pattern in SPECIFIC:
             for m in re.finditer(pattern, name):
                 code = m.group(1)
-                if code[:2] not in BLACKLIST:
-                    return code
+                if code[:2] in BLACKLIST_PREFIX:
+                    continue
+                return code
+        return ""
+
+    def _extract_season_from_name(self, name: str) -> str:
+        """상품명에서 시즌 추출 — [SS26], [26SS], SS26, 26SS 등 모든 형식 지원."""
+        SEASONS = r"SS|FW|SP|SU|AU|WI|HOL"
+        # 1) [SS26] / SS26
+        m = re.search(rf"\[?({SEASONS})(\d{{2}})\]?", name, re.IGNORECASE)
+        if m:
+            return f"{m.group(1).upper()}{m.group(2)}"
+        # 2) [26SS] / 26SS
+        m = re.search(rf"\[?(\d{{2}})({SEASONS})\]?", name, re.IGNORECASE)
+        if m:
+            return f"{m.group(2).upper()}{m.group(1)}"
+        return ""
+
+    def _infer_sex(self, name: str, brand: str, category1: str, category: str) -> str:
+        """상품명/브랜드/카테고리에서 성별 추정."""
+        haystack = " ".join([name or "", brand or "", category1 or "", category or ""])
+        if re.search(
+            r"남녀\s*공용|남여\s*공용|공용|유니섹스|unisex|UNISEX",
+            haystack,
+            re.IGNORECASE,
+        ):
+            return "남녀공용"
+        if re.search(
+            r"여성|여자|레이디(스|즈)?|우먼|women|woman|ladies",
+            haystack,
+            re.IGNORECASE,
+        ):
+            return "여성"
+        if re.search(r"남성|남자|\b멘\b|men|man|mens", haystack, re.IGNORECASE):
+            return "남성"
         return ""
 
     def _normalize_sex(self, val: str) -> str:
