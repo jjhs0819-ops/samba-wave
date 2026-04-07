@@ -658,7 +658,7 @@ const ProductCard = React.memo(function ProductCard({
                     setCardConfirm(null)
                     try {
                       const field = list === detailImgList ? 'detail_images' : 'images'
-                      const res = await collectorApi.bulkRemoveImage(img, field)
+                      const res = await collectorApi.bulkRemoveImage(img, [field])
                       setList(list.filter((_, j) => j !== i))
                       setCardAlert({ msg: `${res.removed}개 상품에서 삭제 완료`, type: 'success' })
                     } catch (e) { setCardAlert({ msg: '추적삭제 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' }) }
@@ -757,7 +757,7 @@ const ProductCard = React.memo(function ProductCard({
                                 onOk: async () => {
                                   setCardConfirm(null)
                                   try {
-                                    const res = await collectorApi.bulkRemoveImage(mainImg, 'images')
+                                    const res = await collectorApi.bulkRemoveImage(mainImg, ['images'])
                                     const remaining = productImages.slice(1)
                                     setProductImages(remaining)
                                     setCardAlert({ msg: `${res.removed}개 상품에서 대표이미지 추적삭제 완료`, type: 'success' })

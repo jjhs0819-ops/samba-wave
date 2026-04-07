@@ -63,10 +63,10 @@ async def dashboard_stats(
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """대시보드 집계 — DB에서 SUM/COUNT 후 결과만 반환 (빠름)."""
-    from sqlalchemy import select, func, case, and_
-    from datetime import datetime, timedelta
+    from sqlalchemy import select, func, case, and_, extract, text
+    from datetime import datetime, timedelta, timezone as tz
 
-    # 이행매출 대상 상태 (취소 제외 정상 처리 주문)
+    # 이행매출 대상 상태 (주문상태 드롭박스 기준)
     FULFILLMENT_STATUSES = (
         "pending",
         "wait_ship",
@@ -79,7 +79,9 @@ async def dashboard_stats(
         "exchange_requested",
     )
 
-    now = datetime.utcnow()
+    # KST 기준 (UTC+9)
+    KST = tz(timedelta(hours=9))
+    now = datetime.now(KST).replace(tzinfo=None)
     this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if now.month == 1:
         last_month_start = this_month_start.replace(year=now.year - 1, month=12)
@@ -89,15 +91,33 @@ async def dashboard_stats(
         hour=0, minute=0, second=0, microsecond=0
     )
 
+    # 날짜 기준: 고객결제일 우선, KST 변환
+    order_date_utc = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
+    order_date = order_date_utc + text("INTERVAL '9 hours'")
+
     # 금월 집계
     this_month_q = select(
         func.count().label("count"),
         func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
-        func.sum(case((SambaOrder.status.in_(FULFILLMENT_STATUSES), 1), else_=0)).label(
-            "delivered"
-        ),
-    ).where(SambaOrder.created_at >= this_month_start)
-    # tenant_id가 있으면 해당 테넌트 데이터만 집계
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        SambaOrder.status.in_(FULFILLMENT_STATUSES),
+                        SambaOrder.sale_price,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("fulfillment_sales"),
+        func.sum(
+            case(
+                (SambaOrder.status.in_(FULFILLMENT_STATUSES), 1),
+                else_=0,
+            )
+        ).label("fulfillment_count"),
+    ).where(order_date >= this_month_start)
     if tenant_id is not None:
         this_month_q = this_month_q.where(SambaOrder.tenant_id == tenant_id)
     tm = (await session.execute(this_month_q)).one()
@@ -106,15 +126,25 @@ async def dashboard_stats(
     last_month_q = select(
         func.count().label("count"),
         func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
-        func.sum(case((SambaOrder.status.in_(FULFILLMENT_STATUSES), 1), else_=0)).label(
-            "delivered"
-        ),
-    ).where(
-        and_(
-            SambaOrder.created_at >= last_month_start,
-            SambaOrder.created_at < this_month_start,
-        )
-    )
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        SambaOrder.status.in_(FULFILLMENT_STATUSES),
+                        SambaOrder.sale_price,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("fulfillment_sales"),
+        func.sum(
+            case(
+                (SambaOrder.status.in_(FULFILLMENT_STATUSES), 1),
+                else_=0,
+            )
+        ).label("fulfillment_count"),
+    ).where(and_(order_date >= last_month_start, order_date < this_month_start))
     if tenant_id is not None:
         last_month_q = last_month_q.where(SambaOrder.tenant_id == tenant_id)
     lm = (await session.execute(last_month_q)).one()
@@ -122,15 +152,30 @@ async def dashboard_stats(
     # 최근 7일 일별 집계
     daily_q = (
         select(
-            func.date(SambaOrder.created_at).label("day"),
+            func.date(order_date).label("day"),
             func.count().label("count"),
             func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
-            func.sum(case((SambaOrder.status == "delivered", 1), else_=0)).label(
-                "delivered"
-            ),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            SambaOrder.status.in_(FULFILLMENT_STATUSES),
+                            SambaOrder.sale_price,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("fulfillment_sales"),
+            func.sum(
+                case(
+                    (SambaOrder.status.in_(FULFILLMENT_STATUSES), 1),
+                    else_=0,
+                )
+            ).label("fulfillment_count"),
         )
-        .where(SambaOrder.created_at >= week_ago)
-        .group_by(func.date(SambaOrder.created_at))
+        .where(order_date >= week_ago)
+        .group_by(func.date(order_date))
     )
     if tenant_id is not None:
         daily_q = daily_q.where(SambaOrder.tenant_id == tenant_id)
@@ -145,21 +190,57 @@ async def dashboard_stats(
                 "date": day_str,
                 "sales": float(row.sales) if row else 0,
                 "count": int(row.count) if row else 0,
-                "delivered": int(row.delivered) if row else 0,
+                "fulfillmentSales": float(row.fulfillment_sales) if row else 0,
+                "fulfillmentCount": int(row.fulfillment_count) if row else 0,
             }
         )
 
-    # 최근 활동 5건
-    recent_q = select(SambaOrder).order_by(SambaOrder.created_at.desc()).limit(5)
-    if tenant_id is not None:
-        recent_q = recent_q.where(SambaOrder.tenant_id == tenant_id)
-    recent = (await session.execute(recent_q)).scalars().all()
-
-    tm_fulfillment = (
-        round(int(tm.delivered or 0) / int(tm.count) * 100) if tm.count else 0
+    # 월별 집계 (연간 12개월)
+    year_start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    monthly_q = (
+        select(
+            extract("month", order_date).label("month"),
+            func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            SambaOrder.status.in_(FULFILLMENT_STATUSES),
+                            SambaOrder.sale_price,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("fulfillment_sales"),
+        )
+        .where(
+            and_(
+                order_date >= year_start,
+                extract("year", order_date) == now.year,
+            )
+        )
+        .group_by(extract("month", order_date))
     )
-    lm_fulfillment = (
-        round(int(lm.delivered or 0) / int(lm.count) * 100) if lm.count else 0
+    if tenant_id is not None:
+        monthly_q = monthly_q.where(SambaOrder.tenant_id == tenant_id)
+    monthly_rows = (await session.execute(monthly_q)).all()
+    monthly = []
+    for m in range(1, 13):
+        row = next((r for r in monthly_rows if int(r.month) == m), None)
+        monthly.append(
+            {
+                "month": m,
+                "sales": float(row.sales) if row else 0,
+                "fulfillmentSales": float(row.fulfillment_sales) if row else 0,
+            }
+        )
+
+    tm_fulfillment_rate = (
+        round(int(tm.fulfillment_count or 0) / int(tm.count) * 100) if tm.count else 0
+    )
+    lm_fulfillment_rate = (
+        round(int(lm.fulfillment_count or 0) / int(lm.count) * 100) if lm.count else 0
     )
     sales_change = (
         round(((float(tm.sales) - float(lm.sales)) / float(lm.sales)) * 100, 1)
@@ -171,18 +252,20 @@ async def dashboard_stats(
         "thisMonth": {
             "count": int(tm.count),
             "sales": float(tm.sales),
-            "delivered": int(tm.delivered or 0),
-            "fulfillment": tm_fulfillment,
+            "fulfillmentSales": float(tm.fulfillment_sales or 0),
+            "fulfillmentCount": int(tm.fulfillment_count or 0),
+            "fulfillment": tm_fulfillment_rate,
         },
         "lastMonth": {
             "count": int(lm.count),
             "sales": float(lm.sales),
-            "delivered": int(lm.delivered or 0),
-            "fulfillment": lm_fulfillment,
+            "fulfillmentSales": float(lm.fulfillment_sales or 0),
+            "fulfillmentCount": int(lm.fulfillment_count or 0),
+            "fulfillment": lm_fulfillment_rate,
         },
         "salesChange": sales_change,
         "weekly": weekly,
-        "recentOrders": [o.model_dump() for o in recent],
+        "monthly": monthly,
     }
 
 

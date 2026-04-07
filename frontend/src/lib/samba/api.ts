@@ -154,9 +154,17 @@ export const orderApi = {
       `${SAMBA_PREFIX}/orders/sync-from-markets`, { method: "POST", body: JSON.stringify({ days, account_id: accountId || undefined }) }),
   approveCancel: (id: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/approve-cancel`, { method: "POST" }),
-  exchangeAction: (id: string, action: string, reason?: string) =>
+  sellerCancel: (id: string, reasonCode: string, reasonText?: string) =>
+    request<{ ok: boolean; message: string; detail?: string }>(`${SAMBA_PREFIX}/orders/${id}/seller-cancel`, {
+      method: "POST", body: JSON.stringify({ reason_code: reasonCode, reason_text: reasonText || "" }),
+    }),
+  confirmOrder: (id: string) =>
+    request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/confirm`, { method: "POST" }),
+  marketDelete: (id: string) =>
+    request<{ ok: boolean; message: string; detail?: unknown }>(`${SAMBA_PREFIX}/orders/${id}/market-delete`, { method: "POST" }),
+  exchangeAction: (id: string, action: string, reason?: string, extra?: { tracking_number?: string; shipping_company?: string; clm_no?: string }) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/exchange-action`, {
-      method: "POST", body: JSON.stringify({ action, reason }),
+      method: "POST", body: JSON.stringify({ action, reason, ...extra }),
     }),
   returnAction: (id: string, action: string, reason?: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/return-action`, {
@@ -386,10 +394,13 @@ export const collectorApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "DELETE" }),
 
   // Brand Sourcing
+  brandDiscover: (keyword: string, source_site?: string) =>
+    request<{ brands: { name: string; count: number }[]; total: number }>(
+      `${SAMBA_PREFIX}/collector/brand-discover`, { method: "POST", body: JSON.stringify({ keyword, source_site: source_site || 'LOTTEON' }) }),
   brandScan: (brand: string, gf?: string, keyword?: string, source_site?: string, selected_brands?: string[]) =>
     request<{ categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]; total: number; groupCount: number }>(
       `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA', selected_brands: selected_brands || [] }) }),
-  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean> }) =>
+  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean>; source_site?: string; selected_brands?: string[] }) =>
     request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
       `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),
   brandRefresh: (data: { brand: string; brand_name?: string; gf?: string; options?: Record<string, boolean> }) =>
@@ -964,11 +975,12 @@ export interface SambaReturn {
 }
 
 export const returnApi = {
-  list: (orderId?: string, status?: string, type?: string) => {
+  list: (orderId?: string, status?: string, type?: string, limit = 500) => {
     const p = new URLSearchParams();
     if (orderId) p.set("order_id", orderId);
     if (status) p.set("status", status);
     if (type) p.set("type", type);
+    p.set("limit", String(limit));
     return request<SambaReturn[]>(`${SAMBA_PREFIX}/returns?${p}`);
   },
   create: (data: Partial<SambaReturn>) =>
@@ -990,7 +1002,7 @@ export const returnApi = {
       `${SAMBA_PREFIX}/returns/sync-from-markets`, { method: "POST", body: JSON.stringify(body) }
     )
   },
-  patch: (id: string, data: { confirmed?: boolean; settlement_amount?: number; recovery_amount?: number; check_date?: string; memo?: string; product_location?: string; completion_detail?: string; status?: string; customer_order_no?: string; original_order_no?: string; return_source?: string }) =>
+  patch: (id: string, data: { confirmed?: boolean; settlement_amount?: number; recovery_amount?: number; check_date?: string; memo?: string; product_location?: string; completion_detail?: string; status?: string; customer_order_no?: string; original_order_no?: string; type?: string; market_order_status?: string; return_source?: string }) =>
     request<SambaReturn>(`${SAMBA_PREFIX}/returns/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 };
 
@@ -1068,9 +1080,10 @@ export const csInquiryApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates`, { method: 'POST', body: JSON.stringify({ key, name, content }) }),
   deleteTemplate: (key: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates/${key}`, { method: 'DELETE' }),
-  syncFromMarkets: () =>
+  syncFromMarkets: (marketName?: string) =>
     request<{ success: boolean; synced: number; errors: string[]; message: string }>(
-      `${SAMBA_PREFIX}/cs-inquiries/sync-from-markets`, { method: 'POST' }
+      `${SAMBA_PREFIX}/cs-inquiries/sync-from-markets`,
+      { method: 'POST', body: JSON.stringify({ market_name: marketName || undefined }) }
     ),
   sendReply: (id: string, reply: string) =>
     request<{ success: boolean; message: string }>(
@@ -1299,6 +1312,8 @@ export interface SambaUser {
   access_token?: string
   created_at: string
   updated_at: string
+  token?: string
+  tenant_id?: string
 }
 
 export const userApi = {
