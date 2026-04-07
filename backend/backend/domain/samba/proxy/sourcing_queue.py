@@ -18,7 +18,7 @@ SITE_SEARCH_URLS: dict[str, str] = {
     "GrandStage": "https://www.a-rt.com/display/search-word/result?searchWord={keyword}&channel=10002",
     "OKmall": "https://www.okmall.com/products/list?keyword={keyword}",
     "LOTTEON": "https://www.lotteon.com/search/search/search.ecn?render=search&platform=pc&q={keyword}",
-    "GSShop": "https://www.gsshop.com/search/searchMain.gs?tq={keyword}",
+    "GSShop": "https://www.gsshop.com/shop/search/main.gs?tq={keyword}",
     "ElandMall": "https://www.elandmall.com/search/search.action?kwd={keyword}",
     "SSF": "https://www.ssfshop.com/search?keyword={keyword}",
 }
@@ -45,14 +45,17 @@ class SourcingQueue:
     resolvers: dict[str, asyncio.Future[Any]] = {}
 
     @classmethod
-    def add_search_job(cls, site: str, keyword: str) -> tuple[str, asyncio.Future[Any]]:
+    def add_search_job(
+        cls, site: str, keyword: str, url: str = "", max_count: int = 100
+    ) -> tuple[str, asyncio.Future[Any]]:
         """검색 작업 큐에 추가. (requestId, future) 반환."""
         request_id = str(uuid.uuid4())[:8]
-        url_template = SITE_SEARCH_URLS.get(site, "")
-        if not url_template:
-            raise ValueError(f"지원하지 않는 소싱처: {site}")
+        if not url:
+            url_template = SITE_SEARCH_URLS.get(site, "")
+            if not url_template:
+                raise ValueError(f"지원하지 않는 소싱처: {site}")
+            url = url_template.replace("{keyword}", keyword)
 
-        url = url_template.replace("{keyword}", keyword)
         loop = asyncio.get_event_loop()
         future: asyncio.Future[Any] = loop.create_future()
 
@@ -63,6 +66,7 @@ class SourcingQueue:
                 "type": "search",
                 "url": url,
                 "keyword": keyword,
+                "maxCount": max_count,
             }
         )
         cls.resolvers[request_id] = future

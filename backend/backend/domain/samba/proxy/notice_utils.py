@@ -94,6 +94,17 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     Returns: "wear" | "shoes" | "bag" | "accessories" | "cosmetic" | "food" | "electronics" | "etc"
     """
     cat1 = (product.get("category1") or "").strip()
+
+    # "스포츠/레저", "소품" 등 복합 카테고리는 category2로 세분화
+    if cat1 in ("스포츠/레저", "소품"):
+        cat2 = (product.get("category2") or "").strip()
+        if cat2 in _CATEGORY_GROUP:
+            return _CATEGORY_GROUP[cat2]
+        for keyword, group in _CATEGORY_GROUP.items():
+            if keyword in cat2:
+                return group
+        return "etc"  # 기구/용품/장비 등 → 기타 재화
+
     if cat1 in _CATEGORY_GROUP:
         return _CATEGORY_GROUP[cat1]
 
@@ -107,6 +118,10 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     for keyword, group in _CATEGORY_GROUP.items():
         if keyword in full_cat:
             return group
+
+    # GS샵 등 미분류 카테고리 폴백
+    if full_cat == "기타 재화":
+        return "wear"
 
     # 상품명에서 카테고리 추론 (카테고리 미설정 소싱처 대응)
     name = (product.get("name") or "").lower()
@@ -622,22 +637,122 @@ def build_lotteon_notice(product: dict[str, Any]) -> dict[str, Any]:
 # 5. SSG 고시정보 (상품관리속성)
 # ────────────────────────────────────────────
 
+_DOMESTIC_ORIGIN_KEYWORDS = {"한국", "대한민국", "국내", "korea", "south korea"}
+_UNKNOWN_ORIGIN_KEYWORDS = {"없음", "미상", "미확인", "알수없음", "상세설명참조", ""}
 
-def build_ssg_notice(product: dict[str, Any]) -> list[dict[str, str]]:
-    """상품 카테고리에 맞는 SSG 상품관리속성을 생성한다."""
+# SSG 고시정보 타입 매핑 (카테고리 그룹 → SSG itemMngPropClsId)
+_SSG_NOTICE_TYPE_MAP: dict[str, str] = {
+    "wear": "0000000001",
+    "shoes": "0000000002",
+    "bag": "0000000004",
+    "accessories": "0000000004",  # 패션잡화 — bag과 동일 클래스
+    "cosmetic": "0000000005",
+    "food": "0000000006",
+    "electronics": "0000000007",
+    "etc": "0000000035",
+}
+
+
+def _is_domestic_origin(origin: str) -> bool:
+    """원산지가 국내산인지 판별한다."""
+    stripped = origin.strip().lower()
+    return stripped in _DOMESTIC_ORIGIN_KEYWORDS or stripped in _UNKNOWN_ORIGIN_KEYWORDS
+
+
+def build_ssg_notice(
+    product: dict[str, Any],
+) -> tuple[str, list[dict[str, str]]]:
+    """상품 카테고리에 맞는 SSG 상품관리속성을 생성한다.
+
+    Returns:
+        (itemMngPropClsId, itemMngAttrs 배열)
+    """
     fallback = "상세설명참조"
     material = product.get("material", "") or fallback
     color = product.get("color", "") or fallback
     manufacturer = (
         product.get("manufacturer", "") or product.get("brand", "") or fallback
     )
+    origin = product.get("origin", "") or ""
 
-    return [
-        {"itemMngPropId": "0000000001", "itemMngCntt": material},  # 소재
-        {"itemMngPropId": "0000000003", "itemMngCntt": color},  # 색상
-        {"itemMngPropId": "0000000006", "itemMngCntt": fallback},  # 품질보증
-        {"itemMngPropId": "0000000007", "itemMngCntt": manufacturer},  # 제조자
-        {"itemMngPropId": "0000000008", "itemMngCntt": "N"},  # 사이즈표기안내
-        {"itemMngPropId": "0000000011", "itemMngCntt": "1000000001"},  # 제조국
-        {"itemMngPropId": "0000000012", "itemMngCntt": fallback},  # A/S
-    ]
+    # 수입여부
+    if "_ssg_import_yn" in product:
+        import_yn = product["_ssg_import_yn"]
+    else:
+        import_yn = "N" if (origin and _is_domestic_origin(origin)) else "Y"
+    importer = manufacturer if import_yn == "Y" else fallback
+
+    # A/S 정보
+    as_phone = product.get("_as_phone", "") or ""
+    as_message = product.get("_as_message", "") or ""
+    as_info = ""
+    if as_phone:
+        as_info = as_phone
+        if as_message:
+            as_info += f" | {as_message}"
+    elif as_message:
+        as_info = as_message
+    as_info = as_info or fallback
+
+    group = detect_notice_group(product)
+    cls_id = _SSG_NOTICE_TYPE_MAP.get(group, "0000000035")
+
+    if group == "wear":
+        attrs: list[dict[str, str]] = [
+            {"itemMngPropId": "0000000001", "itemMngCntt": material},
+            {"itemMngPropId": "0000000002", "itemMngCntt": color},
+            {"itemMngPropId": "0000000003", "itemMngCntt": fallback},
+            {"itemMngPropId": "0000000008", "itemMngCntt": import_yn},
+            {"itemMngPropId": "0000000009", "itemMngCntt": importer},
+            {"itemMngPropId": "0000000005", "itemMngCntt": fallback},
+            {"itemMngPropId": "0000000004", "itemMngCntt": fallback},
+            {
+                "itemMngPropId": "0000000006",
+                "itemMngCntt": "관련 법 및 소비자 분쟁해결 규정에 따름",
+            },
+            {"itemMngPropId": "0000000012", "itemMngCntt": as_info},
+        ]
+    elif group == "shoes":
+        attrs = [
+            {"itemMngPropId": "0000000184", "itemMngCntt": material},
+            {"itemMngPropId": "0000000002", "itemMngCntt": color},
+            {"itemMngPropId": "0000000170", "itemMngCntt": fallback},
+            {"itemMngPropId": "0000000008", "itemMngCntt": import_yn},
+            {"itemMngPropId": "0000000009", "itemMngCntt": importer},
+            {"itemMngPropId": "0000000013", "itemMngCntt": fallback},
+            {
+                "itemMngPropId": "0000000006",
+                "itemMngCntt": "관련 법 및 소비자 분쟁해결 규정에 따름",
+            },
+            {"itemMngPropId": "0000000012", "itemMngCntt": as_info},
+        ]
+    elif group in ("bag", "accessories"):
+        attrs = [
+            {"itemMngPropId": "0000000014", "itemMngCntt": fallback},
+            {"itemMngPropId": "0000000001", "itemMngCntt": material},
+            {"itemMngPropId": "0000000003", "itemMngCntt": fallback},
+            {"itemMngPropId": "0000000008", "itemMngCntt": import_yn},
+            {"itemMngPropId": "0000000009", "itemMngCntt": importer},
+            {"itemMngPropId": "0000000013", "itemMngCntt": fallback},
+            {
+                "itemMngPropId": "0000000006",
+                "itemMngCntt": "관련 법 및 소비자 분쟁해결 규정에 따름",
+            },
+            {"itemMngPropId": "0000000012", "itemMngCntt": as_info},
+        ]
+    else:
+        attrs = [
+            {"itemMngPropId": "0000000001", "itemMngCntt": material},
+            {"itemMngPropId": "0000000002", "itemMngCntt": color},
+            {"itemMngPropId": "0000000003", "itemMngCntt": fallback},
+            {
+                "itemMngPropId": "0000000006",
+                "itemMngCntt": "관련 법 및 소비자 분쟁해결 규정에 따름",
+            },
+            {"itemMngPropId": "0000000007", "itemMngCntt": manufacturer},
+            {"itemMngPropId": "0000000008", "itemMngCntt": "N"},
+            {"itemMngPropId": "0000000011", "itemMngCntt": "1000000001"},
+            {"itemMngPropId": "0000000012", "itemMngCntt": as_info},
+        ]
+
+    return cls_id, attrs

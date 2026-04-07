@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
+from backend.utils.logger import logger
 
 
 class CoupangPlugin(MarketPlugin):
@@ -59,6 +60,12 @@ class CoupangPlugin(MarketPlugin):
                 "message": "쿠팡 Access Key/Secret Key가 없습니다.",
             }
 
+        if not vendor_id:
+            return {
+                "success": False,
+                "message": "쿠팡 Vendor ID가 없습니다. 계정 설정을 확인해주세요.",
+            }
+
         client = CoupangClient(access_key, secret_key, vendor_id)
 
         # 카테고리 코드가 숫자가 아니면 쿠팡 API로 동적 조회
@@ -84,8 +91,8 @@ class CoupangPlugin(MarketPlugin):
             if rc_content:
                 rc = rc_content[0]
                 return_center_code = rc.get("returnCenterCode", "")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[쿠팡] 반품지 조회 실패 (vendor_id={vendor_id}): {e}")
 
         # 출고지 코드 조회
         outbound_code = ""
@@ -100,8 +107,14 @@ class CoupangPlugin(MarketPlugin):
             )
             if ob_content:
                 outbound_code = str(ob_content[0].get("outboundShippingPlaceCode", ""))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[쿠팡] 출고지 조회 실패 (vendor_id={vendor_id}): {e}")
+
+        if not return_center_code:
+            return {
+                "success": False,
+                "message": "쿠팡 반품지 코드를 조회할 수 없습니다. Wing 센터에서 반품지를 등록해주세요.",
+            }
 
         # AS 전화번호 주입은 base._apply_market_settings 에서 처리됨
         data = CoupangClient.transform_product(

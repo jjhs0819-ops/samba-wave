@@ -796,6 +796,47 @@ async def sync_cs_from_markets(
     except Exception as e:
         logger.warning(f"[CS동기화] 플레이오토 계정 조회 실패: {e}")
 
+    # ── SSG 쪽지/Q&A 수집 ──
+    try:
+        from backend.domain.samba.account.model import SambaMarketAccount
+        from backend.domain.samba.proxy.ssg import SSGClient
+        from sqlalchemy import func as sa_func
+
+        ssg_stmt = select(SambaMarketAccount).where(
+            sa_func.lower(SambaMarketAccount.market_type) == "ssg",
+            SambaMarketAccount.is_active == True,  # noqa: E712
+        )
+        ssg_result = await session.execute(ssg_stmt)
+        ssg_accounts = ssg_result.scalars().all()
+
+        for ssg_acc in ssg_accounts:
+            ssg_extras = ssg_acc.additional_fields or {}
+            ssg_api_key = ssg_extras.get("apiKey", "") or ssg_acc.api_key or ""
+            if not ssg_api_key:
+                continue
+            ssg_label = ssg_acc.account_label or ssg_acc.business_name or "SSG"
+            ssg_client = SSGClient(ssg_api_key)
+            try:
+                result = await svc.collect_from_ssg(
+                    ssg_client,
+                    days_back=7,
+                    account_id=ssg_acc.id,
+                    account_label=ssg_label,
+                )
+                ssg_total = result["notes_collected"] + result["qna_collected"]
+                if ssg_total > 0:
+                    logger.info(
+                        f"[CS동기화] SSG({ssg_label}): 쪽지 {result['notes_collected']}건, Q&A {result['qna_collected']}건 수집"
+                    )
+                synced += ssg_total
+            except Exception as e:
+                logger.error(f"[CS동기화] SSG({ssg_label}) 실패: {e}", exc_info=True)
+                errors.append(f"SSG({ssg_label}): {e}")
+            finally:
+                await ssg_client.close()
+    except Exception as e:
+        logger.warning(f"[CS동기화] SSG 계정 조회 실패: {e}")
+
     return {
         "success": True,
         "synced": synced,
@@ -928,3 +969,99 @@ async def hide_cs_inquiry(
         raise HTTPException(status_code=404, detail="문의를 찾을 수 없습니다")
     await svc.repo.update_async(inquiry_id, is_hidden=True)
     return {"ok": True}
+
+
+class CollectSSGRequest(BaseModel):
+    account_id: str
+    days_back: int = 7
+
+
+@router.post("/collect/ssg")
+async def collect_ssg_cs(
+    body: CollectSSGRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """SSG 쪽지/Q&A 수집."""
+    from sqlmodel import select
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.proxy.ssg import SSGClient
+
+    stmt = select(SambaMarketAccount).where(SambaMarketAccount.id == body.account_id)
+    result = await session.execute(stmt)
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(404, "계정을 찾을 수 없습니다")
+
+    extras = account.additional_fields or {}
+    api_key = extras.get("apiKey", "") or account.api_key or ""
+    if not api_key:
+        raise HTTPException(400, "SSG API 키가 없습니다")
+
+    ssg_client = SSGClient(api_key)
+    try:
+        svc = _write_service(session)
+        account_label = account.account_label or account.business_name or "SSG"
+        return await svc.collect_from_ssg(
+            ssg_client,
+            days_back=body.days_back,
+            account_id=body.account_id,
+            account_label=account_label,
+        )
+    finally:
+        await ssg_client.close()
+
+
+@router.post("/{inquiry_id}/reply-to-market")
+async def reply_to_market(
+    inquiry_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """SSG에 답변 전송 (DB에 저장된 답변 내용 기준)."""
+    from sqlmodel import select
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.proxy.ssg import SSGClient
+
+    svc = _write_service(session)
+    inquiry = await svc.get_inquiry(inquiry_id)
+    if not inquiry:
+        raise HTTPException(404, "문의를 찾을 수 없습니다")
+    if inquiry.market != "SSG":
+        raise HTTPException(
+            400, f"'{inquiry.market}' 마켓은 지원하지 않습니다 (SSG만 가능)"
+        )
+    if not inquiry.reply:
+        raise HTTPException(400, "답변이 없습니다. 먼저 답변을 저장해주세요")
+
+    # 계정 조회
+    account = None
+    if inquiry.account_id:
+        stmt = select(SambaMarketAccount).where(
+            SambaMarketAccount.id == inquiry.account_id
+        )
+        result = await session.execute(stmt)
+        account = result.scalar_one_or_none()
+
+    if not account:
+        stmt = select(SambaMarketAccount).where(
+            SambaMarketAccount.market_type == "ssg",
+            SambaMarketAccount.is_active == True,  # noqa: E712
+        )
+        result = await session.execute(stmt)
+        account = result.scalars().first()
+
+    if not account:
+        raise HTTPException(400, "SSG 계정 설정이 없습니다")
+
+    extras = account.additional_fields or {}
+    api_key = extras.get("apiKey", "") or account.api_key or ""
+    if not api_key:
+        raise HTTPException(400, "SSG API 키가 없습니다")
+
+    ssg_client = SSGClient(api_key)
+    try:
+        ok = await svc.send_reply_to_market(inquiry_id, ssg_client)
+        if not ok:
+            raise HTTPException(500, "마켓 답변 전송에 실패했습니다")
+        return {"ok": True}
+    finally:
+        await ssg_client.close()

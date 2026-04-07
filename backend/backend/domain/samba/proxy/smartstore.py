@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import time
 from typing import Any, Optional
 
@@ -129,8 +130,6 @@ _COUNTRY_ORIGIN_CODE: dict[str, str] = {
 
 def _format_phone(phone: str) -> str:
     """전화번호 포맷팅 — 010-95940674 → 010-9594-0674."""
-    import re
-
     digits = re.sub(r"[^0-9]", "", phone)
     if not digits:
         return phone
@@ -152,6 +151,32 @@ def _format_phone(phone: str) -> str:
     if len(digits) == 12 and digits.startswith("05"):
         return f"{digits[:4]}-{digits[4:8]}-{digits[8:]}"
     return phone
+
+
+def _safe_build_ss_notice(product: dict, **kwargs: Any) -> dict:
+    """고시정보 생성 — 실패 시 기본 ETC 타입으로 폴백."""
+    try:
+        return _build_ss_notice(product, **kwargs)
+    except Exception as e:
+        logger.warning(f"[스마트스토어] 고시정보 생성 실패, ETC 폴백: {e}")
+        return {
+            "productInfoProvidedNoticeType": "ETC",
+            "etcInfo": {
+                "returnCostReason": "상세설명 참조",
+                "noRefundReason": "상세설명 참조",
+                "qualityAssuranceStandard": "상세설명 참조",
+                "compensationProcedure": "상세설명 참조",
+                "troubleShootingContents": "상세설명 참조",
+            },
+        }
+
+
+def _validate_as_phone(phone: str) -> str:
+    """AS 전화번호 검증 — 전화번호 형식이 아니면 기본값 반환."""
+    formatted = _format_phone(phone)
+    if re.match(r"^\d{2,4}-\d{3,4}-\d{4}$", formatted):
+        return formatted
+    return "02-0000-0000"
 
 
 def _build_origin_area(origin: str) -> dict:
@@ -1005,7 +1030,15 @@ class SmartStoreClient:
             if not _dl_client:
                 await dl.aclose()
 
-        # EXIF 제거 스킵 — 소싱처 CDN 이미지에 EXIF 없음, PIL 디코딩이 OOM 유발
+        # EXIF 제거 — GS샵 등 EXIF 포함 소싱처만 적용 (무신사 등 CDN은 스킵, OOM 방지)
+        _is_gsshop_image = "gsshop" in image_url or "gs.kr" in image_url
+        if _is_gsshop_image:
+            try:
+                from backend.domain.samba.image.exif import strip_exif
+
+                img_bytes = strip_exif(img_bytes)
+            except Exception:
+                pass  # EXIF 제거 실패해도 업로드 진행
 
         # content_type 불명확 시 바이트 시그니처로 감지
         if not content_type.startswith("image/"):
@@ -1028,8 +1061,25 @@ class SmartStoreClient:
         elif "gif" in content_type:
             ext = "gif"
         elif "webp" in content_type or image_url.endswith(".webp"):
-            ext = "webp"
-            upload_type = "image/webp"
+            # GS샵 등 webp 이미지 → PNG 변환 (네이버 API webp 거부 대응)
+            if _is_gsshop_image:
+                try:
+                    from PIL import Image as _PILImage
+                    import io as _io
+
+                    pil_img = _PILImage.open(_io.BytesIO(img_bytes)).convert("RGB")
+                    buf = _io.BytesIO()
+                    pil_img.save(buf, format="PNG")
+                    img_bytes = buf.getvalue()
+                    ext = "png"
+                    upload_type = "image/png"
+                    del pil_img, buf
+                except Exception:
+                    ext = "webp"
+                    upload_type = "image/webp"
+            else:
+                ext = "webp"
+                upload_type = "image/webp"
 
         # 네이버 업로드 (클라이언트 재사용 + 429 재시도)
         import asyncio as _aio_retry

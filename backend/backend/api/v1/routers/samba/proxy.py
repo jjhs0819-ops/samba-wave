@@ -746,6 +746,80 @@ async def ssg_auth_test(
         return {"success": False, "message": f"인증 실패: {exc}"}
 
 
+@router.get("/ssg/shipping-policies")
+async def ssg_shipping_policies(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    account_id: str | None = None,
+) -> dict[str, Any]:
+    """SSG 배송비정책 목록 조회."""
+    creds = await _get_setting(session, "store_ssg")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "policies": []}
+    api_key = creds.get("apiKey", "")
+    if not api_key:
+        return {"success": False, "policies": []}
+    try:
+        from backend.domain.samba.proxy.ssg import SSGClient
+
+        client = SSGClient(api_key)
+        result = await client.get_shipping_policies()
+        raw = result.get("result", {})
+        policies_wrapper = raw.get("shppcstPlcys", [{}])
+        policy_list = (
+            policies_wrapper[0].get("shppcstPlcy", []) if policies_wrapper else []
+        )
+        policies = []
+        for p in policy_list:
+            policies.append(
+                {
+                    "shppcstId": p.get("shppcstId", ""),
+                    "feeAmt": p.get("dlvCstAmt", 0),
+                    "prpayCodDivNm": p.get("prpayCodDivNm", ""),
+                    "shppcstAplUnitNm": p.get("shppcstAplUnitNm", ""),
+                    "divCd": p.get("shppcstPlcyDivCd", 0),
+                }
+            )
+        return {"success": True, "policies": policies}
+    except Exception as exc:
+        logger.error(f"[SSG] 배송비정책 조회 실패: {exc}")
+        return {"success": False, "policies": [], "message": str(exc)}
+
+
+@router.get("/ssg/addresses")
+async def ssg_addresses(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    account_id: str | None = None,
+) -> dict[str, Any]:
+    """SSG 출고/반송 주소 목록 조회."""
+    creds = await _get_setting(session, "store_ssg")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "addresses": []}
+    api_key = creds.get("apiKey", "")
+    if not api_key:
+        return {"success": False, "addresses": []}
+    try:
+        from backend.domain.samba.proxy.ssg import SSGClient
+
+        client = SSGClient(api_key)
+        result = await client.get_addresses()
+        raw = result.get("result", {})
+        addr_wrapper = raw.get("venAddrs", [{}])
+        addr_list = addr_wrapper[0].get("venAddr", []) if addr_wrapper else []
+        addresses = []
+        for a in addr_list:
+            addresses.append(
+                {
+                    "grpAddrId": a.get("grpAddrId", ""),
+                    "addrNm": a.get("addrNm", ""),
+                    "bascAddr": a.get("bascAddr", ""),
+                }
+            )
+        return {"success": True, "addresses": addresses}
+    except Exception as exc:
+        logger.error(f"[SSG] 주소 조회 실패: {exc}")
+        return {"success": False, "addresses": [], "message": str(exc)}
+
+
 # ═══════════════════════════════════════════════
 # GS샵 인증 테스트 (개발/운영)
 # ═══════════════════════════════════════════════

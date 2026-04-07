@@ -174,6 +174,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     sendResponse({ ok: true })
   }
+  if (msg.action === 'abcmartBalance') {
+    const { siteName, money, mileage, username, expired } = msg
+    console.log(`[잔액] ${siteName} 잔액 수신: 머니 ${money?.toLocaleString()} / 적립금 ${mileage?.toLocaleString()} / 유저: ${username}`)
+    sendAbcmartBalance({ siteName, money, mileage, username, expired: !!expired })
+    sendResponse({ ok: true })
+  }
+  if (msg.type === 'SCRAPE_SSG_SCORES') {
+    scrapeSSGScores().then(data => sendResponse(data)).catch(e => sendResponse({ error: e.message }))
+    return true
+  }
   return false
 })
 
@@ -791,21 +801,33 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // 수집 폴링 — job 없으면 5분 후 자동 중지, job 있으면 자동 재시작
 let emptyPollCount = 0
-const MAX_EMPTY_POLLS = 10 // 30초 × 10 = 5분간 빈 결과 → 중지
+let quickPollTimer = null
+const MAX_EMPTY_POLLS = 30 // 10초 × 30 = 5분간 빈 결과 → 중지
 
 function startCollectPolling() {
   emptyPollCount = 0
   chrome.alarms.get('collectPoll', (alarm) => {
     if (!alarm) {
       chrome.alarms.create('collectPoll', { periodInMinutes: 0.5 })
-      console.log('[수집] 폴링 시작 (30초 주기)')
+      console.log('[수집] alarm 등록 (30초/실제 1분 백업)')
     }
   })
+  // setInterval 10초 보조 폴링 — 서비스 워커 활성 중 빠른 응답
+  if (!quickPollTimer) {
+    quickPollTimer = setInterval(() => {
+      if (!focusPollActive) runPollCycle()
+    }, 10_000)
+    console.log('[수집] 폴링 시작 (10초 주기 + alarm 백업)')
+  }
   runPollCycle()
 }
 
 function stopCollectPolling() {
   chrome.alarms.clear('collectPoll')
+  if (quickPollTimer) {
+    clearInterval(quickPollTimer)
+    quickPollTimer = null
+  }
   console.log('[수집] 폴링 중지 (빈 결과 5분 연속)')
 }
 
@@ -854,9 +876,10 @@ chrome.alarms.get('balanceCheckPoll', (alarm) => {
   }
 })
 
-// 설치/업데이트/시작 시 — 수집 폴링은 시작하지 않음 (서버에서 수집 요청 시에만 시작)
-chrome.runtime.onInstalled.addListener(() => {})
-chrome.runtime.onStartup.addListener(() => {})
+// 설치/업데이트/시작 시 — 수집 폴링 자동 시작
+chrome.runtime.onInstalled.addListener(() => { startCollectPolling() })
+chrome.runtime.onStartup.addListener(() => { startCollectPolling() })
+startCollectPolling()
 
 // ==================== AI소싱 큐 폴링 ====================
 
@@ -1131,8 +1154,47 @@ async function handleSourcingJob(job) {
     await wait(needsActive ? 5000 : 4000) // 패션플러스 상세는 렌더링 시간 추가
 
     let result = null
-    if (job.type === 'search') {
-      result = await extractSearchResults(tabId, job.site)
+    if (job.type === 'search' && job.site === 'GSShop') {
+      // GS샵: 페이지네이션 반복 수집
+      const maxCount = job.maxCount || 999
+      const allProducts = []
+      const seenIds = new Set()
+      let pageNum = 1
+      const maxPages = Math.ceil(maxCount / 60) + 1
+
+      while (allProducts.length < maxCount && pageNum <= maxPages) {
+        if (pageNum > 1) {
+          const eh = btoa(JSON.stringify({ pageNumber: pageNum, selected: 'opt-page' }))
+          const nextUrl = new URL(job.url)
+          nextUrl.searchParams.set('eh', eh)
+          await chrome.tabs.update(tabId, { url: nextUrl.toString() })
+          await waitForTabLoad(tabId, 30000)
+          await wait(4000)
+        }
+
+        const pageResult = await extractSearchResults(tabId, job.site, 999)
+        const pageProducts = pageResult?.products || []
+
+        if (pageProducts.length === 0) break
+
+        let newCount = 0
+        for (const p of pageProducts) {
+          if (!seenIds.has(p.site_product_id)) {
+            seenIds.add(p.site_product_id)
+            allProducts.push(p)
+            newCount++
+          }
+        }
+
+        console.log(`[소싱] GSShop 페이지 ${pageNum}: +${newCount}건 (총 ${allProducts.length}건)`)
+        if (newCount === 0) break
+
+        pageNum++
+      }
+
+      result = { success: true, products: allProducts.slice(0, maxCount), total: allProducts.length }
+    } else if (job.type === 'search') {
+      result = await extractSearchResults(tabId, job.site, job.maxCount || 999)
     } else if (job.type === 'detail') {
       result = await extractDetailData(tabId, job.site, job.productId)
     }
@@ -1151,11 +1213,11 @@ async function handleSourcingJob(job) {
 }
 
 // 검색 결과 DOM 파싱 — 범용 상품 카드 추출
-async function extractSearchResults(tabId, site) {
+async function extractSearchResults(tabId, site, maxCount = 999) {
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: (siteName) => {
+    func: (siteName, maxItems) => {
       const products = []
       const seen = new Set()
 
@@ -1165,21 +1227,71 @@ async function extractSearchResults(tabId, site) {
         'GrandStage': /\/product\?prdtNo=(\d+)/,
         'OKmall': /\/products\/detail\/(\d+)/,
         'LOTTEON': /\/product\/productDetail[^"]*spdNo=(\d+)/,
-        'GSShop': /\/prd\/prd\.gs\?prdid=(\d+)/,
+        'GSShop': /\/(?:prd\/prd\.gs\?prdid|deal\/deal\.gs\?dealNo)=(\d+)/,
         'ElandMall': /\/goods\/goods\.action\?goodsNo=(\d+)/,
         'SSF': /\/goods\/([A-Z0-9]+)/,
       }
       const pattern = linkPatterns[siteName]
       if (!pattern) return { success: false, products: [], total: 0 }
 
-      // 모든 a 태그에서 상품 링크 찾기
-      document.querySelectorAll('a[href]').forEach(link => {
+      // 모든 a 태그에서 상품 링크 찾기 (GSShop: 컨테이너 스코핑)
+      let allLinks
+      if (siteName === 'GSShop') {
+        const container = document.querySelector('#searchPrdList .prd-list') || document.querySelector('.prd-list') || document
+        allLinks = container.querySelectorAll('a[href]')
+      } else {
+        allLinks = document.querySelectorAll('a[href]')
+      }
+      for (const link of allLinks) {
+        if (products.length >= maxItems) break  // 수량 제한
         const match = link.href.match(pattern)
-        if (!match || seen.has(match[1])) return
+        if (!match || seen.has(match[1])) continue
         seen.add(match[1])
 
         // 가장 가까운 상품 카드 컨테이너
         const card = link.closest('[class*="product"]') || link.closest('[class*="item"]') || link.closest('li') || link
+
+        // GSShop 전용 파싱 (prd-name, price-info 등 고유 클래스 활용)
+        if (siteName === 'GSShop') {
+          const nameEl = card.querySelector('dt.prd-name') || card.querySelector('.prd-name')
+          const priceEl = card.querySelector('dd.price-info') || card.querySelector('.price-info')
+          const imgEl = card.querySelector('.prd-img img') || card.querySelector('img')
+
+          const name = nameEl?.textContent?.trim() || ''
+          let image = imgEl?.src || imgEl?.getAttribute('data-src') || imgEl?.getAttribute('data-original') || ''
+          if (image.startsWith('//')) image = 'https:' + image
+          // GS샵 이미지 고해상도 변환 (250px → 800px)
+          if (image.includes('asset.m-gs.kr') && image.includes('/250')) {
+            image = image.replace('/250', '/800')
+          }
+
+          let salePrice = 0
+          let originalPrice = 0
+          if (priceEl) {
+            const priceText = priceEl.textContent || ''
+            const nums = priceText.match(/[\d,]+/g)?.map(n => parseInt(n.replace(/,/g, ''))).filter(n => n > 100) || []
+            if (nums.length >= 2) {
+              salePrice = Math.min(...nums)
+              originalPrice = Math.max(...nums)
+            } else if (nums.length === 1) {
+              salePrice = nums[0]
+              originalPrice = nums[0]
+            }
+          }
+
+          if (name || salePrice > 0) {
+            products.push({
+              site_product_id: match[1],
+              name: name || `GSShop ${match[1]}`,
+              brand: '',
+              original_price: originalPrice,
+              sale_price: salePrice,
+              images: image ? [image] : [],
+              source_site: siteName,
+            })
+          }
+          continue
+        }
 
         // 이미지
         const imgEl = card.querySelector('img')
@@ -1222,11 +1334,11 @@ async function extractSearchResults(tabId, site) {
             source_site: siteName,
           })
         }
-      })
+      }
 
       return { success: true, products, total: products.length }
     },
-    args: [site]
+    args: [site, maxCount]
   })
 
   return result?.result || { success: false, products: [], total: 0 }
@@ -1615,3 +1727,97 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true
   }
 })
+
+// ==================== ABCmart / GrandStage 잔액 전송 ====================
+
+async function sendAbcmartBalance(data) {
+  try {
+    const res = await fetch(`${PROXY_URL}/api/v1/samba/sourcing-accounts/sync-balance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...data, site: data.siteName }),
+    })
+    if (res.ok) {
+      const result = await res.json()
+      console.log(`[잔액] ${data.siteName} 서버 저장 완료:`, result)
+    } else {
+      console.warn(`[잔액] ${data.siteName} 서버 저장 실패: HTTP ${res.status}`)
+    }
+  } catch (e) {
+    console.log(`[잔액] ${data.siteName} 서버 전송 실패 (무시): ${e.message}`)
+  }
+}
+
+// ==================== SSG 판매자등급/평점 스크래핑 ====================
+
+async function scrapeSSGScores() {
+  const SSG_HOME_URL = 'https://po.ssgadm.com/main.ssg'
+  const result = {}
+
+  const allSsgTabs = await chrome.tabs.query({ url: 'https://po.ssgadm.com/*' })
+  const homeTabs = allSsgTabs.filter(t => t.url && t.url.includes('main.ssg'))
+
+  let tabId
+  if (homeTabs.length > 0) {
+    tabId = homeTabs[0].id
+  } else if (allSsgTabs.length > 0) {
+    tabId = allSsgTabs[0].id
+    await chrome.tabs.update(tabId, { url: SSG_HOME_URL, active: true })
+    await new Promise(r => setTimeout(r, 5000))
+  } else {
+    const tab = await chrome.tabs.create({ url: SSG_HOME_URL, active: false })
+    tabId = tab.id
+    await new Promise(r => setTimeout(r, 7000))
+  }
+
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const result = {}
+        const parseGradeVal = (text) => {
+          const m = text.match(/([\d.]+)\s*[%점]/)
+          return m ? m[1] : text.trim()
+        }
+        const rows = document.querySelectorAll('tr')
+        for (const row of rows) {
+          const cells = row.querySelectorAll('td, th')
+          if (cells.length >= 2) {
+            const label = (cells[0].textContent || '').trim()
+            const value = (cells[1].textContent || '').trim()
+            if (label.includes('서비스평점') || label.includes('서비스 평점')) {
+              if (!result.ssg_service_score) { const g = value.match(/([\d.]+)/); result.ssg_service_score = g ? g[1] : value }
+            } else if (label.includes('주문이행')) {
+              if (!result.ssg_order_fulfill) result.ssg_order_fulfill = parseGradeVal(value)
+            } else if (label.includes('출고준수')) {
+              if (!result.ssg_ship_comply) result.ssg_ship_comply = parseGradeVal(value)
+            } else if (label.includes('24시간') || label.includes('답변')) {
+              if (!result.ssg_reply_rate) result.ssg_reply_rate = parseGradeVal(value)
+            } else if (label.includes('판매등급') || label.includes('판매자등급')) {
+              if (!result.ssg_seller_grade) { const g = value.match(/([A-Z가-힣]+)/); result.ssg_seller_grade = g ? g[1] : value }
+            }
+          }
+        }
+        if (!result.ssg_service_score) {
+          const fullText = document.body.innerText || ''
+          const patterns = {
+            ssg_service_score: /서비스\s*평점[:\s]*([\d.]+)/,
+            ssg_order_fulfill: /주문이행[:\s]*([\d.]+)/,
+            ssg_ship_comply: /출고준수[:\s]*([\d.]+)/,
+            ssg_reply_rate: /(?:24시간|답변)[:\s]*([\d.]+)/,
+            ssg_seller_grade: /판매(?:자)?등급[:\s]*([A-Z가-힣]+)/,
+          }
+          for (const [key, re] of Object.entries(patterns)) {
+            if (!result[key]) { const m = fullText.match(re); if (m) result[key] = m[1] }
+          }
+        }
+        return result
+      },
+    })
+    Object.assign(result, res.result || {})
+  } catch (e) {
+    console.error(`[SSG스코어] 스크래핑 실패:`, e)
+  }
+
+  return result
+}
