@@ -1128,15 +1128,47 @@ async def sync_orders_from_markets(
                         logger.warning(f"[주문동기화] {label}: 발주확인 실패 — {ce}")
 
             elif market_type == "coupang":
-                # 쿠팡 주문 조회 (구현 대기)
-                results.append(
-                    {
-                        "account": label,
-                        "status": "skip",
-                        "message": "쿠팡 주문 조회 미구현",
-                    }
-                )
-                continue
+                from backend.domain.samba.proxy.coupang import CoupangClient
+
+                access_key = extras.get("accessKey", "") or account.api_key or ""
+                secret_key = extras.get("secretKey", "") or account.api_secret or ""
+                vendor_id = extras.get("vendorId", "") or seller_id or ""
+                if not access_key or not secret_key or not vendor_id:
+                    # fallback: 공유 설정
+                    settings_repo = SambaSettingsRepository(session)
+                    row = await settings_repo.find_by_async(key="store_coupang")
+                    if row and isinstance(row.value, dict):
+                        access_key = access_key or row.value.get("accessKey", "")
+                        secret_key = secret_key or row.value.get("secretKey", "")
+                        vendor_id = vendor_id or row.value.get("vendorId", "")
+                if not access_key or not secret_key or not vendor_id:
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "skip",
+                            "message": "쿠팡 인증정보 없음",
+                        }
+                    )
+                    continue
+                cpg_client = CoupangClient(access_key, secret_key, vendor_id)
+                raw_orders = await cpg_client.get_orders(days=body.days)
+                # 발주 미확인(ACCEPT) 주문 자동 발주확인
+                unconfirmed_box_ids: list[int] = []
+                for ro in raw_orders:
+                    orders_data.append(_parse_coupang_order(ro, account.id, label))
+                    if ro.get("orderedAt") and ro.get("status") == "ACCEPT":
+                        box_id = ro.get("shipmentBoxId")
+                        if box_id:
+                            unconfirmed_box_ids.append(int(box_id))
+                # 발주확인 실행
+                if unconfirmed_box_ids:
+                    try:
+                        await cpg_client.confirm_orders(unconfirmed_box_ids)
+                        logger.info(
+                            f"[주문동기화] {label}: {len(unconfirmed_box_ids)}건 발주확인 완료"
+                        )
+                    except Exception as ce:
+                        logger.warning(f"[주문동기화] {label}: 발주확인 실패 — {ce}")
             elif market_type == "11st":
                 # 11번가 주문 조회 (구현 대기)
                 results.append(
@@ -1147,6 +1179,40 @@ async def sync_orders_from_markets(
                     }
                 )
                 continue
+            elif market_type == "ssg":
+                from backend.domain.samba.proxy.ssg import SSGClient
+
+                api_key = extras.get("apiKey", "") or account.api_key or ""
+                if not api_key:
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "skip",
+                            "message": "SSG API Key 없음",
+                        }
+                    )
+                    continue
+                ssg_client = SSGClient(api_key)
+                try:
+                    fee_rate = float(extras.get("feeRate", 0) or 0)
+                    raw_orders = await ssg_client.get_orders(days=body.days)
+                    logger.info(f"[주문동기화] SSG({label}): {len(raw_orders)}건 조회")
+                    for ro in raw_orders:
+                        orders_data.append(
+                            ssg_client.parse_order(ro, account.id, label, fee_rate)
+                        )
+                except Exception as e:
+                    logger.warning(f"[주문동기화] {label}: SSG 조회 실패 — {e}")
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "error",
+                            "message": str(e)[:100],
+                        }
+                    )
+                    continue
+                finally:
+                    await ssg_client.close()
             elif market_type == "playauto":
                 from backend.domain.samba.proxy.playauto import PlayAutoClient
 
@@ -1497,7 +1563,12 @@ async def sync_orders_from_markets(
                 await session.commit()
 
             total_synced += synced
-            confirmed_count = len(unconfirmed_ids) if market_type == "smartstore" else 0
+            if market_type == "smartstore":
+                confirmed_count = len(unconfirmed_ids)
+            elif market_type == "coupang":
+                confirmed_count = len(unconfirmed_box_ids)
+            else:
+                confirmed_count = 0
             # 취소/반품/교환 요청 건수 (송장 미입력건만)
             cancel_requested = sum(
                 1
@@ -1728,6 +1799,9 @@ def _parse_playauto_order(
             "송장출력": "배송대기중",
             "주문확인": "취소중",
             "수취확인": "배송완료",
+            "취소마감": "취소완료",
+            "반품마감": "반품완료",
+            "교환마감": "교환완료",
         }.get(order_state, order_state),
         "shipping_company": ro.get("Sender", ""),
         "tracking_number": ro.get("SenderNo", ""),
@@ -1743,4 +1817,78 @@ def _parse_playauto_order(
             if site_name
             else ""
         ),
+    }
+
+
+def _parse_coupang_order(
+    order: dict, account_id: str, account_label: str
+) -> dict[str, Any]:
+    """쿠팡 주문시트 → SambaOrder 데이터 변환."""
+    # 쿠팡 주문 상태 → 내부 status 매핑
+    status_map: dict[str, str] = {
+        "ACCEPT": "pending",  # 결제완료
+        "INSTRUCT": "pending",  # 상품준비중
+        "DEPARTURE": "shipped",  # 배송시작
+        "DELIVERING": "shipped",  # 배송중
+        "FINAL_DELIVERY": "delivered",  # 배송완료
+        "NONE_TRACKING": "shipped",  # 추적불가
+        "CANCEL": "cancelled",  # 취소완료
+        "RETURN": "returned",  # 반품완료
+    }
+    # 쿠팡 주문 상태 → 한글 shipping_status
+    shipping_status_map: dict[str, str] = {
+        "ACCEPT": "발주미확인",
+        "INSTRUCT": "발송대기",
+        "DEPARTURE": "배송중",
+        "DELIVERING": "배송중",
+        "FINAL_DELIVERY": "배송완료",
+        "NONE_TRACKING": "배송중(추적불가)",
+        "CANCEL": "취소완료",
+        "RETURN": "반품완료",
+    }
+
+    coupang_status = order.get("status", "")
+    receiver = order.get("receiver", {})
+    sale_price = order.get("orderPrice", 0) or 0
+    quantity = order.get("shippingCount", 1) or 1
+
+    # 고객 전화번호: 안심번호 우선, 없으면 일반 전화번호
+    customer_phone = (
+        receiver.get("safeNumber", "")
+        or receiver.get("receiverPhoneNumber2", "")
+        or receiver.get("receiverPhoneNumber1", "")
+        or ""
+    )
+
+    # 고객 주소
+    addr1 = receiver.get("addr1", "") or ""
+    addr2 = receiver.get("addr2", "") or ""
+    customer_address = f"{addr1} {addr2}".strip()
+
+    # 쿠팡 수수료율 (카테고리별 상이, 기본 10.8%)
+    fee_rate = 10.8
+    revenue = sale_price * (1 - fee_rate / 100)
+
+    return {
+        "order_number": str(order.get("orderId", "")),
+        "shipment_id": str(order.get("shipmentBoxId", "")),
+        "channel_id": account_id,
+        "channel_name": account_label,
+        "product_id": str(order.get("sellerProductId", "")),
+        "product_name": order.get("sellerProductName", "")
+        or order.get("sellerProductItemName", ""),
+        "product_image": "",  # 쿠팡 주문시트에 이미지 미제공
+        "customer_name": receiver.get("name", ""),
+        "customer_phone": customer_phone,
+        "customer_address": customer_address,
+        "quantity": quantity,
+        "sale_price": sale_price,
+        "cost": 0,
+        "fee_rate": fee_rate,
+        "revenue": round(revenue, 2),
+        "status": status_map.get(coupang_status, "pending"),
+        "shipping_status": shipping_status_map.get(coupang_status, coupang_status),
+        "shipping_company": order.get("deliveryCompanyName", ""),
+        "tracking_number": order.get("invoiceNumber", ""),
+        "source": "coupang",
     }
