@@ -131,6 +131,95 @@ async def create_user(
     )
 
 
+_KR_REGION = {
+    "Seoul": "서울",
+    "Busan": "부산",
+    "Daegu": "대구",
+    "Incheon": "인천",
+    "Gwangju": "광주",
+    "Daejeon": "대전",
+    "Ulsan": "울산",
+    "Sejong": "세종",
+    "Gyeonggi-do": "경기",
+    "Gangwon-do": "강원",
+    "Chungcheongbuk-do": "충북",
+    "Chungcheongnam-do": "충남",
+    "Jeollabuk-do": "전북",
+    "Jeollanam-do": "전남",
+    "Gyeongsangbuk-do": "경북",
+    "Gyeongsangnam-do": "경남",
+    "Jeju-do": "제주",
+    "North Chungcheong": "충북",
+    "South Chungcheong": "충남",
+    "North Jeolla": "전북",
+    "South Jeolla": "전남",
+    "North Gyeongsang": "경북",
+    "South Gyeongsang": "경남",
+}
+_KR_CITY = {
+    "Suwon": "수원",
+    "Seongnam": "성남",
+    "Goyang": "고양",
+    "Yongin": "용인",
+    "Bucheon": "부천",
+    "Ansan": "안산",
+    "Anyang": "안양",
+    "Namyangju": "남양주",
+    "Hwaseong": "화성",
+    "Uijeongbu": "의정부",
+    "Gimpo": "김포",
+    "Gwangmyeong": "광명",
+    "Hanam": "하남",
+    "Siheung": "시흥",
+    "Gunpo": "군포",
+    "Osan": "오산",
+    "Icheon": "이천",
+    "Paju": "파주",
+    "Pyeongtaek": "평택",
+    "Yangju": "양주",
+    "Changwon": "창원",
+    "Gimhae": "김해",
+    "Jinju": "진주",
+    "Yangsan": "양산",
+    "Geoje": "거제",
+    "Tongyeong": "통영",
+    "Sacheon": "사천",
+    "Miryang": "밀양",
+    "Pohang": "포항",
+    "Gumi": "구미",
+    "Gimcheon": "김천",
+    "Andong": "안동",
+    "Yeongju": "영주",
+    "Sangju": "상주",
+    "Gyeongju": "경주",
+    "Gyeongsan": "경산",
+    "Cheonan": "천안",
+    "Asan": "아산",
+    "Seosan": "서산",
+    "Dangjin": "당진",
+    "Cheongju": "청주",
+    "Chungju": "충주",
+    "Jecheon": "제천",
+    "Jeonju": "전주",
+    "Gunsan": "군산",
+    "Iksan": "익산",
+    "Namwon": "남원",
+    "Yeosu": "여수",
+    "Suncheon": "순천",
+    "Mokpo": "목포",
+    "Gwangyang": "광양",
+    "Chuncheon": "춘천",
+    "Wonju": "원주",
+    "Gangneung": "강릉",
+    "Sokcho": "속초",
+    "Donghae": "동해",
+    "Samcheok": "삼척",
+    "Taebaek": "태백",
+    "Jeju City": "제주시",
+    "Seogwipo": "서귀포",
+}
+
+
 async def _resolve_ip_region(ip: str) -> str:
     """IP 주소로 접속 지역 조회 (ip-api.com 무료 API)."""
     if not ip or ip in ("127.0.0.1", "::1", "localhost"):
@@ -138,16 +227,27 @@ async def _resolve_ip_region(ip: str) -> str:
     try:
         async with httpx.AsyncClient(timeout=3) as client:
             resp = await client.get(
-                f"http://ip-api.com/json/{ip}?fields=country,regionName,city&lang=ko"
+                f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,regionName,city"
             )
             if resp.status_code == 200:
                 data = resp.json()
-                parts = [
-                    data.get("country", ""),
-                    data.get("regionName", ""),
-                    data.get("city", ""),
-                ]
-                return " ".join(p for p in parts if p).strip() or "알 수 없음"
+                if data.get("status") != "success":
+                    return "알 수 없음"
+                code = data.get("countryCode", "")
+                region = data.get("regionName", "")
+                city = data.get("city", "")
+                if code == "KR":
+                    kr_region = _KR_REGION.get(region, region)
+                    # 광역시: city와 region이 같으면 한글 지역명만 반환
+                    if city == region or not city:
+                        return kr_region
+                    kr_city = _KR_CITY.get(city, "")
+                    if kr_city:
+                        return f"{kr_region} {kr_city}"
+                    # 매핑 없는 도시명 → 시/도만 반환
+                    return kr_region
+                country = data.get("country", "")
+                return f"{country} {city}".strip() or "알 수 없음"
     except Exception:
         pass
     return "알 수 없음"
