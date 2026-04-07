@@ -1,15 +1,17 @@
 """삼바웨이브 사용자(로그인 계정) 관리 API."""
 
 import os
+from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.domain.samba.user.model import SambaUser
+from backend.domain.samba.user.model import SambaLoginHistory, SambaUser
 from backend.domain.samba.user.repository import SambaUserRepository
 from backend.domain.user.auth_service import get_user_id
 from backend.utils.logger import logger
@@ -129,10 +131,41 @@ async def create_user(
     )
 
 
+async def _resolve_ip_region(ip: str) -> str:
+    """IP 주소로 접속 지역 조회 (ip-api.com 무료 API)."""
+    if not ip or ip in ("127.0.0.1", "::1", "localhost"):
+        return "로컬"
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            resp = await client.get(
+                f"http://ip-api.com/json/{ip}?fields=country,regionName,city&lang=ko"
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                parts = [
+                    data.get("country", ""),
+                    data.get("regionName", ""),
+                    data.get("city", ""),
+                ]
+                return " ".join(p for p in parts if p).strip() or "알 수 없음"
+    except Exception:
+        pass
+    return "알 수 없음"
+
+
+def _get_client_ip(request: Request) -> str:
+    """클라이언트 IP 추출 (프록시 헤더 우선)."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
 @router.post("/login", response_model=UserOut)
 async def login_user(
     body: UserLoginDto,
-    session: AsyncSession = Depends(get_read_session_dependency),
+    request: Request,
+    session: AsyncSession = Depends(get_write_session_dependency),
 ):
     """이메일/비밀번호 로그인."""
     repo = SambaUserRepository(session)
@@ -156,7 +189,20 @@ async def login_user(
     auth_svc = AuthService(session)
     access_token = auth_svc._create_access_token(user.id)
 
-    logger.info(f"[사용자관리] 로그인: {user.email}")
+    # 로그인 이력 저장
+    ip = _get_client_ip(request)
+    region = await _resolve_ip_region(ip)
+    history = SambaLoginHistory(
+        user_id=user.id,
+        email=user.email,
+        ip_address=ip,
+        region=region,
+        user_agent=request.headers.get("user-agent", ""),
+    )
+    session.add(history)
+    await session.commit()
+
+    logger.info(f"[사용자관리] 로그인: {user.email} IP={ip} 지역={region}")
     return UserOut(
         id=user.id,
         email=user.email,
@@ -213,6 +259,50 @@ async def update_user(
         created_at=user.created_at.isoformat(),
         updated_at=user.updated_at.isoformat(),
     )
+
+
+class LoginHistoryOut(BaseModel):
+    id: str
+    email: str
+    ip_address: Optional[str] = None
+    region: Optional[str] = None
+    created_at: str
+
+
+@router.get("/login-history", response_model=list[LoginHistoryOut])
+async def get_login_history(
+    start: Optional[str] = Query(None, description="시작일 YYYY-MM-DD"),
+    end: Optional[str] = Query(None, description="종료일 YYYY-MM-DD"),
+    limit: int = Query(100, ge=1, le=500),
+    session: AsyncSession = Depends(get_read_session_dependency),
+    _user_id: str = Depends(get_user_id),
+):
+    """로그인 이력 조회 (날짜 범위 필터)."""
+    stmt = select(SambaLoginHistory).order_by(SambaLoginHistory.created_at.desc())
+
+    if start:
+        start_dt = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        stmt = stmt.where(SambaLoginHistory.created_at >= start_dt)
+    if end:
+        end_dt = datetime.strptime(end, "%Y-%m-%d").replace(
+            hour=23, minute=59, second=59, tzinfo=timezone.utc
+        )
+        stmt = stmt.where(SambaLoginHistory.created_at <= end_dt)
+
+    stmt = stmt.limit(limit)
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+
+    return [
+        LoginHistoryOut(
+            id=r.id,
+            email=r.email,
+            ip_address=r.ip_address,
+            region=r.region,
+            created_at=r.created_at.isoformat(),
+        )
+        for r in rows
+    ]
 
 
 @router.delete("/{user_id}")

@@ -1256,6 +1256,14 @@ export const userApi = {
     request<SambaUser>(
       `${SAMBA_PREFIX}/users/login`, { method: 'POST', body: JSON.stringify({ email, password }) }
     ),
+  loginHistory: (start?: string, end?: string, limit = 100) => {
+    const p = new URLSearchParams({ limit: String(limit) })
+    if (start) p.set('start', start)
+    if (end) p.set('end', end)
+    return request<{ id: string; email: string; ip_address: string | null; region: string | null; created_at: string }[]>(
+      `${SAMBA_PREFIX}/users/login-history?${p}`
+    )
+  },
 }
 
 // ── AI Sourcing (AI 소싱기) ──
