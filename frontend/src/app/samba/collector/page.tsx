@@ -159,6 +159,13 @@ export default function CollectorPage() {
   const [brandSelectedCats, setBrandSelectedCats] = useState<Set<string>>(new Set())
   const [brandTotal, setBrandTotal] = useState(0)
 
+  // 롯데ON 브랜드 선택 모달
+  const [showBrandModal, setShowBrandModal] = useState(false)
+  const [brandModalList, setBrandModalList] = useState<{ name: string; count: number }[]>([])
+  const [brandModalSelected, setBrandModalSelected] = useState<Set<string>>(new Set())
+  const [brandModalKeyword, setBrandModalKeyword] = useState('')
+  const [brandModalParsed, setBrandModalParsed] = useState<{ brand: string; keyword: string; gf: string } | null>(null)
+
   // 일괄 갱신
   const [refreshing, setRefreshing] = useState(false)
   const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null)
@@ -879,14 +886,39 @@ export default function CollectorPage() {
               if (!collectUrl.trim()) { showAlert('URL 또는 키워드를 입력하세요'); return }
               setBrandScanning(true)
               setBrandCategories([]); setBrandSelectedCats(new Set())
+
+              const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
+              // /brand/{name}/products 경로 패턴 지원
+              const pathBrandMatch = parsed?.pathname.match(/\/brand\/([^/]+)/)
+              const brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || ''
+              const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : '')
+              const gf = parsed?.searchParams.get('gf') || 'A'
+              if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
+
+              // 롯데ON: 브랜드 탐색 후 선택 모달 표시
+              if (selectedSite === 'LOTTEON') {
+                try {
+                  const discoverKeyword = keyword || brand
+                  const res = await collectorApi.brandDiscover(discoverKeyword, 'LOTTEON')
+                  // 키워드와 정확 일치하는 브랜드만 기본 체크 (공백 제거 후 비교)
+                  const normalizedKeyword = discoverKeyword.replace(/\s/g, '').toLowerCase()
+                  const defaultSelected = new Set(
+                    res.brands
+                      .filter(b => b.name.replace(/\s/g, '').toLowerCase() === normalizedKeyword)
+                      .map(b => b.name)
+                  )
+                  setBrandModalList(res.brands)
+                  setBrandModalSelected(defaultSelected)
+                  setBrandModalKeyword(discoverKeyword)
+                  setBrandModalParsed({ brand, keyword, gf })
+                  setShowBrandModal(true)
+                } catch (e) { showAlert(e instanceof Error ? e.message : '브랜드 탐색 실패', 'error') }
+                setBrandScanning(false)
+                return
+              }
+
+              // 무신사: 기존 동작 유지
               try {
-                const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
-                // /brand/{name}/products 경로 패턴 지원
-                const pathBrandMatch = parsed?.pathname.match(/\/brand\/([^/]+)/)
-                const brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || ''
-                const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : '')
-                const gf = parsed?.searchParams.get('gf') || 'A'
-                if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
                 const res = await collectorApi.brandScan(brand, gf, keyword, selectedSite)
                 setBrandCategories(res.categories)
                 setBrandTotal(res.total)
@@ -896,7 +928,7 @@ export default function CollectorPage() {
               setBrandScanning(false)
             }} disabled={brandScanning}
               style={{ padding: '0.6rem 1rem', background: brandScanning ? '#333' : 'transparent', border: '1px solid #FF8C00', borderRadius: '6px', color: '#FF8C00', fontSize: '0.82rem', fontWeight: 600, cursor: brandScanning ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>
-              {brandScanning ? '스캔 중...' : '카테고리 스캔'}
+              {brandScanning ? '탐색 중...' : '카테고리 스캔'}
             </button>
           )}
           <button
@@ -918,6 +950,7 @@ export default function CollectorPage() {
                     real_total: brandTotal,
                     options: checkedOptions,
                     source_site: selectedSite,
+                    selected_brands: brandModalParsed ? Array.from(brandModalSelected) : undefined,
                   })
                   addLog(`[카테고리분류] ${res.created}개 그룹 생성 완료`)
                   showAlert(`${res.created}개 그룹이 생성되었습니다`, 'success')
@@ -989,6 +1022,7 @@ export default function CollectorPage() {
                         real_total: brandTotal,
                         options: checkedOptions,
                         source_site: selectedSite,
+                        selected_brands: brandModalParsed ? Array.from(brandModalSelected) : undefined,
                       })
                       addLog(`[카테고리분류] ${res.created}개 그룹 생성 완료`)
                       showAlert(`${res.created}개 그룹이 생성되었습니다`, 'success')
@@ -1004,6 +1038,98 @@ export default function CollectorPage() {
             </div>
         )}
       </div>
+
+      {/* 롯데ON 브랜드 선택 모달 */}
+      {showBrandModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 1000,
+          background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '10px',
+            padding: '1.5rem', width: '420px', maxWidth: '90vw',
+          }}>
+            {/* 모달 헤더 */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#E5E5E5' }}>
+                브랜드 선택 — &quot;{brandModalKeyword}&quot;
+              </span>
+              <button
+                onClick={() => setShowBrandModal(false)}
+                style={{ background: 'none', border: 'none', color: '#666', fontSize: '1.1rem', cursor: 'pointer' }}
+              >&times;</button>
+            </div>
+
+            {/* 전체선택/해제 */}
+            <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.75rem' }}>
+              <button
+                onClick={() => setBrandModalSelected(new Set(brandModalList.map(b => b.name)))}
+                style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}
+              >전체선택</button>
+              <button
+                onClick={() => setBrandModalSelected(new Set())}
+                style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}
+              >전체해제</button>
+              <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: '#666', alignSelf: 'center' }}>
+                {brandModalSelected.size}/{brandModalList.length}개 선택
+              </span>
+            </div>
+
+            {/* 브랜드 목록 */}
+            <div style={{ maxHeight: '300px', overflowY: 'auto', marginBottom: '1rem' }}>
+              {brandModalList.map(b => (
+                <label key={b.name} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.3rem 0', cursor: 'pointer', fontSize: '0.82rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={brandModalSelected.has(b.name)}
+                    onChange={e => {
+                      const next = new Set(brandModalSelected)
+                      if (e.target.checked) next.add(b.name); else next.delete(b.name)
+                      setBrandModalSelected(next)
+                    }}
+                    style={{ accentColor: '#FF8C00' }}
+                  />
+                  <span style={{ color: '#E5E5E5', flex: 1 }}>{b.name}</span>
+                  <span style={{ color: '#FF8C00', fontWeight: 600, fontSize: '0.75rem' }}>{b.count.toLocaleString()}건</span>
+                </label>
+              ))}
+            </div>
+
+            {/* 취소 / 스캔 진행 버튼 */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button
+                onClick={() => setShowBrandModal(false)}
+                style={{ padding: '0.5rem 1rem', background: 'transparent', border: '1px solid #3D3D3D', borderRadius: '6px', color: '#888', fontSize: '0.82rem', cursor: 'pointer' }}
+              >취소</button>
+              <button
+                onClick={async () => {
+                  if (brandModalSelected.size === 0) { showAlert('브랜드를 1개 이상 선택하세요'); return }
+                  setShowBrandModal(false)
+                  setBrandScanning(true)
+                  setBrandCategories([]); setBrandSelectedCats(new Set())
+                  const { brand, keyword, gf } = brandModalParsed || { brand: '', keyword: brandModalKeyword, gf: 'A' }
+                  const selectedBrands = Array.from(brandModalSelected)
+                  try {
+                    const res = await collectorApi.brandScan(brand, gf, keyword, 'LOTTEON', selectedBrands)
+                    setBrandCategories(res.categories)
+                    setBrandTotal(res.total)
+                    setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
+                    addLog(`[카테고리스캔] ${keyword || brand} (${selectedBrands.length}개 브랜드): ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                  } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+                  setBrandScanning(false)
+                }}
+                disabled={brandModalSelected.size === 0}
+                style={{
+                  padding: '0.5rem 1.2rem', background: brandModalSelected.size === 0 ? '#333' : '#FF8C00',
+                  border: 'none', borderRadius: '6px', color: '#fff', fontSize: '0.82rem',
+                  fontWeight: 600, cursor: brandModalSelected.size === 0 ? 'not-allowed' : 'pointer',
+                }}
+              >카테고리 스캔 진행 ({brandModalSelected.size}개)</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 로그현황 */}
       <div style={{

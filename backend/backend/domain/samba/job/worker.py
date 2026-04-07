@@ -1225,6 +1225,36 @@ class JobWorker:
                 f"[잡워커] LOTTEON BC코드 필터 {sf.category_filter}: {before}→{len(items_list)}건"
             )
 
+        # LOTTEON: 선택된 브랜드 목록으로 정확 일치 필터링
+        # URL 파라미터 brands=나이키,나이키 키즈 형태 (콤마 구분)
+        # brands 파라미터 없으면 keyword 단일 브랜드로 사용 (하위 호환)
+        if site == "LOTTEON":
+            from backend.domain.samba.proxy.lotteon_sourcing import _filter_by_brands
+
+            _selected_brands: list[str] = []
+            try:
+                parsed2 = urlparse(sf.keyword or "")
+                if parsed2.scheme:
+                    _qs2 = parse_qs(parsed2.query)
+                    _brands_param = _qs2.get("brands", [""])[0]
+                    if _brands_param:
+                        _selected_brands = [
+                            b.strip() for b in _brands_param.split(",") if b.strip()
+                        ]
+            except Exception:
+                pass
+
+            if not _selected_brands and keyword:
+                _selected_brands = [keyword]
+
+            if _selected_brands:
+                before = len(items_list)
+                items_list = _filter_by_brands(items_list, _selected_brands)
+                if before != len(items_list):
+                    logger.info(
+                        f"[잡워커] LOTTEON 브랜드 필터 {_selected_brands}: {before}→{len(items_list)}건"
+                    )
+
         await repo.update_progress(job.id, 0, remaining)
 
         # 카테고리 매핑 (패션플러스)

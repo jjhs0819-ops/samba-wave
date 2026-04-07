@@ -1827,6 +1827,31 @@ class BrandScanRequest(BaseModel):
     gf: str = "A"
     keyword: str = ""
     source_site: str = "MUSINSA"
+    selected_brands: list[str] = []
+
+
+class BrandDiscoverRequest(BaseModel):
+    keyword: str = ""
+    source_site: str = "LOTTEON"
+
+
+@router.post("/brand-discover")
+async def brand_discover(body: BrandDiscoverRequest):
+    """키워드로 소싱처에서 발견된 브랜드 목록 반환 (사용자 선택용).
+
+    프론트에서 이 결과로 체크박스 목록을 표시하고, 사용자가 선택한
+    브랜드를 `/brand-scan`의 `selected_brands`로 전달한다.
+    """
+    if not body.keyword:
+        raise HTTPException(400, "keyword가 필요합니다")
+
+    if body.source_site == "LOTTEON":
+        from backend.domain.samba.plugins.sourcing.lotteon import LotteonSourcingPlugin
+
+        plugin = LotteonSourcingPlugin()
+        return await plugin.discover_brands(body.keyword)
+
+    raise HTTPException(400, f"브랜드 탐색 미지원 소싱처: {body.source_site}")
 
 
 @router.post("/brand-scan")
@@ -1846,7 +1871,9 @@ async def brand_scan(
         from backend.domain.samba.plugins.sourcing.lotteon import LotteonSourcingPlugin
 
         plugin = LotteonSourcingPlugin()
-        return await plugin.scan_categories(keyword)
+        # selected_brands가 없으면 keyword 자체를 단일 브랜드로 사용 (하위 호환)
+        selected = body.selected_brands or [keyword]
+        return await plugin.scan_categories(keyword, selected_brands=selected)
 
     if body.source_site == "MUSINSA":
         # 무신사 쿠키 로드
@@ -1946,6 +1973,7 @@ class BrandCreateGroupsRequest(BaseModel):
     applied_policy_id: Optional[str] = None
     options: dict = {}
     source_site: str = "MUSINSA"
+    selected_brands: list[str] = []
 
 
 @router.post("/brand-create-groups")
@@ -1994,7 +2022,18 @@ async def brand_create_groups(
             keyword = "https://www.musinsa.com/search/goods?" + "&".join(parts)
             category_filter = code or None
         else:  # LOTTEON
-            keyword = body.brand_name or body.brand or ""
+            _brand_label = body.brand_name or body.brand or ""
+            # 선택된 브랜드 목록을 URL 쿼리 파라미터로 저장 (worker.py에서 파싱)
+            # brands 없으면 keyword 단일 브랜드로 fallback
+            if body.selected_brands:
+                from urllib.parse import quote as _quote
+
+                _brands_q = _quote(",".join(body.selected_brands))
+                keyword = (
+                    f"lotteon://search?q={_quote(_brand_label)}&brands={_brands_q}"
+                )
+            else:
+                keyword = _brand_label
             # 합산된 BC코드들을 콤마로 연결 (같은 path의 여러 BC코드)
             bc_codes = cat.get("bc_codes") or ([code] if code else [])
             category_filter = ",".join(bc_codes) if bc_codes else None

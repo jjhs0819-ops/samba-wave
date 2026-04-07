@@ -56,7 +56,13 @@ class LotteonSourcingPlugin(SourcingPlugin):
         client = LotteonSourcingClient()
         return await self.safe_call(client.get_product_detail(site_product_id))
 
-    async def scan_categories(self, keyword: str, max_scan: int = 20) -> dict:
+    async def scan_categories(
+        self,
+        keyword: str,
+        *,
+        selected_brands: list[str] | None = None,
+        max_scan: int = 20,
+    ) -> dict:
         """롯데ON 카테고리 스캔 — 검색 결과에서 카테고리 분포 집계.
 
         safe_call() 미사용: scan_categories() 내부에서 asyncio.Semaphore(3)으로
@@ -65,7 +71,16 @@ class LotteonSourcingPlugin(SourcingPlugin):
         from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
 
         client = LotteonSourcingClient()
-        return await client.scan_categories(keyword, max_scan=max_scan)
+        return await client.scan_categories(
+            keyword, selected_brands=selected_brands, max_scan=max_scan
+        )
+
+    async def discover_brands(self, keyword: str) -> dict:
+        """롯데ON 키워드 검색 → 발견된 브랜드 목록 반환 (사용자 선택용)."""
+        from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
+
+        client = LotteonSourcingClient()
+        return await client.discover_brands(keyword)
 
     async def _fetch_pbf_refresh(self, sitm_no: str) -> dict:
         """pbf API 직접 호출로 refresh용 데이터 취득 (HTML 파싱 스킵).

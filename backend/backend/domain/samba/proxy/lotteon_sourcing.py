@@ -162,6 +162,26 @@ class RateLimitError(Exception):
         super().__init__(f"HTTP {status} (retry_after={retry_after})")
 
 
+def _filter_by_brands(items: list[dict], selected_brands: list[str]) -> list[dict]:
+    """브랜드 필터링 — 선택된 브랜드 목록에 정확 일치하는 상품만 반환.
+
+    공백 정규화 후 비교하여 "나이키 골프"와 "나이키골프"를 동일하게 처리.
+    selected_brands가 비어있으면 필터링 없이 전체 반환.
+    """
+    if not items or not selected_brands:
+        return items
+
+    brand_set = {b.replace(" ", "").strip() for b in selected_brands if b}
+    if not brand_set:
+        return items
+
+    return [
+        it
+        for it in items
+        if (it.get("brand") or "").replace(" ", "").strip() in brand_set
+    ]
+
+
 class LotteonSourcingClient:
     """롯데ON 소싱용 웹 스크래핑 클라이언트 (검색, 상세).
 
@@ -1062,11 +1082,62 @@ class LotteonSourcingClient:
         """worker.py get_detail 패턴 호환 래퍼 — get_product_detail() 결과 반환."""
         return await self.get_product_detail(product_id)
 
-    async def scan_categories(self, keyword: str, **_kwargs: Any) -> dict[str, Any]:
+    async def discover_brands(
+        self, keyword: str, *, max_pages: int = 100
+    ) -> dict[str, Any]:
+        """롯데ON 키워드 검색 → 발견된 브랜드 분포 반환.
+
+        프론트에서 사용자가 어떤 브랜드를 카테고리 스캔 대상으로 선택할지
+        결정하기 위한 1단계 조회.
+
+        Returns:
+            {
+                "brands": [{"name": "나이키", "count": 599}, ...],
+                "total": int,
+            }
+        """
+        logger.info(f'[LOTTEON] 브랜드 탐색 시작: "{keyword}"')
+        brand_counts: dict[str, int] = {}
+        total = 0
+        for page_num in range(1, max_pages + 1):
+            try:
+                items = await self.search_products(keyword, page=page_num, size=60)
+                if not items:
+                    break
+                total += len(items)
+                for item in items:
+                    b = (item.get("brand") or "").strip()
+                    if b:
+                        brand_counts[b] = brand_counts.get(b, 0) + 1
+            except Exception as e:
+                logger.warning(f"[LOTTEON] 브랜드 탐색 p{page_num} 실패: {e}")
+                break
+
+        brands = [
+            {"name": b, "count": c}
+            for b, c in sorted(brand_counts.items(), key=lambda x: -x[1])
+        ]
+        logger.info(
+            f'[LOTTEON] 브랜드 탐색 완료: "{keyword}" → {len(brands)}개 브랜드, 총 {total}건'
+        )
+        return {"brands": brands, "total": total}
+
+    async def scan_categories(
+        self,
+        keyword: str,
+        *,
+        selected_brands: list[str] | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
         """롯데ON 카테고리 스캔 — qapi 검색 결과의 BC코드(scat_no)로 카테고리 분포 집계.
 
         qapi 검색으로 상품을 가져온 뒤, data.category(BC코드)를 기준으로
         카테고리별 상품 수를 집계한다. _LOTTEON_SCAT_NAMES로 카테고리 경로를 매핑.
+
+        Args:
+            keyword: 검색 키워드
+            selected_brands: 사용자가 선택한 브랜드 목록 (정확 일치 필터)
+                비어있거나 None이면 전체 브랜드 집계.
 
         Returns:
             {
@@ -1075,23 +1146,42 @@ class LotteonSourcingClient:
                 "groupCount": int,
             }
         """
-        logger.info(f'[LOTTEON] 카테고리 스캔 시작 (qapi BC코드): "{keyword}"')
+        logger.info(
+            f'[LOTTEON] 카테고리 스캔 시작 (qapi BC코드): "{keyword}" (selected_brands={selected_brands!r})'
+        )
 
-        # qapi로 최대 500개 상품 검색하여 BC코드 분포 집계
-        cat_counter: dict[str, int] = {}
+        # 1차: 전체 페이지 수집 (브랜드 필터 없이)
+        all_items: list[dict[str, Any]] = []
         scan_pages = 100  # 100페이지 × 60 = 6,000개
         for page_num in range(1, scan_pages + 1):
             try:
                 items = await self.search_products(keyword, page=page_num, size=60)
                 if not items:
                     break
-                for item in items:
-                    scat = item.get("scatNo") or item.get("scat_no") or ""
-                    if scat:
-                        cat_counter[scat] = cat_counter.get(scat, 0) + 1
+                all_items.extend(items)
             except Exception as e:
                 logger.warning(f"[LOTTEON] 카테고리 스캔 p{page_num} 실패: {e}")
                 break
+
+        # 2차: 선택 브랜드 필터링 (빈 리스트면 전체 통과)
+        filtered_items = (
+            _filter_by_brands(all_items, selected_brands)
+            if selected_brands
+            else all_items
+        )
+        filtered_count = len(all_items) - len(filtered_items)
+
+        # BC코드 집계
+        cat_counter: dict[str, int] = {}
+        for item in filtered_items:
+            scat = item.get("scatNo") or item.get("scat_no") or ""
+            if scat:
+                cat_counter[scat] = cat_counter.get(scat, 0) + 1
+
+        if selected_brands and filtered_count:
+            logger.info(
+                f"[LOTTEON] 브랜드 필터링: {filtered_count}건 제외 (selected={selected_brands!r}, 통과={len(filtered_items)}건)"
+            )
 
         # 미매핑 BC코드 자동 매핑: 상품 HTML breadcrumb에서 카테고리 경로 추출
         unmapped_codes = [bc for bc in cat_counter if bc not in _LOTTEON_SCAT_NAMES]
