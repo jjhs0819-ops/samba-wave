@@ -1435,14 +1435,29 @@ class JobWorker:
                     raw_detail_html,
                 )
 
-                await svc.create_collected_product(product_data)
-                total_saved += 1
-                await repo.update_progress(
-                    job.id, existing_count + total_saved, requested_count
+                from backend.domain.samba.collector.model import (
+                    SambaCollectedProduct as _CP,
                 )
+                from sqlalchemy.exc import IntegrityError as _IE
+
+                product_data = svc.prepare_product_data(product_data)
+                obj = _CP(**product_data)
+                session.add(obj)
+                try:
+                    await session.flush()
+                    total_saved += 1
+                    await repo.update_progress(
+                        job.id, existing_count + total_saved, requested_count
+                    )
+                except _IE:
+                    await session.rollback()
 
             except Exception as e:
                 logger.warning(f"[SSG] 상세 수집 실패 {item_id}: {e}")
+                try:
+                    await session.rollback()
+                except Exception:
+                    pass
 
             await asyncio.sleep(1.0)  # 상품별 딜레이
 
