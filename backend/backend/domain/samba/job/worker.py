@@ -146,6 +146,9 @@ class JobWorker:
         self._active_types: set[str] = set()  # 현재 실행 중인 잡 타입
         self._active_job_id: str | None = None  # 현재 실행 중인 잡 ID (shutdown 복구용)
         self._poll_count = 0
+        # 검색 결과 캐시: {(site, keyword): (items_list, timestamp)}
+        # 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
+        self._search_cache: dict[tuple[str, str], tuple[list, float]] = {}
 
     async def start(self):
         """무한 루프: pending 잡 조회 → 타입별 병렬 실행."""
@@ -1267,13 +1270,40 @@ class JobWorker:
                         if (site in ("Nike", "ABCmart") and sf.category_filter)
                         else max(remaining * 2, 100)
                     )
-                    result = await client.search(
-                        keyword, max_count=_max, **_search_kwargs
-                    )
-                    items_list = result.get("products", [])
-                    logger.info(
-                        f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건"
-                    )
+                    # 검색 캐시: 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
+                    import time as _time
+
+                    _cache_key = (site, keyword)
+                    _cached = self._search_cache.get(_cache_key)
+                    _cache_ttl = 300  # 5분
+                    if (
+                        _cached
+                        and _time.time() - _cached[1] < _cache_ttl
+                        and site in ("Nike", "ABCmart")
+                        and sf.category_filter
+                    ):
+                        items_list = list(_cached[0])
+                        logger.info(
+                            f"[잡워커] {site} 검색 캐시 히트 '{keyword}' → {len(items_list)}건"
+                        )
+                    else:
+                        result = await client.search(
+                            keyword, max_count=_max, **_search_kwargs
+                        )
+                        items_list = result.get("products", [])
+                        logger.info(
+                            f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건"
+                        )
+                        # 전수 검색 결과 캐시 저장
+                        if (
+                            site in ("Nike", "ABCmart")
+                            and sf.category_filter
+                            and items_list
+                        ):
+                            self._search_cache[_cache_key] = (
+                                items_list,
+                                _time.time(),
+                            )
             except Exception as e:
                 await repo.fail_job(job.id, f"검색 실패: {e}")
                 return
