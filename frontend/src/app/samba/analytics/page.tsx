@@ -23,6 +23,7 @@ const ORDER_STATUSES = [
   { key: 'cancelling', label: '취소중' },
   { key: 'returning', label: '반품중' },
   { key: 'exchanging', label: '교환중' },
+  { key: 'exchange_requested', label: '교환요청' },
   { key: 'cancel_requested', label: '취소요청' },
   { key: 'return_requested', label: '반품요청' },
   { key: 'cancelled', label: '취소완료' },
@@ -32,7 +33,7 @@ const ORDER_STATUSES = [
   { key: 'delivered', label: '배송완료' },
 ]
 // 기본 선택 상태
-const DEFAULT_STATUSES = ['pending', 'wait_ship', 'arrived', 'shipping', 'delivered', 'exchanged', 'exchanging']
+const DEFAULT_STATUSES = ['pending', 'wait_ship', 'arrived', 'shipping', 'delivered', 'exchanged', 'exchanging', 'exchange_requested']
 
 /** 검색 조건 저장 구조 */
 interface AnalyticsSearch {

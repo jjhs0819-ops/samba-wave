@@ -59,6 +59,7 @@ async def dashboard_stats(
         "delivered",
         "exchanged",
         "exchanging",
+        "exchange_requested",
     )
 
     # KST 기준 (UTC+9)
@@ -307,6 +308,7 @@ async def sales_breakdown(
         "delivered",
         "exchanged",
         "exchanging",
+        "exchange_requested",
     )
 
     # KST 기준 날짜 범위
