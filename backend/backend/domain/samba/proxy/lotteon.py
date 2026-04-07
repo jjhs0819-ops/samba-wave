@@ -1241,6 +1241,34 @@ class LotteonClient:
             result.extend(items)
         return result
 
+    async def get_settlement_items(self, days: int = 7) -> list[dict]:
+        """개별거래처 매출 정산 조회 (SettleItmdSales).
+
+        pymtAmt(지급대상금액)가 실제 정산금액.
+        주문과 (odNo, odSeq, procSeq) 키로 매칭하여 revenue/fee_rate 계산에 사용.
+        """
+        KST = timezone(timedelta(hours=9))
+        now = datetime.now(KST)
+        actual_days = min(days, 30)
+        start_date = (now - timedelta(days=actual_days - 1)).strftime("%Y%m%d")
+        end_date = now.strftime("%Y%m%d")
+        try:
+            resp = await self._call_api(
+                "POST",
+                "/v1/openapi/settle/v1/se/SettleItmdSales",
+                body={"startDate": start_date, "endDate": end_date},
+            )
+            data = resp.get("data") or []
+            if not isinstance(data, list):
+                data = []
+            logger.info(
+                f"[롯데ON][정산] {start_date}~{end_date} SettleItmdSales={len(data)}건"
+            )
+            return data
+        except Exception as e:
+            logger.warning(f"[롯데ON][정산] 조회 실패 ({start_date}~{end_date}): {e}")
+            return []
+
     # 판매자 취소 사유코드
     SELLER_CANCEL_REASON_CODES: dict[str, str] = {
         "soldout": "111",  # 판매자 취소(품절)
@@ -1304,43 +1332,41 @@ class LotteonClient:
             return False, str(e)
 
     async def confirm_orders(self, order_items: list[dict]) -> bool:
-        """발주 확인 처리 (SellerDeliveryProgressStateInform, odPrgsStepCd=11)."""
-        KST = timezone(timedelta(hours=9))
-        dttm = datetime.now(KST).strftime("%Y%m%d%H%M%S")
-        items = [
-            {
+        """주문확인 = 연동완료 처리 (SellerIfCompleteInform, ifCplYN=Y).
+
+        롯데ON 판매자센터 "신규주문" 목록은 ifCplYN=N 기준.
+        ifCplYN=Y 로 통보해야 신규주문에서 제거되고 주문확인 처리됨.
+        """
+        items = []
+        for item in order_items:
+            entry = {
                 "dvRtrvDvsCd": "DV",
-                "odNo": item.get("odNo", ""),
-                "odSeq": "1",
-                "procSeq": "1",
-                "orglProcSeq": "",
-                "clmNo": "",
-                "odPrgsStepCd": "11",
-                "dvTrcStatDttm": dttm,
-                "invcNbr": "",
-                "dvCoCd": "",
-                "invcNo": "",
-                "spdNo": item.get("spdNo", ""),
-                "spdNm": "",
-                "sitmNo": item.get("sitmNo", ""),
-                "itmNm": "",
-                "itmSlPrc": "",
-                "slQty": str(item.get("slQty", "1")),
-                "dvTrcStatCd": "",
+                "odNo": str(item.get("odNo", "")),
+                "odSeq": int(item.get("odSeq", 1) or 1),
+                "procSeq": int(item.get("procSeq", 1) or 1),
+                "ifCplYN": "Y",
+                "ifFlRsnCnts": "",
             }
-            for item in order_items
-        ]
+            clm_no = item.get("clmNo") or ""
+            if clm_no:
+                entry["clmNo"] = str(clm_no)
+                entry["orglProcSeq"] = int(item.get("orglProcSeq", 1) or 1)
+            items.append(entry)
         try:
             resp = await self._call_api(
                 "POST",
-                "/v1/openapi/delivery/v1/SellerDeliveryProgressStateInform",
-                body={"deliveryProgressStateList": items},
+                "/v1/openapi/delivery/v1/SellerIfCompleteInform",
+                body={"ifCompleteList": items},
             )
-            rs = (resp.get("data") or {}).get("rsltCd", "")
-            logger.info(f"[롯데ON] 발주확인 응답: rsltCd={rs}")
-            return True
+            rs = (resp.get("data") or {}).get("rsltCd", "") or resp.get(
+                "returnCode", ""
+            )
+            logger.info(
+                f"[롯데ON] 주문확인(SellerIfCompleteInform) 응답: rsltCd={rs} count={len(items)}"
+            )
+            return str(rs) == "0000"
         except Exception as e:
-            logger.warning(f"[롯데ON] 발주 확인 실패: {e}")
+            logger.warning(f"[롯데ON] 주문확인 실패: {e}")
             return False
 
     # 택배사 한글명 → 롯데ON dvCoCd 매핑 (SellerDeliveryProgressStateInform 기준)

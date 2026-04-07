@@ -1250,6 +1250,48 @@ async def sync_orders_from_markets(
                 )
                 for ro in raw_orders:
                     orders_data.append(_parse_lotteon_order(ro, account.id, label))
+
+                # ── 정산금액 매칭 (SettleItmdSales) ─────────────────────────
+                try:
+                    settle_items = await lotteon_client.get_settlement_items(
+                        days=body.days
+                    )
+                    # (odNo, odSeq, procSeq) → 정산 데이터 매핑
+                    settle_map: dict[tuple[str, str, str], dict] = {}
+                    for si in settle_items:
+                        key = (
+                            str(si.get("odNo", "")),
+                            str(si.get("odSeq", "")),
+                            str(si.get("procSeq", "")),
+                        )
+                        settle_map[key] = si
+                    # 매출 주문에 매칭 → revenue/fee_rate 갱신
+                    matched = 0
+                    for i, ro in enumerate(raw_orders):
+                        key = (
+                            str(ro.get("odNo", "")),
+                            str(ro.get("odSeq", "1")),
+                            str(ro.get("procSeq", "1")),
+                        )
+                        si = settle_map.get(key)
+                        if not si:
+                            continue
+                        pymt_amt = float(si.get("pymtAmt", 0) or 0)
+                        sl_amt = float(si.get("slAmt", 0) or 0)
+                        sl_qty = float(si.get("slQty", 1) or 1)
+                        gross = sl_amt * sl_qty
+                        if pymt_amt > 0 and gross > 0:
+                            fee_rate = round((1 - pymt_amt / gross) * 100, 2)
+                            orders_data[i]["revenue"] = pymt_amt
+                            orders_data[i]["fee_rate"] = fee_rate
+                            matched += 1
+                    logger.info(
+                        f"[주문동기화] {label}: 정산 매칭 {matched}/{len(raw_orders)}건 "
+                        f"(정산 API {len(settle_items)}건)"
+                    )
+                except Exception as se:
+                    logger.warning(f"[주문동기화] {label}: 정산 조회 실패 — {se}")
+
                 # 발주확인은 수동 처리 (원소싱처 재고/가격 확인 후 사용자가 결정)
                 # 교환 클레임 조회 → 기존 주문 shipping_status 업데이트
                 try:
