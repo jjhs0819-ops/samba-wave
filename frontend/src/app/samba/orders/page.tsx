@@ -322,7 +322,6 @@ export default function OrdersPage() {
   }
 
   const handleConfirmOrder = async (id: string) => {
-    if (!await showConfirm('주문확인(발주확인)을 진행합니다.\n원소싱처에서 재고/가격 확인이 완료되었나요?')) return
     try {
       const res = await orderApi.confirmOrder(id)
       if (res.ok) {
