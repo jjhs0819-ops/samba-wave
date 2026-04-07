@@ -1202,31 +1202,36 @@ async function handleSourcingJob(job) {
 
     let result = null
     if (job.type === 'category-scan' && job.site === 'GSShop') {
-      // GS샵 카테고리 스캔: 백화점 탭 사이드바에서 카테고리 분포 파싱
+      // GS샵 카테고리 스캔: 검색 결과 페이지에서 카테고리 분포 파싱
+      // 백화점 탭 클릭 후 사이드바 카테고리 읽기
+      await wait(2000) // 추가 렌더링 대기
+
       const [scanResult] = await chrome.scripting.executeScript({
         target: { tabId },
         world: 'MAIN',
         func: () => {
           const categories = []
+          const seen = new Set()
 
-          // 사이드바 카테고리 영역 탐색 (복수 셀렉터 폴백)
-          const sidebar = document.querySelector('.search-cate')
-            || document.querySelector('.aside-cate')
-            || document.querySelector('.cate-list')
-            || document.querySelector('aside')
-          const links = sidebar
-            ? sidebar.querySelectorAll('a[href]')
-            : document.querySelectorAll('.search-cate a[href], .aside-cate a[href], .cate-list a[href]')
+          // 전략1: 상품 목록 영역(#searchPrdList) 밖의 a 태그에서 "이름 (숫자)" 패턴 찾기
+          const productArea = document.querySelector('#searchPrdList')
+          const allLinks = document.querySelectorAll('a[href]')
 
-          for (const link of links) {
+          for (const link of allLinks) {
+            // 상품 목록 영역 내부 링크는 스킵
+            if (productArea && productArea.contains(link)) continue
+            // 헤더/GNB 영역 스킵
+            if (link.closest('header, nav, .gnb, #gnb, .header, #header')) continue
+
             const text = link.textContent.trim()
-            // "카테고리명 (1,234)" 패턴 매칭
+            // "카테고리명 (1,234)" 또는 "카테고리명(1,234)" 패턴
             const match = text.match(/^(.+?)\s*\(([\d,]+)\)\s*$/)
             if (!match) continue
             const name = match[1].trim()
             const count = parseInt(match[2].replace(/,/g, ''), 10)
-            if (count <= 0) continue
-            // href에서 cls 파라미터 추출 (카테고리 코드)
+            if (count <= 0 || seen.has(name)) continue
+            seen.add(name)
+
             const href = link.getAttribute('href') || ''
             let categoryCode = ''
             try {
@@ -1236,25 +1241,52 @@ async function handleSourcingJob(job) {
             categories.push({ name, count, categoryCode, href })
           }
 
+          // 전략2: 폴백 — li 요소에서 "이름 (숫자)" 패턴 찾기
+          if (categories.length === 0) {
+            const allLis = document.querySelectorAll('li')
+            for (const li of allLis) {
+              if (productArea && productArea.contains(li)) continue
+              const text = li.textContent.trim()
+              const match = text.match(/^(.+?)\s*\(([\d,]+)\)\s*$/)
+              if (!match) continue
+              const name = match[1].trim()
+              const count = parseInt(match[2].replace(/,/g, ''), 10)
+              if (count <= 0 || seen.has(name)) continue
+              seen.add(name)
+              const aTag = li.querySelector('a[href]')
+              const href = aTag?.getAttribute('href') || ''
+              let categoryCode = ''
+              try {
+                const url = new URL(href, location.origin)
+                categoryCode = url.searchParams.get('cls') || url.searchParams.get('sectCd') || ''
+              } catch {}
+              categories.push({ name, count, categoryCode, href })
+            }
+          }
+
           // 백화점 탭 전체 상품 수
           let total = 0
-          const tabEls = document.querySelectorAll('[class*="tab"] a, [class*="tab"] li, [class*="tab"] span')
-          for (const el of tabEls) {
+          const allEls = document.querySelectorAll('a, li, span, button')
+          for (const el of allEls) {
             const t = el.textContent.trim()
-            if (t.includes('백화점')) {
-              const m = t.match(/\(([\d,]+)\)/)
-              if (m) total = parseInt(m[1].replace(/,/g, ''), 10)
+            if (t.includes('백화점') && !t.includes('>')) {
+              const m = t.match(/백화점\s*\(([\d,]+)\)/)
+              if (m) { total = parseInt(m[1].replace(/,/g, ''), 10); break }
             }
           }
           if (total === 0 && categories.length > 0) {
             total = categories.reduce((s, c) => s + c.count, 0)
           }
 
+          // 디버그: DOM 정보 로깅
+          console.log('[GSSHOP 카테고리스캔] 페이지 URL:', location.href)
+          console.log('[GSSHOP 카테고리스캔] 발견 카테고리:', categories.length, JSON.stringify(categories.slice(0, 3)))
+
           return { success: categories.length > 0, categories, total }
         }
       })
       result = scanResult?.result || { success: false, categories: [], total: 0 }
-      console.log(`[소싱] GSShop 카테고리 스캔: ${result.categories?.length || 0}개 카테고리`)
+      console.log(`[소싱] GSShop 카테고리 스캔: ${result.categories?.length || 0}개 카테고리, total=${result.total}`)
     } else if (job.type === 'search' && job.site === 'GSShop') {
       // GS샵: 페이지네이션 반복 수집
       const maxCount = job.maxCount || 999

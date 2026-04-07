@@ -252,17 +252,21 @@ class GsShopSourcingClient:
           {"categories": [...], "total": int, "groupCount": int}
         """
         import base64
+        from urllib.parse import quote
 
         from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
         logger.info(f'[GSSHOP] 카테고리 스캔 시작: "{keyword}"')
 
         request_id = str(uuid.uuid4())[:8]
-        # 백화점 탭 필터 (eh 파라미터)
+        # 백화점 탭 필터 (eh 파라미터) — 공백 없는 compact JSON 필수
         eh = base64.b64encode(
-            json.dumps({"part": "DEPT", "selected": "opt-part"}).encode()
+            json.dumps(
+                {"part": "DEPT", "selected": "opt-part"}, separators=(",", ":")
+            ).encode()
         ).decode()
-        url = f"{self.BASE_PC}/shop/search/main.gs?tq={keyword}&eh={eh}"
+        encoded_kw = quote(keyword, safe="")
+        url = f"{self.BASE_PC}/shop/search/main.gs?tq={encoded_kw}&eh={eh}"
 
         loop = asyncio.get_event_loop()
         future: asyncio.Future = loop.create_future()
