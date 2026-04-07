@@ -278,7 +278,11 @@ class SSGSourcingClient:
         return brands
 
     def _parse_area_count(self, html: str) -> int:
-        """__NEXT_DATA__ → fetchSearchTopArea → areaList[0].count 파싱."""
+        """__NEXT_DATA__ 에서 브랜드 필터 적용된 실제 상품 수 파싱.
+
+        PAGING_UNIT.itemCount 우선 사용,
+        결과 0건이면 PAGING_UNIT이 없으므로 unitText[item_cnt]로 폴백.
+        """
         m = re.search(
             r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
             html,
@@ -297,17 +301,28 @@ class SSGSourcingClient:
             .get("dehydratedState", {})
             .get("queries", [])
         )
+
         for q in queries:
             qk = q.get("queryKey") or []
-            if "fetchSearchTopArea" not in qk:
+            if "fetchSearchItemListArea" not in qk:
                 continue
-            area_list = q.get("state", {}).get("data", {}).get("areaList", [])
-            if area_list:
-                raw = area_list[0].get("count", "0")
-                try:
-                    return int(str(raw).replace(",", ""))
-                except (ValueError, TypeError):
-                    return 0
+            data = q.get("state", {}).get("data")
+            if not isinstance(data, dict):
+                continue
+
+            area_list = data.get("areaList", [])
+
+            # 1순위: PAGING_UNIT.itemCount (브랜드 필터 적용된 정확한 상품 수)
+            for area in area_list:
+                if area.get("unitType") == "PAGING_UNIT":
+                    return int(area.get("itemCount", 0))
+
+            # 2순위: 0건 결과 — PAGING_UNIT 없음, unitText에서 item_cnt 추출
+            for area in area_list:
+                for unit_text in area.get("unitText") or []:
+                    if unit_text.get("type") == "item_cnt":
+                        return int(unit_text.get("value", 0))
+
         return 0
 
     def _extract_all_brand_filters(self, html: str) -> list[dict[str, Any]]:
