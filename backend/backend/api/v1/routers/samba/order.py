@@ -422,32 +422,21 @@ async def confirm_order(
         if not api_key:
             raise HTTPException(status_code=400, detail="롯데ON API Key 없음")
 
-        # shipment_id 에서 spdNo / sitmNo 추출 (형식: LO{spdNo}_{sitmNo})
-        spd_no = ""
-        sitm_no = ""
-        if order.shipment_id and "_" in order.shipment_id:
-            left, right = order.shipment_id.split("_", 1)
-            spd_no = left.replace("LO", "")
-            sitm_no = right
-
+        # SellerIfCompleteInform은 odNo/odSeq/procSeq만 필요 (비클레임은 기본 1/1)
         client = LotteonClient(api_key)
         try:
             await client.test_auth()
             ok = await client.confirm_orders(
-                [
-                    {
-                        "odNo": order.order_number,
-                        "sitmNo": sitm_no,
-                        "spdNo": spd_no,
-                        "slQty": order.quantity or 1,
-                    }
-                ]
+                [{"odNo": order.order_number, "odSeq": 1, "procSeq": 1}]
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"주문확인 실패: {e}")
 
         if not ok:
-            raise HTTPException(status_code=500, detail="주문확인 실패")
+            raise HTTPException(
+                status_code=500,
+                detail="롯데ON 주문확인 실패 — SellerIfCompleteInform 응답 rsltCd≠0000 (서버 로그 확인)",
+            )
 
         await svc.update_order(order_id, {"shipping_status": "출고지시"})
         logger.info(f"[주문확인] 롯데ON {order.order_number} 완료")
@@ -1843,156 +1832,6 @@ async def sync_orders_from_markets(
         logger.warning(f"[주문동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
 
     return {"total_synced": total_synced, "results": results}
-
-
-def _parse_lotteon_order(
-    order: dict, account_id: str, account_label: str
-) -> dict[str, Any]:
-    """롯데ON 주문 데이터 → SambaOrder 변환.
-
-    실제 응답 구조 확인 후 파싱 보정 예정.
-    롯데ON 주문 상태 코드 (예상):
-      PAYMENT_COMPLETE / PAYED → pending
-      DELIVERING → shipped
-      DELIVERED / PURCHASE_CONFIRMED → delivered
-      CANCEL_REQUEST → cancel_requested
-      RETURN_REQUEST → return_requested
-    """
-    # 상태 코드 매핑 (확인 전 예상값 — 로그 보고 보정)
-    status_map = {
-        "PAYMENT_COMPLETE": "pending",
-        "PAYED": "pending",
-        "PAY_COMPLETE": "pending",
-        "SHIP_ING": "shipped",
-        "DELIVERING": "shipped",
-        "DELIVERED": "delivered",
-        "PURCHASE_CONFIRMED": "delivered",
-        "CANCELED": "cancelled",
-        "CANCEL_REQUEST": "cancel_requested",
-        "RETURN_REQUEST": "return_requested",
-        "EXCHANGE_REQUEST": "return_requested",
-    }
-    raw_status = (
-        order.get("ordStatCd")
-        or order.get("orderStatus")
-        or order.get("slOrdStatCd")
-        or order.get("statCd")
-        or ""
-    )
-    claim_status = (
-        order.get("clmStatCd")
-        or order.get("claimStatus")
-        or order.get("claimStatCd")
-        or ""
-    )
-    claim_type = (
-        order.get("clmTypCd") or order.get("claimType") or order.get("claimTypCd") or ""
-    )
-
-    # 클레임 상태 한글 변환
-    claim_status_kr_map = {
-        "CANCEL_REQUEST": "취소요청",
-        "RETURN_REQUEST": "반품요청",
-        "EXCHANGE_REQUEST": "교환요청",
-        "CANCEL_DONE": "취소완료",
-        "RETURN_DONE": "반품완료",
-        "EXCHANGE_DONE": "교환완료",
-    }
-    if claim_status:
-        market_order_status = claim_status_kr_map.get(claim_status, claim_status)
-    else:
-        market_order_status_map = {
-            "PAYMENT_COMPLETE": "결제완료",
-            "PAY_COMPLETE": "결제완료",
-            "PAYED": "결제완료",
-            "SHIP_ING": "배송중",
-            "DELIVERING": "배송중",
-            "DELIVERED": "배송완료",
-            "PURCHASE_CONFIRMED": "구매확정",
-            "CANCELED": "취소완료",
-        }
-        market_order_status = market_order_status_map.get(raw_status, raw_status)
-
-    # 내부 상태 결정 (클레임 우선)
-    if claim_status in ("CANCEL_REQUEST",):
-        internal_status = "cancel_requested"
-    elif claim_status in ("RETURN_REQUEST", "EXCHANGE_REQUEST"):
-        internal_status = "return_requested"
-    elif claim_status in ("CANCEL_DONE",):
-        internal_status = "cancelled"
-    elif claim_status in ("RETURN_DONE",):
-        internal_status = "returned"
-    else:
-        internal_status = status_map.get(raw_status, "pending")
-
-    # 금액 (필드명 탐색)
-    sale_price = int(
-        order.get("ordAmt")
-        or order.get("payAmt")
-        or order.get("totalAmt")
-        or order.get("salePrice")
-        or order.get("ordPrc")
-        or 0
-    )
-
-    # 주문번호
-    order_number = str(
-        order.get("ordNo") or order.get("orderNo") or order.get("slOrdNo") or ""
-    )
-
-    # 상품 정보
-    product_name = (
-        order.get("spdNm")
-        or order.get("pdNm")
-        or order.get("productName")
-        or order.get("itemNm")
-        or ""
-    )
-    product_no = str(
-        order.get("spdNo") or order.get("pdNo") or order.get("productNo") or ""
-    )
-
-    # 고객 정보
-    customer_name = (
-        order.get("ordNm") or order.get("buyerNm") or order.get("custNm") or ""
-    )
-    customer_phone = (
-        order.get("ordTelNo") or order.get("buyerTel") or order.get("custTel") or ""
-    )
-    ship_addr = (
-        order.get("dlvAddr") or order.get("shipAddr") or order.get("rcvrAddr") or ""
-    )
-    tracking_no = (
-        order.get("invcNo") or order.get("trackingNo") or order.get("waybillNo") or ""
-    )
-    ship_company = (
-        order.get("dlvCmpNm") or order.get("courierName") or order.get("dlvCoNm") or ""
-    )
-
-    logger.info(
-        f"[롯데ON 주문 파싱] ordNo={order_number!r} status={raw_status!r} "
-        f"claim={claim_status!r} amt={sale_price} keys={list(order.keys())[:12]}"
-    )
-
-    return {
-        "order_number": order_number,
-        "channel_id": account_id,
-        "channel_name": account_label,
-        "product_id": product_no,
-        "product_name": product_name,
-        "customer_name": customer_name,
-        "customer_phone": customer_phone,
-        "customer_address": ship_addr,
-        "sale_price": sale_price,
-        "cost": 0,
-        "fee_rate": 0,
-        "revenue": sale_price,
-        "status": internal_status,
-        "shipping_status": market_order_status,
-        "tracking_number": tracking_no,
-        "shipping_company": ship_company,
-        "source": "lotteon",
-    }
 
 
 def _parse_smartstore_order(
