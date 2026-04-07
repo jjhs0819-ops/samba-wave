@@ -377,31 +377,36 @@ class NikeClient:
             "groupCount": len(categories),
         }
 
-    async def get_detail(self, style_color: str) -> dict[str, Any]:
-        """상품 상세 조회 — 검색으로 PDP URL 확인 후 PDP 직접 fetch.
+    async def get_detail(
+        self,
+        style_color: str,
+        pdp_url: str | None = None,
+        base_info: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """상품 상세 조회 — PDP URL이 있으면 바로 fetch, 없으면 검색 후 fetch.
 
-        Nike PDP URL은 슬러그 기반이라 styleColor만으로 바로 접근 불가.
-        1단계: 검색으로 pdpUrl.url 추출
-        2단계: PDP 페이지 fetch → selectedProduct 파싱
+        pdp_url: 검색 결과에서 이미 얻은 PDP URL (있으면 검색 스킵)
+        base_info: 검색 결과 상품 데이터 (이름/가격 보충용)
         """
-        # 1단계: 검색으로 PDP URL + 기본 정보(이름) 확인 (첫 페이지만)
-        search_result = await self.search(style_color, max_count=24)
-        products = search_result.get("products", [])
-        base_info: dict[str, Any] = {}
-        pdp_url = None
-        for p in products:
-            if p.get("site_product_id") == style_color:
-                pdp_url = p.get("url")
-                base_info = p
-                break
-        if not pdp_url and products:
-            pdp_url = products[0].get("url")
-            base_info = products[0]
+        _base = base_info or {}
+
+        if not pdp_url:
+            # 검색으로 PDP URL + 기본 정보 확인 (pdp_url 없을 때만)
+            search_result = await self.search(style_color, max_count=24)
+            products = search_result.get("products", [])
+            for p in products:
+                if p.get("site_product_id") == style_color:
+                    pdp_url = p.get("url")
+                    _base = p
+                    break
+            if not pdp_url and products:
+                pdp_url = products[0].get("url")
+                _base = products[0]
 
         if not pdp_url:
             return {"error": f"상품 {style_color}의 PDP URL을 찾을 수 없습니다."}
 
-        # 2단계: PDP 직접 fetch → 상세 정보 (이미지, 색상, 제조국)
+        # PDP 직접 fetch → 상세 정보 (이미지, 색상, 제조국)
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
             resp = await client.get(pdp_url, headers=HEADERS)
             resp.raise_for_status()
@@ -409,15 +414,14 @@ class NikeClient:
             if not detail:
                 return {"error": f"상품 {style_color}를 파싱할 수 없습니다."}
 
-        # 3단계: 검색 기본 정보 + PDP 상세 정보 병합
-        # 이름은 검색 결과가 정확 (PDP __NEXT_DATA__에 title 없음)
+        # 검색 기본 정보 + PDP 상세 정보 병합
         result = {**detail}
-        if base_info.get("name"):
-            result["name"] = base_info["name"]
-        if base_info.get("sale_price") and not result.get("sale_price"):
-            result["sale_price"] = base_info["sale_price"]
-        if base_info.get("original_price") and not result.get("original_price"):
-            result["original_price"] = base_info["original_price"]
+        if _base.get("name"):
+            result["name"] = _base["name"]
+        if _base.get("sale_price") and not result.get("sale_price"):
+            result["sale_price"] = _base["sale_price"]
+        if _base.get("original_price") and not result.get("original_price"):
+            result["original_price"] = _base["original_price"]
 
         logger.info(
             f"[Nike] 상세 '{style_color}' → 이미지 {len(result.get('images', []))}장"

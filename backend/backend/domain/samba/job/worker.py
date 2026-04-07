@@ -1484,8 +1484,16 @@ class JobWorker:
                 # 서버 HTTP 상세 조회 (빠르고 안정적)
                 if hasattr(client, "get_detail"):
                     try:
-                        detail = await client.get_detail(p_id)
-                        await asyncio.sleep(0.3)
+                        # Nike: 검색 결과 URL 전달하여 중복 검색 방지
+                        if site == "Nike":
+                            detail = await client.get_detail(
+                                p_id,
+                                pdp_url=item.get("url") or item.get("source_url"),
+                                base_info=item,
+                            )
+                        else:
+                            detail = await client.get_detail(p_id)
+                        await asyncio.sleep(0.15 if site == "Nike" else 0.3)
                     except Exception as e:
                         logger.warning(f"[잡워커] {site} 서버 상세 실패 {p_id}: {e}")
 
