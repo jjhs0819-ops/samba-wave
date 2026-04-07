@@ -1246,8 +1246,8 @@ export default function SettingsPage() {
     }).catch(() => {})
     proxyApi.ssgAddresses().then(res => {
       if (!res.success || !res.addresses?.length) return
-      setSsgAddrOptions(res.addresses.map((a: { grpAddrId: string; addrNm: string; bascAddr: string }) => ({
-        value: a.grpAddrId,
+      setSsgAddrOptions(res.addresses.map((a: { grpAddrId: string; doroAddrId?: string; addrNm: string; bascAddr: string }) => ({
+        value: a.doroAddrId || a.grpAddrId,
         label: `${a.addrNm}${a.bascAddr ? ` (${a.bascAddr})` : ''}`,
       })))
     }).catch(() => {})
@@ -1636,8 +1636,8 @@ export default function SettingsPage() {
                               // 주소 조회
                               const addrRes = await proxyApi.ssgAddresses()
                               if (addrRes.success && addrRes.addresses?.length) {
-                                setSsgAddrOptions(addrRes.addresses.map((a: { grpAddrId: string; addrNm: string; bascAddr: string }) => ({
-                                  value: a.grpAddrId,
+                                setSsgAddrOptions(addrRes.addresses.map((a: { grpAddrId: string; doroAddrId?: string; addrNm: string; bascAddr: string }) => ({
+                                  value: a.doroAddrId || a.grpAddrId,
                                   label: `${a.addrNm}${a.bascAddr ? ` (${a.bascAddr})` : ''}`,
                                 })))
                               }

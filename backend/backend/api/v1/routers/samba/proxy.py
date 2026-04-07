@@ -822,15 +822,21 @@ async def ssg_addresses(
         client = SSGClient(api_key)
         result = await client.get_addresses()
         raw = result.get("result", {})
-        addr_wrapper = raw.get("venAddrs", [{}])
-        addr_list = addr_wrapper[0].get("venAddr", []) if addr_wrapper else []
+        # SSG 실제 응답: venAddrDelInfo → venAddrDelInfoDto
+        addr_list = raw.get("venAddrDelInfo", [])
+        if isinstance(addr_list, dict):
+            addr_list = [addr_list]
+        addrs_raw = addr_list[0].get("venAddrDelInfoDto", []) if addr_list else []
+        if isinstance(addrs_raw, dict):
+            addrs_raw = [addrs_raw]
         addresses = []
-        for a in addr_list:
+        for a in addrs_raw:
             addresses.append(
                 {
                     "grpAddrId": a.get("grpAddrId", ""),
-                    "addrNm": a.get("addrNm", ""),
-                    "bascAddr": a.get("bascAddr", ""),
+                    "doroAddrId": a.get("doroAddrId", ""),
+                    "addrNm": a.get("addrlcAntnmNm", ""),
+                    "bascAddr": a.get("doroAddrBasc", ""),
                 }
             )
         return {"success": True, "addresses": addresses}
