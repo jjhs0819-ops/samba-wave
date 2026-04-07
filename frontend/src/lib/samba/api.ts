@@ -115,6 +115,8 @@ export const orderApi = {
     }),
   confirmOrder: (id: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/confirm`, { method: "POST" }),
+  marketDelete: (id: string) =>
+    request<{ ok: boolean; message: string; detail?: unknown }>(`${SAMBA_PREFIX}/orders/${id}/market-delete`, { method: "POST" }),
   exchangeAction: (id: string, action: string, reason?: string, extra?: { tracking_number?: string; shipping_company?: string; clm_no?: string }) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/exchange-action`, {
       method: "POST", body: JSON.stringify({ action, reason, ...extra }),

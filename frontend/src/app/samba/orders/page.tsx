@@ -449,17 +449,8 @@ export default function OrdersPage() {
       window.open(sourcingUrls[o.source_site] + idMatch[1], '_blank')
       return
     }
-    // source_site 없어도 상품명 패턴으로 소싱처 추론
-    if (idMatch) {
-      const id = idMatch[1]
-      if (name.includes('운동화') || name.includes('나이키') || name.includes('아디다스')) {
-        window.open('https://www.fashionplus.co.kr/goods/detail/' + id, '_blank')
-        return
-      }
-      window.open('https://www.musinsa.com/products/' + id, '_blank')
-      return
-    }
-    showAlert('소싱처 원문링크 정보가 없습니다', 'info')
+    // source_site가 명시적으로 알려진 경우에만 추정 (잘못된 사이트로 보내는 위험 방지)
+    showAlert('소싱처 원문링크 정보가 없습니다. "미등록 입력"으로 URL을 등록해주세요.', 'info')
   }
   const handleMarketLink = (o: SambaOrder) => {
     const acc = accounts.find(a => a.id === o.channel_id)
@@ -911,12 +902,12 @@ export default function OrdersPage() {
                         <img
                           src={o.product_image}
                           alt=""
-                          onClick={() => handleImageClick(o)}
+                          onClick={() => handleSourceLink(o)}
                           style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer' }}
                         />
                       ) : (
                         <div
-                          onClick={() => handleImageClick(o)}
+                          onClick={() => handleSourceLink(o)}
                           style={{ width: '100px', height: '100px', background: '#1A1A1A', borderRadius: '6px', border: '1px solid #2D2D2D', display: 'flex', alignItems: 'center', justifyContent: 'center', color: o.product_id?.startsWith('http') ? '#4C9AFF' : '#444', fontSize: '0.75rem', flexShrink: 0, cursor: o.product_id?.startsWith('http') ? 'pointer' : 'default', textDecoration: o.product_id?.startsWith('http') ? 'underline' : 'none' }}
                         >{o.product_id?.startsWith('http') ? '링크이동' : 'No IMG'}</div>
                       )}
@@ -938,7 +929,7 @@ export default function OrdersPage() {
                         </div>
                         {/* 상품명 + 옵션 */}
                         <div style={{ minWidth: 0 }}>
-                          <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{o.product_name || '-'}</span>
+                          <span onClick={() => handleSourceLink(o)} style={{ color: '#C5C5C5', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', cursor: 'pointer' }}>{o.product_name || '-'}</span>
                           {o.product_option && (
                             <span style={{ color: '#FF8C00', fontSize: '0.75rem', display: 'block', marginTop: '0.125rem' }}>[옵션] {o.product_option}</span>
                           )}
@@ -1048,7 +1039,14 @@ export default function OrdersPage() {
                           }
                         } catch (e) { showAlert(e instanceof Error ? e.message : '업데이트 실패', 'error') }
                       }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>업데이트</button>
-                      <button onClick={() => showAlert('마켓상품삭제 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>마켓상품삭제</button>
+                      <button onClick={async () => {
+                        if (!await showConfirm(`마켓에서 이 상품을 완전 삭제합니다.\n(판매중지가 아닌 삭제)\n\n${o.product_name || ''}\n진행할까요?`)) return
+                        try {
+                          const res = await orderApi.marketDelete(o.id)
+                          if (res.ok) { showAlert('마켓 상품 삭제 완료', 'success'); loadOrders() }
+                          else showAlert(res.message || '마켓상품삭제 실패', 'error')
+                        } catch (e) { showAlert(e instanceof Error ? e.message : '마켓상품삭제 실패', 'error') }
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>마켓상품삭제</button>
                       <button onClick={() => {
                         if (o.ext_order_number) { window.open(o.ext_order_number, '_blank'); return }
                         const srcNo = o.sourcing_order_number || ''

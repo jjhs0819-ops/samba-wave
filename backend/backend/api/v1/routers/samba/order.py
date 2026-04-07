@@ -458,6 +458,54 @@ async def confirm_order(
     )
 
 
+@router.post("/{order_id}/market-delete")
+async def market_delete_order_product(
+    order_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """주문 카드의 '마켓상품삭제' — 해당 주문 상품을 마켓에서 완전 삭제(판매종료가 아닌 삭제)."""
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    svc = _write_service(session)
+    order = await svc.get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+    if not order.product_id:
+        raise HTTPException(status_code=400, detail="마켓 상품번호가 없습니다")
+    if not order.channel_id:
+        raise HTTPException(status_code=400, detail="마켓 계정 정보가 없습니다")
+
+    account_repo = SambaMarketAccountRepository(session)
+    account = await account_repo.get_async(order.channel_id)
+    if not account:
+        raise HTTPException(status_code=400, detail="마켓 계정을 찾을 수 없습니다")
+
+    if account.market_type == "lotteon":
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+
+        extras = account.additional_fields or {}
+        api_key = extras.get("apiKey", "") or account.api_key or ""
+        if not api_key:
+            raise HTTPException(status_code=400, detail="롯데ON API Key 없음")
+
+        spd_no = order.product_id
+        client = LotteonClient(api_key)
+        try:
+            await client.test_auth()
+            result = await client.delete_product(spd_no)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"마켓상품삭제 실패: {e}")
+
+        logger.info(
+            f"[마켓상품삭제] 롯데ON spdNo={spd_no} order={order.order_number} result={result}"
+        )
+        return {"ok": True, "message": "마켓 상품 삭제 완료", "detail": result}
+
+    raise HTTPException(
+        status_code=400, detail=f"{account.market_type} 마켓상품삭제 미지원"
+    )
+
+
 class CancelSourceOrderRequest(BaseModel):
     order_number: str
     reason: str = "단순변심"
