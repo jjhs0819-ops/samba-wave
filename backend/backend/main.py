@@ -82,6 +82,27 @@ async def lifespan(app: FastAPI):
                 await session.execute(
                     text(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS {_col} {_typ}")
                 )
+            # samba_login_history 테이블 자동 생성
+            await session.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS samba_login_history (
+                        id VARCHAR(30) PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        email TEXT NOT NULL,
+                        ip_address TEXT,
+                        region TEXT,
+                        user_agent TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                    """
+                )
+            )
+            await session.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_samba_login_history_user_id ON samba_login_history (user_id)"
+                )
+            )
             # 파생 주문 일괄 삭제 (사본-* + ★교환주문 — 원주문에 이미 정보 포함)
             _del = await session.execute(
                 text(
