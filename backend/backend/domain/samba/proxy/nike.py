@@ -332,25 +332,19 @@ class NikeClient:
         if not products:
             return {"categories": [], "total": 0, "groupCount": 0}
 
-        # 그룹(groupKey) 기준 카운트 — 같은 그룹의 컬러웨이는 1건으로 집계
+        # 색상별(site_product_id) 기준 카운트 — 컬러웨이 각각 1건으로 집계
         cat_counter: dict[str, int] = {}
-        seen_groups: dict[str, set[str]] = {}  # key → {group_key, ...}
         for p in products:
             c1 = p.get("category1", "")
             c2 = p.get("category2", "")
             c3 = p.get("category3", "")
-            gk = p.get("group_key", p.get("site_product_id", ""))
             if not c1 and not c2 and not c3:
                 continue
             path = " > ".join([x for x in [c1, c2, c3] if x])
             # categoryCode: "성별_세분류" (그룹 생성 시 고유키로 사용)
             code = "_".join([x for x in [c2, c3] if x]) or c1
             key = f"{code}||{path}||{c1}||{c2}||{c3}"
-            if key not in seen_groups:
-                seen_groups[key] = set()
-            if gk not in seen_groups[key]:
-                seen_groups[key].add(gk)
-                cat_counter[key] = cat_counter.get(key, 0) + 1
+            cat_counter[key] = cat_counter.get(key, 0) + 1
 
         categories = []
         for key, count in sorted(cat_counter.items(), key=lambda x: -x[1]):
