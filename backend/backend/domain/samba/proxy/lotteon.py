@@ -856,7 +856,7 @@ class LotteonClient:
         """표준카테고리 속성목록 조회 — 메인 API 경로 시도."""
         return await self._call_api(
             "GET",
-            f"/v1/openapi/product/v1/category/attribute/list",
+            "/v1/openapi/product/v1/category/attribute/list",
             params={"scatNo": category_id},
         )
 

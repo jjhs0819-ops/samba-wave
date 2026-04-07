@@ -37,10 +37,7 @@ _TABLES = [
 
 def _safe_update(table: str, old: str, new: str) -> None:
     """테이블이 없으면 스킵."""
-    op.execute(
-        f"UPDATE {table} SET source_site = '{new}' "
-        f"WHERE source_site = '{old}'"
-    )
+    op.execute(f"UPDATE {table} SET source_site = '{new}' WHERE source_site = '{old}'")
 
 
 def upgrade() -> None:

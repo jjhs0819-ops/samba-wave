@@ -169,9 +169,6 @@ class SambaShipmentService:
         skip_unchanged: bool = False,
     ) -> dict[str, Any]:
         """여러 상품을 대상 마켓 계정으로 실제 전송. 마켓별 결과 반환."""
-        from backend.domain.samba.collector.repository import (
-            SambaCollectedProductRepository,
-        )
 
         # 이전 취소 플래그 잔존 방지
         clear_cancel_transmit()
@@ -467,13 +464,6 @@ class SambaShipmentService:
         skip_unchanged: bool = False,
     ) -> SambaShipment:
         """단일 상품에 대한 실제 마켓 전송."""
-        from backend.domain.samba.account.model import SambaMarketAccount
-        from backend.domain.samba.account.repository import SambaMarketAccountRepository
-        from backend.domain.samba.collector.model import SambaCollectedProduct
-        from backend.domain.samba.collector.repository import (
-            SambaCollectedProductRepository,
-        )
-        from backend.domain.samba.shipment.dispatcher import dispatch_to_market
 
         # 상품 전송 락 — 동일 상품 중복 전송 방지
         if product_id in _transmitting_products:
@@ -536,7 +526,6 @@ class SambaShipmentService:
 
         from backend.domain.samba.account.model import SambaMarketAccount
         from backend.domain.samba.account.repository import SambaMarketAccountRepository
-        from backend.domain.samba.collector.model import SambaCollectedProduct
         from backend.domain.samba.collector.repository import (
             SambaCollectedProductRepository,
         )
@@ -1062,7 +1051,7 @@ class SambaShipmentService:
                     )
                     logger.info(f"[전송] 품절 최신화 실패 — {_err}")
             except asyncio.TimeoutError:
-                logger.warning(f"[전송] 전 옵션 품절 소싱처 최신화 타임아웃 (30초)")
+                logger.warning("[전송] 전 옵션 품절 소싱처 최신화 타임아웃 (30초)")
             except Exception as _sold_e:
                 logger.warning(f"[전송] 전 옵션 품절 소싱처 최신화 예외: {_sold_e}")
 
@@ -1130,7 +1119,7 @@ class SambaShipmentService:
                 ):
                     # 이미 마켓 등록된 상품이면 삭제 처리
                     _reg_accs = product_dict.get("registered_accounts") or []
-                    if account_id in _reg_accs and existing_product_no:
+                    if account_id in _reg_accs:
                         try:
                             from backend.domain.samba.shipment.dispatcher import (
                                 delete_from_market,
@@ -1471,7 +1460,7 @@ class SambaShipmentService:
             refresh_status.startswith("최신화실패")
             or refresh_status.startswith("최신화예외")
         ):
-            logger.info(f"[전송] 최신화 실패 → 상품 데이터 변경 안 함")
+            logger.info("[전송] 최신화 실패 → 상품 데이터 변경 안 함")
         else:
             update_data: dict[str, Any] = {
                 "registered_accounts": new_accounts if new_accounts else None,
@@ -1590,6 +1579,7 @@ class SambaShipmentService:
                 return value
             if value.strip().startswith("<img"):
                 import re as _re
+
                 m = _re.search(r'src=["\']([^"\']+)["\']', value)
                 return m.group(1) if m else value
             return value
@@ -1695,7 +1685,6 @@ class SambaShipmentService:
         2. DB에 저장된 매핑이 있으면 사용 (카테고리매핑 페이지에서 설정)
         3. 없으면 키워드 기반 자동 제안으로 첫 번째 결과 사용
         """
-        from backend.domain.samba.account.repository import SambaMarketAccountRepository
         from backend.domain.samba.category.repository import (
             SambaCategoryMappingRepository,
         )
@@ -1770,7 +1759,6 @@ class SambaShipmentService:
 
     async def retransmit(self, shipment_id: str) -> Optional[SambaShipment]:
         """실패한 계정에 대해 기존 shipment 레코드를 업데이트하며 재전송."""
-        from backend.domain.samba.account.repository import SambaMarketAccountRepository
         from backend.domain.samba.collector.repository import (
             SambaCollectedProductRepository,
         )
@@ -1894,7 +1882,6 @@ class SambaShipmentService:
         target_account_ids: list[str],
     ) -> dict[str, Any]:
         """선택된 상품을 대상 마켓에서 삭제."""
-        from backend.domain.samba.account.repository import SambaMarketAccountRepository
         from backend.domain.samba.collector.repository import (
             SambaCollectedProductRepository,
         )

@@ -682,7 +682,6 @@ async def sync_returns_from_markets(
 
             elif market_type == "lotteon":
                 from backend.domain.samba.proxy.lotteon import (
-                    LotteonApiError,
                     LotteonClient,
                 )
 
@@ -951,7 +950,6 @@ async def sync_returns_from_markets(
                     continue
 
                 from backend.domain.samba.proxy.lotteon import (
-                    LotteonApiError,
                     LotteonClient,
                 )
 
@@ -1118,7 +1116,7 @@ async def sync_returns_from_markets(
         _diag_rows = _diag.fetchall()
         if _diag_rows:
             logger.warning(
-                f"[반품동기화][진단] 롯데ON 교환 레코드 샘플: "
+                "[반품동기화][진단] 롯데ON 교환 레코드 샘플: "
                 + str(
                     [
                         (str(r[0])[:8], r[1], repr(r[2]), repr(r[3]), r[4], r[5])

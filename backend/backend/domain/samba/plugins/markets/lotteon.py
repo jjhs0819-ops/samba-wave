@@ -2191,7 +2191,7 @@ class LotteonPlugin(MarketPlugin):
                             logger.warning(f"[롯데ON] 홍보문구 등록 실패 (무시): {e}")
                     else:
                         logger.debug(
-                            f"[롯데ON] 홍보문구 미설정 (설정 > 롯데ON > 상품 홍보문구 입력 필요)"
+                            "[롯데ON] 홍보문구 미설정 (설정 > 롯데ON > 상품 홍보문구 입력 필요)"
                         )
 
                 return {

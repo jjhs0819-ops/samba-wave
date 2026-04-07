@@ -66,6 +66,19 @@ async def dashboard_stats(
     from sqlalchemy import select, func, case, and_
     from datetime import datetime, timedelta
 
+    # 이행매출 대상 상태 (취소 제외 정상 처리 주문)
+    FULFILLMENT_STATUSES = (
+        "pending",
+        "wait_ship",
+        "arrived",
+        "ship_failed",
+        "shipping",
+        "delivered",
+        "exchanged",
+        "exchanging",
+        "exchange_requested",
+    )
+
     now = datetime.utcnow()
     this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if now.month == 1:
@@ -80,7 +93,7 @@ async def dashboard_stats(
     this_month_q = select(
         func.count().label("count"),
         func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
-        func.sum(case((SambaOrder.status == "delivered", 1), else_=0)).label(
+        func.sum(case((SambaOrder.status.in_(FULFILLMENT_STATUSES), 1), else_=0)).label(
             "delivered"
         ),
     ).where(SambaOrder.created_at >= this_month_start)
@@ -93,7 +106,7 @@ async def dashboard_stats(
     last_month_q = select(
         func.count().label("count"),
         func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
-        func.sum(case((SambaOrder.status == "delivered", 1), else_=0)).label(
+        func.sum(case((SambaOrder.status.in_(FULFILLMENT_STATUSES), 1), else_=0)).label(
             "delivered"
         ),
     ).where(
@@ -1782,7 +1795,9 @@ async def sync_orders_from_markets(
                     f"[주문동기화] {label}: 클레임 {len(claim_orders)}건 중 {returns_synced}건 반품교환 생성"
                 )
 
-            cancel_requested = len(claim_orders)
+            cancel_requested = sum(
+                1 for od in orders_data if od.get("shipping_status") == "취소요청"
+            )
             results.append(
                 {
                     "account": label,

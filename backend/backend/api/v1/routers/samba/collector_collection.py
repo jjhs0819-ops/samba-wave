@@ -11,7 +11,6 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.domain.user.auth_service import get_user_id
 from backend.domain.samba.proxy.musinsa import RateLimitError
 from backend.domain.samba.collector.grouping import (
     generate_group_key,
