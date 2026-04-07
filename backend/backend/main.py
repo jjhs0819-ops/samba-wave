@@ -1,6 +1,5 @@
 import asyncio
 from contextlib import asynccontextmanager
-
 from pathlib import Path
 
 from fastapi import FastAPI
