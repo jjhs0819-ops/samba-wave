@@ -92,7 +92,11 @@ async def create_user(
     body: UserCreateDto,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """새 사용자 계정 생성."""
+    """새 사용자 계정 생성. 프로덕션에서 비활성화."""
+    from backend.core.config import settings
+
+    if settings.is_production:
+        raise HTTPException(status_code=403, detail="회원가입은 관리자에게 문의하세요")
     # 초대 코드 검증
     if body.invite_code != INVITE_CODE:
         raise HTTPException(status_code=403, detail="초대 코드가 올바르지 않습니다")

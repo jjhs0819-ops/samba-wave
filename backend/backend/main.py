@@ -270,14 +270,16 @@ def create_application() -> FastAPI:
         allow_origin_regex=settings.cors_origin_regex,
     )
 
-    # Register routers
-    app.include_router(auth_router, prefix="/api/v1")
-    app.include_router(user_router, prefix="/api/v1")
-
-    # SambaWave routers — JWT 인증 필수 (모든 엔드포인트 일괄 보호)
+    # JWT 인증 의존성 (모든 보호 라우터에 일괄 적용)
     _samba_auth = [Depends(get_user_id)]
 
-    # 로그인/회원가입은 인증 없이 접근해야 하므로 별도 등록
+    # 레거시 auth/user 라우터
+    # auth_router: login/signup/refresh는 공개, /me만 인증 (자체 처리)
+    app.include_router(auth_router, prefix="/api/v1")
+    # user_router: 레거시 사용자 관리 — 인증 필수
+    app.include_router(user_router, prefix="/api/v1", dependencies=_samba_auth)
+
+    # SambaWave routers — 로그인/회원가입만 공개, 나머지 전부 인증 필수
     app.include_router(samba_user_router, prefix="/api/v1/samba")
 
     # 나머지 모든 samba 라우터 — 인증 필수

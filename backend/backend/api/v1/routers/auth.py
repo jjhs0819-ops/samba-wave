@@ -1,6 +1,6 @@
 """Authentication API endpoints."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
@@ -22,7 +22,14 @@ async def email_sign_up(
     request: EmailSignUpRequestDto,
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> LoginResponseDto:
-    """Sign up user with email and password."""
+    """Sign up user with email and password. 프로덕션에서 비활성화."""
+    from backend.core.config import settings
+
+    if settings.is_production:
+        raise HTTPException(
+            status_code=403,
+            detail="회원가입은 관리자에게 문의하세요",
+        )
     auth_service = AuthService(session=session)
     return await auth_service.email_sign_up(request=request)
 
