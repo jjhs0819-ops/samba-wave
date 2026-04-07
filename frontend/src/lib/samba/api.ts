@@ -31,7 +31,15 @@ export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Re
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
-  return fetch(url, { ...init, headers })
+  const res = await fetch(url, { cache: 'no-store', ...init, headers })
+  // 401 토큰 만료 시 자동 로그아웃
+  if (res.status === 401 && typeof window !== 'undefined') {
+    localStorage.removeItem(STORAGE_KEYS.SAMBA_USER)
+    document.cookie = 'samba_user=; path=/; max-age=0'
+    window.location.href = '/samba/login'
+    throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.')
+  }
+  return res
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
