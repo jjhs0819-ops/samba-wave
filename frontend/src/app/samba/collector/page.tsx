@@ -951,7 +951,7 @@ export default function CollectorPage() {
             type="text"
             value={collectUrl}
             onChange={(e) => { setCollectUrl(e.target.value); setDetectedBrandCode('') }}
-            onKeyDown={(e) => e.key === "Enter" && selectedSite !== "MUSINSA" && handleCreateGroup()}
+            onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault() }}
             placeholder={
               selectedSite === "MUSINSA" ? "키워드 또는 URL (예: 나이키, https://www.musinsa.com/search/goods?keyword=나이키)" :
               selectedSite === "KREAM" ? "키워드 또는 URL (예: 나이키, https://kream.co.kr/search?keyword=나이키)" :
