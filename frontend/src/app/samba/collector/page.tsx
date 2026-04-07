@@ -871,11 +871,21 @@ export default function CollectorPage() {
             onChange={(e) => setCollectUrl(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && selectedSite !== "GSShop" && handleCreateGroup()}
             placeholder={
-              selectedSite === "MUSINSA" ? "브랜드명 또는 URL (예: 나이키, https://www.musinsa.com/search/goods?keyword=나이키)" :
-              selectedSite === "KREAM" ? "https://kream.co.kr/search?keyword=나이키" :
-              selectedSite === "LOTTEON" ? "키워드 또는 URL (예: 나이키, https://www.lotteon.com/search/...)" :
-              selectedSite === "GSShop" ? "키워드 입력 (예: 내셔널지오그래픽, 나이키)" :
-              "URL을 입력하세요"
+              selectedSite === "MUSINSA" ? "키워드 또는 URL (예: 나이키, https://www.musinsa.com/search/goods?keyword=나이키)" :
+              selectedSite === "KREAM" ? "키워드 또는 URL (예: 나이키, https://kream.co.kr/search?keyword=나이키)" :
+              selectedSite === "DANAWA" ? "키워드 또는 URL (예: 에어팟, https://search.danawa.com/dsearch.php?keyword=에어팟)" :
+              selectedSite === "FashionPlus" ? "키워드 또는 URL (예: 나이키, https://www.fashionplus.co.kr/search/goods/result?searchWord=나이키)" :
+              selectedSite === "Nike" ? "키워드 또는 URL (예: 에어포스, https://www.nike.com/kr/w?q=에어포스)" :
+              selectedSite === "Adidas" ? "키워드 또는 URL (예: 삼바, https://www.adidas.co.kr/search?q=삼바)" :
+              selectedSite === "ABCmart" ? "키워드 또는 URL (예: 나이키, https://www.a-rt.com/abc/display/search?keyword=나이키)" :
+              selectedSite === "GrandStage" ? "키워드 또는 URL (예: 나이키, https://www.a-rt.com/grand/display/search?keyword=나이키)" :
+              selectedSite === "REXMONDE" ? "키워드 또는 URL (예: 나이키, https://www.okmall.com/search?keyword=나이키)" :
+              selectedSite === "SSG" ? "키워드 또는 URL (예: 나이키, https://www.ssg.com/search.ssg?query=나이키)" :
+              selectedSite === "LOTTEON" ? "키워드 또는 URL (예: 나이키, https://www.lotteon.com/search?query=나이키)" :
+              selectedSite === "GSShop" ? "키워드 또는 URL (예: 내셔널지오그래픽, https://www.gsshop.com/search?tq=내셔널지오그래픽)" :
+              selectedSite === "ElandMall" ? "키워드 또는 URL (예: 나이키, https://www.elandmall.com/search?kwd=나이키)" :
+              selectedSite === "SSF" ? "키워드 또는 URL (예: 나이키, https://www.ssfshop.com/search?keyword=나이키)" :
+              "키워드 또는 URL을 입력하세요"
             }
             style={{
               flex: 1, padding: "0.6rem 0.8rem", fontSize: "0.82rem",
