@@ -1,4 +1,5 @@
 import asyncio
+import json
 from contextlib import asynccontextmanager
 
 from pathlib import Path
@@ -117,6 +118,99 @@ async def lifespan(app: FastAPI):
             )
     except Exception as _mig_err:
         _startup_log.warning(f"[startup] 스키마 마이그레이션 실패: {_mig_err}")
+
+    # 가디 스마트스토어 계정 복원 (삭제된 계정 1회성 복구)
+    # 상품의 registered_accounts에 남아있는 고아 ID를 찾아서 동일 ID로 복원
+    try:
+        from backend.db.orm import get_write_session
+        from sqlalchemy import text
+
+        async with get_write_session() as session:
+            _exists = await session.execute(
+                text(
+                    "SELECT 1 FROM samba_market_account "
+                    "WHERE market_type = 'smartstore' AND seller_id = 'enclehhg@naver.com' LIMIT 1"
+                )
+            )
+            if not _exists.first():
+                # 상품에 남아있는 고아 계정 ID 탐색
+                # registered_accounts에 있지만 samba_market_account에 없는 ID
+                _orphan_result = await session.execute(
+                    text(
+                        "SELECT DISTINCT jsonb_array_elements_text(registered_accounts::jsonb) AS aid "
+                        "FROM samba_collector_product "
+                        "WHERE registered_accounts IS NOT NULL "
+                        "AND registered_accounts::text != 'null' "
+                        "AND registered_accounts::text != '[]'"
+                    )
+                )
+                _all_product_aids = {r[0] for r in _orphan_result.fetchall()}
+
+                _existing_aids_result = await session.execute(
+                    text("SELECT id FROM samba_market_account")
+                )
+                _existing_aids = {r[0] for r in _existing_aids_result.fetchall()}
+
+                _orphan_ids = _all_product_aids - _existing_aids
+                _startup_log.info(
+                    f"[startup] 고아 계정 ID {len(_orphan_ids)}개 발견: {_orphan_ids}"
+                )
+
+                if _orphan_ids:
+                    # 고아 ID 중 첫 번째를 가디 계정으로 복원
+                    _account_id = next(iter(_orphan_ids))
+                else:
+                    # 고아 ID가 없으면 새 ID 생성
+                    from ulid import ULID
+
+                    _account_id = f"ma_{ULID()}"
+
+                await session.execute(
+                    text(
+                        "INSERT INTO samba_market_account "
+                        "(id, market_type, market_name, account_label, seller_id, business_name, "
+                        "is_active, additional_fields, created_at, updated_at) "
+                        "VALUES (:id, 'smartstore', '스마트스토어', '가디-enclehhg@naver.com', "
+                        "'enclehhg@naver.com', '가디', true, :fields, now(), now())"
+                    ),
+                    {
+                        "id": _account_id,
+                        "fields": json.dumps(
+                            {
+                                "clientId": "6MdpcWPR17Vlgm2bqe57nj",
+                                "clientSecret": "$2a$04$UqcXfAdHdRLk5AaEQ2ehDu",
+                                "asPhone": "010-9594-0674",
+                                "asMessage": "문자보내주시면 순차적으로 안내도와드리겠습니다.",
+                                "discountRate": "20",
+                                "returnFee": "5000",
+                                "exchangeFee": "10000",
+                                "jejuFee": "5000",
+                                "returnSafeguard": "true",
+                                "stockQuantity": "9",
+                                "naverShopping": "true",
+                                "multiPurchaseDiscount": "true",
+                                "multiPurchaseQty": "2",
+                                "multiPurchaseRate": "1",
+                                "purchasePointEnabled": "true",
+                                "purchasePointRate": "1",
+                                "reviewPointEnabled": "true",
+                                "reviewTextPoint": "100",
+                                "reviewPhotoPoint": "100",
+                                "reviewMonthTextPoint": "100",
+                                "reviewMonthPhotoPoint": "100",
+                                "storeSlug": "unclehg",
+                            }
+                        ),
+                    },
+                )
+                await session.commit()
+                _startup_log.info(
+                    f"[startup] 가디 스마트스토어 계정 복원 완료 (ID: {_account_id})"
+                )
+            else:
+                _startup_log.info("[startup] 가디 스마트스토어 계정 이미 존재 — 스킵")
+    except Exception as _restore_err:
+        _startup_log.warning(f"[startup] 가디 계정 복원 실패: {_restore_err}")
 
     # 서버 시작 시 좀비 running Job 처리
     # - transmit: attempt < 3이면 pending 복구 (배포 중단 → 자동 재개)

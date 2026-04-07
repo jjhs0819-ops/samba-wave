@@ -1560,7 +1560,7 @@ export default function SettingsPage() {
               const renderTab = (m: typeof STORE_MARKETS[number]) => (
                 <button
                   key={m.key}
-                  onClick={() => setStoreTab(m.key)}
+                  onClick={() => { setStoreTab(m.key); setEditingAccountId(null) }}
                   style={{
                     padding: '0.5rem 0.75rem', background: 'none', border: 'none',
                     borderBottom: storeTab === m.key ? '2px solid #FF8C00' : '2px solid transparent',
