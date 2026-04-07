@@ -1257,10 +1257,10 @@ class JobWorker:
                         f"[잡워커] LOTTEON 브랜드별 검색 합계 → {len(items_list)}건"
                     )
                 else:
-                    # Nike+카테고리필터: 전체 검색 후 사후 필터링 (드레스 등 후순위 카테고리 누락 방지)
+                    # 카테고리필터가 있는 소싱처: 전체 검색 후 사후 필터링
                     _max = (
                         9999
-                        if (site == "Nike" and sf.category_filter)
+                        if (site in ("Nike", "ABCmart") and sf.category_filter)
                         else max(remaining * 2, 100)
                     )
                     result = await client.search(
