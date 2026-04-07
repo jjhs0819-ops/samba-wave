@@ -88,6 +88,7 @@ def _create_write_async_engine() -> AsyncEngine:
         max_overflow=10,  # 추가 허용 (write 최대 25개)
         pool_recycle=3600,
         pool_timeout=30,
+        connect_args={"timeout": 10},  # asyncpg 연결 타임아웃 10초
     )
 
 
@@ -107,6 +108,7 @@ def _create_read_async_engine() -> AsyncEngine:
         max_overflow=7,  # 추가 허용 (read 최대 15개)
         pool_recycle=3600,
         pool_timeout=30,
+        connect_args={"timeout": 10},  # asyncpg 연결 타임아웃 10초
     )
 
 

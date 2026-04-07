@@ -80,14 +80,17 @@ async def lifespan(app: FastAPI):
             async with get_write_session() as session:
                 # transmit Job: attempt 기반 분기
                 # attempt < 3 → pending 복구 + attempt 증가 (current 보존 → 이어서 전송)
-                r_resume = await session.execute(
-                    text(
-                        "UPDATE samba_jobs "
-                        "SET status = 'pending', started_at = NULL, "
-                        "attempt = COALESCE(attempt, 0) + 1 "
-                        "WHERE status = 'running' AND job_type = 'transmit' "
-                        f"AND COALESCE(attempt, 0) < {_MAX_TRANSMIT_ATTEMPTS}"
-                    )
+                r_resume = await asyncio.wait_for(
+                    session.execute(
+                        text(
+                            "UPDATE samba_jobs "
+                            "SET status = 'pending', started_at = NULL, "
+                            "attempt = COALESCE(attempt, 0) + 1 "
+                            "WHERE status = 'running' AND job_type = 'transmit' "
+                            f"AND COALESCE(attempt, 0) < {_MAX_TRANSMIT_ATTEMPTS}"
+                        )
+                    ),
+                    timeout=8,
                 )
                 if r_resume.rowcount > 0:
                     _startup_log.info(
@@ -95,15 +98,18 @@ async def lifespan(app: FastAPI):
                     )
 
                 # attempt >= 3 → failed (OOM 반복 의심)
-                r_fail = await session.execute(
-                    text(
-                        "UPDATE samba_jobs "
-                        "SET status = 'failed', "
-                        "error = 'OOM 반복 재시작 (attempt >= 3) — 수동 확인 필요', "
-                        "completed_at = now() "
-                        "WHERE status = 'running' AND job_type = 'transmit' "
-                        f"AND COALESCE(attempt, 0) >= {_MAX_TRANSMIT_ATTEMPTS}"
-                    )
+                r_fail = await asyncio.wait_for(
+                    session.execute(
+                        text(
+                            "UPDATE samba_jobs "
+                            "SET status = 'failed', "
+                            "error = 'OOM 반복 재시작 (attempt >= 3) — 수동 확인 필요', "
+                            "completed_at = now() "
+                            "WHERE status = 'running' AND job_type = 'transmit' "
+                            f"AND COALESCE(attempt, 0) >= {_MAX_TRANSMIT_ATTEMPTS}"
+                        )
+                    ),
+                    timeout=8,
                 )
                 if r_fail.rowcount > 0:
                     _startup_log.info(
@@ -111,11 +117,14 @@ async def lifespan(app: FastAPI):
                     )
 
                 # collect 등 나머지 → pending 복구 (기존 동작 유지)
-                r_other = await session.execute(
-                    text(
-                        "UPDATE samba_jobs SET status = 'pending', started_at = NULL "
-                        "WHERE status = 'running' AND job_type != 'transmit'"
-                    )
+                r_other = await asyncio.wait_for(
+                    session.execute(
+                        text(
+                            "UPDATE samba_jobs SET status = 'pending', started_at = NULL "
+                            "WHERE status = 'running' AND job_type != 'transmit'"
+                        )
+                    ),
+                    timeout=8,
                 )
                 if r_other.rowcount > 0:
                     _startup_log.info(
