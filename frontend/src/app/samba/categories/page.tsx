@@ -930,7 +930,7 @@ export default function CategoriesPage() {
       <div style={{ background: 'rgba(255,140,0,0.05)', border: '1px solid rgba(255,140,0,0.25)', borderRadius: '8px', padding: '0.875rem 1.25rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
         <span style={{ fontSize: '0.8125rem', color: '#888', flex: 1 }}>
           {selectedPath
-            ? `선택: ${selectedPath} (${selectedProducts.length}개) — AI가 마켓별 카테고리를 추천합니다`
+            ? `선택: ${selectedPath} (${selectedProducts.length.toLocaleString()}개) — AI가 마켓별 카테고리를 추천합니다`
             : '카테고리 선택 시 단건 매핑, 미선택 시 전체 미매핑 자동 처리'}
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
@@ -962,7 +962,7 @@ export default function CategoriesPage() {
               cursor: filteredMappings.length === 0 ? 'not-allowed' : 'pointer',
               whiteSpace: 'nowrap',
             }}
-          >매핑 일괄 삭제 ({filteredMappings.length})</button>
+          >매핑 일괄 삭제 ({filteredMappings.length.toLocaleString()})</button>
         </div>
       </div>
 
@@ -1062,8 +1062,8 @@ export default function CategoriesPage() {
             매핑 현황{' '}
             <span style={{ fontSize: '0.875rem', fontWeight: 400, color: '#888' }}>
               ({filteredMappings.length === mappings.length
-                ? `총 ${mappings.length}건`
-                : `${filteredMappings.length}건 / 전체 ${mappings.length}건`})
+                ? `총 ${mappings.length.toLocaleString()}건`
+                : `${filteredMappings.length.toLocaleString()}건 / 전체 ${mappings.length.toLocaleString()}건`})
             </span>
           </h3>
           <div style={{ ...card, overflow: 'auto' }}>
@@ -1144,7 +1144,7 @@ export default function CategoriesPage() {
                               e.currentTarget.style.borderColor = 'transparent'
                             }
                           }}
-                          title={`${MARKET_LABELS[mk]} AI 리매핑 (${filteredMappings.length}건)`}
+                          title={`${MARKET_LABELS[mk]} AI 리매핑 (${filteredMappings.length.toLocaleString()}건)`}
                         >{marketAiLoading === mk ? '...' : 'AI'}</button>
                         <button
                           onClick={() => handleMarketColumnDelete(mk)}
@@ -1160,7 +1160,7 @@ export default function CategoriesPage() {
                           }}
                           onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
                           onMouseLeave={e => { e.currentTarget.style.color = '#444' }}
-                          title={`${MARKET_LABELS[mk]} 카테고리 일괄 삭제 (${filteredMappings.length}건)`}
+                          title={`${MARKET_LABELS[mk]} 카테고리 일괄 삭제 (${filteredMappings.length.toLocaleString()}건)`}
                         >✕</button>
                       </div>
                       <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? '#51CF66' : '#FF6B6B' }}>
@@ -1368,7 +1368,7 @@ export default function CategoriesPage() {
           <div style={{ marginBottom: '1rem', fontSize: '0.875rem' }}>
             <span style={{ color: '#888' }}>[선택카테고리]</span>{' '}
             <span style={{ color: '#FF8C00', fontWeight: 600 }}>{selectedPath}</span>{' '}
-            <span style={{ color: '#888' }}>상품 {selectedProducts.length}개</span>
+            <span style={{ color: '#888' }}>상품 {selectedProducts.length.toLocaleString()}개</span>
           </div>
 
           {selectedProducts.length > 0 && (
@@ -1467,7 +1467,7 @@ export default function CategoriesPage() {
                   {/* 에러 목록 */}
                   {bulkResult.errors.length > 0 && (
                     <div style={{ padding: '0.75rem 1rem', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px' }}>
-                      <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#EF4444', marginBottom: '0.5rem' }}>오류 {bulkResult.errors.length}건</div>
+                      <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#EF4444', marginBottom: '0.5rem' }}>오류 {bulkResult.errors.length.toLocaleString()}건</div>
                       <div style={{ maxHeight: '120px', overflowY: 'auto' }}>
                         {bulkResult.errors.map((err, i) => (
                           <div key={i} style={{ fontSize: '0.75rem', color: '#999', padding: '0.125rem 0' }}>{err}</div>

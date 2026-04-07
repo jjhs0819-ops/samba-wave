@@ -795,10 +795,10 @@ export default function ShipmentsPage() {
                 background: jobQueueStatus.running > 0 ? '#51CF66' : jobQueueStatus.pending > 0 ? '#FAB005' : '#444',
               }} />
               <span style={{ color: jobQueueStatus.running > 0 ? '#51CF66' : jobQueueStatus.pending > 0 ? '#FAB005' : '#555' }}>
-                {jobQueueStatus.running > 0 ? `전송 중 ${jobQueueStatus.running}건` : jobQueueStatus.pending > 0 ? `대기 ${jobQueueStatus.pending}건` : '대기 잡 없음'}
+                {jobQueueStatus.running > 0 ? `전송 중 ${jobQueueStatus.running.toLocaleString()}건` : jobQueueStatus.pending > 0 ? `대기 ${jobQueueStatus.pending.toLocaleString()}건` : '대기 잡 없음'}
               </span>
               {jobQueueStatus.pending > 0 && jobQueueStatus.running > 0 && (
-                <span style={{ color: '#FAB005' }}>+ 대기 {jobQueueStatus.pending}건</span>
+                <span style={{ color: '#FAB005' }}>+ 대기 {jobQueueStatus.pending.toLocaleString()}건</span>
               )}
             </div>
           </div>
@@ -1049,7 +1049,7 @@ export default function ShipmentsPage() {
                         onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
                         onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
                       >
-                        [{p.site_product_id || ''}] {p.name} {optCount > 0 ? <span style={{ color: '#DCE0E8' }}>[옵션수:{optCount}]</span> : ''}
+                        [{p.site_product_id || ''}] {p.name} {optCount > 0 ? <span style={{ color: '#DCE0E8' }}>[옵션수:{optCount.toLocaleString()}]</span> : ''}
                       </a>
                     </div>
                     {regMarkets.length > 0 && (
@@ -1127,7 +1127,7 @@ export default function ShipmentsPage() {
               style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage >= Math.ceil(totalCount / pageSize) ? '#444' : '#C5C5C5', cursor: currentPage >= Math.ceil(totalCount / pageSize) ? 'default' : 'pointer' }}
             >▶</button>
             <span style={{ fontSize: '0.72rem', color: '#666', marginLeft: '8px' }}>
-              {totalCount}개 중 {(currentPage - 1) * pageSize + 1}~{Math.min(currentPage * pageSize, totalCount)}
+              {totalCount.toLocaleString()}개 중 {((currentPage - 1) * pageSize + 1).toLocaleString()}~{Math.min(currentPage * pageSize, totalCount).toLocaleString()}
             </span>
           </div>
         )}

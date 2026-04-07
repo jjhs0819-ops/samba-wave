@@ -989,17 +989,17 @@ export default function ProductsPage() {
             })}
           </select>
         )}
-        <span style={{ fontSize: '0.78rem', color: '#888' }}>({selectedIds.size}개 상품)</span>
+        <span style={{ fontSize: '0.78rem', color: '#888' }}>({selectedIds.size.toLocaleString()}개 상품)</span>
         <button
           onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 이미지를 변환하시겠습니까?`)
+            const ok = await showConfirm(`선택된 ${selectedIds.size.toLocaleString()}개 상품의 이미지를 변환하시겠습니까?`)
             if (!ok) return
             const ids = [...selectedIds]
             const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
             setAiImgTransforming(true)
             aiJobAbortRef.current = false
-            setAiJobTitle(`AI 이미지변환 (${ids.length}개)`)
+            setAiJobTitle(`AI 이미지변환 (${ids.length.toLocaleString()}개)`)
             setAiJobLogs([])
             setAiJobDone(false)
             setAiJobModal(true)
@@ -1057,12 +1057,12 @@ export default function ProductsPage() {
             if (imgFilterScopes.size === 0) { showAlert('필터링 대상을 선택해주세요'); return }
             const scopeLabel = [...imgFilterScopes].map(s => s === 'images' ? '대표' : s === 'detail_images' ? '추가' : '상세').join('+')
             const scope = imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') && imgFilterScopes.has('detail') ? 'all' : imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') ? 'images' : imgFilterScopes.has('detail') ? 'detail' : [...imgFilterScopes][0] || 'images'
-            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
+            const ok = await showConfirm(`선택된 ${selectedIds.size.toLocaleString()}개 상품의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
             if (!ok) return
             const ids = [...selectedIds]
             setImgFiltering(true)
             aiJobAbortRef.current = false
-            setAiJobTitle(`이미지 필터링 (${ids.length}개)`)
+            setAiJobTitle(`이미지 필터링 (${ids.length.toLocaleString()}개)`)
             setAiJobLogs([])
             setAiJobDone(false)
             setAiJobModal(true)
@@ -1170,7 +1170,7 @@ export default function ProductsPage() {
           </span>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 영상을 생성하시겠습니까?`)
+            const ok = await showConfirm(`선택된 ${selectedIds.size.toLocaleString()}개 상품의 영상을 생성하시겠습니까?`)
             if (!ok) return
             for (const pid of selectedIds) {
               const prod = products.find(p => p.id === pid)
@@ -1195,7 +1195,7 @@ export default function ProductsPage() {
           }}>AI상품명</button>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
+            const ok = await showConfirm(`선택된 ${selectedIds.size.toLocaleString()}개 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
             if (!ok) return
             setTagPreviewLoading(true)
             try {
@@ -1218,11 +1218,11 @@ export default function ProductsPage() {
           }}>{tagPreviewLoading ? 'AI태그 생성중...' : 'AI태그'}</button>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 태그를 모두 삭제하시겠습니까?`)
+            const ok = await showConfirm(`선택된 ${selectedIds.size.toLocaleString()}개 상품의 태그를 모두 삭제하시겠습니까?`)
             if (!ok) return
             await collectorApi.bulkUpdateTags([...selectedIds], [], [])
             setAllProducts(prev => prev.map(p => selectedIds.has(p.id) ? { ...p, tags: [], seo_keywords: [] as string[] } : p))
-            showAlert(`${selectedIds.size}개 상품 태그 삭제 완료`, 'success')
+            showAlert(`${selectedIds.size.toLocaleString()}개 상품 태그 삭제 완료`, 'success')
             setSelectedIds(new Set()); setSelectAll(false)
           }} style={{
             fontSize: "0.78rem", padding: "4px 12px",

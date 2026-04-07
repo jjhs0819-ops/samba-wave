@@ -371,7 +371,7 @@ export default function AnalyticsPage() {
           <button onClick={load}
             style={{ padding: '0.375rem 0.875rem', fontSize: '0.8125rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 600, cursor: 'pointer' }}>매출검색</button>
           <span style={{ marginLeft: 'auto', fontSize: '0.8125rem', color: '#888' }}>
-            총 <span style={{ color: '#FF8C00', fontWeight: 700 }}>{totalOrders}</span>건 · 매출 <span style={{ color: '#FF8C00', fontWeight: 700 }}>₩{totalSales.toLocaleString()}</span>
+            총 <span style={{ color: '#FF8C00', fontWeight: 700 }}>{totalOrders.toLocaleString()}</span>건 · 매출 <span style={{ color: '#FF8C00', fontWeight: 700 }}>₩{totalSales.toLocaleString()}</span>
           </span>
         </div>
 

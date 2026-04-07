@@ -686,7 +686,7 @@ export default function OrdersPage() {
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>주문 상황</h2>
           <p style={{ fontSize: '0.875rem', color: '#888' }}>
-            미배송: <span style={{ color: '#FF6B6B', fontWeight: 700 }}>{pendingCount}</span>건 / 전체: <span style={{ fontWeight: 700 }}>{filteredOrders.length}</span>건
+            미배송: <span style={{ color: '#FF6B6B', fontWeight: 700 }}>{pendingCount.toLocaleString()}</span>건 / 전체: <span style={{ fontWeight: 700 }}>{filteredOrders.length.toLocaleString()}</span>건
           </p>
         </div>
         {smsRemain && (
@@ -785,7 +785,7 @@ export default function OrdersPage() {
       {/* 필터 바 */}
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
         <span style={{ fontSize: '0.72rem', color: '#aaa', whiteSpace: 'nowrap', marginRight: '4px' }}>
-          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.length}</span>건 / ₩<span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.reduce((s, o) => s + o.sale_price, 0).toLocaleString()}</span>
+          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.length.toLocaleString()}</span>건 / ₩<span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.reduce((s, o) => s + o.sale_price, 0).toLocaleString()}</span>
         </span>
         <select style={{ ...inputStyle, width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품</option>
@@ -888,7 +888,7 @@ export default function OrdersPage() {
                         <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
                         <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', color: '#B0B0B0', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
                       </div>
-                      <span style={{ fontSize: o.quantity > 1 ? '2.25rem' : '0.95rem', fontWeight: 700, color: o.quantity > 1 ? '#F5A623' : '#888' }}>수량: <span style={{ color: o.quantity > 1 ? '#F5A623' : '#E5E5E5' }}>{o.quantity}</span></span>
+                      <span style={{ fontSize: o.quantity > 1 ? '2.25rem' : '0.95rem', fontWeight: 700, color: o.quantity > 1 ? '#F5A623' : '#888' }}>수량: <span style={{ color: o.quantity > 1 ? '#F5A623' : '#E5E5E5' }}>{o.quantity.toLocaleString()}</span></span>
                     </div>
 
                     {/* 상품 이미지 (100x100) + 마켓/주문번호 */}
@@ -1478,7 +1478,7 @@ export default function OrdersPage() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid #2D2D2D' }}>
                 <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#E5E5E5' }}>가격 / 재고 이력</h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontSize: '0.75rem', color: '#666' }}>{history.length}건 기록</span>
+                  <span style={{ fontSize: '0.75rem', color: '#666' }}>{history.length.toLocaleString()}건 기록</span>
                   <button onClick={() => setPriceHistoryModal(false)} style={{ background: 'transparent', border: 'none', color: '#888', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
                 </div>
               </div>
@@ -1549,7 +1549,7 @@ export default function OrdersPage() {
                                 </td>
                               )}
                               <td style={{ padding: '8px 16px', textAlign: 'right', color: '#888' }}>
-                                {opts.length > 0 ? `${opts.length}개 옵션` : '-'}
+                                {opts.length > 0 ? `${opts.length.toLocaleString()}개 옵션` : '-'}
                               </td>
                             </tr>
                             {opts.map((opt, oi) => {
