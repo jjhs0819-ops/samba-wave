@@ -1264,6 +1264,28 @@ class JobWorker:
                 await repo.fail_job(job.id, f"검색 실패: {e}")
                 return
 
+        # Nike: category_filter("성별_세분류")로 검색 결과 사후 필터링
+        if site == "Nike" and sf.category_filter:
+            # category_filter = "남성_러닝화" → category2="남성", category3="러닝화"
+            _parts = sf.category_filter.split("_", 1)
+            _filter_c2 = _parts[0] if len(_parts) >= 1 else ""
+            _filter_c3 = _parts[1] if len(_parts) >= 2 else ""
+            before = len(items_list)
+            filtered = []
+            for item in items_list:
+                ic2 = item.get("category2", "")
+                ic3 = item.get("category3", "")
+                # 성별+세분류 모두 일치해야 통과
+                if _filter_c2 and ic2 != _filter_c2:
+                    continue
+                if _filter_c3 and ic3 != _filter_c3:
+                    continue
+                filtered.append(item)
+            items_list = filtered
+            logger.info(
+                f"[잡워커] Nike 카테고리 필터 {sf.category_filter}: {before}→{len(items_list)}건"
+            )
+
         # LOTTEON: category_filter(BC코드, 콤마 구분)로 검색 결과 사후 필터링
         if site == "LOTTEON" and sf.category_filter:
             bc_set = set(sf.category_filter.split(","))

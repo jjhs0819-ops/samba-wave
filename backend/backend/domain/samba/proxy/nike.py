@@ -35,6 +35,122 @@ CAT_MAP = {
     "EQUIPMENT": "장비",
 }
 
+# subTitle 성별 접두사 (길이 내림차순 매칭)
+_GENDER_PREFIXES = [
+    "주니어(남아)",
+    "주니어(여아)",
+    "리틀키즈",
+    "남성용",
+    "여성용",
+    "주니어",
+    "남성",
+    "여성",
+    "여아",
+    "유아",
+    "키즈",
+]
+# 성별 정규화
+_GENDER_NORM = {
+    "남성용": "남성",
+    "여성용": "여성",
+    "주니어(남아)": "주니어",
+    "주니어(여아)": "주니어",
+    "여아": "주니어",
+    "리틀키즈": "키즈",
+    "유아": "키즈",
+}
+
+# subTitle 끝 키워드 → 세부 카테고리 매핑
+SUBTITLE_CAT_KEYWORDS: dict[str, str] = {
+    # 신발
+    "러닝화": "러닝화",
+    "레이싱화": "러닝화",
+    "축구화": "축구화",
+    "농구화": "농구화",
+    "테니스화": "테니스화",
+    "골프화": "골프화",
+    "슬라이드": "슬라이드",
+    "샌들": "슬라이드",
+    "신발": "신발",
+    # 상의
+    "티셔츠": "티셔츠",
+    "탑": "티셔츠",
+    "탱크": "티셔츠",
+    "저지": "저지",
+    "폴로": "폴로",
+    "셔츠": "셔츠",
+    "후디": "후디",
+    "후드 재킷": "후디",
+    "후드 미드 레이어": "후디",
+    "스웻셔츠": "후디",
+    "크루": "맨투맨",
+    # 아우터
+    "재킷": "재킷",
+    "파카": "재킷",
+    "패딩 재킷": "패딩",
+    "패딩 조끼": "패딩",
+    "조끼": "패딩",
+    # 하의
+    "팬츠": "팬츠",
+    "조거": "팬츠",
+    "쇼츠": "쇼츠",
+    "드레스": "드레스",
+    "스커트": "스커트",
+    "스코트": "스커트",
+    # 용품
+    "백팩": "가방",
+    "캡": "모자",
+    "삭스": "양말",
+}
+# 긴 키워드부터 매칭 (패딩 재킷 > 재킷)
+_SORTED_CAT_KEYWORDS = sorted(SUBTITLE_CAT_KEYWORDS.keys(), key=len, reverse=True)
+# contains 매칭용 (백팩 세트, 삭스 등)
+_CONTAINS_KEYWORDS = ["백팩", "삭스"]
+
+
+def parse_subtitle(subtitle: str, product_type: str = "") -> tuple[str, str]:
+    """Nike subTitle → (성별, 세부카테고리) 추출.
+
+    예: "남성 로드 러닝화" → ("남성", "러닝화")
+        "천연 잔디 클리트 축구화" → ("", "축구화")
+        "여성 오버사이즈 로고 후디(플러스 사이즈)" → ("여성", "후디")
+    """
+    if not subtitle:
+        return ("", "")
+
+    # 괄호 내용 제거: (와이드), (플러스 사이즈), (21L) 등
+    clean = re.sub(r"\([^)]*\)", "", subtitle).strip()
+
+    # 1. 성별 추출
+    gender = ""
+    rest = clean
+    for g in _GENDER_PREFIXES:
+        if clean.startswith(g + " ") or clean == g:
+            gender = g
+            rest = clean[len(g) :].strip()
+            break
+    gender = _GENDER_NORM.get(gender, gender)
+
+    # "나이키" 브랜드 접두사 제거
+    for prefix in ("나이키 ", "나이키"):
+        if rest.startswith(prefix):
+            rest = rest[len(prefix) :].strip()
+            break
+
+    # 2. 끝 키워드 매칭 (긴 키워드 우선)
+    for kw in _SORTED_CAT_KEYWORDS:
+        if rest.endswith(kw):
+            return (gender, SUBTITLE_CAT_KEYWORDS[kw])
+
+    # 3. 포함 매칭 (백팩 세트 등)
+    for kw in _CONTAINS_KEYWORDS:
+        if kw in rest:
+            return (gender, SUBTITLE_CAT_KEYWORDS[kw])
+
+    # 4. fallback: productType 대분류
+    return (gender, CAT_MAP.get(product_type, product_type))
+
+
 # 나이키 공식 취급주의 안내 (출처: https://www.nike.com/kr/help/a/product-handling)
 NIKE_CARE_INSTRUCTIONS: dict[str, str] = {
     "신발": (
@@ -205,27 +321,36 @@ class NikeClient:
     async def scan_categories(self, keyword: str) -> dict[str, Any]:
         """키워드 검색 후 카테고리 분포 집계.
 
-        검색 결과의 productType(FOOTWEAR/APPAREL/ACCESSORIES/EQUIPMENT)으로
-        카테고리를 집계한다. 상세 조회 없이 검색만으로 추출 가능.
+        subTitle에서 성별+세부카테고리를 추출하여 세분화된 카테고리를 집계.
+        전체 상품을 수집하여 정확한 분포를 제공한다.
 
         Returns:
           {"categories": [...], "total": int, "groupCount": int}
         """
-        result = await self.search(keyword, max_count=100)
+        result = await self.search(keyword, max_count=9999)
         products = result.get("products", [])
         if not products:
             return {"categories": [], "total": 0, "groupCount": 0}
 
+        # 그룹(groupKey) 기준 카운트 — 같은 그룹의 컬러웨이는 1건으로 집계
         cat_counter: dict[str, int] = {}
+        seen_groups: dict[str, set[str]] = {}  # key → {group_key, ...}
         for p in products:
             c1 = p.get("category1", "")
             c2 = p.get("category2", "")
             c3 = p.get("category3", "")
-            if not c1 and not c2:
+            gk = p.get("group_key", p.get("site_product_id", ""))
+            if not c1 and not c2 and not c3:
                 continue
             path = " > ".join([x for x in [c1, c2, c3] if x])
-            key = f"{c2 or c1}||{path}||{c1}||{c2}||{c3}"
-            cat_counter[key] = cat_counter.get(key, 0) + 1
+            # categoryCode: "성별_세분류" (그룹 생성 시 고유키로 사용)
+            code = "_".join([x for x in [c2, c3] if x]) or c1
+            key = f"{code}||{path}||{c1}||{c2}||{c3}"
+            if key not in seen_groups:
+                seen_groups[key] = set()
+            if gk not in seen_groups[key]:
+                seen_groups[key].add(gk)
+                cat_counter[key] = cat_counter.get(key, 0) + 1
 
         categories = []
         for key, count in sorted(cat_counter.items(), key=lambda x: -x[1]):
@@ -344,24 +469,31 @@ class NikeClient:
                 initial_price = prices.get("initialPrice", 0)
                 img_url = images.get("portraitURL", "") or images.get("squarishURL", "")
                 product_code = prod.get("productCode", "")
+                group_key = prod.get("groupKey", product_code)
                 product_type = prod.get("productType", "")
-                category1 = CAT_MAP.get(product_type, product_type)
                 color = display_colors.get("colorDescription", "")
                 url = pdp_url.get("url", "") if isinstance(pdp_url, dict) else ""
+
+                # subTitle 기반 세분류: 성별 + 카테고리
+                gender, sub_cat = parse_subtitle(subtitle, product_type)
+                # category 경로: "Nike > 남성 > 러닝화"
+                cat_parts = ["Nike"] + [x for x in [gender, sub_cat] if x]
+                category_path = " > ".join(cat_parts)
 
                 products.append(
                     {
                         "site_product_id": product_code,
+                        "group_key": group_key or product_code,
                         "name": name or f"Nike {product_code}",
                         "original_price": initial_price,
                         "sale_price": current_price or initial_price,
                         "images": [img_url] if img_url else [],
                         "brand": "Nike",
                         "source_site": "Nike",
-                        "category": f"Nike > {category1}" if category1 else "Nike",
+                        "category": category_path,
                         "category1": "Nike",
-                        "category2": category1,
-                        "category3": "",
+                        "category2": gender,
+                        "category3": sub_cat,
                         "color": color,
                         "video_url": url,  # 나이키 PDP URL 저장 (영상 없으므로 원문링크용으로 활용)
                         "url": url,
