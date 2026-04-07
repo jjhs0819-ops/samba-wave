@@ -382,8 +382,12 @@ class NikeClient:
             url = (props.get("squarish") or {}).get("url") or (
                 props.get("portrait") or {}
             ).get("url")
-            if url and url not in images:
-                images.append(url)
+            if url:
+                # Nike CDN: t_default → 팔레트 PNG 반환 → strip_exif에서 검정색으로 깨짐
+                # t_PDP_1280_v1 프리셋 사용 → JPEG 반환 → 정상 업로드
+                url = url.replace("/t_default/", "/t_PDP_1280_v1/")
+                if url not in images:
+                    images.append(url)
 
         # 색상/제조국
         color = sp.get("colorDescription", "") or prod_data.get("colorDescription", "")
