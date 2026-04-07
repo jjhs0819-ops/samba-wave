@@ -82,7 +82,7 @@ jobs:
       - name: Health Check
         run: |
           sleep 15
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://samba-wave-api-363598397345.asia-northeast3.run.app/api/v1/health)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://samba-wave-api-pz725ucp4q-du.a.run.app/api/v1/health)
           if [ "$STATUS" != "200" ]; then
             echo "❌ Health check 실패 (HTTP $STATUS)"
             gcloud run services describe samba-wave-api \

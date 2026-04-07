@@ -118,7 +118,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         logger.exception(f"Database error during request to {request.url}: {exc}")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"detail": f"Database error: {str(exc)[:500]}"},
+            content={"detail": "Database error"},
         )
 
     @app.exception_handler(Exception)
