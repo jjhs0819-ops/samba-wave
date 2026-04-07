@@ -1321,7 +1321,7 @@ _SOURCING_SITE_BANNED: frozenset[str] = frozenset(
         "패션플러스",
         "grandstage",
         "그랜드스테이지",
-        "okmall",
+        "rexmonde",
         "elandmall",
         "이랜드몰",
         "ssf",
@@ -2413,7 +2413,7 @@ async def compare_image_filter_methods(
 EXTENSION_SITES = {
     "ABCmart",
     "GrandStage",
-    "OKmall",
+    "REXMONDE",
     "LOTTEON",
     "GSShop",
     "ElandMall",

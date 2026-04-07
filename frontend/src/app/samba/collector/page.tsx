@@ -32,7 +32,7 @@ const SITES = [
   { id: 'Adidas', label: 'Adidas' },
   { id: 'ABCmart', label: 'ABC마트' },
   { id: 'GrandStage', label: '그랜드스테이지' },
-  { id: 'OKmall', label: 'OKmall' },
+  { id: 'REXMONDE', label: '렉스몬드' },
   { id: 'SSG', label: '신세계몰' },
   { id: 'LOTTEON', label: '롯데ON' },
   { id: 'GSShop', label: 'GSShop' },
@@ -324,7 +324,7 @@ export default function CollectorPage() {
         const siteHostMap: Record<string, string[]> = {
           MUSINSA: ['musinsa.com'], KREAM: ['kream.co.kr'], FashionPlus: ['fashionplus.co.kr'],
           Nike: ['nike.com'], Adidas: ['adidas.co.kr', 'adidas.com'],
-          ABCmart: ['a-rt.com'], GrandStage: ['a-rt.com'], OKmall: ['okmall.com'],
+          ABCmart: ['a-rt.com'], GrandStage: ['a-rt.com'], REXMONDE: ['okmall.com'],
           LOTTEON: ['lotteon.com'], GSShop: ['gsshop.com'], ElandMall: ['elandmall.com'],
           SSF: ['ssfshop.com'], SSG: ['ssg.com'],
         }

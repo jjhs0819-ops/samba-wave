@@ -125,7 +125,7 @@ const SOURCE_URL_MAP: Record<string, string> = {
   FASHIONPLUS: 'https://www.fashionplus.co.kr/goods/detail/{id}',
   ABCMART: 'https://www.a-rt.com/product?prdtNo={id}',
   GRANDSTAGE: 'https://www.a-rt.com/product?prdtNo={id}&tChnnlNo=10002',
-  OKMALL: 'https://www.okmall.com/products/detail/{id}',
+  REXMONDE: 'https://www.okmall.com/products/detail/{id}',
   LOTTEON: 'https://www.lotteon.com/product/productDetail.lotte?spdNo={id}',
   GSSHOP: 'https://www.gsshop.com/prd/prd.gs?prdid={id}',
   ELANDMALL: 'https://www.elandmall.com/goods/goods.action?goodsNo={id}',

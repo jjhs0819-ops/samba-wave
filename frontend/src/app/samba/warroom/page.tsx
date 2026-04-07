@@ -232,7 +232,7 @@ export default function WarroomPage() {
     { key: 'Adidas', label: 'Adidas' },
     { key: 'ABCmart', label: 'ABC마트' },
     { key: 'GrandStage', label: '그랜드스테이지' },
-    { key: 'OKmall', label: 'OKmall' },
+    { key: 'REXMONDE', label: '렉스몬드' },
     { key: 'SSG', label: 'SSG' },
     { key: 'LOTTEON', label: '롯데ON' },
     { key: 'GSShop', label: 'GSShop' },

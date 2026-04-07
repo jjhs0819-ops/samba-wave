@@ -736,7 +736,7 @@ class JobWorker:
         EXTENSION_SITES = {
             "ABCmart",
             "GrandStage",
-            "OKmall",
+            "REXMONDE",
             "GSShop",
             "ElandMall",
             "SSF",

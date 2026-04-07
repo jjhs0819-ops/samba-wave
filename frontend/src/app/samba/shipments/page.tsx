@@ -16,7 +16,7 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }>
   failed:       { bg: 'rgba(255,107,107,0.15)', text: '#FF6B6B', label: '실패' },
 }
 
-const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
+const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
 // 영문 market_type → 한글 정책 키 (markets.ts에서 import)
 const MARKET_TYPE_TO_POLICY_KEY = SHARED_POLICY_KEY

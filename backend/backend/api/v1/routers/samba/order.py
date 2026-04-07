@@ -1436,7 +1436,7 @@ async def sync_orders_from_markets(
                 "FashionPlus": "https://www.fashionplus.co.kr/goods/detail/{}",
                 "ABCmart": "https://www.a-rt.com/product?prdtNo={}",
                 "GrandStage": "https://www.a-rt.com/product?prdtNo={}",
-                "OKmall": "https://www.okmall.com/products/detail/{}",
+                "REXMONDE": "https://www.okmall.com/products/detail/{}",
                 "LOTTEON": "https://www.lotteon.com/product/productDetail.lotte?spdNo={}",
                 "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={}",
                 "ElandMall": "https://www.elandmall.com/goods/goods.action?goodsNo={}",

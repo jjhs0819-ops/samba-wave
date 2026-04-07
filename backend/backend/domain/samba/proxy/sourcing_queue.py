@@ -1,7 +1,7 @@
 """통합 소싱 큐 — 확장앱 기반 상품 수집 큐 관리.
 
 KREAM 패턴과 동일: 백엔드가 큐에 작업 추가 → 확장앱이 폴링 → 탭 열어 DOM 파싱 → 결과 전송.
-ABCmart, GrandStage, OKmall, 롯데ON, GSShop 5개 사이트 지원.
+ABCmart, GrandStage, REXMONDE, 롯데ON, GSShop 5개 사이트 지원.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from backend.utils.logger import logger
 SITE_SEARCH_URLS: dict[str, str] = {
     "ABCmart": "https://www.a-rt.com/display/search-word/result?searchWord={keyword}",
     "GrandStage": "https://www.a-rt.com/display/search-word/result?searchWord={keyword}&channel=10002",
-    "OKmall": "https://www.okmall.com/products/list?keyword={keyword}",
+    "REXMONDE": "https://www.okmall.com/products/list?keyword={keyword}",
     "LOTTEON": "https://www.lotteon.com/search/search/search.ecn?render=search&platform=pc&q={keyword}",
     "GSShop": "https://www.gsshop.com/shop/search/main.gs?tq={keyword}",
     "ElandMall": "https://www.elandmall.com/search/search.action?kwd={keyword}",
@@ -27,7 +27,7 @@ SITE_SEARCH_URLS: dict[str, str] = {
 SITE_DETAIL_URLS: dict[str, str] = {
     "ABCmart": "https://www.a-rt.com/product?prdtNo={product_id}",
     "GrandStage": "https://www.a-rt.com/product?prdtNo={product_id}&tChnnlNo=10002",
-    "OKmall": "https://www.okmall.com/products/detail/{product_id}",
+    "REXMONDE": "https://www.okmall.com/products/detail/{product_id}",
     "LOTTEON": "https://www.lotteon.com/product/productDetail.lotte?spdNo={product_id}",
     "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={product_id}",
     "ElandMall": "https://www.elandmall.com/goods/goods.action?goodsNo={product_id}",

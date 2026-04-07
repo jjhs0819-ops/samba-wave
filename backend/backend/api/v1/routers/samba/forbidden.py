@@ -288,7 +288,7 @@ async def get_tag_banned_words(
         "패션플러스",
         "GrandStage",
         "그랜드스테이지",
-        "OKmall",
+        "REXMONDE",
         "ElandMall",
         "이랜드몰",
         "SSF",

@@ -13,7 +13,7 @@ export const SITE_COLORS: Record<string, string> = {
   Adidas: '#FFD93D',
   ABCmart: '#FF8C00',
   GrandStage: '#20C997',
-  OKmall: '#F06595',
+  REXMONDE: '#F06595',
   SSG: '#FF5A2E',
   LOTTEON: '#E10044',
   GSShop: '#6B5CE7',

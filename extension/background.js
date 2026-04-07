@@ -1183,7 +1183,7 @@ async function handleAiSourcingJob(job) {
   }
 }
 
-// ==================== 통합 소싱 큐 폴링 (ABCmart, GrandStage, OKmall, 롯데ON, GSShop) ====================
+// ==================== 통합 소싱 큐 폴링 (ABCmart, GrandStage, REXMONDE, 롯데ON, GSShop) ====================
 
 function pollSourcingOnce() {
   return pollOnce('sourcing/collect-queue', handleSourcingJob, '소싱', 'url')
@@ -1272,7 +1272,7 @@ async function extractSearchResults(tabId, site, maxCount = 999) {
       const linkPatterns = {
         'ABCmart': /\/product\?prdtNo=(\d+)/,
         'GrandStage': /\/product\?prdtNo=(\d+)/,
-        'OKmall': /\/products\/detail\/(\d+)/,
+        'REXMONDE': /\/products\/detail\/(\d+)/,
         'LOTTEON': /\/product\/productDetail[^"]*spdNo=(\d+)/,
         'GSShop': /\/(?:prd\/prd\.gs\?prdid|deal\/deal\.gs\?dealNo)=(\d+)/,
         'ElandMall': /\/goods\/goods\.action\?goodsNo=(\d+)/,
