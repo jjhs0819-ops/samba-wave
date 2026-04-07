@@ -297,6 +297,7 @@ async def sales_breakdown(
 ):
     """특정일 status별 매출 분해 — 마이그레이션 후 기준."""
     from sqlalchemy import func, select, text
+    from datetime import datetime as dt
 
     FULFILLMENT_STATUSES = (
         "pending",
@@ -309,6 +310,10 @@ async def sales_breakdown(
         "exchanging",
     )
 
+    # KST 기준 날짜 범위
+    start_dt = dt.strptime(date, "%Y-%m-%d").replace(hour=0, minute=0, second=0)
+    end_dt = dt.strptime(date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+
     order_date_utc = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
     order_date = order_date_utc + text("INTERVAL '9 hours'")
 
@@ -318,7 +323,7 @@ async def sales_breakdown(
             func.count().label("cnt"),
             func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
         )
-        .where(func.date(order_date) == date)
+        .where(order_date >= start_dt, order_date <= end_dt)
         .group_by(SambaOrder.status)
         .order_by(func.sum(SambaOrder.sale_price).desc())
     )
