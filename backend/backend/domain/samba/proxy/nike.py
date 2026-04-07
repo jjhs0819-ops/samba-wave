@@ -423,10 +423,45 @@ class NikeClient:
         if _base.get("original_price") and not result.get("original_price"):
             result["original_price"] = _base["original_price"]
 
+        # threads API로 사이즈별 실재고 반영
+        try:
+            avail = await self._fetch_availability(style_color)
+            if avail:
+                for opt in result.get("options", []):
+                    gtin = opt.get("gtin", "")
+                    if gtin and gtin not in avail:
+                        opt["stock"] = 0
+                    elif gtin and not avail.get(gtin, False):
+                        opt["stock"] = 0
+        except Exception as e:
+            logger.warning(f"[Nike] 재고 API 실패 {style_color}: {e}")
+
         logger.info(
             f"[Nike] 상세 '{style_color}' → 이미지 {len(result.get('images', []))}장"
         )
         return result
+
+    async def _fetch_availability(self, style_color: str) -> dict[str, bool]:
+        """threads API로 사이즈별 재고 조회 → {gtin: available} 맵 반환."""
+        url = (
+            "https://api.nike.com/product_feed/threads/v3"
+            "?filter=marketplace(KR)"
+            "&filter=language(ko)"
+            "&filter=channelId(d9a5bc42-4b9c-4976-858a-f159cf99c647)"
+            f"&filter=productInfo.merchProduct.styleColor({style_color})"
+        )
+        api_headers = {**HEADERS, "Accept": "application/json"}
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, headers=api_headers)
+            if resp.status_code != 200:
+                return {}
+            data = resp.json()
+        objects = data.get("objects", [])
+        if not objects:
+            return {}
+        pi = objects[0].get("productInfo", [{}])[0]
+        available_gtins = pi.get("availableGtins", [])
+        return {ag["gtin"]: ag.get("available", False) for ag in available_gtins}
 
     @staticmethod
     def _parse_search_data_with_total(html: str) -> tuple[list[dict[str, Any]], int]:
@@ -606,18 +641,25 @@ class NikeClient:
             }
             gender_kr = gender_map.get(gender_en, gender_en)
 
-        # 사이즈 옵션: productGroups.sizes → localizedLabel + status(ACTIVE=재고있음)
+        # 사이즈 옵션: productGroups.sizes → localizedLabel + GTIN + status
         sizes_data = prod_data.get("sizes") or []
         if sizes_data:
-            options = [
-                {
-                    "name": s.get("localizedLabel", s.get("label", "")),
-                    "size": s.get("localizedLabel", s.get("label", "")),
-                    "stock": 99 if s.get("status") == "ACTIVE" else 0,
-                }
-                for s in sizes_data
-                if s.get("localizedLabel") or s.get("label")
-            ]
+            options = []
+            for s in sizes_data:
+                label = s.get("localizedLabel") or s.get("label", "")
+                if not label:
+                    continue
+                # GTIN 추출 (threads API 재고 매칭용)
+                gtin_list = s.get("gtins") or []
+                gtin = gtin_list[0].get("gtin", "") if gtin_list else ""
+                options.append(
+                    {
+                        "name": label,
+                        "size": label,
+                        "gtin": gtin,
+                        "stock": 99 if s.get("status") == "ACTIVE" else 0,
+                    }
+                )
         else:
             # fallback: HTML label 태그에서 파싱
             size_labels = re.findall(r"<label[^>]*>\s*(\d{3})\s*</label>", html)
