@@ -7,6 +7,8 @@ tmp_captures/
 
 # Claude IDE 캐시
 .claude/tsc-cache/
+.omc/
+backend/.omc/
 
 # 생성 산출물
 backend/backend/static/images/
@@ -478,3 +480,5 @@ sketch
 
 # End of https://www.toptal.com/developers/gitignore/api/react,node
 *.sql
+.gstack/
+backend/cloud-sql-proxy.exe

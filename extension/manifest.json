@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SAMBA-WAVE",
-  "version": "2.8.3",
+  "version": "2.8.7",
   "description": "무재고 위탁판매 솔루션 - 무신사/KREAM/소싱처 수집 연동",
   "permissions": [
     "cookies",
@@ -28,7 +28,7 @@
     "https://*.grandstage.co.kr/*",
     "https://sell.smartstore.naver.com/*",
     "http://localhost:28080/*",
-    "https://samba-wave-api-363598397345.asia-northeast3.run.app/*"
+    "https://samba-wave-api-413651618998.asia-northeast3.run.app/*"
   ],
   "action": {
     "default_popup": "popup.html",
