@@ -738,6 +738,12 @@ export const proxyApi = {
   ssgAuthTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/ssg/auth-test`, { method: 'POST' }),
+  ssgShippingPolicies: (accountId?: string) =>
+    request<{ success: boolean; policies: { shppcstId: string; feeAmt: number; prpayCodDivNm: string; shppcstAplUnitNm: string; divCd: number }[] }>(
+      `${SAMBA_PREFIX}/proxy/ssg/shipping-policies${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''}`),
+  ssgAddresses: (accountId?: string) =>
+    request<{ success: boolean; addresses: { grpAddrId: string; addrNm: string; bascAddr: string }[] }>(
+      `${SAMBA_PREFIX}/proxy/ssg/addresses${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''}`),
   gsshopAuthTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/gsshop/auth-test`, { method: 'POST' }),
