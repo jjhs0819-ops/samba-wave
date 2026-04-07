@@ -873,6 +873,7 @@ export default function CollectorPage() {
               selectedSite === "MUSINSA" ? "브랜드명 또는 URL (예: 나이키, https://www.musinsa.com/search/goods?keyword=나이키)" :
               selectedSite === "KREAM" ? "https://kream.co.kr/search?keyword=나이키" :
               selectedSite === "LOTTEON" ? "키워드 또는 URL (예: 나이키, https://www.lotteon.com/search/...)" :
+              selectedSite === "GSShop" ? "키워드 입력 (예: 내셔널지오그래픽, 나이키)" :
               "URL을 입력하세요"
             }
             style={{
@@ -881,7 +882,7 @@ export default function CollectorPage() {
               color: "#E5E5E5", outline: "none",
             }}
           />
-          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON') && (
+          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON' || selectedSite === 'GSShop') && (
             <button onClick={async () => {
               if (!collectUrl.trim()) { showAlert('URL 또는 키워드를 입력하세요'); return }
               setBrandScanning(true)
@@ -913,6 +914,20 @@ export default function CollectorPage() {
                   setBrandModalParsed({ brand, keyword, gf })
                   setShowBrandModal(true)
                 } catch (e) { showAlert(e instanceof Error ? e.message : '브랜드 탐색 실패', 'error') }
+                setBrandScanning(false)
+                return
+              }
+
+              // GS샵: 키워드만으로 바로 스캔 (백화점 탭)
+              if (selectedSite === 'GSShop') {
+                const scanKeyword = keyword || brand || collectUrl.trim()
+                try {
+                  const res = await collectorApi.brandScan('', 'A', scanKeyword, 'GSSHOP')
+                  setBrandCategories(res.categories)
+                  setBrandTotal(res.total)
+                  setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
+                  addLog(`[카테고리스캔] GS샵 백화점: ${scanKeyword} → ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                 setBrandScanning(false)
                 return
               }
