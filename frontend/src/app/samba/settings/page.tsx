@@ -1609,8 +1609,46 @@ export default function SettingsPage() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   {market.fields.map(field => field.type === 'divider' ? (
-                    <div key={field.name} style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', marginTop: '0.25rem' }}>
+                    <div key={field.name} style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                       <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FFB84D' }}>{field.label}</span>
+                      {market.key === 'ssg' && field.name === '_divider_shipping_code' && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              // 현재 입력된 API Key로 먼저 설정 저장
+                              const data = storeData['ssg'] || savedStoreData['ssg'] || {}
+                              if (!data.apiKey) {
+                                showAlert('API KEY를 먼저 입력하세요.', 'error')
+                                return
+                              }
+                              await forbiddenApi.saveSetting('store_ssg', data)
+                              // 배송비정책 조회
+                              const shipRes = await proxyApi.ssgShippingPolicies()
+                              if (shipRes.success && shipRes.policies?.length) {
+                                setSsgShippingOptions(shipRes.policies.map((p: { shppcstId: string; feeAmt: number; prpayCodDivNm: string; shppcstAplUnitNm: string; divCd: number }) => {
+                                  const fee = p.feeAmt ? `${Number(p.feeAmt).toLocaleString()}원` : '무료'
+                                  const parts = [p.shppcstId, fee]
+                                  if (p.prpayCodDivNm) parts.push(p.prpayCodDivNm)
+                                  if (p.shppcstAplUnitNm) parts.push(p.shppcstAplUnitNm)
+                                  return { value: p.shppcstId, label: parts.join(' / '), divCd: p.divCd }
+                                }))
+                              }
+                              // 주소 조회
+                              const addrRes = await proxyApi.ssgAddresses()
+                              if (addrRes.success && addrRes.addresses?.length) {
+                                setSsgAddrOptions(addrRes.addresses.map((a: { grpAddrId: string; addrNm: string; bascAddr: string }) => ({
+                                  value: a.grpAddrId,
+                                  label: `${a.addrNm}${a.bascAddr ? ` (${a.bascAddr})` : ''}`,
+                                })))
+                              }
+                              showAlert('배송비/주소 정보를 불러왔습니다.', 'success')
+                            } catch {
+                              showAlert('배송비/주소 조회 실패', 'error')
+                            }
+                          }}
+                          style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                        >배송비/주소 불러오기</button>
+                      )}
                     </div>
                   ) : field.type === 'info' ? (
                     <div key={field.name} style={{ padding: '0.4rem 0.6rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '4px' }}>
