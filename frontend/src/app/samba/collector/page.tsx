@@ -869,7 +869,7 @@ export default function CollectorPage() {
             type="text"
             value={collectUrl}
             onChange={(e) => setCollectUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleCreateGroup()}
+            onKeyDown={(e) => e.key === "Enter" && selectedSite !== "GSShop" && handleCreateGroup()}
             placeholder={
               selectedSite === "MUSINSA" ? "브랜드명 또는 URL (예: 나이키, https://www.musinsa.com/search/goods?keyword=나이키)" :
               selectedSite === "KREAM" ? "https://kream.co.kr/search?keyword=나이키" :
