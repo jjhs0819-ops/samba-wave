@@ -552,16 +552,20 @@ export default function CollectorPage() {
     }
     setCollecting(false)
     collectAbortRef.current = null
-    // 수집 완료 후 요청수를 수집수에 자동 동기화
-    await syncRequestedCounts()
+    // 수집 완료 후 수집한 그룹만 요청수→수집수 동기화
+    await syncRequestedCounts(targetIds)
     load(); loadTree()
   }
 
-  // 요청수 ↔ 수집수 자동 동기화 (수집 완료 후 호출)
-  const syncRequestedCounts = async () => {
+  // 요청수 ↔ 수집수 자동 동기화 (수집한 그룹만)
+  const syncRequestedCounts = async (groupIds?: string[]) => {
     try {
       const latestFilters = await collectorApi.listFilters()
-      const mismatch = latestFilters.filter(
+      // groupIds가 주어지면 해당 그룹만, 아니면 전체
+      const scope = groupIds
+        ? latestFilters.filter((f: SambaSearchFilter) => groupIds.includes(f.id))
+        : latestFilters
+      const mismatch = scope.filter(
         (f: SambaSearchFilter) => !f.is_folder && (f.requested_count || 0) !== ((f as unknown as Record<string, number>).collected_count || 0)
       )
       for (const f of mismatch) {
@@ -1596,7 +1600,7 @@ export default function CollectorPage() {
                           } catch (e) { addLog(`[${f.name}] 수집 오류: ${(e as Error).message}`) }
                         }
                         setCollecting(false)
-                        await syncRequestedCounts()
+                        await syncRequestedCounts(updatedFilters.map(f => f.id))
                         load(); loadTree()
                       }
                     }
