@@ -32,7 +32,6 @@ const SITES = [
   { id: 'Nike', label: 'Nike' },
   { id: 'Adidas', label: 'Adidas' },
   { id: 'ABCmart', label: 'ABC마트' },
-  { id: 'GrandStage', label: '그랜드스테이지' },
   { id: 'REXMONDE', label: '렉스몬드' },
   { id: 'SSG', label: '신세계몰' },
   { id: 'LOTTEON', label: '롯데ON' },
@@ -325,7 +324,7 @@ export default function CollectorPage() {
         const siteHostMap: Record<string, string[]> = {
           MUSINSA: ['musinsa.com'], KREAM: ['kream.co.kr'], FashionPlus: ['fashionplus.co.kr'],
           Nike: ['nike.com'], Adidas: ['adidas.co.kr', 'adidas.com'],
-          ABCmart: ['a-rt.com'], GrandStage: ['a-rt.com'], REXMONDE: ['okmall.com'],
+          ABCmart: ['a-rt.com'], REXMONDE: ['okmall.com'],
           LOTTEON: ['lotteon.com'], GSShop: ['gsshop.com'], ElandMall: ['elandmall.com'],
           SSF: ['ssfshop.com'], SSG: ['ssg.com'],
         }
@@ -878,7 +877,6 @@ export default function CollectorPage() {
               selectedSite === "Nike" ? "키워드 또는 URL (예: 에어포스, https://www.nike.com/kr/w?q=에어포스)" :
               selectedSite === "Adidas" ? "키워드 또는 URL (예: 삼바, https://www.adidas.co.kr/search?q=삼바)" :
               selectedSite === "ABCmart" ? "키워드 또는 URL (예: 나이키, https://www.a-rt.com/abc/display/search?keyword=나이키)" :
-              selectedSite === "GrandStage" ? "키워드 또는 URL (예: 나이키, https://www.a-rt.com/grand/display/search?keyword=나이키)" :
               selectedSite === "REXMONDE" ? "키워드 또는 URL (예: 나이키, https://www.okmall.com/search?keyword=나이키)" :
               selectedSite === "SSG" ? "키워드 또는 URL (예: 나이키, https://www.ssg.com/search.ssg?query=나이키)" :
               selectedSite === "LOTTEON" ? "키워드 또는 URL (예: 나이키, https://www.lotteon.com/search?query=나이키)" :
@@ -932,18 +930,16 @@ export default function CollectorPage() {
               // GS샵: 키워드만으로 바로 스캔 (백화점 탭) + 진행 상황 폴링
               if (selectedSite === 'GSShop') {
                 const scanKeyword = keyword || brand || collectUrl.trim()
-                const scanStart = Date.now()
-                const elapsed = () => `${((Date.now() - scanStart) / 1000).toFixed(0)}초`
                 addLog(`[카테고리스캔] GS샵 백화점 "${scanKeyword}" 스캔 시작...`)
                 // 진행 상황 폴링 (3초 간격)
                 const pollId = setInterval(async () => {
                   try {
                     const p = await collectorApi.gsshopScanProgress()
                     if (p.stage === 'search') {
-                      addLog(`[카테고리스캔] (${elapsed()}) 검색 중... ${p.page}페이지, ${p.products}개 상품 발견`)
+                      addLog(`[카테고리스캔] 검색 중... ${p.page}페이지, ${p.products}개 상품 발견`)
                     } else if (p.stage === 'detail') {
                       const done = (p.detail_ok || 0) + (p.detail_fail || 0)
-                      addLog(`[카테고리스캔] (${elapsed()}) 상세 조회 중... ${done}/${p.detail_total}건 (성공: ${p.detail_ok}, 실패: ${p.detail_fail})`)
+                      addLog(`[카테고리스캔] 상세 조회 중... ${done}/${p.detail_total}건 (성공: ${p.detail_ok}, 실패: ${p.detail_fail})`)
                     }
                   } catch { /* 폴링 실패 무시 */ }
                 }, 3000)
@@ -953,7 +949,7 @@ export default function CollectorPage() {
                   setBrandCategories(res.categories)
                   setBrandTotal(res.total)
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                  addLog(`[카테고리스캔] 완료 (${elapsed()}): ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                  addLog(`[카테고리스캔] 완료: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
                 } catch (e) {
                   clearInterval(pollId)
                   showAlert(e instanceof Error ? e.message : '스캔 실패', 'error')
