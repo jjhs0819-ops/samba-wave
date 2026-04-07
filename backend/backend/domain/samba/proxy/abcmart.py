@@ -359,6 +359,137 @@ class ARTSourcingClient:
 
         return products
 
+    # ------------------------------------------------------------------
+    # worker 호환 래퍼 (snake_case + 페이징 + {"products":[], "total":N})
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _to_snake(item: dict[str, Any]) -> dict[str, Any]:
+        """camelCase 상품 dict → worker가 기대하는 snake_case 변환."""
+        return {
+            "site_product_id": item.get("siteProductId") or item.get("goodsNo", ""),
+            "name": item.get("name", ""),
+            "sale_price": item.get("salePrice", 0),
+            "original_price": item.get("originalPrice", 0),
+            "cost": item.get("salePrice", 0),
+            "brand": item.get("brand", ""),
+            "images": [item["image"]] if item.get("image") else [],
+            "source_site": item.get("sourceSite", "ABCmart"),
+            "source_url": item.get("sourceUrl", ""),
+            "is_sold_out": item.get("isSoldOut", False),
+        }
+
+    async def search(
+        self, keyword: str, max_count: int = 9999, **kwargs: Any
+    ) -> dict[str, Any]:
+        """worker 호환 검색 — 전체 페이지 순회 + snake_case + 카테고리 코드 포함."""
+        # _search_all_for_scan으로 raw 아이템 수집 (CTGR_CD_ALL 포함)
+        raw_items, total_count = await self._search_all_for_scan(keyword)
+        if not raw_items:
+            return {"products": [], "total": 0}
+
+        # 카테고리 제외 목록
+        _CTGR_EXCLUDE = {
+            "홈",
+            "HOME",
+            "ABC마트",
+            "그랜드스테이지",
+            "GRAND STAGE",
+            "ABCmart",
+        }
+
+        products: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in raw_items:
+            pid = str(item.get("PRDT_NO") or item.get("prdtNo") or "")
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
+
+            name = (item.get("PRDT_NAME") or item.get("prdtNm") or "").strip()
+            sale_price = self._safe_int(
+                item.get("PRDT_DC_PRICE") or item.get("sellPrc") or 0
+            )
+            original_price = self._safe_int(
+                item.get("NRMAL_AMT") or item.get("consumerPrc") or sale_price
+            )
+            brand = (item.get("BRAND_NAME") or item.get("brandNm") or "").strip()
+            img = self._normalize_image(
+                item.get("PRDT_IMAGE_URL") or item.get("imgUrl") or ""
+            )
+            is_sold_out = item.get("SOLD_OUT") == "y" or item.get("soldOutYn") == "Y"
+
+            # 카테고리 코드/경로 추출 (카테고리 필터링용)
+            cat_str = (
+                item.get("CTGR_NAME_ALL") or item.get("SY_CTGR_NAME") or ""
+            ).strip()
+            if "," in cat_str:
+                cat_str = cat_str.split(",")[0].strip()
+            code_str = (item.get("CTGR_CD_ALL") or item.get("SY_CTGR_NO") or "").strip()
+            if "," in code_str:
+                code_str = code_str.split(",")[0].strip()
+            code_parts = [c.strip() for c in code_str.split(">") if c.strip()]
+            cat_code = code_parts[-1] if code_parts else ""
+            cat_levels = [
+                c.strip()
+                for c in cat_str.split(">")
+                if c.strip() and c.strip() not in _CTGR_EXCLUDE
+            ]
+
+            products.append(
+                {
+                    "site_product_id": pid,
+                    "name": name,
+                    "sale_price": sale_price,
+                    "original_price": original_price,
+                    "cost": sale_price,
+                    "brand": brand,
+                    "images": [img] if img else [],
+                    "source_site": self._source_site,
+                    "is_sold_out": is_sold_out,
+                    "category_code": cat_code,
+                    "category": " > ".join(cat_levels) if cat_levels else "",
+                    "category1": cat_levels[0] if len(cat_levels) > 0 else "",
+                    "category2": cat_levels[1] if len(cat_levels) > 1 else "",
+                    "category3": cat_levels[2] if len(cat_levels) > 2 else "",
+                }
+            )
+
+        products = products[:max_count]
+        logger.info(
+            f"[{self._source_site}] search() 완료: '{keyword}' → {len(products)}건"
+        )
+        return {"products": products, "total": total_count}
+
+    async def get_detail(self, product_id: str) -> dict[str, Any]:
+        """worker 호환 상세 조회 — get_product_detail 래핑 + snake_case 변환."""
+        detail = await self.get_product_detail(product_id)
+        if not detail:
+            return {}
+        # get_product_detail은 이미 상세 필드를 포함하므로 키만 snake_case로 변환
+        return {
+            "site_product_id": detail.get("siteProductId", ""),
+            "name": detail.get("name", ""),
+            "brand": detail.get("brand", ""),
+            "sale_price": detail.get("salePrice", 0),
+            "original_price": detail.get("originalPrice", 0),
+            "cost": detail.get("bestBenefitPrice", 0) or detail.get("salePrice", 0),
+            "images": detail.get("images", []),
+            "options": detail.get("options", []),
+            "category": detail.get("category", ""),
+            "category1": detail.get("category1", ""),
+            "category2": detail.get("category2", ""),
+            "category3": detail.get("category3", ""),
+            "source_url": detail.get("sourceUrl", ""),
+            "source_site": detail.get("sourceSite", "ABCmart"),
+            "detail_images": detail.get("detailImages", []),
+            "detail_html": detail.get("detailHtml", ""),
+            "style_code": detail.get("styleCode", ""),
+            "material": detail.get("material", ""),
+            "origin": detail.get("origin", ""),
+            "care_instructions": detail.get("careInstructions", ""),
+        }
+
     def _parse_search_html(self, html: str, keyword: str) -> list[dict[str, Any]]:
         """검색 결과 HTML에서 상품 정보 추출.
 

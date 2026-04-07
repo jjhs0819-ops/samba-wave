@@ -1888,7 +1888,7 @@ export default function CollectorPage() {
                           <a href={linkUrl} target="_blank" rel="noopener noreferrer" style={{
                             color: '#7EB5D0', fontSize: '0.7rem', wordBreak: 'break-all',
                             textDecoration: 'underline', textUnderlineOffset: '2px', flex: 1,
-                          }}>{kw || linkUrl.replace(/https?:\/\/[^/]+/, '').slice(0, 40)}...</a>
+                          }}>{(() => { try { return decodeURIComponent(linkUrl.replace(/https?:\/\/[^/]+/, '')).slice(0, 40) } catch { return linkUrl.replace(/https?:\/\/[^/]+/, '').slice(0, 40) } })()}...</a>
                         ) : <span style={{ color: '#555', fontSize: '0.75rem', flex: 1 }}>-</span>}
                         <button
                           onClick={async () => {
