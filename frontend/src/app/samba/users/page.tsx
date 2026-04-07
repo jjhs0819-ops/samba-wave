@@ -22,6 +22,7 @@ export default function UsersPage() {
   const [showModal, setShowModal] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', email: '', password: '', is_admin: false })
+  const [showPassword, setShowPassword] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -36,12 +37,14 @@ export default function UsersPage() {
   const openCreate = () => {
     setEditingId(null)
     setForm({ name: '', email: '', password: '', is_admin: false })
+    setShowPassword(false)
     setShowModal(true)
   }
 
   const openEdit = (u: SambaUser) => {
     setEditingId(u.id)
     setForm({ name: u.name || '', email: u.email || '', password: '', is_admin: u.is_admin })
+    setShowPassword(false)
     setShowModal(true)
   }
 
@@ -196,7 +199,13 @@ export default function UsersPage() {
                 <label style={{ fontSize: '0.78rem', color: '#888', marginBottom: '4px', display: 'block' }}>
                   비밀번호 {editingId && <span style={{ color: '#555' }}>(빈칸이면 변경 안 함)</span>}
                 </label>
-                <input style={inputStyle} type="password" value={form.password} onChange={e => setForm(prev => ({ ...prev, password: e.target.value }))} placeholder="6자 이상" />
+                <div style={{ position: 'relative' }}>
+                  <input style={{ ...inputStyle, paddingRight: '2.5rem' }} type={showPassword ? 'text' : 'password'} value={form.password} onChange={e => setForm(prev => ({ ...prev, password: e.target.value }))} placeholder="6자 이상" />
+                  <button type="button" onClick={() => setShowPassword(v => !v)}
+                    style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#888', cursor: 'pointer', padding: '4px', fontSize: '0.85rem' }}>
+                    {showPassword ? '🙈' : '👁'}
+                  </button>
+                </div>
               </div>
               <div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: '#C5C5C5', cursor: 'pointer' }}>
