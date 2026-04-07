@@ -266,7 +266,8 @@ class GsShopSourcingClient:
             ).encode()
         ).decode()
         encoded_kw = quote(keyword, safe="")
-        url = f"{self.BASE_PC}/shop/search/main.gs?tq={encoded_kw}&eh={eh}"
+        encoded_eh = quote(eh, safe="")
+        url = f"{self.BASE_PC}/shop/search/main.gs?tq={encoded_kw}&eh={encoded_eh}"
 
         loop = asyncio.get_event_loop()
         future: asyncio.Future = loop.create_future()

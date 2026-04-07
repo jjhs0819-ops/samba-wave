@@ -1146,8 +1146,8 @@ function pollSourcingOnce() {
 async function handleSourcingJob(job) {
   let tabId = null
   try {
-    // 패션플러스: 상세페이지 lazy 컨텐츠 로딩을 위해 active:true 필요
-    const needsActive = job.type === 'detail' && job.site === 'FashionPlus'
+    // active:true 필요: 패션플러스 상세(lazy 컨텐츠), GS샵 카테고리스캔(JS렌더링)
+    const needsActive = (job.type === 'detail' && job.site === 'FashionPlus') || job.type === 'category-scan'
     const tab = await chrome.tabs.create({ url: job.url, active: needsActive })
     tabId = tab.id
     await waitForTabLoad(tabId, 30000)
@@ -1156,8 +1156,7 @@ async function handleSourcingJob(job) {
     let result = null
     if (job.type === 'category-scan' && job.site === 'GSShop') {
       // GS샵 카테고리 스캔: 검색 결과 페이지에서 카테고리 분포 파싱
-      // 백화점 탭 클릭 후 사이드바 카테고리 읽기
-      await wait(2000) // 추가 렌더링 대기
+      await wait(3000) // JS 렌더링 추가 대기 (active 탭이므로 5s+3s=8s)
 
       const [scanResult] = await chrome.scripting.executeScript({
         target: { tabId },
@@ -1165,81 +1164,65 @@ async function handleSourcingJob(job) {
         func: () => {
           const categories = []
           const seen = new Set()
+          const debugInfo = { url: location.href, title: document.title }
 
-          // 전략1: 상품 목록 영역(#searchPrdList) 밖의 a 태그에서 "이름 (숫자)" 패턴 찾기
-          const productArea = document.querySelector('#searchPrdList')
-          const allLinks = document.querySelectorAll('a[href]')
-
-          for (const link of allLinks) {
-            // 상품 목록 영역 내부 링크는 스킵
-            if (productArea && productArea.contains(link)) continue
-            // 헤더/GNB 영역 스킵
-            if (link.closest('header, nav, .gnb, #gnb, .header, #header')) continue
-
-            const text = link.textContent.trim()
-            // "카테고리명 (1,234)" 또는 "카테고리명(1,234)" 패턴
-            const match = text.match(/^(.+?)\s*\(([\d,]+)\)\s*$/)
+          // innerText에서 "이름 (숫자)" 패턴을 전역 탐색
+          // DOM 구조에 의존하지 않는 가장 안정적인 방법
+          const bodyText = document.body?.innerText || ''
+          const lines = bodyText.split('\n')
+          for (const line of lines) {
+            const trimmed = line.replace(/\s+/g, ' ').trim()
+            const match = trimmed.match(/^(.+?)\s*\(([\d,]+)\)\s*$/)
             if (!match) continue
             const name = match[1].trim()
             const count = parseInt(match[2].replace(/,/g, ''), 10)
+            // 탭 항목(전체상품, TV상품, 백화점) 및 노이즈 제외
             if (count <= 0 || seen.has(name)) continue
+            if (['전체상품', 'TV상품', '백화점', '추천순'].includes(name)) continue
+            if (name.length > 30 || name.length < 2) continue
             seen.add(name)
-
-            const href = link.getAttribute('href') || ''
-            let categoryCode = ''
-            try {
-              const url = new URL(href, location.origin)
-              categoryCode = url.searchParams.get('cls') || url.searchParams.get('sectCd') || ''
-            } catch {}
-            categories.push({ name, count, categoryCode, href })
+            categories.push({ name, count, categoryCode: name, href: '' })
           }
 
-          // 전략2: 폴백 — li 요소에서 "이름 (숫자)" 패턴 찾기
-          if (categories.length === 0) {
-            const allLis = document.querySelectorAll('li')
-            for (const li of allLis) {
-              if (productArea && productArea.contains(li)) continue
-              const text = li.textContent.trim()
-              const match = text.match(/^(.+?)\s*\(([\d,]+)\)\s*$/)
-              if (!match) continue
-              const name = match[1].trim()
-              const count = parseInt(match[2].replace(/,/g, ''), 10)
-              if (count <= 0 || seen.has(name)) continue
-              seen.add(name)
-              const aTag = li.querySelector('a[href]')
-              const href = aTag?.getAttribute('href') || ''
-              let categoryCode = ''
-              try {
-                const url = new URL(href, location.origin)
-                categoryCode = url.searchParams.get('cls') || url.searchParams.get('sectCd') || ''
-              } catch {}
-              categories.push({ name, count, categoryCode, href })
+          // href 보강: 카테고리명과 일치하는 a 태그에서 href 추출
+          if (categories.length > 0) {
+            const allLinks = document.querySelectorAll('a[href]')
+            for (const link of allLinks) {
+              const linkText = link.textContent.replace(/\s+/g, ' ').trim()
+              for (const cat of categories) {
+                if (linkText.includes(cat.name) && linkText.includes(`(${cat.count.toLocaleString()}`)) {
+                  cat.href = link.getAttribute('href') || ''
+                  try {
+                    const url = new URL(cat.href, location.origin)
+                    cat.categoryCode = url.searchParams.get('cls') || url.searchParams.get('sectCd') || cat.name
+                  } catch {}
+                  break
+                }
+              }
             }
           }
 
           // 백화점 탭 전체 상품 수
           let total = 0
-          const allEls = document.querySelectorAll('a, li, span, button')
-          for (const el of allEls) {
-            const t = el.textContent.trim()
-            if (t.includes('백화점') && !t.includes('>')) {
-              const m = t.match(/백화점\s*\(([\d,]+)\)/)
-              if (m) { total = parseInt(m[1].replace(/,/g, ''), 10); break }
-            }
+          for (const line of lines) {
+            const t = line.replace(/\s+/g, ' ').trim()
+            const m = t.match(/백화점\s*\(([\d,]+)\)/)
+            if (m) { total = parseInt(m[1].replace(/,/g, ''), 10); break }
           }
           if (total === 0 && categories.length > 0) {
             total = categories.reduce((s, c) => s + c.count, 0)
           }
 
-          // 디버그: DOM 정보 로깅
-          console.log('[GSSHOP 카테고리스캔] 페이지 URL:', location.href)
-          console.log('[GSSHOP 카테고리스캔] 발견 카테고리:', categories.length, JSON.stringify(categories.slice(0, 3)))
+          debugInfo.categoryCount = categories.length
+          debugInfo.bodyTextLength = bodyText.length
+          debugInfo.sampleLines = lines.filter(l => l.includes('(')).slice(0, 10).map(l => l.trim().slice(0, 50))
 
-          return { success: categories.length > 0, categories, total }
+          return { success: categories.length > 0, categories, total, debugInfo }
         }
       })
-      result = scanResult?.result || { success: false, categories: [], total: 0 }
+      result = scanResult?.result || { success: false, categories: [], total: 0, debugInfo: {} }
       console.log(`[소싱] GSShop 카테고리 스캔: ${result.categories?.length || 0}개 카테고리, total=${result.total}`)
+      console.log(`[소싱] GSShop 디버그:`, JSON.stringify(result.debugInfo || {}))
     } else if (job.type === 'search' && job.site === 'GSShop') {
       // GS샵: 페이지네이션 반복 수집
       const maxCount = job.maxCount || 999
