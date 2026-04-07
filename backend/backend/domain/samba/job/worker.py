@@ -1297,12 +1297,20 @@ class JobWorker:
 
         client = SSGSourcingClient()
 
-        # ── 검색 단계: 후보 상품 목록 수집 ──
+        # ── 기존 수집 ID 미리 조회 (검색 루프에서 신규 여부 즉시 판단) ──
+        existing_result_pre = await session.execute(
+            select(CPModel.site_product_id).where(CPModel.source_site == "SSG")
+        )
+        existing_ids: set[str] = {row[0] for row in existing_result_pre.all()}
+
+        # ── 검색 단계: 신규 상품 remaining개 확보될 때까지 페이지 순회 ──
         all_items: list[dict] = []
-        # remaining의 2배 분량 확보 (중복·품절 제거 후 충분한 후보 보장)
-        max_search_pages = min(25, max(1, (remaining * 2 // SSG_PAGE_SIZE) + 2))
-        for page in range(1, max_search_pages + 1):
-            if len(all_items) >= remaining * 2:
+        targets: list[str] = []
+        skipped_dup = 0
+        skipped_soldout = 0
+
+        for page in range(1, 26):  # 최대 25페이지
+            if len(targets) >= remaining:
                 break
             try:
                 items = await client.search_products(
@@ -1314,6 +1322,19 @@ class JobWorker:
                 if not items:
                     break
                 all_items.extend(items)
+                for item in items:
+                    if len(targets) >= remaining:
+                        break
+                    site_pid = str(item.get("siteProductId", item.get("goodsNo", "")))
+                    if not site_pid:
+                        continue
+                    if site_pid in existing_ids:
+                        skipped_dup += 1
+                        continue
+                    if item.get("isSoldOut", False):
+                        skipped_soldout += 1
+                        continue
+                    targets.append(site_pid)
                 await asyncio.sleep(1.0)  # 검색 페이지 간 딜레이
             except Exception as e:
                 logger.warning(f"[SSG] 검색 p{page} 실패: {e}")
@@ -1322,37 +1343,6 @@ class JobWorker:
         if not all_items:
             await repo.fail_job(job.id, f"SSG '{keyword}' 검색 결과 없음")
             return
-
-        # ── 중복 필터링 ──
-        candidate_ids = [
-            str(item.get("siteProductId", item.get("goodsNo", "")))
-            for item in all_items
-            if item.get("siteProductId") or item.get("goodsNo")
-        ]
-        existing_result = await session.execute(
-            select(CPModel.site_product_id).where(
-                CPModel.source_site == "SSG",
-                CPModel.site_product_id.in_(candidate_ids),
-            )
-        )
-        existing_ids = {row[0] for row in existing_result.all()}
-
-        targets: list[str] = []
-        skipped_dup = 0
-        skipped_soldout = 0
-        for item in all_items:
-            if len(targets) >= remaining:
-                break
-            site_pid = str(item.get("siteProductId", item.get("goodsNo", "")))
-            if not site_pid:
-                continue
-            if site_pid in existing_ids:
-                skipped_dup += 1
-                continue
-            if item.get("isSoldOut", False):
-                skipped_soldout += 1
-                continue
-            targets.append(site_pid)
 
         filter_msg = (
             f"[SSG] 후보 {len(all_items)}개 → 중복제거 {skipped_dup}개, 품절제거 {skipped_soldout}개, "
