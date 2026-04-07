@@ -267,7 +267,35 @@ class GsShopSourcingClient:
         encoded_eh = quote(eh, safe="")
         dept_url = f"{self.BASE_PC}/shop/search/main.gs?tq={encoded_kw}&eh={encoded_eh}"
 
-        products = await self.search_products(keyword, size=60, url=dept_url)
+        # maxCount=60: 1페이지만 수집 (페이지네이션 시 eh 덮어쓰기 방지)
+        from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+        request_id = str(uuid.uuid4())[:8]
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+        SourcingQueue.queue.append(
+            {
+                "requestId": request_id,
+                "site": "GSShop",
+                "type": "search",
+                "url": dept_url,
+                "keyword": keyword,
+                "maxCount": 60,
+            }
+        )
+        SourcingQueue.resolvers[request_id] = future
+        logger.info(f"[GSSHOP] 카테고리 스캔 검색 큐 등록: {request_id}")
+
+        try:
+            result = await asyncio.wait_for(future, timeout=120)
+            products = result.get("products", []) if isinstance(result, dict) else []
+        except asyncio.TimeoutError:
+            logger.warning(f'[GSSHOP] 카테고리 스캔 검색 타임아웃: "{keyword}"')
+            return {"categories": [], "total": 0, "groupCount": 0}
+        except Exception as e:
+            logger.error(f"[GSSHOP] 카테고리 스캔 검색 실패: {e}")
+            return {"categories": [], "total": 0, "groupCount": 0}
+
         if not products:
             logger.warning(f'[GSSHOP] 카테고리 스캔: 검색 결과 없음 "{keyword}"')
             return {"categories": [], "total": 0, "groupCount": 0}
