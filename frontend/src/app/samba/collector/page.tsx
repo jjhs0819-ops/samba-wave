@@ -1179,35 +1179,6 @@ export default function CollectorPage() {
                     <span style={{ color: '#FF8C00', fontWeight: 600, fontSize: '0.72rem' }}>{cat.count.toLocaleString()}건</span>
                   </label>
                 ))}
-                <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'flex-end' }}>
-                  <button onClick={async () => {
-                    const selected = brandCategories.filter(c => brandSelectedCats.has(c.categoryCode))
-                    if (selected.length === 0) { showAlert('카테고리를 선택하세요'); return }
-                    const parsed = (() => { try { return new URL(collectUrl) } catch { return null } })()
-                    const pathBrandMatch = parsed?.pathname.match(/\/brand\/([^/]+)/)
-                    const brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || ''
-                    const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : '')
-                    const gf = parsed?.searchParams.get('gf') || 'A'
-                    try {
-                      const res = await collectorApi.brandCreateGroups({
-                        brand, brand_name: keyword || brand, gf,
-                        categories: selected,
-                        requested_count_per_group: -1,
-                        real_total: brandTotal,
-                        options: checkedOptions,
-                        source_site: selectedSite,
-                        selected_brands: brandModalParsed ? Array.from(brandModalSelected) : undefined,
-                      })
-                      addLog(`[카테고리분류] ${res.created}개 그룹 생성 완료`)
-                      showAlert(`${res.created}개 그룹이 생성되었습니다`, 'success')
-                      setBrandCategories([]); setBrandSelectedCats(new Set())
-                      load()
-                    } catch (e) { showAlert(e instanceof Error ? e.message : '그룹 생성 실패', 'error') }
-                  }}
-                    style={{ padding: '0.4rem 1rem', background: '#FF8C00', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>
-                    선택 그룹 생성 ({brandSelectedCats.size}개)
-                  </button>
-                </div>
               </div>
             </div>
         )}

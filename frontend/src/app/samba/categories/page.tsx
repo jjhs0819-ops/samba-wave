@@ -352,7 +352,7 @@ export default function CategoriesPage() {
         source_category: sourceCategory,
         target_mappings: targetMappings,
       })
-      showAlert(`${Object.keys(targetMappings).length}개 마켓에 카테고리 매핑 저장 완료`, 'success')
+      showAlert(`${Object.keys(targetMappings).length.toLocaleString()}개 마켓에 카테고리 매핑 저장 완료`, 'success')
       setManualModalOpen(false)
       load()
     } catch (e) {
@@ -382,7 +382,7 @@ export default function CategoriesPage() {
         source_category: sourceCategory,
         target_mappings: targetMappings,
       })
-      showAlert(`${Object.keys(targetMappings).length}개 마켓에 카테고리 매핑 저장 완료`, 'success')
+      showAlert(`${Object.keys(targetMappings).length.toLocaleString()}개 마켓에 카테고리 매핑 저장 완료`, 'success')
       setAiModalOpen(false)
     } catch (e) {
       const msg = e instanceof Error ? e.message : '저장 실패'
@@ -731,7 +731,7 @@ export default function CategoriesPage() {
       const blockedCount = ids.length - deletableIds.length
 
       if (deletableIds.length === 0) {
-        showAlert(`전체 ${ids.length}건 모두 등록 상품이 있어 삭제할 수 없습니다`, 'error')
+        showAlert(`전체 ${ids.length.toLocaleString()}건 모두 등록 상품이 있어 삭제할 수 없습니다`, 'error')
         return
       }
 
@@ -1745,7 +1745,7 @@ export default function CategoriesPage() {
                     ))}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.75rem' }}>
-                    선택: {activeMarketTypes.filter(t => bulkSelectedMarkets[t]).length}개 마켓
+                    선택: {activeMarketTypes.filter(t => bulkSelectedMarkets[t]).length.toLocaleString()}개 마켓
                   </div>
                 </div>
               </>
@@ -1782,7 +1782,7 @@ export default function CategoriesPage() {
                     ))}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.75rem' }}>
-                    선택: {marketKeys.filter(mk => aiSelectedMarkets[mk]).length}개 마켓 · 예상 비용 ₩{COST_PER_CALL_KRW}
+                    선택: {marketKeys.filter(mk => aiSelectedMarkets[mk]).length.toLocaleString()}개 마켓 · 예상 비용 ₩{COST_PER_CALL_KRW.toLocaleString()}
                   </div>
                 </div>
               </>

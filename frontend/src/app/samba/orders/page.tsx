@@ -1611,7 +1611,7 @@ export default function OrdersPage() {
                             {opts.map((opt, oi) => {
                               const kOpt = opt as Record<string, unknown>
                               const soldOut = opt.isSoldOut || (opt.stock !== undefined && opt.stock <= 0)
-                              const stockLabel = soldOut ? '품절' : opt.stock !== undefined ? `${opt.stock}개` : 'O'
+                              const stockLabel = soldOut ? '품절' : opt.stock !== undefined ? `${opt.stock.toLocaleString()}개` : 'O'
                               return (
                                 <tr key={oi} style={{ borderTop: '1px solid #1A1A1A' }}>
                                   <td style={{ padding: '4px 16px 4px 32px', color: '#666', fontSize: '0.73rem' }}>ㄴ {opt.name || `옵션${oi + 1}`}</td>
