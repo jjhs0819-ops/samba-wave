@@ -2061,6 +2061,19 @@ async def brand_create_groups(
             _label = body.brand_name or body.brand or keyword or ""
             keyword = f"https://www.nike.com/kr/w?q={_quote_nike(_label)}"
             category_filter = code or None
+        elif body.source_site == "GSSHOP":
+            import base64 as _b64
+            from urllib.parse import quote as _quote_gs
+
+            _label = body.brand_name or body.brand or ""
+            _eh = _b64.b64encode(
+                '{"part":"DEPT","selected":"opt-part"}'.encode()
+            ).decode()
+            keyword = (
+                f"https://www.gsshop.com/shop/search/main.gs"
+                f"?tq={_quote_gs(_label)}&eh={_quote_gs(_eh)}"
+            )
+            category_filter = code or None
         else:  # LOTTEON
             _brand_label = body.brand_name or body.brand or ""
             # 선택된 브랜드 목록을 URL 쿼리 파라미터로 저장 (worker.py에서 파싱)
