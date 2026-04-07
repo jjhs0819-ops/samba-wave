@@ -1301,13 +1301,12 @@ class AutotuneFilterRequest(BaseModel):
 @router.get("/autotune/filters")
 async def autotune_get_filters():
     """오토튠 필터 설정 + 실제 존재하는 소싱처/판매처(마켓 단위) 목록 반환."""
+    import json as _json
+
     from backend.db.orm import get_read_session
     from backend.api.v1.routers.samba.proxy import _get_setting
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from backend.domain.samba.account.model import SambaMarketAccount
-    from backend.api.v1.routers.samba.collector_common import (
-        build_market_registered_conditions,
-    )
     from sqlalchemy import distinct
 
     async with get_read_session() as session:
@@ -1322,18 +1321,25 @@ async def autotune_get_filters():
         src_result = await session.execute(src_stmt)
         available_sources = sorted([r[0] for r in src_result.all() if r[0]])
 
-        # 마켓등록상품(오토튠 대상)의 registered_accounts → 계정 ID 수집
-        market_cond = build_market_registered_conditions(_CP)
+        # 등록된 상품의 registered_accounts → 계정 ID 수집
         reg_stmt = select(_CP.registered_accounts).where(
-            *market_cond,
-            _CP.applied_policy_id != None,
-            _CP.sale_status != "sold_out",
+            _CP.status == "registered",
+            _CP.registered_accounts.isnot(None),
         )
         reg_result = await session.execute(reg_stmt)
         _acc_ids: set[str] = set()
         for row in reg_result.all():
-            if row[0] and isinstance(row[0], list):
-                _acc_ids.update(row[0])
+            val = row[0]
+            if not val:
+                continue
+            # JSON 컬럼이 문자열로 반환될 수 있음
+            if isinstance(val, str):
+                try:
+                    val = _json.loads(val)
+                except Exception:
+                    continue
+            if isinstance(val, list):
+                _acc_ids.update(str(a) for a in val if a)
 
         # 계정 → market_type 매핑 후 중복 제거 (마켓 단위)
         available_markets: list[str] = []
