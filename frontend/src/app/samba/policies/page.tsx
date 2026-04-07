@@ -625,6 +625,17 @@ export default function PoliciesPage() {
                 <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>배송비</span>
                 <NumInput value={mp.shippingCost} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingCost: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
               </div>
+              {/* 신세계몰 전용: 주문수량 제한 */}
+              {marketPolicyTab === '신세계몰' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>1일 최대수량</span>
+                <NumInput value={mp.dayMaxQty || 5} onChange={(v) => { setCurrentMarketPolicy({ ...mp, dayMaxQty: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="개" />
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>1회 최소수량</span>
+                <NumInput value={mp.onceMinQty || 1} onChange={(v) => { setCurrentMarketPolicy({ ...mp, onceMinQty: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="개" />
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>1회 최대수량</span>
+                <NumInput value={mp.onceMaxQty || 5} onChange={(v) => { setCurrentMarketPolicy({ ...mp, onceMaxQty: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="개" />
+              </div>
+              )}
               {marketPolicyTab !== '플레이오토' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>출고일</span>
