@@ -1569,12 +1569,11 @@ async def sync_orders_from_markets(
                 confirmed_count = len(unconfirmed_box_ids)
             else:
                 confirmed_count = 0
-            # 취소/반품/교환 요청 건수 (송장 미입력건만)
+            # 취소요청 건수 (송장 미입력건만)
             cancel_requested = sum(
                 1
                 for od in orders_data
-                if od.get("shipping_status")
-                in ("취소요청", "취소처리중", "반품요청", "교환요청")
+                if od.get("shipping_status") in ("취소요청", "취소처리중")
                 and not od.get("tracking_number")
             )
             results.append(
