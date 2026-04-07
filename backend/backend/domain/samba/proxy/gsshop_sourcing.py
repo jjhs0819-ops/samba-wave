@@ -323,7 +323,11 @@ class GsShopSourcingClient:
                 else:
                     eh_page = base64.b64encode(
                         json.dumps(
-                            {"pageNumber": page, "selected": "opt-page"},
+                            {
+                                "pageNumber": page,
+                                "part": "DEPT",
+                                "selected": "opt-page",
+                            },
                             separators=(",", ":"),
                         ).encode()
                     ).decode()
@@ -353,8 +357,8 @@ class GsShopSourcingClient:
             f"[GSSHOP] 카테고리 스캔: {len(product_ids)}개 상품 검색 완료, 상세 조회 시작"
         )
 
-        # 2. 전체 상품 상세 조회 → 카테고리 추출 (동시 100, 간격 0)
-        sem = asyncio.Semaphore(100)
+        # 2. 전체 상품 상세 조회 → 카테고리 추출 (동시 30, Cloud Run 타임아웃 방지)
+        sem = asyncio.Semaphore(30)
         cat_counter: dict[str, int] = {}
         ok_count = 0
         fail_count = 0
