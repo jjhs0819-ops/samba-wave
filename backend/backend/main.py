@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -45,6 +45,7 @@ from backend.api.v1.routers.samba.sourcing_account import (
     router as samba_sourcing_account_router,
 )
 
+from backend.domain.user.auth_service import get_user_id
 from backend.middleware.error_handler import register_exception_handlers
 
 
@@ -273,33 +274,92 @@ def create_application() -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(user_router, prefix="/api/v1")
 
-    # SambaWave routers (개별 엔드포인트에서 인증 의존성 적용)
-    app.include_router(samba_product_router, prefix="/api/v1/samba")
-    app.include_router(samba_order_router, prefix="/api/v1/samba")
-    app.include_router(samba_channel_router, prefix="/api/v1/samba")
-    app.include_router(samba_policy_router, prefix="/api/v1/samba")
-    app.include_router(samba_collector_router, prefix="/api/v1/samba")
-    app.include_router(samba_collector_collection_router, prefix="/api/v1/samba")
-    app.include_router(samba_collector_refresh_router, prefix="/api/v1/samba")
-    app.include_router(samba_collector_autotune_router, prefix="/api/v1/samba")
-    app.include_router(samba_category_router, prefix="/api/v1/samba")
-    app.include_router(samba_account_router, prefix="/api/v1/samba")
-    app.include_router(samba_shipment_router, prefix="/api/v1/samba")
-    app.include_router(samba_forbidden_router, prefix="/api/v1/samba")
-    app.include_router(samba_contact_router, prefix="/api/v1/samba")
-    app.include_router(samba_returns_router, prefix="/api/v1/samba")
-    app.include_router(samba_analytics_router, prefix="/api/v1/samba")
-    app.include_router(samba_proxy_router, prefix="/api/v1/samba")
-    app.include_router(samba_warroom_router, prefix="/api/v1/samba")
+    # SambaWave routers — JWT 인증 필수 (모든 엔드포인트 일괄 보호)
+    _samba_auth = [Depends(get_user_id)]
+
+    # 로그인/회원가입은 인증 없이 접근해야 하므로 별도 등록
     app.include_router(samba_user_router, prefix="/api/v1/samba")
-    app.include_router(samba_ai_sourcing_router, prefix="/api/v1/samba")
-    app.include_router(samba_tenant_router, prefix="/api/v1/samba")
-    app.include_router(samba_job_router, prefix="/api/v1/samba")
-    app.include_router(samba_cs_inquiry_router, prefix="/api/v1/samba")
-    app.include_router(samba_store_care_router, prefix="/api/v1/samba")
-    app.include_router(samba_wholesale_router, prefix="/api/v1/samba")
-    app.include_router(samba_sns_posting_router, prefix="/api/v1/samba")
-    app.include_router(samba_sourcing_account_router, prefix="/api/v1/samba")
+
+    # 나머지 모든 samba 라우터 — 인증 필수
+    app.include_router(
+        samba_product_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_order_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_channel_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_policy_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_collector_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_collector_collection_router,
+        prefix="/api/v1/samba",
+        dependencies=_samba_auth,
+    )
+    app.include_router(
+        samba_collector_refresh_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_collector_autotune_router,
+        prefix="/api/v1/samba",
+        dependencies=_samba_auth,
+    )
+    app.include_router(
+        samba_category_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_account_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_shipment_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_forbidden_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_contact_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_returns_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_analytics_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_proxy_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_warroom_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_ai_sourcing_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_tenant_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_job_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_cs_inquiry_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_store_care_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_wholesale_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_sns_posting_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
+    app.include_router(
+        samba_sourcing_account_router, prefix="/api/v1/samba", dependencies=_samba_auth
+    )
 
     # 로컬 이미지 저장 디렉토리 서빙 (R2 미설정 시 사용)
     static_dir = Path(__file__).resolve().parent / "static" / "images"

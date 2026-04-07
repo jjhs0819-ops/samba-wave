@@ -1,20 +1,52 @@
 /**
- * SambaWave API client - 인증 없이 접근
+ * SambaWave API client — JWT 인증 필수
  */
 
 import { API_BASE_URL } from '@/config/api'
+import { STORAGE_KEYS } from '@/lib/samba/constants'
 
 export const API_BASE = API_BASE_URL
 
 const SAMBA_PREFIX = `${API_BASE}/api/v1/samba`;
 
+/** localStorage에서 JWT 액세스 토큰 추출 */
+function getAccessToken(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.SAMBA_USER)
+    if (!raw) return null
+    const user = JSON.parse(raw)
+    return user?.access_token ?? null
+  } catch {
+    return null
+  }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(init?.headers as Record<string, string>),
+  }
+
+  // JWT 인증 헤더 자동 추가
+  const token = getAccessToken()
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
   const res = await fetch(url, {
     cache: 'no-store',
-    headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
+    headers,
   });
   if (!res.ok) {
+    // 401이면 토큰 만료 — 로그인 페이지로 리다이렉트
+    if (res.status === 401 && typeof window !== 'undefined') {
+      localStorage.removeItem(STORAGE_KEYS.SAMBA_USER)
+      document.cookie = 'samba_user=; path=/; max-age=0'
+      window.location.href = '/samba/login'
+      throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.')
+    }
     const data = await res.json().catch(() => null);
     const detail = data?.detail
     const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: Record<string, unknown>) => d.msg || JSON.stringify(d)).join(', ') : `HTTP ${res.status}`
