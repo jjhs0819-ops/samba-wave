@@ -222,11 +222,14 @@ class SSGSourcingClient:
         return brand_ids
 
     async def get_brand_filters(self, keyword: str) -> list[dict[str, Any]]:
-        """키워드 검색 결과의 브랜드 필터 목록 전체 반환.
+        """키워드 검색 결과의 브랜드 필터 목록 + 브랜드별 상품 수 반환.
 
-        SSG 검색 페이지 좌측 '브랜드' 섹션의 모든 항목을 반환한다.
+        1단계: keyword 검색 → 브랜드 목록 추출
+        2단계: 브랜드별 repBrandId 필터 요청 → 상품 수(areaList[0].count) 파싱
         반환값: [{name, value, count}]
         """
+        import asyncio
+
         _client_kwargs: dict[str, Any] = {
             "timeout": self._timeout,
             "follow_redirects": True,
@@ -250,7 +253,62 @@ class SSGSourcingClient:
             logger.error(f"[SSG] 브랜드 스캔 실패: {keyword} — {e}")
             return []
 
-        return self._extract_all_brand_filters(html)
+        brands = self._extract_all_brand_filters(html)
+        if not brands:
+            return brands
+
+        # 브랜드별 상품 수 조회 (브랜드 수만큼 추가 요청, 1초 간격)
+        async with httpx.AsyncClient(**_client_kwargs) as client:
+            for brand in brands:
+                await asyncio.sleep(1.0)
+                try:
+                    brand_url = (
+                        f"{self.SEARCH_URL}?query={quote(keyword)}"
+                        f"&repBrandId={brand['value']}&page=1"
+                    )
+                    r = await client.get(brand_url, headers=self._headers())
+                    if r.status_code == 200:
+                        brand["count"] = self._parse_area_count(r.text)
+                        logger.info(
+                            f"[SSG] 브랜드 건수: {brand['name']} → {brand['count']}건"
+                        )
+                except Exception as e:
+                    logger.warning(f"[SSG] 브랜드 건수 조회 실패 {brand['name']}: {e}")
+
+        return brands
+
+    def _parse_area_count(self, html: str) -> int:
+        """__NEXT_DATA__ → fetchSearchTopArea → areaList[0].count 파싱."""
+        m = re.search(
+            r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        if not m:
+            return 0
+        try:
+            next_data = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            return 0
+
+        queries = (
+            next_data.get("props", {})
+            .get("pageProps", {})
+            .get("dehydratedState", {})
+            .get("queries", [])
+        )
+        for q in queries:
+            qk = q.get("queryKey") or []
+            if "fetchSearchTopArea" not in qk:
+                continue
+            area_list = q.get("state", {}).get("data", {}).get("areaList", [])
+            if area_list:
+                raw = area_list[0].get("count", "0")
+                try:
+                    return int(str(raw).replace(",", ""))
+                except (ValueError, TypeError):
+                    return 0
+        return 0
 
     def _extract_all_brand_filters(self, html: str) -> list[dict[str, Any]]:
         """__NEXT_DATA__에서 브랜드 필터 전체 목록 추출.
@@ -291,7 +349,7 @@ class SSGSourcingClient:
                     for item in unit.get("dataList", []):
                         name = item.get("name", "")
                         value = item.get("value", "")
-                        count = int(item.get("count", 0))
+                        count = 0  # 브랜드별 개별 요청으로 채워짐
                         if value and value not in seen:
                             brands.append(
                                 {"name": name, "value": value, "count": count}
