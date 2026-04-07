@@ -471,6 +471,7 @@ export default function CollectorPage() {
       try {
         const keyword = pendingKeyword
         const gf = pendingScanGf.current
+        addLog(`[카테고리스캔] 무신사 "${keyword}" 스캔 시작... (${brandList.length}개 브랜드)`)
         const allCategories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[] = []
         let totalCount = 0
         for (const code of brandList.length > 0 ? brandList : ['']) {
@@ -483,7 +484,7 @@ export default function CollectorPage() {
         setBrandTotal(totalCount)
         setBrandSelectedCats(new Set(allCategories.map(c => c.categoryCode)))
         addLog(`[카테고리스캔] 합계: ${allCategories.length}개 카테고리, 총 ${totalCount.toLocaleString()}건`)
-      } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+      } catch (e) { addLog(`[카테고리스캔] 무신사 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
       setBrandScanning(false)
     } else {
       for (const code of brandList.length > 0 ? brandList : [undefined]) {
@@ -1054,13 +1055,14 @@ export default function CollectorPage() {
               // ABC마트: 키워드만으로 바로 스캔
               if (selectedSite === 'ABCmart') {
                 const scanKeyword = keyword || brand || collectUrl.trim()
+                addLog(`[카테고리스캔] ABC마트 "${scanKeyword}" 스캔 시작...`)
                 try {
                   const res = await collectorApi.brandScan('', 'A', scanKeyword, 'ABCmart')
                   setBrandCategories(res.categories)
                   setBrandTotal(res.total)
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
                   addLog(`[카테고리스캔] ABC마트: ${scanKeyword} → ${res.groupCount}개 카테고리, 총 ${res.total}건`)
-                } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+                } catch (e) { addLog(`[카테고리스캔] ABC마트 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                 setBrandScanning(false)
                 return
               }
@@ -1068,13 +1070,14 @@ export default function CollectorPage() {
               // 나이키: 키워드만으로 바로 스캔
               if (selectedSite === 'Nike') {
                 const scanKeyword = keyword || brand || collectUrl.trim()
+                addLog(`[카테고리스캔] Nike "${scanKeyword}" 스캔 시작...`)
                 try {
                   const res = await collectorApi.brandScan('', 'A', scanKeyword, 'Nike')
                   setBrandCategories(res.categories)
                   setBrandTotal(res.total)
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
                   addLog(`[카테고리스캔] Nike: ${scanKeyword} → ${res.groupCount}개 카테고리, 총 ${res.total}건`)
-                } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+                } catch (e) { addLog(`[카테고리스캔] Nike 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                 setBrandScanning(false)
                 return
               }
@@ -1095,13 +1098,14 @@ export default function CollectorPage() {
                   }
                 } catch { /* 브랜드 검색 실패 시 키워드로 진행 */ }
               }
+              addLog(`[카테고리스캔] ${selectedSite} "${keyword || brand}" 스캔 시작...`)
               try {
                 const res = await collectorApi.brandScan(brand, gf, keyword, selectedSite)
                 setBrandCategories(res.categories)
                 setBrandTotal(res.total)
                 setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
                 addLog(`[카테고리스캔] ${keyword || brand}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
-              } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+              } catch (e) { addLog(`[카테고리스캔] ${selectedSite} 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
               setBrandScanning(false)
             }} disabled={brandScanning}
               style={{ padding: '0.6rem 1rem', background: brandScanning ? '#333' : 'transparent', border: '1px solid #FF8C00', borderRadius: '6px', color: '#FF8C00', fontSize: '0.82rem', fontWeight: 600, cursor: brandScanning ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>
@@ -1273,13 +1277,14 @@ export default function CollectorPage() {
                   setBrandCategories([]); setBrandSelectedCats(new Set())
                   const { brand, keyword, gf } = brandModalParsed || { brand: '', keyword: brandModalKeyword, gf: 'A' }
                   const selectedBrands = Array.from(brandModalSelected)
+                  addLog(`[카테고리스캔] 롯데ON "${keyword || brand}" 스캔 시작... (${selectedBrands.length}개 브랜드)`)
                   try {
                     const res = await collectorApi.brandScan(brand, gf, keyword, 'LOTTEON', selectedBrands)
                     setBrandCategories(res.categories)
                     setBrandTotal(res.total)
                     setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
                     addLog(`[카테고리스캔] ${keyword || brand} (${selectedBrands.length.toLocaleString()}개 브랜드): ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
-                  } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+                  } catch (e) { addLog(`[카테고리스캔] 롯데ON 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                   setBrandScanning(false)
                 }}
                 disabled={brandModalSelected.size === 0}
