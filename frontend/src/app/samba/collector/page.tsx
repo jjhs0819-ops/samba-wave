@@ -868,7 +868,7 @@ export default function CollectorPage() {
             type="text"
             value={collectUrl}
             onChange={(e) => setCollectUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && selectedSite !== "GSShop" && handleCreateGroup()}
+            onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault() }}
             placeholder={
               selectedSite === "MUSINSA" ? "키워드 또는 URL (예: 나이키, https://www.musinsa.com/search/goods?keyword=나이키)" :
               selectedSite === "KREAM" ? "키워드 또는 URL (예: 나이키, https://kream.co.kr/search?keyword=나이키)" :
@@ -1905,7 +1905,9 @@ export default function CollectorPage() {
                     const site = selectedFilter.source_site || ''
                     // keyword가 이미 URL이면 그대로 사용
                     const kwIsUrl = kw.startsWith('http://') || kw.startsWith('https://')
-                    const linkUrl = storedUrl || (kwIsUrl ? kw : (SOURCING_SEARCH_URLS[site] ? SOURCING_SEARCH_URLS[site] + encodeURIComponent(kw) : ''))
+                    // storedUrl은 실제 URL인 경우만 사용 (카테고리 코드는 무시)
+                    const validStoredUrl = storedUrl.startsWith('http') ? storedUrl : ''
+                    const linkUrl = validStoredUrl || (kwIsUrl ? kw : (SOURCING_SEARCH_URLS[site] ? SOURCING_SEARCH_URLS[site] + encodeURIComponent(kw) : ''))
                     return (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         {linkUrl ? (
