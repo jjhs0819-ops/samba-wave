@@ -397,6 +397,9 @@ export const collectorApi = {
   brandDiscover: (keyword: string, source_site?: string) =>
     request<{ brands: { name: string; count: number }[]; total: number }>(
       `${SAMBA_PREFIX}/collector/brand-discover`, { method: "POST", body: JSON.stringify({ keyword, source_site: source_site || 'LOTTEON' }) }),
+  gsshopScanProgress: () =>
+    request<{ stage: string; keyword?: string; page?: number; products?: number; detail_ok?: number; detail_fail?: number; detail_total?: number }>(
+      `${SAMBA_PREFIX}/collector/gsshop-scan-progress`),
   brandScan: (brand: string, gf?: string, keyword?: string, source_site?: string, selected_brands?: string[]) =>
     request<{ categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]; total: number; groupCount: number }>(
       `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA', selected_brands: selected_brands || [] }) }),

@@ -45,6 +45,9 @@ class GsShopSourcingClient:
     상품 정보를 추출한다. TV홈쇼핑 기반이므로 보수적 간격으로 요청한다.
     """
 
+    # 카테고리 스캔 진행 상황 (프론트 폴링용)
+    scan_progress: dict[str, Any] = {}
+
     # sourcing_queue.py의 SITE_SEARCH_URLS["GSShop"]이 잘못된 URL이므로 여기서 올바른 URL 사용
     SEARCH_URL = "https://www.gsshop.com/shop/search/main.gs?tq={keyword}"
     BASE_PC = "https://www.gsshop.com"
@@ -301,6 +304,15 @@ class GsShopSourcingClient:
         import base64
 
         logger.info(f'[GSSHOP] 카테고리 스캔 시작: "{keyword}"')
+        GsShopSourcingClient.scan_progress = {
+            "stage": "search",
+            "keyword": keyword,
+            "page": 0,
+            "products": 0,
+            "detail_ok": 0,
+            "detail_fail": 0,
+            "detail_total": 0,
+        }
 
         # 1. 백화점 탭 전체 페이지 순회 → 상품 ID 수집 (서버 직접)
         eh_dept = base64.b64encode(
@@ -346,11 +358,15 @@ class GsShopSourcingClient:
                             new_count += 1
                     if new_count == 0:
                         break
+                    GsShopSourcingClient.scan_progress.update(
+                        {"page": page, "products": len(product_ids)}
+                    )
                 except Exception:
                     break
 
         if not product_ids:
             logger.warning(f'[GSSHOP] 카테고리 스캔: 검색 결과 없음 "{keyword}"')
+            GsShopSourcingClient.scan_progress = {}
             return {"categories": [], "total": 0, "groupCount": 0}
 
         logger.info(
@@ -362,6 +378,9 @@ class GsShopSourcingClient:
         cat_counter: dict[str, int] = {}
         ok_count = 0
         fail_count = 0
+        GsShopSourcingClient.scan_progress.update(
+            {"stage": "detail", "detail_total": len(product_ids)}
+        )
 
         async def _fetch(pid: str) -> None:
             nonlocal ok_count, fail_count
@@ -374,6 +393,7 @@ class GsShopSourcingClient:
                     c4 = detail.get("category4", "")
                     if not c1:
                         fail_count += 1
+                        GsShopSourcingClient.scan_progress["detail_fail"] = fail_count
                         return
                     # GNB 대카테고리 매핑
                     gnb = self.GNB_MAP.get(c1, "")
@@ -383,8 +403,10 @@ class GsShopSourcingClient:
                     key = f"{path}||{gnb}||{c1}||{c2}||{c3}"
                     cat_counter[key] = cat_counter.get(key, 0) + 1
                     ok_count += 1
+                    GsShopSourcingClient.scan_progress["detail_ok"] = ok_count
                 except Exception as e:
                     fail_count += 1
+                    GsShopSourcingClient.scan_progress["detail_fail"] = fail_count
                     logger.debug(f"[GSSHOP] 카테고리 스캔 상세 실패: {pid} — {e}")
 
         await asyncio.gather(
@@ -393,6 +415,7 @@ class GsShopSourcingClient:
         logger.info(
             f"[GSSHOP] 카테고리 스캔 상세 완료: 성공={ok_count} 실패={fail_count}"
         )
+        GsShopSourcingClient.scan_progress = {}
 
         # 3. 카테고리 분포 집계
         categories = []

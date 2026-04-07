@@ -919,16 +919,33 @@ export default function CollectorPage() {
                 return
               }
 
-              // GS샵: 키워드만으로 바로 스캔 (백화점 탭)
+              // GS샵: 키워드만으로 바로 스캔 (백화점 탭) + 진행 상황 폴링
               if (selectedSite === 'GSShop') {
                 const scanKeyword = keyword || brand || collectUrl.trim()
+                addLog(`[카테고리스캔] GS샵 백화점 "${scanKeyword}" 스캔 시작...`)
+                // 진행 상황 폴링 (2초 간격)
+                const pollId = setInterval(async () => {
+                  try {
+                    const p = await collectorApi.gsshopScanProgress()
+                    if (p.stage === 'search') {
+                      addLog(`[카테고리스캔] 검색 중... ${p.page}페이지, ${p.products}개 상품 발견`)
+                    } else if (p.stage === 'detail') {
+                      const done = (p.detail_ok || 0) + (p.detail_fail || 0)
+                      addLog(`[카테고리스캔] 상세 조회 중... ${done}/${p.detail_total}건 (성공: ${p.detail_ok}, 실패: ${p.detail_fail})`)
+                    }
+                  } catch { /* 폴링 실패 무시 */ }
+                }, 3000)
                 try {
                   const res = await collectorApi.brandScan('', 'A', scanKeyword, 'GSSHOP')
+                  clearInterval(pollId)
                   setBrandCategories(res.categories)
                   setBrandTotal(res.total)
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                  addLog(`[카테고리스캔] GS샵 백화점: ${scanKeyword} → ${res.groupCount}개 카테고리, 총 ${res.total}건`)
-                } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+                  addLog(`[카테고리스캔] 완료: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                } catch (e) {
+                  clearInterval(pollId)
+                  showAlert(e instanceof Error ? e.message : '스캔 실패', 'error')
+                }
                 setBrandScanning(false)
                 return
               }

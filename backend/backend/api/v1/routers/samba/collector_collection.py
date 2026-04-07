@@ -1853,6 +1853,14 @@ async def brand_discover(body: BrandDiscoverRequest):
     raise HTTPException(400, f"브랜드 탐색 미지원 소싱처: {body.source_site}")
 
 
+@router.get("/gsshop-scan-progress")
+async def gsshop_scan_progress():
+    """GS샵 카테고리 스캔 진행 상황 폴링."""
+    from backend.domain.samba.proxy.gsshop_sourcing import GsShopSourcingClient
+
+    return GsShopSourcingClient.scan_progress or {"stage": "idle"}
+
+
 @router.post("/brand-scan")
 async def brand_scan(
     body: BrandScanRequest,
