@@ -46,7 +46,7 @@ jobs:
           gcloud run deploy samba-wave-api \
             --source ./backend \
             --region asia-northeast3 \
-            --project fresh-sanctuary-489804-v4 \
+            --project glass-sight-452013-n6 \
             --env-vars-file /tmp/cloudrun-env.yaml \
             --memory 2Gi \
             --min-instances=1 \
@@ -57,13 +57,13 @@ jobs:
           LATEST=$(gcloud run revisions list \
             --service=samba-wave-api \
             --region=asia-northeast3 \
-            --project=fresh-sanctuary-489804-v4 \
+            --project=glass-sight-452013-n6 \
             --sort-by=~createTime \
             --limit=1 \
             --format="value(name)")
           SERVING=$(gcloud run services describe samba-wave-api \
             --region=asia-northeast3 \
-            --project=fresh-sanctuary-489804-v4 \
+            --project=glass-sight-452013-n6 \
             --format="value(status.traffic[0].revisionName)")
           echo "최신 리비전: $LATEST"
           echo "트래픽 리비전: $SERVING"
@@ -71,7 +71,7 @@ jobs:
             echo "⚠️ 트래픽이 구 리비전에 고정됨 — 강제 전환"
             gcloud run services update-traffic samba-wave-api \
               --region=asia-northeast3 \
-              --project=fresh-sanctuary-489804-v4 \
+              --project=glass-sight-452013-n6 \
               --to-latest --quiet
             echo "✅ 최신 리비전으로 트래픽 전환 완료"
           fi
@@ -84,7 +84,7 @@ jobs:
             echo "❌ Health check 실패 (HTTP $STATUS)"
             gcloud run services describe samba-wave-api \
               --region=asia-northeast3 \
-              --project=fresh-sanctuary-489804-v4 \
+              --project=glass-sight-452013-n6 \
               --format="value(status.traffic)"
             exit 1
           fi
