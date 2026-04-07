@@ -1141,7 +1141,7 @@ class ARTSourcingClient:
             "sameDayDelivery": same_day_delivery,
             "manufacturer": manufacturer,
             "origin": origin,
-            "color": color,
+            "color": (detail_extra or {}).get("color_notice", "") or color,
             "styleCode": style_code,
             "sex": sex,
             "season": "사계절용",  # API에 시즌 정보 없으므로 기본값
