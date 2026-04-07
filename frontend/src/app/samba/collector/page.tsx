@@ -883,7 +883,7 @@ export default function CollectorPage() {
               color: "#E5E5E5", outline: "none",
             }}
           />
-          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON' || selectedSite === 'GSShop') && (
+          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON' || selectedSite === 'GSShop' || selectedSite === 'ABCmart' || selectedSite === 'Nike') && (
             <button onClick={async () => {
               if (!collectUrl.trim()) { showAlert('URL 또는 키워드를 입력하세요'); return }
               setBrandScanning(true)
@@ -928,6 +928,34 @@ export default function CollectorPage() {
                   setBrandTotal(res.total)
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
                   addLog(`[카테고리스캔] GS샵 백화점: ${scanKeyword} → ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+                setBrandScanning(false)
+                return
+              }
+
+              // ABC마트: 키워드만으로 바로 스캔
+              if (selectedSite === 'ABCmart') {
+                const scanKeyword = keyword || brand || collectUrl.trim()
+                try {
+                  const res = await collectorApi.brandScan('', 'A', scanKeyword, 'ABCmart')
+                  setBrandCategories(res.categories)
+                  setBrandTotal(res.total)
+                  setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
+                  addLog(`[카테고리스캔] ABC마트: ${scanKeyword} → ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+                setBrandScanning(false)
+                return
+              }
+
+              // 나이키: 키워드만으로 바로 스캔
+              if (selectedSite === 'Nike') {
+                const scanKeyword = keyword || brand || collectUrl.trim()
+                try {
+                  const res = await collectorApi.brandScan('', 'A', scanKeyword, 'Nike')
+                  setBrandCategories(res.categories)
+                  setBrandTotal(res.total)
+                  setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
+                  addLog(`[카테고리스캔] Nike: ${scanKeyword} → ${res.groupCount}개 카테고리, 총 ${res.total}건`)
                 } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                 setBrandScanning(false)
                 return

@@ -220,6 +220,17 @@ async def save_setting(
         session.add(existing)
         await session.commit()
         await session.refresh(existing)
+
+        # SSG 설정 변경 시 인프라 캐시 무효화
+        if key == "store_ssg" and isinstance(value, dict):
+            ssg_api_key = value.get("apiKey", "")
+            if ssg_api_key:
+                from backend.domain.samba.proxy.ssg import (
+                    invalidate_infra_cache,
+                )
+
+                await invalidate_infra_cache(ssg_api_key)
+
         return existing
     new_setting = SambaSettings(
         key=effective_key,
@@ -230,6 +241,15 @@ async def save_setting(
     session.add(new_setting)
     await session.commit()
     await session.refresh(new_setting)
+
+    # SSG 설정 변경 시 인프라 캐시 무효화
+    if key == "store_ssg" and isinstance(value, dict):
+        ssg_api_key = value.get("apiKey", "")
+        if ssg_api_key:
+            from backend.domain.samba.proxy.ssg import invalidate_infra_cache
+
+            await invalidate_infra_cache(ssg_api_key)
+
     return new_setting
 
 

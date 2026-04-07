@@ -202,6 +202,56 @@ class NikeClient:
             "last_error": last_error,
         }
 
+    async def scan_categories(self, keyword: str) -> dict[str, Any]:
+        """키워드 검색 후 카테고리 분포 집계.
+
+        검색 결과의 productType(FOOTWEAR/APPAREL/ACCESSORIES/EQUIPMENT)으로
+        카테고리를 집계한다. 상세 조회 없이 검색만으로 추출 가능.
+
+        Returns:
+          {"categories": [...], "total": int, "groupCount": int}
+        """
+        result = await self.search(keyword, max_count=100)
+        products = result.get("products", [])
+        if not products:
+            return {"categories": [], "total": 0, "groupCount": 0}
+
+        cat_counter: dict[str, int] = {}
+        for p in products:
+            c1 = p.get("category1", "")
+            c2 = p.get("category2", "")
+            c3 = p.get("category3", "")
+            if not c1 and not c2:
+                continue
+            path = " > ".join([x for x in [c1, c2, c3] if x])
+            key = f"{c2 or c1}||{path}||{c1}||{c2}||{c3}"
+            cat_counter[key] = cat_counter.get(key, 0) + 1
+
+        categories = []
+        for key, count in sorted(cat_counter.items(), key=lambda x: -x[1]):
+            code, path, c1, c2, c3 = key.split("||")
+            categories.append(
+                {
+                    "categoryCode": code,
+                    "path": path,
+                    "count": count,
+                    "category1": c1,
+                    "category2": c2,
+                    "category3": c3,
+                }
+            )
+
+        total = sum(c["count"] for c in categories)
+        logger.info(
+            f"[Nike] 카테고리 스캔 완료: '{keyword}' "
+            f"→ {len(categories)}개 카테고리, 총 {total}건"
+        )
+        return {
+            "categories": categories,
+            "total": total,
+            "groupCount": len(categories),
+        }
+
     async def get_detail(self, style_color: str) -> dict[str, Any]:
         """상품 상세 조회 — 검색으로 PDP URL 확인 후 PDP 직접 fetch.
 

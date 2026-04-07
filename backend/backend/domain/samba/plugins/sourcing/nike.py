@@ -31,6 +31,13 @@ class NikePlugin(SourcingPlugin):
         result = await self.safe_call(client.search(keyword, max_count=max_count))
         return result.get("products", [])
 
+    async def scan_categories(self, keyword: str) -> dict:
+        """나이키 카테고리 스캔."""
+        from backend.domain.samba.proxy.nike import NikeClient
+
+        client = NikeClient()
+        return await self.safe_call(client.scan_categories(keyword))
+
     async def get_detail(self, site_product_id: str) -> dict:
         """나이키 상품 상세 조회."""
         from backend.domain.samba.proxy.nike import NikeClient

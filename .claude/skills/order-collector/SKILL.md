@@ -8,7 +8,9 @@ description: >
   발주확인(confirm_product_orders), 취소승인(approve_cancel),
   반품승인(approve_return), 교환 처리, 클레임 상태 감지(claimType/claimStatus),
   정산금액 계산(expectedSettlementAmount, fee_rate 역산),
-  주문상태 매핑(PAYED→pending, DELIVERING→shipped, CANCEL_REQUEST→cancel_requested),
+  주문상태 매핑(PAYED→pending, DELIVERING→shipped, CANCEL_REQUEST→cancel_requested,
+  플레이오토 신규주문→new_order, 송장출력→invoice_printed, 수취확인→delivered),
+  플레이오토 상태 변환 시 반드시 references/playauto-status-mapping.md 참조,
   송장번호 입력, 배송추적, 판매중지 연동.
   대상 파일: order.py(라우터), order/service.py, order/model.py, dtos/samba/order.py,
   smartstore.py·coupang.py·elevenst.py 등 각 프록시의 주문 메서드.
@@ -26,11 +28,21 @@ description: >
 - **product-upload** = CollectedProduct → 마켓 등록 (등록 품질)
 - **order-collector** = 마켓 주문 → SambaOrder (주문 수집 + CS 처리)
 
+## 플레이오토 상태 매핑 [필독]
+
+주문상태 관련 코드를 수정할 때 **반드시** `references/playauto-status-mapping.md`를 읽을 것.
+
+사용자는 항상 내부 상태명(주문접수, 배송대기중)으로 대화한다.
+플레이오토 원본 상태(신규주문, 송장출력)와 내부 status 값(new_order, invoice_printed, pending)의
+3단 매핑을 이해하지 않으면 필터/통계에서 누락이 발생한다.
+
+**핵심 함정:** 사용자가 "주문접수"라고 하면 `pending`만이 아니라 `new_order`, `invoice_printed`도 포함해야 한다.
+
 ## 자기 진화 규칙
 
 **사용자가 주문 관련 수정을 요구하면, 수정 내용을 이 스킬 파일에도 반영해야 한다.**
 - 새 마켓 주문 수집 구현 → `references/{market}.md` 업데이트
-- 주문 상태 매핑 변경 → `references/status-mapping.md` 업데이트
+- 주문 상태 매핑 변경 → `references/playauto-status-mapping.md` 업데이트
 - CS 처리 로직 변경 → `references/cs-guide.md` 업데이트
 - 에러 해결 → 해당 마켓 레퍼런스에 기록
 

@@ -31,13 +31,18 @@ def _get_service(session: AsyncSession):
     return SambaShipmentService(SambaShipmentRepository(session), session)
 
 
+class CancelRequest(BaseModel):
+    job_id: Optional[str] = None
+
+
 @router.post("/cancel")
-async def cancel_transmit():
-    """진행 중인 전송 강제 중단."""
+async def cancel_transmit(body: CancelRequest = CancelRequest()):
+    """진행 중인 전송 강제 중단. job_id가 주어지면 해당 잡만 취소."""
     from backend.domain.samba.shipment.service import request_cancel_transmit
 
-    request_cancel_transmit()
-    return {"ok": True, "message": "전송 중단 요청 완료"}
+    request_cancel_transmit(body.job_id)
+    target = f"잡 {body.job_id}" if body.job_id else "전체"
+    return {"ok": True, "message": f"전송 중단 요청 완료 ({target})"}
 
 
 @router.post("/emergency-stop")

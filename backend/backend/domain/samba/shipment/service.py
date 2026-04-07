@@ -88,22 +88,58 @@ _transmitting_products: set[str] = set()
 # 계정별 세마포어 — API Rate Limit 방지 (계정당 동시 1건)
 _account_semaphores: dict[str, asyncio.Semaphore] = {}
 
-# 전송 중단 플래그 (threading.Event — 스레드 간 동기화 보장)
+# 전송 중단 플래그 — job_id별 분리 (멀티유저 격리)
 import threading as _threading
 
-_cancel_event = _threading.Event()
+_cancel_events: dict[str, _threading.Event] = {}
+_cancel_lock = _threading.Lock()
 
 
-def request_cancel_transmit():
-    _cancel_event.set()
+def request_cancel_transmit(job_id: str | None = None):
+    """전송 취소 요청.
+
+    job_id가 주어지면 해당 잡만, None이면 모든 잡을 취소한다.
+    """
+    with _cancel_lock:
+        if job_id is None:
+            # 전체 취소 — 기존 이벤트 모두 set + 글로벌 마커
+            for evt in _cancel_events.values():
+                evt.set()
+            _cancel_events.setdefault("__all__", _threading.Event()).set()
+        else:
+            evt = _cancel_events.setdefault(job_id, _threading.Event())
+            evt.set()
 
 
-def clear_cancel_transmit():
-    _cancel_event.clear()
+def clear_cancel_transmit(job_id: str | None = None):
+    """취소 플래그 해제.
+
+    job_id가 주어지면 해당 잡만, None이면 모든 이벤트를 제거한다.
+    """
+    with _cancel_lock:
+        if job_id is None:
+            _cancel_events.clear()
+        else:
+            _cancel_events.pop(job_id, None)
+            # 글로벌 마커도 정리 (남아있으면 새 잡이 즉시 취소됨)
+            _cancel_events.pop("__all__", None)
 
 
-def is_cancel_requested() -> bool:
-    return _cancel_event.is_set()
+def is_cancel_requested(job_id: str | None = None) -> bool:
+    """취소가 요청되었는지 확인.
+
+    job_id가 주어지면 해당 잡 또는 글로벌 취소를 확인,
+    None이면 아무 이벤트라도 set이면 True.
+    """
+    with _cancel_lock:
+        if job_id is None:
+            return any(evt.is_set() for evt in _cancel_events.values())
+        # 해당 job_id 이벤트 또는 글로벌(__all__) 이벤트 확인
+        evt = _cancel_events.get(job_id)
+        if evt and evt.is_set():
+            return True
+        global_evt = _cancel_events.get("__all__")
+        return bool(global_evt and global_evt.is_set())
 
 
 def _get_group_lock(account_id: str) -> asyncio.Lock:
@@ -349,8 +385,10 @@ class SambaShipmentService:
                             delete_no = delete_no.get("originProductNo", delete_no)
                         await client.delete_product(str(delete_no))
                         deleted_nos.append(delete_no)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning(
+                            f"[전송] 그룹전송 기존 단일상품 삭제 실패 (no={delete_no}): {exc}"
+                        )
 
             # 상품 데이터 준비 (가격 계산, 이미지 업로드)
             product_dicts = []
@@ -384,7 +422,10 @@ class SambaShipmentService:
                     try:
                         naver_url = await client.upload_image_from_url(img_url)
                         uploaded_images.append(naver_url)
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning(
+                            f"[전송] 그룹전송 이미지 업로드 실패, 원본 URL 사용: {exc}"
+                        )
                         uploaded_images.append(img_url)
                 pd["images"] = uploaded_images
                 product_dicts.append(pd)
@@ -413,8 +454,10 @@ class SambaShipmentService:
                             [account_id],
                             ["price", "stock", "image", "description"],
                         )
-                    except Exception:
-                        pass
+                    except Exception as rollback_exc:
+                        logger.warning(
+                            f"[전송] 그룹등록 실패 후 단일상품 롤백 실패 (pid={p.id}): {rollback_exc}"
+                        )
                 raise e
 
             # 결과 저장
@@ -510,7 +553,8 @@ class SambaShipmentService:
                     for line in f:
                         if line.startswith("VmRSS:"):
                             return int(line.split()[1]) // 1024
-            except Exception:
+            except Exception as exc:
+                logger.debug(f"[전송] 메모리 측정 실패 (비Linux 환경): {exc}")
                 return -1
 
         logger.info(f"[메모리] 전송시작: {_mem_mb()}MB")

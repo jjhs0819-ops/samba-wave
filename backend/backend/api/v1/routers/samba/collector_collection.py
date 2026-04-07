@@ -1903,6 +1903,18 @@ async def brand_scan(
             )
         return await _scan_musinsa_categories(keyword, body.brand, body.gf, cookie)
 
+    if body.source_site in ("ABCmart", "GrandStage"):
+        from backend.domain.samba.plugins.sourcing.abcmart import AbcMartPlugin
+
+        plugin = AbcMartPlugin()
+        return await plugin.scan_categories(keyword)
+
+    if body.source_site == "Nike":
+        from backend.domain.samba.plugins.sourcing.nike import NikePlugin
+
+        plugin = NikePlugin()
+        return await plugin.scan_categories(keyword)
+
     raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
 
 
@@ -2026,6 +2038,14 @@ async def brand_create_groups(
                 parts.append(f"category={code}")
             keyword = "https://www.musinsa.com/search/goods?" + "&".join(parts)
             category_filter = code or None
+        elif body.source_site in ("ABCmart", "GrandStage"):
+            _label = body.brand_name or body.brand or keyword or ""
+            keyword = _label  # 검색 키워드 그대로 사용
+            category_filter = code or None  # 카테고리 path를 필터로 저장
+        elif body.source_site == "Nike":
+            _label = body.brand_name or body.brand or keyword or ""
+            keyword = _label  # 검색 키워드 그대로 사용
+            category_filter = code or None  # productType 코드를 필터로 저장
         else:  # LOTTEON
             _brand_label = body.brand_name or body.brand or ""
             # 선택된 브랜드 목록을 URL 쿼리 파라미터로 저장 (worker.py에서 파싱)

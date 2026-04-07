@@ -41,20 +41,64 @@ _infra_cache: dict[str, tuple[dict[str, Any], float]] = {}
 _INFRA_CACHE_TTL = 900  # 15분
 
 # httpx 클라이언트 풀 — api_key별 재사용 (TCP 커넥션 재활용으로 SSL handshake 제거)
-_client_pool: dict[str, httpx.AsyncClient] = {}
+# 값: (클라이언트, 마지막 사용 시간)
+_client_pool: dict[str, tuple[httpx.AsyncClient, float]] = {}
+_CLIENT_STALE_TTL = 1800  # 30분 미사용 시 정리
+
+
+async def _cleanup_stale_clients() -> None:
+    """30분 이상 미사용 클라이언트를 닫고 풀에서 제거."""
+    now = time.time()
+    stale_keys = [
+        k
+        for k, (_, last_used) in _client_pool.items()
+        if now - last_used > _CLIENT_STALE_TTL
+    ]
+    for k in stale_keys:
+        client, _ = _client_pool.pop(k)
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+    if stale_keys:
+        logger.debug(f"[SSG] stale 클라이언트 {len(stale_keys)}개 정리 완료")
 
 
 def _get_ssg_client(api_key: str) -> httpx.AsyncClient:
-    """api_key별 재사용 클라이언트 반환. 없으면 생성."""
-    if api_key not in _client_pool:
-        _client_pool[api_key] = httpx.AsyncClient(
-            timeout=settings.http_timeout_default,
-            limits=httpx.Limits(
-                max_keepalive_connections=10,
-                max_connections=5,
-            ),
-        )
-    return _client_pool[api_key]
+    """api_key별 재사용 클라이언트 반환. 없으면 생성, 사용 시간 갱신."""
+    now = time.time()
+    if api_key in _client_pool:
+        client, _ = _client_pool[api_key]
+        _client_pool[api_key] = (client, now)
+        return client
+    client = httpx.AsyncClient(
+        timeout=settings.http_timeout_default,
+        limits=httpx.Limits(
+            max_keepalive_connections=10,
+            max_connections=5,
+        ),
+    )
+    _client_pool[api_key] = (client, now)
+    return client
+
+
+async def invalidate_infra_cache(api_key: str) -> None:
+    """SSG 설정 변경 시 인프라 캐시 + stale 클라이언트 정리.
+
+    설정 저장 엔드포인트에서 호출하여
+    변경된 자격증명이 즉시 반영되도록 한다.
+    """
+    _infra_cache.pop(api_key, None)
+    # 해당 api_key 클라이언트도 닫고 제거 (자격증명 변경 대응)
+    entry = _client_pool.pop(api_key, None)
+    if entry is not None:
+        try:
+            await entry[0].aclose()
+        except Exception:
+            pass
+    # stale 클라이언트 일괄 정리
+    await _cleanup_stale_clients()
+    logger.info(f"[SSG] 인프라 캐시 무효화 완료 (api_key=...{api_key[-6:]})")
 
 
 class SSGClient:
@@ -89,7 +133,8 @@ class SSGClient:
         url = f"{self.BASE_URL}{path}"
         headers = self._headers()
 
-        # 커넥션 풀 재사용 — 매 호출마다 새 클라이언트 생성 방지
+        # stale 클라이언트 정리 후 커넥션 풀 재사용
+        await _cleanup_stale_clients()
         client = _get_ssg_client(self.api_key)
         if method == "GET":
             resp = await client.get(url, headers=headers, params=params)

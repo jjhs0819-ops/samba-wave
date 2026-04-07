@@ -1026,6 +1026,134 @@ class ARTSourcingClient:
         }
 
     # ------------------------------------------------------------------
+    # 카테고리 스캔
+    # ------------------------------------------------------------------
+
+    async def scan_categories(self, keyword: str) -> dict[str, Any]:
+        """키워드 검색 → 상위 상품 상세 조회 → 카테고리 분포 집계.
+
+        무신사 카테고리 스캔과 동일한 패턴:
+        1. search_products로 상품 목록 조회
+        2. 상위 20개 상품의 info API 호출
+        3. stdCtgrNameInline 기반 카테고리 집계
+
+        Returns:
+          {"categories": [...], "total": int, "groupCount": int}
+        """
+        site_label = f"[{self._source_site}]"
+        logger.info(f"{site_label} 카테고리 스캔 시작: '{keyword}'")
+
+        # 1단계: 검색
+        products = await self.search_products(keyword, page=1, size=40)
+        if not products:
+            return {"categories": [], "total": 0, "groupCount": 0}
+
+        # 2단계: 상위 20개 상세 조회 (동시성 3)
+        sample = products[:20]
+        sem = asyncio.Semaphore(3)
+        cat_counter: dict[str, int] = {}
+
+        _CTGR_EXCLUDE = {
+            "홈",
+            "HOME",
+            "ABC마트",
+            "그랜드스테이지",
+            "GRAND STAGE",
+            "ABCmart",
+        }
+
+        async def _fetch_category(product: dict[str, Any]) -> None:
+            async with sem:
+                pid = product.get("siteProductId") or product.get("goodsNo", "")
+                if not pid:
+                    return
+                try:
+                    info = await self.get_product_info_api(str(pid))
+                    if not info:
+                        return
+
+                    # stdCtgrNameInline 우선 ("신발 > 스니커즈 > 라이프스타일")
+                    cat_str = (info.get("stdCtgrNameInline") or "").strip()
+                    cat_levels = [c.strip() for c in cat_str.split(">") if c.strip()]
+
+                    # 폴백: ctgrList 등
+                    if not cat_levels:
+                        for field in (
+                            "ctgrList",
+                            "dispCtgrList",
+                            "gnbCtgrList",
+                            "prdtCtgrList",
+                            "breadcrumbList",
+                        ):
+                            val = info.get(field)
+                            if isinstance(val, list) and val:
+                                parts: list[str] = []
+                                for item in val:
+                                    if isinstance(item, dict):
+                                        name_val = (
+                                            item.get("ctgrName")
+                                            or item.get("name")
+                                            or item.get("dispCtgrName")
+                                            or ""
+                                        ).strip()
+                                        if name_val and name_val not in _CTGR_EXCLUDE:
+                                            parts.append(name_val)
+                                    elif (
+                                        isinstance(item, str)
+                                        and item.strip()
+                                        and item.strip() not in _CTGR_EXCLUDE
+                                    ):
+                                        parts.append(item.strip())
+                                if parts:
+                                    cat_levels = parts
+                                    break
+
+                    if not cat_levels:
+                        return
+
+                    c1 = cat_levels[0] if len(cat_levels) > 0 else ""
+                    c2 = cat_levels[1] if len(cat_levels) > 1 else ""
+                    c3 = cat_levels[2] if len(cat_levels) > 2 else ""
+                    path = " > ".join(cat_levels)
+
+                    # 카테고리 코드: stdCtgrNo 우선, 없으면 path 사용
+                    code = str(info.get("stdCtgrNo") or info.get("ctgrNo") or path)
+
+                    key = f"{code}||{path}||{c1}||{c2}||{c3}"
+                    cat_counter[key] = cat_counter.get(key, 0) + 1
+                except Exception as e:
+                    logger.debug(f"{site_label} 카테고리 추출 실패: {pid} — {e}")
+
+        await asyncio.gather(
+            *[_fetch_category(p) for p in sample], return_exceptions=True
+        )
+
+        categories = []
+        for key, count in sorted(cat_counter.items(), key=lambda x: -x[1]):
+            code, path, c1, c2, c3 = key.split("||")
+            categories.append(
+                {
+                    "categoryCode": code,
+                    "path": path,
+                    "count": count,
+                    "category1": c1,
+                    "category2": c2,
+                    "category3": c3,
+                }
+            )
+
+        result = {
+            "categories": categories,
+            "total": sum(c["count"] for c in categories),
+            "groupCount": len(categories),
+        }
+        logger.info(
+            f"{site_label} 카테고리 스캔 완료: '{keyword}' "
+            f"→ {result['groupCount']}개 카테고리, 총 {result['total']}건"
+        )
+        return result
+
+    # ------------------------------------------------------------------
     # 상세 조회
     # ------------------------------------------------------------------
 

@@ -235,36 +235,31 @@ class JobWorker:
                 logger.error(f"[잡워커] 배포 종료 잡 복구 실패: {e}")
 
     async def _poll_once(self) -> bool:
-        """OOM 방지: 한 번에 1개 잡만 실행 (수집+전송 동시 실행 차단)."""
+        """OOM 방지: 한 번에 1개 잡만 실행 (수집+전송 동시 실행 차단).
+
+        FOR UPDATE SKIP LOCKED로 원자적 잡 획득 — 멀티 worker 중복 실행 방지.
+        """
         _worker_status["last_poll"] = datetime.now(UTC).isoformat()
+
+        # OOM 방지: 이미 실행 중인 잡이 있으면 대기
+        if self._active_types:
+            return False
+
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
 
         async with get_write_session() as session:
             repo = SambaJobRepository(session)
-            jobs = await repo.list_pending(limit=5)
-            if not jobs:
+            # 원자적 claim: FOR UPDATE SKIP LOCKED로 1개 잡만 획득
+            job = await repo.claim_pending_job()
+            if not job:
                 return False
 
-            # OOM 방지: 이미 실행 중인 잡이 있으면 대기
-            if self._active_types:
-                for job in jobs:
-                    job.status = JobStatus.PENDING
-                    job.started_at = None
-                await session.commit()
-                return False
-
-            # 1개만 선택, 나머지는 pending으로 되돌림
-            selected = jobs[0]
-            self._active_types.add(selected.job_type)
-            for job in jobs[1:]:
-                job.status = JobStatus.PENDING
-                job.started_at = None
-
+            self._active_types.add(job.job_type)
             await session.commit()
 
-        # 1개 잡만 실행
-        await self._execute_job(selected)
+        # claim된 잡 실행
+        await self._execute_job(job)
         return True
 
     async def _execute_job(self, job):
@@ -431,7 +426,7 @@ class JobWorker:
         from backend.domain.samba.emergency import clear_emergency_stop
 
         # 이전 취소/비상정지 잔존 플래그 해제 (새 전송은 항상 정상 시작)
-        clear_cancel_transmit()
+        clear_cancel_transmit(job.id)
         clear_emergency_stop()
 
         payload = job.payload or {}
@@ -474,7 +469,8 @@ class JobWorker:
 
             try:
                 _is_cancelled = await repo.is_cancelled(job.id)
-            except Exception:
+            except Exception as exc:
+                logger.warning(f"[잡워커] 취소 체크 중 DB 에러: {job.id} — {exc}")
                 _is_cancelled = False
 
             # 배포 종료 감지 — progress 저장 후 정상 탈출 (pending 유지)
@@ -490,11 +486,13 @@ class JobWorker:
                 try:
                     await repo.update_progress(job.id, i, total)
                     await session.commit()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        f"[잡워커] 배포 종료 진행 저장 실패: {job.id} — {exc}"
+                    )
                 return  # fail 아닌 정상 리턴 — graceful_stop이 pending으로 전환
 
-            if is_emergency_stopped() or is_cancel_requested() or _is_cancelled:
+            if is_emergency_stopped() or is_cancel_requested(job.id) or _is_cancelled:
                 cancelled = len(product_ids) - i
                 reason = "비상정지" if is_emergency_stopped() else "취소"
                 _add_job_log(job.id, f"{reason} — {i}건 완료, {cancelled}건 중단")
@@ -502,6 +500,8 @@ class JobWorker:
                     f"[잡워커] 전송 {reason}: {job.id} — {i}건 완료, {cancelled}건 중단"
                 )
                 await repo.fail_job(job.id, f"{reason}: {i}건 완료, {cancelled}건 중단")
+                # 해당 잡 취소 플래그 정리
+                clear_cancel_transmit(job.id)
                 return
 
             # 건별 독립 세션 — greenlet_spawn 방지 (세션 상태 누적 차단)
@@ -628,8 +628,8 @@ class JobWorker:
                     )
                     try:
                         await session.rollback()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning(f"[잡워커] 세션 롤백 실패: {job.id} — {exc}")
 
         # 2차 재시도 — 실패 상품만 (건별 독립 세션)
         retry_success = 0
@@ -804,8 +804,8 @@ class JobWorker:
                 _category_filter = qs.get("category", [""])[0]
                 _min_price = int(_min_price_raw) if _min_price_raw.isdigit() else None
                 _max_price = int(_max_price_raw) if _max_price_raw.isdigit() else None
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(f"[잡워커] 검색 URL 파싱 실패: {exc}")
 
         # 기존 수집 수 확인
         requested_count = sf.requested_count or 100
@@ -1142,8 +1142,8 @@ class JobWorker:
                 # skipDetail 옵션
                 if qs.get("skipDetail", [""])[0] == "1":
                     _search_kwargs["_skip_detail"] = True
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(f"[잡워커] 검색 URL 파싱 실패: {exc}")
 
         # 기존 수집 수 확인
         count_stmt = select(_func.count()).where(CPModel.search_filter_id == filter_id)
@@ -1220,8 +1220,8 @@ class JobWorker:
                             _per_brand_keywords = [
                                 b.strip() for b in _bp.split(",") if b.strip()
                             ]
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(f"[잡워커] LOTTEON 브랜드 파라미터 파싱 실패: {exc}")
 
             try:
                 if _per_brand_keywords:
@@ -1291,8 +1291,8 @@ class JobWorker:
                         _selected_brands = [
                             b.strip() for b in _brands_param.split(",") if b.strip()
                         ]
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(f"[잡워커] LOTTEON 브랜드 필터 파싱 실패: {exc}")
 
             if not _selected_brands and keyword:
                 _selected_brands = [keyword]

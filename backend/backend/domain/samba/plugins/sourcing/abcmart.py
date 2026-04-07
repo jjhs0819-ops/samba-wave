@@ -77,6 +77,50 @@ class AbcMartPlugin(SourcingPlugin):
         )
         return merged
 
+    async def scan_categories(self, keyword: str) -> dict:
+        """ABC마트 + 그랜드스테이지 카테고리 스캔 후 병합."""
+        from backend.domain.samba.proxy.abcmart import ARTSourcingClient
+
+        abc_client = ARTSourcingClient(channel=None)  # ABC마트
+        gs_client = ARTSourcingClient(channel="10002")  # 그랜드스테이지
+
+        abc_result, gs_result = await asyncio.gather(
+            self.safe_call(abc_client.scan_categories(keyword)),
+            self.safe_call(gs_client.scan_categories(keyword)),
+            return_exceptions=True,
+        )
+
+        if isinstance(abc_result, Exception):
+            logger.warning(f"[ABCmart] 카테고리 스캔 실패 (ABC마트): {abc_result}")
+            abc_result = {"categories": [], "total": 0, "groupCount": 0}
+        if isinstance(gs_result, Exception):
+            logger.warning(
+                f"[ABCmart] 카테고리 스캔 실패 (그랜드스테이지): {gs_result}"
+            )
+            gs_result = {"categories": [], "total": 0, "groupCount": 0}
+
+        # 카테고리 병합 (같은 path는 count 합산)
+        merged: dict[str, dict] = {}
+        for cat in abc_result.get("categories", []) + gs_result.get("categories", []):
+            path = cat.get("path", "")
+            if path in merged:
+                merged[path]["count"] += cat.get("count", 0)
+            else:
+                merged[path] = {**cat}
+
+        categories = sorted(merged.values(), key=lambda x: -x.get("count", 0))
+        total = sum(c.get("count", 0) for c in categories)
+
+        logger.info(
+            f"[ABCmart] 카테고리 스캔 병합 완료: '{keyword}' "
+            f"→ {len(categories)}개 카테고리, 총 {total}건"
+        )
+        return {
+            "categories": list(categories),
+            "total": total,
+            "groupCount": len(categories),
+        }
+
     async def get_detail(self, site_product_id: str) -> dict:
         """ABC마트 상품 상세 조회."""
         from backend.domain.samba.proxy.abcmart import ARTSourcingClient
