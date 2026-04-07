@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
+import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, fetchWithAuth, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { inputStyle } from '@/lib/samba/styles'
@@ -1025,7 +1025,7 @@ export default function OrdersPage() {
                         if (!cpId) { showAlert('수집상품을 찾을 수 없습니다', 'info'); return }
                         try {
                           const { API_BASE_URL: apiBase } = await import('@/config/api')
-                          const res = await fetch(`${apiBase}/api/v1/samba/collector/enrich/${cpId}`, { method: 'POST' })
+                          const res = await fetchWithAuth(`${apiBase}/api/v1/samba/collector/enrich/${cpId}`, { method: 'POST' })
                           const data = await res.json()
                           if (res.ok && data.success) {
                             const p = data.product

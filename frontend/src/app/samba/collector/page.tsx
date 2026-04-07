@@ -494,7 +494,7 @@ export default function CollectorPage() {
 
       try {
         // Job 생성
-        const res = await fetch(
+        const res = await fetchWithAuth(
           `${API_BASE}/api/v1/samba/collector/collect-filter/${id}`,
           { method: 'POST' }
         )
