@@ -1294,6 +1294,11 @@ class JobWorker:
             if not _selected_brands and keyword:
                 _selected_brands = [keyword]
 
+            # 브랜드별로 직접 검색했다면 brand 정확일치 필터를 건너뛴다.
+            # (검색 결과의 brand 필드가 키워드와 다를 수 있으나 키워드 검색 결과를 신뢰)
+            if locals().get("_per_brand_keywords"):
+                _selected_brands = []
+
             if _selected_brands:
                 before = len(items_list)
                 items_list = _filter_by_brands(items_list, _selected_brands)

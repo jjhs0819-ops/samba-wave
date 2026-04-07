@@ -1182,13 +1182,13 @@ class LotteonSourcingClient:
                     break
             logger.info(f"[LOTTEON] 카테고리 스캔 kw={kw!r} → {kw_count}건 수집")
 
-        # 2차: 선택 브랜드 필터링 (빈 리스트면 전체 통과)
-        filtered_items = (
-            _filter_by_brands(all_items, selected_brands)
-            if selected_brands
-            else all_items
-        )
-        filtered_count = len(all_items) - len(filtered_items)
+        # 2차: 선택 브랜드 필터링은 생략한다.
+        # 이미 1차에서 각 브랜드명을 키워드로 직접 검색했으므로, brand 필드가
+        # 정확 일치하지 않아도(예: "나이키 스윔" 검색 결과에 brand="나이키"가 섞여도)
+        # 키워드 검색 결과 자체를 신뢰한다. 정확 일치 필터를 적용하면 1차에서
+        # 1000건을 가져와도 55건만 남는 문제가 발생함.
+        filtered_items = all_items
+        filtered_count = 0
 
         # BC코드 집계
         cat_counter: dict[str, int] = {}
@@ -1208,22 +1208,16 @@ class LotteonSourcingClient:
             logger.info(
                 f"[LOTTEON] 미매핑 BC코드 {len(unmapped_codes)}개 자동 매핑 시도"
             )
-            # 미매핑 BC코드별 대표 상품 1개씩 수집 (스캔 중 이미 저장해둔 데이터 활용)
+            # 미매핑 BC코드별 대표 상품 1개씩 — 1차에서 수집한 all_items 재활용
             bc_to_product: dict[str, str] = {}
-            for page_num in range(1, min(scan_pages + 1, 20)):
-                try:
-                    items = await self.search_products(keyword, page=page_num, size=60)
-                    if not items:
+            unmapped_set = set(unmapped_codes)
+            for item in filtered_items:
+                scat = item.get("scatNo") or item.get("scat_no") or ""
+                pid = item.get("spdNo") or item.get("site_product_id") or ""
+                if scat in unmapped_set and scat not in bc_to_product and pid:
+                    bc_to_product[scat] = pid
+                    if len(bc_to_product) >= len(unmapped_set):
                         break
-                    for item in items:
-                        scat = item.get("scatNo") or item.get("scat_no") or ""
-                        pid = item.get("spdNo") or item.get("site_product_id") or ""
-                        if scat in unmapped_codes and scat not in bc_to_product and pid:
-                            bc_to_product[scat] = pid
-                    if len(bc_to_product) >= len(unmapped_codes):
-                        break
-                except Exception:
-                    break
 
             # 병렬로 HTML breadcrumb 추출
             async def _resolve_bc(bc_code: str, pid: str) -> tuple[str, str]:
@@ -1256,12 +1250,10 @@ class LotteonSourcingClient:
                     f"[LOTTEON] 자동 매핑 완료: {mapped_count}/{len(unmapped_codes)}개"
                 )
 
-        # BC코드 → 카테고리 경로 매핑 (같은 path 합산, 미매핑 제외)
+        # BC코드 → 카테고리 경로 매핑 (같은 path 합산, 미매핑은 BC코드를 path로 표시)
         path_merged: dict[str, dict[str, Any]] = {}
         for bc_code, count in cat_counter.items():
-            path = _LOTTEON_SCAT_NAMES.get(bc_code, "")
-            if not path:
-                continue  # 미매핑 제외
+            path = _LOTTEON_SCAT_NAMES.get(bc_code, "") or f"미매핑 ({bc_code})"
             if path in path_merged:
                 path_merged[path]["count"] += count
                 path_merged[path]["bc_codes"].append(bc_code)
