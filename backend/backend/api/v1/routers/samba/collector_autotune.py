@@ -531,10 +531,18 @@ async def _autotune_loop():
                                 # ★ 마켓별 최종 판매가 비교 → 전송 판정
                                 new_cost = _cur_cost
                                 reg_accounts = product.registered_accounts or []
-                                # 판매처 필터 적용
+                                # 판매처 필터 적용 (market_type 기준)
                                 if _market_filter_active:
                                     reg_accounts = [
-                                        a for a in reg_accounts if a in _enabled_markets
+                                        a
+                                        for a in reg_accounts
+                                        if (
+                                            _account_cache.get(a)
+                                            and getattr(
+                                                _account_cache[a], "market_type", ""
+                                            )
+                                            in _enabled_markets
+                                        )
                                     ]
                                 last_sent = product.last_sent_data or {}
 
@@ -1292,7 +1300,7 @@ class AutotuneFilterRequest(BaseModel):
 
 @router.get("/autotune/filters")
 async def autotune_get_filters():
-    """오토튠 필터 설정 + 실제 존재하는 소싱처/판매처 목록 반환."""
+    """오토튠 필터 설정 + 실제 존재하는 소싱처/판매처(마켓 단위) 목록 반환."""
     from backend.db.orm import get_read_session
     from backend.api.v1.routers.samba.proxy import _get_setting
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
@@ -1314,33 +1322,27 @@ async def autotune_get_filters():
         src_result = await session.execute(src_stmt)
         available_sources = sorted([r[0] for r in src_result.all() if r[0]])
 
-        # 마켓등록상품의 registered_accounts에 존재하는 계정 ID 수집
+        # 마켓등록상품(오토튠 대상)의 registered_accounts → 계정 ID 수집
         market_cond = build_market_registered_conditions(_CP)
-        reg_stmt = select(_CP.registered_accounts).where(*market_cond)
+        reg_stmt = select(_CP.registered_accounts).where(
+            *market_cond,
+            _CP.applied_policy_id != None,
+            _CP.sale_status != "sold_out",
+        )
         reg_result = await session.execute(reg_stmt)
         _acc_ids: set[str] = set()
         for row in reg_result.all():
             if row[0] and isinstance(row[0], list):
                 _acc_ids.update(row[0])
 
-        # 계정 정보 조회
-        available_markets: list[dict] = []
+        # 계정 → market_type 매핑 후 중복 제거 (마켓 단위)
+        available_markets: list[str] = []
         if _acc_ids:
-            acc_stmt = select(SambaMarketAccount).where(
+            acc_stmt = select(distinct(SambaMarketAccount.market_type)).where(
                 SambaMarketAccount.id.in_(list(_acc_ids))
             )
-            acc_result = await session.exec(acc_stmt)
-            for acc in acc_result.all():
-                available_markets.append(
-                    {
-                        "id": acc.id,
-                        "market_type": acc.market_type or "",
-                        "market_name": acc.market_name or "",
-                        "account_label": acc.account_label or "",
-                        "seller_id": acc.seller_id or "",
-                    }
-                )
-        available_markets.sort(key=lambda x: x.get("market_name", ""))
+            acc_result = await session.execute(acc_stmt)
+            available_markets = sorted([r[0] for r in acc_result.all() if r[0]])
 
     return {
         "enabled_sources": saved_sources if isinstance(saved_sources, list) else None,

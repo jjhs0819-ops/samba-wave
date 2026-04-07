@@ -271,7 +271,7 @@ export default function WarroomPage() {
   const [filterSources, setFilterSources] = useState<string[] | null>(null) // null=전체
   const [filterMarkets, setFilterMarkets] = useState<string[] | null>(null) // null=전체
   const [availSources, setAvailSources] = useState<string[]>([])
-  const [availMarkets, setAvailMarkets] = useState<{ id: string; market_type: string; market_name: string; account_label: string; seller_id: string }[]>([])
+  const [availMarkets, setAvailMarkets] = useState<string[]>([])
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -294,7 +294,6 @@ export default function WarroomPage() {
 
   const toggleSource = useCallback((site: string) => {
     setFilterSources(prev => {
-      // null(전체) → 전부 선택 상태에서 하나 해제
       const all = availSources
       const current = prev ?? [...all]
       const next = current.includes(site) ? current.filter(s => s !== site) : [...current, site]
@@ -304,12 +303,12 @@ export default function WarroomPage() {
     })
   }, [availSources, filterMarkets, saveFilters])
 
-  const toggleMarket = useCallback((accId: string) => {
+  const toggleMarket = useCallback((marketType: string) => {
     setFilterMarkets(prev => {
-      const allIds = availMarkets.map(m => m.id)
-      const current = prev ?? [...allIds]
-      const next = current.includes(accId) ? current.filter(a => a !== accId) : [...current, accId]
-      const result = next.length === allIds.length ? null : next.length === 0 ? null : next
+      const all = availMarkets
+      const current = prev ?? [...all]
+      const next = current.includes(marketType) ? current.filter(m => m !== marketType) : [...current, marketType]
+      const result = next.length === all.length ? null : next.length === 0 ? null : next
       saveFilters(filterSources, result)
       return result
     })
@@ -516,22 +515,22 @@ export default function WarroomPage() {
             })}
           </div>
         )}
-        {/* 판매처 체크박스 */}
+        {/* 판매처 체크박스 (마켓 단위) */}
         {availMarkets.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>판매처</span>
-            {availMarkets.map(acc => {
-              const checked = filterMarkets === null || filterMarkets.includes(acc.id)
-              const label = acc.account_label || `${acc.market_name}(${acc.seller_id})`
+            {availMarkets.map(mt => {
+              const checked = filterMarkets === null || filterMarkets.includes(mt)
+              const marketLabel: Record<string, string> = { smartstore: '스마트스토어', coupang: '쿠팡', '11st': '11번가', auction: '옥션', gmarket: 'G마켓', lotteon: '롯데ON', ssg: 'SSG', tmon: '티몬', wemakeprice: '위메프', kream: 'KREAM', playauto: '플레이오토', gsshop: 'GS샵', elandmall: '이랜드몰', ssf: 'SSF샵' }
               return (
-                <label key={acc.id} style={{ display: 'flex', alignItems: 'center', gap: '2px', cursor: 'pointer' }}>
+                <label key={mt} style={{ display: 'flex', alignItems: 'center', gap: '2px', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
                     checked={checked}
-                    onChange={() => toggleMarket(acc.id)}
+                    onChange={() => toggleMarket(mt)}
                     style={{ accentColor: '#4C9AFF', width: 13, height: 13, cursor: 'pointer' }}
                   />
-                  <span style={{ fontSize: '0.7rem', color: checked ? '#ddd' : '#666', whiteSpace: 'nowrap' }}>{label}</span>
+                  <span style={{ fontSize: '0.7rem', color: checked ? '#ddd' : '#666', whiteSpace: 'nowrap' }}>{marketLabel[mt] || mt}</span>
                 </label>
               )
             })}

@@ -530,7 +530,7 @@ export const collectorApi = {
       enabled_sources: string[] | null
       enabled_markets: string[] | null
       available_sources: string[]
-      available_markets: { id: string; market_type: string; market_name: string; account_label: string; seller_id: string }[]
+      available_markets: string[]
     }>(`${SAMBA_PREFIX}/collector/autotune/filters`),
   autotuneSetFilters: (enabledSources: string[] | null, enabledMarkets: string[] | null) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/autotune/filters`, { method: 'PUT', body: JSON.stringify({ enabled_sources: enabledSources, enabled_markets: enabledMarkets }) }),
