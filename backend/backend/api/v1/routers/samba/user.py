@@ -165,7 +165,7 @@ def _get_client_ip(request: Request) -> str:
 async def login_user(
     body: UserLoginDto,
     request: Request,
-    session: AsyncSession = Depends(get_write_session_dependency),
+    session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """이메일/비밀번호 로그인."""
     repo = SambaUserRepository(session)
@@ -189,20 +189,27 @@ async def login_user(
     auth_svc = AuthService(session)
     access_token = auth_svc._create_access_token(user.id)
 
-    # 로그인 이력 저장
+    # 로그인 이력 저장 (실패해도 로그인은 정상 진행)
     ip = _get_client_ip(request)
-    region = await _resolve_ip_region(ip)
-    history = SambaLoginHistory(
-        user_id=user.id,
-        email=user.email,
-        ip_address=ip,
-        region=region,
-        user_agent=request.headers.get("user-agent", ""),
-    )
-    session.add(history)
-    await session.commit()
+    try:
+        region = await _resolve_ip_region(ip)
+        from backend.db.orm import get_write_session
 
-    logger.info(f"[사용자관리] 로그인: {user.email} IP={ip} 지역={region}")
+        async with get_write_session() as log_session:
+            history = SambaLoginHistory(
+                user_id=user.id,
+                email=user.email,
+                ip_address=ip,
+                region=region,
+                user_agent=request.headers.get("user-agent", ""),
+            )
+            log_session.add(history)
+            await log_session.commit()
+        logger.info(f"[사용자관리] 로그인: {user.email} IP={ip} 지역={region}")
+    except Exception as e:
+        logger.warning(f"[사용자관리] 로그인 이력 저장 실패: {e}")
+
+    logger.info(f"[사용자관리] 로그인 성공: {user.email}")
     return UserOut(
         id=user.id,
         email=user.email,
