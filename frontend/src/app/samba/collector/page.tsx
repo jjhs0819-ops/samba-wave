@@ -1116,61 +1116,51 @@ export default function CollectorPage() {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <div style={{
-            background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '10px',
-            padding: '1.5rem', width: '420px', maxWidth: '90vw',
+            background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px',
+            padding: '0.75rem', width: '420px', maxWidth: '90vw', maxHeight: '350px', overflowY: 'auto',
           }}>
             {/* 모달 헤더 */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#E5E5E5' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <span style={{ fontSize: '0.78rem', color: '#888' }}>
                 브랜드 선택 — &quot;{brandModalKeyword}&quot;
+                ({brandModalSelected.size}/{brandModalList.length}개 선택)
               </span>
-              <button
-                onClick={() => setShowBrandModal(false)}
-                style={{ background: 'none', border: 'none', color: '#666', fontSize: '1.1rem', cursor: 'pointer' }}
-              >&times;</button>
-            </div>
-
-            {/* 전체선택/해제 */}
-            <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.75rem' }}>
-              <button
-                onClick={() => setBrandModalSelected(new Set(brandModalList.map(b => b.name)))}
-                style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}
-              >전체선택</button>
-              <button
-                onClick={() => setBrandModalSelected(new Set())}
-                style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}
-              >전체해제</button>
-              <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: '#666', alignSelf: 'center' }}>
-                {brandModalSelected.size}/{brandModalList.length}개 선택
-              </span>
+              <div style={{ display: 'flex', gap: '0.25rem' }}>
+                <button
+                  onClick={() => setBrandModalSelected(new Set(brandModalList.map(b => b.name)))}
+                  style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}
+                >전체선택</button>
+                <button
+                  onClick={() => setBrandModalSelected(new Set())}
+                  style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}
+                >전체해제</button>
+                <button
+                  onClick={() => setShowBrandModal(false)}
+                  style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}
+                >닫기</button>
+              </div>
             </div>
 
             {/* 브랜드 목록 */}
-            <div style={{ maxHeight: '300px', overflowY: 'auto', marginBottom: '1rem' }}>
-              {brandModalList.map(b => (
-                <label key={b.name} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.3rem 0', cursor: 'pointer', fontSize: '0.82rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={brandModalSelected.has(b.name)}
-                    onChange={e => {
-                      const next = new Set(brandModalSelected)
-                      if (e.target.checked) next.add(b.name); else next.delete(b.name)
-                      setBrandModalSelected(next)
-                    }}
-                    style={{ accentColor: '#FF8C00' }}
-                  />
-                  <span style={{ color: '#E5E5E5', flex: 1 }}>{b.name}</span>
-                  <span style={{ color: '#FF8C00', fontWeight: 600, fontSize: '0.75rem' }}>{b.count.toLocaleString()}건</span>
-                </label>
-              ))}
-            </div>
+            {brandModalList.map(b => (
+              <label key={b.name} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.2rem 0', cursor: 'pointer', fontSize: '0.78rem' }}>
+                <input
+                  type="checkbox"
+                  checked={brandModalSelected.has(b.name)}
+                  onChange={e => {
+                    const next = new Set(brandModalSelected)
+                    if (e.target.checked) next.add(b.name); else next.delete(b.name)
+                    setBrandModalSelected(next)
+                  }}
+                  style={{ accentColor: '#FF8C00' }}
+                />
+                <span style={{ color: '#E5E5E5', flex: 1 }}>{b.name}</span>
+                <span style={{ color: '#FF8C00', fontWeight: 600, fontSize: '0.72rem' }}>{b.count.toLocaleString()}건</span>
+              </label>
+            ))}
 
-            {/* 취소 / 스캔 진행 버튼 */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-              <button
-                onClick={() => setShowBrandModal(false)}
-                style={{ padding: '0.5rem 1rem', background: 'transparent', border: '1px solid #3D3D3D', borderRadius: '6px', color: '#888', fontSize: '0.82rem', cursor: 'pointer' }}
-              >취소</button>
+            {/* 스캔 진행 버튼 */}
+            <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'flex-end' }}>
               <button
                 onClick={async () => {
                   if (brandModalSelected.size === 0) { showAlert('브랜드를 1개 이상 선택하세요'); return }
@@ -1190,8 +1180,8 @@ export default function CollectorPage() {
                 }}
                 disabled={brandModalSelected.size === 0}
                 style={{
-                  padding: '0.5rem 1.2rem', background: brandModalSelected.size === 0 ? '#333' : '#FF8C00',
-                  border: 'none', borderRadius: '6px', color: '#fff', fontSize: '0.82rem',
+                  padding: '0.4rem 1rem', background: brandModalSelected.size === 0 ? '#333' : '#FF8C00',
+                  border: 'none', borderRadius: '6px', color: '#fff', fontSize: '0.8rem',
                   fontWeight: 600, cursor: brandModalSelected.size === 0 ? 'not-allowed' : 'pointer',
                 }}
               >카테고리 스캔 진행 ({brandModalSelected.size}개)</button>
