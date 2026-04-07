@@ -73,7 +73,7 @@ export default function SambaDashboard() {
     const maxVal = Math.max(...allValues, 1000)
     // Y축 눈금 계산 (천원 단위)
     const maxK = Math.ceil(maxVal / 1000)
-    const step = maxK <= 5 ? 1 : maxK <= 20 ? 5 : maxK <= 100 ? 20 : maxK <= 500 ? 100 : Math.ceil(maxK / 5 / 100) * 100
+    const step = 50000 // 5천만원 단위
     const yMax = Math.ceil(maxK / step) * step
     const gridLines = []
     for (let v = 0; v <= yMax; v += step) gridLines.push(v)
