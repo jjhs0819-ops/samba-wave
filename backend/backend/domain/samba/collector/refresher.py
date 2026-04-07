@@ -138,22 +138,91 @@ IP_ROTATE_EVERY = 50
 _ip_rotate_counter = 0
 _ip_rotate_idx = 0
 _ip_rotate_label: str = ""
+_ip_rotate_total = 0
+
+
+# DB 프록시 캐시 (autotune 용도)
+_db_proxy_cache: list[str] | None = None
+_db_proxy_cache_ts: float = 0
+
+
+def _load_db_proxies_for_autotune() -> list[str]:
+    """DB proxy_config에서 autotune/both 활성 프록시 URL 목록 반환 (5분 캐시)."""
+    global _db_proxy_cache, _db_proxy_cache_ts
+    import time
+
+    now = time.monotonic()
+    if _db_proxy_cache is not None and now - _db_proxy_cache_ts < 300:
+        return _db_proxy_cache
+
+    try:
+        import asyncio
+        from sqlmodel import select
+        from backend.db.orm import get_read_session
+        from backend.domain.samba.forbidden.model import SambaSettings
+
+        async def _fetch():
+            async with get_read_session() as session:
+                result = await session.execute(
+                    select(SambaSettings).where(SambaSettings.key == "proxy_config")
+                )
+                row = result.scalar_one_or_none()
+                if not row or not row.value:
+                    return []
+                return [
+                    p["url"]
+                    for p in row.value
+                    if p.get("enabled")
+                    and p.get("url")
+                    and "autotune" in (p.get("purposes") or [])
+                ]
+
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # 이미 이벤트 루프가 돌고 있으면 동기로는 불가 → 캐시 반환
+            return _db_proxy_cache or []
+        urls = loop.run_until_complete(_fetch())
+    except Exception:
+        urls = []
+
+    _db_proxy_cache = urls
+    _db_proxy_cache_ts = now
+    return urls
+
+
+def invalidate_db_proxy_cache():
+    """DB 프록시 캐시 무효화 — 설정 변경 시 호출."""
+    global _db_proxy_cache, _db_proxy_cache_ts
+    _db_proxy_cache = None
+    _db_proxy_cache_ts = 0
 
 
 def _get_rotated_proxy() -> str | None:
-    """메인 IP + 프록시 목록을 N건 단위로 순환. PROXY_URLS 미설정 시 None."""
-    global _ip_rotate_counter, _ip_rotate_idx, _ip_rotate_label, _refresh_log_total
+    """메인 IP + 프록시 목록을 N건 단위로 순환. DB 프록시 우선, 없으면 환경변수 폴백."""
+    global \
+        _ip_rotate_counter, \
+        _ip_rotate_idx, \
+        _ip_rotate_label, \
+        _refresh_log_total, \
+        _ip_rotate_total
     from backend.core.config import settings
 
-    proxy_urls = settings.proxy_urls
-    if not proxy_urls:
-        return None
-    proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
+    # DB 프록시 우선
+    db_proxies = _load_db_proxies_for_autotune()
+    if db_proxies:
+        proxies = db_proxies
+    else:
+        # 환경변수 폴백
+        proxy_urls = settings.proxy_urls
+        if not proxy_urls:
+            return None
+        proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
     if not proxies:
         return None
     # 프록시만 사용 (메인 IP 제외)
     pool: list[str | None] = proxies
     _ip_rotate_counter += 1
+    _ip_rotate_total += 1
     if _ip_rotate_counter >= IP_ROTATE_EVERY or _ip_rotate_label == "":
         _ip_rotate_counter = 0
         if _ip_rotate_label != "":
@@ -168,7 +237,7 @@ def _get_rotated_proxy() -> str | None:
                 else f"proxy-{_ip_rotate_idx}"
             )
         )
-        _from = _ip_rotate_idx * IP_ROTATE_EVERY + 1
+        _from = _ip_rotate_total
         _to = _from + IP_ROTATE_EVERY - 1
         _ip_rotate_label = label
         _msg = f"IP -> {label} ({_from}~{_to}건)"

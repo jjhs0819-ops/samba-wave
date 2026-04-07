@@ -766,10 +766,30 @@ class JobWorker:
             await repo.fail_job(job.id, "무신사 로그인(쿠키) 필요")
             return
 
-        # 수집용 프록시 적용
+        # 수집용 프록시 적용 — DB 우선, 환경변수 폴백
         from backend.core.config import settings as _settings
 
-        _collect_proxy = _settings.collect_proxy_url or None
+        _collect_proxy: str | None = None
+        # DB proxy_config에서 collect/both 활성 프록시 우선 사용
+        try:
+            _proxy_cfg_row = await session.execute(
+                select(SambaSettings).where(SambaSettings.key == "proxy_config")
+            )
+            _proxy_cfg = _proxy_cfg_row.scalar_one_or_none()
+            if _proxy_cfg and _proxy_cfg.value:
+                _collect_proxies = [
+                    p["url"]
+                    for p in _proxy_cfg.value
+                    if p.get("enabled")
+                    and p.get("url")
+                    and "collect" in (p.get("purposes") or [])
+                ]
+                if _collect_proxies:
+                    _collect_proxy = _collect_proxies[0]
+        except Exception:
+            pass
+        if not _collect_proxy:
+            _collect_proxy = _settings.collect_proxy_url or None
         client = MusinsaClient(cookie=cookie, proxy_url=_collect_proxy)
         if _collect_proxy:
             logger.info(
@@ -1250,6 +1270,7 @@ class JobWorker:
         requested_count = sf.requested_count or 100
 
         # URL에서 키워드/필터 추출
+        original_url = keyword  # URL 원본 보존 (add_search_job에 전달용)
         _search_kwargs: dict = {}
         try:
             from urllib.parse import urlparse, parse_qs
@@ -1257,7 +1278,15 @@ class JobWorker:
             parsed = urlparse(keyword)
             if parsed.scheme:
                 qs = parse_qs(parsed.query)
-                keyword = qs.get("searchWord", [keyword])[0]
+                _param_keys = {
+                    "GSShop": "tq",
+                    "LOTTEON": "q",
+                    "ElandMall": "kwd",
+                    "ABCmart": "searchWord",
+                    "GrandStage": "searchWord",
+                }
+                param_key = _param_keys.get(site, "searchWord")
+                keyword = qs.get(param_key, qs.get("keyword", [keyword]))[0]
                 # 패션플러스 필터 파라미터
                 for k in (
                     "category1Id",
@@ -1319,8 +1348,10 @@ class JobWorker:
                 await repo.fail_job(job.id, f"미지원 소싱처: {site}")
                 return
             try:
-                _req_id, _future = SourcingQueue.add_search_job(site, keyword)
-                ext_result = await asyncio.wait_for(_future, timeout=60)
+                _req_id, _future = SourcingQueue.add_search_job(
+                    site, keyword, url=original_url, max_count=remaining
+                )
+                ext_result = await asyncio.wait_for(_future, timeout=300)
                 items_list = ext_result.get("products", [])
                 logger.info(
                     f"[잡워커] {site} 확장앱 검색 '{keyword}' → {len(items_list)}건"

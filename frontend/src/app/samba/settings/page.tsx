@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { accountApi, collectorApi, forbiddenApi, proxyApi, sourcingAccountApi, API_BASE, type SambaMarketAccount, type SambaSourcingAccount, type ChromeProfile } from '@/lib/samba/api'
+import { accountApi, collectorApi, forbiddenApi, proxyApi, proxyConfigApi, sourcingAccountApi, API_BASE, type SambaMarketAccount, type SambaSourcingAccount, type ChromeProfile, type ProxyConfigItem, type ProxyPurpose } from '@/lib/samba/api'
 import { MARKET_SELECT_OPTIONS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum, parseNum } from '@/lib/samba/styles'
@@ -863,6 +863,14 @@ export default function SettingsPage() {
   const [r2PublicUrl, setR2PublicUrl] = useState('')
   const [r2Status, setR2Status] = useState('')
 
+  // 프록시 설정
+  const [proxies, setProxies] = useState<ProxyConfigItem[]>([])
+  const [proxyModalOpen, setProxyModalOpen] = useState(false)
+  const [proxyEditIdx, setProxyEditIdx] = useState<number | null>(null)
+  const [proxyForm, setProxyForm] = useState<ProxyConfigItem>({ name: '', url: '', purposes: [], enabled: true })
+  const [proxyTesting, setProxyTesting] = useState<number | null>(null)
+  const [proxySaving, setProxySaving] = useState(false)
+
   // 소싱처 계정 상태
   const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
   const [sourcingSites, setSourcingSites] = useState<{ id: string; name: string; group: string }[]>([])
@@ -1088,7 +1096,119 @@ export default function SettingsPage() {
     } catch { /* ignore */ }
   }, [])
 
-  useEffect(() => { loadAccounts(); loadSourcingAccounts() }, [loadAccounts, loadSourcingAccounts])
+  // 프록시 설정 로드 — DB에 없으면 현재 사용중인 프록시 시드
+  const INITIAL_PROXIES: ProxyConfigItem[] = [
+    { name: '메인 IP (Cloud NAT)', url: '', purposes: ['transmit'], enabled: true },
+    { name: '프록시칩 1', url: 'http://TUDmM1Fi0xjGbns:sb2WOVkX9Darnc5@46.203.217.246:47575', purposes: ['collect'], enabled: true },
+    { name: '프록시칩 2', url: 'http://rMDRyZGLnuPCZtp:dj3YzpGskkwTdcB@46.203.217.125:41695', purposes: ['autotune'], enabled: true },
+    { name: '프록시칩 3', url: 'http://7BvF260qCClvqD6:qqXnL5kUqaWm18m@46.203.217.105:43362', purposes: ['autotune'], enabled: true },
+  ]
+
+  const loadProxies = useCallback(async () => {
+    try {
+      const data = await proxyConfigApi.list()
+      if (Array.isArray(data) && data.length > 0) {
+        setProxies(data)
+      } else {
+        // 초기 시드
+        await proxyConfigApi.save(INITIAL_PROXIES)
+        setProxies(INITIAL_PROXIES)
+      }
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const saveProxies = async (items: ProxyConfigItem[], silent?: boolean) => {
+    setProxySaving(true)
+    try {
+      await proxyConfigApi.save(items)
+      setProxies(items)
+      if (!silent) showAlert('프록시 설정이 저장되었습니다.', 'success')
+    } catch {
+      if (!silent) showAlert('프록시 저장 실패', 'error')
+    }
+    setProxySaving(false)
+  }
+
+  const testProxy = async (idx: number) => {
+    const p = proxies[idx]
+    if (!p.url) {
+      // 메인 IP는 httpbin으로 직접 테스트
+      setProxyTesting(idx)
+      try {
+        const res = await fetch('https://httpbin.org/ip').then(r => r.json())
+        showAlert(`메인 IP 확인: ${res.origin}`, 'success')
+      } catch { showAlert('메인 IP 테스트 실패', 'error') }
+      setProxyTesting(null)
+      return
+    }
+    setProxyTesting(idx)
+    try {
+      const res = await proxyConfigApi.test(p.url)
+      if (res.success) {
+        showAlert(`연결 성공 — 외부 IP: ${res.ip}`, 'success')
+      } else {
+        showAlert(`연결 실패: ${res.message}`, 'error')
+      }
+    } catch (e) {
+      showAlert(`테스트 오류: ${e instanceof Error ? e.message : '오류'}`, 'error')
+    }
+    setProxyTesting(null)
+  }
+
+  const openProxyAdd = () => {
+    setProxyEditIdx(null)
+    setProxyForm({ name: '', url: '', purposes: [], enabled: true })
+    setProxyModalOpen(true)
+  }
+
+  const openProxyEdit = (idx: number) => {
+    setProxyEditIdx(idx)
+    setProxyForm({ ...proxies[idx], purposes: [...proxies[idx].purposes] })
+    setProxyModalOpen(true)
+  }
+
+  const handleProxySave = async () => {
+    if (!proxyForm.name.trim()) {
+      showAlert('이름을 입력하세요.', 'error')
+      return
+    }
+    if (proxyForm.purposes.length === 0) {
+      showAlert('용도를 1개 이상 선택하세요.', 'error')
+      return
+    }
+    const updated = [...proxies]
+    if (proxyEditIdx !== null) {
+      updated[proxyEditIdx] = { ...proxyForm }
+    } else {
+      updated.push({ ...proxyForm })
+    }
+    await saveProxies(updated)
+    setProxyModalOpen(false)
+  }
+
+  const handleProxyDelete = async (idx: number) => {
+    if (!await showConfirm(`"${proxies[idx].name}" 프록시를 삭제하시겠습니까?`)) return
+    const updated = proxies.filter((_, i) => i !== idx)
+    await saveProxies(updated)
+  }
+
+  const handleProxyToggle = async (idx: number) => {
+    const updated = [...proxies]
+    updated[idx] = { ...updated[idx], enabled: !updated[idx].enabled }
+    await saveProxies(updated)
+  }
+
+  const toggleProxyPurpose = (purpose: ProxyConfigItem['purposes'][number]) => {
+    setProxyForm(prev => ({
+      ...prev,
+      purposes: prev.purposes.includes(purpose)
+        ? prev.purposes.filter(p => p !== purpose)
+        : [...prev.purposes, purpose],
+    }))
+  }
+
+  useEffect(() => { loadAccounts(); loadSourcingAccounts(); loadProxies() }, [loadAccounts, loadSourcingAccounts, loadProxies])
 
   const loadProbeStatus = useCallback(async () => {
     try {
@@ -2294,6 +2414,156 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {/* 프록시 설정 */}
+      <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+          <div>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5' }}>프록시 / IP 설정</div>
+            <p style={{ fontSize: '0.8125rem', color: '#666', margin: '0.25rem 0 0' }}>전송·수집·오토튠에 사용할 IP/프록시를 관리합니다</p>
+          </div>
+          <button
+            onClick={openProxyAdd}
+            style={{ padding: '0.4rem 1rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer' }}
+          >+ 추가</button>
+        </div>
+
+        {proxies.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '2rem', color: '#555', fontSize: '0.8125rem' }}>
+            등록된 프록시가 없습니다
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem', fontSize: '0.8125rem' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #2D2D2D', color: '#888' }}>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem', fontWeight: 500 }}>이름</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem', fontWeight: 500 }}>IP / URL</th>
+                <th style={{ textAlign: 'center', padding: '0.5rem 0.75rem', fontWeight: 500 }}>용도</th>
+                <th style={{ textAlign: 'center', padding: '0.5rem 0.75rem', fontWeight: 500 }}>상태</th>
+                <th style={{ textAlign: 'center', padding: '0.5rem 0.75rem', fontWeight: 500 }}>관리</th>
+              </tr>
+            </thead>
+            <tbody>
+              {proxies.map((p, i) => {
+                const isMainIp = !p.url
+                const masked = isMainIp ? '34.47.122.131 (직접 연결)' : p.url.includes('@') ? `***@${p.url.split('@').pop()}` : p.url.replace(/^https?:\/\//, '')
+                const PURPOSE_STYLES: Record<ProxyPurpose, { bg: string; color: string; label: string }> = {
+                  transmit: { bg: 'rgba(0,200,150,0.1)', color: '#00C896', label: '전송' },
+                  collect: { bg: 'rgba(255,184,77,0.1)', color: '#FFB84D', label: '수집' },
+                  autotune: { bg: 'rgba(76,154,255,0.1)', color: '#4C9AFF', label: '오토튠' },
+                }
+                return (
+                  <tr key={i} style={{ borderBottom: '1px solid #1A1A1A' }}>
+                    <td style={{ padding: '0.6rem 0.75rem', color: '#E5E5E5' }}>
+                      {isMainIp && <span style={{ color: '#00C896', marginRight: '4px', fontSize: '0.7rem' }}>●</span>}
+                      {p.name}
+                    </td>
+                    <td style={{ padding: '0.6rem 0.75rem', color: isMainIp ? '#00C896' : '#999', fontFamily: 'monospace', fontSize: '0.75rem' }}>{masked}</td>
+                    <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                        {(p.purposes || []).map(pp => {
+                          const s = PURPOSE_STYLES[pp]
+                          return s ? <span key={pp} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: s.bg, color: s.color }}>{s.label}</span> : null
+                        })}
+                      </div>
+                    </td>
+                    <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>
+                      <span
+                        onClick={() => handleProxyToggle(i)}
+                        style={{
+                          display: 'inline-block', width: '36px', height: '20px', borderRadius: '10px', cursor: 'pointer', position: 'relative',
+                          background: p.enabled ? '#FF8C00' : '#333',
+                          transition: 'background 0.2s',
+                        }}
+                      >
+                        <span style={{
+                          position: 'absolute', top: '2px', left: p.enabled ? '18px' : '2px',
+                          width: '16px', height: '16px', borderRadius: '50%', background: '#fff',
+                          transition: 'left 0.2s',
+                        }} />
+                      </span>
+                    </td>
+                    <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      <button
+                        onClick={() => testProxy(i)}
+                        disabled={proxyTesting === i}
+                        style={{ background: 'none', border: '1px solid #2D2D2D', color: proxyTesting === i ? '#555' : '#4C9AFF', borderRadius: '4px', padding: '2px 8px', fontSize: '0.75rem', cursor: 'pointer', marginRight: '4px' }}
+                      >{proxyTesting === i ? '테스트중' : '테스트'}</button>
+                      <button
+                        onClick={() => openProxyEdit(i)}
+                        style={{ background: 'none', border: '1px solid #2D2D2D', color: '#999', borderRadius: '4px', padding: '2px 8px', fontSize: '0.75rem', cursor: 'pointer', marginRight: '4px' }}
+                      >수정</button>
+                      <button
+                        onClick={() => handleProxyDelete(i)}
+                        style={{ background: 'none', border: '1px solid #2D2D2D', color: '#C4736E', borderRadius: '4px', padding: '2px 8px', fontSize: '0.75rem', cursor: 'pointer' }}
+                      >삭제</button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* 프록시 추가/수정 모달 */}
+      {proxyModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setProxyModalOpen(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ ...card, padding: '1.5rem', width: '420px', maxWidth: '90vw' }}>
+            <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#E5E5E5', marginBottom: '1rem' }}>
+              {proxyEditIdx !== null ? '프록시 수정' : '프록시 추가'}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '4px', display: 'block' }}>이름</label>
+                <input value={proxyForm.name} onChange={e => setProxyForm(p => ({ ...p, name: e.target.value }))}
+                  placeholder="프록시칩 1" style={{ ...inputStyle }} />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '4px', display: 'block' }}>프록시 URL</label>
+                <input value={proxyForm.url} onChange={e => setProxyForm(p => ({ ...p, url: e.target.value }))}
+                  placeholder="http://user:pass@host:port (비워두면 메인 IP)" style={{ ...inputStyle, fontFamily: 'monospace', fontSize: '0.8125rem' }} />
+                <p style={{ fontSize: '0.7rem', color: '#555', margin: '4px 0 0' }}>비워두면 서버 메인 IP (직접 연결)로 사용됩니다</p>
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '6px', display: 'block' }}>용도 (복수 선택 가능)</label>
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                  {([
+                    { key: 'transmit' as ProxyPurpose, label: '전송', color: '#00C896' },
+                    { key: 'collect' as ProxyPurpose, label: '수집', color: '#FFB84D' },
+                    { key: 'autotune' as ProxyPurpose, label: '오토튠', color: '#4C9AFF' },
+                  ]).map(({ key, label, color }) => {
+                    const active = proxyForm.purposes.includes(key)
+                    return (
+                      <button key={key} onClick={() => toggleProxyPurpose(key)}
+                        style={{
+                          padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer',
+                          background: active ? `${color}20` : '#1A1A1A',
+                          border: `1px solid ${active ? color : '#2D2D2D'}`,
+                          color: active ? color : '#666',
+                          fontWeight: active ? 600 : 400,
+                        }}>{label}</button>
+                    )
+                  })}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input type="checkbox" checked={proxyForm.enabled} onChange={e => setProxyForm(p => ({ ...p, enabled: e.target.checked }))} />
+                <label style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>활성화</label>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1.25rem' }}>
+              <button onClick={() => setProxyModalOpen(false)}
+                style={{ padding: '0.4rem 1rem', background: '#333', color: '#999', border: 'none', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>취소</button>
+              <button onClick={handleProxySave} disabled={proxySaving}
+                style={{ padding: '0.4rem 1rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', opacity: proxySaving ? 0.6 : 1 }}>
+                {proxySaving ? '저장중...' : '저장'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 프리셋 이미지 확대 모달 */}
       {presetZoom && (

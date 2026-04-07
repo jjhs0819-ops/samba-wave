@@ -73,6 +73,63 @@ async def _get_musinsa_client(session: AsyncSession) -> MusinsaClient:
     return MusinsaClient(cookie=str(cookie))
 
 
+# ── 프록시 설정 관리 API ──
+
+
+class ProxyConfigItem(BaseModel):
+    """프록시 설정 아이템."""
+
+    name: str  # 프록시 이름 (ex: "프록시칩 1")
+    url: str = ""  # 프록시 URL (비어있으면 메인 IP)
+    purposes: list[str] = []  # transmit | collect | autotune
+    enabled: bool = True
+
+
+class ProxyConfigPayload(BaseModel):
+    proxies: list[ProxyConfigItem]
+
+
+PROXY_SETTINGS_KEY = "proxy_config"
+
+
+@router.get("/config/proxies")
+async def get_proxy_config(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """프록시 설정 목록 조회."""
+    data = await _get_setting(session, PROXY_SETTINGS_KEY)
+    return data or []
+
+
+@router.put("/config/proxies")
+async def save_proxy_config(
+    payload: ProxyConfigPayload,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """프록시 설정 저장 (전체 교체)."""
+    items = [p.model_dump() for p in payload.proxies]
+    await _set_setting(session, PROXY_SETTINGS_KEY, items)
+    return {"ok": True, "count": len(items)}
+
+
+@router.post("/config/proxies/test")
+async def test_proxy_connection(
+    url: str = Form(...),
+):
+    """프록시 연결 테스트 — httpbin으로 외부 IP 확인."""
+    try:
+        async with httpx.AsyncClient(
+            proxy=url, timeout=httpx.Timeout(10, connect=5)
+        ) as client:
+            resp = await client.get("https://httpbin.org/ip")
+            if resp.status_code == 200:
+                origin = resp.json().get("origin", "")
+                return {"success": True, "ip": origin}
+            return {"success": False, "message": f"HTTP {resp.status_code}"}
+    except Exception as e:
+        return {"success": False, "message": str(e)[:200]}
+
+
 @router.get("/musinsa/ip-check")
 async def musinsa_ip_check():
     """무신사 CDN 차단 여부 테스트 — 서버 IP 기준."""

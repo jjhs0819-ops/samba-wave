@@ -682,6 +682,32 @@ export const forbiddenApi = {
     request<{ rejected: string[]; brands: string[]; source_sites: string[] }>(`${SAMBA_PREFIX}/forbidden/tag-banned-words`),
 };
 
+// ── Proxy Config (프록시 설정 관리) ──
+
+export type ProxyPurpose = 'transmit' | 'collect' | 'autotune'
+
+export interface ProxyConfigItem {
+  name: string
+  url: string       // 비어있으면 메인 IP (직접 연결)
+  purposes: ProxyPurpose[]
+  enabled: boolean
+}
+
+export const proxyConfigApi = {
+  list: () => request<ProxyConfigItem[]>(`${SAMBA_PREFIX}/proxy/config/proxies`),
+  save: (proxies: ProxyConfigItem[]) =>
+    request<{ ok: boolean; count: number }>(`${SAMBA_PREFIX}/proxy/config/proxies`, {
+      method: 'PUT',
+      body: JSON.stringify({ proxies }),
+    }),
+  test: (url: string) => {
+    const form = new FormData()
+    form.append('url', url)
+    return fetchWithAuth(`${SAMBA_PREFIX}/proxy/config/proxies/test`, { method: 'POST', body: form })
+      .then(r => r.json() as Promise<{ success: boolean; ip?: string; message?: string }>)
+  },
+}
+
 // ── Proxy (외부 API 프록시) ──
 
 export const proxyApi = {
