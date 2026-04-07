@@ -1179,6 +1179,7 @@ async function handleSourcingJob(job) {
             // 탭 항목(전체상품, TV상품, 백화점) 및 노이즈 제외
             if (count <= 0 || seen.has(name)) continue
             if (['전체상품', 'TV상품', '백화점', '추천순'].includes(name)) continue
+            if (name.includes('검색결과')) continue
             if (name.length > 30 || name.length < 2) continue
             seen.add(name)
             categories.push({ name, count, categoryCode: name, href: '' })
