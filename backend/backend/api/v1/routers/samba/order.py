@@ -1718,10 +1718,10 @@ def _parse_playauto_order(
         or ro.get("OrderTel", ""),
         "customer_address": ro.get("RecipientAddress", ""),
         "quantity": quantity,
-        "sale_price": sale_price * quantity,
+        "sale_price": sale_price,  # Price 필드가 이미 총가(단가×수량)
         "cost": 0,
         "fee_rate": 0,
-        "revenue": supply_price * quantity if supply_price else sale_price * quantity,
+        "revenue": supply_price if supply_price else sale_price,
         "status": status_map.get(order_state, "pending"),
         "shipping_status": {
             "신규주문": "주문접수",
