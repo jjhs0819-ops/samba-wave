@@ -24,6 +24,7 @@ from typing import Any, Optional
 import httpx
 
 from backend.domain.samba.proxy.musinsa import MusinsaClient
+from backend.utils import now_kst
 from backend.utils.logger import logger
 
 
@@ -687,7 +688,7 @@ class AISourcingService:
         self, cid: str, category_name: str, month: int = 0
     ) -> list[dict[str, Any]]:
         """네이버 데이터랩 쇼핑인사이트 인기검색어 스크래핑."""
-        now = datetime.now()
+        now = now_kst()
         if month > 0:
             import calendar
 

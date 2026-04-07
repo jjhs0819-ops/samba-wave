@@ -1,6 +1,13 @@
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+KST = ZoneInfo("Asia/Seoul")
+
+
+def now_kst() -> datetime:
+    """KST(Asia/Seoul) 기준 현재 시간 반환."""
+    return datetime.now(KST)
+
 
 def utc_to_seoul(dt: datetime | None) -> datetime | None:
     """
@@ -12,5 +19,4 @@ def utc_to_seoul(dt: datetime | None) -> datetime | None:
         return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    seoul_tz = ZoneInfo("Asia/Seoul")
-    return dt.astimezone(seoul_tz)
+    return dt.astimezone(KST)

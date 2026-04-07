@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from typing import Any, Dict, Generic, List, Optional, Type, TypeVar, TYPE_CHECKING
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -6,6 +5,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, func, select
 
+from backend.utils import now_kst
 from backend.utils.logger import logger
 
 if TYPE_CHECKING:
@@ -157,7 +157,7 @@ class BaseRepository(Generic[ModelType]):
 
             # Update timestamp if model has it
             if hasattr(entity, "updated_at"):
-                entity.updated_at = datetime.now(UTC)
+                entity.updated_at = now_kst()
 
             self.session.add(entity)
             await self.session.commit()
@@ -300,7 +300,7 @@ class BaseRepository(Generic[ModelType]):
 
             # Add updated_at timestamp if model supports it
             if hasattr(self.model, "updated_at"):
-                timestamp = datetime.now(UTC)
+                timestamp = now_kst()
                 for update_data in updates:
                     if "updated_at" not in update_data:
                         update_data["updated_at"] = timestamp

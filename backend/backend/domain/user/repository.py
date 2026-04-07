@@ -4,7 +4,6 @@ User domain repository with CRUD operations and custom queries.
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import and_
@@ -12,6 +11,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.domain.shared.base_repository import BaseRepository
+from backend.utils import now_kst
 from backend.domain.user.model import (
     User,
     UserAccessAudit,
@@ -81,8 +81,8 @@ class UserRepository(BaseRepository[User]):
         if not user or user.deleted_at is not None:
             return False
 
-        user.deleted_at = datetime.now(tz=timezone.utc)
-        user.updated_at = datetime.now(tz=timezone.utc)
+        user.deleted_at = now_kst()
+        user.updated_at = now_kst()
         self.session.add(user)
         await self.session.commit()
         return True

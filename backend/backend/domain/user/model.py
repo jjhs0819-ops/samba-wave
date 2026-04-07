@@ -14,13 +14,15 @@ Table Structure:
 NOTE: No FK constraints - referential integrity managed at application level.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List, Optional
 
 from sqlmodel import Column, DateTime, Field, JSON, SQLModel, Text
 from sqlalchemy import Boolean
 
 from ulid import ULID
+
+from backend.utils import now_kst
 
 from backend.domain.user.enums import (
     AuthTypeEnum,
@@ -140,11 +142,11 @@ class User(SQLModel, table=True):
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
     updated_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
     deleted_at: Optional[datetime] = Field(
         sa_column=Column(DateTime(timezone=True), nullable=True),
@@ -231,11 +233,11 @@ class UserProfile(SQLModel, table=True):
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
     updated_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
 
 
@@ -300,11 +302,11 @@ class UserLifestyle(SQLModel, table=True):
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
     updated_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
 
 
@@ -379,11 +381,11 @@ class UserPreference(SQLModel, table=True):
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
     updated_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
 
 
@@ -450,11 +452,11 @@ class UserDocument(SQLModel, table=True):
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
     updated_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
     deleted_at: Optional[datetime] = Field(
         sa_column=Column(DateTime(timezone=True), nullable=True),
@@ -518,11 +520,11 @@ class UserPhoto(SQLModel, table=True):
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
     updated_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
     deleted_at: Optional[datetime] = Field(
         sa_column=Column(DateTime(timezone=True), nullable=True),
@@ -599,11 +601,11 @@ class UserSubscription(SQLModel, table=True):
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
     updated_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
 
 
@@ -658,5 +660,5 @@ class UserAccessAudit(SQLModel, table=True):
     # Timestamp
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
+        default_factory=now_kst,
     )
