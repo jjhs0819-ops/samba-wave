@@ -109,26 +109,18 @@ def get_worker_status() -> dict[str, str | None]:
 
 def _run_collect_in_thread(worker: "JobWorker", job_id: str, payload: dict):
     """별도 스레드에서 독립 이벤트 루프로 수집 실행."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
-        loop.run_until_complete(worker._execute_collect_isolated(job_id, payload))
+        asyncio.run(worker._execute_collect_isolated(job_id, payload))
     except Exception as e:
         logger.error(f"[잡워커] 수집 스레드 에러: {job_id} — {e}")
-    finally:
-        loop.close()
 
 
 def _run_transmit_in_thread(worker: "JobWorker", job_id: str, payload: dict):
     """별도 스레드에서 독립 이벤트 루프로 전송 실행 — API 요청과 I/O 완전 격리."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
-        loop.run_until_complete(worker._execute_transmit_isolated(job_id, payload))
+        asyncio.run(worker._execute_transmit_isolated(job_id, payload))
     except Exception as e:
         logger.error(f"[잡워커] 전송 스레드 에러: {job_id} — {e}")
-    finally:
-        loop.close()
 
 
 class JobWorker:
