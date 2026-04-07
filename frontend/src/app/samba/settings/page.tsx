@@ -267,34 +267,24 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
     { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
   ]},
-  { key: 'ssg', label: 'SSG', authField: 'apiKey', guideUrl: 'https://opn-ssg.ssgadm.com', fields: [
+  { key: 'ssg', label: '신세계몰', authField: 'apiKey', guideUrl: 'https://opn-ssg.ssgadm.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
-    { name: 'apiId', label: 'API ID', type: 'text' },
     { name: 'apiKey', label: 'API KEY', type: 'text' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '010-1234-5678' },
     { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '상세페이지 참조' },
-    { name: 'discountRate', label: '즉시할인율(%)', type: 'number', placeholder: '0 (미설정)' },
-    { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '3000' },
-    { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '6000' },
-    { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
-    { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
+    { name: '_divider_margin', label: '가격 설정', type: 'divider' },
+    { name: 'marginRate', label: '마진율(%)', type: 'number', placeholder: '15' },
+    { name: '_divider_delivery_ssg', label: '배송 설정', type: 'divider' },
+    { name: 'shppRqrmDcnt', label: '배송소요일', type: 'number', placeholder: '3' },
+    { name: '_divider_shipping_code', label: '배송비/출고지 (SSG API 조회)', type: 'divider' },
+    { name: 'whoutShppcstId', label: '출고배송비', type: 'ssg-shipping-select', placeholder: '버튼으로 불러오기' },
+    { name: 'retShppcstId', label: '반품배송비', type: 'ssg-shipping-select', placeholder: '버튼으로 불러오기' },
+    { name: 'addShppcstIdJeju', label: '제주 추가배송비', type: 'ssg-extra-select', placeholder: '버튼으로 불러오기' },
+    { name: 'addShppcstIdIsland', label: '도서산간 추가배송비', type: 'ssg-extra-select', placeholder: '버튼으로 불러오기' },
+    { name: 'whoutAddrId', label: '출고지', type: 'ssg-addr-select', placeholder: '버튼으로 불러오기' },
+    { name: 'snbkAddrId', label: '반송지', type: 'ssg-addr-select', placeholder: '버튼으로 불러오기' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
-    { name: '_divider_purchase', label: '구매/리뷰 혜택 조건', type: 'divider' },
-    { name: 'multiPurchaseDiscount', label: '복수구매할인', type: 'select', options: [
-      { value: '', label: '설정안함' }, { value: 'true', label: '설정함' },
-    ]},
-    { name: 'multiPurchaseQty', label: '복수구매 수량 (N개 이상)', type: 'number', placeholder: '2' },
-    { name: 'multiPurchaseRate', label: '복수구매 할인율 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_point', label: '포인트', type: 'divider' },
-    { name: 'purchasePointEnabled', label: '상품 구매 시 지급', type: 'checkbox' },
-    { name: 'purchasePointRate', label: '구매 적립률 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_review', label: '상품리뷰 작성시 지급', type: 'divider' },
-    { name: 'reviewPointEnabled', label: '리뷰 포인트 지급', type: 'checkbox' },
-    { name: 'reviewTextPoint', label: '텍스트 리뷰 작성', type: 'number', placeholder: '원' },
-    { name: 'reviewPhotoPoint', label: '포토/동영상 리뷰 작성', type: 'number', placeholder: '원' },
-    { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
-    { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
   ]},
   { key: 'gsshop', label: 'GSSHOP', authField: 'apiKeyProd', guideUrl: 'https://partners.gsshop.com/api/apiMain', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
@@ -806,6 +796,9 @@ export default function SettingsPage() {
   const [savedStoreData, setSavedStoreData] = useState<Record<string, Record<string, string>>>({})
   const [storeStatus, setStoreStatus] = useState<Record<string, string>>({})
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null) // 수정 중인 계정 ID
+  // SSG 배송비/주소 옵션 (SSG 탭 진입 시 동적 로드)
+  const [ssgShippingOptions, setSsgShippingOptions] = useState<{ value: string; label: string; divCd: number }[]>([])
+  const [ssgAddrOptions, setSsgAddrOptions] = useState<{ value: string; label: string }[]>([])
 
   // 알리고 SMS 설정
   const [smsUserId, setSmsUserId] = useState('')
@@ -1108,26 +1101,12 @@ export default function SettingsPage() {
     } catch { /* ignore */ }
   }, [])
 
-  // 프록시 설정 로드 — DB에 없으면 현재 사용중인 프록시 시드
-  const INITIAL_PROXIES: ProxyConfigItem[] = [
-    { name: '메인 IP (Cloud NAT)', url: '', purposes: ['transmit'], enabled: true },
-    { name: '프록시칩 1', url: 'http://TUDmM1Fi0xjGbns:sb2WOVkX9Darnc5@46.203.217.246:47575', purposes: ['collect'], enabled: true },
-    { name: '프록시칩 2', url: 'http://rMDRyZGLnuPCZtp:dj3YzpGskkwTdcB@46.203.217.125:41695', purposes: ['autotune'], enabled: true },
-    { name: '프록시칩 3', url: 'http://7BvF260qCClvqD6:qqXnL5kUqaWm18m@46.203.217.105:43362', purposes: ['autotune'], enabled: true },
-  ]
-
+  // 프록시 설정 로드
   const loadProxies = useCallback(async () => {
     try {
       const data = await proxyConfigApi.list()
-      if (Array.isArray(data) && data.length > 0) {
-        setProxies(data)
-      } else {
-        // 초기 시드
-        await proxyConfigApi.save(INITIAL_PROXIES)
-        setProxies(INITIAL_PROXIES)
-      }
+      if (Array.isArray(data)) setProxies(data)
     } catch { /* ignore */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const saveProxies = async (items: ProxyConfigItem[], silent?: boolean) => {
@@ -1247,6 +1226,32 @@ export default function SettingsPage() {
   }
 
   useEffect(() => { loadExternalSettings(); loadStoreSettings(); loadProbeStatus() }, [loadExternalSettings, loadStoreSettings, loadProbeStatus])
+
+  // SSG 탭 진입 시 배송비/주소 옵션 자동 로드
+  useEffect(() => {
+    if (storeTab !== 'ssg') return
+    if (ssgShippingOptions.length > 0 || ssgAddrOptions.length > 0) return
+    const ssgData = savedStoreData['ssg'] || storeData['ssg'] || {}
+    if (!ssgData.apiKey) return
+    proxyApi.ssgShippingPolicies().then(res => {
+      if (!res.success || !res.policies?.length) return
+      const opts = res.policies.map((p: { shppcstId: string; feeAmt: number; prpayCodDivNm: string; shppcstAplUnitNm: string; divCd: number }) => {
+        const fee = p.feeAmt ? `${Number(p.feeAmt).toLocaleString()}원` : '무료'
+        const parts = [p.shppcstId, fee]
+        if (p.prpayCodDivNm) parts.push(p.prpayCodDivNm)
+        if (p.shppcstAplUnitNm) parts.push(p.shppcstAplUnitNm)
+        return { value: p.shppcstId, label: parts.join(' / '), divCd: p.divCd }
+      })
+      setSsgShippingOptions(opts)
+    }).catch(() => {})
+    proxyApi.ssgAddresses().then(res => {
+      if (!res.success || !res.addresses?.length) return
+      setSsgAddrOptions(res.addresses.map((a: { grpAddrId: string; addrNm: string; bascAddr: string }) => ({
+        value: a.grpAddrId,
+        label: `${a.addrNm}${a.bascAddr ? ` (${a.bascAddr})` : ''}`,
+      })))
+    }).catch(() => {})
+  }, [storeTab, savedStoreData, storeData, ssgShippingOptions.length, ssgAddrOptions.length])
 
   // 금지어/삭제어 + 태그 금지어 로드
   useEffect(() => {
@@ -1645,7 +1650,33 @@ export default function SettingsPage() {
                   ) : (
                     <div key={field.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                       <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>{field.label}</label>
-                      {field.type === 'select' ? (
+                      {(field.type === 'ssg-shipping-select' || field.type === 'ssg-extra-select') ? (
+                        <select
+                          style={{ ...inputStyle, flex: 1 }}
+                          value={storeData[market.key]?.[field.name] || ''}
+                          onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                        >
+                          <option value=''>버튼으로 불러오기</option>
+                          {ssgShippingOptions
+                            .filter(o => {
+                              if (field.name === 'whoutShppcstId') return o.divCd === 10
+                              if (field.name === 'retShppcstId') return o.divCd === 20
+                              if (field.name === 'addShppcstIdJeju') return o.divCd === 70
+                              if (field.name === 'addShppcstIdIsland') return o.divCd === 60
+                              return false
+                            })
+                            .map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      ) : field.type === 'ssg-addr-select' ? (
+                        <select
+                          style={{ ...inputStyle, flex: 1 }}
+                          value={storeData[market.key]?.[field.name] || ''}
+                          onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                        >
+                          <option value=''>버튼으로 불러오기</option>
+                          {ssgAddrOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      ) : field.type === 'select' ? (
                         <select
                           style={{ ...inputStyle, flex: 1 }}
                           value={storeData[market.key]?.[field.name] || ''}
@@ -2543,22 +2574,22 @@ export default function SettingsPage() {
                   <div>
                     <label style={{ fontSize: '0.7rem', color: '#666', marginBottom: '2px', display: 'block' }}>Username</label>
                     <input value={proxyFields.username} onChange={e => setProxyFields(f => ({ ...f, username: e.target.value }))}
-                      placeholder="TUDmM1Fi0xjGbns" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
+                      placeholder="username" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: '0.7rem', color: '#666', marginBottom: '2px', display: 'block' }}>Password</label>
                     <input value={proxyFields.password} onChange={e => setProxyFields(f => ({ ...f, password: e.target.value }))}
-                      placeholder="sb2WOVkX9Darnc5" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
+                      placeholder="password" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: '0.7rem', color: '#666', marginBottom: '2px', display: 'block' }}>IP Address</label>
                     <input value={proxyFields.ip} onChange={e => setProxyFields(f => ({ ...f, ip: e.target.value }))}
-                      placeholder="46.203.217.246" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
+                      placeholder="0.0.0.0" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: '0.7rem', color: '#666', marginBottom: '2px', display: 'block' }}>Port</label>
                     <input value={proxyFields.port} onChange={e => setProxyFields(f => ({ ...f, port: e.target.value }))}
-                      placeholder="47575" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
+                      placeholder="0000" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
                   </div>
                 </div>
               </div>
