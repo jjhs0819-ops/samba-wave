@@ -2021,11 +2021,11 @@ async def brand_create_groups(
         path = cat.get("path", "")
         count = cat.get("count", 0)
 
-        # 그룹명: "{SITE}_{브랜드}_{카테고리(마지막 2단계)}"
+        # 그룹명: "{SITE}_{브랜드}_{카테고리(전체 단계)}"
         # parseGroupName이 SITE 접두사 제거 후 첫 _ 기준 brand/category 분리
         label = body.brand_name or body.brand or "브랜드"
         segments = path.split(" > ") if path else [code]
-        path_tail = "_".join(segments[-2:]) if len(segments) >= 2 else segments[-1]
+        path_tail = "_".join(segments) if segments else code
         group_name = f"{body.source_site}_{label}_{path_tail}"
 
         # 수집 요청 수: 0이면 자동 (스캔 카운트 × 3, 최소 50)
