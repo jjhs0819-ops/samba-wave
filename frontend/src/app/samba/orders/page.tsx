@@ -160,14 +160,26 @@ export default function OrdersPage() {
     switch (key) {
       case 'today': return now
       case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() - 7); return d }
+      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7); return d }
       case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
       case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
       case '1week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d }
       case '1month': { const d = new Date(now); d.setDate(d.getDate() - 30); return d }
       case 'thisyear': return new Date(now.getFullYear(), 0, 1)
       default: return null
+    }
+  }
+
+  // 기간 종료일 계산 (지난주/지난달/어제는 해당 기간 마지막 날)
+  const getPeriodEnd = (key: string): Date => {
+    const now = new Date()
+    now.setHours(0, 0, 0, 0)
+    switch (key) {
+      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 1); return d }
+      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth(), 0)
+      default: return now
     }
   }
 
@@ -718,7 +730,7 @@ export default function OrdersPage() {
                 const start = getPeriodStart(pb.key)
                 setCustomStart(start ? start.toLocaleDateString('sv-SE') : '')
               }
-              setCustomEnd(new Date().toLocaleDateString('sv-SE'))
+              setCustomEnd(getPeriodEnd(pb.key).toLocaleDateString('sv-SE'))
             }}
               style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? 'rgba(80,80,80,0.8)' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #666' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
             >{pb.label}</button>

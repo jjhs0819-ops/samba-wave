@@ -69,7 +69,7 @@ export default function ReturnsPage() {
   const [period, setPeriod] = useState('thisyear')
   const [syncAccountId, setSyncAccountId] = useState('')
   const [customStart, setCustomStart] = useState(`${new Date().getFullYear()}-01-01`)
-  const [customEnd, setCustomEnd] = useState(new Date().toISOString().slice(0, 10))
+  const [customEnd, setCustomEnd] = useState(new Date().toLocaleDateString('sv-SE'))
   const [startLocked, setStartLocked] = useState(false)
   const [dateLocked, setDateLocked] = useState(false)
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
@@ -84,12 +84,24 @@ export default function ReturnsPage() {
     switch (key) {
       case 'today': return now
       case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() - 7); return d }
+      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7); return d }
       case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
       case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
       case 'thisyear': return new Date(now.getFullYear(), 0, 1)
       default: return null
+    }
+  }
+
+  // 기간 종료일 계산 (지난주/지난달/어제는 해당 기간 마지막 날)
+  const getPeriodEnd = (key: string): Date => {
+    const now = new Date()
+    now.setHours(0, 0, 0, 0)
+    switch (key) {
+      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 1); return d }
+      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth(), 0)
+      default: return now
     }
   }
 
@@ -116,17 +128,10 @@ export default function ReturnsPage() {
 
   useEffect(() => { load() }, [load])
 
-  // 가져오기 버튼 핸들러 (load 래핑)
+  // 가져오기 버튼 — 마켓 동기화 후 DB 데이터 로드
   const loadReturns = async () => {
     const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    setLogMessages(prev => [...prev, `[${now}] 반품교환 데이터 가져오는 중...`])
-    await load()
-    setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] 반품교환 데이터 가져오기 완료`])
-  }
-
-  const loadAllMarkets = async () => {
-    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    setLogMessages(prev => [...prev, `[${now}] 전체마켓 반품교환 데이터 동기화 중...`])
+    setLogMessages(prev => [...prev, `[${now}] 반품교환 데이터 동기화 중...`])
     try {
       const syncResult = await returnApi.syncFromMarkets(30, syncAccountId || undefined)
       const ts = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -342,9 +347,9 @@ export default function ReturnsPage() {
               setPeriod(pb.key)
               if (!startLocked) {
                 const start = getPeriodStart(pb.key)
-                setCustomStart(start ? start.toISOString().slice(0, 10) : '')
+                setCustomStart(start ? start.toLocaleDateString('sv-SE') : '')
               }
-              setCustomEnd(new Date().toISOString().slice(0, 10))
+              setCustomEnd(getPeriodEnd(pb.key).toLocaleDateString('sv-SE'))
             }}
               style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
             >{pb.label}</button>
@@ -368,7 +373,6 @@ export default function ReturnsPage() {
             ))}
           </select>
           <button onClick={loadReturns} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
-          <button onClick={loadAllMarkets} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>전체마켓 가져오기</button>
         </div>
       </div>
 
