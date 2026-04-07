@@ -486,8 +486,14 @@ class ARTSourcingClient:
             "detail_html": detail.get("detailHtml", ""),
             "style_code": detail.get("styleCode", ""),
             "material": detail.get("material", ""),
+            "color": detail.get("color", ""),
             "origin": detail.get("origin", ""),
+            "sex": detail.get("sex", ""),
+            "season": detail.get("season", ""),
             "care_instructions": detail.get("careInstructions", ""),
+            "quality_guarantee": detail.get("qualityGuarantee", ""),
+            "shipping_fee": detail.get("shippingFee", 0),
+            "free_shipping": detail.get("freeShipping", False),
         }
 
     def _parse_search_html(self, html: str, keyword: str) -> list[dict[str, Any]]:
