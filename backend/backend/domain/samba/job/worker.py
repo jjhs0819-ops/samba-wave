@@ -1510,7 +1510,10 @@ class JobWorker:
                 "sale_price": sale_price,
                 "cost": cost,
                 "images": images,
-                "options": detail.get("options") or item.get("options", []),
+                "options": [
+                    {**o, "stock": 99 if (o.get("stock") or 0) > 0 else 0}
+                    for o in (detail.get("options") or item.get("options", []))
+                ],
                 "category": detail.get("category")
                 or _lotteon_cat
                 or item.get("category", "")
@@ -1532,6 +1535,8 @@ class JobWorker:
                 "color": detail.get("color", ""),
                 "manufacturer": detail.get("manufacturer") or item.get("brand", ""),
                 "origin": detail.get("origin", ""),
+                "sex": detail.get("sex", "") or item.get("category2", "") or "남녀공용",
+                "season": detail.get("season", "") or "사계절",
                 "care_instructions": detail.get("care_instructions", ""),
                 "quality_guarantee": detail.get("quality_guarantee", ""),
                 "sourcing_shipping_fee": _sourcing_ship_fee,

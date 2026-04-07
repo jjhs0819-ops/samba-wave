@@ -2021,12 +2021,18 @@ async def brand_create_groups(
         path = cat.get("path", "")
         count = cat.get("count", 0)
 
-        # 그룹명: "{SITE}_{브랜드}_{카테고리(전체 단계)}"
-        # parseGroupName이 SITE 접두사 제거 후 첫 _ 기준 brand/category 분리
+        # 그룹명: "{SITE}_{브랜드}_{카테고리}"
+        # Nike: source_site와 브랜드가 동일하므로 브랜드 라벨 생략
         label = body.brand_name or body.brand or "브랜드"
         segments = path.split(" > ") if path else [code]
+        # Nike: 카테고리 경로에서 "Nike" 제거 (source_site로 충분)
+        if body.source_site == "Nike":
+            segments = [s for s in segments if s != "Nike"]
         path_tail = "_".join(segments) if segments else code
-        group_name = f"{body.source_site}_{label}_{path_tail}"
+        if body.source_site == "Nike":
+            group_name = f"{body.source_site}_{path_tail}"
+        else:
+            group_name = f"{body.source_site}_{label}_{path_tail}"
 
         # 수집 요청 수: 0 이하이면 스캔 카운트(실제 상품수) 사용
         req_count = body.requested_count_per_group

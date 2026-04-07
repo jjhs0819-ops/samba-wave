@@ -476,9 +476,9 @@ class NikeClient:
 
                 # subTitle 기반 세분류: 성별 + 카테고리
                 gender, sub_cat = parse_subtitle(subtitle, product_type)
-                # category 경로: "Nike > 남성 > 러닝화"
-                cat_parts = ["Nike"] + [x for x in [gender, sub_cat] if x]
-                category_path = " > ".join(cat_parts)
+                # category 경로: "남성 > 러닝화" (Nike 제외 — source_site로 충분)
+                cat_parts = [x for x in [gender, sub_cat] if x]
+                category_path = " > ".join(cat_parts) if cat_parts else "Nike"
 
                 products.append(
                     {
@@ -490,12 +490,13 @@ class NikeClient:
                         "images": [img_url] if img_url else [],
                         "brand": "Nike",
                         "source_site": "Nike",
+                        "source_url": url,
                         "category": category_path,
                         "category1": "Nike",
                         "category2": gender,
                         "category3": sub_cat,
                         "color": color,
-                        "video_url": url,  # 나이키 PDP URL 저장 (영상 없으므로 원문링크용으로 활용)
+                        "video_url": url,
                         "url": url,
                         "options": [],
                         "detail_html": "",
@@ -606,7 +607,7 @@ class NikeClient:
             options = [
                 {
                     "size": s.get("localizedLabel", s.get("label", "")),
-                    "stock": 1 if s.get("status") == "ACTIVE" else 0,
+                    "stock": 99 if s.get("status") == "ACTIVE" else 0,
                 }
                 for s in sizes_data
                 if s.get("localizedLabel") or s.get("label")
@@ -614,7 +615,7 @@ class NikeClient:
         else:
             # fallback: HTML label 태그에서 파싱
             size_labels = re.findall(r"<label[^>]*>\s*(\d{3})\s*</label>", html)
-            options = [{"size": s, "stock": 1} for s in dict.fromkeys(size_labels)]
+            options = [{"size": s, "stock": 99} for s in dict.fromkeys(size_labels)]
 
         # 상품 정보 섹션 (featuresAndBenefits, productDetails)
         product_info = prod_data.get("productInfo") or {}
@@ -732,12 +733,11 @@ class NikeClient:
             "images": images,
             "brand": "Nike",
             "source_site": "Nike",
-            "category": f"Nike > {gender_kr} > {category1}".strip(" > ")
-            if gender_kr or category1
-            else "Nike",
+            "category": " > ".join([x for x in [gender_kr, category1] if x]) or "Nike",
             "category1": "Nike",
             "category2": gender_kr,
             "category3": category1,
+            "source_url": video_url,
             "color": color,
             "origin": origin,
             "material": material,
