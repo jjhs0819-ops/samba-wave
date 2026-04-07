@@ -500,6 +500,7 @@ class NikeClient:
                         "url": url,
                         "options": [],
                         "detail_html": "",
+                        "free_shipping": True,
                     }
                 )
 
@@ -749,4 +750,5 @@ class NikeClient:
             "video_url": video_url,
             "options": options,
             "detail_html": detail_html,
+            "free_shipping": True,
         }
