@@ -32,6 +32,9 @@ from backend.api.v1.routers.samba.contact import router as samba_contact_router
 from backend.api.v1.routers.samba.returns import router as samba_returns_router
 from backend.api.v1.routers.samba.analytics import router as samba_analytics_router
 from backend.api.v1.routers.samba.proxy import router as samba_proxy_router
+from backend.api.v1.routers.samba.proxy import (
+    sourcing_queue_router as samba_sourcing_queue_router,
+)
 from backend.api.v1.routers.samba.warroom import router as samba_warroom_router
 from backend.api.v1.routers.samba.user import router as samba_user_router
 from backend.api.v1.routers.samba.ai_sourcing import router as samba_ai_sourcing_router
@@ -356,6 +359,8 @@ def create_application() -> FastAPI:
     app.include_router(
         samba_proxy_router, prefix="/api/v1/samba", dependencies=_samba_auth
     )
+    # 소싱큐 엔드포인트 — 확장앱 폴링용, 인증 불필요
+    app.include_router(samba_sourcing_queue_router, prefix="/api/v1/samba")
     app.include_router(
         samba_warroom_router, prefix="/api/v1/samba", dependencies=_samba_auth
     )

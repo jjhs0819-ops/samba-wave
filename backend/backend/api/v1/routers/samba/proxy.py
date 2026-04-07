@@ -44,6 +44,9 @@ from backend.utils.logger import logger
 
 router = APIRouter(prefix="/proxy", tags=["samba-proxy"])
 
+# 확장앱 소싱큐 전용 라우터 — 인증 불필요 (확장앱이 토큰 없이 폴링)
+sourcing_queue_router = APIRouter(prefix="/proxy", tags=["samba-proxy-public"])
+
 
 # ── Cloud Run 외부 IP 확인 ──
 @router.get("/myip")
@@ -2445,17 +2448,17 @@ def _get_sourcing_client(site: str):
     return None
 
 
-@router.get("/sourcing/collect-queue")
+@sourcing_queue_router.get("/sourcing/collect-queue")
 async def sourcing_collect_queue() -> dict[str, Any]:
-    """확장앱이 폴링하는 소싱 수집 큐."""
+    """확장앱이 폴링하는 소싱 수집 큐 (인증 불필요)."""
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     return SourcingQueue.get_next_job()
 
 
-@router.post("/sourcing/collect-result")
+@sourcing_queue_router.post("/sourcing/collect-result")
 async def sourcing_collect_result(body: dict[str, Any]) -> dict[str, Any]:
-    """확장앱이 수집 결과를 전달."""
+    """확장앱이 수집 결과를 전달 (인증 불필요)."""
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     request_id = body.get("requestId", "")
