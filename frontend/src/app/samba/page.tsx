@@ -94,13 +94,13 @@ export default function SambaDashboard() {
           return (
             <g key={v}>
               <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="#2D2D2D" strokeWidth={1} />
-              <text x={padL - 6} y={y + 4} textAnchor="end" fill="#666" fontSize="10">{v.toLocaleString()}</text>
+              <text x={padL - 6} y={y + 4} textAnchor="end" fill="#666" fontSize="8">{v.toLocaleString()}</text>
             </g>
           )
         })}
         {/* X축 라벨 */}
         {monthlyData.map((_, i) => (
-          <text key={i} x={getX(i)} y={H - 5} textAnchor="middle" fill={i === month ? '#FF8C00' : '#666'} fontSize="11" fontWeight={i === month ? 700 : 400}>{i + 1}월</text>
+          <text key={i} x={getX(i)} y={H - 5} textAnchor="middle" fill={i === month ? '#FF8C00' : '#666'} fontSize="8" fontWeight={i === month ? 700 : 400}>{i + 1}월</text>
         ))}
         {/* 총매출 선 */}
         <polyline points={totalPoints} fill="none" stroke="rgba(255,140,0,0.4)" strokeWidth={2} />
@@ -114,7 +114,7 @@ export default function SambaDashboard() {
           return (
             <g key={`t-${i}`}>
               <circle cx={x} cy={y} r={3} fill="rgba(255,140,0,0.4)" />
-              {kVal > 0 && <text x={x} y={y - 10} textAnchor="middle" fill="#888" fontSize="9">{kVal.toLocaleString()}</text>}
+              {kVal > 0 && <text x={x} y={y - 10} textAnchor="middle" fill="#888" fontSize="7">{kVal.toLocaleString()}</text>}
             </g>
           )
         })}
@@ -126,7 +126,7 @@ export default function SambaDashboard() {
           return (
             <g key={`f-${i}`}>
               <circle cx={x} cy={y} r={3} fill="#FF8C00" />
-              {kVal > 0 && <text x={x} y={y - 10} textAnchor="middle" fill="#FF8C00" fontSize="9" fontWeight={600}>{kVal.toLocaleString()}</text>}
+              {kVal > 0 && <text x={x} y={y - 10} textAnchor="middle" fill="#FF8C00" fontSize="7" fontWeight={600}>{kVal.toLocaleString()}</text>}
             </g>
           )
         })}
