@@ -165,6 +165,28 @@ async def login_user(
     )
 
 
+@router.post("/dev-reset-pw")
+async def dev_reset_password(
+    body: dict,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """임시 비밀번호 리셋 — 사용 후 즉시 삭제."""
+    from backend.utils.password import hash_password
+
+    email = body.get("email")
+    new_password = body.get("new_password")
+    if not email or not new_password:
+        raise HTTPException(status_code=400, detail="email, new_password 필요")
+    repo = SambaUserRepository(session)
+    user = await repo.find_by_email(email)
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자 없음")
+    user.password_hash = hash_password(new_password)
+    session.add(user)
+    await session.commit()
+    return {"ok": True, "email": email}
+
+
 @router.put("/{user_id}", response_model=UserOut)
 async def update_user(
     user_id: str,
