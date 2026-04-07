@@ -106,6 +106,10 @@ export default function OrdersPage() {
   const [priceHistoryData, setPriceHistoryData] = useState<Record<string, unknown>[]>([])
   const [priceHistoryProduct, setPriceHistoryProduct] = useState<{ name: string; source_site: string }>({ name: '', source_site: '' })
 
+  const [sellerCancelModal, setSellerCancelModal] = useState<{ id: string; orderNumber: string } | null>(null)
+  const [sellerCancelReason, setSellerCancelReason] = useState('135')
+  const [sellerCancelText, setSellerCancelText] = useState('품절')
+  const [sellerCancelSaving, setSellerCancelSaving] = useState(false)
   const [showUrlModal, setShowUrlModal] = useState(false)
   const [urlModalOrderId, setUrlModalOrderId] = useState('')
   const [urlModalInput, setUrlModalInput] = useState('')
@@ -315,6 +319,31 @@ export default function OrdersPage() {
     if (!await showConfirm('주문삭제하시겠습니까?')) return
     try { await orderApi.delete(id); loadOrders() }
     catch (e) { showAlert(e instanceof Error ? e.message : '삭제 실패', 'error') }
+  }
+
+  const openSellerCancelModal = (id: string, orderNumber: string) => {
+    setSellerCancelReason('135')
+    setSellerCancelText('품절')
+    setSellerCancelModal({ id, orderNumber })
+  }
+
+  const handleSellerCancelSubmit = async () => {
+    if (!sellerCancelModal) return
+    setSellerCancelSaving(true)
+    try {
+      const res = await orderApi.sellerCancel(sellerCancelModal.id, sellerCancelReason, sellerCancelText)
+      if (res.ok) {
+        showAlert(`취소 완료: ${res.detail || res.message}`, 'success')
+        setSellerCancelModal(null)
+        loadOrders()
+      } else {
+        showAlert(res.message || '취소 실패', 'error')
+      }
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '판매자 취소 실패', 'error')
+    } finally {
+      setSellerCancelSaving(false)
+    }
   }
 
   // 원가 인라인 저장
@@ -855,6 +884,7 @@ export default function OrdersPage() {
                     <div style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <button onClick={() => openSellerCancelModal(o.id, o.order_number || '')} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#7C2D12', border: '1px solid #EA580C', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>판매자취소</button>
                         <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
                       </div>
                       <span style={{ fontSize: '2.25rem', fontWeight: 700, color: '#888' }}>수량: <span style={{ color: '#E5E5E5' }}>{o.quantity}</span></span>
@@ -1363,6 +1393,58 @@ export default function OrdersPage() {
       )}
 
       {/* 미등록 입력 URL 모달 */}
+      {sellerCancelModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '480px', maxWidth: '90vw' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5' }}>판매자 주문 취소</h3>
+              <button onClick={() => setSellerCancelModal(null)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '1rem' }}>
+              주문번호: <span style={{ color: '#E5E5E5', fontFamily: 'monospace' }}>{sellerCancelModal.orderNumber}</span>
+              <br />
+              취소 사유를 선택하고 상세 내용을 입력하세요. 롯데ON에 즉시 취소 요청이 전송됩니다.
+            </p>
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.375rem', display: 'block' }}>취소 사유</label>
+              <select
+                value={sellerCancelReason}
+                onChange={e => setSellerCancelReason(e.target.value)}
+                style={{ width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem', background: '#0F0F0F', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', cursor: 'pointer' }}
+              >
+                <option value="135">고객요청 (고객변심)</option>
+                <option value="111">품절</option>
+                <option value="132">가격 오등록</option>
+                <option value="133">리셀러 주문</option>
+                <option value="137">택배지원 불가</option>
+              </select>
+            </div>
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.375rem', display: 'block' }}>상세 사유 <span style={{ color: '#555' }}>(선택)</span></label>
+              <input
+                type="text"
+                placeholder="예: 품절로 인한 취소"
+                value={sellerCancelText}
+                onChange={e => setSellerCancelText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleSellerCancelSubmit() }}
+                style={{ width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem', background: '#0F0F0F', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5' }}
+                autoFocus
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button onClick={() => setSellerCancelModal(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>닫기</button>
+              <button
+                onClick={handleSellerCancelSubmit}
+                disabled={sellerCancelSaving}
+                style={{ padding: '0.625rem 1.25rem', background: sellerCancelSaving ? '#555' : '#EA580C', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: sellerCancelSaving ? 'not-allowed' : 'pointer' }}
+              >
+                {sellerCancelSaving ? '처리중...' : '취소 실행'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showUrlModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
           <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '520px', maxWidth: '90vw' }}>

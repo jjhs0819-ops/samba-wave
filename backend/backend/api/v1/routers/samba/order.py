@@ -359,7 +359,8 @@ async def seller_cancel(
     if account.market_type == "lotteon":
         from backend.domain.samba.proxy.lotteon import LotteonClient
 
-        api_key = account.api_key or ""
+        extras = account.additional_fields or {}
+        api_key = extras.get("apiKey", "") or account.api_key or ""
         if not api_key:
             raise HTTPException(status_code=400, detail="롯데ON API Key 없음")
 
