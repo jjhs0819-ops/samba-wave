@@ -868,8 +868,19 @@ export default function SettingsPage() {
   const [proxyModalOpen, setProxyModalOpen] = useState(false)
   const [proxyEditIdx, setProxyEditIdx] = useState<number | null>(null)
   const [proxyForm, setProxyForm] = useState<ProxyConfigItem>({ name: '', url: '', purposes: [], enabled: true })
+  const [proxyFields, setProxyFields] = useState({ username: '', password: '', ip: '', port: '' })
   const [proxyTesting, setProxyTesting] = useState<number | null>(null)
   const [proxySaving, setProxySaving] = useState(false)
+
+  // URL ↔ 필드 변환
+  const parseProxyUrl = (url: string) => {
+    // http://user:pass@host:port
+    const m = url.match(/^https?:\/\/([^:]+):([^@]+)@([^:]+):(\d+)$/)
+    if (m) return { username: m[1], password: m[2], ip: m[3], port: m[4] }
+    return { username: '', password: '', ip: '', port: '' }
+  }
+  const buildProxyUrl = (f: typeof proxyFields) =>
+    f.ip ? `http://${f.username}:${f.password}@${f.ip}:${f.port}` : ''
 
   // 소싱처 계정 상태
   const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
@@ -1159,12 +1170,14 @@ export default function SettingsPage() {
   const openProxyAdd = () => {
     setProxyEditIdx(null)
     setProxyForm({ name: '', url: '', purposes: [], enabled: true })
+    setProxyFields({ username: '', password: '', ip: '', port: '' })
     setProxyModalOpen(true)
   }
 
   const openProxyEdit = (idx: number) => {
     setProxyEditIdx(idx)
     setProxyForm({ ...proxies[idx], purposes: [...proxies[idx].purposes] })
+    setProxyFields(parseProxyUrl(proxies[idx].url))
     setProxyModalOpen(true)
   }
 
@@ -1177,11 +1190,14 @@ export default function SettingsPage() {
       showAlert('용도를 1개 이상 선택하세요.', 'error')
       return
     }
+    // 필드에서 URL 조합 (메인 IP는 빈값)
+    const assembledUrl = buildProxyUrl(proxyFields)
+    const formWithUrl = { ...proxyForm, url: assembledUrl }
     const updated = [...proxies]
     if (proxyEditIdx !== null) {
-      updated[proxyEditIdx] = { ...proxyForm }
+      updated[proxyEditIdx] = formWithUrl
     } else {
-      updated.push({ ...proxyForm })
+      updated.push(formWithUrl)
     }
     await saveProxies(updated)
     setProxyModalOpen(false)
@@ -2520,11 +2536,30 @@ export default function SettingsPage() {
                 <input value={proxyForm.name} onChange={e => setProxyForm(p => ({ ...p, name: e.target.value }))}
                   placeholder="프록시칩 1" style={{ ...inputStyle }} />
               </div>
-              <div>
-                <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '4px', display: 'block' }}>프록시 URL</label>
-                <input value={proxyForm.url} onChange={e => setProxyForm(p => ({ ...p, url: e.target.value }))}
-                  placeholder="http://user:pass@host:port (비워두면 메인 IP)" style={{ ...inputStyle, fontFamily: 'monospace', fontSize: '0.8125rem' }} />
-                <p style={{ fontSize: '0.7rem', color: '#555', margin: '4px 0 0' }}>비워두면 서버 메인 IP (직접 연결)로 사용됩니다</p>
+              <div style={{ background: '#141414', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.75rem' }}>
+                <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>프록시 인증 정보 <span style={{ color: '#555' }}>(비워두면 메인 IP)</span></div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#666', marginBottom: '2px', display: 'block' }}>Username</label>
+                    <input value={proxyFields.username} onChange={e => setProxyFields(f => ({ ...f, username: e.target.value }))}
+                      placeholder="TUDmM1Fi0xjGbns" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#666', marginBottom: '2px', display: 'block' }}>Password</label>
+                    <input value={proxyFields.password} onChange={e => setProxyFields(f => ({ ...f, password: e.target.value }))}
+                      placeholder="sb2WOVkX9Darnc5" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#666', marginBottom: '2px', display: 'block' }}>IP Address</label>
+                    <input value={proxyFields.ip} onChange={e => setProxyFields(f => ({ ...f, ip: e.target.value }))}
+                      placeholder="46.203.217.246" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#666', marginBottom: '2px', display: 'block' }}>Port</label>
+                    <input value={proxyFields.port} onChange={e => setProxyFields(f => ({ ...f, port: e.target.value }))}
+                      placeholder="47575" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
+                  </div>
+                </div>
               </div>
               <div>
                 <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '6px', display: 'block' }}>용도 (복수 선택 가능)</label>
