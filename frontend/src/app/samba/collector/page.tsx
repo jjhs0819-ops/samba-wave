@@ -289,16 +289,14 @@ export default function CollectorPage() {
 
   // 프록시 & 무신사 인증 상태 확인
   useEffect(() => {
-    fetch(`${API_BASE}/api/v1/samba/collector/proxy-status`)
-      .then((r) => r.json())
+    collectorApi.proxyStatus()
       .then((data) => {
         if (data.status === "ok") { setProxyStatus("ok"); setProxyText(data.message || "프록시 서버 정상 작동 중"); }
         else { setProxyStatus("error"); setProxyText(data.message || "프록시 서버 연결 실패"); }
       })
       .catch(() => { setProxyStatus("error"); setProxyText("백엔드 서버 연결 실패"); });
 
-    fetch(`${API_BASE}/api/v1/samba/collector/musinsa-auth-status`)
-      .then((r) => r.json())
+    collectorApi.musinsaAuthStatus()
       .then((data) => {
         if (data.status === "ok") { setMusinsaAuth("ok"); setMusinsaAuthText(data.message || "무신사 인증 완료"); }
         else { setMusinsaAuth("error"); setMusinsaAuthText(data.message || "무신사 인증 필요"); }
@@ -860,8 +858,7 @@ export default function CollectorPage() {
           onClick={() => {
             setProxyStatus('checking')
             setProxyText('프록시 서버 확인 중...')
-            fetch(`${API_BASE}/api/v1/samba/collector/proxy-status`)
-              .then(r => r.json())
+            collectorApi.proxyStatus()
               .then(data => {
                 if (data.status === 'ok') { setProxyStatus('ok'); setProxyText(data.message || '프록시 서버 정상 작동 중') }
                 else { setProxyStatus('error'); setProxyText(data.message || '프록시 서버 연결 실패') }

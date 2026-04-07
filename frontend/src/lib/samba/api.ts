@@ -376,6 +376,12 @@ export const collectorApi = {
     request<{ scanned: number; new_groups: number; updated_groups: number; message: string }>(
       `${SAMBA_PREFIX}/collector/brand-refresh`, { method: "POST", body: JSON.stringify(data) }),
 
+  // 상태 확인
+  proxyStatus: () =>
+    request<{ status: string; message: string }>(`${SAMBA_PREFIX}/collector/proxy-status`),
+  musinsaAuthStatus: () =>
+    request<{ status: string; message: string }>(`${SAMBA_PREFIX}/collector/musinsa-auth-status`),
+
   // Collected Products
   listProducts: (skip = 0, limit = 50, status?: string) => {
     const p = new URLSearchParams({ skip: String(skip), limit: String(limit) });
