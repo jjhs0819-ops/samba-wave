@@ -40,6 +40,10 @@ _site_breaker_tripped: dict[str, bool] = {}  # {소싱처: 중단 여부}
 # 등급 분류 기준 기간 (일)
 CLASSIFY_WINDOW_DAYS = 7
 
+# 오토튠 필터 설정 키 (samba_settings)
+AUTOTUNE_FILTER_SOURCES_KEY = "autotune_enabled_sources"
+AUTOTUNE_FILTER_MARKETS_KEY = "autotune_enabled_markets"
+
 
 async def _classify_products(session) -> dict[str, int]:
     """마켓등록상품 대상 hot/warm/cold 자동 분류 (벌크 SQL 3건).
@@ -205,6 +209,25 @@ async def _autotune_loop():
                             _seen_ids.add(p.id)
                             products.append(p)
 
+                    # 사용자 지정 소싱처 필터 적용
+                    from backend.api.v1.routers.samba.proxy import _get_setting
+
+                    _enabled_sources = await _get_setting(
+                        session, AUTOTUNE_FILTER_SOURCES_KEY
+                    )
+                    if _enabled_sources and isinstance(_enabled_sources, list):
+                        _before_src = len(products)
+                        products = [
+                            p for p in products if p.source_site in _enabled_sources
+                        ]
+                        _skipped_src = _before_src - len(products)
+                        if _skipped_src > 0:
+                            log.info(
+                                "[오토튠] 소싱처 필터 — %d개 제외 (허용: %s)",
+                                _skipped_src,
+                                ", ".join(_enabled_sources),
+                            )
+
                     # 서킷브레이커 걸린 소싱처 상품 제외
                     if products:
                         before_filter = len(products)
@@ -248,6 +271,14 @@ async def _autotune_loop():
                         _account_cache: dict[str, object] = {}
                         account_repo = SambaMarketAccountRepository(session)
                         policy_repo = SambaPolicyRepository(session)
+
+                        # 판매처 필터 사전 로드
+                        _enabled_markets = await _get_setting(
+                            session, AUTOTUNE_FILTER_MARKETS_KEY
+                        )
+                        _market_filter_active = bool(
+                            _enabled_markets and isinstance(_enabled_markets, list)
+                        )
 
                         # 계정 사전 로드
                         _all_account_ids: set[str] = set()
@@ -500,6 +531,11 @@ async def _autotune_loop():
                                 # ★ 마켓별 최종 판매가 비교 → 전송 판정
                                 new_cost = _cur_cost
                                 reg_accounts = product.registered_accounts or []
+                                # 판매처 필터 적용
+                                if _market_filter_active:
+                                    reg_accounts = [
+                                        a for a in reg_accounts if a in _enabled_markets
+                                    ]
                                 last_sent = product.last_sent_data or {}
 
                                 if product.applied_policy_id:
@@ -1244,3 +1280,94 @@ async def autotune_breaker_reset(site: str = ""):
         _site_consecutive_soldout.clear()
         logger.info("[오토튠] 서킷브레이커 전체 해제")
         return {"ok": True, "reset": "all"}
+
+
+# ── 오토튠 필터 (소싱처 / 판매처 선택) ──
+
+
+class AutotuneFilterRequest(BaseModel):
+    enabled_sources: Optional[list[str]] = None
+    enabled_markets: Optional[list[str]] = None
+
+
+@router.get("/autotune/filters")
+async def autotune_get_filters():
+    """오토튠 필터 설정 + 실제 존재하는 소싱처/판매처 목록 반환."""
+    from backend.db.orm import get_read_session
+    from backend.api.v1.routers.samba.proxy import _get_setting
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.api.v1.routers.samba.collector_common import (
+        build_market_registered_conditions,
+    )
+    from sqlalchemy import distinct
+
+    async with get_read_session() as session:
+        # 현재 저장된 필터
+        saved_sources = await _get_setting(session, AUTOTUNE_FILTER_SOURCES_KEY)
+        saved_markets = await _get_setting(session, AUTOTUNE_FILTER_MARKETS_KEY)
+
+        # 실제 수집된 소싱처 목록 (상품이 존재하는 것만)
+        src_stmt = select(distinct(_CP.source_site)).where(
+            _CP.source_site != None, _CP.source_site != ""
+        )
+        src_result = await session.execute(src_stmt)
+        available_sources = sorted([r[0] for r in src_result.all() if r[0]])
+
+        # 마켓등록상품의 registered_accounts에 존재하는 계정 ID 수집
+        market_cond = build_market_registered_conditions(_CP)
+        reg_stmt = select(_CP.registered_accounts).where(*market_cond)
+        reg_result = await session.execute(reg_stmt)
+        _acc_ids: set[str] = set()
+        for row in reg_result.all():
+            if row[0] and isinstance(row[0], list):
+                _acc_ids.update(row[0])
+
+        # 계정 정보 조회
+        available_markets: list[dict] = []
+        if _acc_ids:
+            acc_stmt = select(SambaMarketAccount).where(
+                SambaMarketAccount.id.in_(list(_acc_ids))
+            )
+            acc_result = await session.exec(acc_stmt)
+            for acc in acc_result.all():
+                available_markets.append(
+                    {
+                        "id": acc.id,
+                        "market_type": acc.market_type or "",
+                        "market_name": acc.market_name or "",
+                        "account_label": acc.account_label or "",
+                        "seller_id": acc.seller_id or "",
+                    }
+                )
+        available_markets.sort(key=lambda x: x.get("market_name", ""))
+
+    return {
+        "enabled_sources": saved_sources if isinstance(saved_sources, list) else None,
+        "enabled_markets": saved_markets if isinstance(saved_markets, list) else None,
+        "available_sources": available_sources,
+        "available_markets": available_markets,
+    }
+
+
+@router.put("/autotune/filters")
+async def autotune_set_filters(body: AutotuneFilterRequest):
+    """오토튠 소싱처/판매처 필터 저장. None이면 전체 허용(필터 해제)."""
+    from backend.db.orm import get_write_session
+    from backend.api.v1.routers.samba.proxy import _set_setting
+
+    async with get_write_session() as session:
+        await _set_setting(session, AUTOTUNE_FILTER_SOURCES_KEY, body.enabled_sources)
+        await _set_setting(session, AUTOTUNE_FILTER_MARKETS_KEY, body.enabled_markets)
+        await session.commit()
+
+    logger.info(
+        "[오토튠] 필터 저장 — 소싱처: %s, 판매처: %s",
+        body.enabled_sources if body.enabled_sources else "전체",
+        f"{len(body.enabled_markets)}개" if body.enabled_markets else "전체",
+    )
+    return {
+        "ok": True,
+        "enabled_sources": body.enabled_sources,
+        "enabled_markets": body.enabled_markets,
+    }

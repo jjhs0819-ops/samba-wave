@@ -267,6 +267,54 @@ export default function WarroomPage() {
       } catch { /* ignore */ }
     }, 500)
   }, [])
+  // ── 오토튠 필터 (소싱처/판매처 체크박스) ──
+  const [filterSources, setFilterSources] = useState<string[] | null>(null) // null=전체
+  const [filterMarkets, setFilterMarkets] = useState<string[] | null>(null) // null=전체
+  const [availSources, setAvailSources] = useState<string[]>([])
+  const [availMarkets, setAvailMarkets] = useState<{ id: string; market_type: string; market_name: string; account_label: string; seller_id: string }[]>([])
+  const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    collectorApi.autotuneGetFilters().then(res => {
+      setAvailSources(res.available_sources)
+      setAvailMarkets(res.available_markets)
+      setFilterSources(res.enabled_sources)
+      setFilterMarkets(res.enabled_markets)
+    }).catch(() => {})
+  }, [])
+
+  const saveFilters = useCallback((sources: string[] | null, markets: string[] | null) => {
+    if (filterTimerRef.current) clearTimeout(filterTimerRef.current)
+    filterTimerRef.current = setTimeout(async () => {
+      try {
+        await collectorApi.autotuneSetFilters(sources, markets)
+      } catch { /* ignore */ }
+    }, 500)
+  }, [])
+
+  const toggleSource = useCallback((site: string) => {
+    setFilterSources(prev => {
+      // null(전체) → 전부 선택 상태에서 하나 해제
+      const all = availSources
+      const current = prev ?? [...all]
+      const next = current.includes(site) ? current.filter(s => s !== site) : [...current, site]
+      const result = next.length === all.length ? null : next.length === 0 ? null : next
+      saveFilters(result, filterMarkets)
+      return result
+    })
+  }, [availSources, filterMarkets, saveFilters])
+
+  const toggleMarket = useCallback((accId: string) => {
+    setFilterMarkets(prev => {
+      const allIds = availMarkets.map(m => m.id)
+      const current = prev ?? [...allIds]
+      const next = current.includes(accId) ? current.filter(a => a !== accId) : [...current, accId]
+      const result = next.length === allIds.length ? null : next.length === 0 ? null : next
+      saveFilters(filterSources, result)
+      return result
+    })
+  }, [availMarkets, filterSources, saveFilters])
+
   const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number) => {
     // 별도 스레드 타이밍 차이 대응 — 3회 연속 false일 때만 정지 표시
     if (!running) {
@@ -447,6 +495,48 @@ export default function WarroomPage() {
             >강제중단</button>
           </div>
         </div>
+        {/* 소싱처 체크박스 */}
+        {availSources.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>소싱처</span>
+            {availSources.map(src => {
+              const checked = filterSources === null || filterSources.includes(src)
+              const labelMap: Record<string, string> = { MUSINSA: '무신사', KREAM: 'KREAM', DANAWA: '다나와', FashionPlus: '패션플러스', Nike: 'Nike', Adidas: 'Adidas', ABCmart: 'ABC마트', GrandStage: '그랜드스테이지', REXMONDE: '렉스몬드', SSG: 'SSG', LOTTEON: '롯데ON', GSShop: 'GSShop', ElandMall: '이랜드몰', SSF: 'SSF샵' }
+              return (
+                <label key={src} style={{ display: 'flex', alignItems: 'center', gap: '2px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleSource(src)}
+                    style={{ accentColor: '#FF8C00', width: 13, height: 13, cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.7rem', color: checked ? '#ddd' : '#666', whiteSpace: 'nowrap' }}>{labelMap[src] || src}</span>
+                </label>
+              )
+            })}
+          </div>
+        )}
+        {/* 판매처 체크박스 */}
+        {availMarkets.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>판매처</span>
+            {availMarkets.map(acc => {
+              const checked = filterMarkets === null || filterMarkets.includes(acc.id)
+              const label = acc.account_label || `${acc.market_name}(${acc.seller_id})`
+              return (
+                <label key={acc.id} style={{ display: 'flex', alignItems: 'center', gap: '2px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleMarket(acc.id)}
+                    style={{ accentColor: '#4C9AFF', width: 13, height: 13, cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.7rem', color: checked ? '#ddd' : '#666', whiteSpace: 'nowrap' }}>{label}</span>
+                </label>
+              )
+            })}
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>수집인터벌</span>
           {INTERVAL_SITES.map(({ key, label }) => (

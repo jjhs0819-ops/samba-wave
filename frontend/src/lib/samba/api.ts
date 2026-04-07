@@ -525,6 +525,15 @@ export const collectorApi = {
     request<{ running: boolean; last_tick: string | null; cycle_count: number; restart_count: number; target: string; refreshed_count: number; breaker_tripped: Record<string, number>; site_intervals?: Record<string, number>; traffic?: { collecting: boolean; transmitting: boolean; busy: boolean } }>(`${SAMBA_PREFIX}/collector/autotune/status`),
   autotuneUpdateInterval: (site: string, interval: number) =>
     request<{ ok: boolean; site: string; interval: number }>(`${SAMBA_PREFIX}/collector/autotune/interval`, { method: 'POST', body: JSON.stringify({ site, interval }) }),
+  autotuneGetFilters: () =>
+    request<{
+      enabled_sources: string[] | null
+      enabled_markets: string[] | null
+      available_sources: string[]
+      available_markets: { id: string; market_type: string; market_name: string; account_label: string; seller_id: string }[]
+    }>(`${SAMBA_PREFIX}/collector/autotune/filters`),
+  autotuneSetFilters: (enabledSources: string[] | null, enabledMarkets: string[] | null) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/autotune/filters`, { method: 'PUT', body: JSON.stringify({ enabled_sources: enabledSources, enabled_markets: enabledMarkets }) }),
 }
 
 // ── Market Accounts ──
