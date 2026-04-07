@@ -1030,12 +1030,10 @@ class ARTSourcingClient:
     # ------------------------------------------------------------------
 
     async def scan_categories(self, keyword: str) -> dict[str, Any]:
-        """키워드 검색 → 상위 상품 상세 조회 → 카테고리 분포 집계.
+        """키워드 검색 → 전체 페이지 순회 → 카테고리 분포 집계.
 
-        무신사 카테고리 스캔과 동일한 패턴:
-        1. search_products로 상품 목록 조회
-        2. 상위 20개 상품의 info API 호출
-        3. stdCtgrNameInline 기반 카테고리 집계
+        검색 API 응답의 CTGR_NAME_ALL 필드로 상세 조회 없이
+        카테고리를 직접 집계한다. (perPage=100, 단일 세션 유지)
 
         Returns:
           {"categories": [...], "total": int, "groupCount": int}
@@ -1043,16 +1041,12 @@ class ARTSourcingClient:
         site_label = f"[{self._source_site}]"
         logger.info(f"{site_label} 카테고리 스캔 시작: '{keyword}'")
 
-        # 1단계: 검색
-        products = await self.search_products(keyword, page=1, size=40)
-        if not products:
+        # 전체 페이지 순회하여 raw 아이템 수집
+        all_items, total_count = await self._search_all_for_scan(keyword)
+        if not all_items:
             return {"categories": [], "total": 0, "groupCount": 0}
 
-        # 2단계: 상위 20개 상세 조회 (동시성 3)
-        sample = products[:20]
-        sem = asyncio.Semaphore(3)
-        cat_counter: dict[str, int] = {}
-
+        # 카테고리 집계 (검색 결과에서 직접 추출)
         _CTGR_EXCLUDE = {
             "홈",
             "HOME",
@@ -1061,72 +1055,41 @@ class ARTSourcingClient:
             "GRAND STAGE",
             "ABCmart",
         }
+        cat_counter: dict[str, int] = {}
 
-        async def _fetch_category(product: dict[str, Any]) -> None:
-            async with sem:
-                pid = product.get("siteProductId") or product.get("goodsNo", "")
-                if not pid:
-                    return
-                try:
-                    info = await self.get_product_info_api(str(pid))
-                    if not info:
-                        return
+        for item in all_items:
+            cat_str = (
+                item.get("CTGR_NAME_ALL") or item.get("SY_CTGR_NAME") or ""
+            ).strip()
+            if not cat_str:
+                continue
 
-                    # stdCtgrNameInline 우선 ("신발 > 스니커즈 > 라이프스타일")
-                    cat_str = (info.get("stdCtgrNameInline") or "").strip()
-                    cat_levels = [c.strip() for c in cat_str.split(">") if c.strip()]
+            # 쉼표 구분 복수 카테고리 → 첫 번째만 사용
+            if "," in cat_str:
+                cat_str = cat_str.split(",")[0].strip()
 
-                    # 폴백: ctgrList 등
-                    if not cat_levels:
-                        for field in (
-                            "ctgrList",
-                            "dispCtgrList",
-                            "gnbCtgrList",
-                            "prdtCtgrList",
-                            "breadcrumbList",
-                        ):
-                            val = info.get(field)
-                            if isinstance(val, list) and val:
-                                parts: list[str] = []
-                                for item in val:
-                                    if isinstance(item, dict):
-                                        name_val = (
-                                            item.get("ctgrName")
-                                            or item.get("name")
-                                            or item.get("dispCtgrName")
-                                            or ""
-                                        ).strip()
-                                        if name_val and name_val not in _CTGR_EXCLUDE:
-                                            parts.append(name_val)
-                                    elif (
-                                        isinstance(item, str)
-                                        and item.strip()
-                                        and item.strip() not in _CTGR_EXCLUDE
-                                    ):
-                                        parts.append(item.strip())
-                                if parts:
-                                    cat_levels = parts
-                                    break
+            cat_levels = [
+                c.strip()
+                for c in cat_str.split(">")
+                if c.strip() and c.strip() not in _CTGR_EXCLUDE
+            ]
+            if not cat_levels:
+                continue
 
-                    if not cat_levels:
-                        return
+            c1 = cat_levels[0] if len(cat_levels) > 0 else ""
+            c2 = cat_levels[1] if len(cat_levels) > 1 else ""
+            c3 = cat_levels[2] if len(cat_levels) > 2 else ""
+            path = " > ".join(cat_levels)
 
-                    c1 = cat_levels[0] if len(cat_levels) > 0 else ""
-                    c2 = cat_levels[1] if len(cat_levels) > 1 else ""
-                    c3 = cat_levels[2] if len(cat_levels) > 2 else ""
-                    path = " > ".join(cat_levels)
+            # 카테고리 코드: CTGR_CD_ALL의 마지막 레벨
+            code_str = (item.get("CTGR_CD_ALL") or item.get("SY_CTGR_NO") or "").strip()
+            if "," in code_str:
+                code_str = code_str.split(",")[0].strip()
+            code_parts = [c.strip() for c in code_str.split(">") if c.strip()]
+            code = code_parts[-1] if code_parts else path
 
-                    # 카테고리 코드: stdCtgrNo 우선, 없으면 path 사용
-                    code = str(info.get("stdCtgrNo") or info.get("ctgrNo") or path)
-
-                    key = f"{code}||{path}||{c1}||{c2}||{c3}"
-                    cat_counter[key] = cat_counter.get(key, 0) + 1
-                except Exception as e:
-                    logger.debug(f"{site_label} 카테고리 추출 실패: {pid} — {e}")
-
-        await asyncio.gather(
-            *[_fetch_category(p) for p in sample], return_exceptions=True
-        )
+            key = f"{code}||{path}||{c1}||{c2}||{c3}"
+            cat_counter[key] = cat_counter.get(key, 0) + 1
 
         categories = []
         for key, count in sorted(cat_counter.items(), key=lambda x: -x[1]):
@@ -1152,6 +1115,95 @@ class ARTSourcingClient:
             f"→ {result['groupCount']}개 카테고리, 총 {result['total']}건"
         )
         return result
+
+    async def _search_all_for_scan(
+        self, keyword: str, max_pages: int = 30
+    ) -> tuple[list[dict[str, Any]], int]:
+        """카테고리 스캔용 전체 페이지 검색. 단일 세션으로 순회.
+
+        Returns:
+          (raw_items, total_count)
+        """
+        site_label = f"[{self._source_site}]"
+        subdomain = self.SUBDOMAIN_MAP.get(self.channel, self.SUBDOMAIN_MAP["10001"])
+        encoded_kw = quote(keyword)
+        search_page_url = (
+            f"{subdomain}/display/search-word/result"
+            f"?searchWord={encoded_kw}&channel={self.channel}"
+        )
+        api_url = f"{subdomain}{self.SEARCH_API_PATH}"
+        per_page = 100
+
+        all_items: list[dict[str, Any]] = []
+        total_count = 0
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout, follow_redirects=True
+            ) as client:
+                # 세션 획득 (JSESSIONID)
+                await client.get(subdomain + "/", headers=self.HEADERS)
+                await client.get(search_page_url, headers=self.HEADERS)
+
+                api_headers = {
+                    **self.API_HEADERS,
+                    "Referer": search_page_url,
+                }
+
+                for page in range(1, max_pages + 1):
+                    resp = await client.get(
+                        api_url,
+                        params={
+                            "searchWord": keyword,
+                            "page": str(page),
+                            "perPage": str(per_page),
+                            "sort": "point",
+                            "channel": self.channel,
+                            "pageColumn": "3",
+                            "tabGubun": "total",
+                            "searchPageGubun": "product",
+                            "smartSearchCheck": "false",
+                        },
+                        headers=api_headers,
+                    )
+
+                    if resp.status_code in (429, 403):
+                        logger.warning(
+                            f"{site_label} 카테고리 스캔 차단 HTTP {resp.status_code}"
+                        )
+                        break
+
+                    if resp.status_code != 200:
+                        logger.warning(
+                            f"{site_label} 카테고리 스캔 HTTP {resp.status_code}"
+                        )
+                        break
+
+                    data = resp.json()
+
+                    if page == 1:
+                        total_count = data.get("SEARCH_COUNT", 0) or 0
+
+                    items = data.get("SEARCH") or []
+                    if not items:
+                        break
+
+                    all_items.extend(items)
+                    logger.info(
+                        f"{site_label} 카테고리 스캔 {page}페이지: "
+                        f"+{len(items)}건 (누적 {len(all_items)}/{total_count})"
+                    )
+
+                    if len(all_items) >= total_count:
+                        break
+
+                    # 차단 방지 딜레이
+                    await asyncio.sleep(0.3)
+
+        except Exception as e:
+            logger.error(f"{site_label} 카테고리 스캔 검색 실패: {e}")
+
+        return all_items, total_count
 
     # ------------------------------------------------------------------
     # 상세 조회

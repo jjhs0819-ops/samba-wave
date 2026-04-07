@@ -12,7 +12,6 @@ export const SITE_COLORS: Record<string, string> = {
   Nike: '#FF6B6B',
   Adidas: '#FFD93D',
   ABCmart: '#FF8C00',
-  GrandStage: '#20C997',
   REXMONDE: '#F06595',
   SSG: '#FF5A2E',
   LOTTEON: '#E10044',
