@@ -118,16 +118,23 @@ class SSGSourcingClient:
         async def _run(client: httpx.AsyncClient) -> list[dict[str, Any]]:
             # 1단계: page=1로 브랜드 필터 목록 조회
             if page == 1:
-                first_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
-                resp = await client.get(first_url, headers=self._headers())
-                if resp.status_code in (429, 403):
-                    raise RateLimitError(int(resp.status_code))
-                if resp.status_code != 200:
-                    logger.warning(f"[SSG] 검색 페이지 HTTP {resp.status_code}")
-                    return []
-                first_html = resp.text
-                brand_ids = self._extract_matching_brand_ids(first_html, keyword)
-                logger.info(f"[SSG] 매칭 브랜드: {len(brand_ids)}개 → {brand_ids}")
+                preset = filters.get("brand_ids", [])
+                if preset:
+                    # URL에 repBrandId가 명시된 경우 HTML 추출 스킵 — 해당 브랜드만 수집
+                    brand_ids = preset
+                    first_html = None
+                    logger.info(f"[SSG] 브랜드 preset 사용: {brand_ids}")
+                else:
+                    first_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
+                    resp = await client.get(first_url, headers=self._headers())
+                    if resp.status_code in (429, 403):
+                        raise RateLimitError(int(resp.status_code))
+                    if resp.status_code != 200:
+                        logger.warning(f"[SSG] 검색 페이지 HTTP {resp.status_code}")
+                        return []
+                    first_html = resp.text
+                    brand_ids = self._extract_matching_brand_ids(first_html, keyword)
+                    logger.info(f"[SSG] 매칭 브랜드: {len(brand_ids)}개 → {brand_ids}")
             else:
                 # page > 1: filters에서 brand_ids 전달받음
                 brand_ids = filters.get("brand_ids", [])

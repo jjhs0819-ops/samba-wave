@@ -660,19 +660,29 @@ export default function CollectorPage() {
         const { job_id } = await res.json() as { job_id: string }
         // 수집 시작 로그 생략
 
-        // 폴링으로 진행률 추적
+        // 폴링으로 진행률 + 백엔드 로그 추적
         let lastCurrent = 0
+        let logSinceIdx = 0
         while (!abort.signal.aborted) {
           await new Promise(r => setTimeout(r, 1000))
           if (abort.signal.aborted) break
 
           try {
-            const jobRes = await fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+            const [jobRes, logsRes] = await Promise.all([
+              fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`),
+              jobApi.getLogs(job_id, logSinceIdx).catch(() => ({ logs: [] as string[] })),
+            ])
             if (!jobRes.ok) break
             const job = await jobRes.json() as {
               status: string; current: number; total: number
               progress: number; result?: { saved?: number; skipped?: number; policy?: string; message?: string }
               error?: string
+            }
+
+            // 백엔드 로그 추가 (후보/중복/품절 통계 등)
+            if (logsRes.logs.length > 0) {
+              logSinceIdx += logsRes.logs.length
+              setCollectLog(prev => [...prev, ...logsRes.logs].slice(-200))
             }
 
             if (job.current > lastCurrent) {
@@ -688,6 +698,13 @@ export default function CollectorPage() {
               const parts = [`신규 ${saved}건`]
               if (skipped > 0) parts.push(`중복 ${skipped}건`)
               if (policy) parts.push(policy)
+              // 완료 시 마지막 로그 한 번 더 가져오기
+              try {
+                const finalLogs = await jobApi.getLogs(job_id, logSinceIdx)
+                if (finalLogs.logs.length > 0) {
+                  setCollectLog(prev => [...prev, ...finalLogs.logs].slice(-200))
+                }
+              } catch { /* 무시 */ }
               addLog(`${gTag} [${f.name}] 수집 완료: ${parts.join(' | ')}`)
               await new Promise(r => setTimeout(r, 100))
               break
@@ -713,19 +730,21 @@ export default function CollectorPage() {
   }
 
   // 요청수 ↔ 수집수 자동 동기화 (수집 완료 후 호출)
+  // 수집수가 요청수보다 많을 때만 동기화 — 실패/타임아웃으로 미완료된 경우는 요청수 유지
   const syncRequestedCounts = async () => {
     try {
       const latestFilters = await collectorApi.listFilters()
-      const mismatch = latestFilters.filter(
-        (f: SambaSearchFilter) => !f.is_folder && (f.requested_count || 0) !== ((f as unknown as Record<string, number>).collected_count || 0)
-      )
-      for (const f of mismatch) {
+      const overCollected = latestFilters.filter((f: SambaSearchFilter) => {
+        if (f.is_folder) return false
+        const req = f.requested_count || 0
         const cc = (f as unknown as Record<string, number>).collected_count || 0
-        if (cc > 0) {
-          await collectorApi.updateFilter(f.id, { requested_count: cc })
-        }
+        return cc > req  // 수집수가 요청수 초과한 경우만 동기화
+      })
+      for (const f of overCollected) {
+        const cc = (f as unknown as Record<string, number>).collected_count || 0
+        await collectorApi.updateFilter(f.id, { requested_count: cc })
       }
-      if (mismatch.length > 0) addLog(`[동기화] ${mismatch.length}개 그룹 요청수 → 수집수 자동 동기화`)
+      if (overCollected.length > 0) addLog(`[동기화] ${overCollected.length}개 그룹 요청수 → 수집수 자동 동기화`)
     } catch { /* 동기화 실패해도 수집 흐름은 유지 */ }
   }
 
@@ -1642,18 +1661,30 @@ export default function CollectorPage() {
                       if (!r.ok) { addLog(`[추가수집] [${groupFilter.name}] 수집 실패: HTTP ${r.status}`); setCollecting(false); return }
                       const { job_id } = await r.json()
                       let lastCurrent = 0
+                      let logSinceIdx = 0
                       while (!abort.signal.aborted) {
                         await new Promise(r => setTimeout(r, 1000))
                         if (abort.signal.aborted) break
-                        const jr = await fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+                        const [jr, logsRes] = await Promise.all([
+                          fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`),
+                          jobApi.getLogs(job_id, logSinceIdx).catch(() => ({ logs: [] as string[] })),
+                        ])
                         if (!jr.ok) break
                         const job = await jr.json()
+                        if (logsRes.logs.length > 0) {
+                          logSinceIdx += logsRes.logs.length
+                          setCollectLog(prev => [...prev, ...logsRes.logs].slice(-200))
+                        }
                         if (job.current > lastCurrent) { addLog(`[추가수집] [${groupFilter.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
                         if (job.status === 'completed') {
                           const _s = job.result?.saved ?? 0, _sk = job.result?.skipped ?? 0, _p = job.result?.policy || ''
                           const _parts = [`신규 ${_s}건`]
                           if (_sk > 0) _parts.push(`중복 ${_sk}건`)
                           if (_p) _parts.push(_p)
+                          try {
+                            const finalLogs = await jobApi.getLogs(job_id, logSinceIdx)
+                            if (finalLogs.logs.length > 0) setCollectLog(prev => [...prev, ...finalLogs.logs].slice(-200))
+                          } catch { /* 무시 */ }
                           addLog(`[추가수집] [${groupFilter.name}] 수집 완료: ${_parts.join(' | ')}`)
                           break
                         }

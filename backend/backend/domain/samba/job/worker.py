@@ -1268,12 +1268,16 @@ class JobWorker:
         keyword_url = sf.keyword or ""
         requested_count = sf.requested_count or 100
 
-        # URL에서 키워드·옵션 파싱
+        # URL에서 키워드·브랜드ID·옵션 파싱
+        preset_brand_ids: list[str] = []
         try:
             parsed = urlparse(keyword_url)
             qs = parse_qs(parsed.query)
             keyword = qs.get("query", [keyword_url])[0]
             use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
+            rep_brand = qs.get("repBrandId", [""])[0]
+            if rep_brand:
+                preset_brand_ids = [b for b in rep_brand.split("|") if b]
         except Exception:
             keyword = keyword_url
             use_max_discount = False
@@ -1310,7 +1314,10 @@ class JobWorker:
                 break
             try:
                 items = await client.search_products(
-                    keyword=keyword, page=page, size=SSG_PAGE_SIZE
+                    keyword=keyword,
+                    page=page,
+                    size=SSG_PAGE_SIZE,
+                    brand_ids=preset_brand_ids,
                 )
                 if not items:
                     break
@@ -1339,6 +1346,8 @@ class JobWorker:
         existing_ids = {row[0] for row in existing_result.all()}
 
         targets: list[str] = []
+        skipped_dup = 0
+        skipped_soldout = 0
         for item in all_items:
             if len(targets) >= remaining:
                 break
@@ -1346,10 +1355,19 @@ class JobWorker:
             if not site_pid:
                 continue
             if site_pid in existing_ids:
+                skipped_dup += 1
                 continue
             if item.get("isSoldOut", False):
+                skipped_soldout += 1
                 continue
             targets.append(site_pid)
+
+        filter_msg = (
+            f"[SSG] 후보 {len(all_items)}개 → 중복제거 {skipped_dup}개, 품절제거 {skipped_soldout}개, "
+            f"타겟 {len(targets)}개 (remaining={remaining})"
+        )
+        logger.info(filter_msg)
+        _add_job_log(job.id, filter_msg)
 
         svc = _get_services(session)
         total_saved = 0
@@ -1443,21 +1461,24 @@ class JobWorker:
             )
         ).scalar() or 0
 
+        # requested_count는 덮어쓰지 않음 — 사용자가 설정한 목표 수량 유지
         await session.execute(
             _sa_upd(_SF)
             .where(_SF.id == filter_id)
-            .values(
-                last_collected_at=_dt.now(UTC),
-                requested_count=actual_count,
-            )
+            .values(last_collected_at=_dt.now(UTC))
         )
         await session.commit()
 
+        complete_msg = (
+            f"SSG 수집 완료: {total_saved}개 저장 (총 {actual_count}개) "
+            f"[후보 {len(all_items)}개 / 중복제거 {skipped_dup}개 / 품절제거 {skipped_soldout}개]"
+        )
+        _add_job_log(job.id, complete_msg)
         await repo.complete_job(
             job.id,
             {
                 "saved": total_saved,
-                "message": f"SSG 수집 완료: {total_saved}개 저장 (총 {actual_count}개)",
+                "message": complete_msg,
             },
         )
 
