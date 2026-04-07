@@ -46,6 +46,10 @@ interface MarketPolicyForm {
   smileCashRate: number
   // GS샵 전용
   gsMarginRate: number
+  // 신세계몰 전용: 주문수량 제한
+  dayMaxQty: number
+  onceMinQty: number
+  onceMaxQty: number
   // 스마트스토어 전용
   discountRate: number  // 즉시할인율 (%)
   maxStock: number      // 최대 재고수량 (0=무제한)
@@ -126,7 +130,7 @@ export default function PoliciesPage() {
 
   // 현재 마켓 정책 가져오기
   const getCurrentMarketPolicy = useCallback((): MarketPolicyForm => {
-    return marketPolicies[marketPolicyTab] || { accountId: '', accountIds: [], shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0, gsMarginRate: 0, discountRate: 0, maxStock: 0 }
+    return marketPolicies[marketPolicyTab] || { accountId: '', accountIds: [], shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0, gsMarginRate: 0, discountRate: 0, maxStock: 0, dayMaxQty: 5, onceMinQty: 1, onceMaxQty: 5 }
   }, [marketPolicies, marketPolicyTab])
 
   const setCurrentMarketPolicy = useCallback((mp: MarketPolicyForm) => {
