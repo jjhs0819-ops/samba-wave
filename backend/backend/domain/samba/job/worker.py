@@ -1175,6 +1175,10 @@ class JobWorker:
             )
 
             client = LotteonSourcingClient()
+        elif site == "ABCmart":
+            from backend.domain.samba.proxy.abcmart import ARTSourcingClient
+
+            client = ARTSourcingClient()
 
         # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
         if not client:
@@ -1272,10 +1276,14 @@ class JobWorker:
 
         # Nike: category_filter("성별_세분류")로 검색 결과 사후 필터링
         if site == "Nike" and sf.category_filter:
-            # category_filter = "남성_러닝화" → category2="남성", category3="러닝화"
+            # "남성_러닝화" → c2="남성", c3="러닝화"
+            # "가방" (언더스코어 없음) → c2="", c3="가방" (성별 없는 카테고리)
             _parts = sf.category_filter.split("_", 1)
-            _filter_c2 = _parts[0] if len(_parts) >= 1 else ""
-            _filter_c3 = _parts[1] if len(_parts) >= 2 else ""
+            if len(_parts) == 2:
+                _filter_c2, _filter_c3 = _parts[0], _parts[1]
+            else:
+                # 언더스코어 없으면 세분류만 (성별 없는 카테고리: 가방, 모자, 양말 등)
+                _filter_c2, _filter_c3 = "", _parts[0]
             before = len(items_list)
             filtered = []
             for item in items_list:
@@ -1290,6 +1298,18 @@ class JobWorker:
             items_list = filtered
             logger.info(
                 f"[잡워커] Nike 카테고리 필터 {sf.category_filter}: {before}→{len(items_list)}건"
+            )
+
+        # ABCmart: category_filter(카테고리 코드)로 검색 결과 사후 필터링
+        if site == "ABCmart" and sf.category_filter:
+            before = len(items_list)
+            items_list = [
+                item
+                for item in items_list
+                if (item.get("category_code") or "") == sf.category_filter
+            ]
+            logger.info(
+                f"[잡워커] ABCmart 카테고리 필터 {sf.category_filter}: {before}→{len(items_list)}건"
             )
 
         # LOTTEON: category_filter(BC코드, 콤마 구분)로 검색 결과 사후 필터링
