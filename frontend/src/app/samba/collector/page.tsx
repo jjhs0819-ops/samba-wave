@@ -529,7 +529,7 @@ export default function CollectorPage() {
         // 마켓 등록 상품 체크
         const registered = res.items.filter(p => p.market_product_nos && Object.keys(p.market_product_nos).length > 0)
         if (registered.length > 0) {
-          showAlert(`마켓등록 상품이 ${registered.length}건 있어서 삭제할 수 없습니다`, 'error')
+          showAlert(`마켓등록 상품이 ${registered.length.toLocaleString()}건 있어서 삭제할 수 없습니다`, 'error')
           continue
         }
         const productIds = res.items.map(p => p.id)
@@ -561,7 +561,7 @@ export default function CollectorPage() {
     const abort = new AbortController()
     collectAbortRef.current = abort
     setCollecting(true)
-    addLog(`${targetIds.length}개 그룹 상품수집 시작...`)
+    addLog(`${targetIds.length.toLocaleString()}개 그룹 상품수집 시작...`)
 
     for (const id of targetIds) {
       if (abort.signal.aborted) break
@@ -654,7 +654,7 @@ export default function CollectorPage() {
           await collectorApi.updateFilter(f.id, { requested_count: cc })
         }
       }
-      if (mismatch.length > 0) addLog(`[동기화] ${mismatch.length}개 그룹 요청수 → 수집수 자동 동기화`)
+      if (mismatch.length > 0) addLog(`[동기화] ${mismatch.length.toLocaleString()}개 그룹 요청수 → 수집수 자동 동기화`)
     } catch { /* 동기화 실패해도 수집 흐름은 유지 */ }
   }
 
@@ -728,7 +728,7 @@ export default function CollectorPage() {
   const handleRefresh = async () => {
     setRefreshing(true)
     const filterIds = selectedIds.size > 0 ? [...selectedIds] : undefined
-    addLog(filterIds ? `선택된 ${filterIds.length}개 그룹 갱신 시작...` : '전체 일괄 갱신 시작...')
+    addLog(filterIds ? `선택된 ${filterIds.length.toLocaleString()}개 그룹 갱신 시작...` : '전체 일괄 갱신 시작...')
     try {
       const result = await collectorApi.refresh(undefined, true, filterIds)
       setRefreshResult(result)
@@ -766,6 +766,11 @@ export default function CollectorPage() {
   const displayedFilters = useMemo(() => {
     let result = [...filters]
     if (siteFilter) result = result.filter((f) => f.source_site === siteFilter)
+    // 드릴다운 사이트 선택 시 해당 사이트 그룹만 표시
+    if (drillSite) {
+      const drillSiteName = tree.find(s => s.id === drillSite)?.source_site
+      if (drillSiteName) result = result.filter(f => f.source_site === drillSiteName)
+    }
     // 드릴다운 브랜드 선택 시 해당 브랜드 그룹만 표시
     if (drillBrand) {
       result = result.filter(f => {
@@ -836,7 +841,7 @@ export default function CollectorPage() {
       return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va)
     })
     return result
-  }, [filters, siteFilter, drillBrand, aiFilter, collectFilter, marketRegFilter, tagRegFilter, policyRegFilter, sortBy])
+  }, [filters, siteFilter, drillSite, tree, drillBrand, aiFilter, collectFilter, marketRegFilter, tagRegFilter, policyRegFilter, sortBy])
 
 
 
@@ -1150,7 +1155,7 @@ export default function CollectorPage() {
               <div style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.75rem', maxHeight: '350px', overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                   <span style={{ fontSize: '0.78rem', color: '#888' }}>
-                    {brandCategories.length}개 카테고리 / {brandTotal.toLocaleString()}건
+                    {brandCategories.length.toLocaleString()}개 카테고리 / {brandTotal.toLocaleString()}건
                     (선택 {brandSelectedCats.size}개)
                   </span>
                   <div style={{ display: 'flex', gap: '0.25rem' }}>
@@ -1297,7 +1302,7 @@ export default function CollectorPage() {
                     setBrandCategories(res.categories)
                     setBrandTotal(res.total)
                     setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                    addLog(`[카테고리스캔] ${keyword || brand} (${selectedBrands.length}개 브랜드): ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                    addLog(`[카테고리스캔] ${keyword || brand} (${selectedBrands.length.toLocaleString()}개 브랜드): ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
                   } catch (e) { showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                   setBrandScanning(false)
                 }}
@@ -1436,18 +1441,18 @@ export default function CollectorPage() {
               }
               if (productIds.length === 0) { showAlert(skippedAi > 0 ? `모든 상품이 이미 AI 변환 완료 (${skippedAi}건 스킵)` : '선택된 그룹에 상품이 없습니다'); return }
               const skipMsg = skippedAi > 0 ? `\n(AI 변환 완료 ${skippedAi}건 스킵)` : ''
-              const ok = await showConfirm(`${activeIds.length}개 그룹 (${productIds.length}개 상품)의 이미지를 변환하시겠습니까?${skipMsg}`)
+              const ok = await showConfirm(`${activeIds.length.toLocaleString()}개 그룹 (${productIds.length.toLocaleString()}개 상품)의 이미지를 변환하시겠습니까?${skipMsg}`)
               if (!ok) return
               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
               setAiImgTransforming(true)
               aiJobAbortRef.current = false
-              setAiJobTitle(`AI 이미지변환 (${productIds.length}개)`)
+              setAiJobTitle(`AI 이미지변환 (${productIds.length.toLocaleString()}개)`)
               setAiJobLogs([])
               setAiJobDone(false)
               setAiJobModal(true)
               const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
               const startTime = ts()
-              addLog(`시작: ${startTime} (${productIds.length}개 상품)`)
+              addLog(`시작: ${startTime} (${productIds.length.toLocaleString()}개 상품)`)
               let success = 0
               let fail = 0
               for (let i = 0; i < productIds.length; i++) {
@@ -1498,12 +1503,12 @@ export default function CollectorPage() {
               const activeGroupIds = [...selectedIds].filter(id => displayedFilters.some(f => f.id === id))
               if (activeGroupIds.length === 0) { showAlert('현재 필터에 해당하는 그룹이 없습니다'); return }
               const scopeLabel = [...imgFilterScopes].map(s => s === 'images' ? '대표' : s === 'detail_images' ? '추가' : '상세').join('+')
-              const ok = await showConfirm(`선택된 ${activeGroupIds.length}개 그룹의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
+              const ok = await showConfirm(`선택된 ${activeGroupIds.length.toLocaleString()}개 그룹의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
               if (!ok) return
               const scope = imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') && imgFilterScopes.has('detail') ? 'all' : imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') ? 'images' : imgFilterScopes.has('detail') ? 'detail' : [...imgFilterScopes][0] || 'images'
               setImgFiltering(true)
               aiJobAbortRef.current = false
-              setAiJobTitle(`이미지 필터링 (${activeGroupIds.length}개 그룹)`)
+              setAiJobTitle(`이미지 필터링 (${activeGroupIds.length.toLocaleString()}개 그룹)`)
               setAiJobLogs([])
               setAiJobDone(false)
               setAiJobModal(true)
@@ -1523,11 +1528,11 @@ export default function CollectorPage() {
                   if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단`); break }
                   const gid = groupIds[gi]
                   const groupLabel = tree.find(t => t.id === gid)?.keyword?.slice(0, 20) || gid.slice(-8)
-                  addLog(`\n[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — 상품 조회중...`)
+                  addLog(`\n[그룹 ${gi + 1}/${groupIds.length.toLocaleString()}] ${groupLabel} — 상품 조회중...`)
                   try {
                     const { items: products } = await collectorApi.scrollProducts({ search_filter_id: gid, limit: 10000 })
                     totalProducts += products.length
-                    addLog(`[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — ${products.length}개 상품`)
+                    addLog(`[그룹 ${gi + 1}/${groupIds.length.toLocaleString()}] ${groupLabel} — ${products.length.toLocaleString()}개 상품`)
                     if (gi === 0 && products.length > 0) addLog(`\n시작: ${startTime} (${totalProducts}개 상품)\n`)
                     for (let i = 0; i < products.length; i++) {
                       if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${processedProducts}/${totalProducts})`); break }
@@ -1561,7 +1566,7 @@ export default function CollectorPage() {
                               const kept = imgs.filter(u => !tallUrls.includes(u))
                               await collectorApi.updateProduct(prod.id, { images: kept })
                               totalTall += tallUrls.length
-                              steps.push(`긴이미지 ${tallUrls.length}장 제거`)
+                              steps.push(`긴이미지 ${tallUrls.length.toLocaleString()}장 제거`)
                             }
                           }
                         }
@@ -1578,7 +1583,7 @@ export default function CollectorPage() {
                       } catch (e) { fail++; addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
                     }
                   } catch (e) {
-                    addLog(`[그룹 ${gi + 1}/${groupIds.length}] ${groupLabel} — 상품 조회 실패: ${e instanceof Error ? e.message : ''}`)
+                    addLog(`[그룹 ${gi + 1}/${groupIds.length.toLocaleString()}] ${groupLabel} — 상품 조회 실패: ${e instanceof Error ? e.message : ''}`)
                   }
                 }
                 const summary = [`성공 ${success}개`, `실패 ${fail}개`]
@@ -1665,7 +1670,7 @@ export default function CollectorPage() {
                 if (targets.length === 0) { showAlert('동기화할 그룹이 없습니다'); return }
                 const mismatch = targets.filter(f => (f.requested_count || 0) !== (f.collected_count || 0))
                 if (mismatch.length === 0) { showAlert('모든 그룹이 이미 동기화되어 있습니다', 'info'); return }
-                if (!await showConfirm(`${mismatch.length}개 그룹의 요청수를 수집수로 동기화하시겠습니까?`)) return
+                if (!await showConfirm(`${mismatch.length.toLocaleString()}개 그룹의 요청수를 수집수로 동기화하시겠습니까?`)) return
                 let synced = 0
                 for (const f of mismatch) {
                   try {
@@ -1706,12 +1711,12 @@ export default function CollectorPage() {
                       return p?.searchParams.get('brand') === brand
                     })
                     if (updatedFilters.length > 0) {
-                      const collectOk = await showConfirm(`${res.message}\n\n${updatedFilters.length}개 그룹 상품수집을 시작하시겠습니까?`)
+                      const collectOk = await showConfirm(`${res.message}\n\n${updatedFilters.length.toLocaleString()}개 그룹 상품수집을 시작하시겠습니까?`)
                       if (collectOk) {
                         const abort = new AbortController()
                         collectAbortRef.current = abort
                         setCollecting(true)
-                        addLog(`${updatedFilters.length}개 그룹 상품수집 시작...`)
+                        addLog(`${updatedFilters.length.toLocaleString()}개 그룹 상품수집 시작...`)
                         for (const f of updatedFilters) {
                           if (abort.signal.aborted) break
                           addLog(`[${f.name}] 수집 요청 중...`)
@@ -1765,11 +1770,11 @@ export default function CollectorPage() {
                   ? displayedFilters.filter(f => checkedIds.includes(f.id))
                   : [...displayedFilters]
                 if (targetFilters.length === 0) { showAlert('검색그룹이 없습니다'); return }
-                const ok = await showConfirm(`${checkedIds.length > 0 ? '선택된' : '전체'} ${targetFilters.length}개 그룹의 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
+                const ok = await showConfirm(`${checkedIds.length > 0 ? '선택된' : '전체'} ${targetFilters.length.toLocaleString()}개 그룹의 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
                 if (!ok) return
                 setTagPreviewLoading(true)
                 try {
-                  addLog(`[AI태그] ${targetFilters.length}개 그룹 태그 생성 시작...`)
+                  addLog(`[AI태그] ${targetFilters.length.toLocaleString()}개 그룹 태그 생성 시작...`)
                   const allPreviews: typeof tagPreviews = []
                   let totalCalls = 0, totalInput = 0, totalOutput = 0, totalCost = 0
                   for (let i = 0; i < targetFilters.length; i++) {
@@ -1785,15 +1790,15 @@ export default function CollectorPage() {
                         totalCost += res.cost_krw || 0
                         const tags = res.previews[0]?.tags || []
                         const seo = res.previews[0]?.seo_keywords || []
-                        addLog(`[AI태그] [${i + 1}/${targetFilters.length}] ${f.name} → SEO: ${seo.join(', ')} | 태그: ${tags.length}개`)
+                        addLog(`[AI태그] [${i + 1}/${targetFilters.length.toLocaleString()}] ${f.name} → SEO: ${seo.join(', ')} | 태그: ${tags.length.toLocaleString()}개`)
                       } else {
-                        addLog(`[AI태그] [${i + 1}/${targetFilters.length}] ${f.name} → 태그 없음`)
+                        addLog(`[AI태그] [${i + 1}/${targetFilters.length.toLocaleString()}] ${f.name} → 태그 없음`)
                       }
                     } catch (e) {
-                      addLog(`[AI태그] [${i + 1}/${targetFilters.length}] ${f.name} → 실패: ${e instanceof Error ? e.message : '오류'}`)
+                      addLog(`[AI태그] [${i + 1}/${targetFilters.length.toLocaleString()}] ${f.name} → 실패: ${e instanceof Error ? e.message : '오류'}`)
                     }
                   }
-                  addLog(`[AI태그] 완료: ${allPreviews.length}/${targetFilters.length}개 그룹 | API ${totalCalls}회 | ${totalCost.toFixed(0)}원`)
+                  addLog(`[AI태그] 완료: ${allPreviews.length.toLocaleString()}/${targetFilters.length.toLocaleString()}개 그룹 | API ${totalCalls.toLocaleString()}회 | ${Number(totalCost.toFixed(0)).toLocaleString()}원`)
                   if (allPreviews.length > 0) {
                     setTagPreviews(allPreviews)
                     setTagPreviewCost({ api_calls: totalCalls, input_tokens: totalInput, output_tokens: totalOutput, cost_krw: totalCost })
@@ -1903,8 +1908,8 @@ export default function CollectorPage() {
           const selectedCount = selectedFilter ? ((selectedFilter as unknown as Record<string, number>).collected_count ?? 0) : 0
 
           // 헤더·본문 너비 통일 (합계 100%)
-          // 사이트8 브랜드8 카테고리24 링크15 정책10 수집8 요청6 생성일11 매핑10
-          const colW = ['8%', '8%', '24%', '15%', '10%', '8%', '6%', '11%', '10%']
+          // 사이트8 브랜드10 카테고리22 링크15 정책10 수집8 요청6 생성일11 매핑10
+          const colW = ['8%', '10%', '22%', '15%', '10%', '8%', '6%', '11%', '10%']
           const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const, textAlign: 'left' as const }
           const colStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0 })
           const detColStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0, padding: '0.5rem 0.5rem' })
@@ -1956,9 +1961,7 @@ export default function CollectorPage() {
                       >
                         {s.source_site || s.name}
                         <span style={{ marginLeft: 'auto', fontSize: '0.74rem', color: '#FF8C00', fontWeight: 600 }}>
-                          {drillBrand
-                            ? allLeafInfos.filter(l => l._siteId === s.id && l._brand === drillBrand).length
-                            : getAllLeaves(s).length}
+                          {getAllLeaves(s).length}
                         </span>
                       </div>
                     ))
@@ -2038,7 +2041,7 @@ export default function CollectorPage() {
                               const res = await collectorApi.scrollProducts({ skip: 0, limit: 10000, search_filter_id: selectedFilter.id })
                               const registered = res.items.filter(p => p.market_product_nos && Object.keys(p.market_product_nos).length > 0)
                               if (registered.length > 0) {
-                                showAlert(`마켓등록 상품이 ${registered.length}건 있어서 삭제할 수 없습니다`, 'error')
+                                showAlert(`마켓등록 상품이 ${registered.length.toLocaleString()}건 있어서 삭제할 수 없습니다`, 'error')
                                 return
                               }
                               const pIds = res.items.map(p => p.id)
@@ -2079,7 +2082,7 @@ export default function CollectorPage() {
                       const policyId = e.target.value
                       if (!policyId) return
                       const policyName = policies.find(p => p.id === policyId)?.name || ''
-                      if (!await showConfirm(`${drillBrand} 브랜드의 ${catGroups.length}개 그룹에 "${policyName}" 정책을 일괄 적용하시겠습니까?`)) { e.target.value = ''; return }
+                      if (!await showConfirm(`${drillBrand} 브랜드의 ${catGroups.length.toLocaleString()}개 그룹에 "${policyName}" 정책을 일괄 적용하시겠습니까?`)) { e.target.value = ''; return }
                       let applied = 0
                       for (const g of catGroups) {
                         try {
@@ -2087,7 +2090,7 @@ export default function CollectorPage() {
                           applied++
                         } catch { /* 무시 */ }
                       }
-                      showAlert(`${applied}/${catGroups.length}개 그룹에 정책 적용 완료`, 'success')
+                      showAlert(`${applied.toLocaleString()}/${catGroups.length.toLocaleString()}개 그룹에 정책 적용 완료`, 'success')
                       e.target.value = ''
                       load(); loadTree()
                     }} style={{
@@ -2300,7 +2303,7 @@ export default function CollectorPage() {
                 } catch (e) { showAlert(e instanceof Error ? e.message : '저장 실패', 'error') }
               }}
                 style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(81,207,102,0.5)', background: 'rgba(81,207,102,0.15)', color: '#51CF66', fontWeight: 600 }}>
-                저장 ({Object.values(mappingData).filter(Boolean).length}개 마켓)
+                저장 ({Object.values(mappingData).filter(Boolean).length.toLocaleString()}개 마켓)
               </button>
             </div>
           </div>
@@ -2326,7 +2329,7 @@ export default function CollectorPage() {
                       <span style={{ fontSize: '0.7rem', color: '#888', marginLeft: '6px' }}>({preview.rep_name})</span>
                     )}
                   </div>
-                  <span style={{ fontSize: '0.7rem', color: '#666' }}>{preview.product_count}개 상품 | {preview.tags.length}개 태그</span>
+                  <span style={{ fontSize: '0.7rem', color: '#666' }}>{preview.product_count.toLocaleString()}개 상품 | {preview.tags.length.toLocaleString()}개 태그</span>
                 </div>
                 <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span style={{ fontSize: '0.72rem', color: '#4C9AFF', fontWeight: 600, whiteSpace: 'nowrap' }}>SEO:</span>
@@ -2393,7 +2396,7 @@ export default function CollectorPage() {
             ))}
             {removedTags.length > 0 && (
               <div style={{ marginBottom: '12px', padding: '10px 14px', background: 'rgba(255,107,107,0.06)', borderRadius: '6px', border: '1px solid rgba(255,107,107,0.15)' }}>
-                <span style={{ fontSize: '0.72rem', color: '#FF6B6B', fontWeight: 600 }}>금지태그 등록 예정 ({removedTags.length}개): </span>
+                <span style={{ fontSize: '0.72rem', color: '#FF6B6B', fontWeight: 600 }}>금지태그 등록 예정 ({removedTags.length.toLocaleString()}개): </span>
                 <span style={{ fontSize: '0.72rem', color: '#888' }}>{removedTags.join(', ')}</span>
               </div>
             )}
@@ -2836,7 +2839,7 @@ export default function CollectorPage() {
                   return (
                     <div style={{ marginBottom: '14px', padding: '12px 14px', background: 'rgba(255,107,107,0.04)', border: '1px solid rgba(255,107,107,0.15)', borderRadius: '8px' }}>
                       <div style={{ fontSize: '0.75rem', color: '#FF6B6B', marginBottom: '8px', fontWeight: 600 }}>
-                        IP위험 브랜드 ({unsafeBrands.length}개)
+                        IP위험 브랜드 ({unsafeBrands.length.toLocaleString()}개)
                         {aiExcludedBrands.size > 0 && <span style={{ color: '#888', fontWeight: 400 }}> — {aiExcludedBrands.size}개 제외</span>}
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
@@ -2983,7 +2986,7 @@ export default function CollectorPage() {
                 {/* 선택 요약 + 버튼 */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ fontSize: '0.82rem', color: '#888' }}>
-                    {aiResult.combinations.filter((c, i) => aiSelectedCombos.has(i) && !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`)).length}개 선택 / 예상{' '}
+                    {aiResult.combinations.filter((c, i) => aiSelectedCombos.has(i) && !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`)).length.toLocaleString()}개 선택 / 예상{' '}
                     {aiResult.combinations
                       .filter((c, i) => aiSelectedCombos.has(i) && !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`))
                       .reduce((s, c) => s + c.estimated_count, 0)
