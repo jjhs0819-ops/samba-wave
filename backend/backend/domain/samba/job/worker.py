@@ -1191,7 +1191,11 @@ class JobWorker:
                 await repo.fail_job(job.id, f"미지원 소싱처: {site}")
                 return
             try:
-                _req_id, _future = SourcingQueue.add_search_job(site, keyword)
+                # sf.keyword가 이미 URL이면 SourcingQueue에 직접 전달 (템플릿 이중 치환 방지)
+                _sq_url = sf.keyword if (sf.keyword or "").startswith("http") else ""
+                _req_id, _future = SourcingQueue.add_search_job(
+                    site, keyword, url=_sq_url
+                )
                 ext_result = await asyncio.wait_for(_future, timeout=60)
                 items_list = ext_result.get("products", [])
                 logger.info(
