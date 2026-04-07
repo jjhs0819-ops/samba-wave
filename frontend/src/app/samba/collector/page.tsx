@@ -809,10 +809,9 @@ export default function CollectorPage() {
                 onClick={() => {
                   setSelectedSite(site.id)
                   setCollectUrl("")
-                  setCheckedOptions(site.id === 'MUSINSA'
-                    ? { excludePreorder: true, excludeBoutique: true, maxDiscount: true }
-                    : {}
-                  )
+                  setCheckedOptions(Object.fromEntries(
+                    (SITE_OPTIONS[site.id] || []).map(opt => [opt.id, true])
+                  ))
                 }}
                 style={{
                   padding: "0.35rem 0.875rem", borderRadius: "20px", fontSize: "0.8rem",
@@ -1761,7 +1760,7 @@ export default function CollectorPage() {
           // 헤더·본문 너비 통일 (합계 100%)
           // 사이트8 브랜드8 카테고리24 링크15 정책10 수집8 요청6 생성일11 매핑10
           const colW = ['8%', '8%', '24%', '15%', '10%', '8%', '6%', '11%', '10%']
-          const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const, textAlign: 'center' as const }
+          const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const, textAlign: 'left' as const }
           const colStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0 })
           const detColStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0, padding: '0.5rem 0.5rem' })
           const itemSt = (sel: boolean) => ({

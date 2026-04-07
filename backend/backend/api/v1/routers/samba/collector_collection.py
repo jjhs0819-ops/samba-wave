@@ -2028,10 +2028,10 @@ async def brand_create_groups(
         path_tail = "_".join(segments) if segments else code
         group_name = f"{body.source_site}_{label}_{path_tail}"
 
-        # 수집 요청 수: 0이면 자동 (스캔 카운트 × 3, 최소 50)
+        # 수집 요청 수: 0 이하이면 스캔 카운트(실제 상품수) 사용
         req_count = body.requested_count_per_group
         if req_count <= 0:
-            req_count = max(count * 3, 50)
+            req_count = max(count, 1)
 
         # 소싱처별 keyword 및 category_filter 결정
         if body.source_site == "MUSINSA":
@@ -2061,7 +2061,7 @@ async def brand_create_groups(
             _label = body.brand_name or body.brand or keyword or ""
             keyword = f"https://www.nike.com/kr/w?q={_quote_nike(_label)}"
             category_filter = code or None
-        elif body.source_site == "GSSHOP":
+        elif body.source_site == "GSShop":
             import base64 as _b64
             from urllib.parse import quote as _quote_gs
 
@@ -2075,18 +2075,21 @@ async def brand_create_groups(
             )
             category_filter = code or None
         else:  # LOTTEON
-            _brand_label = body.brand_name or body.brand or ""
-            # 선택된 브랜드 목록을 URL 쿼리 파라미터로 저장 (worker.py에서 파싱)
-            # brands 없으면 keyword 단일 브랜드로 fallback
-            if body.selected_brands:
-                from urllib.parse import quote as _quote
+            from urllib.parse import quote as _quote_lt
 
-                _brands_q = _quote(",".join(body.selected_brands))
+            _brand_label = body.brand_name or body.brand or ""
+            # 실제 롯데ON 검색 URL로 저장 (프론트 링크 표시 + 워커 brands 파싱 호환)
+            if body.selected_brands:
+                _brands_q = _quote_lt(",".join(body.selected_brands))
                 keyword = (
-                    f"lotteon://search?q={_quote(_brand_label)}&brands={_brands_q}"
+                    f"https://www.lotteon.com/search/search/search.ecn"
+                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&brands={_brands_q}"
                 )
             else:
-                keyword = _brand_label
+                keyword = (
+                    f"https://www.lotteon.com/search/search/search.ecn"
+                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}"
+                )
             # 합산된 BC코드들을 콤마로 연결 (같은 path의 여러 BC코드)
             bc_codes = cat.get("bc_codes") or ([code] if code else [])
             category_filter = ",".join(bc_codes) if bc_codes else None
