@@ -373,8 +373,9 @@ class GsShopSourcingClient:
             f"[GSSHOP] 카테고리 스캔: {len(product_ids)}개 상품 검색 완료, 상세 조회 시작"
         )
 
-        # 2. 전체 상품 상세 조회 → 카테고리 추출 (동시 30, Cloud Run 타임아웃 방지)
-        sem = asyncio.Semaphore(30)
+        # 2. 전체 상품 상세 조회 → 카테고리 추출 (동시 15, Cloud Run 안정)
+        sem = asyncio.Semaphore(15)
+        scan_timeout = httpx.Timeout(30.0, connect=15.0)
         cat_counter: dict[str, int] = {}
         ok_count = 0
         fail_count = 0
@@ -382,11 +383,27 @@ class GsShopSourcingClient:
             {"stage": "detail", "detail_total": len(product_ids)}
         )
 
-        async def _fetch(pid: str) -> None:
+        async def _fetch_detail(
+            client: httpx.AsyncClient, pid: str
+        ) -> Optional[dict[str, Any]]:
+            """스캔 전용 상세 조회 (공유 클라이언트 사용)."""
+            url = f"{self.PRODUCT_URL}?prdid={pid}"
+            try:
+                resp = await client.get(url, headers=self._headers(mobile=True))
+                if resp.status_code != 200:
+                    return None
+                render_data = self._extract_render_json(resp.text)
+                if render_data:
+                    return self._build_from_render_json(render_data, pid, 0, "")
+            except Exception:
+                pass
+            return None
+
+        async def _fetch(client: httpx.AsyncClient, pid: str) -> None:
             nonlocal ok_count, fail_count
             async with sem:
                 try:
-                    detail = await self.get_product_detail(pid)
+                    detail = await _fetch_detail(client, pid)
                     c1 = detail.get("category1", "")
                     c2 = detail.get("category2", "")
                     c3 = detail.get("category3", "")
@@ -409,9 +426,13 @@ class GsShopSourcingClient:
                     GsShopSourcingClient.scan_progress["detail_fail"] = fail_count
                     logger.debug(f"[GSSHOP] 카테고리 스캔 상세 실패: {pid} — {e}")
 
-        await asyncio.gather(
-            *[_fetch(pid) for pid in product_ids], return_exceptions=True
-        )
+        async with httpx.AsyncClient(
+            timeout=scan_timeout, follow_redirects=True
+        ) as scan_client:
+            await asyncio.gather(
+                *[_fetch(scan_client, pid) for pid in product_ids],
+                return_exceptions=True,
+            )
         logger.info(
             f"[GSSHOP] 카테고리 스캔 상세 완료: 성공={ok_count} 실패={fail_count}"
         )
