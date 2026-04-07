@@ -112,7 +112,7 @@ export const orderApi = {
       method: "POST", body: JSON.stringify({ action, reason }),
     }),
   findByOrderNumber: (orderNumber: string) =>
-    request<{ id: string; order_number: string } | null>(`${SAMBA_PREFIX}/orders/find-by-number?order_number=${encodeURIComponent(orderNumber)}`),
+    request<{ id: string; order_number: string; channel_id?: string } | null>(`${SAMBA_PREFIX}/orders/find-by-number?order_number=${encodeURIComponent(orderNumber)}`),
   shipOrder: (id: string, shippingCompany: string, trackingNumber: string) =>
     request<{ ok: boolean; market_sent: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/ship`, {
       method: "POST", body: JSON.stringify({ shipping_company: shippingCompany, tracking_number: trackingNumber }),
