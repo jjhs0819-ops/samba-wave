@@ -301,17 +301,15 @@ class GsShopSourcingClient:
             return {"categories": [], "total": 0, "groupCount": 0}
 
         logger.info(
-            f"[GSSHOP] 카테고리 스캔: {len(products)}개 상품 검색 완료, 전체 상세 조회 시작"
+            f"[GSSHOP] 카테고리 스캔: {len(products)}개 상품 검색 완료, 상위 30개 상세 조회 시작"
         )
 
-        # 2. 전체 상품 상세 조회 → 카테고리 추출 (동시 50개, 간격 0)
-        sem = asyncio.Semaphore(50)
+        # 2. 상위 30개 상품 상세 조회 → 카테고리 추출
+        targets = products[:30]
+        sem = asyncio.Semaphore(2)  # GS샵 보수적 간격
         cat_counter: dict[str, int] = {}
-        ok_count = 0
-        fail_count = 0
 
         async def _fetch(p: dict[str, Any]) -> None:
-            nonlocal ok_count, fail_count
             async with sem:
                 spid = (
                     p.get("siteProductId")
@@ -328,21 +326,16 @@ class GsShopSourcingClient:
                     c3 = detail.get("category3", "")
                     c4 = detail.get("category4", "")
                     if not c1:
-                        fail_count += 1
                         return
                     parts = [c for c in [c1, c2, c3, c4] if c]
                     path = " > ".join(parts)
                     key = f"{path}||{c1}||{c2}||{c3}||{c4}"
                     cat_counter[key] = cat_counter.get(key, 0) + 1
-                    ok_count += 1
+                    await asyncio.sleep(1.0)  # GS샵 요청 간격
                 except Exception as e:
-                    fail_count += 1
                     logger.warning(f"[GSSHOP] 카테고리 스캔 상세 실패: {spid} — {e}")
 
-        await asyncio.gather(*[_fetch(p) for p in products], return_exceptions=True)
-        logger.info(
-            f"[GSSHOP] 카테고리 스캔 상세 완료: 성공={ok_count} 실패={fail_count}"
-        )
+        await asyncio.gather(*[_fetch(p) for p in targets], return_exceptions=True)
 
         # 3. 카테고리 분포 집계
         categories = []
