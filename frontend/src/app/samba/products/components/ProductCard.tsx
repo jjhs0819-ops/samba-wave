@@ -83,7 +83,7 @@ function buildMarketProductUrl(marketType: string, sellerId: string, productNo: 
     case 'ssg':
       return `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`
     case 'lotteon':
-      return `https://www.lotteon.com/product/productDetail.lotte?spdNo=${productNo}`
+      return `https://www.lotteon.com/p/product/${productNo}`
     case 'gsshop':
       return `https://www.gsshop.com/prd/prd.gs?prdid=${productNo}`
     case 'lottehome':
@@ -1324,8 +1324,8 @@ const ProductCard = React.memo(function ProductCard({
                                   style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                   onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                                   onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
-                                  title={`${rm.label} 구매페이지`}
-                                >구매페이지</button>
+                                  title={`${rm.label} 판매페이지`}
+                                >판매페이지</button>
                               ) : (
                                 <span
                                   style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', whiteSpace: 'nowrap' }}
