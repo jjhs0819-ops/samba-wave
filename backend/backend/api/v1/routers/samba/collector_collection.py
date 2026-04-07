@@ -2047,13 +2047,20 @@ async def brand_create_groups(
             keyword = "https://www.musinsa.com/search/goods?" + "&".join(parts)
             category_filter = code or None
         elif body.source_site in ("ABCmart", "GrandStage"):
+            from urllib.parse import quote as _quote
+
             _label = body.brand_name or body.brand or keyword or ""
-            keyword = _label  # 검색 키워드 그대로 사용
-            category_filter = code or None  # 카테고리 path를 필터로 저장
+            keyword = (
+                f"https://abcmart.a-rt.com/display/search-word/result"
+                f"?searchWord={_quote(_label)}"
+            )
+            category_filter = code or None
         elif body.source_site == "Nike":
+            from urllib.parse import quote as _quote_nike
+
             _label = body.brand_name or body.brand or keyword or ""
-            keyword = _label  # 검색 키워드 그대로 사용
-            category_filter = code or None  # productType 코드를 필터로 저장
+            keyword = f"https://www.nike.com/kr/w?q={_quote_nike(_label)}"
+            category_filter = code or None
         else:  # LOTTEON
             _brand_label = body.brand_name or body.brand or ""
             # 선택된 브랜드 목록을 URL 쿼리 파라미터로 저장 (worker.py에서 파싱)
