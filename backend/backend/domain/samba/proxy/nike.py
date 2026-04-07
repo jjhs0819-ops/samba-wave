@@ -611,6 +611,7 @@ class NikeClient:
         if sizes_data:
             options = [
                 {
+                    "name": s.get("localizedLabel", s.get("label", "")),
                     "size": s.get("localizedLabel", s.get("label", "")),
                     "stock": 99 if s.get("status") == "ACTIVE" else 0,
                 }
@@ -620,7 +621,9 @@ class NikeClient:
         else:
             # fallback: HTML label 태그에서 파싱
             size_labels = re.findall(r"<label[^>]*>\s*(\d{3})\s*</label>", html)
-            options = [{"size": s, "stock": 99} for s in dict.fromkeys(size_labels)]
+            options = [
+                {"name": s, "size": s, "stock": 99} for s in dict.fromkeys(size_labels)
+            ]
 
         # 상품 정보 섹션 (featuresAndBenefits, productDetails)
         product_info = prod_data.get("productInfo") or {}
