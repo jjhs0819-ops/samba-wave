@@ -534,6 +534,10 @@ export const collectorApi = {
     }>(`${SAMBA_PREFIX}/collector/autotune/filters`),
   autotuneSetFilters: (enabledSources: string[] | null, enabledMarkets: string[] | null) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/autotune/filters`, { method: 'PUT', body: JSON.stringify({ enabled_sources: enabledSources, enabled_markets: enabledMarkets }) }),
+  autotuneGetPriority: () =>
+    request<{ ok: boolean; priority_enabled: boolean }>(`${SAMBA_PREFIX}/collector/autotune/priority`),
+  autotuneSetPriority: (enabled: boolean) =>
+    request<{ ok: boolean; priority_enabled: boolean }>(`${SAMBA_PREFIX}/collector/autotune/priority`, { method: 'POST', body: JSON.stringify({ enabled }) }),
 }
 
 // ── Market Accounts ──

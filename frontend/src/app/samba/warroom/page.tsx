@@ -267,6 +267,21 @@ export default function WarroomPage() {
       } catch { /* ignore */ }
     }, 500)
   }, [])
+  // ── 등급 분류(hot/warm/cold) ON/OFF ──
+  const [priorityEnabled, setPriorityEnabled] = useState(true)
+  useEffect(() => {
+    collectorApi.autotuneGetPriority().then(res => {
+      setPriorityEnabled(res.priority_enabled)
+    }).catch(() => {})
+  }, [])
+  const handlePriorityToggle = useCallback(async () => {
+    const next = !priorityEnabled
+    setPriorityEnabled(next)
+    try {
+      await collectorApi.autotuneSetPriority(next)
+    } catch { setPriorityEnabled(!next) }
+  }, [priorityEnabled])
+
   // ── 오토튠 필터 (소싱처/판매처 체크박스) ──
   const [filterSources, setFilterSources] = useState<string[] | null>(null) // null=전체
   const [filterMarkets, setFilterMarkets] = useState<string[] | null>(null) // null=전체
@@ -492,6 +507,19 @@ export default function WarroomPage() {
               cursor: 'pointer',
             }}
             >강제중단</button>
+            <button
+              onClick={handlePriorityToggle}
+              style={{
+                padding: '0.25rem 0.75rem',
+                background: priorityEnabled ? 'rgba(76,154,255,0.12)' : 'rgba(255,255,255,0.06)',
+                border: `1px solid ${priorityEnabled ? 'rgba(76,154,255,0.35)' : 'rgba(255,255,255,0.15)'}`,
+                borderRadius: '6px',
+                color: priorityEnabled ? '#4C9AFF' : '#666',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >등급분류 {priorityEnabled ? 'ON' : 'OFF'}</button>
           </div>
         </div>
         {/* 소싱처 체크박스 */}

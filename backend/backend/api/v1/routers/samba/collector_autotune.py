@@ -43,6 +43,7 @@ CLASSIFY_WINDOW_DAYS = 7
 # 오토튠 필터 설정 키 (samba_settings)
 AUTOTUNE_FILTER_SOURCES_KEY = "autotune_enabled_sources"
 AUTOTUNE_FILTER_MARKETS_KEY = "autotune_enabled_markets"
+AUTOTUNE_PRIORITY_ENABLED_KEY = "autotune_priority_enabled"
 
 
 async def _classify_products(session) -> dict[str, int]:
@@ -160,26 +161,48 @@ async def _autotune_loop():
                     now = datetime.now(timezone.utc)
                     repo = SambaCollectedProductRepository(session)
 
-                    # ① 등급 자동 분류 (매 사이클) — 실패해도 사이클 계속
-                    try:
-                        await _classify_products(session)
-                    except Exception as cls_err:
-                        log.warning(
-                            "[오토튠] 등급 분류 실패 (무시하고 진행): %s", cls_err
-                        )
+                    # ① 등급 분류 ON/OFF 확인
+                    from backend.api.v1.routers.samba.proxy import _get_setting
 
-                    # ② 마켓등록상품만 조회 + hot→warm→cold 정렬
-                    priority_order = case(
-                        (_CP.monitor_priority == "hot", 0),
-                        (_CP.monitor_priority == "warm", 1),
-                        else_=2,
+                    _priority_enabled = await _get_setting(
+                        session, AUTOTUNE_PRIORITY_ENABLED_KEY
                     )
+                    # 기본값 True (기존 동작 유지)
+                    _use_priority = (
+                        _priority_enabled
+                        if isinstance(_priority_enabled, bool)
+                        else True
+                    )
+
+                    if _use_priority:
+                        try:
+                            await _classify_products(session)
+                        except Exception as cls_err:
+                            log.warning(
+                                "[오토튠] 등급 분류 실패 (무시하고 진행): %s", cls_err
+                            )
+
+                    # ② 마켓등록상품 조회
                     # 마켓등록상품 공통 조건 (collector_common에서 통합 관리)
                     from backend.api.v1.routers.samba.collector_common import (
                         build_market_registered_conditions,
                     )
 
                     market_cond = build_market_registered_conditions(_CP)
+
+                    if _use_priority:
+                        priority_order = case(
+                            (_CP.monitor_priority == "hot", 0),
+                            (_CP.monitor_priority == "warm", 1),
+                            else_=2,
+                        )
+                        _order_clause = (
+                            priority_order,
+                            _CP.last_refreshed_at.asc().nullsfirst(),
+                        )
+                    else:
+                        _order_clause = (_CP.last_refreshed_at.asc().nullsfirst(),)
+
                     stmt = (
                         select(_CP)
                         .where(
@@ -189,9 +212,7 @@ async def _autotune_loop():
                             # sale_status 기준 품절 제외
                             _CP.sale_status != "sold_out",
                         )
-                        .order_by(
-                            priority_order, _CP.last_refreshed_at.asc().nullsfirst()
-                        )
+                        .order_by(*_order_clause)
                         # 오토튠에 불필요한 대형 컬럼 제외 — OOM 방지
                         .options(
                             defer(_CP.detail_html),
@@ -1244,6 +1265,17 @@ async def autotune_status():
 
     intervals_info = get_site_intervals_info()
 
+    # 등급 분류 ON/OFF
+    priority_enabled = True
+    try:
+        from backend.api.v1.routers.samba.proxy import _get_setting
+
+        async with get_read_session() as rs2:
+            _pv = await _get_setting(rs2, AUTOTUNE_PRIORITY_ENABLED_KEY)
+        priority_enabled = _pv if isinstance(_pv, bool) else True
+    except Exception:
+        pass
+
     return {
         "running": _autotune_running_event.is_set()
         and _autotune_task is not None
@@ -1255,6 +1287,7 @@ async def autotune_status():
         "target": "registered",
         "breaker_tripped": tripped,
         "site_intervals": intervals_info.get("base_intervals", {}),
+        "priority_enabled": priority_enabled,
     }
 
 
@@ -1288,6 +1321,39 @@ async def autotune_breaker_reset(site: str = ""):
         _site_consecutive_soldout.clear()
         logger.info("[오토튠] 서킷브레이커 전체 해제")
         return {"ok": True, "reset": "all"}
+
+
+# ── 등급 분류(hot/warm/cold) ON/OFF ──
+
+
+@router.get("/autotune/priority")
+async def autotune_get_priority():
+    """등급 분류 ON/OFF 상태 조회."""
+    from backend.db.orm import get_read_session
+    from backend.api.v1.routers.samba.proxy import _get_setting
+
+    async with get_read_session() as session:
+        val = await _get_setting(session, AUTOTUNE_PRIORITY_ENABLED_KEY)
+    enabled = val if isinstance(val, bool) else True
+    return {"ok": True, "priority_enabled": enabled}
+
+
+class AutotunePriorityRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/autotune/priority")
+async def autotune_set_priority(body: AutotunePriorityRequest):
+    """등급 분류 ON/OFF 설정 변경."""
+    from backend.db.orm import get_write_session
+    from backend.api.v1.routers.samba.proxy import _set_setting
+
+    async with get_write_session() as session:
+        await _set_setting(session, AUTOTUNE_PRIORITY_ENABLED_KEY, body.enabled)
+        await session.commit()
+    label = "ON" if body.enabled else "OFF"
+    logger.info("[오토튠] 등급 분류 %s", label)
+    return {"ok": True, "priority_enabled": body.enabled}
 
 
 # ── 오토튠 필터 (소싱처 / 판매처 선택) ──
