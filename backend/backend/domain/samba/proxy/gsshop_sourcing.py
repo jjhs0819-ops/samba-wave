@@ -239,116 +239,169 @@ class GsShopSourcingClient:
     # 카테고리 스캔 — 검색 → 상세 조회 → 카테고리 집계 (무신사 패턴)
     # ------------------------------------------------------------------
 
+    # GNB 대카테고리 매핑 (lsectNm → GNB 상위 카테고리)
+    GNB_MAP: dict[str, str] = {
+        "스포츠의류": "스포츠/레저",
+        "등산/아웃도어": "스포츠/레저",
+        "스포츠신발": "스포츠/레저",
+        "스포츠가방": "스포츠/레저",
+        "스포츠잡화": "스포츠/레저",
+        "골프의류": "스포츠/레저",
+        "골프용품": "스포츠/레저",
+        "골프클럽": "스포츠/레저",
+        "수영/물놀이": "스포츠/레저",
+        "캠핑용품": "스포츠/레저",
+        "헬스/요가": "스포츠/레저",
+        "자전거": "스포츠/레저",
+        "낚시용품": "스포츠/레저",
+        "구기/라켓": "스포츠/레저",
+        "스키/스노보드": "스포츠/레저",
+        "스케이트/보드": "스포츠/레저",
+        "시즌의류/잡화": "스포츠/레저",
+        "주니어/키즈의류": "출산/유아동",
+        "유아동잡화": "출산/유아동",
+        "신생아/유아의류": "출산/유아동",
+        "티셔츠": "유니섹스의류",
+        "아우터": "유니섹스의류",
+        "바지": "유니섹스의류",
+        "맨투맨/후드집업": "유니섹스의류",
+        "셔츠/남방": "유니섹스의류",
+        "니트/가디건": "유니섹스의류",
+        "조끼": "유니섹스의류",
+        "수트/셋업": "유니섹스의류",
+        "원피스": "여성의류",
+        "스커트": "여성의류",
+        "블라우스/셔츠": "여성의류",
+        "가방/지갑": "패션잡화",
+        "신발": "패션잡화",
+        "여행가방/소품": "패션잡화",
+        "양말/패션소품": "패션잡화",
+        "주얼리/시계": "패션잡화",
+        "휴대폰/태블릿": "가전/디지털",
+        "음향기기": "가전/디지털",
+        "자동차기기": "가전/디지털",
+        "주방용품": "생활/주방",
+        "현대백화점": "백화점",
+        "롯데백화점": "백화점",
+    }
+
     async def scan_categories(
         self,
         keyword: str,
     ) -> dict[str, Any]:
-        """GS샵 카테고리 스캔 — 백화점 탭 검색 후 상품별 카테고리 집계.
+        """GS샵 카테고리 스캔 — 백화점 탭 전체 페이지 검색 → 상세 조회 → 카테고리 집계.
 
-        1. 백화점 탭 URL로 검색 (확장앱 경유) → 상품 ID 목록
-        2. 상위 30개 상품 상세 조회 (서버 직접) → renderJson 카테고리 추출
-        3. 카테고리별 상품 수 집계
+        1. 백화점 탭 URL로 전체 페이지 순회 (서버 직접) → 상품 ID 목록
+        2. 전체 상품 상세 조회 (서버 직접, 동시 100) → renderJson 카테고리 추출
+        3. GNB 대카테고리 매핑 + 카테고리별 상품 수 집계
 
         Returns:
           {"categories": [...], "total": int, "groupCount": int}
         """
         import base64
-        from urllib.parse import quote
 
         logger.info(f'[GSSHOP] 카테고리 스캔 시작: "{keyword}"')
 
-        # 1. 백화점 탭 URL로 검색
-        eh = base64.b64encode(
+        # 1. 백화점 탭 전체 페이지 순회 → 상품 ID 수집 (서버 직접)
+        eh_dept = base64.b64encode(
             json.dumps(
                 {"part": "DEPT", "selected": "opt-part"}, separators=(",", ":")
             ).encode()
         ).decode()
-        encoded_kw = quote(keyword, safe="")
-        encoded_eh = quote(eh, safe="")
-        dept_url = f"{self.BASE_PC}/shop/search/main.gs?tq={encoded_kw}&eh={encoded_eh}"
-
-        # maxCount=60: 1페이지만 수집 (페이지네이션 시 eh 덮어쓰기 방지)
-        from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
-
-        request_id = str(uuid.uuid4())[:8]
-        loop = asyncio.get_event_loop()
-        future: asyncio.Future = loop.create_future()
-        SourcingQueue.queue.append(
-            {
-                "requestId": request_id,
-                "site": "GSShop",
-                "type": "search",
-                "url": dept_url,
-                "keyword": keyword,
-                "maxCount": 60,
-            }
+        product_ids: list[str] = []
+        seen_ids: set[str] = set()
+        link_pattern = re.compile(
+            r"/(?:prd/prd\.gs\?prdid|deal/deal\.gs\?dealNo)=(\d+)"
         )
-        SourcingQueue.resolvers[request_id] = future
-        logger.info(f"[GSSHOP] 카테고리 스캔 검색 큐 등록: {request_id}")
 
-        try:
-            result = await asyncio.wait_for(future, timeout=120)
-            products = result.get("products", []) if isinstance(result, dict) else []
-        except asyncio.TimeoutError:
-            logger.warning(f'[GSSHOP] 카테고리 스캔 검색 타임아웃: "{keyword}"')
-            return {"categories": [], "total": 0, "groupCount": 0}
-        except Exception as e:
-            logger.error(f"[GSSHOP] 카테고리 스캔 검색 실패: {e}")
-            return {"categories": [], "total": 0, "groupCount": 0}
+        async with httpx.AsyncClient(
+            timeout=self._timeout, follow_redirects=True
+        ) as client:
+            for page in range(1, 100):
+                if page == 1:
+                    params = {"tq": keyword, "eh": eh_dept}
+                else:
+                    eh_page = base64.b64encode(
+                        json.dumps(
+                            {"pageNumber": page, "selected": "opt-page"},
+                            separators=(",", ":"),
+                        ).encode()
+                    ).decode()
+                    params = {"tq": keyword, "eh": eh_page}
+                try:
+                    resp = await client.get(
+                        f"{self.BASE_PC}/shop/search/main.gs",
+                        params=params,
+                        headers=self._headers(mobile=False),
+                    )
+                    new_count = 0
+                    for pid in link_pattern.findall(resp.text):
+                        if pid not in seen_ids:
+                            seen_ids.add(pid)
+                            product_ids.append(pid)
+                            new_count += 1
+                    if new_count == 0:
+                        break
+                except Exception:
+                    break
 
-        if not products:
+        if not product_ids:
             logger.warning(f'[GSSHOP] 카테고리 스캔: 검색 결과 없음 "{keyword}"')
             return {"categories": [], "total": 0, "groupCount": 0}
 
         logger.info(
-            f"[GSSHOP] 카테고리 스캔: {len(products)}개 상품 검색 완료, 상위 30개 상세 조회 시작"
+            f"[GSSHOP] 카테고리 스캔: {len(product_ids)}개 상품 검색 완료, 상세 조회 시작"
         )
 
-        # 2. 상위 30개 상품 상세 조회 → 카테고리 추출
-        targets = products[:30]
-        sem = asyncio.Semaphore(2)  # GS샵 보수적 간격
+        # 2. 전체 상품 상세 조회 → 카테고리 추출 (동시 100, 간격 0)
+        sem = asyncio.Semaphore(100)
         cat_counter: dict[str, int] = {}
+        ok_count = 0
+        fail_count = 0
 
-        async def _fetch(p: dict[str, Any]) -> None:
+        async def _fetch(pid: str) -> None:
+            nonlocal ok_count, fail_count
             async with sem:
-                spid = (
-                    p.get("siteProductId")
-                    or p.get("site_product_id")
-                    or p.get("goodsNo")
-                    or ""
-                )
-                if not spid:
-                    return
                 try:
-                    detail = await self.get_product_detail(str(spid))
+                    detail = await self.get_product_detail(pid)
                     c1 = detail.get("category1", "")
                     c2 = detail.get("category2", "")
                     c3 = detail.get("category3", "")
                     c4 = detail.get("category4", "")
                     if not c1:
+                        fail_count += 1
                         return
-                    parts = [c for c in [c1, c2, c3, c4] if c]
+                    # GNB 대카테고리 매핑
+                    gnb = self.GNB_MAP.get(c1, "")
+                    parts = [gnb, c1, c2, c3, c4] if gnb else [c1, c2, c3, c4]
+                    parts = [p for p in parts if p]
                     path = " > ".join(parts)
-                    key = f"{path}||{c1}||{c2}||{c3}||{c4}"
+                    key = f"{path}||{gnb}||{c1}||{c2}||{c3}"
                     cat_counter[key] = cat_counter.get(key, 0) + 1
-                    await asyncio.sleep(1.0)  # GS샵 요청 간격
+                    ok_count += 1
                 except Exception as e:
-                    logger.warning(f"[GSSHOP] 카테고리 스캔 상세 실패: {spid} — {e}")
+                    fail_count += 1
+                    logger.debug(f"[GSSHOP] 카테고리 스캔 상세 실패: {pid} — {e}")
 
-        await asyncio.gather(*[_fetch(p) for p in targets], return_exceptions=True)
+        await asyncio.gather(
+            *[_fetch(pid) for pid in product_ids], return_exceptions=True
+        )
+        logger.info(
+            f"[GSSHOP] 카테고리 스캔 상세 완료: 성공={ok_count} 실패={fail_count}"
+        )
 
         # 3. 카테고리 분포 집계
         categories = []
         for key, count in sorted(cat_counter.items(), key=lambda x: -x[1]):
-            path, c1, c2, c3, c4 = key.split("||")
+            path, gnb, c1, c2, c3 = key.split("||")
             categories.append(
                 {
-                    "categoryCode": c4 or c3 or c2 or c1,
+                    "categoryCode": c3 or c2 or c1,
                     "path": path,
                     "count": count,
-                    "category1": c1,
-                    "category2": c2,
-                    "category3": c3,
+                    "category1": gnb or c1,
+                    "category2": c1 if gnb else c2,
+                    "category3": c2 if gnb else c3,
                 }
             )
 
