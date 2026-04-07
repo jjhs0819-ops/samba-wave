@@ -4,9 +4,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 
 router = APIRouter(prefix="/forbidden", tags=["samba-forbidden"])
 
@@ -47,19 +49,31 @@ def _get_service(session: AsyncSession):
 async def list_words(
     type: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    svc = _get_service(session)
+    from backend.domain.samba.forbidden.model import SambaForbiddenWord
+
+    # tenant_id가 있으면 해당 테넌트 금지어만 조회
+    stmt = select(SambaForbiddenWord).order_by(SambaForbiddenWord.created_at.desc())
     if type:
-        return await svc.list_by_type(type)
-    return await svc.list_words()
+        stmt = stmt.where(SambaForbiddenWord.type == type)
+    if tenant_id is not None:
+        stmt = stmt.where(SambaForbiddenWord.tenant_id == tenant_id)
+    result = await session.execute(stmt)
+    return result.scalars().all()
 
 
 @router.post("/words", status_code=201)
 async def create_word(
     body: WordCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    return await _get_service(session).create_word(body.model_dump(exclude_unset=True))
+    data = body.model_dump(exclude_unset=True)
+    # tenant_id가 있으면 신규 금지어에 테넌트 정보 설정
+    if tenant_id is not None:
+        data["tenant_id"] = tenant_id
+    return await _get_service(session).create_word(data)
 
 
 class BulkWordsRequest(BaseModel):
@@ -71,15 +85,17 @@ class BulkWordsRequest(BaseModel):
 async def bulk_save_words(
     body: BulkWordsRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """기존 타입의 단어를 전부 삭제 후 새 단어 벌크 저장 (단일 트랜잭션)."""
     from sqlmodel import delete
     from backend.domain.samba.forbidden.model import SambaForbiddenWord
 
-    # 해당 타입 전체 삭제 (단일 쿼리)
-    await session.exec(
-        delete(SambaForbiddenWord).where(SambaForbiddenWord.type == body.type)
-    )
+    # tenant_id가 있으면 해당 테넌트 타입만, 없으면 전체 삭제
+    del_stmt = delete(SambaForbiddenWord).where(SambaForbiddenWord.type == body.type)
+    if tenant_id is not None:
+        del_stmt = del_stmt.where(SambaForbiddenWord.tenant_id == tenant_id)
+    await session.exec(del_stmt)
 
     # 새 단어 일괄 추가 (중복 제거)
     created = 0
@@ -90,7 +106,13 @@ async def bulk_save_words(
             continue
         seen.add(w.lower())
         session.add(
-            SambaForbiddenWord(word=w, type=body.type, scope="all", is_active=True)
+            SambaForbiddenWord(
+                word=w,
+                type=body.type,
+                scope="all",
+                is_active=True,
+                tenant_id=tenant_id,
+            )
         )
         created += 1
 
@@ -158,11 +180,18 @@ async def clean_product_name(
 async def get_setting(
     key: str,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    svc = _get_service(session)
-    result = await svc.get_setting(key)
+    from backend.domain.samba.forbidden.model import SambaSettings
+
+    # tenant_id가 있으면 테넌트 전용 키(tenant_id:key)로 조회
+    effective_key = f"{tenant_id}:{key}" if tenant_id is not None else key
+    stmt = select(SambaSettings).where(SambaSettings.key == effective_key)
+    result = await session.execute(stmt)
+    row = result.scalars().first()
+    value = row.value if row else None
     # None이면 빈 dict 반환 (프론트에서 .catch(() => null) 호환)
-    return result if result is not None else {}
+    return value if value is not None else {}
 
 
 @router.put("/settings/{key}")
@@ -170,9 +199,38 @@ async def save_setting(
     key: str,
     body: dict,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    svc = _get_service(session)
-    return await svc.save_setting(key, body.get("value"))
+    from datetime import UTC, datetime
+
+    from backend.domain.samba.forbidden.model import SambaSettings
+
+    value = body.get("value")
+    # tenant_id가 있으면 테넌트 전용 키(tenant_id:key)로 upsert
+    # SambaSettings PK가 key 단일 컬럼이므로 테넌트별 네임스페이스 분리
+    effective_key = f"{tenant_id}:{key}" if tenant_id is not None else key
+    existing_stmt = select(SambaSettings).where(SambaSettings.key == effective_key)
+    result = await session.execute(existing_stmt)
+    existing = result.scalars().first()
+    if existing:
+        existing.value = value
+        existing.updated_at = datetime.now(UTC)
+        if tenant_id is not None:
+            existing.tenant_id = tenant_id
+        session.add(existing)
+        await session.commit()
+        await session.refresh(existing)
+        return existing
+    new_setting = SambaSettings(
+        key=effective_key,
+        tenant_id=tenant_id,
+        value=value,
+        updated_at=datetime.now(UTC),
+    )
+    session.add(new_setting)
+    await session.commit()
+    await session.refresh(new_setting)
+    return new_setting
 
 
 @router.get("/tag-banned-words")

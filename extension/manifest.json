@@ -28,7 +28,7 @@
     "https://*.grandstage.co.kr/*",
     "https://sell.smartstore.naver.com/*",
     "http://localhost:28080/*",
-    "https://samba-wave-api-363598397345.asia-northeast3.run.app/*"
+    "https://samba-wave-api-413651618998.asia-northeast3.run.app/*"
   ],
   "action": {
     "default_popup": "popup.html",

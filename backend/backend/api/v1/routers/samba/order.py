@@ -1,6 +1,5 @@
 """SambaWave Order API router."""
 
-from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,6 +7,7 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 from backend.domain.samba.order.model import SambaOrder
 from backend.domain.samba.order.repository import SambaOrderRepository
 from backend.domain.samba.order.service import SambaOrderService
@@ -33,10 +33,26 @@ def _write_service(session: AsyncSession) -> SambaOrderService:
 @router.get("", response_model=list[SambaOrder])
 async def list_orders(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=10000),
+    limit: int = Query(50, ge=1, le=500),
     status: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
+    from sqlmodel import select
+
+    # tenant_id가 있으면 해당 테넌트 주문만 조회
+    if tenant_id is not None:
+        stmt = (
+            select(SambaOrder)
+            .order_by(SambaOrder.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
+        if status:
+            stmt = stmt.where(SambaOrder.status == status)
+        result = await session.execute(stmt)
+        return result.scalars().all()
     svc = _read_service(session)
     return await svc.list_orders(skip=skip, limit=limit, status=status)
 
@@ -44,27 +60,13 @@ async def list_orders(
 @router.get("/dashboard-stats")
 async def dashboard_stats(
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """대시보드 집계 — DB에서 SUM/COUNT 후 결과만 반환 (빠름)."""
-    from sqlalchemy import select, func, case, and_, extract, text
-    from datetime import datetime, timedelta, timezone as tz
+    from sqlalchemy import select, func, case, and_
+    from datetime import datetime, timedelta
 
-    # 이행매출 대상 상태 (주문상태 드롭박스 기준)
-    FULFILLMENT_STATUSES = (
-        "pending",
-        "wait_ship",
-        "arrived",
-        "ship_failed",
-        "shipping",
-        "delivered",
-        "exchanged",
-        "exchanging",
-        "exchange_requested",
-    )
-
-    # KST 기준 (UTC+9)
-    KST = tz(timedelta(hours=9))
-    now = datetime.now(KST).replace(tzinfo=None)
+    now = datetime.utcnow()
     this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if now.month == 1:
         last_month_start = this_month_start.replace(year=now.year - 1, month=12)
@@ -74,88 +76,51 @@ async def dashboard_stats(
         hour=0, minute=0, second=0, microsecond=0
     )
 
-    # 날짜 기준: 고객결제일 우선, KST 변환
-    order_date_utc = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
-    order_date = order_date_utc + text("INTERVAL '9 hours'")
-
     # 금월 집계
     this_month_q = select(
         func.count().label("count"),
         func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
-        func.coalesce(
-            func.sum(
-                case(
-                    (
-                        SambaOrder.status.in_(FULFILLMENT_STATUSES),
-                        SambaOrder.sale_price,
-                    ),
-                    else_=0,
-                )
-            ),
-            0,
-        ).label("fulfillment_sales"),
-        func.sum(
-            case(
-                (SambaOrder.status.in_(FULFILLMENT_STATUSES), 1),
-                else_=0,
-            )
-        ).label("fulfillment_count"),
-    ).where(order_date >= this_month_start)
+        func.sum(case((SambaOrder.status == "delivered", 1), else_=0)).label(
+            "delivered"
+        ),
+    ).where(SambaOrder.created_at >= this_month_start)
+    # tenant_id가 있으면 해당 테넌트 데이터만 집계
+    if tenant_id is not None:
+        this_month_q = this_month_q.where(SambaOrder.tenant_id == tenant_id)
     tm = (await session.execute(this_month_q)).one()
 
     # 전월 집계
     last_month_q = select(
         func.count().label("count"),
         func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
-        func.coalesce(
-            func.sum(
-                case(
-                    (
-                        SambaOrder.status.in_(FULFILLMENT_STATUSES),
-                        SambaOrder.sale_price,
-                    ),
-                    else_=0,
-                )
-            ),
-            0,
-        ).label("fulfillment_sales"),
-        func.sum(
-            case(
-                (SambaOrder.status.in_(FULFILLMENT_STATUSES), 1),
-                else_=0,
-            )
-        ).label("fulfillment_count"),
-    ).where(and_(order_date >= last_month_start, order_date < this_month_start))
+        func.sum(case((SambaOrder.status == "delivered", 1), else_=0)).label(
+            "delivered"
+        ),
+    ).where(
+        and_(
+            SambaOrder.created_at >= last_month_start,
+            SambaOrder.created_at < this_month_start,
+        )
+    )
+    if tenant_id is not None:
+        last_month_q = last_month_q.where(SambaOrder.tenant_id == tenant_id)
     lm = (await session.execute(last_month_q)).one()
 
     # 최근 7일 일별 집계
     daily_q = (
         select(
-            func.date(order_date).label("day"),
+            func.date(SambaOrder.created_at).label("day"),
             func.count().label("count"),
             func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
-            func.coalesce(
-                func.sum(
-                    case(
-                        (
-                            SambaOrder.status.in_(FULFILLMENT_STATUSES),
-                            SambaOrder.sale_price,
-                        ),
-                        else_=0,
-                    )
-                ),
-                0,
-            ).label("fulfillment_sales"),
-            func.sum(
-                case(
-                    (SambaOrder.status.in_(FULFILLMENT_STATUSES), 1),
-                    else_=0,
-                )
-            ).label("fulfillment_count"),
+            func.sum(case((SambaOrder.status == "delivered", 1), else_=0)).label(
+                "delivered"
+            ),
         )
-        .where(order_date >= week_ago)
-        .group_by(func.date(order_date))
+        .where(SambaOrder.created_at >= week_ago)
+        .group_by(func.date(SambaOrder.created_at))
     )
+    if tenant_id is not None:
+        daily_q = daily_q.where(SambaOrder.tenant_id == tenant_id)
     daily_rows = (await session.execute(daily_q)).all()
     weekly = []
     for i in range(7):
@@ -167,55 +132,21 @@ async def dashboard_stats(
                 "date": day_str,
                 "sales": float(row.sales) if row else 0,
                 "count": int(row.count) if row else 0,
-                "fulfillmentSales": float(row.fulfillment_sales) if row else 0,
-                "fulfillmentCount": int(row.fulfillment_count) if row else 0,
+                "delivered": int(row.delivered) if row else 0,
             }
         )
 
-    # 월별 집계 (연간 12개월)
-    year_start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-    monthly_q = (
-        select(
-            extract("month", order_date).label("month"),
-            func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
-            func.coalesce(
-                func.sum(
-                    case(
-                        (
-                            SambaOrder.status.in_(FULFILLMENT_STATUSES),
-                            SambaOrder.sale_price,
-                        ),
-                        else_=0,
-                    )
-                ),
-                0,
-            ).label("fulfillment_sales"),
-        )
-        .where(
-            and_(
-                order_date >= year_start,
-                extract("year", order_date) == now.year,
-            )
-        )
-        .group_by(extract("month", order_date))
-    )
-    monthly_rows = (await session.execute(monthly_q)).all()
-    monthly = []
-    for m in range(1, 13):
-        row = next((r for r in monthly_rows if int(r.month) == m), None)
-        monthly.append(
-            {
-                "month": m,
-                "sales": float(row.sales) if row else 0,
-                "fulfillmentSales": float(row.fulfillment_sales) if row else 0,
-            }
-        )
+    # 최근 활동 5건
+    recent_q = select(SambaOrder).order_by(SambaOrder.created_at.desc()).limit(5)
+    if tenant_id is not None:
+        recent_q = recent_q.where(SambaOrder.tenant_id == tenant_id)
+    recent = (await session.execute(recent_q)).scalars().all()
 
-    tm_fulfillment_rate = (
-        round(int(tm.fulfillment_count or 0) / int(tm.count) * 100) if tm.count else 0
+    tm_fulfillment = (
+        round(int(tm.delivered or 0) / int(tm.count) * 100) if tm.count else 0
     )
-    lm_fulfillment_rate = (
-        round(int(lm.fulfillment_count or 0) / int(lm.count) * 100) if lm.count else 0
+    lm_fulfillment = (
+        round(int(lm.delivered or 0) / int(lm.count) * 100) if lm.count else 0
     )
     sales_change = (
         round(((float(tm.sales) - float(lm.sales)) / float(lm.sales)) * 100, 1)
@@ -227,20 +158,18 @@ async def dashboard_stats(
         "thisMonth": {
             "count": int(tm.count),
             "sales": float(tm.sales),
-            "fulfillmentSales": float(tm.fulfillment_sales or 0),
-            "fulfillmentCount": int(tm.fulfillment_count or 0),
-            "fulfillment": tm_fulfillment_rate,
+            "delivered": int(tm.delivered or 0),
+            "fulfillment": tm_fulfillment,
         },
         "lastMonth": {
             "count": int(lm.count),
             "sales": float(lm.sales),
-            "fulfillmentSales": float(lm.fulfillment_sales or 0),
-            "fulfillmentCount": int(lm.fulfillment_count or 0),
-            "fulfillment": lm_fulfillment_rate,
+            "delivered": int(lm.delivered or 0),
+            "fulfillment": lm_fulfillment,
         },
         "salesChange": sales_change,
         "weekly": weekly,
-        "monthly": monthly,
+        "recentOrders": [o.model_dump() for o in recent],
     }
 
 
@@ -264,226 +193,6 @@ async def find_by_order_number(
     if not order:
         return None
     return {"id": order.id, "order_number": order.order_number}
-
-
-@router.get("/by-date-range", response_model=list[SambaOrder])
-async def list_orders_by_date_range(
-    start: str = Query(..., description="시작일 YYYY-MM-DD"),
-    end: str = Query(..., description="종료일 YYYY-MM-DD"),
-    session: AsyncSession = Depends(get_read_session_dependency),
-):
-    """기간별 주문 조회 — COALESCE(paid_at, created_at) KST 기준, 제한 없이 전체 반환."""
-    from sqlalchemy import func, select as sa_select, text
-
-    # KST 기준 날짜 범위 (naive datetime으로 DB 컬럼+9h과 비교)
-    start_dt = datetime.strptime(start, "%Y-%m-%d").replace(hour=0, minute=0, second=0)
-    end_dt = datetime.strptime(end, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
-
-    # 고객결제일 우선, KST 변환 (대시보드와 동일 기준)
-    order_date_utc = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
-    order_date = order_date_utc + text("INTERVAL '9 hours'")
-    stmt = (
-        sa_select(SambaOrder)
-        .where(order_date >= start_dt, order_date <= end_dt)
-        .order_by(order_date.desc())
-    )
-    result = await session.execute(stmt)
-    return list(result.scalars().all())
-
-
-@router.get("/sales-breakdown")
-async def sales_breakdown(
-    date: str = Query(..., description="조회일 YYYY-MM-DD"),
-    session: AsyncSession = Depends(get_read_session_dependency),
-):
-    """특정일 status별 매출 분해 — 마이그레이션 후 기준."""
-    from sqlalchemy import func, select, text
-
-    FULFILLMENT_STATUSES = (
-        "pending",
-        "wait_ship",
-        "arrived",
-        "ship_failed",
-        "shipping",
-        "delivered",
-        "exchanged",
-        "exchanging",
-        "exchange_requested",
-    )
-
-    # KST 기준 날짜 범위
-    start_dt = datetime.strptime(date, "%Y-%m-%d").replace(hour=0, minute=0, second=0)
-    end_dt = datetime.strptime(date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
-
-    order_date_utc = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
-    order_date = order_date_utc + text("INTERVAL '9 hours'")
-
-    q = (
-        select(
-            SambaOrder.status.label("status"),
-            func.count().label("cnt"),
-            func.coalesce(func.sum(SambaOrder.sale_price), 0).label("sales"),
-        )
-        .where(order_date >= start_dt, order_date <= end_dt)
-        .group_by(SambaOrder.status)
-        .order_by(func.sum(SambaOrder.sale_price).desc())
-    )
-    rows = (await session.execute(q)).all()
-
-    breakdown = []
-    total_sales = 0
-    total_count = 0
-    f_sales = 0
-    f_count = 0
-    for r in rows:
-        s = float(r.sales)
-        is_fulfill = r.status in FULFILLMENT_STATUSES
-        breakdown.append(
-            {
-                "status": r.status,
-                "count": r.cnt,
-                "sales": s,
-                "fulfillment": is_fulfill,
-            }
-        )
-        total_sales += s
-        total_count += r.cnt
-        if is_fulfill:
-            f_sales += s
-            f_count += r.cnt
-
-    return {
-        "date": date,
-        "breakdown": breakdown,
-        "total": {"count": total_count, "sales": total_sales},
-        "fulfillment": {"count": f_count, "sales": f_sales},
-        "rate": round(f_sales / total_sales * 100, 1) if total_sales else 0,
-    }
-
-
-@router.post("/migrate-legacy-status")
-async def migrate_legacy_status(
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """기존 주문의 레거시 status 값을 표준 값으로 일괄 변환."""
-    from sqlalchemy import update
-
-    mapping = {
-        "new_order": "pending",
-        "invoice_printed": "wait_ship",
-        "processing": "wait_ship",
-        "shipped": "shipping",
-    }
-    total = 0
-    for old, new in mapping.items():
-        result = await session.execute(
-            update(SambaOrder).where(SambaOrder.status == old).values(status=new)
-        )
-        total += result.rowcount
-    await session.commit()
-    return {"migrated": total, "mapping": mapping}
-
-
-@router.post("/backfill-paid-at")
-async def backfill_paid_at(
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """paid_at이 NULL인 스마트스토어 주문의 결제시간을 네이버 API로 보충."""
-    from backend.domain.samba.account.repository import SambaMarketAccountRepository
-
-    account_repo = SambaMarketAccountRepository(session)
-    svc = _write_service(session)
-
-    from sqlalchemy import select as sa_select
-
-    stmt = sa_select(SambaOrder).where(
-        SambaOrder.paid_at.is_(None),
-        SambaOrder.source == "smartstore",
-    )
-    result = await session.execute(stmt)
-    null_orders = list(result.scalars().all())
-
-    if not null_orders:
-        return {"updated": 0, "message": "paid_at이 NULL인 스마트스토어 주문 없음"}
-
-    logger.info(
-        f"[paid_at 백필] paid_at=NULL 스마트스토어 주문 {len(null_orders)}건 발견"
-    )
-
-    account_orders: dict[str, list[SambaOrder]] = {}
-    for o in null_orders:
-        aid = o.channel_id or ""
-        if aid not in account_orders:
-            account_orders[aid] = []
-        account_orders[aid].append(o)
-
-    updated = 0
-    for account_id, orders_list in account_orders.items():
-        account = await account_repo.get_async(account_id) if account_id else None
-        if not account or account.market_type != "smartstore":
-            continue
-
-        extras = account.additional_fields or {}
-        client_id = extras.get("clientId", "") or account.api_key or ""
-        client_secret = extras.get("clientSecret", "") or account.api_secret or ""
-        if not client_id or not client_secret:
-            continue
-
-        from backend.domain.samba.proxy.smartstore import SmartStoreClient
-
-        client = SmartStoreClient(client_id, client_secret)
-
-        po_ids = [o.order_number for o in orders_list if o.order_number]
-        if not po_ids:
-            continue
-
-        try:
-            for i in range(0, len(po_ids), 300):
-                batch = po_ids[i : i + 300]
-                details_result = await client._call_api(
-                    "POST",
-                    "/v1/pay-order/seller/product-orders/query",
-                    body={"productOrderIds": batch},
-                )
-                details_data = (
-                    details_result.get("data", details_result)
-                    if isinstance(details_result, dict)
-                    else details_result
-                )
-                if isinstance(details_data, dict):
-                    details_data = details_data.get("productOrders", [])
-                if not isinstance(details_data, list):
-                    continue
-
-                paid_map: dict[str, datetime | None] = {}
-                for ro in details_data:
-                    po = ro.get("productOrder", ro)
-                    order_info = ro.get("order", {})
-                    po_id = po.get("productOrderId", "")
-                    paid_val = _parse_datetime(
-                        order_info.get("paymentDate")
-                        or po.get("paymentDate")
-                        or order_info.get("orderDate")
-                        or po.get("orderDate")
-                    )
-                    if po_id and paid_val:
-                        paid_map[po_id] = paid_val
-
-                for o in orders_list:
-                    if o.order_number in paid_map:
-                        await svc.update_order(
-                            o.id, {"paid_at": paid_map[o.order_number]}
-                        )
-                        updated += 1
-                        logger.info(
-                            f"[paid_at 백필] {o.order_number} → {paid_map[o.order_number]}"
-                        )
-
-            await session.commit()
-        except Exception as e:
-            logger.error(f"[paid_at 백필] {account_id} 실패: {e}")
-
-    return {"updated": updated, "total_null": len(null_orders)}
 
 
 @router.get("/{order_id}", response_model=SambaOrder)
@@ -612,6 +321,180 @@ async def approve_cancel(
         )
 
 
+# ══════════════════════════════════════════════
+# 판매자 주도 취소 (재고부족, 가격변동 등)
+# ══════════════════════════════════════════════
+
+
+class SellerCancelBody(BaseModel):
+    reason_code: str = (
+        "111"  # 111=품절, 132=가격오등록, 133=리셀러, 135=고객변심, 137=택배불가
+    )
+    reason_text: Optional[str] = None
+
+
+@router.post("/{order_id}/seller-cancel")
+async def seller_cancel(
+    order_id: str,
+    body: SellerCancelBody,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """판매자 주도 주문 취소 (재고부족/가격변동 등)."""
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    svc = _write_service(session)
+    order = await svc.get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+    if not order.order_number:
+        raise HTTPException(status_code=400, detail="상품주문번호가 없습니다")
+    if not order.channel_id:
+        raise HTTPException(status_code=400, detail="마켓 계정 정보가 없습니다")
+
+    account_repo = SambaMarketAccountRepository(session)
+    account = await account_repo.get_async(order.channel_id)
+    if not account:
+        raise HTTPException(status_code=400, detail="마켓 계정을 찾을 수 없습니다")
+
+    if account.market_type == "lotteon":
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+
+        extras = account.additional_fields or {}
+        api_key = extras.get("apiKey", "") or account.api_key or ""
+        if not api_key:
+            raise HTTPException(status_code=400, detail="롯데ON API Key 없음")
+
+        client = LotteonClient(api_key)
+        try:
+            await client.test_auth()
+            success, message = await client.seller_cancel_order(
+                od_no=order.order_number,
+                reason_code=body.reason_code,
+                reason_text=body.reason_text or "",
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"판매자 취소 실패: {e}")
+
+        if not success:
+            raise HTTPException(status_code=500, detail=f"판매자 취소 실패: {message}")
+
+        await svc.update_order(
+            order_id,
+            {"shipping_status": "취소완료"},
+        )
+        logger.info(
+            f"[판매자취소] 롯데ON {order.order_number} 완료 (rsnCd={body.reason_code})"
+        )
+        return {"ok": True, "message": "판매자 취소 완료", "detail": message}
+
+    raise HTTPException(
+        status_code=400, detail=f"{account.market_type} 판매자 취소 미지원"
+    )
+
+
+@router.post("/{order_id}/confirm")
+async def confirm_order(
+    order_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """주문확인(발주확인) 수동 처리 — 원소싱처 재고/가격 확인 후 사용자가 실행."""
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    svc = _write_service(session)
+    order = await svc.get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+    if not order.order_number:
+        raise HTTPException(status_code=400, detail="상품주문번호가 없습니다")
+    if not order.channel_id:
+        raise HTTPException(status_code=400, detail="마켓 계정 정보가 없습니다")
+
+    account_repo = SambaMarketAccountRepository(session)
+    account = await account_repo.get_async(order.channel_id)
+    if not account:
+        raise HTTPException(status_code=400, detail="마켓 계정을 찾을 수 없습니다")
+
+    if account.market_type == "lotteon":
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+
+        extras = account.additional_fields or {}
+        api_key = extras.get("apiKey", "") or account.api_key or ""
+        if not api_key:
+            raise HTTPException(status_code=400, detail="롯데ON API Key 없음")
+
+        # SellerIfCompleteInform은 odNo/odSeq/procSeq만 필요 (비클레임은 기본 1/1)
+        client = LotteonClient(api_key)
+        try:
+            await client.test_auth()
+            ok = await client.confirm_orders(
+                [{"odNo": order.order_number, "odSeq": 1, "procSeq": 1}]
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"주문확인 실패: {e}")
+
+        if not ok:
+            raise HTTPException(
+                status_code=500,
+                detail="롯데ON 주문확인 실패 — SellerIfCompleteInform 응답 rsltCd≠0000 (서버 로그 확인)",
+            )
+
+        await svc.update_order(order_id, {"shipping_status": "출고지시"})
+        logger.info(f"[주문확인] 롯데ON {order.order_number} 완료")
+        return {"ok": True, "message": "주문확인 완료"}
+
+    raise HTTPException(
+        status_code=400, detail=f"{account.market_type} 주문확인 미지원"
+    )
+
+
+@router.post("/{order_id}/market-delete")
+async def market_delete_order_product(
+    order_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """주문 카드의 '마켓상품삭제' — 해당 주문 상품을 마켓에서 완전 삭제(판매종료가 아닌 삭제)."""
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    svc = _write_service(session)
+    order = await svc.get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+    if not order.product_id:
+        raise HTTPException(status_code=400, detail="마켓 상품번호가 없습니다")
+    if not order.channel_id:
+        raise HTTPException(status_code=400, detail="마켓 계정 정보가 없습니다")
+
+    account_repo = SambaMarketAccountRepository(session)
+    account = await account_repo.get_async(order.channel_id)
+    if not account:
+        raise HTTPException(status_code=400, detail="마켓 계정을 찾을 수 없습니다")
+
+    if account.market_type == "lotteon":
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+
+        extras = account.additional_fields or {}
+        api_key = extras.get("apiKey", "") or account.api_key or ""
+        if not api_key:
+            raise HTTPException(status_code=400, detail="롯데ON API Key 없음")
+
+        spd_no = order.product_id
+        client = LotteonClient(api_key)
+        try:
+            await client.test_auth()
+            result = await client.delete_product(spd_no)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"마켓상품삭제 실패: {e}")
+
+        logger.info(
+            f"[마켓상품삭제] 롯데ON spdNo={spd_no} order={order.order_number} result={result}"
+        )
+        return {"ok": True, "message": "마켓 상품 삭제 완료", "detail": result}
+
+    raise HTTPException(
+        status_code=400, detail=f"{account.market_type} 마켓상품삭제 미지원"
+    )
+
+
 class CancelSourceOrderRequest(BaseModel):
     order_number: str
     reason: str = "단순변심"
@@ -653,6 +536,9 @@ async def cancel_source_order(
 class ExchangeActionBody(BaseModel):
     action: str  # "reship" | "reject" | "convert_return"
     reason: Optional[str] = None
+    clm_no: Optional[str] = None  # 롯데ON 교환 클레임번호
+    tracking_number: Optional[str] = None  # 롯데ON 교환 재배송 송장번호
+    shipping_company: Optional[str] = None  # 롯데ON 교환 재배송 택배사
 
 
 @router.post("/{order_id}/exchange-action")
@@ -726,6 +612,151 @@ async def exchange_action(
         await svc.update_order(order_id, {"shipping_status": new_status})
         logger.info(f"[교환처리] {order.order_number} {label} 완료")
         return {"ok": True, "message": f"{label} 완료"}
+
+    elif account.market_type == "lotteon":
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+
+        extras = account.additional_fields or {}
+        api_key = extras.get("apiKey", "") or account.api_key or ""
+        if not api_key:
+            raise HTTPException(status_code=400, detail="롯데ON API 키 없음")
+
+        client = LotteonClient(api_key=api_key)
+        await client.test_auth()
+
+        # 교환 클레임 정보 자동 탐색 (clmNo, procSeq, orglProcSeq)
+        clm_no = body.clm_no or ""
+        found_claim: dict = {}
+        try:
+            exchange_claims = await client.get_exchanges(days=30)
+            for claim in exchange_claims:
+                if str(claim.get("odNo", "")) == str(order.order_number):
+                    if not clm_no:
+                        clm_no = claim.get("clmNo", "")
+                    found_claim = claim
+                    logger.info(
+                        f"[교환처리] clmNo 탐색 성공: {clm_no} stepCd={claim.get('odPrgsStepCd', '')}"
+                    )
+                    break
+        except Exception as ce:
+            logger.warning(f"[교환처리] 클레임 탐색 실패: {ce}")
+
+        if body.action == "reship":
+            # 교환 재배송: 승인 → 발송 처리
+            tracking_number = body.tracking_number or ""
+            shipping_company = body.shipping_company or ""
+            sitm_no = order.shipment_id or ""
+            spd_no = order.product_id or ""
+            quantity = order.quantity or 1
+
+            if not tracking_number:
+                raise HTTPException(
+                    status_code=400, detail="교환 재배송 송장번호가 필요합니다"
+                )
+
+            # 교환 승인 (회수 지시) — 접수(03) 상태인 경우 먼저 승인
+            step_cd = str(found_claim.get("odPrgsStepCd", "") or "")
+            if step_cd == "03" and clm_no:
+                proc_seq = str(found_claim.get("procSeq", 1))
+                orgl_proc_seq = str(found_claim.get("orglProcSeq", 1))
+                clm_rsn_cd = str(found_claim.get("clmRsnCd", "204"))
+                try:
+                    approved = await client.approve_exchange(
+                        od_no=order.order_number,
+                        clm_no=clm_no,
+                        items=[
+                            {
+                                "odSeq": 1,
+                                "procSeq": int(proc_seq),
+                                "orglProcSeq": int(orgl_proc_seq),
+                                "slrRsnCd": clm_rsn_cd,
+                            }
+                        ],
+                    )
+                    if approved:
+                        logger.info(f"[교환처리] {order.order_number} 교환 승인 완료")
+                except Exception as ae:
+                    logger.warning(f"[교환처리] 교환 승인 실패 (계속 진행): {ae}")
+
+            try:
+                sent = await client.ship_order_exchange(
+                    od_no=order.order_number,
+                    sitm_no=sitm_no,
+                    spd_no=spd_no,
+                    clm_no=clm_no,
+                    quantity=quantity,
+                    shipping_company=shipping_company,
+                    tracking_number=tracking_number,
+                )
+                if not sent:
+                    raise HTTPException(
+                        status_code=500, detail="롯데ON 교환 재배송 전송 실패"
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"교환 재배송 실패: {e}")
+
+            await svc.update_order(
+                order_id,
+                {
+                    "shipping_status": "교환재배송",
+                    "tracking_number": tracking_number,
+                    "shipping_company": shipping_company,
+                },
+            )
+            logger.info(f"[교환처리] {order.order_number} 롯데ON 교환재배송 완료")
+            return {"ok": True, "message": "교환 재배송 처리 완료"}
+
+        elif body.action == "convert_return":
+            # 교환→반품 변경: 롯데ON API 미지원 → 삼바 내부 처리만
+            # 반품교환 레코드 타입을 exchange→return으로 변경
+            from backend.domain.samba.returns.repository import SambaReturnRepository
+
+            return_repo = SambaReturnRepository(session)
+            ret = await return_repo.find_by_async(order_id=order_id)
+            if ret:
+                await return_repo.update_async(
+                    ret.id,
+                    type="return",
+                    market_order_status="반품요청",
+                    status="pending",
+                )
+            await svc.update_order(
+                order_id, {"shipping_status": "반품요청", "status": "return_requested"}
+            )
+            logger.info(
+                f"[교환처리] {order.order_number} 교환→반품 변경 완료 (삼바 내부)"
+            )
+            return {
+                "ok": True,
+                "message": "교환→반품 변경 완료 (롯데ON 판매자센터에서도 별도 처리 필요)",
+            }
+
+        elif body.action == "reject":
+            # 교환 거부: 삼바 내부 상태 업데이트 (롯데ON 교환 거부 API 스펙 확인 후 연동 필요)
+            from backend.domain.samba.returns.repository import SambaReturnRepository
+
+            return_repo = SambaReturnRepository(session)
+            ret = await return_repo.find_by_async(order_id=order_id)
+            if ret:
+                await return_repo.update_async(
+                    ret.id,
+                    status="rejected",
+                    market_order_status="교환거부",
+                )
+            await svc.update_order(order_id, {"shipping_status": "교환거부"})
+            logger.info(f"[교환처리] {order.order_number} 교환거부 완료 (삼바 내부)")
+            return {
+                "ok": True,
+                "message": "교환거부 완료 (롯데ON 판매자센터에서도 별도 처리 필요)",
+            }
+
+        else:
+            raise HTTPException(
+                status_code=400, detail=f"롯데ON 교환처리 미지원 액션: {body.action}"
+            )
+
     else:
         raise HTTPException(
             status_code=400, detail=f"{account.market_type} 교환처리 미지원"
@@ -839,6 +870,88 @@ async def return_action(
 
         logger.info(f"[반품처리] {order.order_number} {label} 완료")
         return {"ok": True, "message": f"{label} 완료"}
+
+    elif account.market_type == "lotteon":
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+
+        api_key = (
+            (account.additional_fields or {}).get("apiKey", "") or account.api_key or ""
+        )
+        if not api_key:
+            raise HTTPException(status_code=400, detail="롯데ON API 키 없음")
+
+        client = LotteonClient(api_key=api_key)
+        label = "반품승인" if body.action == "approve" else "반품거부"
+
+        try:
+            if body.action == "approve":
+                # 반품 클레임 목록에서 해당 주문 item 조회
+                raw_returns = await client.get_returns(days=30)
+                claim_items = [
+                    i for i in raw_returns if i.get("odNo") == order.order_number
+                ]
+                if not claim_items:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="롯데ON 반품 클레임 정보 없음 (최근 30일 내 조회되지 않음)",
+                    )
+                ci = claim_items[0]
+                clm_no = ci.get("clmNo", "")
+                od_seq = int(ci.get("odSeq") or 1)
+                proc_seq = int(ci.get("procSeq") or od_seq)
+                orgl_proc_seq = int(ci.get("orglProcSeq") or proc_seq)
+                items_payload = [
+                    {
+                        "odSeq": od_seq,
+                        "procSeq": proc_seq,
+                        "orglProcSeq": orgl_proc_seq,
+                        "spdNo": ci.get("spdNo", ""),
+                        "spdNm": ci.get("spdNm", ""),
+                        "sitmNo": ci.get("sitmNo", ""),
+                        "sitmNm": ci.get("sitmNm", ""),
+                    }
+                ]
+                await client.approve_return(order.order_number, clm_no, items_payload)
+                new_status = "반품승인"
+            elif body.action == "reject":
+                await client.reject_return(order.order_number, body.reason or "")
+                new_status = "반품거부"
+            else:
+                raise HTTPException(
+                    status_code=400, detail=f"알 수 없는 액션: {body.action}"
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"{label} 실패: {e}")
+
+        await svc.update_order(order_id, {"shipping_status": new_status})
+
+        # samba_return 상태 업데이트
+        from backend.domain.samba.returns.repository import SambaReturnRepository
+        from datetime import UTC, datetime
+
+        return_repo = SambaReturnRepository(session)
+        existing_returns = await return_repo.filter_by_async(order_id=order_id)
+        if existing_returns:
+            ret = existing_returns[0]
+            if body.action == "approve":
+                await return_repo.update_async(
+                    ret.id,
+                    status="completed",
+                    market_order_status="반품완료",
+                    completion_date=datetime.now(UTC),
+                )
+            elif body.action == "reject":
+                await return_repo.update_async(
+                    ret.id,
+                    status="rejected",
+                    market_order_status="반품거부",
+                )
+
+        logger.info(f"[반품처리][롯데ON] {order.order_number} {label} 완료")
+        return {"ok": True, "message": f"{label} 완료"}
+
     else:
         raise HTTPException(
             status_code=400, detail=f"{account.market_type} 반품처리 미지원"
@@ -889,7 +1002,45 @@ async def ship_order(
             account_repo = SambaMarketAccountRepository(session)
             account = await account_repo.get_async(order.channel_id)
 
-            if account and account.market_type == "smartstore":
+            if account and account.market_type == "lotteon":
+                from backend.domain.samba.proxy.lotteon import LotteonClient
+                import json
+                from sqlmodel import select
+                from backend.domain.samba.forbidden.model import SambaSettings
+
+                config_result = await session.execute(
+                    select(SambaSettings).where(
+                        SambaSettings.key.like("store_lotteon%")
+                    )
+                )
+                lo_settings = config_result.scalars().first()
+                if lo_settings:
+                    config = (
+                        json.loads(lo_settings.value)
+                        if isinstance(lo_settings.value, str)
+                        else lo_settings.value
+                    )
+                    client = LotteonClient(config["apiKey"])
+                    await client.test_auth()
+                    sent = await client.ship_order(
+                        od_no=order.order_number,
+                        sitm_no=order.shipment_id or order.order_number,
+                        spd_no=order.product_id or "",
+                        quantity=order.quantity or 1,
+                        shipping_company=body.shipping_company,
+                        tracking_number=body.tracking_number,
+                    )
+                    if sent:
+                        market_sent = True
+                        market_msg = "롯데ON 송장 등록 완료"
+                        await svc.update_order(
+                            order_id,
+                            {"shipping_status": "송장전송완료", "status": "shipping"},
+                        )
+                    else:
+                        market_msg = "롯데ON 송장 등록 실패 (로그 확인)"
+
+            elif account and account.market_type == "smartstore":
                 import json
                 from sqlmodel import select
                 from backend.domain.samba.forbidden.model import SambaSettings
@@ -1039,6 +1190,7 @@ class SyncOrdersRequest(BaseModel):
 async def sync_orders_from_markets(
     body: SyncOrdersRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """활성 마켓 계정에서 주문 데이터를 가져와 DB에 저장."""
     from backend.domain.samba.account.repository import SambaMarketAccountRepository
@@ -1096,19 +1248,6 @@ async def sync_orders_from_markets(
                 for ro in raw_orders:
                     po = ro.get("productOrder", ro)
                     order_info = ro.get("order", {})
-                    # 디버그: paid_at 파싱 확인
-                    _paid_raw = (
-                        order_info.get("paymentDate")
-                        or po.get("paymentDate")
-                        or order_info.get("orderDate")
-                        or po.get("orderDate")
-                    )
-                    logger.info(
-                        f"[paid_at 디버그] ro_keys={list(ro.keys())}, "
-                        f"po_keys(date관련)={[k for k in po.keys() if 'date' in k.lower() or 'Date' in k or 'time' in k.lower() or 'pay' in k.lower()]}, "
-                        f"order_info_keys={list(order_info.keys())}, "
-                        f"paid_raw={_paid_raw!r}"
-                    )
                     orders_data.append(
                         _parse_smartstore_order(po, order_info, account.id, label)
                     )
@@ -1127,48 +1266,139 @@ async def sync_orders_from_markets(
                     except Exception as ce:
                         logger.warning(f"[주문동기화] {label}: 발주확인 실패 — {ce}")
 
-            elif market_type == "coupang":
-                from backend.domain.samba.proxy.coupang import CoupangClient
+            elif market_type == "lotteon":
+                from backend.domain.samba.proxy.lotteon import LotteonClient
 
-                access_key = extras.get("accessKey", "") or account.api_key or ""
-                secret_key = extras.get("secretKey", "") or account.api_secret or ""
-                vendor_id = extras.get("vendorId", "") or seller_id or ""
-                if not access_key or not secret_key or not vendor_id:
-                    # fallback: 공유 설정
-                    settings_repo = SambaSettingsRepository(session)
-                    row = await settings_repo.find_by_async(key="store_coupang")
-                    if row and isinstance(row.value, dict):
-                        access_key = access_key or row.value.get("accessKey", "")
-                        secret_key = secret_key or row.value.get("secretKey", "")
-                        vendor_id = vendor_id or row.value.get("vendorId", "")
-                if not access_key or not secret_key or not vendor_id:
+                api_key = extras.get("apiKey", "") or account.api_key or ""
+                if not api_key:
                     results.append(
                         {
                             "account": label,
                             "status": "skip",
-                            "message": "쿠팡 인증정보 없음",
+                            "message": "롯데ON API Key 없음",
                         }
                     )
                     continue
-                cpg_client = CoupangClient(access_key, secret_key, vendor_id)
-                raw_orders = await cpg_client.get_orders(days=body.days)
-                # 발주 미확인(ACCEPT) 주문 자동 발주확인
-                unconfirmed_box_ids: list[int] = []
+                lotteon_client = LotteonClient(api_key)
+                await lotteon_client.test_auth()
+                raw_orders = await lotteon_client.get_delivery_orders(days=body.days)
+                logger.info(
+                    f"[주문동기화] {label}: 롯데ON 주문 {len(raw_orders)}건 조회"
+                )
                 for ro in raw_orders:
-                    orders_data.append(_parse_coupang_order(ro, account.id, label))
-                    if ro.get("orderedAt") and ro.get("status") == "ACCEPT":
-                        box_id = ro.get("shipmentBoxId")
-                        if box_id:
-                            unconfirmed_box_ids.append(int(box_id))
-                # 발주확인 실행
-                if unconfirmed_box_ids:
-                    try:
-                        await cpg_client.confirm_orders(unconfirmed_box_ids)
-                        logger.info(
-                            f"[주문동기화] {label}: {len(unconfirmed_box_ids)}건 발주확인 완료"
+                    orders_data.append(_parse_lotteon_order(ro, account.id, label))
+
+                # ── 정산금액 매칭 (SettleItmdSales) ─────────────────────────
+                try:
+                    settle_items = await lotteon_client.get_settlement_items(
+                        days=body.days
+                    )
+                    # (odNo, odSeq, procSeq) → 정산 데이터 매핑
+                    settle_map: dict[tuple[str, str, str], dict] = {}
+                    for si in settle_items:
+                        key = (
+                            str(si.get("odNo", "")),
+                            str(si.get("odSeq", "")),
+                            str(si.get("procSeq", "")),
                         )
-                    except Exception as ce:
-                        logger.warning(f"[주문동기화] {label}: 발주확인 실패 — {ce}")
+                        settle_map[key] = si
+                    # 매출 주문에 매칭 → revenue/fee_rate 갱신
+                    matched = 0
+                    for i, ro in enumerate(raw_orders):
+                        key = (
+                            str(ro.get("odNo", "")),
+                            str(ro.get("odSeq", "1")),
+                            str(ro.get("procSeq", "1")),
+                        )
+                        si = settle_map.get(key)
+                        if not si:
+                            continue
+                        pymt_amt = float(si.get("pymtAmt", 0) or 0)
+                        sl_amt = float(si.get("slAmt", 0) or 0)
+                        sl_qty = float(si.get("slQty", 1) or 1)
+                        gross = sl_amt * sl_qty
+                        if pymt_amt > 0 and gross > 0:
+                            fee_rate = round((1 - pymt_amt / gross) * 100, 2)
+                            orders_data[i]["revenue"] = pymt_amt
+                            orders_data[i]["fee_rate"] = fee_rate
+                            matched += 1
+                    logger.info(
+                        f"[주문동기화] {label}: 정산 매칭 {matched}/{len(raw_orders)}건 "
+                        f"(정산 API {len(settle_items)}건)"
+                    )
+                except Exception as se:
+                    logger.warning(f"[주문동기화] {label}: 정산 조회 실패 — {se}")
+
+                # 발주확인은 수동 처리 (원소싱처 재고/가격 확인 후 사용자가 결정)
+                # 교환 클레임 조회 → 기존 주문 shipping_status 업데이트
+                try:
+                    exchange_claims = await lotteon_client.get_exchanges(days=body.days)
+                    logger.info(f"[롯데ON] 교환 클레임 조회: {len(exchange_claims)}건")
+                    if exchange_claims:
+                        exchange_step_map = {
+                            "21": "교환요청",
+                            "22": "교환회수완료",
+                            "23": "교환회수완료",
+                            "24": "교환재배송",
+                            "25": "교환완료",
+                        }
+                        exchange_priority = {
+                            "교환요청": 1,
+                            "교환회수완료": 2,
+                            "교환재배송": 3,
+                            "교환완료": 4,
+                        }
+                        for claim in exchange_claims:
+                            ex_od_no = claim.get("odNo", "")
+                            clm_no = claim.get("clmNo", "")
+                            step_cd = str(claim.get("odPrgsStepCd", "") or "")
+                            ex_status = exchange_step_map.get(step_cd, "교환요청")
+                            logger.info(
+                                f"[롯데ON][교환클레임] odNo={ex_od_no} clmNo={clm_no} stepCd={step_cd} → {ex_status}"
+                            )
+                            found_in_data = False
+                            for od in orders_data:
+                                if od.get("order_number") == ex_od_no:
+                                    cur_status = od.get("shipping_status", "")
+                                    cur_p = exchange_priority.get(cur_status, 0)
+                                    new_p = exchange_priority.get(ex_status, 0)
+                                    if cur_p == 0 or new_p >= cur_p:
+                                        od["shipping_status"] = ex_status
+                                        if step_cd in ("21", "22", "23"):
+                                            od["status"] = "return_requested"
+                                    found_in_data = True
+                                    break
+                            if not found_in_data and ex_od_no:
+                                existing = await svc.repo.find_by_async(
+                                    order_number=ex_od_no
+                                )
+                                if existing:
+                                    cur_p = exchange_priority.get(
+                                        existing.shipping_status, 0
+                                    )
+                                    new_p = exchange_priority.get(ex_status, 0)
+                                    if cur_p == 0 or new_p >= cur_p:
+                                        update_ex: dict[str, Any] = {
+                                            "shipping_status": ex_status
+                                        }
+                                        if step_cd in ("21", "22", "23"):
+                                            update_ex["status"] = "return_requested"
+                                        await svc.update_order(existing.id, update_ex)
+                                        logger.info(
+                                            f"[롯데ON][교환클레임] DB 직접 업데이트: {ex_od_no} → {ex_status}"
+                                        )
+                except Exception as ex_err:
+                    logger.warning(f"[롯데ON] 교환 클레임 조회 실패: {ex_err}")
+            elif market_type == "coupang":
+                # 쿠팡 주문 조회 (구현 대기)
+                results.append(
+                    {
+                        "account": label,
+                        "status": "skip",
+                        "message": "쿠팡 주문 조회 미구현",
+                    }
+                )
+                continue
             elif market_type == "11st":
                 # 11번가 주문 조회 (구현 대기)
                 results.append(
@@ -1179,97 +1409,7 @@ async def sync_orders_from_markets(
                     }
                 )
                 continue
-            elif market_type == "ssg":
-                from backend.domain.samba.proxy.ssg import SSGClient
-
-                api_key = extras.get("apiKey", "") or account.api_key or ""
-                if not api_key:
-                    results.append(
-                        {
-                            "account": label,
-                            "status": "skip",
-                            "message": "SSG API Key 없음",
-                        }
-                    )
-                    continue
-                ssg_client = SSGClient(api_key)
-                try:
-                    fee_rate = float(extras.get("feeRate", 0) or 0)
-                    raw_orders = await ssg_client.get_orders(days=body.days)
-                    logger.info(f"[주문동기화] SSG({label}): {len(raw_orders)}건 조회")
-                    for ro in raw_orders:
-                        orders_data.append(
-                            ssg_client.parse_order(ro, account.id, label, fee_rate)
-                        )
-                except Exception as e:
-                    logger.warning(f"[주문동기화] {label}: SSG 조회 실패 — {e}")
-                    results.append(
-                        {
-                            "account": label,
-                            "status": "error",
-                            "message": str(e)[:100],
-                        }
-                    )
-                    continue
-                finally:
-                    await ssg_client.close()
-            elif market_type == "playauto":
-                from backend.domain.samba.proxy.playauto import PlayAutoClient
-
-                api_key = extras.get("apiKey", "") or account.api_key or ""
-                if not api_key:
-                    results.append(
-                        {"account": label, "status": "skip", "message": "API Key 없음"}
-                    )
-                    continue
-                # 별칭 매핑 로드 (store_playauto 설정에서)
-                alias_map: dict[str, str] = {}
-                try:
-                    settings_repo = SambaSettingsRepository(session)
-                    pa_setting = await settings_repo.find_by_async(key="store_playauto")
-                    if pa_setting and isinstance(pa_setting.value, dict):
-                        for ak in ("alias1", "alias2", "alias3"):
-                            av = pa_setting.value.get(ak, "")
-                            if av and "-" in av:
-                                code, nick = av.split("-", 1)
-                                alias_map[code.strip()] = nick.strip()
-                except Exception:
-                    pass
-                pa_client = PlayAutoClient(api_key)
-                try:
-                    start_date = (
-                        datetime.now(UTC) - timedelta(days=body.days)
-                    ).strftime("%Y%m%d")
-                    # 전체 상태 한번에 조회 (상태 필터 없이)
-                    raw_orders = await pa_client.get_orders(
-                        start_date=start_date,
-                        count=5000,
-                    )
-                    logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
-                    # 디버깅: 첫 주문의 날짜 필드 확인
-                    if raw_orders:
-                        _s = raw_orders[0]
-                        logger.info(
-                            f"[플레이오토 날짜] OrderDate={_s.get('OrderDate')!r}, "
-                            f"CashDate={_s.get('CashDate')!r}, "
-                            f"WriteDate={_s.get('WriteDate')!r}"
-                        )
-                    for ro in raw_orders:
-                        # 파생 주문 스킵 (사본-*, ★교환주문 — 원주문에 이미 정보 포함)
-                        _pname = ro.get("ProdName", "")
-                        if _pname.startswith("[사본-") or "★교환주문" in _pname:
-                            continue
-                        orders_data.append(
-                            _parse_playauto_order(ro, account.id, label, alias_map)
-                        )
-                except Exception as e:
-                    logger.warning(f"[주문동기화] {label}: 플레이오토 조회 실패 — {e}")
-                    results.append(
-                        {"account": label, "status": "error", "message": str(e)[:100]}
-                    )
-                    continue
-                finally:
-                    await pa_client.close()
+            # (dead code 제거: 두 번째 롯데ON 블록 → 첫 번째에 병합 완료)
             else:
                 results.append(
                     {
@@ -1356,262 +1496,342 @@ async def sync_orders_from_markets(
 
             # 중복 확인 후 저장 (기존 주문은 금액/상태 업데이트)
             synced = 0
-            skipped = 0
             for order_data in orders_data:
-                try:
-                    # 수집상품 매칭 — product_image, source_site, source_url 보충
-                    _pid = str(order_data.get("product_id", ""))
-                    _matched = _mpn_cache.get(_pid)
-                    if _matched:
-                        if not order_data.get("product_image"):
-                            order_data["product_image"] = _matched["product_image"]
-                        if not order_data.get("source_site"):
-                            order_data["source_site"] = _matched["source_site"]
-                        if not order_data.get("source_url") and _matched.get(
-                            "original_link"
-                        ):
-                            order_data["source_url"] = _matched["original_link"]
-                    # 미등록 입력 자동 적용: 동일 상품의 기존 source_url/product_image 복사
-                    _ukey = f"{_pid}|{order_data.get('channel_name', '')}"
-                    _unreg_matched = _unreg_cache.get(_ukey)
-                    if _unreg_matched:
-                        if not order_data.get("source_url"):
-                            order_data["source_url"] = _unreg_matched["source_url"]
-                        if (
-                            not order_data.get("product_image")
-                            and _unreg_matched["product_image"]
-                        ):
-                            order_data["product_image"] = _unreg_matched[
-                                "product_image"
-                            ]
-                    # 상품명에서 소싱처 상품번호 추출 → source_site/source_url 보충
-                    if not order_data.get("source_url"):
-                        import re as _re
-
-                        _pname = order_data.get("product_name", "")
-                        _id_match = _re.search(r"\b(\d{6,})\s*$", _pname)
-                        if _id_match:
-                            _sid = _id_match.group(1)
-                            # 1차: DB에서 수집상품 조회
-                            _cp_check = await session.execute(
-                                _sa_text(
-                                    "SELECT source_site, images FROM samba_collected_product WHERE site_product_id = :sid LIMIT 1"
-                                ),
-                                {"sid": _sid},
-                            )
-                            _cp_row = _cp_check.fetchone()
-                            if _cp_row:
-                                order_data["source_site"] = _cp_row[0]
-                                order_data["source_url"] = _sourcing_urls.get(
-                                    _cp_row[0], ""
-                                ).format(_sid)
-                                if (
-                                    not order_data.get("product_image")
-                                    and _cp_row[1]
-                                    and isinstance(_cp_row[1], list)
-                                ):
-                                    order_data["product_image"] = _cp_row[1][0]
-                            else:
-                                # 2차: DB에 없어도 상품명 패턴으로 소싱처 추론
-                                if len(_sid) >= 9:  # 패션플러스 상품번호는 9자리 이상
-                                    order_data["source_site"] = "FashionPlus"
-                                    order_data["source_url"] = (
-                                        f"https://www.fashionplus.co.kr/goods/detail/{_sid}"
-                                    )
-                                elif len(_sid) >= 7:  # 무신사 상품번호는 7자리
-                                    order_data["source_site"] = "MUSINSA"
-                                    order_data["source_url"] = (
-                                        f"https://www.musinsa.com/products/{_sid}"
-                                    )
-                    # order_number 기준 중복 체크 + shipment_id 기반 2차 체크 (발주확인 후 productOrderId 변경 대응)
-                    existing = await svc.repo.find_by_async(
-                        order_number=order_data["order_number"]
-                    )
-                    if (
-                        not existing
-                        and order_data.get("shipment_id")
-                        and order_data.get("product_id")
+                # tenant_id 주입 (멀티테넌트 격리 — account 우선, JWT fallback)
+                _tid = account.tenant_id or tenant_id
+                if _tid:
+                    order_data["tenant_id"] = _tid
+                # 수집상품 매칭 — product_image, source_site, source_url 보충
+                _pid = str(order_data.get("product_id", ""))
+                _matched = _mpn_cache.get(_pid)
+                if _matched:
+                    if not order_data.get("product_image"):
+                        order_data["product_image"] = _matched["product_image"]
+                    if not order_data.get("source_site"):
+                        order_data["source_site"] = _matched["source_site"]
+                    if not order_data.get("source_url") and _matched.get(
+                        "original_link"
                     ):
-                        # 같은 orderId + 상품번호로 이미 있는 주문 검색
-                        _dup_candidates = await svc.repo.filter_by_async(
-                            shipment_id=order_data["shipment_id"], limit=10
-                        )
-                        existing = next(
-                            (
-                                d
-                                for d in _dup_candidates
-                                if d.product_id == order_data["product_id"]
-                            ),
-                            None,
-                        )
-                        if existing:
-                            # order_number 갱신 (발주확인 후 변경된 productOrderId)
-                            await svc.repo.update_async(
-                                existing.id, order_number=order_data["order_number"]
-                            )
-                    # 디버깅: shipment_id 1005913 추적
-                    if order_data.get("shipment_id") == "1005913":
-                        logger.info(
-                            f"[디버깅 1005913] found={existing is not None}, "
-                            f"paid_at_data={order_data.get('paid_at')!r}, "
-                            f"paid_at_existing={getattr(existing, 'paid_at', 'N/A')!r}"
-                        )
-                    if existing:
-                        # 기존 주문: sale_price, 이미지, 상태, 마켓주문상태 업데이트
-                        update_fields: dict[str, Any] = {}
-                        if (
-                            order_data.get("sale_price")
-                            and order_data["sale_price"] != existing.sale_price
-                        ):
-                            update_fields["sale_price"] = order_data["sale_price"]
-                        if (
-                            order_data.get("product_image")
-                            and not existing.product_image
-                        ):
-                            update_fields["product_image"] = order_data["product_image"]
-                        if order_data.get("source_site") and not existing.source_site:
-                            update_fields["source_site"] = order_data["source_site"]
-                        if order_data.get("source_url") and not existing.source_url:
-                            update_fields["source_url"] = order_data["source_url"]
-                        if order_data.get("shipment_id") and not existing.shipment_id:
-                            update_fields["shipment_id"] = order_data["shipment_id"]
-                        _od_paid = order_data.get("paid_at")
-                        logger.info(
-                            f"[paid_at 체크] order={existing.order_number} "
-                            f"data_paid_at={_od_paid!r} "
-                            f"existing_paid_at={existing.paid_at!r} "
-                            f"will_update={bool(_od_paid and not existing.paid_at)}"
-                        )
-                        if _od_paid and not existing.paid_at:
-                            update_fields["paid_at"] = _od_paid
-                            logger.info(
-                                f"[paid_at 보충] {existing.order_number} → {_od_paid}"
-                            )
-                        # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
-                        if order_data.get("product_id") and not existing.product_id:
-                            update_fields["product_id"] = order_data["product_id"]
-                        if order_data.get("shipping_status"):
-                            update_fields["shipping_status"] = order_data[
-                                "shipping_status"
-                            ]
-                        # 플레이오토 주문: 실구매가/배송비는 사용자 입력 전용 — API 값 덮어쓰기 방지 + 기존 값 리셋
-                        if order_data.get("source") == "playauto":
-                            if existing.cost and existing.cost > 0:
-                                update_fields["cost"] = 0
-                            if existing.shipping_fee and existing.shipping_fee > 0:
-                                update_fields["shipping_fee"] = 0
-                        # 내부 status도 갱신 (취소/반품 등 상태 변화 반영)
-                        if (
-                            order_data.get("status")
-                            and order_data["status"] != existing.status
-                        ):
-                            update_fields["status"] = order_data["status"]
-                        # 정산금액(revenue) / 수수료율 갱신
-                        new_revenue = order_data.get("revenue")
-                        new_fee_rate = order_data.get("fee_rate")
-                        sp = float(
-                            update_fields.get("sale_price", existing.sale_price) or 0
-                        )
-                        if new_revenue and float(new_revenue) != float(
-                            existing.revenue or 0
-                        ):
-                            rev = float(new_revenue)
-                            update_fields["revenue"] = rev
-                            update_fields["fee_rate"] = (
-                                new_fee_rate
-                                if new_fee_rate is not None
-                                else (existing.fee_rate or 0)
-                            )
-                            cost = float(existing.cost or 0)
-                            ship_fee = float(existing.shipping_fee or 0)
-                            update_fields["profit"] = rev - cost - ship_fee
-                            update_fields["profit_rate"] = (
-                                f"{((rev - cost - ship_fee) / rev * 100):.2f}"
-                                if rev > 0
-                                else "0.00"
-                            )
-                        elif "sale_price" in update_fields:
-                            fr = float(
-                                new_fee_rate
-                                if new_fee_rate is not None
-                                else (existing.fee_rate or 0)
-                            )
-                            rev = sp * (1 - fr / 100)
-                            cost = float(existing.cost or 0)
-                            ship_fee = float(existing.shipping_fee or 0)
-                            update_fields["revenue"] = rev
-                            update_fields["profit"] = rev - cost - ship_fee
-                            update_fields["profit_rate"] = (
-                                f"{((rev - cost - ship_fee) / rev * 100):.2f}"
-                                if rev > 0
-                                else "0.00"
-                            )
-                        if update_fields:
-                            await svc.update_order(existing.id, update_fields)
-                        continue
-                    await svc.create_order(order_data)
-                    synced += 1
-                except Exception as _ord_err:
-                    await session.rollback()
-                    skipped += 1
-                    logger.warning(
-                        f"[주문동기화] 개별 주문 처리 실패 (order_number={order_data.get('order_number', '?')}): {_ord_err}"
-                    )
+                        order_data["source_url"] = _matched["original_link"]
+                # 미등록 입력 자동 적용: 동일 상품의 기존 source_url/product_image 복사
+                _ukey = f"{_pid}|{order_data.get('channel_name', '')}"
+                _unreg_matched = _unreg_cache.get(_ukey)
+                if _unreg_matched:
+                    if not order_data.get("source_url"):
+                        order_data["source_url"] = _unreg_matched["source_url"]
+                    if (
+                        not order_data.get("product_image")
+                        and _unreg_matched["product_image"]
+                    ):
+                        order_data["product_image"] = _unreg_matched["product_image"]
+                # 상품명에서 소싱처 상품번호 추출 → source_site/source_url 보충
+                if not order_data.get("source_url"):
+                    import re as _re
 
-            # 즉시 커밋 — Cloud Run 타임아웃으로 세션 롤백 방지
-            if synced > 0:
-                await session.commit()
+                    _pname = order_data.get("product_name", "")
+                    _id_match = _re.search(r"\b(\d{6,})\s*$", _pname)
+                    if _id_match:
+                        _sid = _id_match.group(1)
+                        # 1차: DB에서 수집상품 조회
+                        _cp_check = await session.execute(
+                            _sa_text(
+                                "SELECT source_site, images FROM samba_collected_product WHERE site_product_id = :sid LIMIT 1"
+                            ),
+                            {"sid": _sid},
+                        )
+                        _cp_row = _cp_check.fetchone()
+                        if _cp_row:
+                            order_data["source_site"] = _cp_row[0]
+                            order_data["source_url"] = _sourcing_urls.get(
+                                _cp_row[0], ""
+                            ).format(_sid)
+                            if (
+                                not order_data.get("product_image")
+                                and _cp_row[1]
+                                and isinstance(_cp_row[1], list)
+                            ):
+                                order_data["product_image"] = _cp_row[1][0]
+                        else:
+                            # 2차: DB에 없어도 상품명 패턴으로 소싱처 추론
+                            if len(_sid) >= 9:  # 패션플러스 상품번호는 9자리 이상
+                                order_data["source_site"] = "FashionPlus"
+                                order_data["source_url"] = (
+                                    f"https://www.fashionplus.co.kr/goods/detail/{_sid}"
+                                )
+                            elif len(_sid) >= 7:  # 무신사 상품번호는 7자리
+                                order_data["source_site"] = "MUSINSA"
+                                order_data["source_url"] = (
+                                    f"https://www.musinsa.com/products/{_sid}"
+                                )
+                # order_number 기준 중복 체크 + shipment_id 기반 2차 체크 (발주확인 후 productOrderId 변경 대응)
+                existing = await svc.repo.find_by_async(
+                    order_number=order_data["order_number"]
+                )
+                if (
+                    not existing
+                    and order_data.get("shipment_id")
+                    and order_data.get("product_id")
+                ):
+                    # 같은 orderId + 상품번호로 이미 있는 주문 검색
+                    _dup_candidates = await svc.repo.filter_by_async(
+                        shipment_id=order_data["shipment_id"], limit=10
+                    )
+                    existing = next(
+                        (
+                            d
+                            for d in _dup_candidates
+                            if d.product_id == order_data["product_id"]
+                        ),
+                        None,
+                    )
+                    if existing:
+                        # order_number 갱신 (발주확인 후 변경된 productOrderId)
+                        await svc.repo.update_async(
+                            existing.id, order_number=order_data["order_number"]
+                        )
+                if existing:
+                    # 기존 주문: sale_price, 이미지, 상태, 마켓주문상태 업데이트
+                    update_fields: dict[str, Any] = {}
+                    # tenant_id 보충 (기존 NULL 데이터 대응)
+                    if order_data.get("tenant_id") and not existing.tenant_id:
+                        update_fields["tenant_id"] = order_data["tenant_id"]
+                    if (
+                        order_data.get("sale_price")
+                        and order_data["sale_price"] != existing.sale_price
+                    ):
+                        update_fields["sale_price"] = order_data["sale_price"]
+                    if order_data.get("product_image") and not existing.product_image:
+                        update_fields["product_image"] = order_data["product_image"]
+                    if order_data.get("source_site") and not existing.source_site:
+                        update_fields["source_site"] = order_data["source_site"]
+                    if order_data.get("source_url") and not existing.source_url:
+                        update_fields["source_url"] = order_data["source_url"]
+                    if order_data.get("shipment_id") and not existing.shipment_id:
+                        update_fields["shipment_id"] = order_data["shipment_id"]
+                    # 주소 보충 (기존 주문에 없으면 채움)
+                    if (
+                        order_data.get("customer_address")
+                        and not existing.customer_address
+                    ):
+                        update_fields["customer_address"] = order_data[
+                            "customer_address"
+                        ]
+                    # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
+                    if order_data.get("product_id") and not existing.product_id:
+                        update_fields["product_id"] = order_data["product_id"]
+                    # 송장전송완료/배송중 이상 상태는 덮어쓰지 않음
+                    # 단, 롯데ON은 발송완료/배송중/배송완료로 진행된 경우 갱신 허용
+                    new_ship_status = order_data.get("shipping_status")
+                    if new_ship_status:
+                        exchange_statuses = {
+                            "교환요청",
+                            "교환회수완료",
+                            "교환재배송",
+                            "교환완료",
+                        }
+                        advanced = {"발송완료", "배송중", "배송완료", "구매확정"}
+                        if new_ship_status in exchange_statuses:
+                            # 교환 상태는 항상 갱신 (배송완료 → 교환요청 등 역행 허용)
+                            # 단, 이미 반품 상태인 주문은 교환으로 되돌리지 않음
+                            if existing.shipping_status in (
+                                "반품요청",
+                                "반품완료",
+                                "반품거부",
+                            ):
+                                logger.info(
+                                    f"[주문동기화] 반품 상태 보호: {order_data.get('order_number')} "
+                                    f"{existing.shipping_status} → {new_ship_status} 차단"
+                                )
+                            else:
+                                update_fields["shipping_status"] = new_ship_status
+                        elif (
+                            existing.shipping_status == "송장전송완료"
+                            and new_ship_status in advanced
+                        ):
+                            update_fields["shipping_status"] = new_ship_status
+                        elif (
+                            new_ship_status in ("반품요청", "반품완료", "반품거부")
+                            and existing.shipping_status in exchange_statuses
+                        ):
+                            # 반품 상태는 교환 상태를 덮어씀 (교환→반품 재접수 케이스)
+                            update_fields["shipping_status"] = new_ship_status
+                            logger.info(
+                                f"[주문동기화] 교환→반품 상태 전환: {order_data.get('order_number')} "
+                                f"{existing.shipping_status} → {new_ship_status}"
+                            )
+                        elif existing.shipping_status not in (
+                            "송장전송완료",
+                            "배송중",
+                            "배송완료",
+                            "교환재배송",
+                            "교환요청",
+                            "교환회수완료",
+                            "교환완료",
+                            "교환거부",
+                            "반품요청",
+                            "반품완료",
+                            "반품거부",
+                        ):
+                            update_fields["shipping_status"] = new_ship_status
+                    # 정산금액(revenue) / 수수료율 갱신
+                    new_revenue = order_data.get("revenue")
+                    new_fee_rate = order_data.get("fee_rate")
+                    sp = float(
+                        update_fields.get("sale_price", existing.sale_price) or 0
+                    )
+                    if new_revenue and float(new_revenue) != float(
+                        existing.revenue or 0
+                    ):
+                        rev = float(new_revenue)
+                        update_fields["revenue"] = rev
+                        update_fields["fee_rate"] = (
+                            new_fee_rate
+                            if new_fee_rate is not None
+                            else (existing.fee_rate or 0)
+                        )
+                        cost = float(existing.cost or 0)
+                        ship_fee = float(existing.shipping_fee or 0)
+                        update_fields["profit"] = rev - cost - ship_fee
+                        update_fields["profit_rate"] = (
+                            f"{((rev - cost - ship_fee) / rev * 100):.2f}"
+                            if rev > 0
+                            else "0.00"
+                        )
+                    elif "sale_price" in update_fields:
+                        fr = float(
+                            new_fee_rate
+                            if new_fee_rate is not None
+                            else (existing.fee_rate or 0)
+                        )
+                        rev = sp * (1 - fr / 100)
+                        cost = float(existing.cost or 0)
+                        ship_fee = float(existing.shipping_fee or 0)
+                        update_fields["revenue"] = rev
+                        update_fields["profit"] = rev - cost - ship_fee
+                        update_fields["profit_rate"] = (
+                            f"{((rev - cost - ship_fee) / rev * 100):.2f}"
+                            if rev > 0
+                            else "0.00"
+                        )
+                    if update_fields:
+                        await svc.update_order(existing.id, update_fields)
+                    continue
+                await svc.create_order(order_data)
+                synced += 1
 
             total_synced += synced
-            if market_type == "smartstore":
-                confirmed_count = len(unconfirmed_ids)
-            elif market_type == "coupang":
-                confirmed_count = len(unconfirmed_box_ids)
-            else:
-                confirmed_count = 0
-            # 취소요청 건수 (송장 미입력건만)
-            cancel_requested = sum(
-                1
-                for od in orders_data
-                if od.get("shipping_status") == "취소요청"
-                and not od.get("tracking_number")
-            )
+            confirmed_count = len(unconfirmed_ids) if market_type == "smartstore" else 0
+
+            # ── 클레임(취소/반품/교환) → SambaReturn 자동 생성 ──────────────
+            returns_synced = 0
+            claim_statuses = {"취소요청", "반품요청", "교환요청", "취소처리중"}
+            claim_orders = [
+                od for od in orders_data if od.get("shipping_status") in claim_statuses
+            ]
+            if claim_orders:
+                from backend.domain.samba.returns.service import SambaReturnService
+                from backend.domain.samba.returns.repository import (
+                    SambaReturnRepository,
+                )
+                from backend.domain.samba.returns.model import SambaReturn
+                from sqlmodel import select as _sel
+
+                return_svc = SambaReturnService(SambaReturnRepository(session))
+
+                claim_type_map = {
+                    "취소요청": "cancel",
+                    "취소처리중": "cancel",
+                    "반품요청": "return",
+                    "교환요청": "exchange",
+                }
+                for od in claim_orders:
+                    order_no = od.get("order_number", "")
+                    if not order_no:
+                        continue
+                    # 중복 체크
+                    existing_ret = await session.execute(
+                        _sel(SambaReturn).where(SambaReturn.order_number == order_no)
+                    )
+                    if existing_ret.scalar_one_or_none():
+                        continue
+                    # 연결 주문 조회
+                    linked_order = await svc.repo.find_by_async(order_number=order_no)
+                    if not linked_order:
+                        continue
+                    ret_type = claim_type_map.get(
+                        od.get("shipping_status", ""), "return"
+                    )
+                    await return_svc.create_return(
+                        {
+                            "order_id": linked_order.id,
+                            "order_number": order_no,
+                            "type": ret_type,
+                            "status": "requested",
+                            "market": label,
+                            "market_order_status": od.get("shipping_status", ""),
+                            "product_name": od.get("product_name", ""),
+                            "product_image": od.get("product_image", ""),
+                            "customer_name": od.get("customer_name", ""),
+                            "customer_phone": od.get("customer_phone", ""),
+                            "customer_address": od.get("customer_address", ""),
+                            "requested_amount": od.get("sale_price", 0),
+                        }
+                    )
+                    returns_synced += 1
+                logger.info(
+                    f"[주문동기화] {label}: 클레임 {len(claim_orders)}건 중 {returns_synced}건 반품교환 생성"
+                )
+
+            cancel_requested = len(claim_orders)
             results.append(
                 {
                     "account": label,
                     "status": "success",
                     "fetched": len(orders_data),
                     "synced": synced,
-                    "skipped": skipped,
                     "confirmed": confirmed_count,
                     "cancel_requested": cancel_requested,
+                    "returns_synced": returns_synced,
                 }
             )
             logger.info(
-                f"[주문동기화] {label}: {len(orders_data)}건 조회, {synced}건 저장, {skipped}건 스킵, {confirmed_count}건 발주확인"
+                f"[주문동기화] {label}: {len(orders_data)}건 조회, {synced}건 저장, {confirmed_count}건 발주확인"
             )
 
         except Exception as e:
             logger.error(f"[주문동기화] {label} 실패: {e}")
             results.append({"account": label, "status": "error", "message": str(e)})
 
-    return {"total_synced": total_synced, "results": results}
-
-
-def _parse_datetime(val: str | datetime | None) -> datetime | None:
-    """문자열/datetime → timezone-aware datetime 변환. asyncpg는 str을 거부하므로 필수."""
-    if val is None:
-        return None
-    if isinstance(val, datetime):
-        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
-    s = str(val).strip()
-    if not s:
-        return None
+    # DB 기반 원주문 shipping_status 일괄 동기화
+    # samba_return 레코드가 있고 진행 중인 주문의 shipping_status를 강제 업데이트
     try:
-        dt = datetime.fromisoformat(s)
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    except Exception:
-        return None
+        from sqlalchemy import text as _sa_text_upd
+
+        await session.execute(
+            _sa_text_upd("""
+            UPDATE samba_order o
+            SET shipping_status = CASE
+                WHEN r.type = 'exchange' THEN '교환요청'
+                WHEN r.type = 'return' THEN '반품요청'
+                ELSE o.shipping_status
+            END
+            FROM samba_return r
+            WHERE r.order_id = o.id
+              AND r.status NOT IN ('completed', 'cancelled', 'rejected')
+              AND o.shipping_status NOT IN (
+                  '교환요청', '교환회수완료', '교환재배송', '교환완료',
+                  '반품요청', '반품완료', '반품거부'
+              )
+        """)
+        )
+        await session.commit()
+        logger.info(
+            "[주문동기화] 반품/교환 진행 중 원주문 shipping_status 일괄 업데이트 완료"
+        )
+    except Exception as _upd_err:
+        logger.warning(f"[주문동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
+
+    return {"total_synced": total_synced, "results": results}
 
 
 def _parse_smartstore_order(
@@ -1620,7 +1840,7 @@ def _parse_smartstore_order(
     """스마트스토어 productOrder + order → SambaOrder 데이터 변환."""
     status_map = {
         "PAYED": "pending",
-        "DELIVERING": "shipping",
+        "DELIVERING": "shipped",
         "DELIVERED": "delivered",
         "PURCHASE_DECIDED": "delivered",
         "EXCHANGED": "delivered",
@@ -1730,164 +1950,106 @@ def _parse_smartstore_order(
         "shipping_company": po.get("deliveryCompany", ""),
         "tracking_number": po.get("trackingNumber", ""),
         "source": "smartstore",
-        "paid_at": _parse_datetime(
-            order_info.get("paymentDate")
-            or po.get("paymentDate")
-            or order_info.get("orderDate")
-            or po.get("orderDate")
-        ),
     }
 
 
-def _parse_playauto_order(
-    ro: dict,
-    account_id: str,
-    account_label: str,
-    alias_map: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """플레이오토 EMP 주문 → SambaOrder 데이터 변환."""
+def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
+    """롯데ON 주문 데이터 → SambaOrder dict 변환."""
+    from datetime import datetime, timezone
+
+    # 주문 진행 단계 코드 → 내부 status/shipping_status 매핑
+    step_cd = str(item.get("odPrgsStepCd", "") or "")
     status_map = {
-        "신규주문": "pending",
-        "송장출력": "wait_ship",
-        "송장입력": "wait_ship",
-        "출고": "shipping",
-        "배송중": "shipping",
-        "수취확인": "delivered",
-        "정산완료": "delivered",
-        "주문확인": "pending",
-        "취소": "cancelled",
-        "취소마감": "cancelled",
-        "반품요청": "return_requested",
-        "반품마감": "returned",
-        "교환요청": "exchange_requested",
-        "교환마감": "exchanged",
-        "보류": "pending",
+        "10": "pending",  # 발주확인대기
+        "11": "pending",  # 발주확인완료(출고지시)
+        "12": "pending",  # 상품준비
+        "13": "shipping",  # 발송완료
+        "14": "delivered",  # 배송완료
+        "20": "pending",  # 발주확인
+        "21": "return_requested",  # 교환회수중
+        "22": "return_requested",  # 교환회수완료
+        "23": "return_requested",  # 교환회수완료확인
+        "24": "shipping",  # 교환재배송
+        "25": "delivered",  # 교환배송완료
+        "30": "shipping",  # 배송중
+        "40": "delivered",  # 배송완료
+        "50": "confirmed",  # 구매확정
+        "90": "cancelled",  # 취소
     }
+    shipping_map = {
+        "10": "발주확인대기",
+        "11": "출고지시",
+        "12": "상품준비",
+        "13": "발송완료",
+        "14": "배송완료",
+        "20": "출고지시",
+        "21": "교환요청",
+        "22": "교환회수완료",
+        "23": "교환회수완료",
+        "24": "교환재배송",
+        "25": "교환완료",
+        "30": "배송중",
+        "40": "배송완료",
+        "50": "구매확정",
+        "90": "취소",
+    }
+    status = status_map.get(step_cd, "pending")
+    shipping_status = shipping_map.get(step_cd, "출고지시")
 
-    order_state = ro.get("OrderState", "")
-    sale_price = int(ro.get("Price", 0) or 0)
-    quantity = int(ro.get("Count", 1) or 1)
+    # 롯데ON 반품 사유코드(200/300번대)인데 교환 stepCd(21~25)로 들어온 경우
+    # → 실제로는 반품이므로 반품 상태로 재매핑
+    clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
+    if clm_rsn_cd.startswith(("2", "3")) and step_cd in ("21", "22", "23", "24", "25"):
+        status = "return_requested"
+        shipping_status = "반품요청"
+        logger.info(
+            f"[롯데ON][주문파싱] 반품 사유코드({clm_rsn_cd}) 교환 stepCd({step_cd}) "
+            f"→ 반품요청으로 재매핑: odNo={item.get('odNo')}"
+        )
 
-    site_name = ro.get("SiteName", "")
-    site_id = ro.get("SiteId", "")
-    supply_price = int(ro.get("SupplyPrice", 0) or 0)
+    # 주문 생성일 파싱 (yyyymmddHHmmss)
+    created_str = item.get("odDttm", "") or ""
+    created_at = None
+    if created_str:
+        try:
+            created_at = datetime.strptime(created_str[:14], "%Y%m%d%H%M%S").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            try:
+                created_at = datetime.strptime(created_str[:8], "%Y%m%d").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                pass
+    if not created_at:
+        created_at = datetime.now(timezone.utc)
+
+    # 배송지 주소 조합 (dvpStnmZipAddr=도로명기본주소, dvpStnmDtlAddr=상세주소)
+    addr1 = item.get("dvpStnmZipAddr") or ""
+    addr2 = item.get("dvpStnmDtlAddr") or ""
+    full_addr = f"{addr1} {addr2}".strip()
 
     return {
-        "order_number": ro.get("OrderCode", ""),
-        "shipment_id": str(ro.get("Number", "")),
         "channel_id": account_id,
-        "channel_name": account_label,
-        "product_id": ro.get("ProdCode", ""),
-        "product_name": ro.get("ProdName", ""),
-        "product_option": ro.get("Option", ""),
-        "product_image": "",
-        "customer_name": ro.get("RecipientName", "") or ro.get("OrderName", ""),
-        "customer_phone": ro.get("RecipientHtel", "")
-        or ro.get("RecipientTel", "")
-        or ro.get("OrderHtel", "")
-        or ro.get("OrderTel", ""),
-        "customer_address": ro.get("RecipientAddress", ""),
-        "quantity": quantity,
-        "sale_price": sale_price,  # Price 필드가 이미 총가(단가×수량)
+        "channel_name": label,
+        "source": "lotteon",
+        "order_number": str(item.get("odNo", "")),
+        "shipment_id": str(item.get("sitmNo", "") or ""),
+        "product_id": str(item.get("spdNo", "") or ""),
+        "product_name": item.get("spdNm", "") or "",
+        "product_option": item.get("sitmNm", "") or "",
+        "quantity": int(item.get("odQty", 1) or 1),
+        "sale_price": int(item.get("slAmt", 0) or item.get("slPrc", 0) or 0),
         "cost": 0,
-        "fee_rate": 0,
-        "revenue": supply_price if supply_price else sale_price,
-        "status": status_map.get(order_state, "pending"),
-        "shipping_status": {
-            "신규주문": "주문접수",
-            "송장출력": "배송대기중",
-            "주문확인": "취소중",
-            "수취확인": "배송완료",
-            "취소마감": "취소완료",
-            "반품마감": "반품완료",
-            "교환마감": "교환완료",
-        }.get(order_state, order_state),
-        "shipping_company": ro.get("Sender", ""),
-        "tracking_number": ro.get("SenderNo", ""),
-        "source": "playauto",
-        "paid_at": _parse_datetime(
-            ro.get("OrderDate") or ro.get("InsertDate") or ro.get("RegDate")
-        ),
-        # 판매처(사업자) 정보 — 별칭 매핑 적용
-        "source_site": (
-            f"{site_name}({alias_map[site_id]})"
-            if alias_map and site_id in alias_map and site_name
-            else f"{site_name}({site_id})"
-            if site_name
-            else ""
-        ),
-    }
-
-
-def _parse_coupang_order(
-    order: dict, account_id: str, account_label: str
-) -> dict[str, Any]:
-    """쿠팡 주문시트 → SambaOrder 데이터 변환."""
-    # 쿠팡 주문 상태 → 내부 status 매핑
-    status_map: dict[str, str] = {
-        "ACCEPT": "pending",  # 결제완료
-        "INSTRUCT": "pending",  # 상품준비중
-        "DEPARTURE": "shipped",  # 배송시작
-        "DELIVERING": "shipped",  # 배송중
-        "FINAL_DELIVERY": "delivered",  # 배송완료
-        "NONE_TRACKING": "shipped",  # 추적불가
-        "CANCEL": "cancelled",  # 취소완료
-        "RETURN": "returned",  # 반품완료
-    }
-    # 쿠팡 주문 상태 → 한글 shipping_status
-    shipping_status_map: dict[str, str] = {
-        "ACCEPT": "발주미확인",
-        "INSTRUCT": "발송대기",
-        "DEPARTURE": "배송중",
-        "DELIVERING": "배송중",
-        "FINAL_DELIVERY": "배송완료",
-        "NONE_TRACKING": "배송중(추적불가)",
-        "CANCEL": "취소완료",
-        "RETURN": "반품완료",
-    }
-
-    coupang_status = order.get("status", "")
-    receiver = order.get("receiver", {})
-    sale_price = order.get("orderPrice", 0) or 0
-    quantity = order.get("shippingCount", 1) or 1
-
-    # 고객 전화번호: 안심번호 우선, 없으면 일반 전화번호
-    customer_phone = (
-        receiver.get("safeNumber", "")
-        or receiver.get("receiverPhoneNumber2", "")
-        or receiver.get("receiverPhoneNumber1", "")
-        or ""
-    )
-
-    # 고객 주소
-    addr1 = receiver.get("addr1", "") or ""
-    addr2 = receiver.get("addr2", "") or ""
-    customer_address = f"{addr1} {addr2}".strip()
-
-    # 쿠팡 수수료율 (카테고리별 상이, 기본 10.8%)
-    fee_rate = 10.8
-    revenue = sale_price * (1 - fee_rate / 100)
-
-    return {
-        "order_number": str(order.get("orderId", "")),
-        "shipment_id": str(order.get("shipmentBoxId", "")),
-        "channel_id": account_id,
-        "channel_name": account_label,
-        "product_id": str(order.get("sellerProductId", "")),
-        "product_name": order.get("sellerProductName", "")
-        or order.get("sellerProductItemName", ""),
-        "product_image": "",  # 쿠팡 주문시트에 이미지 미제공
-        "customer_name": receiver.get("name", ""),
-        "customer_phone": customer_phone,
-        "customer_address": customer_address,
-        "quantity": quantity,
-        "sale_price": sale_price,
-        "cost": 0,
-        "fee_rate": fee_rate,
-        "revenue": round(revenue, 2),
-        "status": status_map.get(coupang_status, "pending"),
-        "shipping_status": shipping_status_map.get(coupang_status, coupang_status),
-        "shipping_company": order.get("deliveryCompanyName", ""),
-        "tracking_number": order.get("invoiceNumber", ""),
-        "source": "coupang",
+        "status": status,
+        "shipping_status": shipping_status,
+        "customer_name": item.get("dvpCustNm", "") or item.get("odrNm", "") or "",
+        "customer_phone": item.get("dvpMphnNo", "")
+        or item.get("dvpTelNo", "")
+        or item.get("mphnNo", "")
+        or "",
+        "customer_address": full_addr,
+        "notes": item.get("dvMsg", "") or "",
+        "created_at": created_at,
     }

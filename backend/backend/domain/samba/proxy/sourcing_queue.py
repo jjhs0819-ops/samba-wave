@@ -46,9 +46,18 @@ class SourcingQueue:
 
     @classmethod
     def add_search_job(
-        cls, site: str, keyword: str, url: str = "", max_count: int = 100
+        cls,
+        site: str,
+        keyword: str,
+        url: str | None = None,
+        max_count: int | None = None,
     ) -> tuple[str, asyncio.Future[Any]]:
-        """검색 작업 큐에 추가. (requestId, future) 반환."""
+        """검색 작업 큐에 추가. (requestId, future) 반환.
+
+        url: 호출자가 원본 검색 URL(파라미터 포함)을 직접 넘길 수 있음.
+             없으면 SITE_SEARCH_URLS 템플릿에 keyword만 치환해서 사용.
+        max_count: 확장앱에 최대 수집 건수 힌트 전달.
+        """
         request_id = str(uuid.uuid4())[:8]
         if not url:
             url_template = SITE_SEARCH_URLS.get(site, "")
@@ -59,16 +68,16 @@ class SourcingQueue:
         loop = asyncio.get_event_loop()
         future: asyncio.Future[Any] = loop.create_future()
 
-        cls.queue.append(
-            {
-                "requestId": request_id,
-                "site": site,
-                "type": "search",
-                "url": url,
-                "keyword": keyword,
-                "maxCount": max_count,
-            }
-        )
+        job: dict[str, Any] = {
+            "requestId": request_id,
+            "site": site,
+            "type": "search",
+            "url": url,
+            "keyword": keyword,
+        }
+        if max_count is not None:
+            job["maxCount"] = max_count
+        cls.queue.append(job)
         cls.resolvers[request_id] = future
         logger.info(f"[소싱큐] 검색 추가: {site} '{keyword}' (id={request_id})")
         return request_id, future

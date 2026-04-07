@@ -1278,11 +1278,19 @@ class SmartStoreClient:
         return {"success": True, "data": result}
 
     async def delete_product(self, product_no: str) -> dict[str, Any]:
-        """상품 삭제 (리스트에서 완전 제거)."""
-        result = await self._call_api(
-            "DELETE", f"/v2/products/origin-products/{product_no}"
-        )
-        return {"success": True, "data": result}
+        """상품 삭제 (리스트에서 완전 제거). 404는 이미 삭제된 상품이므로 성공 처리."""
+        try:
+            result = await self._call_api(
+                "DELETE", f"/v2/products/origin-products/{product_no}"
+            )
+            return {"success": True, "data": result}
+        except SmartStoreApiError as e:
+            if "HTTP 404" in str(e):
+                logger.info(
+                    f"[스마트스토어] 상품 {product_no} 이미 삭제됨 (404) → 성공 처리"
+                )
+                return {"success": True, "data": {}, "already_deleted": True}
+            raise
 
     async def get_product(self, product_no: str) -> dict[str, Any]:
         """상품 조회."""
@@ -1819,7 +1827,7 @@ class SmartStoreClient:
                     else {}
                 ),
                 "detailContent": product.get("detail_html", "")
-                or f"<p>{product_name}</p>",
+                or f'<div style="text-align:center; padding:30px 0;"><p style="font-size:18px; font-weight:bold;">{product_name}</p><p style="margin-top:10px; color:#666;">상세 정보는 상품 이미지를 참조해주세요.</p></div>',
                 "images": {
                     "representativeImage": representative,
                     "optionalImages": optional,

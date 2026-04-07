@@ -11,6 +11,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.user.auth_service import get_user_id
 from backend.domain.samba.proxy.musinsa import RateLimitError
 from backend.domain.samba.collector.grouping import (
     generate_group_key,
@@ -1212,163 +1213,11 @@ async def collect_by_url(
 # ═══════════════════════════════════════
 # 브랜드 소싱 — 카테고리 스캔 + 그룹 일괄 생성
 # ═══════════════════════════════════════
+# 구 brand-scan 엔드포인트는 하단 "카테고리 스캔" 섹션의
+# 통합 brand-scan 엔드포인트로 대체됨 (MUSINSA + LOTTEON 지원)
 
 
-class BrandScanRequest(BaseModel):
-    brand: str
-    gf: str = "A"
-    keyword: str = ""
-
-
-@router.post("/brand-scan")
-async def brand_scan(
-    req: BrandScanRequest,
-    session: AsyncSession = Depends(get_read_session_dependency),
-):
-    """무신사 브랜드의 최하위 카테고리별 상품 수 스캔."""
-    from backend.domain.samba.proxy.musinsa import MusinsaClient
-
-    client = MusinsaClient()
-    try:
-        categories = await client.scan_brand_categories(
-            brand=req.brand,
-            gf=req.gf,
-            keyword=req.keyword or req.brand,
-        )
-        # 실제 총 상품 수 조회 (카테고리 합산은 중복 포함)
-        import httpx
-
-        async with httpx.AsyncClient(timeout=15) as http:
-            r = await http.get(
-                "https://api.musinsa.com/api2/dp/v1/plp/goods",
-                params={
-                    "caller": "SEARCH",
-                    "keyword": req.keyword or req.brand,
-                    "brand": req.brand,
-                    "gf": req.gf,
-                    "page": "1",
-                    "size": "1",
-                },
-                headers={
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "application/json",
-                    "Referer": "https://www.musinsa.com/",
-                },
-            )
-            real_total = (
-                r.json().get("data", {}).get("pagination", {}).get("totalCount", 0)
-                if r.status_code == 200
-                else 0
-            )
-    except Exception as e:
-        raise HTTPException(500, f"브랜드 스캔 실패: {e}")
-
-    return {
-        "categories": categories,
-        "total": real_total,
-        "groupCount": len(categories),
-    }
-
-
-class BrandCreateGroupsRequest(BaseModel):
-    brand: str
-    brand_name: str = ""
-    gf: str = "A"
-    categories: list[
-        dict
-    ]  # [{categoryCode, path, count, category1, category2, category3}]
-    requested_count_per_group: int = 100
-    real_total: int = 0  # 실제 총 상품수 (중복 제거 기준)
-    applied_policy_id: str | None = None
-    options: dict = {}  # excludePreorder, excludeBoutique, maxDiscount
-
-
-@router.post("/brand-create-groups")
-async def brand_create_groups(
-    req: BrandCreateGroupsRequest,
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """선택된 카테고리별로 검색그룹 일괄 생성 (기존 그룹 중복 방지)."""
-    from backend.api.v1.routers.samba.collector_common import _get_services
-    from urllib.parse import urlencode, urlparse, parse_qs
-
-    svc = _get_services(session)
-    created = []
-
-    # 기존 그룹 조회 — URL의 brand 파라미터 기준 동일 브랜드 중복 방지
-    all_filters = await svc.list_filters()
-    existing_names: set[str] = set()
-    existing_cat_codes: set[str] = set()
-    for f in all_filters:
-        if f.source_site != "MUSINSA":
-            continue
-        try:
-            _p = urlparse(f.keyword or "")
-            _qs = parse_qs(_p.query)
-            _fb = _qs.get("brand", [""])[0]
-            # brand 코드 기준으로 동일 브랜드만 필터링
-            if _fb != req.brand:
-                continue
-            existing_names.add(f.name or "")
-            _c = _qs.get("category", [""])[0]
-            if _c:
-                existing_cat_codes.add(_c)
-        except Exception:
-            pass
-
-    skipped = 0
-    for cat in req.categories:
-        cat_code = cat.get("categoryCode", "")
-        path = cat.get("path", "")
-        count = cat.get("count", 0)
-        cat_name = path.replace(" > ", "_").replace("/", "_")
-        group_name = f"MUSINSA_{req.brand_name or req.brand}_{cat_name}"
-
-        # 이름 또는 카테고리코드 기준 중복 스킵
-        if group_name in existing_names or cat_code in existing_cat_codes:
-            skipped += 1
-            continue
-
-        params = {
-            "keyword": req.brand_name or req.brand,
-            "brand": req.brand,
-            "category": cat_code,
-            "gf": req.gf,
-        }
-        if req.options.get("excludePreorder"):
-            params["excludePreorder"] = "1"
-        if req.options.get("excludeBoutique"):
-            params["excludeBoutique"] = "1"
-        if req.options.get("maxDiscount"):
-            params["maxDiscount"] = "1"
-
-        keyword_url = f"https://www.musinsa.com/search/goods?{urlencode(params)}"
-        req_count = (
-            min(count, req.requested_count_per_group)
-            if req.requested_count_per_group > 0
-            else count
-        )
-
-        filter_data = {
-            "source_site": "MUSINSA",
-            "keyword": keyword_url,
-            "name": group_name,
-            "requested_count": req_count,
-            "applied_policy_id": req.applied_policy_id,
-        }
-        try:
-            sf = await svc.create_filter(filter_data)
-            created.append(
-                {"id": sf.id, "name": group_name, "count": req_count, "path": path}
-            )
-        except Exception as e:
-            logger.warning(f"[브랜드소싱] 그룹 생성 실패 {group_name}: {e}")
-
-    # 전체 보정 그룹은 초기 생성 시 만들지 않음 (추가수집 brand_refresh에서 생성)
-    logger.info(
-        f"[브랜드소싱] {req.brand}: 신규 {len(created)}개 생성, 기존 {skipped}개 스킵"
-    )
-    return {"created": len(created), "skipped": skipped, "groups": created}
+# 구 brand-create-groups 엔드포인트는 하단 통합 엔드포인트로 대체됨 (MUSINSA + LOTTEON 지원)
 
 
 class BrandRefreshRequest(BaseModel):
@@ -1404,11 +1253,9 @@ async def brand_refresh(
     # 2) 기존 그룹 조회 — brand + category 코드로 매칭
     all_filters = await svc.list_filters()
     existing_cat_codes: dict[str, Any] = {}  # categoryCode → filter
-    existing_names: set[str] = set()
     for f in all_filters:
         if f.source_site != "MUSINSA":
             continue
-        existing_names.add(f.name or "")
         try:
             parsed = urlparse(f.keyword or "")
             qs = parse_qs(parsed.query)
@@ -1434,11 +1281,9 @@ async def brand_refresh(
                 await svc.update_filter(f.id, {"requested_count": count})
                 updated_groups += 1
         else:
-            # 신규 카테고리 — 이름 중복 확인 후 그룹 생성
+            # 신규 카테고리 — 그룹 생성
             cat_name = path.replace(" > ", "_").replace("/", "_")
             group_name = f"MUSINSA_{req.brand_name or req.brand}_{cat_name}"
-            if group_name in existing_names:
-                continue
             params = {
                 "keyword": req.brand_name or req.brand,
                 "brand": req.brand,
@@ -1542,6 +1387,21 @@ async def collect_by_keyword(
         client = KreamClient()
         data = await client.search(body.keyword, body.size)
         return {"success": True, "data": data}
+
+    elif body.source_site == "LOTTEON":
+        from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
+
+        client = LotteonSourcingClient()
+        data = await client.search_products(
+            keyword=body.keyword, page=body.page, size=body.size
+        )
+        # 브랜드 필터링: 키워드와 브랜드명이 일치하는 상품만 반환
+        # (롯데ON은 URL에 브랜드 파라미터가 없어 다른 브랜드 상품이 섞임)
+        keyword_lower = body.keyword.strip().lower()
+        filtered = [
+            p for p in data if keyword_lower in (p.get("brand", "") or "").lower()
+        ]
+        return {"success": True, "data": filtered if filtered else data}
 
     raise HTTPException(
         400, f"'{body.source_site}' 키워드 검색은 아직 지원하지 않습니다"
@@ -1957,3 +1817,254 @@ async def enrich_all_products(
             continue
 
     return {"enriched": enriched, "total_targets": len(targets)}
+
+
+# ── 카테고리 스캔 ──────────────────────────────────────────────────────────────
+
+
+class BrandScanRequest(BaseModel):
+    brand: str = ""
+    gf: str = "A"
+    keyword: str = ""
+    source_site: str = "MUSINSA"
+    selected_brands: list[str] = []
+
+
+class BrandDiscoverRequest(BaseModel):
+    keyword: str = ""
+    source_site: str = "LOTTEON"
+
+
+@router.post("/brand-discover")
+async def brand_discover(body: BrandDiscoverRequest):
+    """키워드로 소싱처에서 발견된 브랜드 목록 반환 (사용자 선택용).
+
+    프론트에서 이 결과로 체크박스 목록을 표시하고, 사용자가 선택한
+    브랜드를 `/brand-scan`의 `selected_brands`로 전달한다.
+    """
+    if not body.keyword:
+        raise HTTPException(400, "keyword가 필요합니다")
+
+    if body.source_site == "LOTTEON":
+        from backend.domain.samba.plugins.sourcing.lotteon import LotteonSourcingPlugin
+
+        plugin = LotteonSourcingPlugin()
+        return await plugin.discover_brands(body.keyword)
+
+    raise HTTPException(400, f"브랜드 탐색 미지원 소싱처: {body.source_site}")
+
+
+@router.post("/brand-scan")
+async def brand_scan(
+    body: BrandScanRequest,
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """키워드/브랜드로 소싱처 카테고리 분포를 스캔하여 검색그룹 생성에 활용.
+
+    지원 소싱처: MUSINSA, LOTTEON
+    """
+    keyword = body.keyword or body.brand
+    if not keyword:
+        raise HTTPException(400, "keyword 또는 brand가 필요합니다")
+
+    if body.source_site == "LOTTEON":
+        from backend.domain.samba.plugins.sourcing.lotteon import LotteonSourcingPlugin
+
+        plugin = LotteonSourcingPlugin()
+        # selected_brands가 없으면 keyword 자체를 단일 브랜드로 사용 (하위 호환)
+        selected = body.selected_brands or [keyword]
+        return await plugin.scan_categories(keyword, selected_brands=selected)
+
+    if body.source_site == "MUSINSA":
+        # 무신사 쿠키 로드
+        from backend.domain.samba.forbidden.model import SambaSettings
+        from sqlmodel import select as sql_select
+
+        try:
+            row = (
+                await session.execute(
+                    sql_select(SambaSettings).where(
+                        SambaSettings.key == "musinsa_cookie"
+                    )
+                )
+            ).scalar_one_or_none()
+            cookie = (row.value if row and row.value else "") or ""
+        except Exception:
+            cookie = ""
+        if not cookie:
+            raise HTTPException(
+                400,
+                "무신사 쿠키가 없습니다. 확장앱에서 무신사 로그인 후 다시 시도하세요.",
+            )
+        return await _scan_musinsa_categories(keyword, body.brand, body.gf, cookie)
+
+    raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
+
+
+async def _scan_musinsa_categories(
+    keyword: str, brand: str = "", gf: str = "A", cookie: str = ""
+) -> dict:
+    """무신사 카테고리 스캔 — 검색 결과 상위 20개 상품 상세 조회 후 카테고리 분포 집계."""
+    from backend.domain.samba.proxy.musinsa import MusinsaClient
+
+    client = MusinsaClient(cookie=cookie)
+    search_result = await client.search_products(keyword, size=20, brand=brand, gf=gf)
+    products = search_result.get("data", [])
+    if not products:
+        return {"categories": [], "total": 0, "groupCount": 0}
+
+    # 동시성 3개로 상세 조회
+    sem = asyncio.Semaphore(3)
+    cat_counter: dict[str, int] = {}
+
+    async def _fetch(p: dict) -> None:
+        async with sem:
+            spid = p.get("siteProductId") or p.get("site_product_id") or ""
+            if not spid:
+                return
+            try:
+                detail = await client.get_goods_detail(spid)
+                c1 = detail.get("category1", "")
+                c2 = detail.get("category2", "")
+                c3 = detail.get("category3", "")
+                if not c1:
+                    return
+                parts = [c for c in [c1, c2, c3] if c]
+                path = " > ".join(parts)
+                # category code는 무신사 categoryCode 필드
+                code = detail.get("categoryCode", c3 or c2 or c1)
+                key = f"{code}||{path}||{c1}||{c2}||{c3}"
+                cat_counter[key] = cat_counter.get(key, 0) + 1
+            except Exception:
+                pass
+
+    await asyncio.gather(*[_fetch(p) for p in products], return_exceptions=True)
+
+    categories = []
+    for key, count in sorted(cat_counter.items(), key=lambda x: -x[1]):
+        code, path, c1, c2, c3 = key.split("||")
+        categories.append(
+            {
+                "categoryCode": code,
+                "path": path,
+                "count": count,
+                "category1": c1,
+                "category2": c2,
+                "category3": c3,
+            }
+        )
+
+    return {
+        "categories": categories,
+        "total": sum(c["count"] for c in categories),
+        "groupCount": len(categories),
+    }
+
+
+# ── 브랜드 그룹 생성 ──────────────────────────────────────────────────────────
+
+
+class BrandCreateGroupsRequest(BaseModel):
+    brand: str = ""
+    brand_name: str = ""
+    gf: str = "A"
+    categories: list[dict] = []
+    requested_count_per_group: int = 0
+    applied_policy_id: Optional[str] = None
+    options: dict = {}
+    source_site: str = "MUSINSA"
+    selected_brands: list[str] = []
+
+
+@router.post("/brand-create-groups")
+async def brand_create_groups(
+    body: BrandCreateGroupsRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """카테고리 스캔 결과에서 선택한 카테고리별 검색그룹 생성.
+
+    지원 소싱처: MUSINSA, LOTTEON
+    """
+    if not body.categories:
+        raise HTTPException(400, "categories가 비어있습니다")
+
+    svc = _get_services(session)
+    created_groups = []
+
+    for cat in body.categories:
+        code = cat.get("categoryCode", "")
+        path = cat.get("path", "")
+        count = cat.get("count", 0)
+
+        # 그룹명: "{SITE}_{브랜드}_{카테고리(마지막 2단계)}"
+        # parseGroupName이 SITE 접두사 제거 후 첫 _ 기준 brand/category 분리
+        label = body.brand_name or body.brand or "브랜드"
+        segments = path.split(" > ") if path else [code]
+        path_tail = "_".join(segments[-2:]) if len(segments) >= 2 else segments[-1]
+        group_name = f"{body.source_site}_{label}_{path_tail}"
+
+        # 수집 요청 수: 0이면 자동 (스캔 카운트 × 3, 최소 50)
+        req_count = body.requested_count_per_group
+        if req_count <= 0:
+            req_count = max(count * 3, 50)
+
+        # 소싱처별 keyword 및 category_filter 결정
+        if body.source_site == "MUSINSA":
+            parts = [
+                f"keyword={body.brand_name or body.brand}",
+                "keywordType=keyword",
+                f"gf={body.gf}",
+            ]
+            if body.brand:
+                parts.append(f"brand={body.brand}")
+            if code:
+                parts.append(f"category={code}")
+            keyword = "https://www.musinsa.com/search/goods?" + "&".join(parts)
+            category_filter = code or None
+        else:  # LOTTEON
+            _brand_label = body.brand_name or body.brand or ""
+            # 선택된 브랜드 목록을 URL 쿼리 파라미터로 저장 (worker.py에서 파싱)
+            # brands 없으면 keyword 단일 브랜드로 fallback
+            if body.selected_brands:
+                from urllib.parse import quote as _quote
+
+                _brands_q = _quote(",".join(body.selected_brands))
+                keyword = (
+                    f"lotteon://search?q={_quote(_brand_label)}&brands={_brands_q}"
+                )
+            else:
+                keyword = _brand_label
+            # 합산된 BC코드들을 콤마로 연결 (같은 path의 여러 BC코드)
+            bc_codes = cat.get("bc_codes") or ([code] if code else [])
+            category_filter = ",".join(bc_codes) if bc_codes else None
+
+        filter_data: dict = {
+            "source_site": body.source_site,
+            "name": group_name,
+            "keyword": keyword,
+            "requested_count": req_count,
+            "category_filter": category_filter,
+        }
+        if body.applied_policy_id:
+            filter_data["applied_policy_id"] = body.applied_policy_id
+
+        try:
+            sf = await svc.create_filter(filter_data)
+            created_groups.append(
+                {
+                    "id": str(sf.id),
+                    "name": group_name,
+                    "count": req_count,
+                    "path": path,
+                }
+            )
+        except Exception as e:
+            # 중복 그룹은 건너뜀
+            import logging
+
+            logging.getLogger(__name__).warning(f"그룹 생성 스킵: {group_name} — {e}")
+
+    return {
+        "created": len(created_groups),
+        "groups": created_groups,
+    }

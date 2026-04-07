@@ -143,7 +143,11 @@ class BackendSettings(BaseSettings):
 _settings = BackendSettings()
 
 # ── 개발 환경에서 운영 DB 접속 차단 ──
-_PRODUCTION_DB_HOSTS = ["34.47.96.236", "/cloudsql/fresh-sanctuary"]
+_PRODUCTION_DB_HOSTS = [
+    "34.47.96.236",
+    "/cloudsql/fresh-sanctuary",  # 팀장님 운영 DB
+    "/cloudsql/samba-wave-molle",  # 준길 운영 DB
+]
 if _settings.is_development:
     for _h in _PRODUCTION_DB_HOSTS:
         if _h in _settings.write_db_host or _h in _settings.read_db_host:

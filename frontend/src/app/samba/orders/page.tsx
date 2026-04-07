@@ -1,20 +1,18 @@
 'use client'
 
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, forbiddenApi, fetchWithAuth, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
+import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { PERIOD_BUTTONS, DELIVERY_TRACKING_URLS, SOURCING_PRODUCT_URLS, SOURCING_ORDER_URLS, STORAGE_KEYS } from '@/lib/samba/constants'
+import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { inputStyle } from '@/lib/samba/styles'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
-  new_order:  { label: '신규주문', bg: 'rgba(255,235,59,0.15)', text: '#FFEB3B' },
-  invoice_printed: { label: '송장출력', bg: 'rgba(255,183,77,0.15)', text: '#FFB74D' },
   pending:    { label: '주문접수', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
   wait_ship:  { label: '배송대기중', bg: 'rgba(100,149,237,0.15)', text: '#6495ED' },
   arrived:    { label: '사무실도착', bg: 'rgba(72,209,204,0.15)', text: '#48D1CC' },
   ship_failed: { label: '송장전송실패', bg: 'rgba(255,50,50,0.2)', text: '#FF3232' },
-  shipping:   { label: '배송중', bg: 'rgba(76,154,255,0.15)', text: '#4C9AFF' },
+  shipping:   { label: '국내배송중', bg: 'rgba(76,154,255,0.15)', text: '#4C9AFF' },
   delivered:  { label: '배송완료', bg: 'rgba(81,207,102,0.15)', text: '#51CF66' },
   cancelling: { label: '취소중', bg: 'rgba(255,165,0,0.15)', text: '#FFA500' },
   returning:  { label: '반품중', bg: 'rgba(200,100,200,0.15)', text: '#CC5DE8' },
@@ -28,16 +26,17 @@ const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = 
 
 const SHIPPING_COMPANIES = ['CJ대한통운', '한진택배', '롯데택배', '로젠택배', '우체국택배', '경동택배', '대신택배', '일양로지스', '편의점택배', 'DHL', '직접배송', '기타']
 
-const MARKET_STATUS_OPTIONS = [
-  '발주미확인', '발송대기', '결제완료', '주문접수', '배송대기중',
-  '배송중', '배송완료', '구매확정', '송장출력', '송장입력', '출고', '정산완료',
-  '취소요청', '취소처리중', '취소완료', '취소거부', '취소중', '취소',
-  '반품요청', '수거중', '수거완료', '반품완료', '반품거부',
-  '교환요청', '교환처리중', '교환완료', '교환거부',
-  '보류', '송장전송완료',
-]
+const MARKET_STATUS_OPTIONS = ['일반', '발송대기', '교환요청', '취소요청', '반품요청', '배송완료']
 
-// 배송조회 URL은 @/lib/samba/constants에서 DELIVERY_TRACKING_URLS로 통합
+// 택배사별 배송조회 URL
+const TRACKING_URLS: Record<string, string> = {
+  'CJ대한통운': 'https://trace.cjlogistics.com/next/tracking.html?wblNo=',
+  '한진택배': 'https://www.hanjin.com/kor/CMS/DeliveryMgr/WaybillResult.do?mession=&searchType=General&wblnumText2=',
+  '롯데택배': 'https://www.lotteglogis.com/home/reservation/tracking/link498?InvNo=',
+  '로젠택배': 'https://www.ilogen.com/web/personal/trace/',
+  '우체국택배': 'https://service.epost.go.kr/trace.RetrieveDomRi498.postal?sid1=',
+  '경동택배': 'https://kdexp.com/deliverySearch?barcode=',
+}
 
 interface OrderForm {
   channel_id: string; product_name: string; customer_name: string; customer_phone: string
@@ -53,8 +52,6 @@ const emptyForm: OrderForm = {
 
 // 직배/까대기/선물 버튼 색상
 const ACTION_BUTTONS = [
-  { key: 'no_price', label: '가격X', activeColor: '#DC2626' },
-  { key: 'no_stock', label: '재고X', activeColor: '#CA8A04' },
   { key: 'direct', label: '직배', activeColor: '#2563EB' },
   { key: 'kkadaegi', label: '까대기', activeColor: '#D97706' },
   { key: 'gift', label: '선물', activeColor: '#059669' },
@@ -76,8 +73,7 @@ export default function OrdersPage() {
   const [inputFilter, setInputFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('active')
   const [searchText, setSearchText] = useState('')
-  const [pageSize, setPageSize] = useState(20)
-  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
   const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
   const setLogMessages: typeof _setLogMessagesRaw = (v) => _setLogMessagesRaw(prev => {
     const next = typeof v === 'function' ? v(prev) : v
@@ -110,6 +106,10 @@ export default function OrdersPage() {
   const [priceHistoryData, setPriceHistoryData] = useState<Record<string, unknown>[]>([])
   const [priceHistoryProduct, setPriceHistoryProduct] = useState<{ name: string; source_site: string }>({ name: '', source_site: '' })
 
+  const [sellerCancelModal, setSellerCancelModal] = useState<{ id: string; orderNumber: string } | null>(null)
+  const [sellerCancelReason, setSellerCancelReason] = useState('135')
+  const [sellerCancelText, setSellerCancelText] = useState('품절')
+  const [sellerCancelSaving, setSellerCancelSaving] = useState(false)
   const [showUrlModal, setShowUrlModal] = useState(false)
   const [urlModalOrderId, setUrlModalOrderId] = useState('')
   const [urlModalInput, setUrlModalInput] = useState('')
@@ -153,100 +153,42 @@ export default function OrdersPage() {
   const [startLocked, setStartLocked] = useState(false)
   const [customEnd, setCustomEnd] = useState(new Date().toLocaleDateString('sv-SE'))
 
-  // 기간 필터 계산
-  const getPeriodStart = (key: string): Date | null => {
-    const now = new Date()
-    now.setHours(0, 0, 0, 0)
-    switch (key) {
-      case 'today': return now
-      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7); return d }
-      case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
-      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d }
-      case '1month': { const d = new Date(now); d.setDate(d.getDate() - 30); return d }
-      case 'thisyear': return new Date(now.getFullYear(), 0, 1)
-      default: return null
-    }
-  }
-
-  // 기간 종료일 계산 (지난주/지난달/어제는 해당 기간 마지막 날)
-  const getPeriodEnd = (key: string): Date => {
-    const now = new Date()
-    now.setHours(0, 0, 0, 0)
-    switch (key) {
-      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 1); return d }
-      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth(), 0)
-      default: return now
-    }
-  }
-
-  // 유효 시작일: customStart를 직접 사용
-  const effectiveStart = customStart
-
-  const loadOrders = useCallback(async (start: string, end: string) => {
+  const loadOrders = useCallback(async () => {
     setLoading(true)
     try {
-      setOrders(await orderApi.listByDateRange(start, end))
+      setOrders(await orderApi.list(0, pageSize))
       setEditingTrackings({})
     } catch { /* ignore */ }
     setLoading(false)
-  }, [])
+  }, [pageSize])
 
-  // 개별 주문 로컬 상태 업데이트 (전체 목록 재조회 방지)
-  const updateOrderLocal = useCallback((id: string, updates: Partial<SambaOrder>) => {
-    setOrders(prev => prev.map(o => o.id === id ? { ...o, ...updates } : o))
-  }, [])
-
-  const removeOrderLocal = useCallback((id: string) => {
-    setOrders(prev => prev.filter(o => o.id !== id))
-  }, [])
-
-  // 플레이오토 마켓번호 별칭 매핑
-  const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
-  useEffect(() => { loadOrders(effectiveStart, customEnd) }, [loadOrders, effectiveStart, customEnd])
+  useEffect(() => { loadOrders() }, [loadOrders])
   useEffect(() => { channelApi.list().then(setChannels).catch(() => {}) }, [])
   useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
   useEffect(() => { sourcingAccountApi.list().then(accs => setSourcingAccounts(accs.filter(a => a.is_active))).catch(() => {}) }, [])
   useEffect(() => {
     proxyApi.aligoRemain().then(r => { if (r.success) setSmsRemain(r) }).catch(() => {})
   }, [])
-  useEffect(() => {
-    forbiddenApi.getSetting('store_playauto').then(data => {
-      const d = data as Record<string, string> | null
-      if (!d) return
-      const map: Record<string, string> = {}
-      for (const k of ['alias1', 'alias2', 'alias3']) {
-        const v = d[k] || ''
-        if (v.includes('-')) {
-          const [code, ...rest] = v.split('-')
-          map[code.trim()] = rest.join('-').trim()
-        }
-      }
-      setSiteAliasMap(map)
-    }).catch(() => {})
-  }, [])
 
   const handleFetch = async () => {
+    if (!syncAccountId) {
+      setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] 주문 목록 새로고침...`])
+      await loadOrders()
+      setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] 완료`])
+      return
+    }
     setSyncing(true)
     const ts = () => new Date().toLocaleTimeString()
-    const now = new Date()
-    const diffDays = (key: string) => {
-      const start = getPeriodStart(key)
-      if (!start) return 7
-      const today = new Date(now)
-      today.setHours(0, 0, 0, 0)
-      return Math.round((today.getTime() - start.getTime()) / 86400000)
+    const acc = accounts.find(a => a.id === syncAccountId)
+    const label = acc ? `${acc.market_name}(${acc.seller_id || '-'})` : syncAccountId
+    const daysMap: Record<string, number> = {
+      today: 1, '1week': 7, '15days': 15, '1month': 30,
+      '3months': 90, '6months': 180, thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
     }
-    const days = diffDays(period)
-    const isAll = !syncAccountId
-    const acc = isAll ? null : accounts.find(a => a.id === syncAccountId)
-    const label = isAll ? '전체 계정' : (acc ? `${acc.market_name}(${acc.seller_id || '-'})` : syncAccountId)
-    setLogMessages(prev => [...prev, `[${ts()}] ${label} 주문 가져오기 시작 (${days === 0 ? '오늘' : `최근 ${days}일`})...`])
+    const days = daysMap[period] || 7
+    setLogMessages(prev => [...prev, `[${ts()}] ${label} 주문 가져오기 시작 (최근 ${days}일)...`])
     try {
-      const res = await orderApi.syncFromMarkets(days, isAll ? undefined : syncAccountId)
+      const res = await orderApi.syncFromMarkets(days, syncAccountId)
       for (const r of res.results) {
         if (r.status === 'success') {
           setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.fetched}건 조회, ${r.synced}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${(r as Record<string, unknown>).confirmed}건 발주확인` : ''}`])
@@ -257,6 +199,7 @@ export default function OrdersPage() {
         }
       }
       setLogMessages(prev => [...prev, `[${ts()}] 완료 — ${res.total_synced}건 신규 저장`])
+      // 취소요청 알람
       let totalCancelRequested = 0
       for (const r of res.results) {
         totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
@@ -264,9 +207,46 @@ export default function OrdersPage() {
       if (totalCancelRequested > 0) {
         showNotification(`주문 취소요청 ${totalCancelRequested}건이 감지되었습니다. 확인이 필요합니다.`)
       }
-      await loadOrders(effectiveStart, customEnd)
+      await loadOrders()
     } catch (e) {
       setLogMessages(prev => [...prev, `[${ts()}] 오류: ${e}`])
+    }
+    setSyncing(false)
+  }
+
+  const handleSyncFromMarkets = async () => {
+    setSyncing(true)
+    const ts = () => new Date().toLocaleTimeString()
+    const daysMap: Record<string, number> = {
+      today: 1, '1week': 7, '15days': 15, '1month': 30,
+      '3months': 90, '6months': 180, thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
+    }
+    const days = daysMap[period] || 7
+    setLogMessages(prev => [...prev, `[${ts()}] 전체마켓 주문 동기화 시작 (최근 ${days}일)...`])
+
+    try {
+      const res = await orderApi.syncFromMarkets(days)
+      for (const r of res.results) {
+        if (r.status === 'success') {
+          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.fetched}건 조회, ${r.synced}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${(r as Record<string, unknown>).confirmed}건 발주확인` : ''}`])
+        } else if (r.status === 'skip') {
+          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.message}`])
+        } else {
+          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
+        }
+      }
+      setLogMessages(prev => [...prev, `[${ts()}] 동기화 완료 — 총 ${res.total_synced}건 신규 저장`])
+      // 취소요청 알람
+      let totalCancelRequested = 0
+      for (const r of res.results) {
+        totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
+      }
+      if (totalCancelRequested > 0) {
+        showNotification(`주문 취소요청 ${totalCancelRequested}건이 감지되었습니다. 확인이 필요합니다.`)
+      }
+      await loadOrders()
+    } catch (e) {
+      setLogMessages(prev => [...prev, `[${ts()}] 동기화 오류: ${e}`])
     }
     setSyncing(false)
   }
@@ -289,7 +269,7 @@ export default function OrdersPage() {
       const payload = { ...form, channel_name: ch?.name, fee_rate: form.fee_rate || ch?.fee_rate || 0 }
       if (editingId) await orderApi.update(editingId, payload)
       else await orderApi.create(payload)
-      setShowForm(false); setEditingId(null); setForm({ ...emptyForm }); loadOrders(effectiveStart, customEnd)
+      setShowForm(false); setEditingId(null); setForm({ ...emptyForm }); loadOrders()
     } catch (e) { showAlert(e instanceof Error ? e.message : '저장 실패', 'error') }
   }
 
@@ -331,14 +311,53 @@ export default function OrdersPage() {
   }
 
   const handleStatusChange = async (id: string, status: string) => {
-    try { await orderApi.updateStatus(id, status); updateOrderLocal(id, { status }) }
+    try { await orderApi.updateStatus(id, status); loadOrders() }
     catch (e) { showAlert(e instanceof Error ? e.message : '상태 변경 실패', 'error') }
   }
 
   const handleDelete = async (id: string) => {
     if (!await showConfirm('주문삭제하시겠습니까?')) return
-    try { await orderApi.delete(id); removeOrderLocal(id) }
+    try { await orderApi.delete(id); loadOrders() }
     catch (e) { showAlert(e instanceof Error ? e.message : '삭제 실패', 'error') }
+  }
+
+  const handleConfirmOrder = async (id: string) => {
+    try {
+      const res = await orderApi.confirmOrder(id)
+      if (res.ok) {
+        showAlert('주문확인 완료', 'success')
+        loadOrders()
+      } else {
+        showAlert(res.message || '주문확인 실패', 'error')
+      }
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '주문확인 실패', 'error')
+    }
+  }
+
+  const openSellerCancelModal = (id: string, orderNumber: string) => {
+    setSellerCancelReason('135')
+    setSellerCancelText('품절')
+    setSellerCancelModal({ id, orderNumber })
+  }
+
+  const handleSellerCancelSubmit = async () => {
+    if (!sellerCancelModal) return
+    setSellerCancelSaving(true)
+    try {
+      const res = await orderApi.sellerCancel(sellerCancelModal.id, sellerCancelReason, sellerCancelText)
+      if (res.ok) {
+        showAlert(`취소 완료: ${res.detail || res.message}`, 'success')
+        setSellerCancelModal(null)
+        loadOrders()
+      } else {
+        showAlert(res.message || '취소 실패', 'error')
+      }
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '판매자 취소 실패', 'error')
+    } finally {
+      setSellerCancelSaving(false)
+    }
   }
 
   // 원가 인라인 저장
@@ -348,7 +367,7 @@ export default function OrdersPage() {
     try {
       await orderApi.update(id, { cost: Number(val) || 0 })
       setEditingCosts(prev => { const n = { ...prev }; delete n[id]; return n })
-      updateOrderLocal(id, { cost: Number(val) || 0 })
+      loadOrders()
     } catch (e) { showAlert(e instanceof Error ? e.message : '원가 저장 실패', 'error') }
   }
 
@@ -359,7 +378,7 @@ export default function OrdersPage() {
     try {
       await orderApi.update(id, { shipping_fee: Number(val) || 0 })
       setEditingShipFees(prev => { const n = { ...prev }; delete n[id]; return n })
-      updateOrderLocal(id, { shipping_fee: Number(val) || 0 })
+      loadOrders()
     } catch (e) { showAlert(e instanceof Error ? e.message : '배송비 저장 실패', 'error') }
   }
 
@@ -391,7 +410,7 @@ export default function OrdersPage() {
       showAlert('송장번호가 없습니다', 'error')
       return
     }
-    const baseUrl = DELIVERY_TRACKING_URLS[shippingCompany] || DELIVERY_TRACKING_URLS['CJ대한통운']
+    const baseUrl = TRACKING_URLS[shippingCompany] || TRACKING_URLS['CJ대한통운']
     window.open(`${baseUrl}${trackingNumber}`, '_blank')
   }
   const handleSourceLink = async (o: SambaOrder) => {
@@ -416,24 +435,22 @@ export default function OrdersPage() {
       } catch { /* ignore */ }
     }
     // 4. 상품명에서 소싱처 상품번호 추출 → URL 구성
+    const sourcingUrls: Record<string, string> = {
+      MUSINSA: 'https://www.musinsa.com/products/',
+      KREAM: 'https://kream.co.kr/products/',
+      FashionPlus: 'https://www.fashionplus.co.kr/goods/detail/',
+      ABCmart: 'https://www.a-rt.com/product?prdtNo=',
+      Nike: 'https://www.nike.com/kr/t/',
+    }
     const name = o.product_name || ''
     // 상품명 끝에 숫자가 있으면 소싱처 상품번호로 추정
     const idMatch = name.match(/\b(\d{6,})\s*$/)
-    if (idMatch && o.source_site && SOURCING_PRODUCT_URLS[o.source_site]) {
-      window.open(SOURCING_PRODUCT_URLS[o.source_site] + idMatch[1], '_blank')
+    if (idMatch && o.source_site && sourcingUrls[o.source_site]) {
+      window.open(sourcingUrls[o.source_site] + idMatch[1], '_blank')
       return
     }
-    // source_site 없어도 상품명 패턴으로 소싱처 추론
-    if (idMatch) {
-      const id = idMatch[1]
-      if (name.includes('운동화') || name.includes('나이키') || name.includes('아디다스')) {
-        window.open(SOURCING_PRODUCT_URLS.FashionPlus + id, '_blank')
-        return
-      }
-      window.open(SOURCING_PRODUCT_URLS.MUSINSA + id, '_blank')
-      return
-    }
-    showAlert('소싱처 원문링크 정보가 없습니다', 'info')
+    // source_site가 명시적으로 알려진 경우에만 추정 (잘못된 사이트로 보내는 위험 방지)
+    showAlert('소싱처 원문링크 정보가 없습니다. "미등록 입력"으로 URL을 등록해주세요.', 'info')
   }
   const handleMarketLink = (o: SambaOrder) => {
     const acc = accounts.find(a => a.id === o.channel_id)
@@ -442,46 +459,19 @@ export default function OrdersPage() {
     const storeSlug = (acc?.additional_fields as Record<string, string> | undefined)?.storeSlug || ''
     const productNo = o.product_id || ''
 
-    // 마켓 상품번호 → 구매페이지 직접 이동
-    const urlMap: Record<string, string> = {
-      smartstore: `https://smartstore.naver.com/${storeSlug || sellerId}/products/${productNo}`,
-      coupang: `https://www.coupang.com/vp/products/${productNo}`,
-      '11st': `https://www.11st.co.kr/products/${productNo}`,
-      gmarket: `https://item.gmarket.co.kr/Item?goodscode=${productNo}`,
-      auction: `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${productNo}`,
-      ssg: `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`,
-      lotteon: `https://www.lotteon.com/p/product/${productNo}`,
-      kream: `https://kream.co.kr/products/${productNo}`,
-      ebay: `https://www.ebay.com/itm/${productNo}`,
-    }
-
+    // 마켓 상품번호가 있으면 구매페이지 직접 이동
     if (productNo) {
-      // 플레이오토: source_site에서 실제 판매처 추출 → 해당 마켓 URL 사용
-      if (marketType === 'playauto' && o.source_site) {
-        const site = o.source_site.split('(')[0]
-        const siteUrlMap: Record<string, (no: string) => string> = {
-          'GS이숍': (no) => `https://www.gsshop.com/prd/prd.gs?prdid=${no}`,
-          'G마켓': (no) => `https://item.gmarket.co.kr/Item?goodscode=${no}`,
-          '옥션': (no) => `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${no}`,
-          '11번가': (no) => `https://www.11st.co.kr/products/${no}`,
-          '스마트스토어': (no) => `https://smartstore.naver.com/search?q=${encodeURIComponent(no)}`,
-          '쿠팡': (no) => `https://www.coupang.com/vp/products/${no}`,
-          'SSG': (no) => `https://www.ssg.com/item/itemView.ssg?itemId=${no}`,
-          '롯데ON': (no) => `https://www.lotteon.com/p/product/${no}`,
-          '롯데온': (no) => `https://www.lotteon.com/p/product/${no}`,
-          '롯데홈쇼핑': (no) => `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${no}`,
-          '롯데아이몰': (no) => `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${no}`,
-          '홈앤쇼핑': (no) => `https://www.hmall.com/p/pda/itemPtc.do?slitmCd=${no}`,
-          'HMALL': (no) => `https://www.hmall.com/p/pda/itemPtc.do?slitmCd=${no}`,
-        }
-        const builder = siteUrlMap[site]
-        if (builder) {
-          // 플레이오토 ProdCode = 마켓상품번호 + 사이트코드(3자리) → 뒤 3자리 제거
-          const cleanNo = productNo.length > 3 ? productNo.slice(0, -3) : productNo
-          window.open(builder(cleanNo), '_blank'); return
-        }
+      const urlMap: Record<string, string> = {
+        smartstore: `https://smartstore.naver.com/${storeSlug || sellerId}/products/${productNo}`,
+        coupang: `https://www.coupang.com/vp/products/${productNo}`,
+        '11st': `https://www.11st.co.kr/products/${productNo}`,
+        gmarket: `https://item.gmarket.co.kr/Item?goodscode=${productNo}`,
+        auction: `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${productNo}`,
+        ssg: `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`,
+        lotteon: `https://www.lotteon.com/p/product/${productNo}`,
+        kream: `https://kream.co.kr/products/${productNo}`,
+        ebay: `https://www.ebay.com/itm/${productNo}`,
       }
-
       const url = urlMap[marketType]
       if (url) { window.open(url, '_blank'); return }
     }
@@ -529,10 +519,7 @@ export default function OrdersPage() {
       setShowUrlModal(false)
       setUrlModalInput('')
       setUrlModalImageInput('')
-      updateOrderLocal(urlModalOrderId, {
-        ...(url ? { source_url: url } : {}),
-        ...(imgUrl ? { product_image: imgUrl } : {}),
-      })
+      loadOrders()
       showAlert('미등록 상품 정보가 등록되었습니다', 'success')
     } catch (e) {
       showAlert(e instanceof Error ? e.message : '저장 실패', 'error')
@@ -566,9 +553,40 @@ export default function OrdersPage() {
     }))
   }
 
+  // 기간 필터 계산
+  const getPeriodStart = (key: string): Date | null => {
+    const now = new Date()
+    now.setHours(0, 0, 0, 0)
+    switch (key) {
+      case 'today': return now
+      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
+      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() - 7); return d }
+      case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
+      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      case 'thisyear': return new Date(now.getFullYear(), 0, 1)
+      default: return null
+    }
+  }
 
-  // 필터링된 주문 목록 (메모이제이션) — 날짜는 서버에서 필터링 완료
-  const filteredOrders = useMemo(() => orders.filter(o => {
+  // 필터링된 주문 목록
+  const filteredOrders = orders.filter(o => {
+    const orderDate = new Date(o.created_at)
+    // 시작일 고정이면 customStart 우선
+    if (startLocked && customStart) {
+      const start = new Date(customStart)
+      start.setHours(0, 0, 0, 0)
+      if (orderDate < start) return false
+    } else {
+      const periodStart = getPeriodStart(period)
+      if (periodStart && orderDate < periodStart) return false
+    }
+    // 종료일 필터
+    if (customEnd) {
+      const end = new Date(customEnd)
+      end.setHours(23, 59, 59, 999)
+      if (orderDate > end) return false
+    }
     if (marketFilter) {
       if (marketFilter.startsWith('acc:')) {
         // 개별 계정 필터
@@ -596,11 +614,7 @@ export default function OrdersPage() {
     }
     if (statusFilter) {
       if (statusFilter === 'active') {
-        if (!['new_order', 'invoice_printed', 'pending', 'wait_ship', 'arrived'].includes(o.status)) return false
-        const ss = o.shipping_status || ''
-        if (['취소중', '취소요청', '취소완료', '취소처리중', '취소', '반품요청', '반품완료', '교환요청', '교환완료'].includes(ss)) return false
-      } else if (statusFilter === 'pending') {
-        if (!['pending', 'new_order', 'invoice_printed'].includes(o.status)) return false
+        if (!['pending', 'wait_ship', 'arrived', 'ship_failed', 'shipping', 'delivered'].includes(o.status)) return false
       } else if (o.status !== statusFilter) return false
     }
     if (inputFilter) {
@@ -621,14 +635,7 @@ export default function OrdersPage() {
       if (searchCategory === 'order_number' && !o.order_number?.toLowerCase().includes(q)) return false
     }
     return true
-  }).sort((a, b) => {
-    const aTime = a.paid_at ? new Date(a.paid_at).getTime() : new Date(a.created_at).getTime()
-    const bTime = b.paid_at ? new Date(b.paid_at).getTime() : new Date(b.created_at).getTime()
-    return bTime - aTime
-  }), [orders, marketFilter, accounts, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory])
-
-  // 필터 변경 시 1페이지로 리셋
-  useEffect(() => { setCurrentPage(1) }, [marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, searchText, searchCategory, period])
+  })
 
   // 숫자 콤마 포맷 헬퍼
   const fmtNum = (v: string) => {
@@ -654,17 +661,10 @@ export default function OrdersPage() {
               </div>
             ))}
             <button
-              onClick={() => {
-                setNotifications([])
-                setStatusFilter('')
-                setMarketStatus('취소요청')
-                setCustomStart('2020-01-01')
-                setCustomEnd(new Date().toLocaleDateString('sv-SE'))
-                setPeriod('')
-              }}
+              onClick={() => setNotifications([])}
               style={{ width: '100%', padding: '0.75rem', background: '#FF4444', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '1rem', fontWeight: 700, cursor: 'pointer', marginTop: '0.5rem' }}
             >
-              취소요청 확인하기
+              확인했습니다
             </button>
           </div>
         </div>
@@ -693,7 +693,7 @@ export default function OrdersPage() {
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>주문 상황</h2>
           <p style={{ fontSize: '0.875rem', color: '#888' }}>
-            미배송: <span style={{ color: '#FF6B6B', fontWeight: 700 }}>{pendingCount.toLocaleString()}</span>건 / 전체: <span style={{ fontWeight: 700 }}>{filteredOrders.length.toLocaleString()}</span>건
+            미배송: <span style={{ color: '#FF6B6B', fontWeight: 700 }}>{pendingCount}</span>건 / 전체: <span style={{ fontWeight: 700 }}>{filteredOrders.length}</span>건
           </p>
         </div>
         {smsRemain && (
@@ -737,13 +737,13 @@ export default function OrdersPage() {
                 const start = getPeriodStart(pb.key)
                 setCustomStart(start ? start.toLocaleDateString('sv-SE') : '')
               }
-              setCustomEnd(getPeriodEnd(pb.key).toLocaleDateString('sv-SE'))
+              setCustomEnd(new Date().toLocaleDateString('sv-SE'))
             }}
-              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? 'rgba(80,80,80,0.8)' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #666' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
+              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
             >{pb.label}</button>
           ))}
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 4px' }} />
-          <input type="date" value={customStart} onChange={e => { setCustomStart(e.target.value); setPeriod('') }}
+          <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)}
             style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: '#C0392B', color: '#FF8C00' } : {}) }} />
           <button
             onClick={() => setStartLocked(prev => !prev)}
@@ -755,7 +755,7 @@ export default function OrdersPage() {
             }}
           >고정</button>
           <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
-          <input type="date" value={customEnd} onChange={e => { setCustomEnd(e.target.value); setPeriod('') }}
+          <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)}
             style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
           <button
             onClick={() => setDateLocked(prev => !prev)}
@@ -786,21 +786,20 @@ export default function OrdersPage() {
             })()}
           </select>
           <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '동기화 중...' : '가져오기'}</button>
+          <button onClick={handleSyncFromMarkets} disabled={syncing}
+            style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: syncing ? '#333' : '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '동기화 중...' : '전체마켓 가져오기'}</button>
         </div>
       </div>
 
       {/* 필터 바 */}
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
-        <span style={{ fontSize: '0.72rem', color: '#aaa', whiteSpace: 'nowrap', marginRight: '4px' }}>
-          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.length.toLocaleString()}</span>건 / ₩<span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.reduce((s, o) => s + o.sale_price, 0).toLocaleString()}</span>
-        </span>
         <select style={{ ...inputStyle, width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품</option>
           <option value="customer">고객</option>
           <option value="product_id">상품번호</option>
-          <option value="order_number">상품주문번호</option>
+          <option value="order_number">주문번호</option>
         </select>
-        <input style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} />
+        <input style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
         <button style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>검색</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
           <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
@@ -838,14 +837,14 @@ export default function OrdersPage() {
             <option value="gift">선물</option>
           </select>
           <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="">전체 주문상태</option>
             <option value="active">접수/대기/사무실</option>
-            {Object.entries(STATUS_MAP).filter(([k]) => k !== 'new_order' && k !== 'invoice_printed').map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
+            <option value="">전체 주문상태</option>
+            {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
           </select>
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
           <select style={{ ...inputStyle, width: '88px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}><option>-- 정렬 --</option><option>주문일자▲</option><option>주문일자▼</option></select>
-          <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }}>
-            <option value={20}>20개 보기</option><option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
+          <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
+            <option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
           </select>
         </div>
       </div>
@@ -868,34 +867,33 @@ export default function OrdersPage() {
               <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
             ) : filteredOrders.length === 0 ? (
               <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>주문이 없습니다</td></tr>
-            ) : filteredOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((o, index) => {
+            ) : filteredOrders.map(o => {
               const costDisplay = editingCosts[o.id] !== undefined ? fmtNum(editingCosts[o.id]) : (o.cost ? o.cost.toLocaleString() : '')
               const shipFeeDisplay = editingShipFees[o.id] !== undefined ? fmtNum(editingShipFees[o.id]) : (o.shipping_fee ? o.shipping_fee.toLocaleString() : '')
               const liveProfit = calcProfit(o)
               const liveProfitRate = calcProfitRate(o)
               const activeAction = activeActions[o.id] || null
 
+              const isExchanging = !!(o.shipping_status?.includes('교환'))
+              const isReturning = !!(o.shipping_status?.includes('반품') || o.status === 'return_requested')
+
               return (
-                <tr key={o.id} style={{ borderBottom: '1px solid #1C2333', verticalAlign: 'top' }}>
+                <tr key={o.id} style={{ borderBottom: '1px solid #1C2333', verticalAlign: 'top', background: isExchanging ? 'rgba(76,154,255,0.05)' : isReturning ? 'rgba(200,100,200,0.05)' : undefined }}>
                   {/* 체크박스 */}
                   <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center', borderRight: '1px solid #1C2333' }}>
-                    <div style={{ fontSize: '0.65rem', color: '#FFFFFF', fontWeight: 'bold', marginBottom: '2px' }}>{(currentPage - 1) * pageSize + index + 1}</div>
                     <input type="checkbox" style={{ accentColor: '#F59E0B' }} />
                   </td>
                   {/* 주문정보 */}
                   <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8125rem', position: 'relative' }}>
                     {/* 우측 상단: 주문일 + 수량 + 삭제 */}
                     <div style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
-                      {o.paid_at && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <span style={{ fontSize: '0.72rem', color: '#fff', fontWeight: 700 }}>{new Date(o.paid_at).toLocaleDateString('ko-KR')} {new Date(o.paid_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                      )}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
-                        <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', color: '#B0B0B0', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
+                        <button onClick={() => handleConfirmOrder(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#14532D', border: '1px solid #16A34A', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>주문확인</button>
+                        <button onClick={() => openSellerCancelModal(o.id, o.order_number || '')} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#7C2D12', border: '1px solid #EA580C', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>판매자취소</button>
+                        <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
                       </div>
-                      <span style={{ fontSize: o.quantity > 1 ? '2.25rem' : '0.95rem', fontWeight: 700, color: o.quantity > 1 ? '#F5A623' : '#888' }}>수량: <span style={{ color: o.quantity > 1 ? '#F5A623' : '#E5E5E5' }}>{o.quantity.toLocaleString()}</span></span>
+                      <span style={{ fontSize: '2.25rem', fontWeight: 700, color: '#888' }}>수량: <span style={{ color: '#E5E5E5' }}>{o.quantity}</span></span>
                     </div>
 
                     {/* 상품 이미지 (100x100) + 마켓/주문번호 */}
@@ -904,26 +902,23 @@ export default function OrdersPage() {
                         <img
                           src={o.product_image}
                           alt=""
-                          onClick={() => handleImageClick(o)}
+                          onClick={() => handleSourceLink(o)}
                           style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer' }}
                         />
                       ) : (
                         <div
-                          onClick={() => handleImageClick(o)}
+                          onClick={() => handleSourceLink(o)}
                           style={{ width: '100px', height: '100px', background: '#1A1A1A', borderRadius: '6px', border: '1px solid #2D2D2D', display: 'flex', alignItems: 'center', justifyContent: 'center', color: o.product_id?.startsWith('http') ? '#4C9AFF' : '#444', fontSize: '0.75rem', flexShrink: 0, cursor: o.product_id?.startsWith('http') ? 'pointer' : 'default', textDecoration: o.product_id?.startsWith('http') ? 'underline' : 'none' }}
                         >{o.product_id?.startsWith('http') ? '링크이동' : 'No IMG'}</div>
                       )}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
-                          {o.source_site && <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D' }}>{(() => {
-                            const m = o.source_site.match(/^(.+)\(([^)]+)\)$/)
-                            if (m && siteAliasMap[m[2]]) return `${m[1]}(${siteAliasMap[m[2]]})`
-                            return o.source_site
-                          })()}</span>}
-                          <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>주문번호복사</button>
-                          <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>SMS</button>
-                          <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>KAKAO</button>
+                          <span style={{ fontSize: '0.75rem', color: '#888', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
+                          {isExchanging && <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#4C9AFF', background: 'rgba(76,154,255,0.15)', padding: '0.1rem 0.45rem', borderRadius: '4px', border: '1px solid rgba(76,154,255,0.4)' }}>교환중</span>}
+                          {isReturning && !isExchanging && <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#CC5DE8', background: 'rgba(200,100,200,0.15)', padding: '0.1rem 0.45rem', borderRadius: '4px', border: '1px solid rgba(200,100,200,0.4)' }}>반품중</span>}
+                          <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '4px', color: '#4C9AFF', cursor: 'pointer' }}>주문번호복사</button>
+                          <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>SMS</button>
+                          <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(255,211,61,0.1)', border: '1px solid rgba(255,211,61,0.3)', borderRadius: '4px', color: '#FFD93D', cursor: 'pointer' }}>KAKAO</button>
                         </div>
                         {/* 상품주문번호 + 주문번호 같은 행 */}
                         <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
@@ -934,9 +929,9 @@ export default function OrdersPage() {
                         </div>
                         {/* 상품명 + 옵션 */}
                         <div style={{ minWidth: 0 }}>
-                          <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{o.product_name || '-'}</span>
+                          <span onClick={() => handleSourceLink(o)} style={{ color: '#C5C5C5', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', cursor: 'pointer' }}>{o.product_name || '-'}</span>
                           {o.product_option && (
-                            <span style={{ color: '#B0B0B0', fontSize: '0.75rem', display: 'block', marginTop: '0.125rem' }}>[옵션] {o.product_option}</span>
+                            <span style={{ color: '#FF8C00', fontSize: '0.75rem', display: 'block', marginTop: '0.125rem' }}>[옵션] {o.product_option}</span>
                           )}
                         </div>
                       </div>
@@ -954,7 +949,7 @@ export default function OrdersPage() {
                           if (val === (o.coupang_display_name ?? '')) return
                           try {
                             await orderApi.update(o.id, { coupang_display_name: val || undefined })
-                            updateOrderLocal(o.id, { coupang_display_name: val || undefined })
+                            loadOrders()
                           } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
                         }}
                         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
@@ -964,8 +959,8 @@ export default function OrdersPage() {
 
                     {/* 버튼 */}
                     <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                      <button onClick={() => handleDanawa(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>다나와</button>
-                      <button onClick={() => handleNaver(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>네이버</button>
+                      <button onClick={() => handleDanawa(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'rgba(255,140,0,0.12)', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#FF8C00', cursor: 'pointer' }}>다나와</button>
+                      <button onClick={() => handleNaver(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'rgba(81,207,102,0.12)', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>네이버</button>
                       <button onClick={async () => {
                         if (o.product_id) {
                           try {
@@ -992,7 +987,7 @@ export default function OrdersPage() {
                         } else {
                           showAlert('상품 정보가 없습니다', 'info')
                         }
-                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>상품정보</button>
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>상품정보</button>
                       <button onClick={async () => {
                         if (!o.product_id) { showAlert('상품 정보가 없습니다', 'info'); return }
                         try {
@@ -1004,11 +999,11 @@ export default function OrdersPage() {
                           const history = await collectorApi.getPriceHistory(lookup.id)
                           setPriceHistoryData(history || [])
                         } catch { showAlert('가격이력 조회 실패', 'error') }
-                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>가격변경이력</button>
-                      <button onClick={() => handleSourceLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>원문링크</button>
-                      <button onClick={() => handleMarketLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>판매링크</button>
-                      <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>미등록 입력</button>
-                      <button onClick={() => handleTracking(o.shipping_company || '', o.tracking_number || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>배송조회</button>
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>가격변경이력</button>
+                      <button onClick={() => handleSourceLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #444', borderRadius: '3px', color: (o.source_site && o.product_id) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원문링크</button>
+                      <button onClick={() => handleMarketLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #444', borderRadius: '3px', color: o.channel_id ? '#51CF66' : '#555', cursor: 'pointer' }}>판매링크</button>
+                      <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>미등록 입력</button>
+                      <button onClick={() => handleTracking(o.shipping_company || '', o.tracking_number || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>배송조회</button>
                       <button onClick={async () => {
                         // 마켓상품번호 → 수집상품 ID 역추적 → enrich 호출
                         let cpId = ''
@@ -1030,7 +1025,7 @@ export default function OrdersPage() {
                         if (!cpId) { showAlert('수집상품을 찾을 수 없습니다', 'info'); return }
                         try {
                           const { API_BASE_URL: apiBase } = await import('@/config/api')
-                          const res = await fetchWithAuth(`${apiBase}/api/v1/samba/collector/enrich/${cpId}`, { method: 'POST' })
+                          const res = await fetch(`${apiBase}/api/v1/samba/collector/enrich/${cpId}`, { method: 'POST' })
                           const data = await res.json()
                           if (res.ok && data.success) {
                             const p = data.product
@@ -1038,22 +1033,35 @@ export default function OrdersPage() {
                             const priceStr = costVal != null ? `₩${Number(costVal).toLocaleString()}` : '-'
                             const stockStr = p?.is_sold_out ? '품절' : '재고있음'
                             showAlert(`${(o.product_name || '').slice(0, 20)} → ${priceStr} | ${stockStr}`, 'success')
-                            if (costVal) { await orderApi.update(o.id, { cost: costVal }); updateOrderLocal(o.id, { cost: costVal }) }
+                            if (costVal) { await orderApi.update(o.id, { cost: costVal }); loadOrders() }
                           } else {
                             showAlert(data.message || '업데이트 실패', 'error')
                           }
                         } catch (e) { showAlert(e instanceof Error ? e.message : '업데이트 실패', 'error') }
-                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>업데이트</button>
-                      <button onClick={() => showAlert('마켓상품삭제 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>마켓상품삭제</button>
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>업데이트</button>
+                      <button onClick={async () => {
+                        if (!await showConfirm(`마켓에서 이 상품을 완전 삭제합니다.\n(판매중지가 아닌 삭제)\n\n${o.product_name || ''}\n진행할까요?`)) return
+                        try {
+                          const res = await orderApi.marketDelete(o.id)
+                          if (res.ok) { showAlert('마켓 상품 삭제 완료', 'success'); loadOrders() }
+                          else showAlert(res.message || '마켓상품삭제 실패', 'error')
+                        } catch (e) { showAlert(e instanceof Error ? e.message : '마켓상품삭제 실패', 'error') }
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>마켓상품삭제</button>
                       <button onClick={() => {
                         if (o.ext_order_number) { window.open(o.ext_order_number, '_blank'); return }
                         const srcNo = o.sourcing_order_number || ''
                         if (!srcNo) { showAlert('소싱 주문번호가 없습니다', 'info'); return }
-                        const orderBaseUrl = SOURCING_ORDER_URLS[o.source_site || '']
-                        const url = orderBaseUrl ? `${orderBaseUrl}${srcNo}` : undefined
+                        const orderUrlMap: Record<string, string> = {
+                          MUSINSA: `https://www.musinsa.com/order/order-detail/${srcNo}`,
+                          KREAM: `https://kream.co.kr/my/purchasing/${srcNo}`,
+                          FashionPlus: `https://www.fashionplus.co.kr/mypage/order/detail/${srcNo}`,
+                          ABCmart: `https://www.a-rt.com/mypage/order-detail/${srcNo}`,
+                          Nike: `https://www.nike.com/kr/orders/${srcNo}`,
+                        }
+                        const url = orderUrlMap[o.source_site || '']
                         if (!url) { showAlert(`${o.source_site || '알수없는'} 소싱처는 원주문링크를 지원하지 않습니다`, 'info'); return }
                         window.open(url, '_blank')
-                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>원주문링크</button>
+                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: (o.ext_order_number || o.sourcing_order_number) ? '#4C9AFF' : '#555', cursor: 'pointer' }}>원주문링크</button>
                     </div>
 
                     {/* 주문자/수령인/연락처/주소 한 줄 */}
@@ -1086,7 +1094,7 @@ export default function OrdersPage() {
                           if (val === (o.ext_order_number ?? '')) return
                           try {
                             await orderApi.update(o.id, { ext_order_number: val || undefined })
-                            updateOrderLocal(o.id, { ext_order_number: val || undefined })
+                            loadOrders()
                           } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
                         }}
                         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
@@ -1099,11 +1107,13 @@ export default function OrdersPage() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>결제</span><span>{o.sale_price.toLocaleString()}</span></div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>정산</span><span>{Math.round(o.revenue).toLocaleString()}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>실수익</span><span>{liveProfit >= 0 ? '+' : ''}{Math.round(liveProfit).toLocaleString()}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>실수익</span><span style={{ color: liveProfit >= 0 ? '#51CF66' : '#FF6B6B' }}>{liveProfit >= 0 ? '+' : ''}{Math.round(liveProfit).toLocaleString()}</span></div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>수익률</span><span style={{ color: '#888' }}>{liveProfitRate}%</span></div>
                     </div>
                     {/* 가격X/재고X/직배/까대기/선물 */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '0.375rem', borderTop: '1px solid #1C2333', paddingTop: '0.375rem' }}>
+                      <button onClick={() => showAlert('가격X 기능 준비중입니다', 'info')} style={{ fontSize: '0.68rem', padding: '0.125rem 0', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer', textAlign: 'center' }}>가격X</button>
+                      <button onClick={() => showAlert('재고X 기능 준비중입니다', 'info')} style={{ fontSize: '0.68rem', padding: '0.125rem 0', background: 'rgba(255,211,61,0.1)', border: '1px solid rgba(255,211,61,0.3)', color: '#FFD93D', borderRadius: '4px', cursor: 'pointer', textAlign: 'center' }}>재고X</button>
                       {ACTION_BUTTONS.map(btn => {
                         const isActive = activeAction === btn.key
                         return (
@@ -1136,7 +1146,7 @@ export default function OrdersPage() {
                             color: o.status === 'ship_failed' ? '#FF3232' : inputStyle.color,
                           }}
                         >
-                          {Object.entries(STATUS_MAP).filter(([k]) => k !== 'new_order' && k !== 'invoice_printed').map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
+                          {Object.entries(STATUS_MAP).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
                         </select>
                         <input
                           type="text"
@@ -1149,7 +1159,7 @@ export default function OrdersPage() {
                             if (val === (o.sourcing_order_number ?? '')) return
                             try {
                               await orderApi.update(o.id, { sourcing_order_number: val })
-                              updateOrderLocal(o.id, { sourcing_order_number: val })
+                              loadOrders()
                             } catch (err) { showAlert(err instanceof Error ? err.message : '소싱주문번호 저장 실패', 'error') }
                           }}
                           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
@@ -1165,7 +1175,7 @@ export default function OrdersPage() {
                             const val = e.target.value
                             try {
                               await orderApi.update(o.id, { sourcing_account_id: val || undefined } as Partial<SambaOrder>)
-                              updateOrderLocal(o.id, { sourcing_account_id: val || undefined })
+                              loadOrders()
                             } catch { /* ignore */ }
                           }}
                           style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
@@ -1189,7 +1199,7 @@ export default function OrdersPage() {
                           background: 'rgba(30,30,30,0.6)', border: '1px solid #2D2D2D', borderRadius: '6px',
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                         }}>
-                          <span style={{ fontSize: '0.75rem', color: '#4C9AFF', fontWeight: 600 }}>{o.shipping_status === '취소' ? '취소중' : o.shipping_status === '취소마감' ? '취소완료' : o.shipping_status || '-'}</span>
+                          <span style={{ fontSize: '0.75rem', color: '#4C9AFF', fontWeight: 600 }}>{o.shipping_status || '-'}</span>
                         </div>
                       </div>
 
@@ -1232,11 +1242,24 @@ export default function OrdersPage() {
                             const co = e.target.value
                             const tn = (document.getElementById(`ship-tn-${o.id}`) as HTMLInputElement)?.value.trim() || ''
                             const alreadyShipped = o.shipping_status === '송장전송완료'
+                            const orderAcc = accounts.find(a => a.id === o.channel_id)
+                            const isLotteon = orderAcc?.market_type === 'lotteon'
                             if (co && tn && alreadyShipped) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                              try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
-                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
-                              updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn })
+                              if (isLotteon) {
+                                // 롯데ON은 송장 수정 시 발송처리 API 재호출
+                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 롯데ON 송장 재전송 중... (${co} ${tn})`])
+                                try {
+                                  const res = await orderApi.shipOrder(o.id, co, tn)
+                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                } catch {
+                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 롯데ON 송장 재전송 실패`])
+                                }
+                              } else {
+                                try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
+                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
+                              }
+                              loadOrders()
                             } else if (co && tn) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 중... (${co} ${tn})`])
@@ -1245,15 +1268,14 @@ export default function OrdersPage() {
                                 if (!res.market_sent) {
                                   await orderApi.updateStatus(o.id, 'ship_failed')
                                   setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
-                                  updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                                 } else {
                                   setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
-                                  updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'shipping', shipping_status: '송장전송완료' })
                                 }
+                                loadOrders()
                               } catch (err) {
                                 await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
                                 setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 실패`])
-                                updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
+                                loadOrders()
                               }
                             } else if (co) {
                               try { await orderApi.update(o.id, { shipping_company: co }) } catch { /* ignore */ }
@@ -1275,12 +1297,25 @@ export default function OrdersPage() {
                             const changed = tn !== (o.tracking_number || '')
                             const retry = o.status === 'ship_failed'
                             const alreadyShipped = o.shipping_status === '송장전송완료'
+                            const orderAcc2 = accounts.find(a => a.id === o.channel_id)
+                            const isLotteon2 = orderAcc2?.market_type === 'lotteon'
                             if (co && tn && changed && alreadyShipped) {
-                              // 이미 발송된 주문 — DB만 저장, 마켓 수정은 판매자센터에서
+                              // 이미 발송된 주문 수정
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                              try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
-                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
-                              updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn })
+                              if (isLotteon2) {
+                                // 롯데ON은 발송처리 API 재호출
+                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 롯데ON 송장 재전송 중... (${co} ${tn})`])
+                                try {
+                                  const res = await orderApi.shipOrder(o.id, co, tn)
+                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
+                                } catch {
+                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 롯데ON 송장 재전송 실패`])
+                                }
+                              } else {
+                                try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
+                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
+                              }
+                              loadOrders()
                             } else if (co && tn && (changed || retry)) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
                               setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 중... (${co} ${tn})`])
@@ -1289,15 +1324,14 @@ export default function OrdersPage() {
                                 if (!res.market_sent) {
                                   await orderApi.updateStatus(o.id, 'ship_failed')
                                   setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
-                                  updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
                                 } else {
                                   setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
-                                  updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'shipping', shipping_status: '송장전송완료' })
                                 }
+                                loadOrders()
                               } catch (err) {
                                 await orderApi.updateStatus(o.id, 'ship_failed').catch(() => {})
                                 setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 전송 실패`])
-                                updateOrderLocal(o.id, { shipping_company: co, tracking_number: tn, status: 'ship_failed' })
+                                loadOrders()
                               }
                             } else if (tn && tn !== (o.tracking_number || '')) {
                               try { await orderApi.update(o.id, { tracking_number: tn }) } catch { /* ignore */ }
@@ -1327,43 +1361,6 @@ export default function OrdersPage() {
           </tbody>
         </table>
       </div>
-
-      {/* 페이지네이션 */}
-      {filteredOrders.length > pageSize && (() => {
-        const totalPages = Math.ceil(filteredOrders.length / pageSize)
-        const pages: (number | string)[] = []
-        if (totalPages <= 7) {
-          for (let i = 1; i <= totalPages; i++) pages.push(i)
-        } else {
-          pages.push(1)
-          if (currentPage > 3) pages.push('...')
-          for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) pages.push(i)
-          if (currentPage < totalPages - 2) pages.push('...')
-          pages.push(totalPages)
-        }
-        const btnStyle = (active: boolean) => ({
-          background: active ? '#FF8C00' : 'rgba(30,30,30,0.9)',
-          color: active ? '#fff' : '#aaa',
-          border: active ? 'none' : '1px solid #333',
-          borderRadius: '6px',
-          padding: '0.3rem 0.6rem',
-          fontSize: '0.75rem',
-          cursor: 'pointer' as const,
-          minWidth: '32px',
-          fontWeight: active ? 600 : 400,
-        })
-        return (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '1rem 0' }}>
-            <button style={btnStyle(false)} disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>‹</button>
-            {pages.map((p, i) =>
-              typeof p === 'string'
-                ? <span key={`dot-${i}`} style={{ color: '#555', padding: '0 4px' }}>…</span>
-                : <button key={p} style={btnStyle(p === currentPage)} onClick={() => setCurrentPage(p)}>{p}</button>
-            )}
-            <button style={btnStyle(false)} disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)}>›</button>
-          </div>
-        )
-      })()}
 
       {/* 주문 수정 모달 */}
       {showForm && (
@@ -1409,6 +1406,58 @@ export default function OrdersPage() {
       )}
 
       {/* 미등록 입력 URL 모달 */}
+      {sellerCancelModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '480px', maxWidth: '90vw' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5' }}>판매자 주문 취소</h3>
+              <button onClick={() => setSellerCancelModal(null)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '1rem' }}>
+              주문번호: <span style={{ color: '#E5E5E5', fontFamily: 'monospace' }}>{sellerCancelModal.orderNumber}</span>
+              <br />
+              취소 사유를 선택하고 상세 내용을 입력하세요. 롯데ON에 즉시 취소 요청이 전송됩니다.
+            </p>
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.375rem', display: 'block' }}>취소 사유</label>
+              <select
+                value={sellerCancelReason}
+                onChange={e => setSellerCancelReason(e.target.value)}
+                style={{ width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem', background: '#0F0F0F', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', cursor: 'pointer' }}
+              >
+                <option value="135">고객요청 (고객변심)</option>
+                <option value="111">품절</option>
+                <option value="132">가격 오등록</option>
+                <option value="133">리셀러 주문</option>
+                <option value="137">택배지원 불가</option>
+              </select>
+            </div>
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.375rem', display: 'block' }}>상세 사유 <span style={{ color: '#555' }}>(선택)</span></label>
+              <input
+                type="text"
+                placeholder="예: 품절로 인한 취소"
+                value={sellerCancelText}
+                onChange={e => setSellerCancelText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleSellerCancelSubmit() }}
+                style={{ width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem', background: '#0F0F0F', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5' }}
+                autoFocus
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button onClick={() => setSellerCancelModal(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>닫기</button>
+              <button
+                onClick={handleSellerCancelSubmit}
+                disabled={sellerCancelSaving}
+                style={{ padding: '0.625rem 1.25rem', background: sellerCancelSaving ? '#555' : '#EA580C', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: sellerCancelSaving ? 'not-allowed' : 'pointer' }}
+              >
+                {sellerCancelSaving ? '처리중...' : '취소 실행'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showUrlModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
           <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '520px', maxWidth: '90vw' }}>
@@ -1485,7 +1534,7 @@ export default function OrdersPage() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid #2D2D2D' }}>
                 <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#E5E5E5' }}>가격 / 재고 이력</h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontSize: '0.75rem', color: '#666' }}>{history.length.toLocaleString()}건 기록</span>
+                  <span style={{ fontSize: '0.75rem', color: '#666' }}>{history.length}건 기록</span>
                   <button onClick={() => setPriceHistoryModal(false)} style={{ background: 'transparent', border: 'none', color: '#888', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
                 </div>
               </div>
@@ -1556,7 +1605,7 @@ export default function OrdersPage() {
                                 </td>
                               )}
                               <td style={{ padding: '8px 16px', textAlign: 'right', color: '#888' }}>
-                                {opts.length > 0 ? `${opts.length.toLocaleString()}개 옵션` : '-'}
+                                {opts.length > 0 ? `${opts.length}개 옵션` : '-'}
                               </td>
                             </tr>
                             {opts.map((opt, oi) => {
@@ -1624,12 +1673,14 @@ export default function OrdersPage() {
             {/* 빠른 템플릿 카드 */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.75rem' }}>
               {[
-                { label: '주문취소안내', msg: '{{marketName}} 주문취소안내\n주문상품 : {{goodsName}}\n\n안녕하세요, {{rvcName}} 고객님.\n\n해당 상품이 일시적으로 시스템 오류로 노출되어 주문이 접수된 것으로 확인되었습니다.\n\n불편을 드려 정말 죄송합니다.\n\n빠른 환불 처리를 위해 "단순취소" 사유로 주문취소 해주시면 확인 후 바로 환불도와드리겠습니다.\n\n불편을 드려 진심으로 죄송하며, 더 나은 서비스로 보답드리겠습니다. 감사합니다.' },
-                { label: '가격변동 취소', msg: '{{marketName}} 가격변동 안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님\n\n해당 제품 공급처에서 가격을 변동하여 안내드립니다.\n취소 후 재주문 부탁드립니다.' },
-                { label: '국내상품 발주안내', msg: '{{marketName}} 주문상품 발주 완료\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님^^ 발주 완료되었습니다. 배송완료까지 영업일기준 2~3일정도 소요됩니다.' },
-                { label: '반품비', msg: '{{marketName}} 반품비 안내\n상품명 : {{goodsName}}\n\n반품비 안내드립니다.\n교환비용 8,000원 발생(고객변심)하므로 따로 개별 문자 안내드리겠습니다.' },
-                { label: '반품안내문자', msg: '{{marketName}} 반품 안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님\n반품신청으로 무자안내드립니다.\n교환 접수시 회수기사님 방문2-3일내 이루어지며 회수된 상품 해당부서로 이동하여 검수진행과정 진행됩니다.' },
-                { label: '발주 후 품절', msg: '{{marketName}} 품절안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님. 저희가 해당 제품 발주를 넣었는데 공급처에서 품절이라고 연락이 왔습니다.\n취소 처리 도와드리겠습니다.' },
+                { label: '발주 후 품절', msg: '{{marketName}} 품절안내\n주문상품: {{goodsName}}\n안녕하세요 {{rvcName}} 고객님 저희가 해당 상품 발주를 넣었는데\n공급처에서 품절로 연락받아 문자드립니다.\n오래기다리셨는데 정말 죄송합니다. 빠른 환불 도와드리겠습니다.\n불편을 드려 죄송합니다.' },
+                { label: '반품안내문자', msg: '{{marketName}} 반품 안내\n주문상품: {{goodsName}}\n안녕하세요, {{rvcName}} 고객님\n반품신청으로 문자안내드립니다.\n상품 문앞에 놔둬주시고 문자로 고객님 성함과 함께 답변주시면 기사님 배정하여\n수거후 빠르게 환불도와드리겠습니다. 답변시 꼭 성함과함께 답변부탁드립니다. 감사합니다.' },
+                { label: '반품비', msg: '{{marketName}} 반품비 안내\n상품명: {{goodsName}}\n은행명: 카카오뱅크\n계좌번호: 3333-21-3371166\n예금주: 손혜진\n금액: 10,000원\n위 계좌로 반품비용을 입금해주시면 반품 승인 진행도와드리겠습니다. 입금후 문자부탁드립니다.\n반품비 입금확인후 수거택배사 방문 예정입니다.' },
+                { label: '단순변심(쿠팡)', msg: '{{marketName}} 주문 관련 안내드립니다.\n주문상품: {{goodsName}}\n안녕하세요, {{rvcName}} 고객님.\n해당 상품이 일시적으로 시스템 오류로 노출되어 주문이 접수된 것으로 확인되었습니다.\n불편을 드려 정말 죄송합니다.\n빠른 환불처리를 위해 "단순변심" 사유로 출고중지(취소 요청)해주시면\n확인후 바로 환불을 도와드리겠습니다.\n다른 사유로 신청하실 경우, 쿠팡 측 시스템 검수 과정이 필요해\n환불까지 1주일 이상 지연되거나 추가 확인 요청을 받으실수 있습니다.\n빠른 처리를 위해 꼭 "단순변심"으로 신청부탁드립니다.\n불편을 드려 진심으로 죄송하며, 더 나은 서비스로 보답드리겠습니다. 감사합니다.' },
+                { label: '단순변심 (g마켓)', msg: '{{marketName}} 시스템오류안내\n주문상품: {{goodsName}}\n안녕하세요 {{rvcName}} 고객님, 해당 제품은 저희가 삭제하였는데\nG마켓 오류라 삭제가 되지않았습니다. 불편을 드려 죄송합니다.\n죄송하지만 취소신청 부탁드리겠습니다.\n하실때 구매자귀책으로 신청하시면 바로 환불이 가능합니다.\n다른 사유로 하실경우 저희가 G마켓에 오류 문의를 해야해서 취소처리가 오래걸릴수있으니.\n이점 유의해서 취소신청부탁드립니다. 불편을 드려 죄송합니다.' },
+                { label: '지마켓,쿠팡제외 품절', msg: '{{marketName}} 옵션 부재 안내\n주문상품: {{goodsName}}\n안녕하세요, {{rvcName}} 고객님\n주문하신 상품의 옵션이 공급처 사정으로 인해 배송이 불가하게 되었습니다.\n불편을 드려 진심으로 죄송합니다.' },
+                { label: '가격변동 취소', msg: '{{marketName}} 가격변동안내\n주문상품: {{goodsName}}\n안녕하세요 {{rvcName}} 고객님\n해당 제품은 공급처에서 가격을 인상하여 발송이 어려울거같습니다.\n가격업데이트가 늦은점 정말 죄송합니다.\n해당 주문 취소도와드리겠습니다.\n다시 한번 정말 죄송합니다.' },
+                { label: '국내상품 발주안내', msg: '{{marketName}}주문상품 발주 완료\n주문상품: {{goodsName}}\n안녕하세요 {{rvcName}} 고객님 ^^ 발주 완료되었습니다.\n배송완료까지 영업일 기준 2~3일 소요됩니다.\n빠른배송 할수있도록 노력하겠습니다. 감사합니다.' },
               ].map(t => (
                 <div
                   key={t.label}

@@ -1,8 +1,11 @@
 """SambaWave Policy API router."""
 
 import logging
+from typing import Optional
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
@@ -13,6 +16,7 @@ from backend.domain.samba.policy.model import (
 )
 from backend.domain.samba.policy.repository import SambaPolicyRepository
 from backend.domain.samba.policy.service import SambaPolicyService
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 from backend.dtos.samba.policy import PolicyCreate, PolicyUpdate, PriceCalculateRequest
 
 logger = logging.getLogger(__name__)
@@ -27,9 +31,20 @@ def _get_service(session: AsyncSession) -> SambaPolicyService:
 @router.get("", response_model=list[SambaPolicy])
 async def list_policies(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
+    # tenant_id가 있으면 해당 테넌트 정책만 조회
+    if tenant_id:
+        stmt = (
+            select(SambaPolicy)
+            .where(SambaPolicy.tenant_id == tenant_id)
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        return result.scalars().all()
     svc = _get_service(session)
     return await svc.list_policies(skip=skip, limit=limit)
 
@@ -41,7 +56,7 @@ async def list_policies(
 @router.get("/detail-templates", response_model=list[SambaDetailTemplate])
 async def list_detail_templates(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """상세페이지 템플릿 목록 조회."""
@@ -115,7 +130,7 @@ async def delete_detail_template(
 @router.get("/name-rules", response_model=list[SambaNameRule])
 async def list_name_rules(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """상품/옵션명 규칙 목록 조회."""
@@ -336,9 +351,14 @@ async def get_policy(
 async def create_policy(
     body: PolicyCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _get_service(session)
-    return await svc.create_policy(body.model_dump(exclude_unset=True))
+    data = body.model_dump(exclude_unset=True)
+    # 테넌트 ID가 있으면 새 정책에 설정
+    if tenant_id:
+        data["tenant_id"] = tenant_id
+    return await svc.create_policy(data)
 
 
 @router.put("/{policy_id}", response_model=SambaPolicy)
@@ -346,8 +366,18 @@ async def update_policy(
     policy_id: str,
     body: PolicyUpdate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _get_service(session)
+    # 테넌트 소유권 검증: tenant_id가 있으면 해당 테넌트 정책만 수정 가능
+    if tenant_id:
+        existing = await svc.get_policy(policy_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="정책을 찾을 수 없습니다")
+        if existing.tenant_id != tenant_id:
+            raise HTTPException(
+                status_code=403, detail="해당 정책에 접근 권한이 없습니다"
+            )
     policy = await svc.update_policy(policy_id, body.model_dump(exclude_unset=True))
     if not policy:
         raise HTTPException(status_code=404, detail="정책을 찾을 수 없습니다")
@@ -358,8 +388,18 @@ async def update_policy(
 async def delete_policy(
     policy_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _get_service(session)
+    # 테넌트 소유권 검증: tenant_id가 있으면 해당 테넌트 정책만 삭제 가능
+    if tenant_id:
+        existing = await svc.get_policy(policy_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="정책을 찾을 수 없습니다")
+        if existing.tenant_id != tenant_id:
+            raise HTTPException(
+                status_code=403, detail="해당 정책에 접근 권한이 없습니다"
+            )
     deleted = await svc.delete_policy(policy_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="정책을 찾을 수 없습니다")

@@ -2,6 +2,7 @@
 
 let PROXY_URL = 'http://localhost:28080'
 const DEFAULT_PROXY_URL = 'http://localhost:28080'
+const CLOUD_URL = 'https://samba-wave-api-413651618998.asia-northeast3.run.app'
 const API_PREFIX = '/api/v1/samba/proxy'
 
 // ==================== KREAM 셀렉터 설정 (서버에서 동적 변경 가능) ====================
@@ -137,6 +138,18 @@ async function postResult(endpoint, body) {
 // ==================== 프록시 전송 함수 ====================
 
 async function sendCookiesToProxy(cookieStr) {
+  // Cloud Run에 항상 전송 (로컬 실패와 무관하게 완료 보장)
+  if (PROXY_URL !== CLOUD_URL) {
+    try {
+      const cr = await fetch(`${CLOUD_URL}${API_PREFIX}/musinsa/set-cookie`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookie: cookieStr })
+      })
+      if (cr.ok) console.log('[클라우드] 무신사 쿠키 전송 성공')
+      else console.warn(`[클라우드] 무신사 쿠키 전송 실패: HTTP ${cr.status}`)
+    } catch (e) { console.warn('[클라우드] 무신사 쿠키 전송 실패 (네트워크)', e.message) }
+  }
   const res = await fetch(`${PROXY_URL}${API_PREFIX}/musinsa/set-cookie`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -147,6 +160,18 @@ async function sendCookiesToProxy(cookieStr) {
 }
 
 async function sendKreamCookiesToProxy(cookieStr) {
+  // Cloud Run에 항상 전송 (로컬 실패와 무관하게 완료 보장)
+  if (PROXY_URL !== CLOUD_URL) {
+    try {
+      const cr = await fetch(`${CLOUD_URL}${API_PREFIX}/kream/set-cookie`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookie: cookieStr })
+      })
+      if (cr.ok) console.log('[클라우드] KREAM 쿠키 전송 성공')
+      else console.warn(`[클라우드] KREAM 쿠키 전송 실패: HTTP ${cr.status}`)
+    } catch (e) { console.warn('[클라우드] KREAM 쿠키 전송 실패 (네트워크)', e.message) }
+  }
   const res = await fetch(`${PROXY_URL}${API_PREFIX}/kream/set-cookie`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

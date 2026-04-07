@@ -45,6 +45,25 @@ from backend.utils.logger import logger
 router = APIRouter(prefix="/proxy", tags=["samba-proxy"])
 
 
+# ── Cloud Run 외부 IP 확인 ──
+@router.get("/myip")
+async def get_my_ip() -> dict[str, Any]:
+    """Cloud Run 컨테이너의 외부 IP 주소를 반환한다 (IPv4/IPv6)."""
+    result: dict[str, Any] = {}
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            resp = await client.get("https://api.ipify.org?format=json")
+            result["ipv4"] = resp.json().get("ip", "")
+        except Exception:
+            result["ipv4"] = ""
+        try:
+            resp = await client.get("https://api64.ipify.org?format=json")
+            result["ipv6"] = resp.json().get("ip", "")
+        except Exception:
+            result["ipv6"] = ""
+    return result
+
+
 # ── Helper: read setting from DB ──
 
 
@@ -670,7 +689,7 @@ async def lotteon_auth_test(
     if not creds or not isinstance(creds, dict):
         return {"success": False, "message": "롯데ON 설정이 저장되지 않았습니다."}
 
-    api_key = creds.get("apiKey", "")
+    api_key = (creds.get("apiKey", "") or "").strip()
     if not api_key:
         return {"success": False, "message": "API Key가 비어있습니다."}
 
