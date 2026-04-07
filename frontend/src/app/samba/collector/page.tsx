@@ -9,6 +9,7 @@ import {
   aiSourcingApi,
   categoryApi,
   accountApi,
+  fetchWithAuth,
   API_BASE,
   type SambaSearchFilter,
   type SambaPolicy,
@@ -286,7 +287,7 @@ export default function CollectorPage() {
 
   // 프록시 & 무신사 인증 상태 확인
   useEffect(() => {
-    fetch(`${API_BASE}/api/v1/samba/collector/proxy-status`)
+    fetchWithAuth(`${API_BASE}/api/v1/samba/collector/proxy-status`)
       .then((r) => r.json())
       .then((data) => {
         if (data.status === "ok") { setProxyStatus("ok"); setProxyText(data.message || "프록시 서버 정상 작동 중"); }
@@ -294,7 +295,7 @@ export default function CollectorPage() {
       })
       .catch(() => { setProxyStatus("error"); setProxyText("백엔드 서버 연결 실패"); });
 
-    fetch(`${API_BASE}/api/v1/samba/collector/musinsa-auth-status`)
+    fetchWithAuth(`${API_BASE}/api/v1/samba/collector/musinsa-auth-status`)
       .then((r) => r.json())
       .then((data) => {
         if (data.status === "ok") { setMusinsaAuth("ok"); setMusinsaAuthText(data.message || "무신사 인증 완료"); }
@@ -512,7 +513,7 @@ export default function CollectorPage() {
           if (abort.signal.aborted) break
 
           try {
-            const jobRes = await fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+            const jobRes = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
             if (!jobRes.ok) break
             const job = await jobRes.json() as {
               status: string; current: number; total: number
@@ -779,7 +780,7 @@ export default function CollectorPage() {
           onClick={() => {
             setProxyStatus('checking')
             setProxyText('프록시 서버 확인 중...')
-            fetch(`${API_BASE}/api/v1/samba/collector/proxy-status`)
+            fetchWithAuth(`${API_BASE}/api/v1/samba/collector/proxy-status`)
               .then(r => r.json())
               .then(data => {
                 if (data.status === 'ok') { setProxyStatus('ok'); setProxyText(data.message || '프록시 서버 정상 작동 중') }
@@ -1547,7 +1548,7 @@ export default function CollectorPage() {
                           if (abort.signal.aborted) break
                           addLog(`[${f.name}] 수집 요청 중...`)
                           try {
-                            const r = await fetch(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}`, { method: 'POST' })
+                            const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}`, { method: 'POST' })
                             if (!r.ok) { addLog(`[${f.name}] 수집 실패: HTTP ${r.status}`); continue }
                             const { job_id } = await r.json()
                             // 수집 시작 로그 생략
@@ -1555,7 +1556,7 @@ export default function CollectorPage() {
                             while (!abort.signal.aborted) {
                               await new Promise(r => setTimeout(r, 1000))
                               if (abort.signal.aborted) break
-                              const jr = await fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+                              const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
                               if (!jr.ok) break
                               const job = await jr.json()
                               if (job.current > lastCurrent) { addLog(`[${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
