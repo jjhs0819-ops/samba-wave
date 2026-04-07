@@ -755,6 +755,11 @@ export default function CollectorPage() {
         break
       }
     }
+    // Nike 등 단일 브랜드 사이트: 사이트명 자체가 브랜드
+    const singleBrandMap: Record<string, string> = { Nike: '나이키' }
+    if (singleBrandMap[site]) {
+      return { brand: singleBrandMap[site], category: rest }
+    }
     const parts = rest.split('_')
     if (parts.length >= 2) return { brand: parts[0], category: parts.slice(1).join('_') }
     const spaceParts = rest.split(' ')
