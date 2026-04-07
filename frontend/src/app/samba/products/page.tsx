@@ -12,6 +12,7 @@ import {
   nameRuleApi,
   categoryApi,
   detailTemplateApi,
+  fetchWithAuth,
   type SambaCollectedProduct,
   type SambaPolicy,
   type SambaSearchFilter,
@@ -395,7 +396,7 @@ export default function ProductsPage() {
     setActiveLog({ productId, message: `[업데이트 중] ${productName}...` })
     try {
       const { API_BASE_URL: apiBase } = await import('@/config/api')
-      const res = await fetch(`${apiBase}/api/v1/samba/collector/enrich/${productId}`, { method: "POST" });
+      const res = await fetchWithAuth(`${apiBase}/api/v1/samba/collector/enrich/${productId}`, { method: "POST" });
       const data = await res.json();
       if (res.ok && data.success) {
         const p = data.product

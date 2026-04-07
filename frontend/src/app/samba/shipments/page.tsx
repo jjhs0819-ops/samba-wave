@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
+import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, fetchWithAuth, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
 import { MARKET_TYPE_TO_POLICY_KEY as SHARED_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
@@ -83,8 +83,8 @@ export default function ShipmentsPage() {
       try {
         const { API_BASE_URL: apiBase } = await import('@/config/api')
         const [runRes, penRes] = await Promise.all([
-          fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=100`),
-          fetch(`${apiBase}/api/v1/samba/jobs?status=pending&limit=100`),
+          fetchWithAuth(`${apiBase}/api/v1/samba/jobs?status=running&limit=100`),
+          fetchWithAuth(`${apiBase}/api/v1/samba/jobs?status=pending&limit=100`),
         ])
         const runJobs = await runRes.json()
         const penJobs = await penRes.json()
@@ -108,7 +108,7 @@ export default function ShipmentsPage() {
       try {
         const { API_BASE_URL: apiBase } = await import('@/config/api')
         // 실행 중인 Job 확인 (가벼운 호출만)
-        const res = await fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`)
+        const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`)
         const jobs = await res.json()
         const job = Array.isArray(jobs) ? jobs.find((j: Record<string, unknown>) => j.job_type === 'transmit') : null
         if (!job) return
@@ -124,8 +124,8 @@ export default function ShipmentsPage() {
           polling = true
           try {
             const [jr, lr] = await Promise.all([
-              fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
-              fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
+              fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+              fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
             ])
             const j = await jr.json()
             const logData = await lr.json()
@@ -357,7 +357,7 @@ export default function ShipmentsPage() {
     // 비상정지 해제 (이전 중단 상태 초기화)
     try {
       const { API_BASE_URL: apiBase } = await import('@/config/api')
-      await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+      await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
     } catch { /* ignore */ }
     // 등록된 마켓이 있는 상품만 필터
     const targetProducts = selectedProducts.filter(pid => {
@@ -436,7 +436,7 @@ export default function ShipmentsPage() {
     // 비상정지 해제 (이전 중단 상태 초기화)
     try {
       const { API_BASE_URL: apiBase } = await import('@/config/api')
-      await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+      await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
     } catch { /* ignore */ }
 
     // 소싱사이트 체크 + 현재 필터에 표시된 상품만 전송
@@ -541,7 +541,7 @@ export default function ShipmentsPage() {
       const allPids = tasks.map(t => t.pid)
       const allAccIds = [...effectiveAccountSet]
       const { API_BASE_URL: apiBase } = await import('@/config/api')
-      const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
+      const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -566,8 +566,8 @@ export default function ShipmentsPage() {
         polling = true
         try {
           const [jr, lr] = await Promise.all([
-            fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
-            fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
+            fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+            fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
           ])
           const j = await jr.json()
           const logData = await lr.json()
@@ -809,7 +809,7 @@ export default function ShipmentsPage() {
               sinceIdxRef.current = 0
               try {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
-                await fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' })
+                await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' })
               } catch { /* ignore */ }
             }} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
             <button onClick={handleMarketDelete} disabled={transmitting}
@@ -823,9 +823,9 @@ export default function ShipmentsPage() {
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   if (activeJobIdRef.current) {
-                    await fetch(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
+                    await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
                   }
-                  await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
+                  await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   activeJobIdRef.current = ''
                   setLogMessages(prev => [...prev, `[${ts}] 전송 중단 완료`].slice(-30))
                 } catch {
@@ -844,9 +844,9 @@ export default function ShipmentsPage() {
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
-                  await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
-                  await fetch(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
+                  await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+                  await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
+                  await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
                   activeJobIdRef.current = ''
                   setLogMessages(prev => [...prev, `[${ts}] 작업중단 완료`].slice(-30))
                 } catch {
@@ -871,7 +871,7 @@ export default function ShipmentsPage() {
                 if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+                  await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 } catch { /* ignore */ }
                 const allParams: Record<string, string | number> = { skip: 0, limit: 10000 }
                 if (searchText.trim()) {
@@ -923,7 +923,7 @@ export default function ShipmentsPage() {
                   }).join(', ')
                   addLog(`[${ts()}] 전송 시작 — 상품 ${allIds.length.toLocaleString()}개, ${accLabels || '연결 계정 없음'}`)
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
+                  const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -942,8 +942,8 @@ export default function ShipmentsPage() {
                     polling = true
                     try {
                       const [jr, lr] = await Promise.all([
-                        fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
-                        fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
+                        fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+                        fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
                       ])
                       const j = await jr.json()
                       const logData = await lr.json()

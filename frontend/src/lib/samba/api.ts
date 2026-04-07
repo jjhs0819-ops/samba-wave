@@ -22,6 +22,18 @@ function getAccessToken(): string | null {
   }
 }
 
+/** JWT 인증이 포함된 fetch — Response 그대로 반환 (SSE·FormData 등 raw 응답 필요 시 사용) */
+export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
+  const token = getAccessToken()
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string>),
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  return fetch(url, { ...init, headers })
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -739,7 +751,7 @@ export const proxyApi = {
     const formData = new FormData()
     formData.append('preset_key', presetKey)
     formData.append('file', file)
-    const res = await fetch(`${SAMBA_PREFIX}/proxy/preset-images/upload`, { method: 'POST', body: formData })
+    const res = await fetchWithAuth(`${SAMBA_PREFIX}/proxy/preset-images/upload`, { method: 'POST', body: formData })
     return res.json() as Promise<{ success: boolean; message: string; image?: string }>
   },
   transformImages: (productIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
@@ -1332,7 +1344,7 @@ export const aiSourcingApi = {
     naver_categories?: string[]
     target_count: number
   }) =>
-    fetch(`${SAMBA_PREFIX}/ai-sourcing/analyze`, {
+    fetchWithAuth(`${SAMBA_PREFIX}/ai-sourcing/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -1350,7 +1362,7 @@ export const aiSourcingApi = {
     formData.append('main_category', data.main_category)
     formData.append('target_count', String(data.target_count))
     if (data.file) formData.append('file', data.file)
-    return fetch(`${SAMBA_PREFIX}/ai-sourcing/analyze-full`, {
+    return fetchWithAuth(`${SAMBA_PREFIX}/ai-sourcing/analyze-full`, {
       method: 'POST',
       body: formData,
     })
@@ -1360,7 +1372,7 @@ export const aiSourcingApi = {
   analyzeExcel: async (file: File) => {
     const formData = new FormData()
     formData.append('file', file)
-    const res = await fetch(`${SAMBA_PREFIX}/ai-sourcing/analyze-excel`, {
+    const res = await fetchWithAuth(`${SAMBA_PREFIX}/ai-sourcing/analyze-excel`, {
       method: 'POST',
       body: formData,
     })

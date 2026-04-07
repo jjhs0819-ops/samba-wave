@@ -10,6 +10,7 @@ import {
   categoryApi,
   accountApi,
   API_BASE,
+  fetchWithAuth,
   type SambaSearchFilter,
   type SambaPolicy,
   type SambaMarketAccount,
@@ -572,7 +573,7 @@ export default function CollectorPage() {
 
       try {
         // Job 생성
-        const res = await fetch(
+        const res = await fetchWithAuth(
           `${API_BASE}/api/v1/samba/collector/collect-filter/${id}`,
           { method: 'POST' }
         )
@@ -591,7 +592,7 @@ export default function CollectorPage() {
           if (abort.signal.aborted) break
 
           try {
-            const jobRes = await fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+            const jobRes = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
             if (!jobRes.ok) break
             const job = await jobRes.json() as {
               status: string; current: number; total: number
@@ -1489,14 +1490,14 @@ export default function CollectorPage() {
                       collectAbortRef.current = abort
                       setCollecting(true)
                       addLog(`[추가수집] [${groupFilter.name}] 수집 요청 중...`)
-                      const r = await fetch(`${API_BASE}/api/v1/samba/collector/collect-filter/${groupFilter.id}`, { method: 'POST' })
+                      const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/collect-filter/${groupFilter.id}`, { method: 'POST' })
                       if (!r.ok) { addLog(`[추가수집] [${groupFilter.name}] 수집 실패: HTTP ${r.status}`); setCollecting(false); return }
                       const { job_id } = await r.json()
                       let lastCurrent = 0
                       while (!abort.signal.aborted) {
                         await new Promise(r => setTimeout(r, 1000))
                         if (abort.signal.aborted) break
-                        const jr = await fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+                        const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
                         if (!jr.ok) break
                         const job = await jr.json()
                         if (job.current > lastCurrent) { addLog(`[추가수집] [${groupFilter.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
@@ -1549,14 +1550,14 @@ export default function CollectorPage() {
                           if (abort.signal.aborted) break
                           addLog(`${gTag} [${f.name}] 수집 요청 중...`)
                           try {
-                            const r = await fetch(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}`, { method: 'POST' })
+                            const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}`, { method: 'POST' })
                             if (!r.ok) { addLog(`${gTag} [${f.name}] 수집 실패: HTTP ${r.status}`); continue }
                             const { job_id } = await r.json()
                             let lastCurrent = 0
                             while (!abort.signal.aborted) {
                               await new Promise(r => setTimeout(r, 1000))
                               if (abort.signal.aborted) break
-                              const jr = await fetch(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
+                              const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
                               if (!jr.ok) break
                               const job = await jr.json()
                               if (job.current > lastCurrent) { addLog(`${gTag} [${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }

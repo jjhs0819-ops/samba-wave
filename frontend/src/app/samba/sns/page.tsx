@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { snsApi, wholesaleApi } from '@/lib/samba/api'
+import { snsApi, wholesaleApi, fetchWithAuth } from '@/lib/samba/api'
 import { card, inputStyle } from '@/lib/samba/styles'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtDate as _fmtDate } from '@/lib/samba/utils'
@@ -354,7 +354,7 @@ export default function SNSPage() {
 
     try {
       const url = snsApi.getAutoPostingUrl(activeSiteId)
-      const res = await fetch(url, {
+      const res = await fetchWithAuth(url, {
         method: 'POST',
         signal: abortController.signal,
       })
