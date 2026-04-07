@@ -1204,12 +1204,59 @@ class JobWorker:
 
         else:
             # 직접 API 검색
+            # LOTTEON: brands 파라미터가 있으면 각 브랜드명을 키워드로 개별 검색해서 합침
+            # (qapi 검색은 키워드 관련도 기반이라 단일 키워드로 검색하면 서브브랜드가 누락됨)
+            _per_brand_keywords: list[str] = []
+            if site == "LOTTEON":
+                try:
+                    parsed_kw = urlparse(sf.keyword or "")
+                    if parsed_kw.scheme:
+                        _qs_kw = parse_qs(parsed_kw.query)
+                        _bp = _qs_kw.get("brands", [""])[0]
+                        if _bp:
+                            _per_brand_keywords = [
+                                b.strip() for b in _bp.split(",") if b.strip()
+                            ]
+                except Exception:
+                    pass
+
             try:
-                result = await client.search(
-                    keyword, max_count=max(remaining * 2, 100), **_search_kwargs
-                )
-                items_list = result.get("products", [])
-                logger.info(f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건")
+                if _per_brand_keywords:
+                    items_list = []
+                    seen_pids: set[str] = set()
+                    per_max = max(remaining * 2, 100)
+                    for _kw in _per_brand_keywords:
+                        try:
+                            _r = await client.search(
+                                _kw, max_count=per_max, **_search_kwargs
+                            )
+                            _items = _r.get("products", [])
+                            for _it in _items:
+                                _pid = str(_it.get("site_product_id", ""))
+                                if _pid and _pid in seen_pids:
+                                    continue
+                                if _pid:
+                                    seen_pids.add(_pid)
+                                items_list.append(_it)
+                            logger.info(
+                                f"[잡워커] LOTTEON 브랜드별 검색 '{_kw}' → {len(_items)}건"
+                            )
+                        except Exception as _be:
+                            logger.warning(
+                                f"[잡워커] LOTTEON 브랜드 '{_kw}' 검색 실패: {_be}"
+                            )
+                    result = {"products": items_list, "total": len(items_list)}
+                    logger.info(
+                        f"[잡워커] LOTTEON 브랜드별 검색 합계 → {len(items_list)}건"
+                    )
+                else:
+                    result = await client.search(
+                        keyword, max_count=max(remaining * 2, 100), **_search_kwargs
+                    )
+                    items_list = result.get("products", [])
+                    logger.info(
+                        f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건"
+                    )
             except Exception as e:
                 await repo.fail_job(job.id, f"검색 실패: {e}")
                 return

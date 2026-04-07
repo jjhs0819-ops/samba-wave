@@ -1150,18 +1150,37 @@ class LotteonSourcingClient:
             f'[LOTTEON] 카테고리 스캔 시작 (qapi BC코드): "{keyword}" (selected_brands={selected_brands!r})'
         )
 
-        # 1차: 전체 페이지 수집 (브랜드 필터 없이)
+        # 1차: 페이지 수집
+        # selected_brands가 있으면 각 브랜드명을 keyword로 개별 검색해서 합침
+        # (qapi 검색은 키워드 관련도 기반이라 "나이키"로 검색하면 "나이키 스윔" 등 서브브랜드가
+        #  대부분 누락됨. "나이키 스윔"으로 직접 검색하면 1047건이 나오는 케이스 등을 보전)
         all_items: list[dict[str, Any]] = []
         scan_pages = 100  # 100페이지 × 60 = 6,000개
-        for page_num in range(1, scan_pages + 1):
-            try:
-                items = await self.search_products(keyword, page=page_num, size=60)
-                if not items:
+        search_keywords: list[str] = (
+            list(selected_brands) if selected_brands else [keyword]
+        )
+        seen_pids: set[str] = set()
+        for kw in search_keywords:
+            kw_count = 0
+            for page_num in range(1, scan_pages + 1):
+                try:
+                    items = await self.search_products(kw, page=page_num, size=60)
+                    if not items:
+                        break
+                    for item in items:
+                        pid = item.get("spdNo") or item.get("site_product_id") or ""
+                        if pid and pid in seen_pids:
+                            continue
+                        if pid:
+                            seen_pids.add(pid)
+                        all_items.append(item)
+                        kw_count += 1
+                except Exception as e:
+                    logger.warning(
+                        f"[LOTTEON] 카테고리 스캔 kw={kw!r} p{page_num} 실패: {e}"
+                    )
                     break
-                all_items.extend(items)
-            except Exception as e:
-                logger.warning(f"[LOTTEON] 카테고리 스캔 p{page_num} 실패: {e}")
-                break
+            logger.info(f"[LOTTEON] 카테고리 스캔 kw={kw!r} → {kw_count}건 수집")
 
         # 2차: 선택 브랜드 필터링 (빈 리스트면 전체 통과)
         filtered_items = (
