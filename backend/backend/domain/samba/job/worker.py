@@ -1072,6 +1072,8 @@ class JobWorker:
                         "margin_rate": pr.get("marginRate", 15),
                         "shipping_cost": pr.get("shippingCost", 0),
                         "extra_charge": pr.get("extraCharge", 0),
+                        "use_range_margin": pr.get("useRangeMargin", False),
+                        "range_margins": pr.get("rangeMargins", []),
                     }
                 count = await svc.apply_policy_to_filter_products(
                     filter_id, sf.applied_policy_id, policy_data
@@ -1545,6 +1547,8 @@ class JobWorker:
                         "margin_rate": pr.get("marginRate", 15),
                         "shipping_cost": pr.get("shippingCost", 0),
                         "extra_charge": pr.get("extraCharge", 0),
+                        "use_range_margin": pr.get("useRangeMargin", False),
+                        "range_margins": pr.get("rangeMargins", []),
                     }
                 count = await svc.apply_policy_to_filter_products(
                     filter_id, sf.applied_policy_id, policy_data

@@ -32,6 +32,16 @@ MARKET_TYPE_TO_POLICY_KEY: dict[str, str] = {
 }
 
 
+def _resolve_margin_rate(cost: float, pricing: dict) -> float:
+    """원가 기반 범위 마진율 반환. useRangeMargin이면 해당 구간 rate 사용."""
+    if pricing.get("useRangeMargin") and pricing.get("rangeMargins"):
+        for r in pricing["rangeMargins"]:
+            max_val = r.get("max") or 9999999999
+            if cost >= r.get("min", 0) and cost < max_val:
+                return r.get("rate", 15)
+    return pricing.get("marginRate", 15)
+
+
 def calc_market_price(
     cost: float,
     policy_pricing: dict,
@@ -41,12 +51,12 @@ def calc_market_price(
     """정책 기반 마켓 최종 판매가 계산.
 
     원가 + 마진 + 배송비 → 수수료 역산 → 추가요금.
-    마켓별 오버라이드 적용.
+    마켓별 오버라이드 적용. 범위 마진 지원.
     """
     if not policy_pricing:
         return int(cost)
     pr = policy_pricing
-    common_margin_rate = pr.get("marginRate", 15)
+    common_margin_rate = _resolve_margin_rate(cost, pr)
     common_shipping = pr.get("shippingCost", 0)
     common_extra = pr.get("extraCharge", 0)
     common_fee = pr.get("feeRate", 0)
@@ -359,32 +369,13 @@ class SambaShipmentService:
                         or pd.get("original_price")
                         or 0
                     )
-                    pr = policy.pricing
-                    common_margin_rate = pr.get("marginRate", 15)
-                    common_shipping = pr.get("shippingCost", 0)
-                    common_extra = pr.get("extraCharge", 0)
-                    common_fee = pr.get("feeRate", 0)
-                    min_margin = pr.get("minMarginAmount", 0)
-
-                    policy_key = MARKET_TYPE_TO_POLICY_KEY.get("smartstore")
-                    mp = policy_market_data.get(policy_key, {}) if policy_key else {}
-                    m_margin_rate = mp.get("marginRate") or common_margin_rate
-                    m_shipping = mp.get("shippingCost") or common_shipping
-                    m_fee = mp.get("feeRate") or common_fee
-
-                    margin_amt = round(cost * m_margin_rate / 100)
-                    if min_margin > 0 and margin_amt < min_margin:
-                        margin_amt = min_margin
-                    calc_price = cost + margin_amt + m_shipping
-                    if m_fee > 0 and calc_price > 0:
-                        calc_price = math.ceil(calc_price / (1 - m_fee / 100))
-                    if common_extra > 0:
-                        calc_price += common_extra
+                    calc_price = calc_market_price(
+                        cost, policy.pricing, "smartstore", policy_market_data
+                    )
 
                     pd["_final_sale_price"] = calc_price
                     logger.info(
-                        f"[그룹전송] 가격 계산: 원가={cost}, 마진={margin_amt}({m_margin_rate}%), "
-                        f"배송={m_shipping}, 수수료={m_fee}% → 판매가={calc_price}"
+                        f"[그룹전송] 가격 계산: 원가={cost} → 판매가={calc_price}"
                     )
 
                 # 이미지 업로드
@@ -1180,31 +1171,13 @@ class SambaShipmentService:
                     or 0
                 )
                 if policy and policy.pricing:
-                    pr = policy.pricing
-                    common_margin_rate = pr.get("marginRate", 15)
-                    common_shipping = pr.get("shippingCost", 0)
-                    common_extra = pr.get("extraCharge", 0)
-                    common_fee = pr.get("feeRate", 0)
-                    min_margin = pr.get("minMarginAmount", 0)
-
-                    policy_key = MARKET_TYPE_TO_POLICY_KEY.get(market_type)
-                    mp = policy_market_data.get(policy_key, {}) if policy_key else {}
-                    m_margin_rate = mp.get("marginRate") or common_margin_rate
-                    m_shipping = mp.get("shippingCost") or common_shipping
-                    m_fee = mp.get("feeRate") or common_fee
-
-                    margin_amt = round(cost * m_margin_rate / 100)
-                    if min_margin > 0 and margin_amt < min_margin:
-                        margin_amt = min_margin
-                    calc_price = cost + margin_amt + m_shipping
-                    if m_fee > 0 and calc_price > 0:
-                        calc_price = math.ceil(calc_price / (1 - m_fee / 100))
-                    if common_extra > 0:
-                        calc_price += common_extra
+                    calc_price = calc_market_price(
+                        cost, policy.pricing, market_type, policy_market_data
+                    )
 
                     acct_product["sale_price"] = calc_price
                     logger.info(
-                        f"[전송] 정책 가격 계산: 원가={cost}, 마진={margin_amt}({m_margin_rate}%), 배송={m_shipping}, 수수료={m_fee}% → 판매가={calc_price}"
+                        f"[전송] 정책 가격 계산: 원가={cost} → 판매가={calc_price}"
                     )
                     logger.info(f"[메모리] 가격계산 후: {_mem_mb()}MB")
 
