@@ -35,6 +35,7 @@ jobs:
           READ_DB_PORT: "5432"
           READ_DB_NAME: "samba-wave"
           DB_SSL_REQUIRED: "false"
+          JWT_SECRET_KEY: "${{ secrets.JWT_SECRET_KEY }}"
           WEB_CONCURRENCY: "1"
           GUNICORN_CMD_ARGS: "--timeout 300 --graceful-timeout 300"
           TERMINATION_GRACE_HACK: "1"
