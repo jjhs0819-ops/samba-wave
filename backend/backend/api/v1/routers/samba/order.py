@@ -392,6 +392,72 @@ async def seller_cancel(
     )
 
 
+@router.post("/{order_id}/confirm")
+async def confirm_order(
+    order_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """주문확인(발주확인) 수동 처리 — 원소싱처 재고/가격 확인 후 사용자가 실행."""
+    from backend.domain.samba.account.repository import SambaMarketAccountRepository
+
+    svc = _write_service(session)
+    order = await svc.get_order(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+    if not order.order_number:
+        raise HTTPException(status_code=400, detail="상품주문번호가 없습니다")
+    if not order.channel_id:
+        raise HTTPException(status_code=400, detail="마켓 계정 정보가 없습니다")
+
+    account_repo = SambaMarketAccountRepository(session)
+    account = await account_repo.get_async(order.channel_id)
+    if not account:
+        raise HTTPException(status_code=400, detail="마켓 계정을 찾을 수 없습니다")
+
+    if account.market_type == "lotteon":
+        from backend.domain.samba.proxy.lotteon import LotteonClient
+
+        extras = account.additional_fields or {}
+        api_key = extras.get("apiKey", "") or account.api_key or ""
+        if not api_key:
+            raise HTTPException(status_code=400, detail="롯데ON API Key 없음")
+
+        # shipment_id 에서 spdNo / sitmNo 추출 (형식: LO{spdNo}_{sitmNo})
+        spd_no = ""
+        sitm_no = ""
+        if order.shipment_id and "_" in order.shipment_id:
+            left, right = order.shipment_id.split("_", 1)
+            spd_no = left.replace("LO", "")
+            sitm_no = right
+
+        client = LotteonClient(api_key)
+        try:
+            await client.test_auth()
+            ok = await client.confirm_orders(
+                [
+                    {
+                        "odNo": order.order_number,
+                        "sitmNo": sitm_no,
+                        "spdNo": spd_no,
+                        "slQty": order.quantity or 1,
+                    }
+                ]
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"주문확인 실패: {e}")
+
+        if not ok:
+            raise HTTPException(status_code=500, detail="주문확인 실패")
+
+        await svc.update_order(order_id, {"shipping_status": "출고지시"})
+        logger.info(f"[주문확인] 롯데ON {order.order_number} 완료")
+        return {"ok": True, "message": "주문확인 완료"}
+
+    raise HTTPException(
+        status_code=400, detail=f"{account.market_type} 주문확인 미지원"
+    )
+
+
 class CancelSourceOrderRequest(BaseModel):
     order_number: str
     reason: str = "단순변심"
@@ -1184,25 +1250,7 @@ async def sync_orders_from_markets(
                 )
                 for ro in raw_orders:
                     orders_data.append(_parse_lotteon_order(ro, account.id, label))
-                # 발주확인 대기 건 자동 발주확인 (odPrgsStepCd=10)
-                unconfirmed = [
-                    {
-                        "odNo": item.get("odNo", ""),
-                        "sitmNo": item.get("sitmNo", ""),
-                        "spdNo": item.get("spdNo", ""),
-                        "slQty": item.get("odQty", 1),
-                    }
-                    for item in raw_orders
-                    if str(item.get("odPrgsStepCd", "")) == "10"
-                ]
-                if unconfirmed:
-                    try:
-                        await lotteon_client.confirm_orders(unconfirmed)
-                        logger.info(
-                            f"[주문동기화] {label}: {len(unconfirmed)}건 발주확인 완료"
-                        )
-                    except Exception as ce:
-                        logger.warning(f"[주문동기화] {label}: 발주확인 실패 — {ce}")
+                # 발주확인은 수동 처리 (원소싱처 재고/가격 확인 후 사용자가 결정)
                 # 교환 클레임 조회 → 기존 주문 shipping_status 업데이트
                 try:
                     exchange_claims = await lotteon_client.get_exchanges(days=body.days)

@@ -321,6 +321,21 @@ export default function OrdersPage() {
     catch (e) { showAlert(e instanceof Error ? e.message : '삭제 실패', 'error') }
   }
 
+  const handleConfirmOrder = async (id: string) => {
+    if (!await showConfirm('주문확인(발주확인)을 진행합니다.\n원소싱처에서 재고/가격 확인이 완료되었나요?')) return
+    try {
+      const res = await orderApi.confirmOrder(id)
+      if (res.ok) {
+        showAlert('주문확인 완료', 'success')
+        loadOrders()
+      } else {
+        showAlert(res.message || '주문확인 실패', 'error')
+      }
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '주문확인 실패', 'error')
+    }
+  }
+
   const openSellerCancelModal = (id: string, orderNumber: string) => {
     setSellerCancelReason('135')
     setSellerCancelText('품절')
@@ -884,6 +899,7 @@ export default function OrdersPage() {
                     <div style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <button onClick={() => handleConfirmOrder(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#14532D', border: '1px solid #16A34A', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>주문확인</button>
                         <button onClick={() => openSellerCancelModal(o.id, o.order_number || '')} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#7C2D12', border: '1px solid #EA580C', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>판매자취소</button>
                         <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
                       </div>

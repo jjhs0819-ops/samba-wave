@@ -113,6 +113,8 @@ export const orderApi = {
     request<{ ok: boolean; message: string; detail?: string }>(`${SAMBA_PREFIX}/orders/${id}/seller-cancel`, {
       method: "POST", body: JSON.stringify({ reason_code: reasonCode, reason_text: reasonText || "" }),
     }),
+  confirmOrder: (id: string) =>
+    request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/confirm`, { method: "POST" }),
   exchangeAction: (id: string, action: string, reason?: string, extra?: { tracking_number?: string; shipping_company?: string; clm_no?: string }) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/exchange-action`, {
       method: "POST", body: JSON.stringify({ action, reason, ...extra }),
