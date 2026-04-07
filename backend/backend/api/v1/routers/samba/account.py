@@ -35,6 +35,7 @@ class AccountOut(BaseModel):
     api_secret: Optional[str] = None
     additional_fields: Optional[Any] = None
     is_active: bool = True
+    sort_order: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -53,6 +54,7 @@ def _to_account_out(account: Any) -> AccountOut:
         api_secret=_mask_secret(account.api_secret),
         additional_fields=account.additional_fields,
         is_active=account.is_active,
+        sort_order=account.sort_order,
         created_at=account.created_at,
         updated_at=account.updated_at,
     )
@@ -127,6 +129,22 @@ async def create_account(
     await _enrich_store_slug(data)
     account = await _get_service(session).create_account(data)
     return _to_account_out(account)
+
+
+class AccountReorderItem(BaseModel):
+    id: str
+    sort_order: int
+
+
+@router.put("/reorder")
+async def reorder_accounts(
+    body: list[AccountReorderItem],
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    await _get_service(session).reorder_accounts(
+        [{"id": item.id, "sort_order": item.sort_order} for item in body]
+    )
+    return {"ok": True}
 
 
 @router.put("/{account_id}")

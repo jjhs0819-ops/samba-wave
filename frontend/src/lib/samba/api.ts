@@ -1530,6 +1530,31 @@ export interface BalanceResult {
   message?: string
 }
 
+export interface SambaJob {
+  id: string;
+  job_type: string;
+  status: string;
+  progress: number;
+  current: number;
+  total: number;
+  error?: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export const jobApi = {
+  list: (status?: string) => {
+    const p = new URLSearchParams()
+    if (status) p.set('status', status)
+    return request<SambaJob[]>(`${SAMBA_PREFIX}/jobs?${p}`)
+  },
+  get: (jobId: string) =>
+    request<SambaJob & { payload?: Record<string, unknown> }>(`${SAMBA_PREFIX}/jobs/${jobId}`),
+  getLogs: (jobId: string, since = 0) =>
+    request<{ logs: string[] }>(`${SAMBA_PREFIX}/jobs/${jobId}/logs?since=${since}`),
+}
+
 export const sourcingAccountApi = {
   list: (siteName?: string) => {
     const p = new URLSearchParams()

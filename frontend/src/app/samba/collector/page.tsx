@@ -9,6 +9,7 @@ import {
   aiSourcingApi,
   categoryApi,
   accountApi,
+  jobApi,
   API_BASE,
   type SambaSearchFilter,
   type SambaPolicy,
@@ -256,6 +257,7 @@ export default function CollectorPage() {
 
   const logRef = useRef<HTMLDivElement>(null);
   const collectAbortRef = useRef<AbortController | null>(null);
+  const liveJobPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -291,6 +293,73 @@ export default function CollectorPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tagRegFilter, collectFilter, marketRegFilter, policyRegFilter, aiFilter])
+
+  // 페이지 로드 시 실행 중인 collect job 감지 → 로그 실시간 폴링
+  useEffect(() => {
+    let sinceIdx = 0
+    let stopped = false
+
+    const startPolling = (jobId: string, jobLabel: string) => {
+      setCollecting(true)
+      setCollectLog([`[수집중] 백엔드에서 진행 중인 수집 감지: ${jobLabel}`])
+
+      liveJobPollRef.current = setInterval(async () => {
+        if (stopped) return
+        try {
+          const [jobRes, logsRes] = await Promise.all([
+            jobApi.list('running').catch(() => [] as import('@/lib/samba/api').SambaJob[]),
+            jobApi.getLogs(jobId, sinceIdx).catch(() => ({ logs: [] as string[] })),
+          ])
+
+          // 새 로그 추가
+          if (logsRes.logs.length > 0) {
+            sinceIdx += logsRes.logs.length
+            setCollectLog(prev => {
+              const next = [...prev, ...logsRes.logs].slice(-200)
+              return next
+            })
+            setTimeout(() => {
+              if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+            }, 50)
+          }
+
+          // job이 더 이상 running 상태가 아니면 종료
+          const stillRunning = (jobRes as import('@/lib/samba/api').SambaJob[]).find(j => j.id === jobId)
+          if (!stillRunning) {
+            // 마지막 로그 한 번 더 가져오기
+            try {
+              const finalLogs = await jobApi.getLogs(jobId, sinceIdx)
+              if (finalLogs.logs.length > 0) {
+                setCollectLog(prev => [...prev, ...finalLogs.logs].slice(-200))
+              }
+            } catch { /* 무시 */ }
+            setCollecting(false)
+            if (liveJobPollRef.current) clearInterval(liveJobPollRef.current)
+            load() // 수집 완료 후 목록 갱신
+          }
+        } catch { /* 폴링 오류 무시 */ }
+      }, 2000)
+    }
+
+    jobApi.list('running').then(async jobs => {
+      if (stopped) return
+      const collectJob = (jobs as import('@/lib/samba/api').SambaJob[]).find(j => j.job_type === 'collect')
+      if (collectJob) {
+        let label = collectJob.id
+        try {
+          const detail = await jobApi.get(collectJob.id)
+          label = (detail.payload?.source_site as string) || collectJob.id
+        } catch { /* 무시 */ }
+        if (!stopped) startPolling(collectJob.id, label)
+      }
+    }).catch(() => { /* 감지 실패 무시 */ })
+
+    return () => {
+      stopped = true
+      if (liveJobPollRef.current) clearInterval(liveJobPollRef.current)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 프록시 & 무신사 인증 상태 확인
   useEffect(() => {

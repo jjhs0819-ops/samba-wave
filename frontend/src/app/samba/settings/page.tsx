@@ -803,6 +803,8 @@ export default function SettingsPage() {
   // Accounts state
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [accountLoading, setAccountLoading] = useState(true)
+  const [dragAccountId, setDragAccountId] = useState<string | null>(null)
+  const [dragOverAccountId, setDragOverAccountId] = useState<string | null>(null)
 
   // 스토어 연결
   const [storeTab, setStoreTab] = useState('smartstore')
@@ -1138,6 +1140,25 @@ export default function SettingsPage() {
   const handleAccountDelete = async (id: string) => {
     if (!await showConfirm('삭제하시겠습니까?')) return
     await accountApi.delete(id); loadAccounts()
+  }
+
+  const handleAccountDrop = async (dragId: string, dropId: string, marketType: string) => {
+    if (dragId === dropId) return
+    const marketAccounts = accounts.filter(a => a.market_type === marketType)
+    const dragIdx = marketAccounts.findIndex(a => a.id === dragId)
+    const dropIdx = marketAccounts.findIndex(a => a.id === dropId)
+    if (dragIdx < 0 || dropIdx < 0) return
+    const reordered = [...marketAccounts]
+    const [moved] = reordered.splice(dragIdx, 1)
+    reordered.splice(dropIdx, 0, moved)
+    const orders = reordered.map((a, i) => ({ id: a.id, sort_order: i }))
+    // 낙관적 업데이트
+    setAccounts(prev => {
+      const others = prev.filter(a => a.market_type !== marketType)
+      const updated = reordered.map((a, i) => ({ ...a, sort_order: i }))
+      return [...others, ...updated].sort((a, b) => a.sort_order - b.sort_order)
+    })
+    await accountApi.reorder(orders)
   }
 
   // SMS 설정 저장
@@ -1608,11 +1629,21 @@ export default function SettingsPage() {
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
                       {marketAccounts.map(a => (
-                        <div key={a.id} style={{
-                          display: 'flex', alignItems: 'center', gap: '0.5rem',
-                          padding: '0.4rem 0.625rem', background: 'rgba(255,255,255,0.02)',
-                          borderRadius: '6px', border: '1px solid rgba(45,45,45,0.5)',
-                        }}>
+                        <div
+                          key={a.id}
+                          draggable
+                          onDragStart={() => setDragAccountId(a.id)}
+                          onDragEnd={() => { setDragAccountId(null); setDragOverAccountId(null) }}
+                          onDragOver={e => { e.preventDefault(); setDragOverAccountId(a.id) }}
+                          onDrop={() => { if (dragAccountId) handleAccountDrop(dragAccountId, a.id, market.key) }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '0.5rem',
+                            padding: '0.4rem 0.625rem', background: dragOverAccountId === a.id ? 'rgba(255,140,0,0.08)' : 'rgba(255,255,255,0.02)',
+                            borderRadius: '6px', border: dragOverAccountId === a.id ? '1px solid rgba(255,140,0,0.4)' : '1px solid rgba(45,45,45,0.5)',
+                            opacity: dragAccountId === a.id ? 0.4 : 1,
+                            cursor: 'grab',
+                          }}>
+                          <div style={{ color: '#555', fontSize: '0.75rem', cursor: 'grab', flexShrink: 0 }}>⠿</div>
                           <div style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {a.account_label}
                           </div>

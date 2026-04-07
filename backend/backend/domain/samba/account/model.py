@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import Boolean, String
+from sqlalchemy import Boolean, Integer, String
 from sqlmodel import Column, DateTime, Field, JSON, SQLModel, Text
 
 from ulid import ULID
@@ -52,6 +52,12 @@ class SambaMarketAccount(SQLModel, table=True):
     # 추가 설정 (JSON)
     additional_fields: Optional[Any] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
+    )
+
+    # 계정 표시 순서 (낮을수록 먼저)
+    sort_order: int = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=False, server_default="0"),
     )
 
     is_active: bool = Field(

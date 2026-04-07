@@ -1359,7 +1359,7 @@ class JobWorker:
         for i, item_id in enumerate(targets):
             # 취소 확인
             _job_chk = await session.get(_SJ, job.id)
-            if _job_chk and _job_chk.status.value == "failed":
+            if _job_chk and str(_job_chk.status) == "failed":
                 logger.info(f"[SSG] 수집 취소됨: {job.id}")
                 return
 
