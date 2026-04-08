@@ -581,12 +581,26 @@ export default function OrdersPage() {
     switch (key) {
       case 'today': return now
       case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() - 7); return d }
+      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7); return d }
+      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d }
+      case '1month': { const d = new Date(now); d.setMonth(d.getMonth() - 1); return d }
       case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
       case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
       case 'thisyear': return new Date(now.getFullYear(), 0, 1)
       default: return null
+    }
+  }
+
+  // 기간 종료일 계산 (지난주/지난달/어제는 해당 기간 마지막 날)
+  const getPeriodEnd = (key: string): Date => {
+    const now = new Date()
+    now.setHours(0, 0, 0, 0)
+    switch (key) {
+      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 1); return d }
+      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth(), 0)
+      default: return now
     }
   }
 
@@ -660,6 +674,10 @@ export default function OrdersPage() {
       if (searchCategory === 'order_number' && !o.order_number?.toLowerCase().includes(q)) return false
     }
     return true
+  }).sort((a, b) => {
+    const aTime = a.paid_at ? new Date(a.paid_at).getTime() : new Date(a.created_at).getTime()
+    const bTime = b.paid_at ? new Date(b.paid_at).getTime() : new Date(b.created_at).getTime()
+    return bTime - aTime
   })
 
   // 숫자 콤마 포맷 헬퍼
@@ -769,7 +787,7 @@ export default function OrdersPage() {
                 const start = getPeriodStart(pb.key)
                 setCustomStart(start ? start.toLocaleDateString('sv-SE') : '')
               }
-              setCustomEnd(new Date().toLocaleDateString('sv-SE'))
+              setCustomEnd(getPeriodEnd(pb.key).toLocaleDateString('sv-SE'))
             }}
               style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? 'rgba(80,80,80,0.8)' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #666' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
             >{pb.label}</button>
@@ -916,6 +934,11 @@ export default function OrdersPage() {
                   <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8125rem', position: 'relative' }}>
                     {/* 우측 상단: 주문일 + 수량 + 삭제 */}
                     <div style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
+                      {o.paid_at && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{ fontSize: '0.72rem', color: '#fff', fontWeight: 700 }}>{new Date(o.paid_at).toLocaleDateString('ko-KR')} {new Date(o.paid_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                      )}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
                         <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
