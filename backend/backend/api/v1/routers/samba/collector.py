@@ -1017,7 +1017,13 @@ async def product_category_tree(
             _CP.category,
             func.count().label("cnt"),
         )
-        .where(_CP.source_site != None, _CP.category != None)
+        .where(
+            _CP.source_site != None,
+            _CP.category != None,
+            _CP.category != "",
+            # fallback 카테고리 제외 (category가 source_site와 동일한 경우)
+            _CP.category != _CP.source_site,
+        )
         .group_by(_CP.source_site, _CP.category)
         .order_by(_CP.source_site, _CP.category)
     )
