@@ -439,7 +439,10 @@ async def _autotune_loop():
                                 if r.new_original_price is not None:
                                     updates["original_price"] = r.new_original_price
                                 if r.new_cost is not None:
-                                    updates["cost"] = r.new_cost
+                                    _old_cost = getattr(product, "cost", None) or 0
+                                    # 기존 원가가 더 낮으면(확장앱 혜택가) 보존
+                                    if not (_old_cost > 0 and _old_cost < r.new_cost):
+                                        updates["cost"] = r.new_cost
                                 if r.new_options is not None:
                                     updates["options"] = r.new_options
                                 updates["sale_status"] = r.new_sale_status

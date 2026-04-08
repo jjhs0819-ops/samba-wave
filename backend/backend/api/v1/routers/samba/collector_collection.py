@@ -1843,7 +1843,10 @@ async def enrich_product(
             if result.new_original_price is not None:
                 updates["original_price"] = result.new_original_price
             if result.new_cost is not None:
-                updates["cost"] = result.new_cost
+                _old_cost = getattr(product, "cost", None) or 0
+                # 기존 원가가 더 낮으면(확장앱 혜택가) 보존
+                if not (_old_cost > 0 and _old_cost < result.new_cost):
+                    updates["cost"] = result.new_cost
             if result.new_sale_status:
                 updates["sale_status"] = result.new_sale_status
             if result.new_options is not None:
