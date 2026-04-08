@@ -446,14 +446,20 @@ class GsShopSourcingClient:
             for i in range(0, len(product_ids), CHUNK_SIZE)
         ]
         for chunk_idx, chunk in enumerate(chunks):
-            proxy = self._proxy_pool[chunk_idx % len(self._proxy_pool)] if self._proxy_pool else None
+            proxy = (
+                self._proxy_pool[chunk_idx % len(self._proxy_pool)]
+                if self._proxy_pool
+                else None
+            )
             client_kwargs: dict[str, Any] = {
                 "timeout": scan_timeout,
                 "follow_redirects": True,
             }
             if proxy:
                 client_kwargs["proxy"] = proxy
-            proxy_label = proxy.split("@")[-1] if proxy and "@" in proxy else (proxy or "direct")
+            proxy_label = (
+                proxy.split("@")[-1] if proxy and "@" in proxy else (proxy or "direct")
+            )
             logger.info(
                 f"[GSSHOP] 카테고리 스캔 청크 {chunk_idx + 1}/{len(chunks)}"
                 f" ({len(chunk)}건) — 프록시: {proxy_label}"
