@@ -86,8 +86,8 @@ export default function ReturnsPage() {
       case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
       case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d }
       case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7); return d }
-      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d }
-      case '1month': { const d = new Date(now); d.setMonth(d.getMonth() - 1); return d }
+      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 6); return d }
+      case '1month': { const d = new Date(now); d.setDate(d.getDate() - 29); return d }
       case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
       case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
       case 'thisyear': return new Date(now.getFullYear(), 0, 1)
@@ -357,7 +357,7 @@ export default function ReturnsPage() {
               }
               setCustomEnd(getPeriodEnd(pb.key).toLocaleDateString('sv-SE'))
             }}
-              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
+              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? 'rgba(80,80,80,0.8)' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #666' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
             >{pb.label}</button>
           ))}
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 4px' }} />
