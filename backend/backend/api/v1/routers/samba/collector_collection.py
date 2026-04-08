@@ -1838,56 +1838,8 @@ async def enrich_product(
             if result.error:
                 return {"success": False, "message": result.error}
 
-            # LOTTEON: 확장앱 pbf API로 "나의 혜택가" + 옵션별 실재고 파싱
-            if _src.upper() == "LOTTEON":
-                try:
-                    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
-                    from backend.domain.samba.plugins.sourcing.lotteon import (
-                        _sitm_no_cache,
-                    )
-
-                    _sitm = _sitm_no_cache.get(product.site_product_id, "")
-                    _req_id, _future = SourcingQueue.add_detail_job(
-                        "LOTTEON",
-                        product.site_product_id,
-                        sitm_no=_sitm,
-                    )
-                    _ext_result = await asyncio.wait_for(_future, timeout=25)
-                    if isinstance(_ext_result, dict) and _ext_result.get("success"):
-                        # 나의 혜택가 → cost
-                        _ext_benefit = int(
-                            _ext_result.get("best_benefit_price", 0) or 0
-                        )
-                        if _ext_benefit > 0:
-                            updates["cost"] = _ext_benefit
-                        # 프로모션 판매가 → sale_price
-                        _ext_sale = int(_ext_result.get("sale_price", 0) or 0)
-                        if _ext_sale > 0 and _ext_sale < (
-                            updates.get("sale_price") or 999999
-                        ):
-                            updates["sale_price"] = _ext_sale
-                        # 옵션별 실재고 병합 (pbf 옵션명 유지 + DOM 재고 덮어쓰기)
-                        _ext_opts = _ext_result.get("options") or []
-                        _existing_opts = updates.get("options") or []
-                        if _ext_opts and _existing_opts:
-                            for i in range(min(len(_existing_opts), len(_ext_opts))):
-                                _es = _ext_opts[i].get("stock")
-                                if _es is not None:
-                                    _existing_opts[i]["stock"] = _es
-                                    _existing_opts[i]["isSoldOut"] = _ext_opts[i].get(
-                                        "isSoldOut", False
-                                    )
-                            updates["options"] = _existing_opts
-                        logger.info(
-                            f"[LOTTEON] 확장앱 반영: {product.site_product_id} "
-                            f"benefit={_ext_benefit}, sale={_ext_sale}, opts={len(_ext_opts)}"
-                        )
-                except asyncio.TimeoutError:
-                    logger.info(
-                        "[LOTTEON] 확장앱 응답 대기 타임아웃 (20초) — qapi 가격 유지"
-                    )
-                except Exception as _ext_err:
-                    logger.debug(f"[LOTTEON] 확장앱 상세 파싱 실패: {_ext_err}")
+            # LOTTEON: benefits API(혜택가) + option/mapping API(재고) 모두
+            # 플러그인 refresh()에서 처리 완료 — 확장앱 불필요
 
             if not updates:
                 return {"success": True, "message": "변동 없음", "product": product}

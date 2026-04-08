@@ -1504,6 +1504,89 @@ class LotteonSourcingClient:
             logger.debug(f"[LOTTEON] qapi 가격 조회 실패: {spd_no} — {e}")
         return None
 
+    async def fetch_option_stock(
+        self, pbf_data: dict[str, Any]
+    ) -> Optional[list[dict[str, Any]]]:
+        """option/mapping API로 옵션별 실재고 조회 (탭/DOM 불필요).
+
+        pbf base API 응답의 basicInfo에서 파라미터를 추출하여
+        optionMappingInfo의 stkQty로 옵션별 실재고를 반환한다.
+
+        Returns:
+          [{"name": "250", "stock": 6, "isSoldOut": False}, ...] 또는 None
+        """
+        basic = pbf_data.get("basicInfo") or {}
+        spd_no = str(basic.get("spdNo", "") or "").strip()
+        sitm_no = str(basic.get("sitmNo", "") or "").strip()
+        tr_no = str(basic.get("trNo", "") or "").strip()
+        tr_grp_cd = str(basic.get("trGrpCd", "") or "").strip()
+        lrtr_no = str(basic.get("lrtrNo", "") or "").strip()
+        pd_no = str(basic.get("pdNo", "") or spd_no).strip()
+        if not spd_no or not sitm_no:
+            return None
+
+        url = (
+            f"{self.PBF_BASE}/product/v2/detail/option/mapping"
+            f"/{spd_no}/{sitm_no}"
+            f"?trNo={tr_no}&trGrpCd={tr_grp_cd}"
+            f"&lrtrNo={lrtr_no}&pdNo={pd_no}"
+        )
+        try:
+            client = await self._get_pbf_client()
+            resp = await client.get(
+                url,
+                headers={
+                    **self.HEADERS,
+                    "Accept": "application/json, text/plain, */*",
+                    "Origin": "https://www.lotteon.com",
+                },
+            )
+            if resp.status_code != 200:
+                return None
+            body = resp.json()
+            if str(body.get("returnCode")) != "200":
+                return None
+
+            data = body.get("data") or {}
+            opt_info = data.get("optionInfo") or {}
+            opt_list = opt_info.get("optionList") or []
+            mapping = opt_info.get("optionMappingInfo") or {}
+            if not opt_list or not mapping:
+                return None
+
+            # optionList의 options → value로 mapping에서 stkQty 조회
+            options: list[dict[str, Any]] = []
+            price_info = pbf_data.get("priceInfo") or {}
+            sl_prc = self._safe_int(price_info.get("slPrc", 0))
+
+            for group in opt_list:
+                for opt in group.get("options", []):
+                    label = opt.get("label", "").strip()
+                    value = str(opt.get("value", ""))
+                    disabled = bool(opt.get("disabled", False))
+                    m = mapping.get(value, {})
+                    stk_qty = int(m.get("stkQty", 0) or 0)
+                    is_sold_out = disabled or stk_qty == 0
+                    options.append(
+                        {
+                            "name": label,
+                            "price": sl_prc,
+                            "stock": 0 if is_sold_out else stk_qty,
+                            "isSoldOut": is_sold_out,
+                        }
+                    )
+
+            if options:
+                logger.info(
+                    f"[LOTTEON] option/mapping 재고: {spd_no} → "
+                    f"{len(options)}개 옵션 "
+                    f"(재고: {[o['stock'] for o in options]})"
+                )
+            return options if options else None
+        except Exception as e:
+            logger.debug(f"[LOTTEON] option/mapping 실패: {spd_no} — {e}")
+        return None
+
     async def fetch_benefit_price(self, pbf_data: dict[str, Any]) -> Optional[int]:
         """favorBox/benefits API로 최대혜택가(totAmt) 조회.
 

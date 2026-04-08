@@ -103,6 +103,11 @@ class LotteonSourcingPlugin(SourcingPlugin):
         benefit = await client.fetch_benefit_price(pbf)
         if benefit and benefit > 0:
             detail["bestBenefitPrice"] = benefit
+
+        # option/mapping API로 옵션별 실재고 보강 (탭/DOM 불필요)
+        opt_stock = await client.fetch_option_stock(pbf)
+        if opt_stock:
+            detail["options"] = opt_stock
         return detail
 
     def _parse_pbf_to_detail(self, pbf: dict) -> dict:

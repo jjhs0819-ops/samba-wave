@@ -496,59 +496,8 @@ async def _refresh_product_inner(
                 error=str(e),
             )
 
-        # LOTTEON: 확장앱 DOM 파싱으로 옵션별 실재고 수집 + 혜택가 폴백
-        if source_site == "LOTTEON" and not result.error:
-            import asyncio
-
-            _sid = getattr(product, "site_product_id", "") or ""
-            if _sid:
-                try:
-                    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
-                    from backend.domain.samba.plugins.sourcing.lotteon import (
-                        _sitm_no_cache,
-                    )
-
-                    _sitm = (
-                        getattr(product, "sitmNo", "")
-                        or getattr(product, "sitm_no", "")
-                        or _sitm_no_cache.get(_sid, "")
-                    )
-                    _req_id, _future = SourcingQueue.add_detail_job(
-                        "LOTTEON", _sid, sitm_no=_sitm
-                    )
-                    _ext_result = await asyncio.wait_for(_future, timeout=25)
-                    if isinstance(_ext_result, dict) and _ext_result.get("success"):
-                        # 옵션별 실재고 병합 (pbf 옵션명 유지 + DOM 재고 덮어쓰기)
-                        _ext_opts = _ext_result.get("options") or []
-                        if _ext_opts and result.new_options:
-                            _merged = list(result.new_options)
-                            for i in range(min(len(_merged), len(_ext_opts))):
-                                _es = _ext_opts[i].get("stock")
-                                if _es is not None:
-                                    _merged[i]["stock"] = _es
-                                    _merged[i]["isSoldOut"] = _ext_opts[i].get(
-                                        "isSoldOut", False
-                                    )
-                            result.new_options = _merged
-                            logger.info(
-                                f"[LOTTEON] 오토튠 옵션 재고 병합: {_sid} → {len(_merged)}개 옵션"
-                            )
-                        # 혜택가: benefits API 값이 없을 때만 확장앱 폴백
-                        if not result.new_cost or result.new_cost <= 0:
-                            _ext_benefit = int(
-                                _ext_result.get("best_benefit_price", 0) or 0
-                            )
-                            if _ext_benefit > 0:
-                                result.new_cost = float(_ext_benefit)
-                                logger.info(
-                                    f"[LOTTEON] 오토튠 확장앱 혜택가 폴백: {_sid} → {_ext_benefit:,}"
-                                )
-                except asyncio.TimeoutError:
-                    logger.info(
-                        f"[LOTTEON] 오토튠 확장앱 타임아웃: {_sid} — API 가격 유지"
-                    )
-                except Exception as _ext_err:
-                    logger.debug(f"[LOTTEON] 오토튠 확장앱 실패: {_sid} — {_ext_err}")
+        # LOTTEON: benefits API(혜택가) + option/mapping API(재고) 모두
+        # 플러그인 refresh()에서 처리 완료 — 확장앱 불필요
 
         # 레거시 파서(무신사/KREAM)는 자체 로그 → 여기서 안 찍음
         if source_site not in ("MUSINSA", "KREAM") and not result.error:
