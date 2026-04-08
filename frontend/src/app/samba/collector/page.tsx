@@ -24,20 +24,22 @@ import { fmtDate as _fmtDate } from '@/lib/samba/utils'
 
 const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
 
-const SITES = [
+const SITES: { id: string; label: string; disabled?: boolean }[] = [
+  // 활성 소싱처
   { id: 'MUSINSA', label: '무신사' },
   { id: 'KREAM', label: 'KREAM' },
-  { id: 'DANAWA', label: '다나와' },
   { id: 'FashionPlus', label: '패션플러스' },
   { id: 'Nike', label: 'Nike' },
-  { id: 'Adidas', label: 'Adidas' },
   { id: 'ABCmart', label: 'ABC마트' },
-  { id: 'REXMONDE', label: '렉스몬드' },
   { id: 'SSG', label: '신세계몰' },
   { id: 'LOTTEON', label: '롯데ON' },
   { id: 'GSShop', label: 'GSShop' },
-  { id: 'ElandMall', label: '이랜드몰' },
-  { id: 'SSF', label: 'SSF샵' },
+  // 개발예정 (비활성)
+  { id: 'DANAWA', label: '다나와', disabled: true },
+  { id: 'Adidas', label: 'Adidas', disabled: true },
+  { id: 'REXMONDE', label: '렉스몬드', disabled: true },
+  { id: 'ElandMall', label: '이랜드몰', disabled: true },
+  { id: 'SSF', label: 'SSF샵', disabled: true },
 ]
 
 const SITE_OPTIONS: Record<string, { id: string; label: string; warn?: string }[]> = {
@@ -915,7 +917,9 @@ export default function CollectorPage() {
             {SITES.map((site) => (
               <button
                 key={site.id}
+                disabled={site.disabled}
                 onClick={() => {
+                  if (site.disabled) return
                   setSelectedSite(site.id)
                   setCollectUrl("")
                   setCheckedOptions(Object.fromEntries(
@@ -924,13 +928,15 @@ export default function CollectorPage() {
                 }}
                 style={{
                   padding: "0.35rem 0.875rem", borderRadius: "20px", fontSize: "0.8rem",
-                  fontWeight: selectedSite === site.id ? 700 : 400, cursor: "pointer",
-                  border: selectedSite === site.id ? "1px solid #FF8C00" : "1px solid #3D3D3D",
-                  background: selectedSite === site.id ? "rgba(255,140,0,0.15)" : "transparent",
-                  color: selectedSite === site.id ? "#FF8C00" : "#C5C5C5",
+                  fontWeight: selectedSite === site.id ? 700 : 400,
+                  cursor: site.disabled ? "not-allowed" : "pointer",
+                  border: site.disabled ? "1px solid #2A2A2A" : selectedSite === site.id ? "1px solid #FF8C00" : "1px solid #3D3D3D",
+                  background: site.disabled ? "transparent" : selectedSite === site.id ? "rgba(255,140,0,0.15)" : "transparent",
+                  color: site.disabled ? "#555" : selectedSite === site.id ? "#FF8C00" : "#C5C5C5",
+                  opacity: site.disabled ? 0.6 : 1,
                   transition: "all 0.15s",
                 }}
-              >{site.label}</button>
+              >{site.label}{site.disabled ? ' (예정)' : ''}</button>
             ))}
             <button
               onClick={() => {
@@ -2523,13 +2529,15 @@ export default function CollectorPage() {
                   <label style={{ fontSize: '0.82rem', color: '#C5C5C5', fontWeight: 600, display: 'block', marginBottom: '8px' }}>수집 소싱처</label>
                   <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     {SITES.map(s => (
-                      <button key={s.id} onClick={() => setAiSourceSite(s.id)} style={{
-                        padding: '6px 14px', borderRadius: '6px', fontSize: '0.78rem', cursor: 'pointer',
+                      <button key={s.id} disabled={s.disabled} onClick={() => { if (!s.disabled) setAiSourceSite(s.id) }} style={{
+                        padding: '6px 14px', borderRadius: '6px', fontSize: '0.78rem',
+                        cursor: s.disabled ? 'not-allowed' : 'pointer',
                         fontWeight: aiSourceSite === s.id ? 700 : 400,
-                        background: aiSourceSite === s.id ? 'rgba(255,140,0,0.15)' : '#111',
-                        border: aiSourceSite === s.id ? '1px solid #FF8C00' : '1px solid #2D2D2D',
-                        color: aiSourceSite === s.id ? '#FF8C00' : '#888',
-                      }}>{s.label}</button>
+                        background: s.disabled ? 'transparent' : aiSourceSite === s.id ? 'rgba(255,140,0,0.15)' : '#111',
+                        border: s.disabled ? '1px solid #2A2A2A' : aiSourceSite === s.id ? '1px solid #FF8C00' : '1px solid #2D2D2D',
+                        color: s.disabled ? '#555' : aiSourceSite === s.id ? '#FF8C00' : '#888',
+                        opacity: s.disabled ? 0.6 : 1,
+                      }}>{s.label}{s.disabled ? ' (예정)' : ''}</button>
                     ))}
                   </div>
                 </div>
