@@ -788,12 +788,8 @@ async function runPollCycle() {
   if (hadCollect || hadSearch || hadSourcing || hadAi) {
     emptyPollCount = 0
     runFocusPoll()
-  } else {
-    emptyPollCount++
-    if (emptyPollCount >= MAX_EMPTY_POLLS) {
-      stopCollectPolling()
-    }
   }
+  // 자동중지 제거 — 확장앱이 켜져 있는 한 항상 폴링 (혜택가 수집용)
 }
 
 // alarm 이벤트 핸들러

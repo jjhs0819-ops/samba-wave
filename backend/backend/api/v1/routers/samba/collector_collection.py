@@ -1060,13 +1060,38 @@ async def collect_by_url(
                         await asyncio.sleep(_site_intervals.get("LOTTEON", 0.5))
                         continue
 
+                    _sale_price = detail.get("salePrice", 0)
                     if use_max_discount:
-                        _raw_cost = detail.get("bestBenefitPrice")
-                        new_cost = (
-                            _raw_cost
-                            if (_raw_cost is not None and _raw_cost > 0)
-                            else (detail.get("salePrice") or 0)
-                        )
+                        # 확장앱 DOM에서 실제 "나의 혜택가" 수집
+                        new_cost = _sale_price  # 폴백: 판매가
+                        try:
+                            from backend.domain.samba.proxy.sourcing_queue import (
+                                SourcingQueue,
+                            )
+
+                            _req_id, _future = SourcingQueue.add_detail_job(
+                                "LOTTEON", item_id
+                            )
+                            _ext_result = await asyncio.wait_for(_future, timeout=20)
+                            if isinstance(_ext_result, dict) and _ext_result.get(
+                                "success"
+                            ):
+                                _ext_benefit = int(
+                                    _ext_result.get("best_benefit_price", 0) or 0
+                                )
+                                if _ext_benefit > 0:
+                                    new_cost = _ext_benefit
+                                    logger.info(
+                                        f"[LOTTEON] 수집 확장앱 혜택가: {item_id} → {_ext_benefit:,}"
+                                    )
+                        except asyncio.TimeoutError:
+                            logger.info(
+                                f"[LOTTEON] 수집 확장앱 타임아웃: {item_id} — 판매가({_sale_price:,}) 사용"
+                            )
+                        except Exception as _ext_err:
+                            logger.debug(
+                                f"[LOTTEON] 수집 확장앱 실패: {item_id} — {_ext_err}"
+                            )
                     else:
                         new_cost = detail.get("salePrice") or 0
 
@@ -1076,7 +1101,6 @@ async def collect_by_url(
                         if raw_cat
                         else []
                     )
-                    _sale_price = detail.get("salePrice", 0)
                     _original_price = detail.get("originalPrice", 0)
 
                     raw_detail_html = ""
@@ -1138,9 +1162,36 @@ async def collect_by_url(
             if not data or not data.get("name"):
                 raise HTTPException(502, "롯데ON 상품 조회 실패")
 
+            # 최대혜택가: 확장앱 DOM 파싱으로 실제 혜택가 수집
+            _sale_price = data.get("salePrice", 0)
+            _cost = _sale_price
+            if use_max_discount:
+                try:
+                    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+                    _req_id, _future = SourcingQueue.add_detail_job("LOTTEON", item_id)
+                    _ext_result = await asyncio.wait_for(_future, timeout=20)
+                    if isinstance(_ext_result, dict) and _ext_result.get("success"):
+                        _ext_benefit = int(
+                            _ext_result.get("best_benefit_price", 0) or 0
+                        )
+                        if _ext_benefit > 0:
+                            _cost = _ext_benefit
+                            logger.info(
+                                f"[LOTTEON] 단일수집 확장앱 혜택가: {item_id} → {_ext_benefit:,}"
+                            )
+                except asyncio.TimeoutError:
+                    logger.info(
+                        f"[LOTTEON] 단일수집 확장앱 타임아웃: {item_id} — 판매가({_sale_price:,}) 사용"
+                    )
+                except Exception as _ext_err:
+                    logger.debug(
+                        f"[LOTTEON] 단일수집 확장앱 실패: {item_id} — {_ext_err}"
+                    )
+
             initial_snapshot = {
                 "date": datetime.now(timezone.utc).isoformat(),
-                "sale_price": data.get("salePrice", 0),
+                "sale_price": _sale_price,
                 "original_price": data.get("originalPrice", 0),
                 "options": data.get("options", []),
             }
@@ -1169,8 +1220,8 @@ async def collect_by_url(
                 "name": data.get("name", ""),
                 "brand": data.get("brand", ""),
                 "original_price": data.get("originalPrice", 0),
-                "sale_price": data.get("salePrice", 0),
-                "cost": data.get("bestBenefitPrice") or None,
+                "sale_price": _sale_price,
+                "cost": _cost,
                 "images": data.get("images", []),
                 "detail_images": data.get("detailImages") or [],
                 "options": data.get("options", []),

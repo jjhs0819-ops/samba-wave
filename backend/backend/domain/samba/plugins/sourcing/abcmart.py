@@ -160,6 +160,33 @@ class AbcMartPlugin(SourcingPlugin):
             new_original_price = detail.get("originalPrice", 0)
             is_sold_out = detail.get("isOutOfStock", False)
             best_benefit_price = detail.get("bestBenefitPrice", 0)
+
+            # 확장앱으로 최대혜택가 추출 (로그인 세션 기반, 멤버십 할인 포함)
+            try:
+                import asyncio
+
+                from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+                _drid, _dfut = SourcingQueue.add_detail_job(
+                    self.site_name, site_product_id
+                )
+                _ext = await asyncio.wait_for(_dfut, timeout=30)
+                if _ext and _ext.get("success"):
+                    _ext_bbp = int(_ext.get("best_benefit_price", 0) or 0)
+                    if _ext_bbp > 0:
+                        best_benefit_price = _ext_bbp
+                        logger.info(
+                            f"[ABCmart] 확장앱 최대혜택가: {site_product_id} → {_ext_bbp:,}원"
+                        )
+            except asyncio.TimeoutError:
+                logger.debug(
+                    f"[ABCmart] 확장앱 최대혜택가 타임아웃: {site_product_id} (API값 사용)"
+                )
+            except Exception as _ext_err:
+                logger.debug(
+                    f"[ABCmart] 확장앱 최대혜택가 실패: {site_product_id} — {_ext_err}"
+                )
+
             # 옵션 데이터 변환
             new_options = None
             raw_options = detail.get("options", [])
