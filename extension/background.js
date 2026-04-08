@@ -1285,8 +1285,29 @@ async function handleAiSourcingJob(job) {
 
 // ==================== 통합 소싱 큐 폴링 (ABCmart, GrandStage, REXMONDE, 롯데ON, GSShop) ====================
 
-function pollSourcingOnce() {
-  return pollOnce('sourcing/collect-queue', handleSourcingJob, '소싱', 'url')
+const SOURCING_MAX_CONCURRENT = 5
+
+async function pollSourcingOnce() {
+  // 최대 SOURCING_MAX_CONCURRENT개 job을 가져와서 병렬 처리
+  const jobs = []
+  for (let i = 0; i < SOURCING_MAX_CONCURRENT; i++) {
+    try {
+      const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/sourcing/collect-queue`)
+      if (!res.ok) break
+      const job = await res.json()
+      if (!job.hasJob) break
+      console.log(`[소싱] ${job.url || '작업 수신'} (${jobs.length + 1}/${SOURCING_MAX_CONCURRENT})`)
+      jobs.push(job)
+    } catch { break }
+  }
+  if (jobs.length === 0) return false
+  if (jobs.length === 1) {
+    await handleSourcingJob(jobs[0])
+  } else {
+    console.log(`[소싱] 병렬 처리: ${jobs.length}개`)
+    await Promise.all(jobs.map(job => handleSourcingJob(job)))
+  }
+  return true
 }
 
 // 롯데ON: sitmNo + 쿠키 기반 pbf API 직접 호출로 혜택가 수집 (탭 불필요)
@@ -1424,9 +1445,8 @@ async function fetchAbcmartBenefitPrice(productId, site) {
 async function handleSourcingJob(job) {
   let tabId = null
   try {
-    // active:true 필요: SPA 상세(JS렌더링 필수), 카테고리스캔
-    const needsActive = (job.type === 'detail' && (job.site === 'FashionPlus' || job.site === 'LOTTEON')) || job.type === 'category-scan'
-    const tab = await chrome.tabs.create({ url: job.url, active: needsActive })
+    // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)
+    const tab = await chrome.tabs.create({ url: job.url, active: false })
     tabId = tab.id
     await waitForTabLoad(tabId, 15000)
 
@@ -1436,7 +1456,7 @@ async function handleSourcingJob(job) {
     } else if (job.type === 'search' && job.site === 'GSShop') {
       await waitForGSShopSearchResults(tabId, 6000)
     } else {
-      await wait(needsActive ? 5000 : 4000) // 패션플러스 등 기존 유지
+      await wait(5000) // SPA 렌더링 대기
     }
 
     let result = null
