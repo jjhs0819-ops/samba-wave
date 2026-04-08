@@ -161,8 +161,9 @@ class AbcMartPlugin(SourcingPlugin):
             is_sold_out = detail.get("isOutOfStock", False)
             best_benefit_price = detail.get("bestBenefitPrice", 0)
 
-            # 확장앱으로 실제 최대혜택가 조회 (멤버십+쿠폰 모두 반영)
-            # API는 쿠폰만 반영하므로, 항상 확장앱 값과 비교하여 더 낮은 값 채택
+            # 확장앱으로 실제 최대혜택가 조회 (사이트 표시 가격 = 가장 신뢰)
+            # API maxBenefitCoupon은 적립금 등을 포함하여 실제보다 낮을 수 있으므로
+            # 확장앱 값을 항상 우선 사용하고, 실패 시에만 API 값으로 폴백
             try:
                 import asyncio
 
@@ -175,15 +176,10 @@ class AbcMartPlugin(SourcingPlugin):
                 if _ext and _ext.get("success"):
                     _ext_bbp = int(_ext.get("best_benefit_price", 0) or 0)
                     if _ext_bbp > 0:
-                        if not best_benefit_price or _ext_bbp < best_benefit_price:
-                            logger.info(
-                                f"[ABCmart] 확장앱 최대혜택가 채택: {site_product_id} → {_ext_bbp:,}원 (API {best_benefit_price:,}원)"
-                            )
-                            best_benefit_price = _ext_bbp
-                        else:
-                            logger.debug(
-                                f"[ABCmart] API 최대혜택가 유지: {site_product_id} → {best_benefit_price:,}원 (확장앱 {_ext_bbp:,}원)"
-                            )
+                        logger.info(
+                            f"[ABCmart] 확장앱 최대혜택가 채택: {site_product_id} → {_ext_bbp:,}원 (API {best_benefit_price:,}원)"
+                        )
+                        best_benefit_price = _ext_bbp
             except asyncio.TimeoutError:
                 logger.debug(
                     f"[ABCmart] 확장앱 최대혜택가 타임아웃: {site_product_id} (API값 {best_benefit_price:,}원 사용)"
