@@ -52,12 +52,19 @@ async def list_sourcing_accounts(
 ):
     from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
 
-    # tenant_id가 있으면 해당 테넌트 소싱처 계정만 조회
+    # tenant_id가 있으면 해당 테넌트 + 기존(NULL) 소싱처 계정 모두 조회
     if tenant_id is not None:
+        from sqlalchemy import or_
+
         stmt = select(SambaSourcingAccount).order_by(
             SambaSourcingAccount.created_at.desc()
         )
-        stmt = stmt.where(SambaSourcingAccount.tenant_id == tenant_id)
+        stmt = stmt.where(
+            or_(
+                SambaSourcingAccount.tenant_id == tenant_id,
+                SambaSourcingAccount.tenant_id == None,  # noqa: E711
+            )
+        )
         if site_name:
             stmt = stmt.where(SambaSourcingAccount.site_name == site_name)
         result = await session.execute(stmt)
