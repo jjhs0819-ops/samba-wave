@@ -1251,20 +1251,85 @@ async function fetchLotteonBenefitPrice(productId, sitmNo) {
   }
 }
 
+// ABCmart/GrandStage: 쿠키 기반 info API 직접 호출로 혜택가 수집 (탭 불필요)
+async function fetchAbcmartBenefitPrice(productId, site) {
+  try {
+    // 1. a-rt.com 쿠키 수집 (url 기반 — www.a-rt.com 쿠키 정확히 매칭)
+    const cookies = await chrome.cookies.getAll({ url: 'https://www.a-rt.com' })
+    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ')
+    const hasSession = cookies.some(c => c.name === 'JSESSIONID')
+    console.log(`[${site}] maxBenefitCoupon 조회 시작: ${productId}, 쿠키=${cookies.length}개, JSESSIONID=${hasSession}`)
+
+    if (!cookieStr || !hasSession) {
+      console.log(`[${site}] maxBenefitCoupon: 쿠키/세션 없음 → DOM 폴백 (${productId})`)
+      return null
+    }
+
+    // 2. info API 호출 (쿠키 포함 = 로그인 세션으로 멤버십 할인 반영)
+    const resp = await fetch(`https://www.a-rt.com/product/info?prdtNo=${productId}`, {
+      credentials: 'include',
+      headers: {
+        'Cookie': cookieStr,
+        'Accept': 'application/json, text/plain, */*',
+        'Origin': 'https://www.a-rt.com',
+        'Referer': `https://www.a-rt.com/product?prdtNo=${productId}`,
+      }
+    })
+    const data = await resp.json()
+    if (!data || !data.prdtName) {
+      console.log(`[${site}] maxBenefitCoupon: API 응답 비어있음 (${productId})`)
+      return null
+    }
+
+    const priceInfo = data.productPrice || {}
+    const normalAmt = parseInt(priceInfo.normalAmt || 0)
+    const salePrice = parseInt(priceInfo.sellAmt || 0)
+    if (!salePrice) return null
+
+    // maxBenefitCoupon: 쿠폰+멤버십 할인 항목 배열 — 합산하여 최대혜택가 계산
+    const benefitCoupons = data.maxBenefitCoupon || data.coupon || []
+    let totalDiscount = 0
+    for (const c of benefitCoupons) {
+      totalDiscount += parseInt(c.dscntAmt || 0)
+    }
+
+    let benefitPrice = totalDiscount > 0 ? salePrice - totalDiscount : 0
+    if (benefitPrice <= 0 || benefitPrice >= salePrice) benefitPrice = 0
+
+    console.log(`[${site}] maxBenefitCoupon: ${productId} sale=${salePrice}, discount=${totalDiscount}, benefit=${benefitPrice}`)
+    console.log(`[${site}] maxBenefitCoupon 상세:`, JSON.stringify(benefitCoupons))
+
+    if (benefitPrice > 0) {
+      return {
+        success: true,
+        site_product_id: productId,
+        name: (data.prdtName || '').trim(),
+        original_price: normalAmt || salePrice,
+        sale_price: salePrice,
+        best_benefit_price: benefitPrice,
+        source_site: site,
+      }
+    }
+    return null
+  } catch (err) {
+    console.error(`[${site}] maxBenefitCoupon 실패:`, err.message)
+    return null
+  }
+}
+
 // 소싱 작업 처리 — 탭 열기 → DOM 파싱 → 결과 전송
 async function handleSourcingJob(job) {
   let tabId = null
   try {
-    // ── LOTTEON + sitmNo: 탭 없이 pbf API 직접 호출 (빠른경로 ~0.3초) ──
-    if (job.type === 'detail' && job.site === 'LOTTEON' && job.sitmNo) {
-      const pbfResult = await fetchLotteonBenefitPrice(job.productId, job.sitmNo)
-      if (pbfResult && pbfResult.success) {
-        await postResult('sourcing/collect-result', { requestId: job.requestId, data: pbfResult })
-        console.log(`[소싱] LOTTEON pbf 빠른경로 완료: ${job.productId}`)
+    // ── ABCmart/GrandStage: 탭 없이 info API 직접 호출 (빠른경로) ──
+    if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
+      const apiResult = await fetchAbcmartBenefitPrice(job.productId, job.site)
+      if (apiResult && apiResult.success) {
+        await postResult('sourcing/collect-result', { requestId: job.requestId, data: apiResult })
+        console.log(`[소싱] ${job.site} API 빠른경로 완료: ${job.productId} → ${apiResult.best_benefit_price}원`)
         return
       }
-      // pbf 실패 → 아래 탭 기반 DOM 폴백으로 진행
-      console.log(`[소싱] LOTTEON pbf 실패 → DOM 폴백: ${job.productId}`)
+      console.log(`[소싱] ${job.site} API 실패 → DOM 폴백: ${job.productId}`)
     }
 
     // active:true 필요: SPA 상세(JS렌더링 필수), 카테고리스캔
@@ -1387,7 +1452,7 @@ async function handleSourcingJob(job) {
     } else if (job.type === 'search') {
       result = await extractSearchResults(tabId, job.site, job.maxCount || 999)
     } else if (job.type === 'detail' && job.site === 'LOTTEON') {
-      // 탭 DOM에서 sitmNo 추출 시도 → pbf API 호출
+      // 탭 DOM에서 sitmNo 추출 시도
       let sitmNo = job.sitmNo || null
       if (!sitmNo) {
         try {
@@ -1401,11 +1466,50 @@ async function handleSourcingJob(job) {
           sitmNo = sitmResult.result
         } catch {}
       }
+      // 탭 컨텍스트에서 pbf API 호출 (lotteon.com 도메인 → 쿠키 자동 포함)
       if (sitmNo) {
-        result = await fetchLotteonBenefitPrice(job.productId, sitmNo)
+        try {
+          const [pbfResult] = await chrome.scripting.executeScript({
+            target: { tabId }, world: 'MAIN',
+            func: async (sitmNo) => {
+              try {
+                const resp = await fetch(`https://pbf.lotteon.com/product/v2/detail/search/base/sitm/${sitmNo}`, {
+                  credentials: 'include',
+                  headers: { 'Accept': 'application/json, text/plain, */*' }
+                })
+                return await resp.json()
+              } catch { return null }
+            },
+            args: [sitmNo]
+          })
+          const pbfData = pbfResult.result
+          if (pbfData?.data?.priceInfo) {
+            const pi = pbfData.data.priceInfo
+            const slPrc = parseInt(pi.slPrc || 0)
+            const immdDc = parseInt(pi.immdDcAplyTotAmt || 0)
+            const adtnDc = parseInt(pi.adtnDcAplyTotAmt || 0)
+            let benefitPrice = 0
+            if (slPrc > 0 && (immdDc > 0 || adtnDc > 0)) {
+              benefitPrice = slPrc - immdDc - adtnDc
+              if (benefitPrice <= 0 || benefitPrice >= slPrc) benefitPrice = 0
+            }
+            console.log(`[LOTTEON] pbf 혜택가(탭): ${job.productId} slPrc=${slPrc}, immdDc=${immdDc}, adtnDc=${adtnDc}, benefit=${benefitPrice}`)
+            if (benefitPrice > 0) {
+              result = {
+                success: true,
+                site_product_id: job.productId,
+                sale_price: slPrc,
+                best_benefit_price: benefitPrice,
+                source_site: 'LOTTEON',
+              }
+            }
+          }
+        } catch (e) {
+          console.log(`[LOTTEON] pbf 탭 호출 실패: ${e.message}`)
+        }
       }
       if (!result || !result.success) {
-        // pbf 실패 시 DOM 파싱 폴백
+        // pbf 실패 시 DOM 파싱 폴백 (나의 혜택가 텍스트 추출)
         result = await extractDetailData(tabId, job.site, job.productId)
       }
     } else if (job.type === 'detail') {
