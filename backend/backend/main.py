@@ -106,6 +106,16 @@ async def lifespan(app: FastAPI):
                     "CREATE INDEX IF NOT EXISTS ix_samba_login_history_user_id ON samba_login_history (user_id)"
                 )
             )
+            # [일회성] ABCmart 배송비 초기화 — 무료배송인데 sourcing_shipping_fee=3000 잘못 저장된 건
+            _fix = await session.execute(
+                text(
+                    "UPDATE samba_collected_product SET sourcing_shipping_fee = 0 WHERE source_site = 'ABCmart' AND sourcing_shipping_fee > 0"
+                )
+            )
+            if _fix.rowcount > 0:
+                _startup_log.info(
+                    f"[startup] ABCmart sourcing_shipping_fee 초기화: {_fix.rowcount}건"
+                )
             # 파생 주문 일괄 삭제 (사본-* + ★교환주문 — 원주문에 이미 정보 포함)
             _del = await session.execute(
                 text(
