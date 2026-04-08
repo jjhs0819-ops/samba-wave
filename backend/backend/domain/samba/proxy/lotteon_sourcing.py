@@ -1639,8 +1639,8 @@ class LotteonSourcingClient:
             "infwMdiaCd": "PC",
             "screenType": "PRODUCT",
             "maxPurQty": 999999,
-            "aplyBestPrcChk": "N",
-            "aplyStdDttm": "",
+            "aplyBestPrcChk": "Y",
+            "aplyStdDttm": datetime.now().strftime("%Y%m%d%H%M%S"),
             "pyMnsExcpLst": [],
             "discountApplyProductList": [],
         }
