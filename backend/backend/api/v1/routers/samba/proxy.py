@@ -2448,6 +2448,28 @@ def _get_sourcing_client(site: str):
     return None
 
 
+class LotteonSetCookieRequest(BaseModel):
+    cookie: str
+
+
+@sourcing_queue_router.post("/lotteon/set-cookie")
+async def lotteon_set_cookie(
+    body: LotteonSetCookieRequest,
+    write_session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """확장앱에서 롯데ON 쿠키 수신 (인증 불필요 — 확장앱에서 직접 호출)."""
+    if not body.cookie:
+        raise HTTPException(status_code=400, detail="쿠키가 필요합니다.")
+    await _set_setting(write_session, "lotteon_cookie", body.cookie)
+    # 메모리 캐시에도 즉시 반영
+    from backend.domain.samba.proxy.lotteon_sourcing import set_lotteon_cookie
+
+    set_lotteon_cookie(body.cookie)
+    cookie_count = len(body.cookie.split(";"))
+    logger.info(f"[LOTTEON] 확장앱에서 쿠키 수신: {cookie_count}개")
+    return {"success": True, "cookieCount": cookie_count}
+
+
 @sourcing_queue_router.get("/sourcing/collect-queue")
 async def sourcing_collect_queue() -> dict[str, Any]:
     """확장앱이 폴링하는 소싱 수집 큐 (인증 불필요)."""
@@ -2884,28 +2906,6 @@ async def kream_set_cookie(
     await _set_setting(write_session, "kream_cookie", body.cookie)
     cookie_count = len(body.cookie.split(";"))
     logger.info(f"[KREAM] 확장앱에서 쿠키 수신: {cookie_count}개")
-    return {"success": True, "cookieCount": cookie_count}
-
-
-class LotteonSetCookieRequest(BaseModel):
-    cookie: str
-
-
-@router.post("/lotteon/set-cookie")
-async def lotteon_set_cookie(
-    body: LotteonSetCookieRequest,
-    write_session: AsyncSession = Depends(get_write_session_dependency),
-) -> dict[str, Any]:
-    """확장앱에서 롯데ON 쿠키 수신."""
-    if not body.cookie:
-        raise HTTPException(status_code=400, detail="쿠키가 필요합니다.")
-    await _set_setting(write_session, "lotteon_cookie", body.cookie)
-    # 메모리 캐시에도 즉시 반영
-    from backend.domain.samba.proxy.lotteon_sourcing import set_lotteon_cookie
-
-    set_lotteon_cookie(body.cookie)
-    cookie_count = len(body.cookie.split(";"))
-    logger.info(f"[LOTTEON] 확장앱에서 쿠키 수신: {cookie_count}개")
     return {"success": True, "cookieCount": cookie_count}
 
 

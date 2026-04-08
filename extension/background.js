@@ -2,7 +2,7 @@
 
 let PROXY_URL = 'http://localhost:28080'
 const DEFAULT_PROXY_URL = 'http://localhost:28080'
-const CLOUD_URL = 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
+const CLOUD_URL = 'https://samba-wave-api-413651618998.asia-northeast3.run.app'
 const API_PREFIX = '/api/v1/samba/proxy'
 const API_GATEWAY_KEY = '6woI2L8NjVrcgthMQ05VvvOTH-3HPoVdmvwa123ot1w'
 
