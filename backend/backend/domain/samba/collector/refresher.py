@@ -496,7 +496,7 @@ async def _refresh_product_inner(
                 error=str(e),
             )
 
-        # LOTTEON: 확장앱 pbf API로 실제 "나의 혜택가" 수집 → new_cost 덮어쓰기
+        # LOTTEON: 확장앱 DOM 파싱으로 옵션별 실재고 수집 + 혜택가 폴백
         if source_site == "LOTTEON" and not result.error:
             import asyncio
 
@@ -516,16 +516,25 @@ async def _refresh_product_inner(
                     _req_id, _future = SourcingQueue.add_detail_job(
                         "LOTTEON", _sid, sitm_no=_sitm
                     )
-                    _ext_result = await asyncio.wait_for(_future, timeout=20)
+                    _ext_result = await asyncio.wait_for(_future, timeout=25)
                     if isinstance(_ext_result, dict) and _ext_result.get("success"):
-                        _ext_benefit = int(
-                            _ext_result.get("best_benefit_price", 0) or 0
-                        )
-                        if _ext_benefit > 0:
-                            result.new_cost = float(_ext_benefit)
+                        # 옵션별 실재고 반영 (DOM "N개 남음" 파싱)
+                        _ext_opts = _ext_result.get("options")
+                        if _ext_opts and len(_ext_opts) > 0:
+                            result.new_options = _ext_opts
                             logger.info(
-                                f"[LOTTEON] 오토튠 확장앱 혜택가: {_sid} → {_ext_benefit:,}"
+                                f"[LOTTEON] 오토튠 옵션 재고: {_sid} → {len(_ext_opts)}개 옵션"
                             )
+                        # 혜택가: benefits API 값이 없을 때만 확장앱 폴백
+                        if not result.new_cost or result.new_cost <= 0:
+                            _ext_benefit = int(
+                                _ext_result.get("best_benefit_price", 0) or 0
+                            )
+                            if _ext_benefit > 0:
+                                result.new_cost = float(_ext_benefit)
+                                logger.info(
+                                    f"[LOTTEON] 오토튠 확장앱 혜택가 폴백: {_sid} → {_ext_benefit:,}"
+                                )
                 except asyncio.TimeoutError:
                     logger.info(
                         f"[LOTTEON] 오토튠 확장앱 타임아웃: {_sid} — API 가격 유지"
