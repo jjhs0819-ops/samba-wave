@@ -475,6 +475,12 @@ class JobWorker:
         # 이어하기: 이전 진행 위치를 먼저 읽은 후 진행률 갱신
         # (update_progress가 identity map으로 job.current를 덮어쓰기 때문)
         start_from = job.current or 0
+        # 이어하기 방어: start_from이 total 이상이면 전체 재실행
+        if start_from >= total:
+            logger.warning(
+                f"[잡워커] start_from({start_from}) >= total({total}) — 전체 재실행"
+            )
+            start_from = 0
         await repo.update_progress(job.id, start_from, total)
 
         # 이어하기: 이전 실행의 카운트 복원

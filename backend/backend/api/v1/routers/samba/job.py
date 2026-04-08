@@ -72,6 +72,7 @@ async def create_job(
                         ),
                         SambaJob.total > 0,
                         SambaJob.current > 0,
+                        SambaJob.current < SambaJob.total,  # 전체 완료된 Job 제외
                     )
                     .order_by(SambaJob.created_at.desc())
                     .limit(1)

@@ -137,6 +137,11 @@ export default function ShipmentsPage() {
             }
             if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
               if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+              // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
+              const r = (j.result || {}) as Record<string, number>
+              const _ts = new Date().toLocaleTimeString()
+              const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
+              setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${r.success || 0}건, 스킵 ${r.skipped || 0}건, 실패 ${r.failed || 0}건`].slice(-30))
               setTransmitting(false)
               activeJobIdRef.current = ''
               load()
@@ -599,7 +604,12 @@ export default function ShipmentsPage() {
           }
           if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
             if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
-            if (j.error) addLog(`[${new Date().toLocaleTimeString()}] ${j.error}`)
+            const _ts = new Date().toLocaleTimeString()
+            if (j.error) addLog(`[${_ts}] ${j.error}`)
+            // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
+            const r = (j.result || {}) as Record<string, number>
+            const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
+            addLog(`[${_ts}] ${statusLabel} — 성공 ${r.success || 0}건, 스킵 ${r.skipped || 0}건, 실패 ${r.failed || 0}건`)
             setTransmitting(false)
             activeJobIdRef.current = ''
             load()
@@ -971,6 +981,11 @@ export default function ShipmentsPage() {
                       }
                       if (j.status === 'completed' || j.status === 'failed') {
                         if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+                        // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
+                        const r = (j.result || {}) as Record<string, number>
+                        const _ts = new Date().toLocaleTimeString()
+                        const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
+                        setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${r.success || 0}건, 스킵 ${r.skipped || 0}건, 실패 ${r.failed || 0}건`].slice(-30))
                         setTransmitting(false)
                         activeJobIdRef.current = ''
                         load()
