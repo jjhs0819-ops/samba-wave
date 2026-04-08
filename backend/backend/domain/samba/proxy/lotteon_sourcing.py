@@ -1505,19 +1505,19 @@ class LotteonSourcingClient:
         return None
 
     async def fetch_option_stock(
-        self, pbf_data: dict[str, Any]
+        self,
+        pbf_data: dict[str, Any],
+        spd_no: str = "",
+        sitm_no: str = "",
     ) -> Optional[list[dict[str, Any]]]:
         """option/mapping API로 옵션별 실재고 조회 (탭/DOM 불필요).
-
-        pbf base API 응답의 basicInfo에서 파라미터를 추출하여
-        optionMappingInfo의 stkQty로 옵션별 실재고를 반환한다.
 
         Returns:
           [{"name": "250", "stock": 6, "isSoldOut": False}, ...] 또는 None
         """
         basic = pbf_data.get("basicInfo") or {}
-        spd_no = str(basic.get("spdNo", "") or "").strip()
-        sitm_no = str(basic.get("sitmNo", "") or "").strip()
+        spd_no = spd_no or str(basic.get("spdNo", "") or "").strip()
+        sitm_no = sitm_no or str(basic.get("sitmNo", "") or "").strip()
         tr_no = str(basic.get("trNo", "") or "").strip()
         tr_grp_cd = str(basic.get("trGrpCd", "") or "").strip()
         lrtr_no = str(basic.get("lrtrNo", "") or "").strip()
@@ -1587,19 +1587,21 @@ class LotteonSourcingClient:
             logger.debug(f"[LOTTEON] option/mapping 실패: {spd_no} — {e}")
         return None
 
-    async def fetch_benefit_price(self, pbf_data: dict[str, Any]) -> Optional[int]:
+    async def fetch_benefit_price(
+        self,
+        pbf_data: dict[str, Any],
+        spd_no: str = "",
+        sitm_no: str = "",
+    ) -> Optional[int]:
         """favorBox/benefits API로 최대혜택가(totAmt) 조회.
-
-        pbf base API 응답의 basicInfo/priceInfo에서 파라미터를 추출하여
-        benefits API를 호출한다. 쿠키 없이도 bestPrice 모드로 동작.
 
         Returns:
           최대혜택가(int) 또는 None (실패 시)
         """
         basic = pbf_data.get("basicInfo") or {}
         price = pbf_data.get("priceInfo") or {}
-        spd_no = str(basic.get("spdNo", "") or "").strip()
-        sitm_no = str(basic.get("sitmNo", "") or "").strip()
+        spd_no = spd_no or str(basic.get("spdNo", "") or "").strip()
+        sitm_no = sitm_no or str(basic.get("sitmNo", "") or "").strip()
         sl_prc = self._safe_int(price.get("slPrc", 0))
         if not spd_no or not sitm_no or sl_prc <= 0:
             return None
