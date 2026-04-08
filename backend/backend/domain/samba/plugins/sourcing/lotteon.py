@@ -294,6 +294,27 @@ class LotteonSourcingPlugin(SourcingPlugin):
                         logger.info(
                             f"[LOTTEON] sitmNo 캐시 저장: {site_product_id} → {_extracted_sitm}"
                         )
+                        # sitmNo 확보 → pbf API로 옵션별 실재고 + 혜택가 보강
+                        try:
+                            _pbf_enrich = await asyncio.wait_for(
+                                self._fetch_pbf_refresh(_extracted_sitm),
+                                timeout=15,
+                            )
+                            if _pbf_enrich:
+                                if _pbf_enrich.get("options"):
+                                    detail["options"] = _pbf_enrich["options"]
+                                _bbp = _pbf_enrich.get("bestBenefitPrice")
+                                if _bbp and _bbp > 0:
+                                    detail["bestBenefitPrice"] = _bbp
+                                logger.info(
+                                    f"[LOTTEON] HTML→pbf 보강: {site_product_id} "
+                                    f"옵션={len(_pbf_enrich.get('options', []))}개, "
+                                    f"혜택가={_bbp}"
+                                )
+                        except Exception as _pe:
+                            logger.debug(
+                                f"[LOTTEON] HTML→pbf 보강 실패: {site_product_id} — {_pe}"
+                            )
             # 성공 → 인터벌 점진 복원 (최소 0.3초까지)
             _lotteon_interval = max(0.3, _lotteon_interval - 0.3)
             _lotteon_consecutive_errors = 0
