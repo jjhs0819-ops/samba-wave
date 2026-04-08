@@ -1405,65 +1405,18 @@ async function handleSourcingJob(job) {
     } else if (job.type === 'search') {
       result = await extractSearchResults(tabId, job.site, job.maxCount || 999)
     } else if (job.type === 'detail' && job.site === 'LOTTEON') {
-      // 탭 DOM에서 sitmNo 추출 시도
-      let sitmNo = job.sitmNo || null
-      if (!sitmNo) {
-        try {
-          const [sitmResult] = await chrome.scripting.executeScript({
-            target: { tabId }, world: 'MAIN',
-            func: () => {
-              const m = document.documentElement.innerHTML.match(/"sitmNo"\s*:\s*"([A-Z]{2}\d+_\d+)"/)
-              return m ? m[1] : null
-            }
-          })
-          sitmNo = sitmResult.result
-        } catch {}
-      }
-      // 탭 컨텍스트에서 pbf API 호출 (lotteon.com 도메인 → 쿠키 자동 포함)
-      if (sitmNo) {
-        try {
-          const [pbfResult] = await chrome.scripting.executeScript({
-            target: { tabId }, world: 'MAIN',
-            func: async (sitmNo) => {
-              try {
-                const resp = await fetch(`https://pbf.lotteon.com/product/v2/detail/search/base/sitm/${sitmNo}`, {
-                  credentials: 'include',
-                  headers: { 'Accept': 'application/json, text/plain, */*' }
-                })
-                return await resp.json()
-              } catch { return null }
-            },
-            args: [sitmNo]
-          })
-          const pbfData = pbfResult.result
-          if (pbfData?.data?.priceInfo) {
-            const pi = pbfData.data.priceInfo
-            const slPrc = parseInt(pi.slPrc || 0)
-            const immdDc = parseInt(pi.immdDcAplyTotAmt || 0)
-            const adtnDc = parseInt(pi.adtnDcAplyTotAmt || 0)
-            let benefitPrice = 0
-            if (slPrc > 0 && (immdDc > 0 || adtnDc > 0)) {
-              benefitPrice = slPrc - immdDc - adtnDc
-              if (benefitPrice <= 0 || benefitPrice >= slPrc) benefitPrice = 0
-            }
-            console.log(`[LOTTEON] pbf 혜택가(탭): ${job.productId} slPrc=${slPrc}, immdDc=${immdDc}, adtnDc=${adtnDc}, benefit=${benefitPrice}`)
-            if (benefitPrice > 0) {
-              result = {
-                success: true,
-                site_product_id: job.productId,
-                sale_price: slPrc,
-                best_benefit_price: benefitPrice,
-                source_site: 'LOTTEON',
-              }
-            }
-          }
-        } catch (e) {
-          console.log(`[LOTTEON] pbf 탭 호출 실패: ${e.message}`)
-        }
-      }
-      if (!result || !result.success) {
-        // pbf 실패 시 DOM 파싱 폴백 (나의 혜택가 텍스트 추출)
+      // DOM 파싱으로 "나의 혜택가" 수집
+      result = await extractDetailData(tabId, job.site, job.productId)
+      // 혜택가 미수집 시 3초 대기 후 재시도 (렌더링 지연 대비)
+      if (!result?.best_benefit_price) {
+        console.log(`[LOTTEON] 혜택가 미수집 — 3초 후 재시도: ${job.productId}`)
+        await wait(3000)
         result = await extractDetailData(tabId, job.site, job.productId)
+      }
+      if (result?.best_benefit_price) {
+        console.log(`[LOTTEON] DOM 혜택가: ${job.productId} → ${result.best_benefit_price}`)
+      } else {
+        console.log(`[LOTTEON] 혜택가 없음 (로그인 필요?): ${job.productId}`)
       }
     } else if (job.type === 'detail') {
       result = await extractDetailData(tabId, job.site, job.productId)
