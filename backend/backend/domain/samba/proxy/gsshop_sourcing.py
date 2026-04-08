@@ -385,8 +385,10 @@ class GsShopSourcingClient:
             f"[GSSHOP] 카테고리 스캔: {len(product_ids)}개 상품 검색 완료, 상세 조회 시작"
         )
 
-        # 2. 전체 상품 상세 조회 → 카테고리 추출 (동시 50, 가벼운 API 호출)
-        sem = asyncio.Semaphore(50)
+        # 2. 전체 상품 상세 조회 → 카테고리 추출
+        #    500개씩 청크, 프록시 3개 순차 로테이션, 청크당 동시 20
+        CHUNK_SIZE = 500
+        sem = asyncio.Semaphore(20)
         scan_timeout = httpx.Timeout(30.0, connect=15.0)
         cat_counter: dict[str, int] = {}
         ok_count = 0
@@ -398,7 +400,7 @@ class GsShopSourcingClient:
         async def _fetch_detail(
             client: httpx.AsyncClient, pid: str
         ) -> Optional[dict[str, Any]]:
-            """스캔 전용 상세 조회 (공유 클라이언트 사용)."""
+            """스캔 전용 상세 조회 (프록시별 클라이언트 사용)."""
             url = f"{self.PRODUCT_URL}?prdid={pid}"
             try:
                 resp = await client.get(url, headers=self._headers(mobile=True))
@@ -438,13 +440,29 @@ class GsShopSourcingClient:
                     GsShopSourcingClient.scan_progress["detail_fail"] = fail_count
                     logger.debug(f"[GSSHOP] 카테고리 스캔 상세 실패: {pid} — {e}")
 
-        async with httpx.AsyncClient(
-            timeout=scan_timeout, follow_redirects=True
-        ) as scan_client:
-            await asyncio.gather(
-                *[_fetch(scan_client, pid) for pid in product_ids],
-                return_exceptions=True,
+        # 500개씩 청크 분할 → 프록시 순차 로테이션
+        chunks = [
+            product_ids[i : i + CHUNK_SIZE]
+            for i in range(0, len(product_ids), CHUNK_SIZE)
+        ]
+        for chunk_idx, chunk in enumerate(chunks):
+            proxy = self._proxy_pool[chunk_idx % len(self._proxy_pool)] if self._proxy_pool else None
+            client_kwargs: dict[str, Any] = {
+                "timeout": scan_timeout,
+                "follow_redirects": True,
+            }
+            if proxy:
+                client_kwargs["proxy"] = proxy
+            proxy_label = proxy.split("@")[-1] if proxy and "@" in proxy else (proxy or "direct")
+            logger.info(
+                f"[GSSHOP] 카테고리 스캔 청크 {chunk_idx + 1}/{len(chunks)}"
+                f" ({len(chunk)}건) — 프록시: {proxy_label}"
             )
+            async with httpx.AsyncClient(**client_kwargs) as scan_client:
+                await asyncio.gather(
+                    *[_fetch(scan_client, pid) for pid in chunk],
+                    return_exceptions=True,
+                )
         logger.info(
             f"[GSSHOP] 카테고리 스캔 상세 완료: 성공={ok_count} 실패={fail_count}"
         )

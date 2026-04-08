@@ -2020,6 +2020,9 @@ async def preview_ai_tags(
     ss_client_preview = await _get_smartstore_tag_client(session)
 
     async with httpx.AsyncClient(timeout=30) as http_client:
+        logger.info(
+            f"[AI태그 미리보기] {method} model={model} key={api_key[:10]}... groups={len(groups)}"
+        )
         for gid, products in groups.items():
             rep = products[0]
             rep_name = rep.name or ""
@@ -2108,6 +2111,7 @@ async def preview_ai_tags(
                 if not resp or resp.status_code != 200:
                     logger.warning(
                         f"[AI태그 미리보기] {method} 호출 실패: {resp.status_code if resp else 'no response'}"
+                        f" — {resp.text[:300] if resp else ''}"
                     )
                     failed_groups += 1
                     continue
