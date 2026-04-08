@@ -1637,7 +1637,7 @@ async def generate_ai_tags(
 
     product_ids = request.get("product_ids", [])
     req_group_ids = request.get("group_ids", [])
-    method: str = request.get("method", "gemma")  # gemma | gemini | claude
+    method: str = request.get("method", "gemini")  # gemini | gemma | claude
     logger.info(
         f"[AI태그] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}, method={method}"
     )
@@ -1946,7 +1946,7 @@ async def preview_ai_tags(
 
     product_ids = request.get("product_ids", [])
     req_group_ids = request.get("group_ids", [])
-    method: str = request.get("method", "gemma")  # gemma | gemini | claude
+    method: str = request.get("method", "gemini")  # gemini | gemma | claude
     logger.info(
         f"[AI태그 미리보기] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}, method={method}"
     )
