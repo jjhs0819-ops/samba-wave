@@ -1145,31 +1145,25 @@ function pollSourcingOnce() {
   return pollOnce('sourcing/collect-queue', handleSourcingJob, '소싱', 'url')
 }
 
-// 롯데ON: 쿠키 포함 pbf API 직접 호출로 혜택가 수집 (탭 불필요)
-async function fetchLotteonBenefitPrice(productId) {
+// 롯데ON: sitmNo + 쿠키 기반 pbf API 직접 호출로 혜택가 수집 (탭 불필요)
+async function fetchLotteonBenefitPrice(productId, sitmNo) {
   try {
+    if (!sitmNo) {
+      console.log(`[LOTTEON] pbf 혜택가: sitmNo 없음 — 스킵 (${productId})`)
+      return null
+    }
+
     // 1. lotteon.com 쿠키 수집
     const cookies = await chrome.cookies.getAll({ domain: '.lotteon.com' })
     const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ')
     if (!cookieStr) {
-      console.log('[LOTTEON] 쿠키 없음 — pbf 혜택가 스킵')
+      console.log(`[LOTTEON] pbf 혜택가: 쿠키 없음 — 스킵 (${productId})`)
       return null
     }
 
-    // 2. 상품 HTML에서 sitmNo 추출 (pbf API에 필요)
-    const pageResp = await fetch(`https://www.lotteon.com/product/productDetail.lotte?spdNo=${productId}`, {
-      headers: { 'Cookie': cookieStr, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-    })
-    const pageHtml = await pageResp.text()
-    const sitmMatch = pageHtml.match(/"sitmNo"\s*:\s*"([A-Z]{2}\d+_\d+)"/)
-    if (!sitmMatch) {
-      console.log('[LOTTEON] sitmNo 추출 실패')
-      return null
-    }
-    const sitmNo = sitmMatch[1]
-
-    // 3. pbf API 호출 (쿠키 포함 → immdDcAplyTotAmt에 실제 할인금액 반영)
+    // 2. pbf API 호출 (credentials + Cookie 헤더 병용)
     const pbfResp = await fetch(`https://pbf.lotteon.com/product/v2/detail/search/base/sitm/${sitmNo}`, {
+      credentials: 'include',
       headers: {
         'Cookie': cookieStr,
         'Accept': 'application/json, text/plain, */*',
@@ -1203,7 +1197,8 @@ async function fetchLotteonBenefitPrice(productId) {
         source_site: 'LOTTEON',
       }
     }
-    return null // 혜택가 없으면 null → DOM 폴백
+    // immdDc=0 → 쿠키 인증 안 됐을 가능성 → null 반환하여 DOM 폴백
+    return null
   } catch (err) {
     console.error('[LOTTEON] pbf 혜택가 실패:', err.message)
     return null
@@ -1214,6 +1209,18 @@ async function fetchLotteonBenefitPrice(productId) {
 async function handleSourcingJob(job) {
   let tabId = null
   try {
+    // ── LOTTEON + sitmNo: 탭 없이 pbf API 직접 호출 (빠른경로 ~0.3초) ──
+    if (job.type === 'detail' && job.site === 'LOTTEON' && job.sitmNo) {
+      const pbfResult = await fetchLotteonBenefitPrice(job.productId, job.sitmNo)
+      if (pbfResult && pbfResult.success) {
+        await postResult('sourcing/collect-result', { requestId: job.requestId, data: pbfResult })
+        console.log(`[소싱] LOTTEON pbf 빠른경로 완료: ${job.productId}`)
+        return
+      }
+      // pbf 실패 → 아래 탭 기반 DOM 폴백으로 진행
+      console.log(`[소싱] LOTTEON pbf 실패 → DOM 폴백: ${job.productId}`)
+    }
+
     // active:true 필요: SPA 상세(JS렌더링 필수), 카테고리스캔
     const needsActive = (job.type === 'detail' && (job.site === 'FashionPlus' || job.site === 'LOTTEON')) || job.type === 'category-scan'
     const tab = await chrome.tabs.create({ url: job.url, active: needsActive })
@@ -1334,8 +1341,23 @@ async function handleSourcingJob(job) {
     } else if (job.type === 'search') {
       result = await extractSearchResults(tabId, job.site, job.maxCount || 999)
     } else if (job.type === 'detail' && job.site === 'LOTTEON') {
-      // 롯데ON: 쿠키 포함 pbf API 직접 호출로 혜택가 수집 (탭 DOM 불필요)
-      result = await fetchLotteonBenefitPrice(job.productId)
+      // 탭 DOM에서 sitmNo 추출 시도 → pbf API 호출
+      let sitmNo = job.sitmNo || null
+      if (!sitmNo) {
+        try {
+          const [sitmResult] = await chrome.scripting.executeScript({
+            target: { tabId }, world: 'MAIN',
+            func: () => {
+              const m = document.documentElement.innerHTML.match(/"sitmNo"\s*:\s*"([A-Z]{2}\d+_\d+)"/)
+              return m ? m[1] : null
+            }
+          })
+          sitmNo = sitmResult.result
+        } catch {}
+      }
+      if (sitmNo) {
+        result = await fetchLotteonBenefitPrice(job.productId, sitmNo)
+      }
       if (!result || !result.success) {
         // pbf 실패 시 DOM 파싱 폴백
         result = await extractDetailData(tabId, job.site, job.productId)

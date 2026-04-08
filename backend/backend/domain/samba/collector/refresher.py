@@ -496,7 +496,7 @@ async def _refresh_product_inner(
                 error=str(e),
             )
 
-        # LOTTEON: 확장앱 DOM에서 실제 "나의 혜택가" 수집 → new_cost 덮어쓰기
+        # LOTTEON: 확장앱 pbf API로 실제 "나의 혜택가" 수집 → new_cost 덮어쓰기
         if source_site == "LOTTEON" and not result.error:
             import asyncio
 
@@ -504,8 +504,18 @@ async def _refresh_product_inner(
             if _sid:
                 try:
                     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+                    from backend.domain.samba.plugins.sourcing.lotteon import (
+                        _sitm_no_cache,
+                    )
 
-                    _req_id, _future = SourcingQueue.add_detail_job("LOTTEON", _sid)
+                    _sitm = (
+                        getattr(product, "sitmNo", "")
+                        or getattr(product, "sitm_no", "")
+                        or _sitm_no_cache.get(_sid, "")
+                    )
+                    _req_id, _future = SourcingQueue.add_detail_job(
+                        "LOTTEON", _sid, sitm_no=_sitm
+                    )
                     _ext_result = await asyncio.wait_for(_future, timeout=20)
                     if isinstance(_ext_result, dict) and _ext_result.get("success"):
                         _ext_benefit = int(

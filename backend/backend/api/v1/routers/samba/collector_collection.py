@@ -1070,9 +1070,11 @@ async def collect_by_url(
                             )
 
                             _req_id, _future = SourcingQueue.add_detail_job(
-                                "LOTTEON", item_id
+                                "LOTTEON",
+                                item_id,
+                                sitm_no=detail.get("sitmNo", ""),
                             )
-                            _ext_result = await asyncio.wait_for(_future, timeout=20)
+                            _ext_result = await asyncio.wait_for(_future, timeout=25)
                             if isinstance(_ext_result, dict) and _ext_result.get(
                                 "success"
                             ):
@@ -1169,8 +1171,10 @@ async def collect_by_url(
                 try:
                     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
-                    _req_id, _future = SourcingQueue.add_detail_job("LOTTEON", item_id)
-                    _ext_result = await asyncio.wait_for(_future, timeout=20)
+                    _req_id, _future = SourcingQueue.add_detail_job(
+                        "LOTTEON", item_id, sitm_no=data.get("sitmNo", "")
+                    )
+                    _ext_result = await asyncio.wait_for(_future, timeout=25)
                     if isinstance(_ext_result, dict) and _ext_result.get("success"):
                         _ext_benefit = int(
                             _ext_result.get("best_benefit_price", 0) or 0
@@ -1834,15 +1838,21 @@ async def enrich_product(
             if result.error:
                 return {"success": False, "message": result.error}
 
-            # LOTTEON: 확장앱 상세 페이지에서 "나의 혜택가" + 옵션별 실재고 파싱
+            # LOTTEON: 확장앱 pbf API로 "나의 혜택가" + 옵션별 실재고 파싱
             if _src.upper() == "LOTTEON":
                 try:
                     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
-
-                    _req_id, _future = SourcingQueue.add_detail_job(
-                        "LOTTEON", product.site_product_id
+                    from backend.domain.samba.plugins.sourcing.lotteon import (
+                        _sitm_no_cache,
                     )
-                    _ext_result = await asyncio.wait_for(_future, timeout=20)
+
+                    _sitm = _sitm_no_cache.get(product.site_product_id, "")
+                    _req_id, _future = SourcingQueue.add_detail_job(
+                        "LOTTEON",
+                        product.site_product_id,
+                        sitm_no=_sitm,
+                    )
+                    _ext_result = await asyncio.wait_for(_future, timeout=25)
                     if isinstance(_ext_result, dict) and _ext_result.get("success"):
                         # 나의 혜택가 → cost
                         _ext_benefit = int(

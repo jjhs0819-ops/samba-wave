@@ -84,9 +84,12 @@ class SourcingQueue:
 
     @classmethod
     def add_detail_job(
-        cls, site: str, product_id: str
+        cls, site: str, product_id: str, *, sitm_no: str = ""
     ) -> tuple[str, asyncio.Future[Any]]:
-        """상세조회 작업 큐에 추가. (requestId, future) 반환."""
+        """상세조회 작업 큐에 추가. (requestId, future) 반환.
+
+        sitm_no: LOTTEON sitmNo — 전달 시 확장앱이 탭 없이 pbf API 직접 호출.
+        """
         request_id = str(uuid.uuid4())[:8]
         url_template = SITE_DETAIL_URLS.get(site, "")
         if not url_template:
@@ -96,15 +99,16 @@ class SourcingQueue:
         loop = asyncio.get_event_loop()
         future: asyncio.Future[Any] = loop.create_future()
 
-        cls.queue.append(
-            {
-                "requestId": request_id,
-                "site": site,
-                "type": "detail",
-                "url": url,
-                "productId": product_id,
-            }
-        )
+        job: dict[str, Any] = {
+            "requestId": request_id,
+            "site": site,
+            "type": "detail",
+            "url": url,
+            "productId": product_id,
+        }
+        if sitm_no:
+            job["sitmNo"] = sitm_no
+        cls.queue.append(job)
         cls.resolvers[request_id] = future
         logger.info(f"[소싱큐] 상세 추가: {site} #{product_id} (id={request_id})")
         return request_id, future
