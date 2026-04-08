@@ -1254,45 +1254,48 @@ async function fetchLotteonBenefitPrice(productId, sitmNo) {
 // ABCmart/GrandStage: 쿠키 기반 info API 직접 호출로 혜택가 수집 (탭 불필요)
 async function fetchAbcmartBenefitPrice(productId, site) {
   try {
-    // 1. 서브도메인 결정 (ABCmart=abcmart, GrandStage=grandstage)
-    const subdomain = site === 'GrandStage' ? 'grandstage' : 'abcmart'
-    const baseUrl = `https://${subdomain}.a-rt.com`
-
-    // 2. 서브도메인 쿠키 수집
-    const cookies = await chrome.cookies.getAll({ url: baseUrl })
-    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ')
-    console.log(`[${site}] maxBenefitCoupon 조회: ${productId}, 쿠키=${cookies.length}개, names=${cookies.map(c=>c.name).join(',')}`)
-
-    if (!cookies.length) {
-      console.log(`[${site}] maxBenefitCoupon: 쿠키 없음 → DOM 폴백 (${productId})`)
+    // 기존 a-rt.com 탭에서 info API 호출 (페이지 컨텍스트 = 세션+인증 자동 포함)
+    const tabs = await chrome.tabs.query({ url: '*://*.a-rt.com/*' })
+    if (!tabs.length) {
+      console.log(`[${site}] maxBenefitCoupon: a-rt.com 탭 없음 → DOM 폴백 (${productId})`)
       return null
     }
 
-    // 3. info API 호출 (서브도메인 기준)
-    const resp = await fetch(`${baseUrl}/product/info?prdtNo=${productId}`, {
-      credentials: 'include',
-      headers: {
-        'Cookie': cookieStr,
-        'Accept': 'application/json, text/plain, */*',
-        'Origin': baseUrl,
-        'Referer': `${baseUrl}/product?prdtNo=${productId}`,
-      }
+    const tabId = tabs[0].id
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: async (prdtNo) => {
+        try {
+          const resp = await fetch(`/product/info?prdtNo=${prdtNo}`, {
+            credentials: 'include',
+            headers: { 'Accept': 'application/json' }
+          })
+          const data = await resp.json()
+          if (!data || !data.prdtName) return null
+          const pi = data.productPrice || {}
+          return {
+            name: (data.prdtName || '').trim(),
+            salePrice: parseInt(pi.sellAmt || 0),
+            normalAmt: parseInt(pi.normalAmt || 0),
+            coupons: data.maxBenefitCoupon || data.coupon || [],
+          }
+        } catch (e) {
+          return { error: e.message }
+        }
+      },
+      args: [productId],
     })
-    const data = await resp.json()
-    if (!data || !data.prdtName) {
-      console.log(`[${site}] maxBenefitCoupon: API 응답 비어있음 (${productId}, HTTP ${resp.status})`)
+
+    const apiData = result?.result
+    if (!apiData || apiData.error || !apiData.salePrice) {
+      console.log(`[${site}] maxBenefitCoupon: 탭 내 API 실패 (${productId})`, apiData?.error || '')
       return null
     }
 
-    const priceInfo = data.productPrice || {}
-    const normalAmt = parseInt(priceInfo.normalAmt || 0)
-    const salePrice = parseInt(priceInfo.sellAmt || 0)
-    if (!salePrice) return null
-
-    // maxBenefitCoupon: 쿠폰+멤버십 할인 항목 배열 — 합산하여 최대혜택가 계산
-    const benefitCoupons = data.maxBenefitCoupon || data.coupon || []
+    const { name, salePrice, normalAmt, coupons } = apiData
     let totalDiscount = 0
-    for (const c of benefitCoupons) {
+    for (const c of coupons) {
       totalDiscount += parseInt(c.dscntAmt || 0)
     }
 
@@ -1300,13 +1303,13 @@ async function fetchAbcmartBenefitPrice(productId, site) {
     if (benefitPrice <= 0 || benefitPrice >= salePrice) benefitPrice = 0
 
     console.log(`[${site}] maxBenefitCoupon: ${productId} sale=${salePrice}, discount=${totalDiscount}, benefit=${benefitPrice}`)
-    console.log(`[${site}] maxBenefitCoupon 상세:`, JSON.stringify(benefitCoupons))
+    console.log(`[${site}] maxBenefitCoupon 상세:`, JSON.stringify(coupons))
 
     if (benefitPrice > 0) {
       return {
         success: true,
         site_product_id: productId,
-        name: (data.prdtName || '').trim(),
+        name,
         original_price: normalAmt || salePrice,
         sale_price: salePrice,
         best_benefit_price: benefitPrice,
