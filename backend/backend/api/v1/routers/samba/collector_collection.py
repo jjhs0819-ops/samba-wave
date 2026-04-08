@@ -1854,8 +1854,39 @@ async def enrich_product(
             if result.error:
                 return {"success": False, "message": result.error}
 
-            # LOTTEON: benefits API(혜택가) + option/mapping API(재고) 모두
-            # 플러그인 refresh()에서 처리 완료 — 확장앱 불필요
+            # LOTTEON: 확장앱 DOM 파싱으로 최대혜택가 수집
+            if _src.upper() == "LOTTEON" and product.site_product_id:
+                try:
+                    import asyncio
+                    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+                    _sitm = (
+                        getattr(product, "sitmNo", "")
+                        or getattr(product, "sitm_no", "")
+                        or (product.extra_data or {}).get("sitmNo", "")
+                    )
+                    _req_id, _future = SourcingQueue.add_detail_job(
+                        "LOTTEON", product.site_product_id, sitm_no=_sitm
+                    )
+                    _ext_result = await asyncio.wait_for(_future, timeout=25)
+                    if isinstance(_ext_result, dict) and _ext_result.get("success"):
+                        _ext_benefit = int(
+                            _ext_result.get("best_benefit_price", 0) or 0
+                        )
+                        if _ext_benefit > 0:
+                            updates["cost"] = _ext_benefit
+                            logger.info(
+                                f"[LOTTEON] enrich 확장앱 혜택가: "
+                                f"{product.site_product_id} → {_ext_benefit:,}"
+                            )
+                except asyncio.TimeoutError:
+                    logger.info(
+                        f"[LOTTEON] enrich 확장앱 타임아웃: {product.site_product_id}"
+                    )
+                except Exception as _ext_err:
+                    logger.debug(
+                        f"[LOTTEON] enrich 확장앱 실패: {product.site_product_id} — {_ext_err}"
+                    )
 
             if not updates:
                 return {"success": True, "message": "변동 없음", "product": product}
