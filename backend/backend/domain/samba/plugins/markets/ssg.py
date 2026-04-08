@@ -54,9 +54,28 @@ class SSGPlugin(MarketPlugin):
         store_id = creds.get("storeId", "6004")
         client = SSGClient(api_key, site_no=store_id)
 
-        # 배송비/주소 인프라 데이터 자동 조회
-        infra = await client.fetch_infra()
-        logger.info(f"[SSG] 인프라 조회 완료: {list(infra.keys())}")
+        # 배송비/주소 인프라 데이터 조회
+        # 경량 모드: 설정에 인프라 ID가 모두 있으면 fetch_infra() API 호출 스킵
+        skip_image = product.get("_skip_image_upload", False) and bool(existing_no)
+        if skip_image:
+            infra: dict[str, Any] = {}
+            _infra_keys = (
+                "whoutAddrId",
+                "snbkAddrId",
+                "whoutShppcstId",
+                "retShppcstId",
+            )
+            _all_present = all(creds.get(k) for k in _infra_keys)
+            if _all_present:
+                logger.info("[SSG] 경량 가격/재고 모드 → fetch_infra 스킵, 설정값 사용")
+            else:
+                infra = await client.fetch_infra()
+                logger.info(
+                    f"[SSG] 경량 모드이나 인프라 ID 부족 → fetch_infra 호출: {list(infra.keys())}"
+                )
+        else:
+            infra = await client.fetch_infra()
+            logger.info(f"[SSG] 인프라 조회 완료: {list(infra.keys())}")
 
         # 설정 페이지 값을 infra에 주입 (설정값이 있으면 fetch_infra 조회값 우선 덮어쓰기)
         setting_shppcst_ids = {

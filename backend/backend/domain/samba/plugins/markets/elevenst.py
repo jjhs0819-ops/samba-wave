@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
+from backend.utils.logger import logger
 
 
 class ElevenstPlugin(MarketPlugin):
@@ -59,6 +60,67 @@ class ElevenstPlugin(MarketPlugin):
             }
 
         client = ElevenstClient(api_key)
+
+        # ── 경량 가격/재고 업데이트 (오토튠 최적화) ──────────────────────
+        # _skip_image_upload=True → price/stock만 변경된 경우
+        # 전체 XML 변환 없이 가격/재고만 포함된 최소 XML로 수정
+        if product.get("_skip_image_upload") and existing_no:
+            try:
+                new_price = int(product.get("sale_price", 0))
+                options = product.get("options") or []
+
+                option_xml = ""
+                if options:
+                    option_xml = "<sellerOptions>"
+                    for opt in options:
+                        opt_name = opt.get("name", "") or opt.get("size", "") or "기본"
+                        opt_stock = opt.get("stock", 999)
+                        # XML 특수문자 이스케이프
+                        safe_name = (
+                            opt_name.replace("&", "&amp;")
+                            .replace("<", "&lt;")
+                            .replace(">", "&gt;")
+                            .replace('"', "&quot;")
+                            .replace("'", "&apos;")
+                        )
+                        option_xml += (
+                            "<sellerOption>"
+                            f"<optionName>옵션</optionName>"
+                            f"<optionValue>{safe_name}</optionValue>"
+                            f"<stockQty>{opt_stock}</stockQty>"
+                            f"<sellerOptionPrice>0</sellerOptionPrice>"
+                            "</sellerOption>"
+                        )
+                    option_xml += "</sellerOptions>"
+
+                xml_data = (
+                    '<?xml version="1.0" encoding="UTF-8"?>'
+                    "<Product>"
+                    f"<selPrc>{new_price}</selPrc>"
+                    f"{option_xml}"
+                    "</Product>"
+                )
+
+                result = await client.update_product(existing_no, xml_data)
+
+                _parts = [f"가격({new_price:,}원)"]
+                if options:
+                    _parts.append(f"옵션({len(options)}건)")
+                logger.info(
+                    f"[11번가] 경량 업데이트 완료: {existing_no} — {', '.join(_parts)}"
+                )
+                return {
+                    "success": True,
+                    "message": f"11번가 경량 업데이트: {', '.join(_parts)}",
+                    "data": result,
+                }
+
+            except Exception as e:
+                logger.warning(
+                    f"[11번가] 경량 업데이트 실패, 전체 수정으로 폴백: {existing_no} — {e}"
+                )
+                # 폴백: 아래 전체 로직으로 계속 진행
+
         account_settings = (account.additional_fields or {}) if account else {}
         xml_data = ElevenstClient.transform_product(
             product, cat_code, settings=account_settings
