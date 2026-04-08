@@ -118,6 +118,7 @@ export default function ProductsPage() {
   const [aiImgMode, setAiImgMode] = useState('background')
   const [aiModelPreset, setAiModelPreset] = useState('auto')
   const [aiPresetList, setAiPresetList] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
+  const [aiImgScope, setAiImgScope] = useState({ thumbnail: true, additional: false, detail: false })
   const [aiImgTransforming, setAiImgTransforming] = useState(false)
   const [imgFiltering, setImgFiltering] = useState(false)
   const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['detail_images']))
@@ -985,6 +986,14 @@ export default function ProductsPage() {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
+        {([['thumbnail', '대표'], ['additional', '추가'], ['detail', '상세']] as const).map(([key, label]) => (
+          <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+            <input type="checkbox" checked={aiImgScope[key]}
+              onChange={() => setAiImgScope(prev => ({ ...prev, [key]: !prev[key] }))}
+              style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
+            <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{label}</span>
+          </label>
+        ))}
         <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
           <option value="background">배경 제거</option>
           <option value="model_to_product">모델→상품</option>
@@ -1020,7 +1029,9 @@ export default function ProductsPage() {
         <button
           onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            const ok = await showConfirm(`선택된 ${selectedIds.size.toLocaleString()}개 상품의 이미지를 변환하시겠습니까?`)
+            if (!aiImgScope.thumbnail && !aiImgScope.additional && !aiImgScope.detail) { showAlert('변환 대상 이미지를 선택해주세요 (대표/추가/상세)'); return }
+            const scopeLabel = [aiImgScope.thumbnail && '대표', aiImgScope.additional && '추가', aiImgScope.detail && '상세'].filter(Boolean).join('+')
+            const ok = await showConfirm(`선택된 ${selectedIds.size.toLocaleString()}개 상품의 ${scopeLabel} 이미지를 변환하시겠습니까?`)
             if (!ok) return
             const ids = [...selectedIds]
             const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -1044,8 +1055,7 @@ export default function ProductsPage() {
               const label = [brand, name, prodNo].filter(Boolean).join(' / ')
               setAiJobTitle(`AI 이미지변환 [${i + 1}/${ids.length}] ${label}`)
               try {
-                const autoScope = { thumbnail: true, additional: true, detail: true }
-                const res = await proxyApi.transformImages([ids[i]], autoScope, aiImgMode, aiModelPreset)
+                const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset)
                 if (res.success && res.total_transformed > 0) { success++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 완료 (${res.total_transformed}장)`) }
                 else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`) }
               } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
@@ -1193,7 +1203,7 @@ export default function ProductsPage() {
             />
           </label>
           <span style={{ fontSize: "0.875rem", color: "#E5E5E5", fontWeight: 600, whiteSpace: "nowrap" }}>
-            상품관리 <span style={{ color: "#FF8C00" }}>( 총 <span>{totalCount.toLocaleString()}</span>개 검색 )</span>
+            상품관리 <span style={{ color: "#FF8C00" }}>( <span>{totalCount.toLocaleString()}</span>개 )</span>
           </span>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
@@ -1212,8 +1222,8 @@ export default function ProductsPage() {
             reloadProducts()
           }} style={{
             fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid rgba(76,154,255,0.3)", borderRadius: "5px",
-            color: "#4C9AFF", background: "rgba(76,154,255,0.08)", cursor: "pointer", whiteSpace: "nowrap",
+            border: "1px solid #3D3D3D", borderRadius: "5px",
+            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
           }}>영상</button>
           <button style={{
             fontSize: "0.78rem", padding: "4px 12px",
@@ -1253,8 +1263,8 @@ export default function ProductsPage() {
             setSelectedIds(new Set()); setSelectAll(false)
           }} style={{
             fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid rgba(255,107,107,0.3)", borderRadius: "5px",
-            color: "#FF6B6B", background: "rgba(255,107,107,0.08)", cursor: "pointer", whiteSpace: "nowrap",
+            border: "1px solid #3D3D3D", borderRadius: "5px",
+            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
           }}>태그 삭제</button>
           <button
             onClick={() => {
@@ -1271,14 +1281,6 @@ export default function ProductsPage() {
               color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}>상품전송</button>
           <button
-            onClick={handleBulkDelete}
-            style={{
-              fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid #3D3D3D", borderRadius: "5px",
-              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
-            }}
-          >상품삭제</button>
-          <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
               const ids = [...selectedIds]
@@ -1292,10 +1294,18 @@ export default function ProductsPage() {
             }}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid rgba(255,107,107,0.3)", borderRadius: "5px",
-              color: "#FF6B6B", background: "rgba(255,107,107,0.08)", cursor: "pointer", whiteSpace: "nowrap",
+              border: "1px solid #3D3D3D", borderRadius: "5px",
+              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}
           >수집차단</button>
+          <button
+            onClick={handleBulkDelete}
+            style={{
+              fontSize: "0.78rem", padding: "4px 12px",
+              border: "1px solid #3D3D3D", borderRadius: "5px",
+              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+            }}
+          >상품삭제</button>
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
@@ -1419,8 +1429,8 @@ export default function ProductsPage() {
             }}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid #FF6B6B", borderRadius: "5px",
-              color: "#FF6B6B", background: "rgba(255,107,107,0.1)", cursor: "pointer", whiteSpace: "nowrap",
+              border: "1px solid #3D3D3D", borderRadius: "5px",
+              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}
           >그룹상품삭제</button>
         </div>
@@ -1483,9 +1493,6 @@ export default function ProductsPage() {
             <option value="update-desc">업데이트일 최신순</option>
             <option value="update-asc">업데이트일 오래된순</option>
           </select>
-          <span style={{ fontSize: '0.75rem', color: '#888' }}>
-            {fmt(allProducts.length)} / {fmt(serverTotal)}
-          </span>
         </div>
       </div>
 
