@@ -201,13 +201,26 @@ export default function CategoriesPage() {
     const path = [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4].filter(Boolean)
     setSelectedPath(path.join(' > '))
     // products 로드 완료 시 선택 상품 업데이트
+    // category 필드를 > 로 split하여 트리 레벨과 매칭 (categoryN 필드는 소싱처마다 구조가 달라 불일치)
     if (products.length > 0) {
       let filtered = products
       if (selectedSite) filtered = filtered.filter(p => (p.source_site || '기타') === selectedSite)
-      if (selectedCat1) filtered = filtered.filter(p => p.category1 === selectedCat1)
-      if (selectedCat2) filtered = filtered.filter(p => p.category2 === selectedCat2)
-      if (selectedCat3) filtered = filtered.filter(p => p.category3 === selectedCat3)
-      if (selectedCat4) filtered = filtered.filter(p => p.category4 === selectedCat4)
+      if (selectedCat1) filtered = filtered.filter(p => {
+        const cats = (p.category || '').split('>').map((c: string) => c.trim())
+        return cats[0] === selectedCat1
+      })
+      if (selectedCat2) filtered = filtered.filter(p => {
+        const cats = (p.category || '').split('>').map((c: string) => c.trim())
+        return cats[1] === selectedCat2
+      })
+      if (selectedCat3) filtered = filtered.filter(p => {
+        const cats = (p.category || '').split('>').map((c: string) => c.trim())
+        return cats[2] === selectedCat3
+      })
+      if (selectedCat4) filtered = filtered.filter(p => {
+        const cats = (p.category || '').split('>').map((c: string) => c.trim())
+        return cats[3] === selectedCat4
+      })
       setSelectedProducts(filtered)
     }
   }, [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4, products])
