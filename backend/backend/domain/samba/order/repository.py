@@ -2,7 +2,7 @@
 
 from typing import List
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlmodel import select
 
 from backend.domain.shared.base_repository import BaseRepository
@@ -43,13 +43,15 @@ class SambaOrderRepository(BaseRepository[SambaOrder]):
     async def list_by_date_range(
         self, start_date: str, end_date: str
     ) -> List[SambaOrder]:
+        # 고객결제일(paid_at) 기준, 없으면 created_at fallback
+        date_col = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
         stmt = (
             select(SambaOrder)
             .where(
-                SambaOrder.created_at >= start_date,
-                SambaOrder.created_at <= end_date,
+                date_col >= start_date,
+                date_col <= end_date,
             )
-            .order_by(SambaOrder.created_at.desc())
+            .order_by(date_col.desc())
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

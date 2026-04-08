@@ -1,15 +1,17 @@
 """삼바웨이브 사용자(로그인 계정) 관리 API."""
 
 import os
+from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.domain.samba.user.model import SambaUser
+from backend.domain.samba.user.model import SambaLoginHistory, SambaUser
 from backend.domain.samba.user.repository import SambaUserRepository
 from backend.domain.user.auth_service import get_user_id
 from backend.utils.logger import logger
@@ -92,7 +94,11 @@ async def create_user(
     body: UserCreateDto,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """새 사용자 계정 생성."""
+    """새 사용자 계정 생성. 프로덕션에서 비활성화."""
+    from backend.core.config import settings
+
+    if settings.is_production:
+        raise HTTPException(status_code=403, detail="회원가입은 관리자에게 문의하세요")
     # 초대 코드 검증
     if body.invite_code != INVITE_CODE:
         raise HTTPException(status_code=403, detail="초대 코드가 올바르지 않습니다")
@@ -125,9 +131,140 @@ async def create_user(
     )
 
 
+_KR_REGION = {
+    "Seoul": "서울",
+    "Busan": "부산",
+    "Daegu": "대구",
+    "Incheon": "인천",
+    "Gwangju": "광주",
+    "Daejeon": "대전",
+    "Ulsan": "울산",
+    "Sejong": "세종",
+    "Gyeonggi-do": "경기",
+    "Gangwon-do": "강원",
+    "Chungcheongbuk-do": "충북",
+    "Chungcheongnam-do": "충남",
+    "Jeollabuk-do": "전북",
+    "Jeollanam-do": "전남",
+    "Gyeongsangbuk-do": "경북",
+    "Gyeongsangnam-do": "경남",
+    "Jeju-do": "제주",
+    "North Chungcheong": "충북",
+    "South Chungcheong": "충남",
+    "North Jeolla": "전북",
+    "South Jeolla": "전남",
+    "North Gyeongsang": "경북",
+    "South Gyeongsang": "경남",
+}
+_KR_CITY = {
+    "Suwon": "수원",
+    "Seongnam": "성남",
+    "Goyang": "고양",
+    "Yongin": "용인",
+    "Bucheon": "부천",
+    "Ansan": "안산",
+    "Anyang": "안양",
+    "Namyangju": "남양주",
+    "Hwaseong": "화성",
+    "Uijeongbu": "의정부",
+    "Gimpo": "김포",
+    "Gwangmyeong": "광명",
+    "Hanam": "하남",
+    "Siheung": "시흥",
+    "Gunpo": "군포",
+    "Osan": "오산",
+    "Icheon": "이천",
+    "Paju": "파주",
+    "Pyeongtaek": "평택",
+    "Yangju": "양주",
+    "Changwon": "창원",
+    "Gimhae": "김해",
+    "Jinju": "진주",
+    "Yangsan": "양산",
+    "Geoje": "거제",
+    "Tongyeong": "통영",
+    "Sacheon": "사천",
+    "Miryang": "밀양",
+    "Pohang": "포항",
+    "Gumi": "구미",
+    "Gimcheon": "김천",
+    "Andong": "안동",
+    "Yeongju": "영주",
+    "Sangju": "상주",
+    "Gyeongju": "경주",
+    "Gyeongsan": "경산",
+    "Cheonan": "천안",
+    "Asan": "아산",
+    "Seosan": "서산",
+    "Dangjin": "당진",
+    "Cheongju": "청주",
+    "Chungju": "충주",
+    "Jecheon": "제천",
+    "Jeonju": "전주",
+    "Gunsan": "군산",
+    "Iksan": "익산",
+    "Namwon": "남원",
+    "Yeosu": "여수",
+    "Suncheon": "순천",
+    "Mokpo": "목포",
+    "Gwangyang": "광양",
+    "Chuncheon": "춘천",
+    "Wonju": "원주",
+    "Gangneung": "강릉",
+    "Sokcho": "속초",
+    "Donghae": "동해",
+    "Samcheok": "삼척",
+    "Taebaek": "태백",
+    "Jeju City": "제주시",
+    "Seogwipo": "서귀포",
+}
+
+
+async def _resolve_ip_region(ip: str) -> str:
+    """IP 주소로 접속 지역 조회 (ip-api.com 무료 API)."""
+    if not ip or ip in ("127.0.0.1", "::1", "localhost"):
+        return "로컬"
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            resp = await client.get(
+                f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,regionName,city"
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") != "success":
+                    return "알 수 없음"
+                code = data.get("countryCode", "")
+                region = data.get("regionName", "")
+                city = data.get("city", "")
+                if code == "KR":
+                    kr_region = _KR_REGION.get(region, region)
+                    # 광역시: city와 region이 같으면 한글 지역명만 반환
+                    if city == region or not city:
+                        return kr_region
+                    kr_city = _KR_CITY.get(city, "")
+                    if kr_city:
+                        return f"{kr_region} {kr_city}"
+                    # 매핑 없는 도시명 → 시/도만 반환
+                    return kr_region
+                country = data.get("country", "")
+                return f"{country} {city}".strip() or "알 수 없음"
+    except Exception:
+        pass
+    return "알 수 없음"
+
+
+def _get_client_ip(request: Request) -> str:
+    """클라이언트 IP 추출 (프록시 헤더 우선)."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
 @router.post("/login", response_model=UserOut)
 async def login_user(
     body: UserLoginDto,
+    request: Request,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """이메일/비밀번호 로그인."""
@@ -152,7 +289,27 @@ async def login_user(
     auth_svc = AuthService(session)
     access_token = auth_svc._create_access_token(user.id)
 
-    logger.info(f"[사용자관리] 로그인: {user.email}")
+    # 로그인 이력 저장 (실패해도 로그인은 정상 진행)
+    ip = _get_client_ip(request)
+    try:
+        region = await _resolve_ip_region(ip)
+        from backend.db.orm import get_write_session
+
+        async with get_write_session() as log_session:
+            history = SambaLoginHistory(
+                user_id=user.id,
+                email=user.email,
+                ip_address=ip,
+                region=region,
+                user_agent=request.headers.get("user-agent", ""),
+            )
+            log_session.add(history)
+            await log_session.commit()
+        logger.info(f"[사용자관리] 로그인: {user.email} IP={ip} 지역={region}")
+    except Exception as e:
+        logger.warning(f"[사용자관리] 로그인 이력 저장 실패: {e}")
+
+    logger.info(f"[사용자관리] 로그인 성공: {user.email}")
     return UserOut(
         id=user.id,
         email=user.email,
@@ -209,6 +366,50 @@ async def update_user(
         created_at=user.created_at.isoformat(),
         updated_at=user.updated_at.isoformat(),
     )
+
+
+class LoginHistoryOut(BaseModel):
+    id: str
+    email: str
+    ip_address: Optional[str] = None
+    region: Optional[str] = None
+    created_at: str
+
+
+@router.get("/login-history", response_model=list[LoginHistoryOut])
+async def get_login_history(
+    start: Optional[str] = Query(None, description="시작일 YYYY-MM-DD"),
+    end: Optional[str] = Query(None, description="종료일 YYYY-MM-DD"),
+    limit: int = Query(100, ge=1, le=500),
+    session: AsyncSession = Depends(get_read_session_dependency),
+    _user_id: str = Depends(get_user_id),
+):
+    """로그인 이력 조회 (날짜 범위 필터)."""
+    stmt = select(SambaLoginHistory).order_by(SambaLoginHistory.created_at.desc())
+
+    if start:
+        start_dt = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        stmt = stmt.where(SambaLoginHistory.created_at >= start_dt)
+    if end:
+        end_dt = datetime.strptime(end, "%Y-%m-%d").replace(
+            hour=23, minute=59, second=59, tzinfo=timezone.utc
+        )
+        stmt = stmt.where(SambaLoginHistory.created_at <= end_dt)
+
+    stmt = stmt.limit(limit)
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+
+    return [
+        LoginHistoryOut(
+            id=r.id,
+            email=r.email,
+            ip_address=r.ip_address,
+            region=r.region,
+            created_at=r.created_at.isoformat(),
+        )
+        for r in rows
+    ]
 
 
 @router.delete("/{user_id}")

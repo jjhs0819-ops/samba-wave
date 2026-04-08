@@ -14,13 +14,13 @@ logger = logging.getLogger(__name__)
 class NikePlugin(SourcingPlugin):
     """나이키 소싱처 플러그인.
 
-    concurrency=3: 동시 3개 요청
-    request_interval=0.5: 요청 간 500ms 딜레이 (차단 방지)
+    concurrency=5: 동시 5개 요청 (Nike CDN 안정적)
+    request_interval=0.3: 요청 간 300ms 딜레이
     """
 
     site_name = "NIKE"
-    concurrency = 3
-    request_interval = 0.5
+    concurrency = 5
+    request_interval = 0.3
 
     async def search(self, keyword: str, **filters) -> list[dict]:
         """나이키 키워드 검색."""
@@ -30,6 +30,13 @@ class NikePlugin(SourcingPlugin):
         client = NikeClient()
         result = await self.safe_call(client.search(keyword, max_count=max_count))
         return result.get("products", [])
+
+    async def scan_categories(self, keyword: str) -> dict:
+        """나이키 카테고리 스캔."""
+        from backend.domain.samba.proxy.nike import NikeClient
+
+        client = NikeClient()
+        return await self.safe_call(client.scan_categories(keyword))
 
     async def get_detail(self, site_product_id: str) -> dict:
         """나이키 상품 상세 조회."""

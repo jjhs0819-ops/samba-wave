@@ -33,7 +33,7 @@ SITE_CONCURRENCY: dict[str, int] = {
     "Adidas": 5 if _IS_CLOUD else 2,
     "ABCmart": 5 if _IS_CLOUD else 2,
     "GrandStage": 5 if _IS_CLOUD else 2,
-    "OKmall": 5 if _IS_CLOUD else 2,
+    "REXMONDE": 5 if _IS_CLOUD else 2,
     "SSG": 3 if _IS_CLOUD else 1,
     "LOTTEON": 5 if _IS_CLOUD else 2,
     "GSShop": 5 if _IS_CLOUD else 2,
@@ -50,7 +50,7 @@ SITE_BASE_INTERVAL: dict[str, float] = {
     "Adidas": 1.0,
     "ABCmart": 1.0,
     "GrandStage": 1.0,
-    "OKmall": 1.0,
+    "REXMONDE": 1.0,
     "SSG": 1.0,
     "LOTTEON": 0.5,
     "GSShop": 1.0,
@@ -67,7 +67,7 @@ SITE_MIN_INTERVAL: dict[str, float] = {
     "Adidas": 0,
     "ABCmart": 0,
     "GrandStage": 0,
-    "OKmall": 0,
+    "REXMONDE": 0,
     "SSG": 0,
     "LOTTEON": 0,
     "GSShop": 0,
@@ -84,7 +84,7 @@ SITE_INTERVAL_STEP: dict[str, float] = {
     "Adidas": 0.3,
     "ABCmart": 0.3,
     "GrandStage": 0.3,
-    "OKmall": 0.3,
+    "REXMONDE": 0.3,
     "SSG": 0.5,
     "LOTTEON": 0.3,
     "GSShop": 0.3,
@@ -138,22 +138,91 @@ IP_ROTATE_EVERY = 50
 _ip_rotate_counter = 0
 _ip_rotate_idx = 0
 _ip_rotate_label: str = ""
+_ip_rotate_total = 0
+
+
+# DB 프록시 캐시 (autotune 용도)
+_db_proxy_cache: list[str] | None = None
+_db_proxy_cache_ts: float = 0
+
+
+def _load_db_proxies_for_autotune() -> list[str]:
+    """DB proxy_config에서 autotune/both 활성 프록시 URL 목록 반환 (5분 캐시)."""
+    global _db_proxy_cache, _db_proxy_cache_ts
+    import time
+
+    now = time.monotonic()
+    if _db_proxy_cache is not None and now - _db_proxy_cache_ts < 300:
+        return _db_proxy_cache
+
+    try:
+        import asyncio
+        from sqlmodel import select
+        from backend.db.orm import get_read_session
+        from backend.domain.samba.forbidden.model import SambaSettings
+
+        async def _fetch():
+            async with get_read_session() as session:
+                result = await session.execute(
+                    select(SambaSettings).where(SambaSettings.key == "proxy_config")
+                )
+                row = result.scalar_one_or_none()
+                if not row or not row.value:
+                    return []
+                return [
+                    p["url"]
+                    for p in row.value
+                    if p.get("enabled")
+                    and p.get("url")
+                    and "autotune" in (p.get("purposes") or [])
+                ]
+
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # 이미 이벤트 루프가 돌고 있으면 동기로는 불가 → 캐시 반환
+            return _db_proxy_cache or []
+        urls = loop.run_until_complete(_fetch())
+    except Exception:
+        urls = []
+
+    _db_proxy_cache = urls
+    _db_proxy_cache_ts = now
+    return urls
+
+
+def invalidate_db_proxy_cache():
+    """DB 프록시 캐시 무효화 — 설정 변경 시 호출."""
+    global _db_proxy_cache, _db_proxy_cache_ts
+    _db_proxy_cache = None
+    _db_proxy_cache_ts = 0
 
 
 def _get_rotated_proxy() -> str | None:
-    """메인 IP + 프록시 목록을 N건 단위로 순환. PROXY_URLS 미설정 시 None."""
-    global _ip_rotate_counter, _ip_rotate_idx, _ip_rotate_label, _refresh_log_total
+    """메인 IP + 프록시 목록을 N건 단위로 순환. DB 프록시 우선, 없으면 환경변수 폴백."""
+    global \
+        _ip_rotate_counter, \
+        _ip_rotate_idx, \
+        _ip_rotate_label, \
+        _refresh_log_total, \
+        _ip_rotate_total
     from backend.core.config import settings
 
-    proxy_urls = settings.proxy_urls
-    if not proxy_urls:
-        return None
-    proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
+    # DB 프록시 우선
+    db_proxies = _load_db_proxies_for_autotune()
+    if db_proxies:
+        proxies = db_proxies
+    else:
+        # 환경변수 폴백
+        proxy_urls = settings.proxy_urls
+        if not proxy_urls:
+            return None
+        proxies = [p.strip() for p in proxy_urls.split(",") if p.strip()]
     if not proxies:
         return None
     # 프록시만 사용 (메인 IP 제외)
     pool: list[str | None] = proxies
     _ip_rotate_counter += 1
+    _ip_rotate_total += 1
     if _ip_rotate_counter >= IP_ROTATE_EVERY or _ip_rotate_label == "":
         _ip_rotate_counter = 0
         if _ip_rotate_label != "":
@@ -168,7 +237,7 @@ def _get_rotated_proxy() -> str | None:
                 else f"proxy-{_ip_rotate_idx}"
             )
         )
-        _from = _ip_rotate_idx * IP_ROTATE_EVERY + 1
+        _from = _ip_rotate_total
         _to = _from + IP_ROTATE_EVERY - 1
         _ip_rotate_label = label
         _msg = f"IP -> {label} ({_from}~{_to}건)"
@@ -426,6 +495,10 @@ async def _refresh_product_inner(
                 product_id=product.id,
                 error=str(e),
             )
+
+        # LOTTEON: benefits API(혜택가) + option/mapping API(재고) 모두
+        # 플러그인 refresh()에서 처리 완료 — 확장앱 불필요
+
         # 레거시 파서(무신사/KREAM)는 자체 로그 → 여기서 안 찍음
         if source_site not in ("MUSINSA", "KREAM") and not result.error:
             _name = getattr(product, "name", "") or ""
@@ -995,7 +1068,7 @@ SITE_PARSERS: dict[str, Any] = {
     "Nike": _parse_generic_stub,
     "Adidas": _parse_generic_stub,
     "GrandStage": _parse_generic_stub,
-    "OKmall": _parse_generic_stub,
+    "REXMONDE": _parse_generic_stub,
     "LOTTEON": _parse_generic_stub,
     "GSShop": _parse_generic_stub,
     "ElandMall": _parse_generic_stub,
@@ -1007,13 +1080,13 @@ SITE_PARSERS: dict[str, Any] = {
 async def refresh_products_bulk(
     products: List[Any],
     source: str = "autotune",
-    max_concurrency: int | None = None,
+    max_concurrency: dict[str, int] | int | None = None,
     on_result: Any = None,
 ) -> tuple[List[RefreshResult], BulkRefreshResult]:
     """여러 상품을 소싱처별로 그룹핑 후 병렬 갱신.
 
     소싱처당 동시 요청 수를 CONCURRENCY_PER_SITE로 제한한다.
-    max_concurrency: 지정 시 SITE_CONCURRENCY 대신 이 값 사용
+    max_concurrency: int 지정 시 전체 소싱처 동일 적용, dict 지정 시 소싱처별 오버라이드
     source: autotune | manual | transmit — 로그 출처 태그
     on_result: 각 상품 갱신 완료 시 호출되는 콜백 (product, result) → 즉시 전송 등
     """
@@ -1036,11 +1109,14 @@ async def refresh_products_bulk(
         # 소싱처별 사전 캐싱 (배치 시작 시 1회)
         if site == "MUSINSA":
             await _prepare_musinsa_cache()
-        concurrency = (
-            max_concurrency
-            if max_concurrency
-            else SITE_CONCURRENCY.get(site, CONCURRENCY_PER_SITE)
-        )
+        if isinstance(max_concurrency, dict):
+            concurrency = max_concurrency.get(
+                site, SITE_CONCURRENCY.get(site, CONCURRENCY_PER_SITE)
+            )
+        elif max_concurrency:
+            concurrency = max_concurrency
+        else:
+            concurrency = SITE_CONCURRENCY.get(site, CONCURRENCY_PER_SITE)
         base_interval = SITE_BASE_INTERVAL.get(site, 1.0)
         sem = asyncio.Semaphore(concurrency)
         results = []

@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { accountApi, orderApi, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { accountApi, collectorApi, orderApi, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api'
 import { useLocalStorageState } from '@/hooks/useLocalStorageState'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
 
@@ -12,20 +12,28 @@ const card = {
   borderRadius: '12px',
 }
 
-const SOURCE_SITES = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
+const SOURCE_SITES = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'OKmall', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
+// 주문상태 목록 (배송중/배송완료는 가장 우측)
 const ORDER_STATUSES = [
-  { key: 'pending', label: '주문확인' },
-  { key: 'shipped', label: '배송중' },
-  { key: 'office_arrived', label: '사무실도착' },
-  { key: 'domestic', label: '국내배송' },
-  { key: 'cancel_req', label: '취소요청' },
-  { key: 'exchange_req', label: '교환요청' },
-  { key: 'return_req', label: '반품요청' },
-  { key: 'cancel_done', label: '취소/반품/교환/완료' },
+  { key: 'pending', label: '주문접수' },
+  { key: 'wait_ship', label: '배송대기중' },
+  { key: 'arrived', label: '사무실도착' },
+  { key: 'ship_failed', label: '송장전송실패' },
+  { key: 'cancelling', label: '취소중' },
+  { key: 'returning', label: '반품중' },
+  { key: 'exchanging', label: '교환중' },
+  { key: 'exchange_requested', label: '교환요청' },
+  { key: 'cancel_requested', label: '취소요청' },
+  { key: 'return_requested', label: '반품요청' },
+  { key: 'cancelled', label: '취소완료' },
+  { key: 'returned', label: '반품완료' },
+  { key: 'exchanged', label: '교환완료' },
+  { key: 'shipping', label: '배송중' },
   { key: 'delivered', label: '배송완료' },
 ]
-const COLORS = ['#FF8C00', '#4C9AFF', '#51CF66', '#CC5DE8', '#FFD93D', '#FF6B6B', '#20C997', '#F06595', '#845EF7', '#FFA94D', '#66D9E8', '#E599F7']
+// 기본 선택 상태
+const DEFAULT_STATUSES = ['pending', 'wait_ship', 'arrived', 'shipping', 'delivered', 'exchanged', 'exchanging', 'exchange_requested']
 
 /** 검색 조건 저장 구조 */
 interface AnalyticsSearch {
@@ -36,19 +44,14 @@ interface AnalyticsSearch {
   statuses: string[]
 }
 
-interface SalesRow {
-  name: string
-  orders: number
+// 월별 집계 셀
+interface MonthlyCell {
   sales: number
-  profit: number
+  orders: number
 }
 
-interface DailyRow {
-  date: string
-  orders: number
-  sales: number
-  profit: number
-}
+// 숫자 포맷
+const fmt = (n: number) => n.toLocaleString()
 
 export default function AnalyticsPage() {
   useEffect(() => { document.title = 'SAMBA-분석' }, [])
@@ -62,13 +65,17 @@ export default function AnalyticsPage() {
     year: now.getFullYear(),
     month: 0,
     markets: [],
-    sites: [...SOURCE_SITES],
-    statuses: ORDER_STATUSES.map(s => s.key),
+    sites: [],
+    statuses: DEFAULT_STATUSES,
   }
   const [search, setSearch] = useLocalStorageState<AnalyticsSearch>(
     STORAGE_KEYS.ANALYTICS_SEARCH,
     defaultSearch,
   )
+  // 주문상태: 항상 기본값으로 초기화
+  useEffect(() => {
+    setSearch(prev => ({ ...prev, statuses: DEFAULT_STATUSES }))
+  }, [])
   const searchYear = search.year
   const searchMonth = search.month
   const selectedMarkets = search.markets
@@ -85,101 +92,261 @@ export default function AnalyticsPage() {
   }
 
   const load = useCallback(async () => {
-    // localStorage 저장은 useLocalStorageState 훅이 자동 처리
     setLoading(true)
     try {
-      const allOrders = await orderApi.list(0, 500).catch(() => [])
+      const start = searchMonth > 0
+        ? `${searchYear}-${String(searchMonth).padStart(2, '0')}-01`
+        : `${searchYear}-01-01`
+      const end = searchMonth > 0
+        ? `${searchYear}-${String(searchMonth).padStart(2, '0')}-${new Date(searchYear, searchMonth, 0).getDate()}`
+        : `${searchYear}-12-31`
+      const allOrders = await orderApi.listByDateRange(start, end).catch(() => [])
       setOrders(allOrders)
     } catch {}
     setLoading(false)
-  }, [search])
+  }, [searchYear, searchMonth])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { accountApi.listActive().then(setMarketAccounts).catch(() => {}) }, [])
+  // 마켓 계정 목록 + 소싱사이트 기본값
+  useEffect(() => {
+    const init = async () => {
+      const accounts = await accountApi.listActive().catch(() => [] as SambaMarketAccount[])
+      setMarketAccounts(accounts)
 
-  // 기간 + 주문상태 필터링
+      // 소싱사이트 기본값: 상품 데이터에서 추출
+      const allData = await collectorApi.scrollProducts({ limit: 1 }).catch(() => null)
+      if (allData) {
+        const collectedSites = (allData.sites || []).filter((s: string) => SOURCE_SITES.includes(s))
+        if (collectedSites.length > 0) setSelectedSites(collectedSites)
+      }
+    }
+    init()
+  }, [])
+
+  // 마켓 기본값: 주문 데이터에서 마켓 추출
+  const initialMarketSet = useRef(false)
+  useEffect(() => {
+    if (!initialMarketSet.current && orders.length > 0) {
+      initialMarketSet.current = true
+      const orderMarkets = new Set<string>()
+      for (const o of orders) {
+        if (o.channel_name) {
+          const name = o.channel_name
+          const idx = name.indexOf('(')
+          orderMarkets.add(idx > 0 ? name.substring(0, idx) : name)
+        }
+      }
+      if (orderMarkets.size > 0) {
+        setSelectedMarkets([...orderMarkets])
+      }
+    }
+  }, [orders])
+
+  // 기간 + 주문상태 필터링 (고객결제일 기준)
   const filteredOrders = orders.filter(o => {
-    const d = new Date(o.created_at)
+    const d = new Date(o.paid_at || o.created_at)
     if (d.getFullYear() !== searchYear) return false
     if (searchMonth > 0 && d.getMonth() + 1 !== searchMonth) return false
-    // 주문상태 필터 (전체 선택이 아닌 경우)
-    if (selectedStatuses.length > 0 && selectedStatuses.length < ORDER_STATUSES.length) {
+    if (selectedStatuses.length < ORDER_STATUSES.length) {
       if (!selectedStatuses.includes(o.status)) return false
     }
     return true
   })
 
-  // 소싱처별 매출 집계
-  const siteRows: SalesRow[] = (() => {
-    const map: Record<string, SalesRow> = {}
-    for (const o of filteredOrders) {
-      const site = o.source_site || '기타'
-      if (!map[site]) map[site] = { name: site, orders: 0, sales: 0, profit: 0 }
-      map[site].orders += 1
-      map[site].sales += o.sale_price || 0
-      map[site].profit += (o.sale_price || 0) - (o.cost || 0)
-    }
-    return Object.values(map).sort((a, b) => b.sales - a.sales)
-  })()
-
-  // 판매마켓별 매출 집계
-  const marketRows: SalesRow[] = (() => {
-    const map: Record<string, SalesRow> = {}
-    for (const o of filteredOrders) {
-      const market = o.channel_name || '기타'
-      if (!map[market]) map[market] = { name: market, orders: 0, sales: 0, profit: 0 }
-      map[market].orders += 1
-      map[market].sales += o.sale_price || 0
-      map[market].profit += (o.sale_price || 0) - (o.cost || 0)
-    }
-    return Object.values(map).sort((a, b) => b.sales - a.sales)
-  })()
-
-  // 일별 매출 집계
-  const dailyRows: DailyRow[] = (() => {
-    const map: Record<string, DailyRow> = {}
-    for (const o of filteredOrders) {
-      const date = o.created_at.slice(0, 10)
-      if (!map[date]) map[date] = { date, orders: 0, sales: 0, profit: 0 }
-      map[date].orders += 1
-      map[date].sales += o.sale_price || 0
-      map[date].profit += (o.sale_price || 0) - (o.cost || 0)
-    }
-    return Object.values(map).sort((a, b) => a.date.localeCompare(b.date))
-  })()
-
   // 전체 합계
   const totalSales = filteredOrders.reduce((s, o) => s + (o.sale_price || 0), 0)
-  const totalProfit = filteredOrders.reduce((s, o) => s + (o.sale_price || 0) - (o.cost || 0), 0)
   const totalOrders = filteredOrders.length
+
+  // ──────────────────────────────────────────────
+  // 집계 함수: 월 선택 시 일별, 전체 시 월별
+  // ──────────────────────────────────────────────
+  const isDaily = searchMonth > 0
+  const rowCount = isDaily ? new Date(searchYear, searchMonth, 0).getDate() : 12
+
+  const buildTable = (
+    getKey: (o: SambaOrder) => string,
+  ): { columns: string[], data: Record<number, Record<string, MonthlyCell>> } => {
+    const colSet = new Set<string>()
+    const data: Record<number, Record<string, MonthlyCell>> = {}
+    for (let r = 1; r <= rowCount; r++) data[r] = {}
+
+    for (const o of filteredOrders) {
+      const d = new Date(o.paid_at || o.created_at)
+      const row = isDaily ? d.getDate() : d.getMonth() + 1
+      const key = getKey(o)
+      colSet.add(key)
+      if (!data[row][key]) data[row][key] = { sales: 0, orders: 0 }
+      data[row][key].sales += o.sale_price || 0
+      data[row][key].orders += 1
+    }
+
+    const columns = [...colSet].sort()
+    return { columns, data }
+  }
+
+  // 마켓별 통계
+  const marketTable = buildTable(o => {
+    const name = o.channel_name || '기타'
+    const idx = name.indexOf('(')
+    return idx > 0 ? name.substring(0, idx) : name
+  })
+  // 소싱처별 통계
+  const siteTable = buildTable(o => {
+    const site = o.source_site
+    if (!site || !SOURCE_SITES.includes(site)) return '미등록상품'
+    return site
+  })
+  // 주문상태별 통계
+  const statusLabelMap: Record<string, string> = {}
+  for (const s of ORDER_STATUSES) statusLabelMap[s.key] = s.label
+  const statusTable = buildTable(o => statusLabelMap[o.status] || o.status)
+  // 주문상태별 컬럼을 ORDER_STATUSES 정의 순서로 정렬
+  const statusColumnOrder = ORDER_STATUSES.map(s => s.label)
+  const orderedStatusColumns = statusColumnOrder.filter(label => statusTable.columns.includes(label))
+  const extraStatusColumns = statusTable.columns.filter(col => !statusColumnOrder.includes(col))
+  const finalStatusColumns = [...orderedStatusColumns, ...extraStatusColumns]
+
+  // 테이블 셀 스타일
+  const thStyle: React.CSSProperties = {
+    padding: '8px 12px',
+    fontSize: '0.75rem',
+    fontWeight: 600,
+    color: '#B0B0B0',
+    borderBottom: '2px solid #3D3D3D',
+    borderRight: '1px solid #2D2D2D',
+    textAlign: 'center',
+    whiteSpace: 'nowrap',
+  }
+  const tdStyle: React.CSSProperties = {
+    padding: '6px 10px',
+    fontSize: '0.75rem',
+    color: '#D0D0D0',
+    borderBottom: '1px solid #2D2D2D',
+    borderRight: '1px solid #2D2D2D',
+    textAlign: 'right',
+    whiteSpace: 'nowrap',
+  }
+  const tdEmptyStyle: React.CSSProperties = {
+    ...tdStyle,
+    textAlign: 'center',
+    color: '#555',
+  }
+
+  // 월별 테이블 렌더러
+  const renderMonthlyTable = (
+    title: string,
+    columns: string[],
+    data: Record<number, Record<string, MonthlyCell>>,
+  ) => {
+    // 열별 합계
+    const colTotals: Record<string, MonthlyCell> = {}
+    for (const col of columns) {
+      colTotals[col] = { sales: 0, orders: 0 }
+      for (let r = 1; r <= rowCount; r++) {
+        const cell = data[r]?.[col]
+        if (cell) {
+          colTotals[col].sales += cell.sales
+          colTotals[col].orders += cell.orders
+        }
+      }
+    }
+    // 전체 합계
+    const grandTotal: MonthlyCell = { sales: 0, orders: 0 }
+    for (const col of columns) {
+      grandTotal.sales += colTotals[col].sales
+      grandTotal.orders += colTotals[col].orders
+    }
+    // 행별 합계
+    const rowTotals: Record<number, MonthlyCell> = {}
+    for (let r = 1; r <= rowCount; r++) {
+      rowTotals[r] = { sales: 0, orders: 0 }
+      for (const col of columns) {
+        const cell = data[r]?.[col]
+        if (cell) {
+          rowTotals[r].sales += cell.sales
+          rowTotals[r].orders += cell.orders
+        }
+      }
+    }
+
+    return (
+      <div style={{ ...card, padding: '1.25rem', marginBottom: '1.5rem' }}>
+        <h3 style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#FF8C00', marginBottom: '1rem' }}>{title}</h3>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: `${(columns.length + 2) * 120}px` }}>
+            <thead>
+              <tr>
+                <th style={{ ...thStyle, position: 'sticky', left: 0, background: '#1A1A1A', zIndex: 1 }}></th>
+                {columns.map(col => (
+                  <th key={col} style={thStyle}>{col}</th>
+                ))}
+                <th style={{ ...thStyle, color: '#FF8C00', fontWeight: 700 }}>합계</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: rowCount }, (_, i) => i + 1).map(row => {
+                const hasData = rowTotals[row].orders > 0
+                return (
+                  <tr key={row} style={{ background: hasData ? 'transparent' : 'rgba(40,50,40,0.15)' }}>
+                    <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 600, position: 'sticky', left: 0, background: hasData ? '#1E1E1E' : 'rgba(30,40,30,0.6)', zIndex: 1 }}>
+                      {isDaily ? `${row}일` : `${row}월`}
+                    </td>
+                    {columns.map(col => {
+                      const cell = data[row]?.[col]
+                      if (!cell || cell.orders === 0) {
+                        return <td key={col} style={tdEmptyStyle}>-</td>
+                      }
+                      return (
+                        <td key={col} style={tdStyle}>
+                          <div>{fmt(cell.sales)}</div>
+                          <div style={{ fontSize: '0.625rem', color: '#888' }}>({fmt(cell.orders)}건)</div>
+                        </td>
+                      )
+                    })}
+                    <td style={{ ...tdStyle, fontWeight: 700, color: '#FF8C00' }}>
+                      {hasData ? (
+                        <>
+                          <div>{fmt(rowTotals[row].sales)}</div>
+                          <div style={{ fontSize: '0.625rem', color: '#888' }}>({fmt(rowTotals[row].orders)}건)</div>
+                        </>
+                      ) : '-'}
+                    </td>
+                  </tr>
+                )
+              })}
+              {/* 합계 행 */}
+              <tr style={{ background: 'rgba(30,30,30,0.8)', borderTop: '2px solid #3D3D3D' }}>
+                <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 700, position: 'sticky', left: 0, background: '#1A1A1A', zIndex: 1, borderTop: '2px solid #3D3D3D' }}>
+                  합계
+                </td>
+                {columns.map(col => {
+                  const total = colTotals[col]
+                  const pct = grandTotal.sales > 0 ? ((total.sales / grandTotal.sales) * 100).toFixed(1) : '0.0'
+                  return (
+                    <td key={col} style={{ ...tdStyle, fontWeight: 600, borderTop: '2px solid #3D3D3D' }}>
+                      {total.orders > 0 ? (
+                        <>
+                          <div>{fmt(total.sales)}</div>
+                          <div style={{ fontSize: '0.625rem', color: '#888' }}>({pct}%)</div>
+                        </>
+                      ) : '-'}
+                    </td>
+                  )
+                })}
+                <td style={{ ...tdStyle, fontWeight: 700, color: '#FF8C00', borderTop: '2px solid #3D3D3D' }}>
+                  <div>{fmt(grandTotal.sales)}</div>
+                  <div style={{ fontSize: '0.625rem', color: '#888' }}>({fmt(grandTotal.orders)}건)</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+  }
 
   if (loading) {
     return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '50vh', color: '#555' }}>로딩 중...</div>
-  }
-
-  // 가로 바 차트 렌더러
-  const renderBarTable = (rows: SalesRow[], label: string) => {
-    const maxSales = Math.max(...rows.map(r => r.sales), 1)
-    return (
-      <div>
-        {rows.length === 0 ? (
-          <p style={{ color: '#555', fontSize: '0.875rem', padding: '2rem 0', textAlign: 'center' }}>데이터가 없습니다</p>
-        ) : rows.map((r, i) => {
-          const pct = (r.sales / maxSales) * 100
-          return (
-            <div key={r.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.8rem', color: COLORS[i % COLORS.length], minWidth: '90px', textAlign: 'right', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
-              <div style={{ flex: 1, height: '22px', background: 'rgba(45,45,45,0.5)', borderRadius: '4px', overflow: 'hidden', position: 'relative' }}>
-                <div style={{ width: `${pct}%`, height: '100%', background: COLORS[i % COLORS.length], borderRadius: '4px', transition: 'width 0.5s ease', minWidth: pct > 0 ? '2px' : '0' }} />
-              </div>
-              <span style={{ fontSize: '0.75rem', color: '#888', minWidth: '40px', textAlign: 'right' }}>{r.orders}건</span>
-              <span style={{ fontSize: '0.75rem', color: '#E5E5E5', minWidth: '90px', textAlign: 'right' }}>₩{r.sales.toLocaleString()}</span>
-              <span style={{ fontSize: '0.75rem', color: r.profit >= 0 ? '#51CF66' : '#FF6B6B', minWidth: '80px', textAlign: 'right' }}>₩{r.profit.toLocaleString()}</span>
-            </div>
-          )
-        })}
-      </div>
-    )
   }
 
   return (
@@ -187,7 +354,6 @@ export default function AnalyticsPage() {
       {/* 헤더 */}
       <div style={{ marginBottom: '1.5rem' }}>
         <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>매출통계</h2>
-        <p style={{ fontSize: '0.875rem', color: '#888' }}>소싱처별 · 마켓별 · 일별 매출 현황</p>
       </div>
 
       {/* 검색 조건 */}
@@ -205,7 +371,7 @@ export default function AnalyticsPage() {
           <button onClick={load}
             style={{ padding: '0.375rem 0.875rem', fontSize: '0.8125rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 600, cursor: 'pointer' }}>매출검색</button>
           <span style={{ marginLeft: 'auto', fontSize: '0.8125rem', color: '#888' }}>
-            총 <span style={{ color: '#FF8C00', fontWeight: 700 }}>{totalOrders}</span>건 · 매출 <span style={{ color: '#FF8C00', fontWeight: 700 }}>₩{totalSales.toLocaleString()}</span> · 수익 <span style={{ color: '#51CF66', fontWeight: 700 }}>₩{totalProfit.toLocaleString()}</span>
+            총 <span style={{ color: '#FF8C00', fontWeight: 700 }}>{totalOrders.toLocaleString()}</span>건 · 매출 <span style={{ color: '#FF8C00', fontWeight: 700 }}>₩{totalSales.toLocaleString()}</span>
           </span>
         </div>
 
@@ -215,7 +381,7 @@ export default function AnalyticsPage() {
           {(() => {
             const marketNames = [...new Set([...marketAccounts.map(a => a.market_name)])]
             const allMarkets = marketNames.length > 0 ? marketNames : ['스마트스토어', '11번가']
-            const isAll = selectedMarkets.length === 0 || selectedMarkets.length === allMarkets.length
+            const isAll = allMarkets.length > 0 && selectedMarkets.length === allMarkets.length
             return (
               <>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: '#888', cursor: 'pointer' }}>
@@ -239,7 +405,7 @@ export default function AnalyticsPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.625rem 0', borderTop: '1px solid #2D2D2D', flexWrap: 'wrap' }}>
           <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '65px', flexShrink: 0 }}>소싱사이트</span>
           {(() => {
-            const isAll = selectedSites.length === SOURCE_SITES.length || selectedSites.length === 0
+            const isAll = selectedSites.length === SOURCE_SITES.length
             return (
               <>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: '#888', cursor: 'pointer' }}>
@@ -264,7 +430,7 @@ export default function AnalyticsPage() {
           <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '65px', flexShrink: 0 }}>주문상태</span>
           {(() => {
             const allKeys = ORDER_STATUSES.map(s => s.key)
-            const isAll = selectedStatuses.length === allKeys.length || selectedStatuses.length === 0
+            const isAll = selectedStatuses.length === allKeys.length
             return (
               <>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: '#888', cursor: 'pointer' }}>
@@ -285,78 +451,14 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* 소싱처별 매출 */}
-      <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-          <h3 style={{ fontSize: '0.9375rem', fontWeight: 600 }}>소싱처별 매출</h3>
-          <span style={{ fontSize: '0.75rem', color: '#666' }}>{siteRows.length}개 소싱처</span>
-        </div>
-        {renderBarTable(siteRows, '소싱처')}
-      </div>
+      {/* 마켓별 통계 */}
+      {renderMonthlyTable('마켓별 통계', marketTable.columns, marketTable.data)}
 
-      {/* 판매마켓별 매출 */}
-      <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-          <h3 style={{ fontSize: '0.9375rem', fontWeight: 600 }}>판매마켓별 매출</h3>
-          <span style={{ fontSize: '0.75rem', color: '#666' }}>{marketRows.length}개 마켓</span>
-        </div>
-        {renderBarTable(marketRows, '마켓')}
-      </div>
+      {/* 소싱처별 통계 */}
+      {renderMonthlyTable('소싱처별 통계', siteTable.columns, siteTable.data)}
 
-      {/* 일별 매출 */}
-      <div style={{ ...card, padding: '1.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-          <h3 style={{ fontSize: '0.9375rem', fontWeight: 600 }}>일별 매출</h3>
-          <span style={{ fontSize: '0.75rem', color: '#666' }}>{dailyRows.length}일</span>
-        </div>
-        {dailyRows.length === 0 ? (
-          <p style={{ color: '#555', fontSize: '0.875rem', padding: '2rem 0', textAlign: 'center' }}>데이터가 없습니다</p>
-        ) : (
-          <>
-            {/* 바 차트 */}
-            <div style={{ overflowX: 'auto', marginBottom: '1rem' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', height: '140px', minWidth: `${dailyRows.length * 30}px` }}>
-                {dailyRows.map((d, i) => {
-                  const maxSales = Math.max(...dailyRows.map(r => r.sales), 1)
-                  const pct = (d.sales / maxSales) * 100
-                  return (
-                    <div key={d.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', height: '100%', justifyContent: 'flex-end', minWidth: '24px' }}>
-                      {d.sales > 0 && <span style={{ fontSize: '0.5625rem', color: '#555', whiteSpace: 'nowrap' }}>₩{(d.sales / 10000).toFixed(0)}만</span>}
-                      <div
-                        style={{ width: '100%', height: `${Math.max(pct, d.sales > 0 ? 4 : 1)}%`, background: d.sales > 0 ? '#FF8C00' : 'rgba(45,45,45,0.5)', borderRadius: '3px 3px 0 0', minHeight: '2px', transition: 'height 0.3s' }}
-                        title={`${d.date}: ₩${d.sales.toLocaleString()} / ${d.orders}건 / 수익 ₩${d.profit.toLocaleString()}`}
-                      />
-                      <span style={{ fontSize: '0.5625rem', color: '#555', whiteSpace: 'nowrap' }}>{d.date.slice(5)}</span>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-            {/* 테이블 */}
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
-                    {['날짜', '주문수', '매출', '수익'].map((h, i) => (
-                      <th key={h} style={{ textAlign: i === 0 ? 'left' : 'right', padding: '0.5rem 0.75rem', color: '#888', fontWeight: 500, fontSize: '0.75rem' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...dailyRows].reverse().map(d => (
-                    <tr key={d.date} style={{ borderBottom: '1px solid rgba(45,45,45,0.3)' }}>
-                      <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5' }}>{d.date}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: '#888' }}>{d.orders}건</td>
-                      <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>₩{d.sales.toLocaleString()}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right', color: d.profit >= 0 ? '#51CF66' : '#FF6B6B' }}>₩{d.profit.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </div>
+      {/* 주문상태별 통계 */}
+      {renderMonthlyTable('주문상태별 통계', finalStatusColumns, statusTable.data)}
     </div>
   )
 }

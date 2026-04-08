@@ -43,6 +43,8 @@ RUN mkdir -p ${CLIP_MODEL_DIR} && \
 
 COPY backend ./backend
 COPY scripts ./scripts
+COPY alembic.ini ./alembic.ini
+COPY alembic ./alembic
 
 # 비루트 사용자로 실행 (보안 강화)
 RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser \

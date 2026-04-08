@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 
 router = APIRouter(prefix="/shipments", tags=["samba-shipments"])
 
@@ -30,13 +31,18 @@ def _get_service(session: AsyncSession):
     return SambaShipmentService(SambaShipmentRepository(session), session)
 
 
+class CancelRequest(BaseModel):
+    job_id: Optional[str] = None
+
+
 @router.post("/cancel")
-async def cancel_transmit():
-    """진행 중인 전송 강제 중단."""
+async def cancel_transmit(body: CancelRequest = CancelRequest()):
+    """진행 중인 전송 강제 중단. job_id가 주어지면 해당 잡만 취소."""
     from backend.domain.samba.shipment.service import request_cancel_transmit
 
-    request_cancel_transmit()
-    return {"ok": True, "message": "전송 중단 요청 완료"}
+    request_cancel_transmit(body.job_id)
+    target = f"잡 {body.job_id}" if body.job_id else "전체"
+    return {"ok": True, "message": f"전송 중단 요청 완료 ({target})"}
 
 
 @router.post("/emergency-stop")
@@ -98,10 +104,28 @@ async def emergency_clear():
 @router.get("")
 async def list_shipments(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     status: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
+    from sqlmodel import select
+
+    from backend.domain.samba.shipment.model import SambaShipment
+
+    # tenant_id가 있으면 해당 테넌트 전송 이력만 조회
+    if tenant_id is not None:
+        stmt = (
+            select(SambaShipment)
+            .order_by(SambaShipment.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        stmt = stmt.where(SambaShipment.tenant_id == tenant_id)
+        if status:
+            stmt = stmt.where(SambaShipment.status == status)
+        result = await session.execute(stmt)
+        return result.scalars().all()
     svc = _get_service(session)
     return await svc.list_shipments(skip=skip, limit=limit, status=status)
 

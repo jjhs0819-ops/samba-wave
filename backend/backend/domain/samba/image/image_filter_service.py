@@ -410,6 +410,67 @@ class ImageFilterService:
         return results
 
     # ------------------------------------------------------------------
+    # Gemma 4 비전 분류 (무료, API)
+    # ------------------------------------------------------------------
+
+    async def classify_images_gemma(self, urls: list[str]) -> list[dict[str, Any]]:
+        """Gemma 4 비전으로 이미지 분류 (무료 API 티어).
+
+        Returns:
+          [{"url": "...", "type": "product"/"other"}, ...]
+        """
+        from backend.domain.samba.ai.gemma_client import (
+            _get_gemma_api_key,
+            classify_image,
+        )
+
+        api_key = await _get_gemma_api_key(self.session)
+        prompt = (
+            'Classify this image as either "product" or "other".\n'
+            '"product": item only on a plain background, no person visible '
+            "(hanger shot, flat lay, mannequin, detail close-up, sole).\n"
+            '"other": everything else — person wearing/using item, '
+            "lifestyle photo, banner, size chart, brand logo, text image.\n"
+            "Reply with ONLY one word: product or other"
+        )
+
+        results: list[dict[str, Any]] = []
+        async with httpx.AsyncClient(
+            timeout=30,
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        ) as client:
+            for url in urls:
+                try:
+                    _headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                        "Accept": "image/*,*/*;q=0.8",
+                        "Referer": url,
+                    }
+                    resp = await client.get(url, headers=_headers)
+                    resp.raise_for_status()
+
+                    raw = await classify_image(api_key, resp.content, prompt)
+                    # 응답에서 product/other 추출
+                    lower = raw.lower()
+                    if "product" in lower and "other" not in lower:
+                        img_type = "product"
+                    elif "other" in lower:
+                        img_type = "other"
+                    else:
+                        img_type = "other"
+
+                    results.append({"url": url, "type": img_type})
+                    logger.info(f"[이미지필터-Gemma] {img_type:7s} | {url[:80]}")
+                except Exception as e:
+                    logger.warning(
+                        f"[이미지필터-Gemma] 실패 (other 처리): {url[:80]} — {e}"
+                    )
+                    results.append({"url": url, "type": "other"})
+
+        return results
+
+    # ------------------------------------------------------------------
     # 정확도 비교 (Claude vs CLIP)
     # ------------------------------------------------------------------
 
@@ -508,9 +569,12 @@ class ImageFilterService:
             return {"action": "skipped", "reason": "not_found"}
 
         # method에 따라 분류 함수 선택
-        _classify = (
-            self.classify_images_clip if method == "clip" else self.classify_images
-        )
+        if method == "gemma":
+            _classify = self.classify_images_gemma
+        elif method == "clip":
+            _classify = self.classify_images_clip
+        else:
+            _classify = self.classify_images
 
         update_data: dict[str, Any] = {}
         result_info: dict[str, Any] = {"action": "filtered", "method": method}

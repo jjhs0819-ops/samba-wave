@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useRef, useState, memo } from 'react'
-import { monitorApi, collectorApi, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api'
+import { monitorApi, collectorApi, fetchWithAuth, type DashboardStats, type MonitorEvent, type RefreshLogEntry } from '@/lib/samba/api'
 import { SITE_COLORS } from '@/lib/samba/constants'
 
 const POLL_INTERVAL = 30_000
@@ -114,7 +114,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ siteColors, onStatusCh
             setLogs([]); sinceIdxRef.current = 0
             try {
               const { API_BASE_URL: apiBase } = await import('@/config/api')
-              await fetch(`${apiBase}/api/v1/samba/monitor/refresh-logs/clear`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+              await fetchWithAuth(`${apiBase}/api/v1/samba/monitor/refresh-logs/clear`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
             } catch { /* ignore */ }
           }} style={{ padding: '2px 8px', fontSize: '0.65rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
         </div>
@@ -216,6 +216,7 @@ export default function WarroomPage() {
   // 오토튠 상태
   const [autotuneRunning, setAutotuneRunning] = useState(false)
   const [autotuneCycles, setAutotuneCycles] = useState(0)
+  const [autotuneRestarts, setAutotuneRestarts] = useState(0)
   const [autotuneRefreshed, setAutotuneRefreshed] = useState(0)
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
   const prevCyclesRef = useRef(0)
@@ -230,8 +231,7 @@ export default function WarroomPage() {
     { key: 'Nike', label: 'Nike' },
     { key: 'Adidas', label: 'Adidas' },
     { key: 'ABCmart', label: 'ABC마트' },
-    { key: 'GrandStage', label: '그랜드스테이지' },
-    { key: 'OKmall', label: 'OKmall' },
+    { key: 'REXMONDE', label: '렉스몬드' },
     { key: 'SSG', label: 'SSG' },
     { key: 'LOTTEON', label: '롯데ON' },
     { key: 'GSShop', label: 'GSShop' },
@@ -266,6 +266,68 @@ export default function WarroomPage() {
       } catch { /* ignore */ }
     }, 500)
   }, [])
+  // ── 등급 분류(hot/warm/cold) ON/OFF ──
+  const [priorityEnabled, setPriorityEnabled] = useState(true)
+  useEffect(() => {
+    collectorApi.autotuneGetPriority().then(res => {
+      setPriorityEnabled(res.priority_enabled)
+    }).catch(() => {})
+  }, [])
+  const handlePriorityToggle = useCallback(async () => {
+    const next = !priorityEnabled
+    setPriorityEnabled(next)
+    try {
+      await collectorApi.autotuneSetPriority(next)
+    } catch { setPriorityEnabled(!next) }
+  }, [priorityEnabled])
+
+  // ── 오토튠 필터 (소싱처/판매처 체크박스) ──
+  const [filterSources, setFilterSources] = useState<string[] | null>(null) // null=전체
+  const [filterMarkets, setFilterMarkets] = useState<string[] | null>(null) // null=전체
+  const [availSources, setAvailSources] = useState<string[]>([])
+  const [availMarkets, setAvailMarkets] = useState<string[]>([])
+  const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    collectorApi.autotuneGetFilters().then(res => {
+      setAvailSources(res.available_sources)
+      setAvailMarkets(res.available_markets)
+      setFilterSources(res.enabled_sources)
+      setFilterMarkets(res.enabled_markets)
+    }).catch(() => {})
+  }, [])
+
+  const saveFilters = useCallback((sources: string[] | null, markets: string[] | null) => {
+    if (filterTimerRef.current) clearTimeout(filterTimerRef.current)
+    filterTimerRef.current = setTimeout(async () => {
+      try {
+        await collectorApi.autotuneSetFilters(sources, markets)
+      } catch { /* ignore */ }
+    }, 500)
+  }, [])
+
+  const toggleSource = useCallback((site: string) => {
+    setFilterSources(prev => {
+      const all = availSources
+      const current = prev ?? [...all]
+      const next = current.includes(site) ? current.filter(s => s !== site) : [...current, site]
+      const result = next.length === all.length ? null : next.length === 0 ? null : next
+      saveFilters(result, filterMarkets)
+      return result
+    })
+  }, [availSources, filterMarkets, saveFilters])
+
+  const toggleMarket = useCallback((marketType: string) => {
+    setFilterMarkets(prev => {
+      const all = availMarkets
+      const current = prev ?? [...all]
+      const next = current.includes(marketType) ? current.filter(m => m !== marketType) : [...current, marketType]
+      const result = next.length === all.length ? null : next.length === 0 ? null : next
+      saveFilters(filterSources, result)
+      return result
+    })
+  }, [availMarkets, filterSources, saveFilters])
+
   const handleAutotuneStatus = useCallback((running: boolean, cycles: number, lastTick: string | null, refreshed: number) => {
     // 별도 스레드 타이밍 차이 대응 — 3회 연속 false일 때만 정지 표시
     if (!running) {
@@ -300,7 +362,7 @@ export default function WarroomPage() {
         monitorApi.dashboard().catch(() => null),
         monitorApi.recentEvents(10).catch(() => []),
         collectorApi.probeStatus().catch(() => ({})) as Promise<Record<string, Record<string, Record<string, unknown>>>>,
-        collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number> })),
+        collectorApi.autotuneStatus().catch(() => ({ running: false, last_tick: null, cycle_count: 0, restart_count: 0, target: 'registered', refreshed_count: 0, breaker_tripped: {} as Record<string, number> })) as ReturnType<typeof collectorApi.autotuneStatus>,
         monitorApi.storeScores().catch(() => ({})),
       ])
       if (dashboard) setStats(dashboard)
@@ -308,6 +370,7 @@ export default function WarroomPage() {
       if (probeStatus && Object.keys(probeStatus).length > 0) setProbeData(probeStatus)
       // 오토튠 상태는 handleAutotuneStatus를 통해 처리 (falseCountRef 가드 적용, 경쟁 상태 방지)
       handleAutotuneStatus(atStatus.running, atStatus.cycle_count, atStatus.last_tick, atStatus.refreshed_count || 0)
+      setAutotuneRestarts(atStatus.restart_count || 0)
       if (scores && Object.keys(scores).length > 0) setStoreScores(scores)
       setLastFetched(new Date())
       nextPollRef.current = POLL_INTERVAL / 1000
@@ -398,6 +461,7 @@ export default function WarroomPage() {
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: autotuneRunning ? '#51CF66' : '#FF6B6B', display: 'inline-block' }} />
             <span style={{ fontWeight: 700, color: '#FF8C00', fontSize: '0.875rem' }}>오토튠 실시간 모니터링</span>
             {autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중 ({autotuneCycles}회)</span>}
+            {autotuneRunning && autotuneRestarts > 0 && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>재시작 {autotuneRestarts}회</span>}
             {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
@@ -405,7 +469,7 @@ export default function WarroomPage() {
             onClick={async () => {
               try {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
-                await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+                await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 await collectorApi.autotuneStart('registered')
                 falseCountRef.current = 0
                 setAutotuneRunning(true)
@@ -427,7 +491,7 @@ export default function WarroomPage() {
             onClick={async () => {
               try {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
-                await fetch(`${apiBase}/api/v1/samba/collector/autotune/stop`, { method: 'POST' })
+                await fetchWithAuth(`${apiBase}/api/v1/samba/collector/autotune/stop`, { method: 'POST' })
                 setAutotuneRunning(false)
               } catch { /* ignore */ }
             }}
@@ -442,8 +506,63 @@ export default function WarroomPage() {
               cursor: 'pointer',
             }}
             >강제중단</button>
+            <button
+              onClick={handlePriorityToggle}
+              style={{
+                padding: '0.25rem 0.75rem',
+                background: priorityEnabled ? 'rgba(76,154,255,0.12)' : 'rgba(255,255,255,0.06)',
+                border: `1px solid ${priorityEnabled ? 'rgba(76,154,255,0.35)' : 'rgba(255,255,255,0.15)'}`,
+                borderRadius: '6px',
+                color: priorityEnabled ? '#4C9AFF' : '#666',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >등급분류 {priorityEnabled ? 'ON' : 'OFF'}</button>
           </div>
         </div>
+        {/* 소싱처 체크박스 */}
+        {availSources.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>소싱처</span>
+            {availSources.map(src => {
+              const checked = filterSources === null || filterSources.includes(src)
+              const labelMap: Record<string, string> = { MUSINSA: '무신사', KREAM: 'KREAM', DANAWA: '다나와', FashionPlus: '패션플러스', Nike: 'Nike', Adidas: 'Adidas', ABCmart: 'ABC마트', REXMONDE: '렉스몬드', SSG: 'SSG', LOTTEON: '롯데ON', GSShop: 'GSShop', ElandMall: '이랜드몰', SSF: 'SSF샵' }
+              return (
+                <label key={src} style={{ display: 'flex', alignItems: 'center', gap: '2px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleSource(src)}
+                    style={{ accentColor: '#FF8C00', width: 13, height: 13, cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.7rem', color: checked ? '#ddd' : '#666', whiteSpace: 'nowrap' }}>{labelMap[src] || src}</span>
+                </label>
+              )
+            })}
+          </div>
+        )}
+        {/* 판매처 체크박스 (마켓 단위) */}
+        {availMarkets.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>판매처</span>
+            {availMarkets.map(mt => {
+              const checked = filterMarkets === null || filterMarkets.includes(mt)
+              const marketLabel: Record<string, string> = { smartstore: '스마트스토어', coupang: '쿠팡', '11st': '11번가', auction: '옥션', gmarket: 'G마켓', lotteon: '롯데ON', ssg: 'SSG', tmon: '티몬', wemakeprice: '위메프', kream: 'KREAM', playauto: '플레이오토', gsshop: 'GS샵', elandmall: '이랜드몰', ssf: 'SSF샵' }
+              return (
+                <label key={mt} style={{ display: 'flex', alignItems: 'center', gap: '2px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleMarket(mt)}
+                    style={{ accentColor: '#4C9AFF', width: 13, height: 13, cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.7rem', color: checked ? '#ddd' : '#666', whiteSpace: 'nowrap' }}>{marketLabel[mt] || mt}</span>
+                </label>
+              )
+            })}
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>수집인터벌</span>
           {INTERVAL_SITES.map(({ key, label }) => (
@@ -554,8 +673,10 @@ export default function WarroomPage() {
                   detailTags.push({ label: '변동', value: `${d.changed.toLocaleString()}건`, color: '#FFD93D' })
                 if (typeof d.sold_out === 'number' && d.sold_out > 0)
                   detailTags.push({ label: '품절', value: `${d.sold_out.toLocaleString()}건`, color: '#FF6B6B' })
-                if (typeof d.retransmitted === 'number' && d.retransmitted > 0)
-                  detailTags.push({ label: '재전송', value: `${d.retransmitted.toLocaleString()}건`, color: '#A78BFA' })
+                if (typeof d.price_transmit === 'number' && d.price_transmit > 0)
+                  detailTags.push({ label: '가격전송', value: `${d.price_transmit.toLocaleString()}건`, color: '#FFB347' })
+                if (typeof d.stock_transmit === 'number' && d.stock_transmit > 0)
+                  detailTags.push({ label: '재고전송', value: `${d.stock_transmit.toLocaleString()}건`, color: '#A78BFA' })
                 if (typeof d.deleted === 'number' && d.deleted > 0)
                   detailTags.push({ label: '삭제', value: `${d.deleted.toLocaleString()}건`, color: '#FF6B6B' })
                 if (typeof d.no_pid === 'number' && d.no_pid > 0)

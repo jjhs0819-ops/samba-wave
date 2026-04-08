@@ -10,6 +10,7 @@ jobs:
   deploy:
     name: Deploy to Cloud Run
     runs-on: ubuntu-latest
+    environment: production
 
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +42,7 @@ jobs:
           TERMINATION_GRACE_HACK: "1"
           PROXY_URLS: "${{ secrets.PROXY_URLS }}"
           COLLECT_PROXY_URL: "${{ secrets.COLLECT_PROXY_URL }}"
+          API_GATEWAY_KEY: "${{ secrets.API_GATEWAY_KEY }}"
           COMMIT_SHA: "${{ github.sha }}"
           EOF
 
@@ -53,6 +55,8 @@ jobs:
             --env-vars-file /tmp/cloudrun-env.yaml \
             --memory 2Gi \
             --min-instances=1 \
+            --max-instances=1 \
+            --no-cpu-throttling \
             --quiet
 
       - name: Verify traffic on latest revision
