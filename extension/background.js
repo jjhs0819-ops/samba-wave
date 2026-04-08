@@ -1327,17 +1327,6 @@ async function fetchAbcmartBenefitPrice(productId, site) {
 async function handleSourcingJob(job) {
   let tabId = null
   try {
-    // ── ABCmart/GrandStage: 탭 없이 info API 직접 호출 (빠른경로) ──
-    if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
-      const apiResult = await fetchAbcmartBenefitPrice(job.productId, job.site)
-      if (apiResult && apiResult.success) {
-        await postResult('sourcing/collect-result', { requestId: job.requestId, data: apiResult })
-        console.log(`[소싱] ${job.site} API 빠른경로 완료: ${job.productId} → ${apiResult.best_benefit_price}원`)
-        return
-      }
-      console.log(`[소싱] ${job.site} API 실패 → DOM 폴백: ${job.productId}`)
-    }
-
     // active:true 필요: SPA 상세(JS렌더링 필수), 카테고리스캔
     const needsActive = (job.type === 'detail' && (job.site === 'FashionPlus' || job.site === 'LOTTEON')) || job.type === 'category-scan'
     const tab = await chrome.tabs.create({ url: job.url, active: needsActive })
