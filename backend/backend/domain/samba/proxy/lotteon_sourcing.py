@@ -1023,6 +1023,9 @@ class LotteonSourcingClient:
                     if _sx:
                         detail["sex"] = _sx
 
+                # 임시 폴백 키 정리
+                detail.pop("_scatCategoryFallback", None)
+
                 return detail
 
         except RateLimitError:
@@ -1787,20 +1790,19 @@ class LotteonSourcingClient:
             if existing_bbp <= 0:
                 detail["bestBenefitPrice"] = existing_sale or sl_prc
 
-        # ── 카테고리 코드 저장 및 이름 변환 ──────────────────────────
+        # ── 카테고리 코드 저장 (딕셔너리 매핑은 폴백용으로만 보존) ──
+        # 우선순위: dispCategoryInfo(전시 카테고리) > scatNo 딕셔너리(내부 분류)
+        # dispCategoryInfo가 실제 사이트 브레드크럼과 일치하므로 우선 사용
         basic = pbf.get("basicInfo") or {}
         logger.debug(f"[LOTTEON] pbf basicInfo keys: {list(basic.keys())}")
         scat_no = str(basic.get("scatNo", "") or "").strip()
         if scat_no:
             # 팀장 카테고리 룰 매핑용으로 scatNo 보존
             detail["_lotteonScatNo"] = scat_no
-            # 하드코딩 딕셔너리에서 카테고리명 조회
+            # 딕셔너리 매핑값은 폴백용으로만 보존 (dispCategoryInfo 우선)
             cat_name = _LOTTEON_SCAT_NAMES.get(scat_no, "")
-            if cat_name and not detail.get("category"):
-                detail["category"] = cat_name
-                parts = cat_name.split(" > ")
-                for i, part in enumerate(parts[:4], 1):
-                    detail[f"category{i}"] = part
+            if cat_name:
+                detail["_scatCategoryFallback"] = cat_name
 
         # ── 브랜드 보완 (basicInfo.brdNm) ──────────────────────────
         brd_nm = str(basic.get("brdNm", "") or "").strip()
@@ -2035,9 +2037,10 @@ class LotteonSourcingClient:
                     detail["material"] = mat_val
                     break
 
-        # ── dispCategoryInfo (카테고리 경로) ──────────────────────────
+        # ── dispCategoryInfo (전시 카테고리 — 사이트 브레드크럼과 동일) ──
+        # 실제 롯데ON 사이트에 표시되는 카테고리이므로 최우선 적용
         disp_cat = pd_data.get("dispCategoryInfo") or {}
-        if disp_cat and not detail.get("category"):
+        if disp_cat:
             parts = []
             for key in ["dispCatNm", "dispCatNm0", "dispCatNm1", "dispCatNm2"]:
                 nm = (disp_cat.get(key) or "").strip()
@@ -2047,6 +2050,14 @@ class LotteonSourcingClient:
                 detail["category"] = " > ".join(parts)
                 for i, part in enumerate(parts[:4], 1):
                     detail[f"category{i}"] = part
+
+        # dispCategoryInfo가 없으면 scatNo 딕셔너리 폴백 적용
+        if not detail.get("category") and detail.get("_scatCategoryFallback"):
+            cat_name = detail["_scatCategoryFallback"]
+            detail["category"] = cat_name
+            parts = cat_name.split(" > ")
+            for i, part in enumerate(parts[:4], 1):
+                detail[f"category{i}"] = part
 
     # ------------------------------------------------------------------
     # JSON-LD 파싱 (상세)
