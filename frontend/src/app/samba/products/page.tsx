@@ -1054,11 +1054,22 @@ export default function ProductsPage() {
               const prodNo = prod?.site_product_id || ids[i].slice(-8)
               const label = [brand, name, prodNo].filter(Boolean).join(' / ')
               setAiJobTitle(`AI 이미지변환 [${i + 1}/${ids.length}] ${label}`)
-              try {
-                const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset)
-                if (res.success && res.total_transformed > 0) { success++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 완료 (${res.total_transformed}장)`) }
-                else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`) }
-              } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+              const delays = [3000, 5000]
+              let done = false
+              for (let attempt = 0; attempt <= 2; attempt++) {
+                if (attempt > 0) {
+                  addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 재시도 ${attempt}/2`)
+                  await new Promise(r => setTimeout(r, delays[attempt - 1]))
+                }
+                try {
+                  const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset)
+                  if (res.success && res.total_transformed > 0) { success++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 완료 (${res.total_transformed}장)`) }
+                  else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`) }
+                  done = true; break
+                } catch (e) {
+                  if (attempt === 2) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                }
+              }
             }
             const endTime = ts()
             setAiJobTitle(`AI 이미지변환 완료 (${success}/${ids.length})`)

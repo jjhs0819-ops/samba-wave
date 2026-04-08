@@ -1384,6 +1384,14 @@ export default function CollectorPage() {
         {/* AI 이미지 변환 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
+          {([['thumbnail', '대표'], ['additional', '추가'], ['detail', '상세']] as const).map(([key, label]) => (
+            <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={aiImgScope[key]}
+                onChange={() => setAiImgScope(prev => ({ ...prev, [key]: !prev[key] }))}
+                style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
+              <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{label}</span>
+            </label>
+          ))}
           <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
             <option value="background">배경 제거</option>
             <option value="model_to_product">모델→상품</option>
@@ -1422,6 +1430,7 @@ export default function CollectorPage() {
               // displayedFilters와 교집합으로 실제 대상 결정
               const activeIds = [...selectedIds].filter(id => displayedFilters.some(f => f.id === id))
               if (activeIds.length === 0) { showAlert('현재 필터에 해당하는 그룹이 없습니다'); return }
+              if (!aiImgScope.thumbnail && !aiImgScope.additional && !aiImgScope.detail) { showAlert('변환 대상 이미지를 선택해주세요 (대표/추가/상세)'); return }
               // 그룹에 속한 상품 조회 → AI 미변환 상품만 추출
               const productIds: string[] = []
               let skippedAi = 0
@@ -1438,7 +1447,8 @@ export default function CollectorPage() {
               }
               if (productIds.length === 0) { showAlert(skippedAi > 0 ? `모든 상품이 이미 AI 변환 완료 (${skippedAi}건 스킵)` : '선택된 그룹에 상품이 없습니다'); return }
               const skipMsg = skippedAi > 0 ? `\n(AI 변환 완료 ${skippedAi}건 스킵)` : ''
-              const ok = await showConfirm(`${activeIds.length.toLocaleString()}개 그룹 (${productIds.length.toLocaleString()}개 상품)의 이미지를 변환하시겠습니까?${skipMsg}`)
+              const scopeLabel = [aiImgScope.thumbnail && '대표', aiImgScope.additional && '추가', aiImgScope.detail && '상세'].filter(Boolean).join('+')
+              const ok = await showConfirm(`${activeIds.length.toLocaleString()}개 그룹 (${productIds.length.toLocaleString()}개 상품)의 ${scopeLabel} 이미지를 변환하시겠습니까?${skipMsg}`)
               if (!ok) return
               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
               setAiImgTransforming(true)
@@ -1457,7 +1467,7 @@ export default function CollectorPage() {
                 const label = productIds[i].slice(-8)
                 setAiJobTitle(`AI 이미지변환 [${i + 1}/${productIds.length}]`)
                 try {
-                  const res = await proxyApi.transformImages([productIds[i]], { thumbnail: true, additional: true, detail: true }, aiImgMode, aiModelPreset)
+                  const res = await proxyApi.transformImages([productIds[i]], aiImgScope, aiImgMode, aiModelPreset)
                   if (res.success) { success++; addLog(`[${ts()}] [${i + 1}/${productIds.length}] ${label} — 완료`) }
                   else { fail++; addLog(`[${ts()}] [${i + 1}/${productIds.length}] ${label} — 실패: ${res.message}`) }
                 } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${productIds.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }

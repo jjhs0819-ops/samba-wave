@@ -10,6 +10,13 @@ tmp_captures/
 .omc/
 backend/.omc/
 
+# Codex 세션 파일
+.context/
+backend/.context/
+
+# AI 모델 바이너리 (대용량)
+backend/models/
+
 # 생성 산출물
 backend/backend/static/images/
 

@@ -309,7 +309,7 @@ export default function ShipmentsPage() {
           }
         }
       }
-      // 플레이오토: 카테고리 매핑 불필요 — 정책에 연결되어 있으면 자동 체크
+      // 정책에 연결된 마켓: 카테고리 매핑 불필요 — 정책에 연결되어 있으면 자동 체크
       for (const prod of selectedProds) {
         if (!prod?.applied_policy_id) continue
         const policy = policies.find(p => p.id === prod.applied_policy_id)
@@ -321,7 +321,7 @@ export default function ShipmentsPage() {
             : marketPolicy.accountId ? [marketPolicy.accountId] : []
           for (const aid of ids) {
             const acc = accounts.find(a => a.id === aid)
-            if (acc?.market_type === 'playauto') mappedMarketTypes.add('playauto')
+            if (acc?.market_type) mappedMarketTypes.add(acc.market_type)
           }
         }
       }
