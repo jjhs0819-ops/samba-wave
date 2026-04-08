@@ -2084,17 +2084,17 @@ async def brand_create_groups(
             from urllib.parse import quote as _quote_lt
 
             _brand_label = body.brand_name or body.brand or ""
-            # 실제 롯데ON 검색 URL로 저장 (프론트 링크 표시 + 워커 brands 파싱 호환)
+            # 롯데백화점(mallId=2) 검색 URL로 저장 (가품 방지 목적)
             if body.selected_brands:
                 _brands_q = _quote_lt(",".join(body.selected_brands))
                 keyword = (
-                    f"https://www.lotteon.com/search/search/search.ecn"
-                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&brands={_brands_q}"
+                    f"https://www.lotteon.com/csearch/search/search"
+                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&mallId=2&brands={_brands_q}"
                 )
             else:
                 keyword = (
-                    f"https://www.lotteon.com/search/search/search.ecn"
-                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}"
+                    f"https://www.lotteon.com/csearch/search/search"
+                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&mallId=2"
                 )
             # 합산된 BC코드들을 콤마로 연결 (같은 path의 여러 BC코드)
             bc_codes = cat.get("bc_codes") or ([code] if code else [])

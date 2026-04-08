@@ -17,7 +17,7 @@ SITE_SEARCH_URLS: dict[str, str] = {
     "ABCmart": "https://www.a-rt.com/display/search-word/result?searchWord={keyword}",
     "GrandStage": "https://www.a-rt.com/display/search-word/result?searchWord={keyword}&channel=10002",
     "REXMONDE": "https://www.okmall.com/products/list?keyword={keyword}",
-    "LOTTEON": "https://www.lotteon.com/search/search/search.ecn?render=search&platform=pc&q={keyword}",
+    "LOTTEON": "https://www.lotteon.com/csearch/search/search?render=search&platform=pc&mallId=2&q={keyword}",
     "GSShop": "https://www.gsshop.com/shop/search/main.gs?tq={keyword}",
     "ElandMall": "https://www.elandmall.com/search/search.action?kwd={keyword}",
     "SSF": "https://www.ssfshop.com/search?keyword={keyword}",

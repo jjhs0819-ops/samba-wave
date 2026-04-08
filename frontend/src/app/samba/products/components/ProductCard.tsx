@@ -25,7 +25,7 @@ export const MARKETS = [
   { id: 'gmarket', name: '지마켓', url: 'https://www.esmplus.com', searchUrl: 'https://browse.gmarket.co.kr/search?keyword=' },
   { id: 'auction', name: '옥션', url: 'https://www.esmplus.com', searchUrl: 'https://browse.auction.co.kr/search?keyword=' },
   { id: 'coupang', name: '쿠팡', url: 'https://wing.coupang.com', searchUrl: 'https://www.coupang.com/np/search?q=' },
-  { id: 'lotteon', name: '롯데ON', url: 'https://partner.lotteon.com', searchUrl: 'https://www.lotteon.com/search/search/search.ecn?render=search&platform=pc&q=' },
+  { id: 'lotteon', name: '롯데ON', url: 'https://partner.lotteon.com', searchUrl: 'https://www.lotteon.com/csearch/search/search?render=search&platform=pc&mallId=2&q=' },
   { id: '11st', name: '11번가', url: 'https://spc.11st.co.kr', searchUrl: 'https://search.11st.co.kr/Search.tmall?kwd=' },
   { id: 'toss', name: '토스', url: 'https://seller.toss.im', searchUrl: 'https://shopping.toss.im/search?keyword=' },
   { id: 'ssg', name: '신세계몰', url: 'https://sellerpick.ssg.com', searchUrl: 'https://www.ssg.com/search.ssg?query=' },
@@ -173,6 +173,7 @@ function getReplacementRegex(from: string, caseInsensitive: boolean): RegExp {
 export function composeProductName(
   product: SambaCollectedProduct,
   nameRule: SambaNameRule | undefined,
+  deletionWords?: string[],
 ): string {
   if (!nameRule?.name_composition?.length) return product.name
   const seoKws = product.seo_keywords || []
@@ -195,6 +196,13 @@ export function composeProductName(
       if (!r.from) continue
       const regex = getReplacementRegex(r.from, !!r.caseInsensitive)
       composed = composed.replace(regex, r.to || '')
+    }
+  }
+  // 삭제어 적용 (dedup 전에 적용하여 중복 단어 감지 가능하게)
+  if (deletionWords?.length) {
+    const delRegex = getDeletionRegex(deletionWords)
+    if (delRegex) {
+      composed = composed.replace(delRegex, ' ').replace(/\s{2,}/g, ' ').trim()
     }
   }
   // 중복 제거
@@ -1102,7 +1110,7 @@ const ProductCard = React.memo(function ProductCard({
               <span style={{ color: '#FFB84D', fontWeight: 600, flexShrink: 0 }}>₩{fmt(cost)}</span>
             </div>
             <div style={{ color: '#888', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))}
+              {composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id), deletionWords)}
             </div>
           </div>
         </div>
@@ -1224,10 +1232,9 @@ const ProductCard = React.memo(function ProductCard({
               <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
                 <td style={tdLabel}>등록 상품명</td>
                 <td style={tdVal}>
-                  <span style={{ color: '#FFFFFF', fontSize: '0.8rem' }}>{renderRegisteredName(
-                    composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id)),
-                    deletionWords
-                  )}</span>
+                  <span style={{ color: '#FFFFFF', fontSize: '0.8rem' }}>{
+                    composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id), deletionWords)
+                  }</span>
                 </td>
               </tr>
               {/* SEO 검색키워드 */}
@@ -1299,7 +1306,7 @@ const ProductCard = React.memo(function ProductCard({
               {marketPriceList.length > 0 ? marketPriceList.map((m) => {
                 const marketNames = (p.market_names || {}) as Record<string, string>
                 const nameLimit = MARKET_NAME_LIMITS[m.marketName] || 100
-                const composedName = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))
+                const composedName = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id), deletionWords)
                 const currentMarketName = marketNames[m.marketName] || ''
                 // 마켓별 개별 상품명이 없으면 조합명을 글자수 제한에 맞게 자름
                 const displayName = currentMarketName || (composedName.length > nameLimit ? composedName.slice(0, nameLimit) : composedName)
@@ -1403,7 +1410,7 @@ const ProductCard = React.memo(function ProductCard({
               {/* 스토어별 상품명 — 마켓가격 행에 없는 등록 스토어도 상품명 편집 가능 */}
               {(() => {
                 const _mktNames = (p.market_names || {}) as Record<string, string>
-                const _composed = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))
+                const _composed = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id), deletionWords)
                 // 마켓가격 행에 이미 표시된 마켓명 목록
                 const priceMarketNames = new Set(marketPriceList.map(m => m.marketName))
                 // 등록된 스토어 중 마켓가격 행이 없는 것만 추출

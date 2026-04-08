@@ -38,7 +38,7 @@ export const SOURCING_SEARCH_URLS: Record<string, string> = {
   MUSINSA: 'https://www.musinsa.com/search/musinsa/integration?q=',
   KREAM: 'https://kream.co.kr/search?keyword=',
   ABCmart: 'https://abcmart.a-rt.com/search?q=',
-  LOTTEON: 'https://www.lotteon.com/search/search/search.ecn?render=search&platform=pc&q=',
+  LOTTEON: 'https://www.lotteon.com/csearch/search/search?render=search&platform=pc&mallId=2&q=',
 }
 
 /** 소싱처 상품 상세 URL (상품번호 뒤에 붙여 사용) */
