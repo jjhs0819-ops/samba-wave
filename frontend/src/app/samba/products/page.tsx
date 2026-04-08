@@ -34,8 +34,8 @@ export default function ProductsPage() {
   const router = useRouter();
 
   // URL searchParams에서 필터 읽기 — 한 번 읽은 뒤 URL에서 제거 (새로고침 시 풀림)
-  const [filterByGroupId, setFilterByGroupId] = useState("")
-  const [filterGroupName, setFilterGroupName] = useState("")
+  const [filterByGroupId, setFilterByGroupId] = useState(searchParams.get("search_filter_id") || "")
+  const [filterGroupName, setFilterGroupName] = useState(searchParams.get("group_name") || "")
   useEffect(() => {
     const gid = searchParams.get("search_filter_id") || ""
     const gname = searchParams.get("group_name") || ""
