@@ -1254,33 +1254,33 @@ async function fetchLotteonBenefitPrice(productId, sitmNo) {
 // ABCmart/GrandStage: 쿠키 기반 info API 직접 호출로 혜택가 수집 (탭 불필요)
 async function fetchAbcmartBenefitPrice(productId, site) {
   try {
-    // 1. a-rt.com 쿠키 수집 — 여러 도메인 패턴 시도
-    let cookies = await chrome.cookies.getAll({ url: 'https://www.a-rt.com' })
-    if (!cookies.length) cookies = await chrome.cookies.getAll({ domain: '.a-rt.com' })
-    if (!cookies.length) cookies = await chrome.cookies.getAll({ domain: 'www.a-rt.com' })
-    if (!cookies.length) cookies = await chrome.cookies.getAll({ domain: 'a-rt.com' })
-    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ')
-    const hasSession = cookies.some(c => c.name === 'JSESSIONID')
-    console.log(`[${site}] maxBenefitCoupon 조회: ${productId}, 쿠키=${cookies.length}개, JSESSIONID=${hasSession}, domains=${[...new Set(cookies.map(c => c.domain))].join(',')}`)
+    // 1. 서브도메인 결정 (ABCmart=abcmart, GrandStage=grandstage)
+    const subdomain = site === 'GrandStage' ? 'grandstage' : 'abcmart'
+    const baseUrl = `https://${subdomain}.a-rt.com`
 
-    if (!cookieStr || !hasSession) {
-      console.log(`[${site}] maxBenefitCoupon: 쿠키/세션 없음 → DOM 폴백 (${productId})`)
+    // 2. 서브도메인 쿠키 수집
+    const cookies = await chrome.cookies.getAll({ url: baseUrl })
+    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ')
+    console.log(`[${site}] maxBenefitCoupon 조회: ${productId}, 쿠키=${cookies.length}개, names=${cookies.map(c=>c.name).join(',')}`)
+
+    if (!cookies.length) {
+      console.log(`[${site}] maxBenefitCoupon: 쿠키 없음 → DOM 폴백 (${productId})`)
       return null
     }
 
-    // 2. info API 호출 (쿠키 포함 = 로그인 세션으로 멤버십 할인 반영)
-    const resp = await fetch(`https://www.a-rt.com/product/info?prdtNo=${productId}`, {
+    // 3. info API 호출 (서브도메인 기준)
+    const resp = await fetch(`${baseUrl}/product/info?prdtNo=${productId}`, {
       credentials: 'include',
       headers: {
         'Cookie': cookieStr,
         'Accept': 'application/json, text/plain, */*',
-        'Origin': 'https://www.a-rt.com',
-        'Referer': `https://www.a-rt.com/product?prdtNo=${productId}`,
+        'Origin': baseUrl,
+        'Referer': `${baseUrl}/product?prdtNo=${productId}`,
       }
     })
     const data = await resp.json()
     if (!data || !data.prdtName) {
-      console.log(`[${site}] maxBenefitCoupon: API 응답 비어있음 (${productId})`)
+      console.log(`[${site}] maxBenefitCoupon: API 응답 비어있음 (${productId}, HTTP ${resp.status})`)
       return null
     }
 
