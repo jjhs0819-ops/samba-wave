@@ -346,13 +346,9 @@ class LotteonSourcingClient:
             original_price = price_map.get("original", 0)
             final_price = price_map.get("final", 0)
 
-            # 카드 할인율 추출 → 최대혜택가 계산
-            card_discount = 0
-            for promo in item.get("promotionInfo", []):
-                if promo.get("type") == "card":
-                    card_discount = promo.get("num", 0)
-                    break
-            best_benefit_price = round(final_price * (1 - card_discount / 100))
+            # 최대혜택가 = 프로모션 판매가 (카드할인은 상한금액이 있어 API로 정확 계산 불가)
+            # 실제 혜택가는 확장앱 DOM 파싱으로 수집
+            best_benefit_price = final_price
 
             # 이미지
             thumbnail = item.get("productImage", "")
@@ -1500,15 +1496,9 @@ class LotteonSourcingClient:
                         price_map: dict[str, int] = {}
                         for p in item.get("priceInfo", []):
                             price_map[p.get("type", "")] = p.get("num", 0)
-                        card_discount = 0
-                        for promo in item.get("promotionInfo", []):
-                            if promo.get("type") == "card":
-                                card_discount = promo.get("num", 0)
-                                break
                         return {
                             "original": price_map.get("original", 0),
                             "final": price_map.get("final", 0),
-                            "card_discount": card_discount,
                         }
         except Exception as e:
             logger.debug(f"[LOTTEON] qapi 가격 조회 실패: {spd_no} — {e}")

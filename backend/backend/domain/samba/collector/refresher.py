@@ -495,6 +495,34 @@ async def _refresh_product_inner(
                 product_id=product.id,
                 error=str(e),
             )
+
+        # LOTTEON: 확장앱 DOM에서 실제 "나의 혜택가" 수집 → new_cost 덮어쓰기
+        if source_site == "LOTTEON" and not result.error:
+            import asyncio
+
+            _sid = getattr(product, "site_product_id", "") or ""
+            if _sid:
+                try:
+                    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+                    _req_id, _future = SourcingQueue.add_detail_job("LOTTEON", _sid)
+                    _ext_result = await asyncio.wait_for(_future, timeout=20)
+                    if isinstance(_ext_result, dict) and _ext_result.get("success"):
+                        _ext_benefit = int(
+                            _ext_result.get("best_benefit_price", 0) or 0
+                        )
+                        if _ext_benefit > 0:
+                            result.new_cost = float(_ext_benefit)
+                            logger.info(
+                                f"[LOTTEON] 오토튠 확장앱 혜택가: {_sid} → {_ext_benefit:,}"
+                            )
+                except asyncio.TimeoutError:
+                    logger.info(
+                        f"[LOTTEON] 오토튠 확장앱 타임아웃: {_sid} — API 가격 유지"
+                    )
+                except Exception as _ext_err:
+                    logger.debug(f"[LOTTEON] 오토튠 확장앱 실패: {_sid} — {_ext_err}")
+
         # 레거시 파서(무신사/KREAM)는 자체 로그 → 여기서 안 찍음
         if source_site not in ("MUSINSA", "KREAM") and not result.error:
             _name = getattr(product, "name", "") or ""

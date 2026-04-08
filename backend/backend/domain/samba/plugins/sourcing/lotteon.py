@@ -394,20 +394,16 @@ class LotteonSourcingPlugin(SourcingPlugin):
             if _qapi_price:
                 _final = _qapi_price.get("final", 0)
                 _original = _qapi_price.get("original", 0)
-                _card_pct = _qapi_price.get("card_discount", 0)
                 if _final > 0 and _final < _pbf_sale:
                     detail["salePrice"] = _final
-                    detail["bestBenefitPrice"] = (
-                        round(_final * (1 - _card_pct / 100))
-                        if _card_pct > 0
-                        else _final
-                    )
+                    # 카드할인은 상한금액이 있어 API로 정확 계산 불가 → 판매가 그대로
+                    # 실제 혜택가는 확장앱 DOM 파싱으로 수집
+                    detail["bestBenefitPrice"] = _final
                     if _original > 0:
                         detail["originalPrice"] = _original
                     logger.info(
                         f"[LOTTEON] qapi 프로모션가 보정: {site_product_id} "
-                        f"pbf={_pbf_sale:,} → final={_final:,}, "
-                        f"benefit={detail['bestBenefitPrice']:,}"
+                        f"pbf={_pbf_sale:,} → final={_final:,}"
                     )
         except Exception as e:
             logger.debug(
