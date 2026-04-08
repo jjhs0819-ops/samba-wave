@@ -474,6 +474,7 @@ class ARTSourcingClient:
             "sale_price": detail.get("salePrice", 0),
             "original_price": detail.get("originalPrice", 0),
             "cost": detail.get("bestBenefitPrice", 0) or detail.get("salePrice", 0),
+            "bestBenefitPrice": detail.get("bestBenefitPrice", 0),
             "images": detail.get("images", []),
             "options": detail.get("options", []),
             "category": detail.get("category", ""),
@@ -863,14 +864,21 @@ class ARTSourcingClient:
         price_info = data.get("productPrice") or {}
         original_price = self._safe_int(price_info.get("normalAmt") or 0)
         sale_price = self._safe_int(price_info.get("sellAmt") or 0)
-        best_benefit_price = self._safe_int(
-            data.get("displayProductPrice") or sale_price
-        )
         discount_rate = self._safe_int(data.get("displayDiscountRate") or 0)
 
         if original_price == 0:
             original_price = sale_price
-        if best_benefit_price > sale_price:
+
+        # 최대혜택가: 쿠폰 할인 적용 (maxBenefitCoupon > coupon 순)
+        _benefit_coupons = data.get("maxBenefitCoupon") or data.get("coupon") or []
+        _coupon_discount = max(
+            (self._safe_int(c.get("dscntAmt", 0)) for c in _benefit_coupons),
+            default=0,
+        )
+        best_benefit_price = (
+            (sale_price - _coupon_discount) if _coupon_discount > 0 else sale_price
+        )
+        if best_benefit_price <= 0 or best_benefit_price > sale_price:
             best_benefit_price = sale_price
 
         # 이미지 (productImage: 메인 1장, productImageExtra: 추가 이미지)
@@ -1106,10 +1114,12 @@ class ARTSourcingClient:
         )
         sale_status = "sold_out" if is_out_of_stock else "in_stock"
 
-        # 배송 정보
-        free_shipping = data.get("freeDlvyYn") == "Y"
+        # 배송 정보 — freeDlvyYn 또는 판매가 >= 무료배송 기준금액이면 무료
+        _free_dlvy_stdr = self._safe_int(data.get("freeDlvyStdrAmt", 0))
+        free_shipping = data.get("freeDlvyYn") == "Y" or (
+            _free_dlvy_stdr > 0 and sale_price >= _free_dlvy_stdr
+        )
         same_day_delivery = data.get("dailyDlvyYn") == "Y"
-        # ABC마트 기본 배송비: 무료배송이면 0, 아니면 3000원
         shipping_fee = 0 if free_shipping else 3000
 
         # 상세 URL 구성

@@ -119,10 +119,20 @@ class SourcingQueue:
 
     @classmethod
     def resolve_job(cls, request_id: str, data: dict[str, Any]) -> bool:
-        """작업 결과 전달 (확장앱 → 백엔드)."""
+        """작업 결과 전달 (확장앱 → 백엔드).
+
+        Future가 워커 스레드의 이벤트 루프에서 생성되었을 수 있으므로
+        call_soon_threadsafe로 안전하게 resolve한다.
+        """
         future = cls.resolvers.pop(request_id, None)
         if future and not future.done():
-            future.set_result(data)
+            try:
+                loop = future.get_loop()
+                loop.call_soon_threadsafe(future.set_result, data)
+            except RuntimeError:
+                # 루프가 닫혔으면 직접 set (같은 스레드일 수도 있음)
+                if not future.done():
+                    future.set_result(data)
             logger.info(
                 f"[소싱큐] 결과 수신: id={request_id}, success={data.get('success')}"
             )

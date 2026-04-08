@@ -293,20 +293,42 @@ class JobWorker:
                     await asyncio.sleep(2)
                     elapsed += 2
                 if thread.is_alive():
-                    logger.error(f"[잡워커] 수집 스레드 10분 타임아웃: {_job_id}")
-                    _add_job_log(_job_id, "수집 타임아웃 (10분)")
-                    # 잡 상태를 failed로 갱신
-                    try:
-                        async with get_write_session() as timeout_session:
-                            from backend.domain.samba.job.repository import (
-                                SambaJobRepository,
-                            )
+                    if self._shutting_down:
+                        # 배포/재시작 중단 — pending으로 복구 (다음 인스턴스에서 재실행)
+                        logger.info(
+                            f"[잡워커] 수집 중 배포 중단 → pending 복구: {_job_id}"
+                        )
+                        _add_job_log(_job_id, "배포 중단 — 재시작 후 자동 재실행")
+                        try:
+                            async with get_write_session() as shutdown_session:
+                                from sqlalchemy import text as _text
 
-                            timeout_repo = SambaJobRepository(timeout_session)
-                            await timeout_repo.fail_job(_job_id, "수집 타임아웃 (10분)")
-                            await timeout_session.commit()
-                    except Exception as te:
-                        logger.error(f"[잡워커] 타임아웃 잡 상태 갱신 실패: {te}")
+                                await shutdown_session.execute(
+                                    _text(
+                                        "UPDATE samba_jobs SET status='pending' WHERE id=:jid AND status='running'"
+                                    ),
+                                    {"jid": _job_id},
+                                )
+                                await shutdown_session.commit()
+                        except Exception as se:
+                            logger.error(f"[잡워커] 배포 중단 pending 복구 실패: {se}")
+                    else:
+                        # 실제 10분 타임아웃
+                        logger.error(f"[잡워커] 수집 스레드 10분 타임아웃: {_job_id}")
+                        _add_job_log(_job_id, "수집 타임아웃 (10분)")
+                        try:
+                            async with get_write_session() as timeout_session:
+                                from backend.domain.samba.job.repository import (
+                                    SambaJobRepository,
+                                )
+
+                                timeout_repo = SambaJobRepository(timeout_session)
+                                await timeout_repo.fail_job(
+                                    _job_id, "수집 타임아웃 (10분)"
+                                )
+                                await timeout_session.commit()
+                        except Exception as te:
+                            logger.error(f"[잡워커] 타임아웃 잡 상태 갱신 실패: {te}")
                 return
 
             # 전송 + 기타: 메인 루프 직접 실행 (인메모리 로그 공유)
@@ -1113,12 +1135,14 @@ class JobWorker:
 
         # URL에서 키워드/필터 추출
         _search_kwargs: dict = {}
+        _use_max_discount = False
         try:
             from urllib.parse import urlparse, parse_qs
 
             parsed = urlparse(keyword)
             if parsed.scheme:
                 qs = parse_qs(parsed.query)
+                _use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
                 # 소싱처별 키워드 파라미터: LOTTEON=q, FashionPlus=searchWord
                 keyword = qs.get(
                     "q", qs.get("keyword", qs.get("searchWord", [keyword]))
@@ -1195,7 +1219,25 @@ class JobWorker:
                 return
             try:
                 # sf.keyword가 이미 URL이면 SourcingQueue에 직접 전달 (템플릿 이중 치환 방지)
-                _sq_url = sf.keyword if (sf.keyword or "").startswith("http") else ""
+                # 상대 URL(/shop/...)도 절대 URL로 변환하여 전달
+                _kw_raw = sf.keyword or ""
+                if _kw_raw.startswith("http"):
+                    _sq_url = _kw_raw
+                elif _kw_raw.startswith("/"):
+                    # 상대 URL → 소싱처 도메인 붙여서 절대 URL 변환
+                    _site_domains = {
+                        "GSShop": "https://www.gsshop.com",
+                        "ABCmart": "https://www.a-rt.com",
+                        "GrandStage": "https://www.a-rt.com",
+                        "REXMONDE": "https://www.okmall.com",
+                        "ElandMall": "https://www.elandmall.com",
+                        "SSF": "https://www.ssfshop.com",
+                        "SSG": "https://www.ssg.com",
+                    }
+                    _domain = _site_domains.get(site, "")
+                    _sq_url = f"{_domain}{_kw_raw}" if _domain else ""
+                else:
+                    _sq_url = ""
                 _req_id, _future = SourcingQueue.add_search_job(
                     site, keyword, url=_sq_url
                 )
@@ -1536,6 +1578,36 @@ class JobWorker:
             if site == "LOTTEON" and p_id in _lotteon_details:
                 detail = _lotteon_details[p_id]
             _skip_detail = _search_kwargs.get("_skip_detail", False)
+            # ABCmart 최대혜택가: 확장앱으로 상세조회 (로그인 세션 필요)
+            if (
+                _use_max_discount
+                and site in ("ABCmart", "GrandStage")
+                and not _skip_detail
+                and not detail
+            ):
+                from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+                try:
+                    _drid, _dfut = SourcingQueue.add_detail_job(site, p_id)
+                    _ext_detail = await asyncio.wait_for(_dfut, timeout=30)
+                    if _ext_detail and _ext_detail.get("success"):
+                        _ext_bbp = int(_ext_detail.get("best_benefit_price", 0) or 0)
+                        if _ext_bbp > 0:
+                            # 서버 API 상세도 함께 조회 (이미지/옵션/고시정보)
+                            if hasattr(client, "get_detail"):
+                                detail = await client.get_detail(p_id)
+                            detail["bestBenefitPrice"] = _ext_bbp
+                            logger.info(
+                                f"[잡워커] {site} 확장앱 최대혜택가: {p_id} → {_ext_bbp:,}원"
+                            )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"[잡워커] {site} 확장앱 최대혜택가 타임아웃: {p_id}"
+                    )
+                except Exception as _ext_err:
+                    logger.warning(
+                        f"[잡워커] {site} 확장앱 최대혜택가 실패: {p_id} — {_ext_err}"
+                    )
             if not _skip_detail and not detail:
                 # 서버 HTTP 상세 조회 (빠르고 안정적)
                 if hasattr(client, "get_detail"):
@@ -1559,11 +1631,14 @@ class JobWorker:
             images = (
                 _detail_imgs if len(_detail_imgs) > len(_search_imgs) else _search_imgs
             )
-            # 원가: bestBenefitPrice(혜택가) → cost → sale_price 순으로 우선 사용
-            _bbp = int(detail.get("bestBenefitPrice", 0) or 0) or int(
-                item.get("best_benefit_price", 0) or 0
-            )
-            cost = _bbp if _bbp > 0 else (int(item.get("cost", 0)) or sale_price)
+            # 원가: 최대혜택가 옵션 시 bestBenefitPrice 우선
+            if _use_max_discount:
+                _bbp = int(detail.get("bestBenefitPrice", 0) or 0) or int(
+                    item.get("best_benefit_price", 0) or 0
+                )
+                cost = _bbp if _bbp > 0 else (int(item.get("cost", 0)) or sale_price)
+            else:
+                cost = int(item.get("cost", 0)) or sale_price
             # 배송비 원가 가산 (무료배송 아닌 경우)
             _sourcing_ship_fee = 0
             _is_free_ship = item.get("free_shipping", False) or detail.get(

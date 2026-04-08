@@ -294,6 +294,11 @@ def create_application() -> FastAPI:
         allow_origin_regex=settings.cors_origin_regex,
     )
 
+    # API Gateway Key 미들웨어 — 외부 앱 차단 (CORS 뒤에 등록해야 preflight 통과)
+    from backend.middleware.api_gateway import ApiGatewayMiddleware
+
+    app.add_middleware(ApiGatewayMiddleware, api_key=settings.api_gateway_key)
+
     # JWT 인증 의존성 (모든 보호 라우터에 일괄 적용)
     _samba_auth = [Depends(get_user_id)]
 

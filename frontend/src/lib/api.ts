@@ -4,7 +4,7 @@
  * Handles all API requests with automatic token management.
  */
 
-import { API_BASE_URL } from '@/config/api'
+import { API_BASE_URL, API_GATEWAY_KEY } from '@/config/api'
 
 export interface LoginResponse {
   user_id: string;
@@ -166,6 +166,9 @@ async function apiRequest<T>(
     ...options.headers,
   };
 
+  if (API_GATEWAY_KEY) {
+    (headers as Record<string, string>)["X-Api-Key"] = API_GATEWAY_KEY;
+  }
   if (accessToken) {
     (headers as Record<string, string>)["Authorization"] =
       `Bearer ${accessToken}`;

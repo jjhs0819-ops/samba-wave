@@ -40,7 +40,7 @@ const SITES = [
   { id: 'SSF', label: 'SSF샵' },
 ]
 
-const SITE_OPTIONS: Record<string, { id: string; label: string }[]> = {
+const SITE_OPTIONS: Record<string, { id: string; label: string; warn?: string }[]> = {
   MUSINSA: [
     { id: 'excludePreorder', label: '예약배송 수집제외' },
     { id: 'excludeBoutique', label: '부티끄 수집제외' },
@@ -49,10 +49,16 @@ const SITE_OPTIONS: Record<string, { id: string; label: string }[]> = {
   KREAM: [],
   FashionPlus: [],
   SSG: [
-    { id: 'maxDiscount', label: '최대혜택가' },
+    { id: 'maxDiscount', label: '최대혜택가', warn: '수집 속도가 느려집니다' },
   ],
   LOTTEON: [
-    { id: 'maxDiscount', label: '최대혜택가' },
+    { id: 'maxDiscount', label: '최대혜택가', warn: '수집 속도가 느려집니다' },
+  ],
+  ABCmart: [
+    { id: 'maxDiscount', label: '최대혜택가', warn: '수집 속도가 느려집니다' },
+  ],
+  GSShop: [
+    { id: 'maxDiscount', label: '최대혜택가', warn: '수집 속도가 느려집니다' },
   ],
 }
 
@@ -388,6 +394,12 @@ export default function CollectorPage() {
       } else if (checkedOptions['skipDetail'] && keywordUrl.startsWith('http')) {
         const u = new URL(keywordUrl)
         u.searchParams.set('skipDetail', '1')
+        keywordUrl = u.toString()
+      }
+      // 최대혜택가 옵션 (MUSINSA 외 소싱처)
+      if (checkedOptions['maxDiscount'] && site !== 'MUSINSA' && keywordUrl.startsWith('http')) {
+        const u = new URL(keywordUrl)
+        u.searchParams.set('maxDiscount', '1')
         keywordUrl = u.toString()
       }
 
@@ -942,7 +954,7 @@ export default function CollectorPage() {
           </div>
           {/* 2행: 선택된 소싱처 검색 조건 체크박스 (동적) */}
           {(SITE_OPTIONS[selectedSite] || []).length > 0 && (
-            <div style={{ display: "flex", gap: "14px", paddingLeft: "4px" }}>
+            <div style={{ display: "flex", gap: "14px", paddingLeft: "4px", alignItems: "center" }}>
               {(SITE_OPTIONS[selectedSite] || []).map((opt) => (
                 <label key={opt.id} style={{ display: "flex", alignItems: "center", gap: "5px", cursor: "pointer" }}>
                   <input
@@ -952,6 +964,9 @@ export default function CollectorPage() {
                     style={{ accentColor: "#FF8C00", width: "13px", height: "13px", cursor: "pointer" }}
                   />
                   <span style={{ fontSize: "0.78rem", color: "#999" }}>{opt.label}</span>
+                  {opt.warn && checkedOptions[opt.id] && (
+                    <span style={{ fontSize: "0.7rem", color: "#FF6B35" }}>{opt.warn}</span>
+                  )}
                 </label>
               ))}
             </div>

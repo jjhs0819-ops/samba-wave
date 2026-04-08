@@ -1608,6 +1608,46 @@ async function extractDetailData(tabId, site, productId) {
         }
       }
 
+      // ── ABCmart/GrandStage 전용 파싱 (최대혜택가 추출) ──
+      if (siteName === 'ABCmart' || siteName === 'GrandStage') {
+        const bodyText = document.body?.innerText || ''
+        let benefitPrice = 0
+
+        // "최대 혜택가 70,400원" 또는 "최대혜택가 70,400원" 패턴
+        const benefitMatch = bodyText.match(/최대\s*혜택가\s*([\d,]+)\s*원/)
+        if (benefitMatch) {
+          benefitPrice = parseInt(benefitMatch[1].replace(/,/g, ''), 10)
+        }
+
+        if (benefitPrice > 0) {
+          let name = ''
+          let salePrice = 0
+          let originalPrice = 0
+          const nameEl = document.querySelector('h2[class*="name"], [class*="prd-name"], [class*="product_name"]')
+          name = nameEl?.textContent?.trim() || document.querySelector('meta[property="og:title"]')?.content || ''
+
+          const priceMatch = bodyText.match(/([\d,]+)\s*원\s*\[\d+%\]/)
+          if (priceMatch) salePrice = parseInt(priceMatch[1].replace(/,/g, ''), 10)
+
+          const origMatch = bodyText.match(/([\d,]+)\s*원\s+([\d,]+)\s*원/)
+          if (origMatch) {
+            originalPrice = parseInt(origMatch[1].replace(/,/g, ''), 10)
+            if (!salePrice) salePrice = parseInt(origMatch[2].replace(/,/g, ''), 10)
+          }
+
+          return {
+            success: true,
+            site_product_id: prdId,
+            name,
+            original_price: originalPrice || salePrice,
+            sale_price: salePrice || benefitPrice,
+            best_benefit_price: benefitPrice,
+            images: [],
+            source_site: siteName,
+          }
+        }
+      }
+
       // ── 범용 파싱 ──
       const jsonLdScripts = document.querySelectorAll('script[type="application/ld+json"]')
       for (const script of jsonLdScripts) {

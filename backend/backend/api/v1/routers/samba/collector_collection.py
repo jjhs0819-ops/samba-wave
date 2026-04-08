@@ -2187,9 +2187,10 @@ async def brand_create_groups(
             from urllib.parse import quote as _quote
 
             _label = body.brand_name or body.brand or keyword or ""
+            _md = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
             keyword = (
                 f"https://abcmart.a-rt.com/display/search-word/result"
-                f"?searchWord={_quote(_label)}"
+                f"?searchWord={_quote(_label)}{_md}"
             )
             category_filter = code or None
         elif body.source_site == "Nike":
@@ -2206,9 +2207,10 @@ async def brand_create_groups(
             _eh = _b64.b64encode(
                 '{"part":"DEPT","selected":"opt-part"}'.encode()
             ).decode()
+            _md_gs = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
             keyword = (
                 f"https://www.gsshop.com/shop/search/main.gs"
-                f"?tq={_quote_gs(_label)}&eh={_quote_gs(_eh)}"
+                f"?tq={_quote_gs(_label)}&eh={_quote_gs(_eh)}{_md_gs}"
             )
             category_filter = code or None
         else:  # LOTTEON
@@ -2216,16 +2218,17 @@ async def brand_create_groups(
 
             _brand_label = body.brand_name or body.brand or ""
             # 롯데백화점(mallId=2) 검색 URL로 저장 (가품 방지 목적)
+            _md_lt = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
             if body.selected_brands:
                 _brands_q = _quote_lt(",".join(body.selected_brands))
                 keyword = (
                     f"https://www.lotteon.com/csearch/search/search"
-                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&mallId=2&brands={_brands_q}"
+                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&mallId=2&brands={_brands_q}{_md_lt}"
                 )
             else:
                 keyword = (
                     f"https://www.lotteon.com/csearch/search/search"
-                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&mallId=2"
+                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&mallId=2{_md_lt}"
                 )
             # 합산된 BC코드들을 콤마로 연결 (같은 path의 여러 BC코드)
             bc_codes = cat.get("bc_codes") or ([code] if code else [])
