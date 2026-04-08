@@ -215,7 +215,7 @@ class NikeClient:
         "https://api.nike.com/discover/product_wall/v1/marketplace/KR/language/ko"
         "/consumerChannelId/d9a5bc42-4b9c-4976-858a-f159cf99c647"
     )
-    PAGE_SIZE = 24
+    PAGE_SIZE = 60
 
     async def search(
         self, keyword: str, page: int = 1, max_count: int = 500

@@ -1529,6 +1529,49 @@ class JobWorker:
                     f"[잡워커] LOTTEON 상세 선취합 완료: {len(_lotteon_details)}/{len(new_items)}건 성공"
                 )
 
+        # Nike: 저장 전 10건 병렬로 상세 정보 선취합
+        _nike_details: dict[str, dict[str, Any]] = {}
+        if site == "Nike" and client:
+            new_items = [
+                it
+                for it in items_list
+                if str(it.get("site_product_id", "")) not in existing_ids
+            ][:remaining]
+            if new_items:
+                logger.info(
+                    f"[잡워커] Nike 상세 선취합 시작: {len(new_items)}건 (10건 병렬)"
+                )
+                _NK_BATCH = 10
+                for batch_start in range(0, len(new_items), _NK_BATCH):
+                    batch = new_items[batch_start : batch_start + _NK_BATCH]
+                    details = await asyncio.gather(
+                        *(
+                            client.get_detail(
+                                str(it.get("site_product_id", "")),
+                                pdp_url=it.get("url") or it.get("source_url"),
+                                base_info=it,
+                            )
+                            for it in batch
+                        ),
+                        return_exceptions=True,
+                    )
+                    for it, det in zip(batch, details):
+                        pid = str(it.get("site_product_id", ""))
+                        if isinstance(det, Exception):
+                            logger.warning(
+                                f"[잡워커] Nike 상세 선취합 실패 {pid}: {det}"
+                            )
+                            continue
+                        if det:
+                            _nike_details[pid] = det
+                    done = min(batch_start + _NK_BATCH, len(new_items))
+                    await repo.update_progress(job.id, done, len(new_items))
+                    logger.info(f"[잡워커] Nike 상세 선취합 [{done}/{len(new_items)}]")
+                    await asyncio.sleep(0.15)
+                logger.info(
+                    f"[잡워커] Nike 상세 선취합 완료: {len(_nike_details)}/{len(new_items)}건 성공"
+                )
+
         for item in items_list:
             if total_saved >= remaining:
                 break
@@ -1577,6 +1620,9 @@ class JobWorker:
             # LOTTEON: 선취합된 상세 데이터 사용
             if site == "LOTTEON" and p_id in _lotteon_details:
                 detail = _lotteon_details[p_id]
+            # Nike: 선취합된 상세 데이터 사용
+            if site == "Nike" and p_id in _nike_details:
+                detail = _nike_details[p_id]
             _skip_detail = _search_kwargs.get("_skip_detail", False)
             # ABCmart 최대혜택가: 확장앱으로 상세조회 (로그인 세션 필요)
             if (
