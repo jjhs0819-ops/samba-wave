@@ -624,6 +624,10 @@ class NikeClient:
         # 카테고리/성별
         product_type = sp.get("productType", "") or prod_data.get("productType", "")
         category1 = CAT_MAP.get(product_type, product_type)
+        # subtitle 기반 세분류 (scan_products_from_search와 동일 로직)
+        _sub_gender, _sub_cat = parse_subtitle(subtitle, product_type)
+        # parse_subtitle 실패 시 CAT_MAP fallback
+        _final_cat = _sub_cat or category1
 
         # taxonomyLabels.Gender → 이미 한국어로 제공 ("남성"/"여성"/"키즈" 등)
         taxonomy = prod_data.get("taxonomyLabels") or sp.get("taxonomyLabels") or {}
@@ -783,10 +787,10 @@ class NikeClient:
             "images": images,
             "brand": "Nike",
             "source_site": "Nike",
-            "category": " > ".join([x for x in [gender_kr, category1] if x]) or "Nike",
+            "category": " > ".join([x for x in [gender_kr, _final_cat] if x]) or "Nike",
             "category1": "Nike",
             "category2": gender_kr,
-            "category3": category1,
+            "category3": _final_cat,
             "source_url": video_url,
             "color": color,
             "origin": origin,

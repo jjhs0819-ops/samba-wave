@@ -1677,6 +1677,35 @@ class JobWorker:
                 _sourcing_ship_fee = int(detail.get("shipping_fee", 3000))
                 cost += _sourcing_ship_fee
             _style_code = detail.get("style_code") or item.get("style_code", "")
+            # Nike: scan(item)의 parse_subtitle이 더 구체적이므로 item 우선
+            # 다른 소싱처: 기존 detail 우선 로직 유지
+            if site == "Nike":
+                _cat = item.get("category") or detail.get("category") or _category1_name
+                _cat1 = item.get("category1") or detail.get("category1") or ""
+                _cat2 = item.get("category2") or detail.get("category2") or ""
+                _cat3 = item.get("category3") or detail.get("category3") or ""
+            else:
+                _cat = (
+                    detail.get("category")
+                    or _lotteon_cat
+                    or item.get("category", "")
+                    or _category1_name
+                )
+                _cat1 = (
+                    detail.get("category1")
+                    or _lotteon_cat1
+                    or item.get("category1", "")
+                )
+                _cat2 = (
+                    detail.get("category2")
+                    or _lotteon_cat2
+                    or item.get("category2", "")
+                )
+                _cat3 = (
+                    detail.get("category3")
+                    or _lotteon_cat3
+                    or item.get("category3", "")
+                )
             product_data = {
                 "source_site": site,
                 "search_filter_id": filter_id,
@@ -1698,19 +1727,10 @@ class JobWorker:
                     }
                     for o in (detail.get("options") or item.get("options", []))
                 ],
-                "category": detail.get("category")
-                or _lotteon_cat
-                or item.get("category", "")
-                or _category1_name,
-                "category1": detail.get("category1")
-                or _lotteon_cat1
-                or item.get("category1", ""),
-                "category2": detail.get("category2")
-                or _lotteon_cat2
-                or item.get("category2", ""),
-                "category3": detail.get("category3")
-                or _lotteon_cat3
-                or item.get("category3", ""),
+                "category": _cat,
+                "category1": _cat1,
+                "category2": _cat2,
+                "category3": _cat3,
                 "detail_html": detail.get("detail_html") or item.get("detail_html", ""),
                 "detail_images": detail.get("detail_images")
                 if len(detail.get("detail_images") or []) > len(images)

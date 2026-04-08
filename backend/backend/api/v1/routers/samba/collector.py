@@ -1388,6 +1388,52 @@ async def bulk_reset_registration(
     return {"reset": result.rowcount}
 
 
+@router.post("/products/fix-nike-categories")
+async def fix_nike_categories(
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """기존 Nike 상품 카테고리를 search_filter.category_filter 기반으로 보정."""
+    from backend.domain.samba.collector.model import (
+        SambaCollectedProduct,
+        SambaSearchFilter,
+    )
+
+    stmt = (
+        select(SambaCollectedProduct, SambaSearchFilter.category_filter)
+        .join(
+            SambaSearchFilter,
+            SambaCollectedProduct.search_filter_id == SambaSearchFilter.id,
+        )
+        .where(SambaCollectedProduct.source_site == "Nike")
+    )
+    rows = (await session.execute(stmt)).all()
+
+    updated = 0
+    for product, cat_filter in rows:
+        if not cat_filter:
+            continue
+        # "남성_러닝화" → cat2="남성", cat3="러닝화"
+        # "가방" (언더스코어 없음) → cat2="", cat3="가방"
+        parts = cat_filter.split("_", 1)
+        if len(parts) == 2:
+            cat2, cat3 = parts
+        else:
+            cat2, cat3 = "", parts[0]
+        new_category = " > ".join([x for x in [cat2, cat3] if x])
+        if product.category != new_category:
+            product.category = new_category
+            product.category2 = cat2
+            product.category3 = cat3
+            session.add(product)
+            updated += 1
+
+    await session.commit()
+    # category-tree 캐시 무효화
+    await cache.delete("products:category-tree")
+    await cache.delete("products:counts")
+    return {"updated": updated, "total": len(rows)}
+
+
 @router.post("/products/bulk-update-tags")
 async def bulk_update_tags(
     body: BulkTagUpdateRequest,
