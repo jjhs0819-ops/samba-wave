@@ -1207,11 +1207,14 @@ async function fetchLotteonBenefitPrice(productId, sitmNo) {
 // ABCmart/GrandStage: 쿠키 기반 info API 직접 호출로 혜택가 수집 (탭 불필요)
 async function fetchAbcmartBenefitPrice(productId, site) {
   try {
-    // 1. a-rt.com 쿠키 수집 (url 기반 — www.a-rt.com 쿠키 정확히 매칭)
-    const cookies = await chrome.cookies.getAll({ url: 'https://www.a-rt.com' })
+    // 1. a-rt.com 쿠키 수집 — 여러 도메인 패턴 시도
+    let cookies = await chrome.cookies.getAll({ url: 'https://www.a-rt.com' })
+    if (!cookies.length) cookies = await chrome.cookies.getAll({ domain: '.a-rt.com' })
+    if (!cookies.length) cookies = await chrome.cookies.getAll({ domain: 'www.a-rt.com' })
+    if (!cookies.length) cookies = await chrome.cookies.getAll({ domain: 'a-rt.com' })
     const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ')
     const hasSession = cookies.some(c => c.name === 'JSESSIONID')
-    console.log(`[${site}] maxBenefitCoupon 조회 시작: ${productId}, 쿠키=${cookies.length}개, JSESSIONID=${hasSession}`)
+    console.log(`[${site}] maxBenefitCoupon 조회: ${productId}, 쿠키=${cookies.length}개, JSESSIONID=${hasSession}, domains=${[...new Set(cookies.map(c => c.domain))].join(',')}`)
 
     if (!cookieStr || !hasSession) {
       console.log(`[${site}] maxBenefitCoupon: 쿠키/세션 없음 → DOM 폴백 (${productId})`)
