@@ -106,10 +106,6 @@ export default function OrdersPage() {
   const [priceHistoryData, setPriceHistoryData] = useState<Record<string, unknown>[]>([])
   const [priceHistoryProduct, setPriceHistoryProduct] = useState<{ name: string; source_site: string }>({ name: '', source_site: '' })
 
-  const [sellerCancelModal, setSellerCancelModal] = useState<{ id: string; orderNumber: string } | null>(null)
-  const [sellerCancelReason, setSellerCancelReason] = useState('135')
-  const [sellerCancelText, setSellerCancelText] = useState('품절')
-  const [sellerCancelSaving, setSellerCancelSaving] = useState(false)
   const [showUrlModal, setShowUrlModal] = useState(false)
   const [urlModalOrderId, setUrlModalOrderId] = useState('')
   const [urlModalInput, setUrlModalInput] = useState('')
@@ -321,45 +317,6 @@ export default function OrdersPage() {
     catch (e) { showAlert(e instanceof Error ? e.message : '삭제 실패', 'error') }
   }
 
-  const handleConfirmOrder = async (id: string) => {
-    try {
-      const res = await orderApi.confirmOrder(id)
-      if (res.ok) {
-        showAlert('주문확인 완료', 'success')
-        loadOrders()
-      } else {
-        showAlert(res.message || '주문확인 실패', 'error')
-      }
-    } catch (e) {
-      showAlert(e instanceof Error ? e.message : '주문확인 실패', 'error')
-    }
-  }
-
-  const openSellerCancelModal = (id: string, orderNumber: string) => {
-    setSellerCancelReason('135')
-    setSellerCancelText('품절')
-    setSellerCancelModal({ id, orderNumber })
-  }
-
-  const handleSellerCancelSubmit = async () => {
-    if (!sellerCancelModal) return
-    setSellerCancelSaving(true)
-    try {
-      const res = await orderApi.sellerCancel(sellerCancelModal.id, sellerCancelReason, sellerCancelText)
-      if (res.ok) {
-        showAlert(`취소 완료: ${res.detail || res.message}`, 'success')
-        setSellerCancelModal(null)
-        loadOrders()
-      } else {
-        showAlert(res.message || '취소 실패', 'error')
-      }
-    } catch (e) {
-      showAlert(e instanceof Error ? e.message : '판매자 취소 실패', 'error')
-    } finally {
-      setSellerCancelSaving(false)
-    }
-  }
-
   // 원가 인라인 저장
   const handleCostSave = async (id: string) => {
     const val = editingCosts[id]
@@ -449,8 +406,17 @@ export default function OrdersPage() {
       window.open(sourcingUrls[o.source_site] + idMatch[1], '_blank')
       return
     }
-    // source_site가 명시적으로 알려진 경우에만 추정 (잘못된 사이트로 보내는 위험 방지)
-    showAlert('소싱처 원문링크 정보가 없습니다. "미등록 입력"으로 URL을 등록해주세요.', 'info')
+    // source_site 없어도 상품명 패턴으로 소싱처 추론
+    if (idMatch) {
+      const id = idMatch[1]
+      if (name.includes('운동화') || name.includes('나이키') || name.includes('아디다스')) {
+        window.open('https://www.fashionplus.co.kr/goods/detail/' + id, '_blank')
+        return
+      }
+      window.open('https://www.musinsa.com/products/' + id, '_blank')
+      return
+    }
+    showAlert('소싱처 원문링크 정보가 없습니다', 'info')
   }
   const handleMarketLink = (o: SambaOrder) => {
     const acc = accounts.find(a => a.id === o.channel_id)
@@ -614,7 +580,7 @@ export default function OrdersPage() {
     }
     if (statusFilter) {
       if (statusFilter === 'active') {
-        if (!['pending', 'wait_ship', 'arrived', 'ship_failed', 'shipping', 'delivered'].includes(o.status)) return false
+        if (!['pending', 'wait_ship', 'arrived'].includes(o.status)) return false
       } else if (o.status !== statusFilter) return false
     }
     if (inputFilter) {
@@ -874,11 +840,8 @@ export default function OrdersPage() {
               const liveProfitRate = calcProfitRate(o)
               const activeAction = activeActions[o.id] || null
 
-              const isExchanging = !!(o.shipping_status?.includes('교환'))
-              const isReturning = !!(o.shipping_status?.includes('반품') || o.status === 'return_requested')
-
               return (
-                <tr key={o.id} style={{ borderBottom: '1px solid #1C2333', verticalAlign: 'top', background: isExchanging ? 'rgba(76,154,255,0.05)' : isReturning ? 'rgba(200,100,200,0.05)' : undefined }}>
+                <tr key={o.id} style={{ borderBottom: '1px solid #1C2333', verticalAlign: 'top' }}>
                   {/* 체크박스 */}
                   <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center', borderRight: '1px solid #1C2333' }}>
                     <input type="checkbox" style={{ accentColor: '#F59E0B' }} />
@@ -889,8 +852,6 @@ export default function OrdersPage() {
                     <div style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{ fontSize: '0.72rem', color: '#555' }}>{new Date(o.created_at).toLocaleDateString('ko-KR')} {new Date(o.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
-                        <button onClick={() => handleConfirmOrder(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#14532D', border: '1px solid #16A34A', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>주문확인</button>
-                        <button onClick={() => openSellerCancelModal(o.id, o.order_number || '')} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#7C2D12', border: '1px solid #EA580C', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>판매자취소</button>
                         <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
                       </div>
                       <span style={{ fontSize: '2.25rem', fontWeight: 700, color: '#888' }}>수량: <span style={{ color: '#E5E5E5' }}>{o.quantity}</span></span>
@@ -902,20 +863,18 @@ export default function OrdersPage() {
                         <img
                           src={o.product_image}
                           alt=""
-                          onClick={() => handleSourceLink(o)}
+                          onClick={() => handleImageClick(o)}
                           style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer' }}
                         />
                       ) : (
                         <div
-                          onClick={() => handleSourceLink(o)}
+                          onClick={() => handleImageClick(o)}
                           style={{ width: '100px', height: '100px', background: '#1A1A1A', borderRadius: '6px', border: '1px solid #2D2D2D', display: 'flex', alignItems: 'center', justifyContent: 'center', color: o.product_id?.startsWith('http') ? '#4C9AFF' : '#444', fontSize: '0.75rem', flexShrink: 0, cursor: o.product_id?.startsWith('http') ? 'pointer' : 'default', textDecoration: o.product_id?.startsWith('http') ? 'underline' : 'none' }}
                         >{o.product_id?.startsWith('http') ? '링크이동' : 'No IMG'}</div>
                       )}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
                           <span style={{ fontSize: '0.75rem', color: '#888', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
-                          {isExchanging && <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#4C9AFF', background: 'rgba(76,154,255,0.15)', padding: '0.1rem 0.45rem', borderRadius: '4px', border: '1px solid rgba(76,154,255,0.4)' }}>교환중</span>}
-                          {isReturning && !isExchanging && <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#CC5DE8', background: 'rgba(200,100,200,0.15)', padding: '0.1rem 0.45rem', borderRadius: '4px', border: '1px solid rgba(200,100,200,0.4)' }}>반품중</span>}
                           <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '4px', color: '#4C9AFF', cursor: 'pointer' }}>주문번호복사</button>
                           <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>SMS</button>
                           <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'rgba(255,211,61,0.1)', border: '1px solid rgba(255,211,61,0.3)', borderRadius: '4px', color: '#FFD93D', cursor: 'pointer' }}>KAKAO</button>
@@ -929,7 +888,7 @@ export default function OrdersPage() {
                         </div>
                         {/* 상품명 + 옵션 */}
                         <div style={{ minWidth: 0 }}>
-                          <span onClick={() => handleSourceLink(o)} style={{ color: '#C5C5C5', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', cursor: 'pointer' }}>{o.product_name || '-'}</span>
+                          <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{o.product_name || '-'}</span>
                           {o.product_option && (
                             <span style={{ color: '#FF8C00', fontSize: '0.75rem', display: 'block', marginTop: '0.125rem' }}>[옵션] {o.product_option}</span>
                           )}
@@ -1039,14 +998,7 @@ export default function OrdersPage() {
                           }
                         } catch (e) { showAlert(e instanceof Error ? e.message : '업데이트 실패', 'error') }
                       }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>업데이트</button>
-                      <button onClick={async () => {
-                        if (!await showConfirm(`마켓에서 이 상품을 완전 삭제합니다.\n(판매중지가 아닌 삭제)\n\n${o.product_name || ''}\n진행할까요?`)) return
-                        try {
-                          const res = await orderApi.marketDelete(o.id)
-                          if (res.ok) { showAlert('마켓 상품 삭제 완료', 'success'); loadOrders() }
-                          else showAlert(res.message || '마켓상품삭제 실패', 'error')
-                        } catch (e) { showAlert(e instanceof Error ? e.message : '마켓상품삭제 실패', 'error') }
-                      }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>마켓상품삭제</button>
+                      <button onClick={() => showAlert('마켓상품삭제 기능 준비중입니다', 'info')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}>마켓상품삭제</button>
                       <button onClick={() => {
                         if (o.ext_order_number) { window.open(o.ext_order_number, '_blank'); return }
                         const srcNo = o.sourcing_order_number || ''
@@ -1242,23 +1194,10 @@ export default function OrdersPage() {
                             const co = e.target.value
                             const tn = (document.getElementById(`ship-tn-${o.id}`) as HTMLInputElement)?.value.trim() || ''
                             const alreadyShipped = o.shipping_status === '송장전송완료'
-                            const orderAcc = accounts.find(a => a.id === o.channel_id)
-                            const isLotteon = orderAcc?.market_type === 'lotteon'
                             if (co && tn && alreadyShipped) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                              if (isLotteon) {
-                                // 롯데ON은 송장 수정 시 발송처리 API 재호출
-                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 롯데ON 송장 재전송 중... (${co} ${tn})`])
-                                try {
-                                  const res = await orderApi.shipOrder(o.id, co, tn)
-                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
-                                } catch {
-                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 롯데ON 송장 재전송 실패`])
-                                }
-                              } else {
-                                try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
-                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
-                              }
+                              try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
+                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
                               loadOrders()
                             } else if (co && tn) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -1297,24 +1236,11 @@ export default function OrdersPage() {
                             const changed = tn !== (o.tracking_number || '')
                             const retry = o.status === 'ship_failed'
                             const alreadyShipped = o.shipping_status === '송장전송완료'
-                            const orderAcc2 = accounts.find(a => a.id === o.channel_id)
-                            const isLotteon2 = orderAcc2?.market_type === 'lotteon'
                             if (co && tn && changed && alreadyShipped) {
-                              // 이미 발송된 주문 수정
+                              // 이미 발송된 주문 — DB만 저장, 마켓 수정은 판매자센터에서
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                              if (isLotteon2) {
-                                // 롯데ON은 발송처리 API 재호출
-                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 롯데ON 송장 재전송 중... (${co} ${tn})`])
-                                try {
-                                  const res = await orderApi.shipOrder(o.id, co, tn)
-                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} ${res.message}`])
-                                } catch {
-                                  setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 롯데ON 송장 재전송 실패`])
-                                }
-                              } else {
-                                try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
-                                setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
-                              }
+                              try { await orderApi.update(o.id, { shipping_company: co, tracking_number: tn }) } catch { /* ignore */ }
+                              setLogMessages(prev => [...prev, `[${ts()}] ${o.order_number} 송장 수정 저장완료 (${co} ${tn}) — 스마트스토어는 송장수정 API를 지원하지 않습니다. 판매자센터에서 직접 수정해주세요.`])
                               loadOrders()
                             } else if (co && tn && (changed || retry)) {
                               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -1406,58 +1332,6 @@ export default function OrdersPage() {
       )}
 
       {/* 미등록 입력 URL 모달 */}
-      {sellerCancelModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '480px', maxWidth: '90vw' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-              <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5' }}>판매자 주문 취소</h3>
-              <button onClick={() => setSellerCancelModal(null)} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
-            </div>
-            <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '1rem' }}>
-              주문번호: <span style={{ color: '#E5E5E5', fontFamily: 'monospace' }}>{sellerCancelModal.orderNumber}</span>
-              <br />
-              취소 사유를 선택하고 상세 내용을 입력하세요. 롯데ON에 즉시 취소 요청이 전송됩니다.
-            </p>
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.375rem', display: 'block' }}>취소 사유</label>
-              <select
-                value={sellerCancelReason}
-                onChange={e => setSellerCancelReason(e.target.value)}
-                style={{ width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem', background: '#0F0F0F', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', cursor: 'pointer' }}
-              >
-                <option value="135">고객요청 (고객변심)</option>
-                <option value="111">품절</option>
-                <option value="132">가격 오등록</option>
-                <option value="133">리셀러 주문</option>
-                <option value="137">택배지원 불가</option>
-              </select>
-            </div>
-            <div style={{ marginBottom: '1.25rem' }}>
-              <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.375rem', display: 'block' }}>상세 사유 <span style={{ color: '#555' }}>(선택)</span></label>
-              <input
-                type="text"
-                placeholder="예: 품절로 인한 취소"
-                value={sellerCancelText}
-                onChange={e => setSellerCancelText(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleSellerCancelSubmit() }}
-                style={{ width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem', background: '#0F0F0F', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5' }}
-                autoFocus
-              />
-            </div>
-            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-              <button onClick={() => setSellerCancelModal(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>닫기</button>
-              <button
-                onClick={handleSellerCancelSubmit}
-                disabled={sellerCancelSaving}
-                style={{ padding: '0.625rem 1.25rem', background: sellerCancelSaving ? '#555' : '#EA580C', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: sellerCancelSaving ? 'not-allowed' : 'pointer' }}
-              >
-                {sellerCancelSaving ? '처리중...' : '취소 실행'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {showUrlModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
           <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '520px', maxWidth: '90vw' }}>
@@ -1673,14 +1547,12 @@ export default function OrdersPage() {
             {/* 빠른 템플릿 카드 */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.75rem' }}>
               {[
-                { label: '발주 후 품절', msg: '{{marketName}} 품절안내\n주문상품: {{goodsName}}\n안녕하세요 {{rvcName}} 고객님 저희가 해당 상품 발주를 넣었는데\n공급처에서 품절로 연락받아 문자드립니다.\n오래기다리셨는데 정말 죄송합니다. 빠른 환불 도와드리겠습니다.\n불편을 드려 죄송합니다.' },
-                { label: '반품안내문자', msg: '{{marketName}} 반품 안내\n주문상품: {{goodsName}}\n안녕하세요, {{rvcName}} 고객님\n반품신청으로 문자안내드립니다.\n상품 문앞에 놔둬주시고 문자로 고객님 성함과 함께 답변주시면 기사님 배정하여\n수거후 빠르게 환불도와드리겠습니다. 답변시 꼭 성함과함께 답변부탁드립니다. 감사합니다.' },
-                { label: '반품비', msg: '{{marketName}} 반품비 안내\n상품명: {{goodsName}}\n은행명: 카카오뱅크\n계좌번호: 3333-21-3371166\n예금주: 손혜진\n금액: 10,000원\n위 계좌로 반품비용을 입금해주시면 반품 승인 진행도와드리겠습니다. 입금후 문자부탁드립니다.\n반품비 입금확인후 수거택배사 방문 예정입니다.' },
-                { label: '단순변심(쿠팡)', msg: '{{marketName}} 주문 관련 안내드립니다.\n주문상품: {{goodsName}}\n안녕하세요, {{rvcName}} 고객님.\n해당 상품이 일시적으로 시스템 오류로 노출되어 주문이 접수된 것으로 확인되었습니다.\n불편을 드려 정말 죄송합니다.\n빠른 환불처리를 위해 "단순변심" 사유로 출고중지(취소 요청)해주시면\n확인후 바로 환불을 도와드리겠습니다.\n다른 사유로 신청하실 경우, 쿠팡 측 시스템 검수 과정이 필요해\n환불까지 1주일 이상 지연되거나 추가 확인 요청을 받으실수 있습니다.\n빠른 처리를 위해 꼭 "단순변심"으로 신청부탁드립니다.\n불편을 드려 진심으로 죄송하며, 더 나은 서비스로 보답드리겠습니다. 감사합니다.' },
-                { label: '단순변심 (g마켓)', msg: '{{marketName}} 시스템오류안내\n주문상품: {{goodsName}}\n안녕하세요 {{rvcName}} 고객님, 해당 제품은 저희가 삭제하였는데\nG마켓 오류라 삭제가 되지않았습니다. 불편을 드려 죄송합니다.\n죄송하지만 취소신청 부탁드리겠습니다.\n하실때 구매자귀책으로 신청하시면 바로 환불이 가능합니다.\n다른 사유로 하실경우 저희가 G마켓에 오류 문의를 해야해서 취소처리가 오래걸릴수있으니.\n이점 유의해서 취소신청부탁드립니다. 불편을 드려 죄송합니다.' },
-                { label: '지마켓,쿠팡제외 품절', msg: '{{marketName}} 옵션 부재 안내\n주문상품: {{goodsName}}\n안녕하세요, {{rvcName}} 고객님\n주문하신 상품의 옵션이 공급처 사정으로 인해 배송이 불가하게 되었습니다.\n불편을 드려 진심으로 죄송합니다.' },
-                { label: '가격변동 취소', msg: '{{marketName}} 가격변동안내\n주문상품: {{goodsName}}\n안녕하세요 {{rvcName}} 고객님\n해당 제품은 공급처에서 가격을 인상하여 발송이 어려울거같습니다.\n가격업데이트가 늦은점 정말 죄송합니다.\n해당 주문 취소도와드리겠습니다.\n다시 한번 정말 죄송합니다.' },
-                { label: '국내상품 발주안내', msg: '{{marketName}}주문상품 발주 완료\n주문상품: {{goodsName}}\n안녕하세요 {{rvcName}} 고객님 ^^ 발주 완료되었습니다.\n배송완료까지 영업일 기준 2~3일 소요됩니다.\n빠른배송 할수있도록 노력하겠습니다. 감사합니다.' },
+                { label: '주문취소안내', msg: '{{marketName}} 주문취소안내\n주문상품 : {{goodsName}}\n\n안녕하세요, {{rvcName}} 고객님.\n\n해당 상품이 일시적으로 시스템 오류로 노출되어 주문이 접수된 것으로 확인되었습니다.\n\n불편을 드려 정말 죄송합니다.\n\n빠른 환불 처리를 위해 "단순취소" 사유로 주문취소 해주시면 확인 후 바로 환불도와드리겠습니다.\n\n불편을 드려 진심으로 죄송하며, 더 나은 서비스로 보답드리겠습니다. 감사합니다.' },
+                { label: '가격변동 취소', msg: '{{marketName}} 가격변동 안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님\n\n해당 제품 공급처에서 가격을 변동하여 안내드립니다.\n취소 후 재주문 부탁드립니다.' },
+                { label: '국내상품 발주안내', msg: '{{marketName}} 주문상품 발주 완료\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님^^ 발주 완료되었습니다. 배송완료까지 영업일기준 2~3일정도 소요됩니다.' },
+                { label: '반품비', msg: '{{marketName}} 반품비 안내\n상품명 : {{goodsName}}\n\n반품비 안내드립니다.\n교환비용 8,000원 발생(고객변심)하므로 따로 개별 문자 안내드리겠습니다.' },
+                { label: '반품안내문자', msg: '{{marketName}} 반품 안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님\n반품신청으로 무자안내드립니다.\n교환 접수시 회수기사님 방문2-3일내 이루어지며 회수된 상품 해당부서로 이동하여 검수진행과정 진행됩니다.' },
+                { label: '발주 후 품절', msg: '{{marketName}} 품절안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님. 저희가 해당 제품 발주를 넣었는데 공급처에서 품절이라고 연락이 왔습니다.\n취소 처리 도와드리겠습니다.' },
               ].map(t => (
                 <div
                   key={t.label}
