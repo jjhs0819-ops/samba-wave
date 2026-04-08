@@ -265,6 +265,17 @@ export default function ProductsPage() {
 
   useEffect(() => { load() }, [load])
 
+  // 드롭다운 필터/정렬 변경 시 그룹 필터 자동 해제
+  const groupClearInitRef = useRef(true)
+  useEffect(() => {
+    if (groupClearInitRef.current) { groupClearInitRef.current = false; return }
+    if (filterByGroupId) {
+      setFilterByGroupId("")
+      setFilterGroupName("")
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteFilter, statusFilter, aiFilter, sortBy])
+
   // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화 (디바운싱 300ms, 초기 로드 제외)
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const filterInitRef = useRef(true)
@@ -317,7 +328,8 @@ export default function ProductsPage() {
     // highlight + 그룹 필터 무조건 해제
     if (highlightProductId) setHighlightProductId("")
     if (filterByGroupId) {
-      router.replace('/samba/products')
+      setFilterByGroupId("")
+      setFilterGroupName("")
     }
     setCurrentPage(1)
   };
