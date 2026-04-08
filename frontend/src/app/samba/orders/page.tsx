@@ -1,8 +1,8 @@
 'use client'
 
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, fetchWithAuth, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
+import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, forbiddenApi, fetchWithAuth, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { inputStyle } from '@/lib/samba/styles'
@@ -167,12 +167,29 @@ export default function OrdersPage() {
     setLoading(false)
   }, [pageSize])
 
+  // 플레이오토 마켓번호 별칭 매핑
+  const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
   useEffect(() => { loadOrders() }, [loadOrders])
   useEffect(() => { channelApi.list().then(setChannels).catch(() => {}) }, [])
   useEffect(() => { accountApi.listActive().then(setAccounts).catch(() => {}) }, [])
   useEffect(() => { sourcingAccountApi.list().then(accs => setSourcingAccounts(accs.filter(a => a.is_active))).catch(() => {}) }, [])
   useEffect(() => {
     proxyApi.aligoRemain().then(r => { if (r.success) setSmsRemain(r) }).catch(() => {})
+  }, [])
+  useEffect(() => {
+    forbiddenApi.getSetting('store_playauto').then(data => {
+      const d = data as Record<string, string> | null
+      if (!d) return
+      const map: Record<string, string> = {}
+      for (const k of ['alias1', 'alias2', 'alias3']) {
+        const v = d[k] || ''
+        if (v.includes('-')) {
+          const [code, ...rest] = v.split('-')
+          map[code.trim()] = rest.join('-').trim()
+        }
+      }
+      setSiteAliasMap(map)
+    }).catch(() => {})
   }, [])
 
   const handleFetch = async () => {
@@ -434,19 +451,46 @@ export default function OrdersPage() {
     const storeSlug = (acc?.additional_fields as Record<string, string> | undefined)?.storeSlug || ''
     const productNo = o.product_id || ''
 
-    // 마켓 상품번호가 있으면 구매페이지 직접 이동
+    // 마켓 상품번호 → 구매페이지 직접 이동
+    const urlMap: Record<string, string> = {
+      smartstore: `https://smartstore.naver.com/${storeSlug || sellerId}/products/${productNo}`,
+      coupang: `https://www.coupang.com/vp/products/${productNo}`,
+      '11st': `https://www.11st.co.kr/products/${productNo}`,
+      gmarket: `https://item.gmarket.co.kr/Item?goodscode=${productNo}`,
+      auction: `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${productNo}`,
+      ssg: `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`,
+      lotteon: `https://www.lotteon.com/p/product/${productNo}`,
+      kream: `https://kream.co.kr/products/${productNo}`,
+      ebay: `https://www.ebay.com/itm/${productNo}`,
+    }
+
     if (productNo) {
-      const urlMap: Record<string, string> = {
-        smartstore: `https://smartstore.naver.com/${storeSlug || sellerId}/products/${productNo}`,
-        coupang: `https://www.coupang.com/vp/products/${productNo}`,
-        '11st': `https://www.11st.co.kr/products/${productNo}`,
-        gmarket: `https://item.gmarket.co.kr/Item?goodscode=${productNo}`,
-        auction: `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${productNo}`,
-        ssg: `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`,
-        lotteon: `https://www.lotteon.com/p/product/${productNo}`,
-        kream: `https://kream.co.kr/products/${productNo}`,
-        ebay: `https://www.ebay.com/itm/${productNo}`,
+      // 플레이오토: source_site에서 실제 판매처 추출 → 해당 마켓 URL 사용
+      if (marketType === 'playauto' && o.source_site) {
+        const site = o.source_site.split('(')[0]
+        const siteUrlMap: Record<string, (no: string) => string> = {
+          'GS이숍': (no) => `https://www.gsshop.com/prd/prd.gs?prdid=${no}`,
+          'G마켓': (no) => `https://item.gmarket.co.kr/Item?goodscode=${no}`,
+          '옥션': (no) => `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${no}`,
+          '11번가': (no) => `https://www.11st.co.kr/products/${no}`,
+          '스마트스토어': (no) => `https://smartstore.naver.com/search?q=${encodeURIComponent(no)}`,
+          '쿠팡': (no) => `https://www.coupang.com/vp/products/${no}`,
+          'SSG': (no) => `https://www.ssg.com/item/itemView.ssg?itemId=${no}`,
+          '롯데ON': (no) => `https://www.lotteon.com/p/product/${no}`,
+          '롯데온': (no) => `https://www.lotteon.com/p/product/${no}`,
+          '롯데홈쇼핑': (no) => `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${no}`,
+          '롯데아이몰': (no) => `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${no}`,
+          '홈앤쇼핑': (no) => `https://www.hmall.com/p/pda/itemPtc.do?slitmCd=${no}`,
+          'HMALL': (no) => `https://www.hmall.com/p/pda/itemPtc.do?slitmCd=${no}`,
+        }
+        const builder = siteUrlMap[site]
+        if (builder) {
+          // 플레이오토 ProdCode = 마켓상품번호 + 사이트코드(3자리) → 뒤 3자리 제거
+          const cleanNo = productNo.length > 3 ? productNo.slice(0, -3) : productNo
+          window.open(builder(cleanNo), '_blank'); return
+        }
       }
+
       const url = urlMap[marketType]
       if (url) { window.open(url, '_blank'); return }
     }
@@ -895,6 +939,11 @@ export default function OrdersPage() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
                           <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>{o.channel_name || '마켓'}</span>
+                          {o.source_site && <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D' }}>{(() => {
+                            const m = o.source_site.match(/^(.+)\(([^)]+)\)$/)
+                            if (m && siteAliasMap[m[2]]) return `${m[1]}(${siteAliasMap[m[2]]})`
+                            return o.source_site
+                          })()}</span>}
                           <button onClick={() => handleCopyOrderNumber(o.order_number)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>주문번호복사</button>
                           <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>SMS</button>
                           <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>KAKAO</button>
