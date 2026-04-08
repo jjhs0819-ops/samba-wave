@@ -869,15 +869,25 @@ class ARTSourcingClient:
         if original_price == 0:
             original_price = sale_price
 
-        # 최대혜택가: 쿠폰 할인 적용 (maxBenefitCoupon > coupon 순)
+        # 최대혜택가: 쿠폰 할인 + 멤버십 상시 할인 적용
         _benefit_coupons = data.get("maxBenefitCoupon") or data.get("coupon") or []
         _coupon_discount = max(
             (self._safe_int(c.get("dscntAmt", 0)) for c in _benefit_coupons),
             default=0,
         )
-        best_benefit_price = (
-            (sale_price - _coupon_discount) if _coupon_discount > 0 else sale_price
+        _after_coupon = (
+            sale_price - _coupon_discount if _coupon_discount > 0 else sale_price
         )
+
+        # 멤버십 상시 할인 (alwaysDscntRate: 쿠폰 후 가격 기준, 100원 단위 반올림)
+        _always_rate = float(data.get("alwaysDscntRate") or 0)
+        _membership_discount = (
+            round(_after_coupon * _always_rate / 100 / 100) * 100
+            if _always_rate > 0
+            else 0
+        )
+
+        best_benefit_price = _after_coupon - _membership_discount
         if best_benefit_price <= 0 or best_benefit_price > sale_price:
             best_benefit_price = sale_price
 

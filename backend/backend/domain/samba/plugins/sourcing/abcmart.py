@@ -161,33 +161,10 @@ class AbcMartPlugin(SourcingPlugin):
             is_sold_out = detail.get("isOutOfStock", False)
             best_benefit_price = detail.get("bestBenefitPrice", 0)
 
-            # 확장앱으로 실제 최대혜택가 조회 (사이트 표시 가격 = 가장 신뢰)
-            # API maxBenefitCoupon은 적립금 등을 포함하여 실제보다 낮을 수 있으므로
-            # 확장앱 값을 항상 우선 사용하고, 실패 시에만 API 값으로 폴백
-            try:
-                import asyncio
-
-                from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
-
-                _drid, _dfut = SourcingQueue.add_detail_job(
-                    self.site_name, site_product_id
-                )
-                _ext = await asyncio.wait_for(_dfut, timeout=30)
-                if _ext and _ext.get("success"):
-                    _ext_bbp = int(_ext.get("best_benefit_price", 0) or 0)
-                    if _ext_bbp > 0:
-                        logger.info(
-                            f"[ABCmart] 확장앱 최대혜택가 채택: {site_product_id} → {_ext_bbp:,}원 (API {best_benefit_price:,}원)"
-                        )
-                        best_benefit_price = _ext_bbp
-            except asyncio.TimeoutError:
-                logger.debug(
-                    f"[ABCmart] 확장앱 최대혜택가 타임아웃: {site_product_id} (API값 {best_benefit_price:,}원 사용)"
-                )
-            except Exception as _ext_err:
-                logger.debug(
-                    f"[ABCmart] 확장앱 최대혜택가 실패: {site_product_id} — {_ext_err}"
-                )
+            # API에서 쿠폰+멤버십 모두 계산하므로 확장앱 불필요
+            logger.info(
+                f"[ABCmart] API 최대혜택가: {site_product_id} → {best_benefit_price:,}원"
+            )
 
             # 옵션 데이터 변환
             new_options = None
