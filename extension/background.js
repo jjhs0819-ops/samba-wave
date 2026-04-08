@@ -1192,6 +1192,71 @@ function pollSourcingOnce() {
   return pollOnce('sourcing/collect-queue', handleSourcingJob, '소싱', 'url')
 }
 
+// 롯데ON: 쿠키 포함 pbf API 직접 호출로 혜택가 수집 (탭 불필요)
+async function fetchLotteonBenefitPrice(productId) {
+  try {
+    // 1. lotteon.com 쿠키 수집
+    const cookies = await chrome.cookies.getAll({ domain: '.lotteon.com' })
+    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ')
+    if (!cookieStr) {
+      console.log('[LOTTEON] 쿠키 없음 — pbf 혜택가 스킵')
+      return null
+    }
+
+    // 2. 상품 HTML에서 sitmNo 추출 (pbf API에 필요)
+    const pageResp = await fetch(`https://www.lotteon.com/product/productDetail.lotte?spdNo=${productId}`, {
+      headers: { 'Cookie': cookieStr, 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    })
+    const pageHtml = await pageResp.text()
+    const sitmMatch = pageHtml.match(/"sitmNo"\s*:\s*"([A-Z]{2}\d+_\d+)"/)
+    if (!sitmMatch) {
+      console.log('[LOTTEON] sitmNo 추출 실패')
+      return null
+    }
+    const sitmNo = sitmMatch[1]
+
+    // 3. pbf API 호출 (쿠키 포함 → immdDcAplyTotAmt에 실제 할인금액 반영)
+    const pbfResp = await fetch(`https://pbf.lotteon.com/product/v2/detail/search/base/sitm/${sitmNo}`, {
+      headers: {
+        'Cookie': cookieStr,
+        'Accept': 'application/json, text/plain, */*',
+        'Origin': 'https://www.lotteon.com',
+        'Referer': 'https://www.lotteon.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      }
+    })
+    const pbfData = await pbfResp.json()
+    const data = pbfData.data || {}
+    const priceInfo = data.priceInfo || {}
+    const slPrc = parseInt(priceInfo.slPrc || 0)
+    const immdDc = parseInt(priceInfo.immdDcAplyTotAmt || 0)
+    const adtnDc = parseInt(priceInfo.adtnDcAplyTotAmt || 0)
+
+    let benefitPrice = 0
+    let salePrice = slPrc
+    if (slPrc > 0 && (immdDc > 0 || adtnDc > 0)) {
+      benefitPrice = slPrc - immdDc - adtnDc
+      if (benefitPrice <= 0 || benefitPrice >= slPrc) benefitPrice = 0
+    }
+
+    console.log(`[LOTTEON] pbf 혜택가: ${productId} slPrc=${slPrc}, immdDc=${immdDc}, adtnDc=${adtnDc}, benefit=${benefitPrice}`)
+
+    if (benefitPrice > 0) {
+      return {
+        success: true,
+        site_product_id: productId,
+        sale_price: salePrice,
+        best_benefit_price: benefitPrice,
+        source_site: 'LOTTEON',
+      }
+    }
+    return null // 혜택가 없으면 null → DOM 폴백
+  } catch (err) {
+    console.error('[LOTTEON] pbf 혜택가 실패:', err.message)
+    return null
+  }
+}
+
 // 소싱 작업 처리 — 탭 열기 → DOM 파싱 → 결과 전송
 async function handleSourcingJob(job) {
   let tabId = null
@@ -1315,6 +1380,13 @@ async function handleSourcingJob(job) {
       result = { success: true, products: allProducts.slice(0, maxCount), total: allProducts.length }
     } else if (job.type === 'search') {
       result = await extractSearchResults(tabId, job.site, job.maxCount || 999)
+    } else if (job.type === 'detail' && job.site === 'LOTTEON') {
+      // 롯데ON: 쿠키 포함 pbf API 직접 호출로 혜택가 수집 (탭 DOM 불필요)
+      result = await fetchLotteonBenefitPrice(job.productId)
+      if (!result || !result.success) {
+        // pbf 실패 시 DOM 파싱 폴백
+        result = await extractDetailData(tabId, job.site, job.productId)
+      }
     } else if (job.type === 'detail') {
       result = await extractDetailData(tabId, job.site, job.productId)
     }
