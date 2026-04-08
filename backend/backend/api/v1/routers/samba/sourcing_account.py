@@ -208,6 +208,42 @@ async def delete_sourcing_account(
     return {"ok": True}
 
 
+class SyncMembershipRequest(BaseModel):
+    site_name: str
+    membership_rate: float
+    membership_grade: str = ""
+
+
+@router.post("/sync-membership")
+async def sync_membership_from_extension(
+    body: SyncMembershipRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """확장앱에서 멤버십 등급 수신 → 소싱처 계정에 저장 + 캐시 갱신."""
+    from backend.domain.samba.proxy.abcmart import ARTSourcingClient
+
+    svc = _write_service(session)
+    accounts = await svc.list_accounts(site_name=body.site_name)
+
+    for account in accounts:
+        extra = dict(account.additional_fields or {})
+        extra["membership_rate"] = body.membership_rate
+        extra["membership_grade"] = body.membership_grade
+        await svc.repo.update_async(account.id, additional_fields=extra)
+
+    # 인메모리 캐시 갱신
+    ARTSourcingClient.set_membership_rate(body.membership_rate)
+
+    logger.info(
+        f"[멤버십동기화] {body.site_name}: {body.membership_grade} ({body.membership_rate}%)"
+    )
+    return {
+        "ok": True,
+        "rate": body.membership_rate,
+        "grade": body.membership_grade,
+    }
+
+
 class SyncBalanceRequest(BaseModel):
     money: float = 0
     mileage: float = 0

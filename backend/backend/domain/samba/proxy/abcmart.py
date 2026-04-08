@@ -49,6 +49,14 @@ class ARTSourcingClient:
     SEARCH_API_PATH = "/display/search-word/result-total/list"
     DETAIL_PATH = "/product"
 
+    # 멤버십 할인률 캐시 (확장앱에서 감지 → sync-membership으로 갱신)
+    _cached_membership_rate: float = 3.0  # 기본 수집가 등급
+
+    @classmethod
+    def set_membership_rate(cls, rate: float) -> None:
+        cls._cached_membership_rate = rate
+        logger.info(f"[ABCmart] 멤버십 할인률 갱신: {rate}%")
+
     # ABC마트: channel=10001, 그랜드스테이지: channel=10002
     CHANNEL_ABCMART = "10001"
     CHANNEL_GRANDSTAGE = "10002"
@@ -880,10 +888,10 @@ class ARTSourcingClient:
         )
 
         # 멤버십 상시 할인 (alwaysDscntRate: 쿠폰 후 가격 기준, 100원 단위 반올림)
-        # 비로그인 API 호출 시 alwaysDscntRate=0 → 수집가 등급 3% 기본 적용
+        # 비로그인 API → alwaysDscntRate=0 → 확장앱에서 감지한 캐시값 사용
         _always_rate = float(data.get("alwaysDscntRate") or 0)
         if _always_rate <= 0:
-            _always_rate = 3.0
+            _always_rate = self._cached_membership_rate
         _membership_discount = round(_after_coupon * _always_rate / 100 / 100) * 100
 
         best_benefit_price = _after_coupon - _membership_discount

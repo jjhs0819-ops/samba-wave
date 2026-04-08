@@ -51,6 +51,11 @@
       "matches": ["https://www.musinsa.com/mypage", "https://www.musinsa.com/mypage/*"],
       "js": ["content-musinsa-balance.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.a-rt.com/*"],
+      "js": ["content-abcmart-membership.js"],
+      "run_at": "document_idle"
     }
   ],
   "icons": {

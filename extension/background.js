@@ -207,6 +207,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendAbcmartBalance({ siteName, money, mileage, username, expired: !!expired })
     sendResponse({ ok: true })
   }
+  if (msg.action === 'abcmartMembership') {
+    const { membershipRate, membershipGrade } = msg
+    console.log(`[ABCmart] 멤버십 감지: ${membershipGrade} (${membershipRate}%)`)
+    chrome.storage.local.set({ abcmart_membership_rate: membershipRate, abcmart_membership_grade: membershipGrade })
+    syncAbcmartMembership(membershipRate, membershipGrade)
+    sendResponse({ ok: true })
+  }
   if (msg.type === 'SCRAPE_SSG_SCORES') {
     scrapeSSGScores().then(data => sendResponse(data)).catch(e => sendResponse({ error: e.message }))
     return true // 비동기 응답
@@ -2189,6 +2196,23 @@ async function sendAbcmartBalance(data) {
     }
   } catch (e) {
     console.log(`[잔액] ${data.siteName} 서버 전송 실패 (무시): ${e.message}`)
+  }
+}
+
+// ==================== ABCmart 멤버십 등급 동기화 ====================
+
+async function syncAbcmartMembership(rate, grade) {
+  try {
+    const res = await apiFetch(`${PROXY_URL}/api/v1/samba/sourcing-accounts/sync-membership`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ site_name: 'ABCmart', membership_rate: rate, membership_grade: grade }),
+    })
+    if (res.ok) {
+      console.log(`[ABCmart] 멤버십 서버 저장 완료: ${grade} (${rate}%)`)
+    }
+  } catch (e) {
+    console.log(`[ABCmart] 멤버십 서버 전송 실패 (무시): ${e.message}`)
   }
 }
 
