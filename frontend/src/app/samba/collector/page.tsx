@@ -1669,22 +1669,43 @@ export default function CollectorPage() {
                   // 표시된 그룹에서 브랜드 정보 추출
                   const sampleFilter = displayedFilters[0]
                   if (!sampleFilter) { showAlert('표시된 그룹이 없습니다'); return }
+                  const sourceSite = sampleFilter.source_site || 'MUSINSA'
                   const parsed = (() => { try { return new URL(sampleFilter.keyword || '') } catch { return null } })()
-                  const brand = parsed?.searchParams.get('brand') || ''
                   const gf = parsed?.searchParams.get('gf') || 'A'
-                  if (!brand) { showAlert('브랜드 정보를 찾을 수 없습니다 (그룹 URL에 brand 파라미터 필요)'); return }
+                  // 소싱처별 브랜드/키워드 추출
+                  let brand = ''
+                  if (sourceSite === 'MUSINSA') {
+                    brand = parsed?.searchParams.get('brand') || ''
+                  } else if (sourceSite === 'Nike') {
+                    brand = parsed?.searchParams.get('q') || ''
+                  } else if (sourceSite === 'ABCmart' || sourceSite === 'GrandStage') {
+                    brand = parsed?.searchParams.get('searchWord') || ''
+                  } else if (sourceSite === 'GSShop') {
+                    brand = parsed?.searchParams.get('tq') || ''
+                  } else if (sourceSite === 'LOTTEON') {
+                    brand = parsed?.searchParams.get('q') || ''
+                  } else {
+                    brand = parsed?.searchParams.get('q') || parsed?.searchParams.get('brand') || parsed?.searchParams.get('searchWord') || parsed?.searchParams.get('tq') || ''
+                  }
+                  if (!brand) { showAlert(`${sourceSite}에서 브랜드 정보를 찾을 수 없습니다`); return }
                   const brandName = drillBrand || brand
                   const ok = await showConfirm(`${brandName} 추가수집을 실행하시겠습니까?\n\n• 신규 카테고리 → 그룹 자동 생성\n• 기존 카테고리 → 요청수 갱신 후 수집`)
                   if (!ok) return
                   addLog(`[추가수집] ${brandName} 카테고리 스캔 중...`)
                   try {
-                    const res = await collectorApi.brandRefresh({ brand, brand_name: brandName, gf, options: checkedOptions })
+                    const res = await collectorApi.brandRefresh({ brand, brand_name: brandName, gf, options: checkedOptions, source_site: sourceSite })
                     addLog(`[추가수집] ${res.message}`)
                     await load(); await loadTree()
                     // 갱신 후 자동 수집 시작
                     const updatedFilters = (await collectorApi.listFilters()).filter(f => {
+                      if (f.source_site !== sourceSite) return false
                       const p = (() => { try { return new URL(f.keyword || '') } catch { return null } })()
-                      return p?.searchParams.get('brand') === brand
+                      if (sourceSite === 'MUSINSA') return p?.searchParams.get('brand') === brand
+                      if (sourceSite === 'Nike') return p?.searchParams.get('q') === brand
+                      if (sourceSite === 'ABCmart' || sourceSite === 'GrandStage') return p?.searchParams.get('searchWord') === brand
+                      if (sourceSite === 'GSShop') return p?.searchParams.get('tq') === brand
+                      if (sourceSite === 'LOTTEON') return p?.searchParams.get('q') === brand
+                      return p?.searchParams.get('q') === brand || p?.searchParams.get('brand') === brand
                     })
                     if (updatedFilters.length > 0) {
                       const collectOk = await showConfirm(`${res.message}\n\n${updatedFilters.length.toLocaleString()}개 그룹 상품수집을 시작하시겠습니까?`)

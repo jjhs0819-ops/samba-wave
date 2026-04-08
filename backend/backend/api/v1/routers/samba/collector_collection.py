@@ -1224,6 +1224,7 @@ class BrandRefreshRequest(BaseModel):
     brand_name: str = ""
     gf: str = "A"
     options: dict = {}
+    source_site: str = "MUSINSA"
 
 
 @router.post("/brand-refresh")
@@ -1231,39 +1232,93 @@ async def brand_refresh(
     req: BrandRefreshRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """브랜드 추가수집 — 신규 카테고리 그룹 생성 + 기존 그룹 요청수 갱신."""
-    from backend.domain.samba.proxy.musinsa import MusinsaClient
+    """브랜드 추가수집 — 신규 카테고리 그룹 생성 + 기존 그룹 요청수 갱신.
+
+    지원 소싱처: MUSINSA, Nike, ABCmart, GrandStage, LOTTEON
+    """
     from backend.api.v1.routers.samba.collector_common import _get_services
-    from urllib.parse import urlencode, urlparse, parse_qs
+    from urllib.parse import urlencode, urlparse, parse_qs, quote as _quote
 
     svc = _get_services(session)
-    client = MusinsaClient()
+    site = req.source_site
+    keyword = req.brand_name or req.brand
 
-    # 1) 카테고리 스캔
+    # 1) 카테고리 스캔 — 소싱처별 분기
     try:
-        categories = await client.scan_brand_categories(
-            brand=req.brand,
-            gf=req.gf,
-            keyword=req.brand_name or req.brand,
-        )
+        _SCAN_SUPPORTED = {
+            "MUSINSA",
+            "Nike",
+            "ABCmart",
+            "GrandStage",
+            "LOTTEON",
+            "GSShop",
+        }
+        if site not in _SCAN_SUPPORTED:
+            raise HTTPException(
+                400, f"{site}은(는) 추가수집(카테고리 스캔)을 지원하지 않습니다"
+            )
+
+        if site == "Nike":
+            from backend.domain.samba.plugins.sourcing.nike import NikePlugin
+
+            scan_result = await NikePlugin().scan_categories(keyword)
+            categories = scan_result.get("categories", [])
+        elif site in ("ABCmart", "GrandStage"):
+            from backend.domain.samba.plugins.sourcing.abcmart import AbcMartPlugin
+
+            scan_result = await AbcMartPlugin().scan_categories(keyword)
+            categories = scan_result.get("categories", [])
+        elif site == "GSShop":
+            from backend.domain.samba.plugins.sourcing.gsshop import (
+                GsShopSourcingPlugin,
+            )
+
+            scan_result = await GsShopSourcingPlugin().scan_categories(keyword)
+            categories = scan_result.get("categories", [])
+        elif site == "LOTTEON":
+            from backend.domain.samba.plugins.sourcing.lotteon import (
+                LotteonSourcingPlugin,
+            )
+
+            selected = [keyword]
+            scan_result = await LotteonSourcingPlugin().scan_categories(
+                keyword, selected_brands=selected
+            )
+            categories = scan_result.get("categories", [])
+        else:
+            # MUSINSA (기존 로직)
+            from backend.domain.samba.proxy.musinsa import MusinsaClient
+
+            client = MusinsaClient()
+            categories = await client.scan_brand_categories(
+                brand=req.brand,
+                gf=req.gf,
+                keyword=keyword,
+            )
     except Exception as e:
         raise HTTPException(500, f"카테고리 스캔 실패: {e}")
 
-    # 2) 기존 그룹 조회 — brand + category 코드로 매칭
+    # 2) 기존 그룹 조회 — source_site + category_filter로 매칭
     all_filters = await svc.list_filters()
     existing_cat_codes: dict[str, Any] = {}  # categoryCode → filter
     for f in all_filters:
-        if f.source_site != "MUSINSA":
+        if f.source_site != site:
             continue
-        try:
-            parsed = urlparse(f.keyword or "")
-            qs = parse_qs(parsed.query)
-            f_brand = qs.get("brand", [""])[0]
-            f_cat = qs.get("category", [""])[0]
-            if f_brand == req.brand and f_cat:
-                existing_cat_codes[f_cat] = f
-        except Exception:
-            continue
+        if site == "MUSINSA":
+            # 무신사: URL의 brand + category 파라미터로 매칭
+            try:
+                parsed = urlparse(f.keyword or "")
+                qs = parse_qs(parsed.query)
+                f_brand = qs.get("brand", [""])[0]
+                f_cat = qs.get("category", [""])[0]
+                if f_brand == req.brand and f_cat:
+                    existing_cat_codes[f_cat] = f
+            except Exception:
+                continue
+        else:
+            # Nike/ABCmart 등: category_filter로 매칭
+            if f.category_filter:
+                existing_cat_codes[f.category_filter] = f
 
     new_groups = 0
     updated_groups = 0
@@ -1280,38 +1335,76 @@ async def brand_refresh(
                 await svc.update_filter(f.id, {"requested_count": count})
                 updated_groups += 1
         else:
-            # 신규 카테고리 — 그룹 생성
-            cat_name = path.replace(" > ", "_").replace("/", "_")
-            group_name = f"MUSINSA_{req.brand_name or req.brand}_{cat_name}"
-            params = {
-                "keyword": req.brand_name or req.brand,
-                "brand": req.brand,
-                "category": cat_code,
-                "gf": req.gf,
-            }
-            if req.options.get("excludePreorder"):
-                params["excludePreorder"] = "1"
-            if req.options.get("excludeBoutique"):
-                params["excludeBoutique"] = "1"
-            if req.options.get("maxDiscount"):
-                params["maxDiscount"] = "1"
-            keyword_url = f"https://www.musinsa.com/search/goods?{urlencode(params)}"
-            try:
-                await svc.create_filter(
-                    {
-                        "source_site": "MUSINSA",
-                        "keyword": keyword_url,
-                        "name": group_name,
-                        "requested_count": count,
-                    }
+            # 신규 카테고리 — 그룹 생성 (소싱처별 keyword/name 포맷)
+            segments = path.split(" > ") if path else [cat_code]
+            if site == "Nike":
+                segments = [s for s in segments if s != "Nike"]
+                path_tail = "_".join(segments) if segments else cat_code
+                group_name = f"Nike_{path_tail}"
+                keyword_url = f"https://www.nike.com/kr/w?q={_quote(keyword)}"
+            elif site in ("ABCmart", "GrandStage"):
+                path_tail = "_".join(segments) if segments else cat_code
+                group_name = f"{site}_{keyword}_{path_tail}"
+                keyword_url = (
+                    f"https://abcmart.a-rt.com/display/search-word/result"
+                    f"?searchWord={_quote(keyword)}"
                 )
+            elif site == "GSShop":
+                import base64 as _b64
+
+                path_tail = "_".join(segments) if segments else cat_code
+                group_name = f"GSShop_{keyword}_{path_tail}"
+                _eh = _b64.b64encode(
+                    '{"part":"DEPT","selected":"opt-part"}'.encode()
+                ).decode()
+                keyword_url = (
+                    f"https://www.gsshop.com/shop/search/main.gs"
+                    f"?tq={_quote(keyword)}&eh={_quote(_eh)}"
+                )
+            elif site == "LOTTEON":
+                path_tail = "_".join(segments) if segments else cat_code
+                group_name = f"LOTTEON_{keyword}_{path_tail}"
+                keyword_url = (
+                    f"https://www.lotteon.com/csearch/search/search"
+                    f"?render=search&platform=pc&q={_quote(keyword)}&mallId=2"
+                )
+            else:
+                # MUSINSA
+                cat_name = path.replace(" > ", "_").replace("/", "_")
+                group_name = f"MUSINSA_{req.brand_name or req.brand}_{cat_name}"
+                params = {
+                    "keyword": req.brand_name or req.brand,
+                    "brand": req.brand,
+                    "category": cat_code,
+                    "gf": req.gf,
+                }
+                if req.options.get("excludePreorder"):
+                    params["excludePreorder"] = "1"
+                if req.options.get("excludeBoutique"):
+                    params["excludeBoutique"] = "1"
+                if req.options.get("maxDiscount"):
+                    params["maxDiscount"] = "1"
+                keyword_url = (
+                    f"https://www.musinsa.com/search/goods?{urlencode(params)}"
+                )
+
+            try:
+                create_data: dict[str, Any] = {
+                    "source_site": site,
+                    "keyword": keyword_url,
+                    "name": group_name,
+                    "requested_count": count,
+                }
+                if site != "MUSINSA":
+                    create_data["category_filter"] = cat_code
+                await svc.create_filter(create_data)
                 new_groups += 1
             except Exception as e:
                 logger.warning(f"[추가수집] 그룹 생성 실패 {group_name}: {e}")
 
     total_cats = len(categories)
     logger.info(
-        f"[추가수집] {req.brand}: 스캔 {total_cats}개, 신규 {new_groups}개, 갱신 {updated_groups}개"
+        f"[추가수집] {site}/{keyword}: 스캔 {total_cats}개, 신규 {new_groups}개, 갱신 {updated_groups}개"
     )
     return {
         "scanned": total_cats,

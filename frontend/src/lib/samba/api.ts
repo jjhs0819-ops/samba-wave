@@ -2,7 +2,7 @@
  * SambaWave API client — JWT 인증 필수
  */
 
-import { API_BASE_URL } from '@/config/api'
+import { API_BASE_URL, API_GATEWAY_KEY } from '@/config/api'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
 
 export const API_BASE = API_BASE_URL
@@ -28,6 +28,9 @@ export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Re
   const headers: Record<string, string> = {
     ...(init?.headers as Record<string, string>),
   }
+  if (API_GATEWAY_KEY) {
+    headers['X-Api-Key'] = API_GATEWAY_KEY
+  }
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
@@ -48,6 +51,10 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     ...(init?.headers as Record<string, string>),
   }
 
+  // API Gateway Key
+  if (API_GATEWAY_KEY) {
+    headers['X-Api-Key'] = API_GATEWAY_KEY
+  }
   // JWT 인증 헤더 자동 추가
   const token = getAccessToken()
   if (token) {
@@ -406,7 +413,7 @@ export const collectorApi = {
   brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean>; source_site?: string; selected_brands?: string[] }) =>
     request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
       `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),
-  brandRefresh: (data: { brand: string; brand_name?: string; gf?: string; options?: Record<string, boolean> }) =>
+  brandRefresh: (data: { brand: string; brand_name?: string; gf?: string; options?: Record<string, boolean>; source_site?: string }) =>
     request<{ scanned: number; new_groups: number; updated_groups: number; message: string }>(
       `${SAMBA_PREFIX}/collector/brand-refresh`, { method: "POST", body: JSON.stringify(data) }),
 
