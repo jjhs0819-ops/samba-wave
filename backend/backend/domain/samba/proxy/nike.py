@@ -215,7 +215,8 @@ class NikeClient:
         "https://api.nike.com/discover/product_wall/v1/marketplace/KR/language/ko"
         "/consumerChannelId/d9a5bc42-4b9c-4976-858a-f159cf99c647"
     )
-    PAGE_SIZE = 60
+    # Nike API는 count 값으로 24/50/100만 허용 (그 외 400 에러)
+    PAGE_SIZE = 100
 
     async def search(
         self, keyword: str, page: int = 1, max_count: int = 500
@@ -236,12 +237,14 @@ class NikeClient:
             params: dict[str, Any] = {"q": keyword}
             resp = await client.get(self.SEARCH_URL, params=params, headers=HEADERS)
             resp.raise_for_status()
-            products, total_resources = self._parse_search_data_with_total(resp.text)
+            products, total_resources, first_groupings = (
+                self._parse_search_data_with_total(resp.text)
+            )
             logger.info(
                 f"[Nike] 검색 '{keyword}' 1페이지 → {len(products)}건 (전체 {total_resources}건)"
             )
 
-            if not products or total_resources <= self.PAGE_SIZE:
+            if not products or total_resources <= first_groupings:
                 return {
                     "products": products[:max_count],
                     "total": total_resources,
@@ -253,7 +256,8 @@ class NikeClient:
             encoded_keyword = quote(keyword, safe="")
 
             # 2단계: 추가 페이지를 API로 수집
-            anchor = self.PAGE_SIZE
+            # anchor는 1페이지 실제 groupings 수부터 시작 (HTML은 항상 24개 반환)
+            anchor = first_groupings
             while len(products) < max_count and anchor < total_resources:
                 page_url = (
                     f"{self.PAGE_API_URL}"
@@ -284,9 +288,8 @@ class NikeClient:
                     pages_info = data.get("pages") or {}
                     if pages_info.get("totalResources"):
                         total_resources = pages_info["totalResources"]
-                    page_products = self._parse_api_groupings(
-                        data.get("productGroupings", [])
-                    )
+                    page_groupings = data.get("productGroupings", [])
+                    page_products = self._parse_api_groupings(page_groupings)
                     if not page_products:
                         last_error = f"빈 productGroupings at anchor={anchor}"
                         logger.info(f"[Nike] {last_error}")
@@ -307,7 +310,8 @@ class NikeClient:
                     last_error = f"{type(e).__name__} at anchor={anchor}: {e}"
                     logger.warning(f"[Nike] 페이지 수집 실패 {last_error}")
                     break
-                anchor += self.PAGE_SIZE
+                # anchor는 실제 반환된 groupings 수만큼 증가
+                anchor += len(page_groupings) if page_groupings else self.PAGE_SIZE
                 await asyncio.sleep(0.2)
 
         products = products[:max_count]
@@ -458,18 +462,20 @@ class NikeClient:
         return {ag["gtin"]: ag.get("available", False) for ag in available_gtins}
 
     @staticmethod
-    def _parse_search_data_with_total(html: str) -> tuple[list[dict[str, Any]], int]:
-        """검색 페이지 __NEXT_DATA__ → (상품 목록, 총 상품수) 반환."""
+    def _parse_search_data_with_total(
+        html: str,
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        """검색 페이지 __NEXT_DATA__ → (상품 목록, 총 groupings 수, 1페이지 groupings 수) 반환."""
         nd_match = re.search(
             r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL
         )
         if not nd_match:
-            return [], 0
+            return [], 0, 0
 
         try:
             nd = json.loads(nd_match.group(1))
         except json.JSONDecodeError:
-            return [], 0
+            return [], 0, 0
 
         wall = (
             nd.get("props", {})
@@ -480,7 +486,7 @@ class NikeClient:
         total_resources = wall.get("pageData", {}).get("totalResources", 0)
         groupings = wall.get("productGroupings", [])
         products = NikeClient._parse_api_groupings(groupings)
-        return products, total_resources
+        return products, total_resources, len(groupings)
 
     @staticmethod
     def _parse_api_groupings(groupings: list[dict]) -> list[dict[str, Any]]:
