@@ -1061,6 +1061,27 @@ async def collect_by_url(
                         continue
 
                     _sale_price = detail.get("salePrice", 0)
+
+                    # qapi 프로모션가 보정 (pbf slPrc는 정가 → qapi final이 실제 판매가)
+                    try:
+                        _qapi_price = await client.fetch_qapi_price(item_id)
+                        if _qapi_price:
+                            _qapi_final = _qapi_price.get("final", 0)
+                            if _qapi_final > 0 and _qapi_final < _sale_price:
+                                logger.info(
+                                    f"[LOTTEON] 수집 qapi 보정: {item_id} "
+                                    f"{_sale_price:,} → {_qapi_final:,}"
+                                )
+                                _sale_price = _qapi_final
+                                detail["salePrice"] = _qapi_final
+                                _bbp = detail.get("bestBenefitPrice", 0)
+                                if not _bbp or _bbp >= _sale_price:
+                                    detail["bestBenefitPrice"] = _qapi_final
+                    except Exception as _qe:
+                        logger.debug(
+                            f"[LOTTEON] 수집 qapi 보정 실패: {item_id} — {_qe}"
+                        )
+
                     if use_max_discount:
                         # 확장앱 DOM에서 실제 "나의 혜택가" 수집
                         new_cost = _sale_price  # 폴백: 판매가
@@ -1166,6 +1187,25 @@ async def collect_by_url(
 
             # 최대혜택가: 확장앱 DOM 파싱으로 실제 혜택가 수집
             _sale_price = data.get("salePrice", 0)
+
+            # qapi 프로모션가 보정 (pbf slPrc는 정가 → qapi final이 실제 판매가)
+            try:
+                _qapi_price = await client.fetch_qapi_price(item_id)
+                if _qapi_price:
+                    _qapi_final = _qapi_price.get("final", 0)
+                    if _qapi_final > 0 and _qapi_final < _sale_price:
+                        logger.info(
+                            f"[LOTTEON] 단일수집 qapi 보정: {item_id} "
+                            f"{_sale_price:,} → {_qapi_final:,}"
+                        )
+                        _sale_price = _qapi_final
+                        data["salePrice"] = _qapi_final
+                        _bbp = data.get("bestBenefitPrice", 0)
+                        if not _bbp or _bbp >= _sale_price:
+                            data["bestBenefitPrice"] = _qapi_final
+            except Exception as _qe:
+                logger.debug(f"[LOTTEON] 단일수집 qapi 보정 실패: {item_id} — {_qe}")
+
             _cost = _sale_price
             if use_max_discount:
                 try:
