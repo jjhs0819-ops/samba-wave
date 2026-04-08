@@ -97,7 +97,13 @@ class LotteonSourcingPlugin(SourcingPlugin):
         pbf = await client.fetch_pbf_standalone(sitm_no)
         if not pbf:
             return {}
-        return self._parse_pbf_to_detail(pbf)
+        detail = self._parse_pbf_to_detail(pbf)
+
+        # benefits API로 최대혜택가 보강 (쿠키 불필요)
+        benefit = await client.fetch_benefit_price(pbf)
+        if benefit and benefit > 0:
+            detail["bestBenefitPrice"] = benefit
+        return detail
 
     def _parse_pbf_to_detail(self, pbf: dict) -> dict:
         """pbf API 응답 → refresh용 detail dict 변환.

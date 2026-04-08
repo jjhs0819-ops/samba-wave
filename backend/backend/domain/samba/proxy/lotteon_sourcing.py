@@ -1504,6 +1504,94 @@ class LotteonSourcingClient:
             logger.debug(f"[LOTTEON] qapi 가격 조회 실패: {spd_no} — {e}")
         return None
 
+    async def fetch_benefit_price(self, pbf_data: dict[str, Any]) -> Optional[int]:
+        """favorBox/benefits API로 최대혜택가(totAmt) 조회.
+
+        pbf base API 응답의 basicInfo/priceInfo에서 파라미터를 추출하여
+        benefits API를 호출한다. 쿠키 없이도 bestPrice 모드로 동작.
+
+        Returns:
+          최대혜택가(int) 또는 None (실패 시)
+        """
+        basic = pbf_data.get("basicInfo") or {}
+        price = pbf_data.get("priceInfo") or {}
+        spd_no = str(basic.get("spdNo", "") or "").strip()
+        sitm_no = str(basic.get("sitmNo", "") or "").strip()
+        sl_prc = self._safe_int(price.get("slPrc", 0))
+        if not spd_no or not sitm_no or sl_prc <= 0:
+            return None
+
+        body = {
+            "spdNo": spd_no,
+            "sitmNo": sitm_no,
+            "slPrc": sl_prc,
+            "slQty": 1,
+            "trGrpCd": str(basic.get("trGrpCd", "") or ""),
+            "trNo": str(basic.get("trNo", "") or ""),
+            "lrtrNo": str(basic.get("lrtrNo", "") or ""),
+            "brdNo": str(basic.get("brdNo", "") or ""),
+            "scatNo": str(basic.get("scatNo", "") or ""),
+            "strCd": str(basic.get("strCd", "") or ""),
+            "chCsfCd": str(basic.get("chCsfCd", "") or "DI"),
+            "chDtlNo": str(basic.get("chDtlNo", "") or ""),
+            "chNo": str(basic.get("chNo", "") or ""),
+            "chTypCd": str(basic.get("chTypCd", "") or ""),
+            "ctrtTypCd": str(basic.get("ctrtTypCd", "") or ""),
+            "afflPdMrgnRt": self._safe_int(basic.get("afflPdMrgnRt", 0)),
+            "afflPdLwstMrgnRt": self._safe_int(basic.get("afflPdLwstMrgnRt", 0)),
+            "sfcoPdMrgnRt": self._safe_int(basic.get("sfcoPdMrgnRt", 0)),
+            "sfcoPdLwstMrgnRt": self._safe_int(basic.get("sfcoPdLwstMrgnRt", 0)),
+            "pcsLwstMrgnRt": self._safe_int(basic.get("pcsLwstMrgnRt", 0)),
+            "dmstOvsDvDvsCd": str(basic.get("dmstOvsDvDvsCd", "") or "DMST"),
+            "dvPdTypCd": str(basic.get("dvPdTypCd", "") or "GNRL"),
+            "dvCst": self._safe_int(basic.get("dvCst", 0)),
+            "dvCstStdQty": self._safe_int(basic.get("dvCstStdQty", 0)),
+            "stkMgtYn": str(basic.get("stkMgtYn", "") or "Y"),
+            "thdyPdYn": str(basic.get("thdyPdYn", "") or "N"),
+            "fprdDvPdYn": basic.get("fprdDvPdYn"),
+            "mallNo": str(basic.get("mallNo", "") or "1"),
+            "cartDvsCd": "01",
+            "infwMdiaCd": "PC",
+            "screenType": "PRODUCT",
+            "maxPurQty": 999999,
+            "aplyBestPrcChk": "N",
+            "aplyStdDttm": "",
+            "pyMnsExcpLst": [],
+            "discountApplyProductList": [],
+        }
+
+        url = f"{self.PBF_BASE}/product/v2/extlmsa/promotion/favorBox/benefits"
+        try:
+            client = await self._get_pbf_client()
+            resp = await client.post(
+                url,
+                json=body,
+                headers={
+                    **self.HEADERS,
+                    "Accept": "application/json, text/plain, */*",
+                    "Content-Type": "application/json",
+                    "Origin": "https://www.lotteon.com",
+                },
+            )
+            if resp.status_code != 200:
+                logger.debug(f"[LOTTEON] benefits API HTTP {resp.status_code}")
+                return None
+            result = resp.json()
+            if str(result.get("returnCode")) != "200":
+                return None
+            data = result.get("data") or {}
+            tot_amt = data.get("totAmt")
+            if tot_amt is not None and float(tot_amt) > 0:
+                benefit = int(float(tot_amt))
+                logger.info(
+                    f"[LOTTEON] benefits API 혜택가: {spd_no} → {benefit:,}"
+                    f" (정가={sl_prc:,}, 할인={int(float(data.get('totDcAmt', 0))):,})"
+                )
+                return benefit
+        except Exception as e:
+            logger.debug(f"[LOTTEON] benefits API 실패: {spd_no} — {e}")
+        return None
+
     async def _fetch_pbf_detail(
         self, sitm_no: str, client: httpx.AsyncClient
     ) -> Optional[dict[str, Any]]:
