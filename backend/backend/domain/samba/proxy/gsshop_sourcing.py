@@ -81,9 +81,21 @@ class GsShopSourcingClient:
         "Referer": "https://www.gsshop.com/",
     }
 
-    def __init__(self, cookie: str = "") -> None:
+    def __init__(
+        self, cookie: str = "", *, proxy_pool: list[str] | None = None
+    ) -> None:
         self._timeout = httpx.Timeout(20.0, connect=10.0)
         self.cookie = cookie
+        self._proxy_pool = proxy_pool or []
+        self._proxy_idx = 0
+
+    def _next_proxy(self) -> str | None:
+        """프록시 풀에서 다음 프록시 반환 (라운드로빈)."""
+        if not self._proxy_pool:
+            return None
+        proxy = self._proxy_pool[self._proxy_idx % len(self._proxy_pool)]
+        self._proxy_idx += 1
+        return proxy
 
     def _headers(
         self,
@@ -490,9 +502,14 @@ class GsShopSourcingClient:
         logger.info(f"[GSSHOP] 상세 조회: {product_id}")
 
         try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, follow_redirects=True
-            ) as client:
+            _proxy = self._next_proxy()
+            _client_kwargs: dict[str, Any] = {
+                "timeout": self._timeout,
+                "follow_redirects": True,
+            }
+            if _proxy:
+                _client_kwargs["proxy"] = _proxy
+            async with httpx.AsyncClient(**_client_kwargs) as client:
                 resp = await client.get(url, headers=self._headers(mobile=True))
 
                 # 차단 감지

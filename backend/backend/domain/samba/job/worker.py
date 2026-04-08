@@ -1257,13 +1257,21 @@ class JobWorker:
                 return
             # 확장앱 결과는 검색 API와 동일 포맷으로 처리 (아래 중복필터+저장 로직 공유)
             result = {"products": items_list, "total": len(items_list)}
-            # GSShop: 검색은 확장앱, 상세조회는 서버 HTTP
+            # GSShop: 검색은 확장앱, 상세조회는 서버 HTTP (프록시 3개 로테이션)
             if site == "GSShop":
+                from backend.core.config import settings as _gs_cfg
                 from backend.domain.samba.proxy.gsshop_sourcing import (
                     GsShopSourcingClient,
                 )
 
-                client = GsShopSourcingClient()
+                _gs_proxies: list[str] = []
+                if _gs_cfg.collect_proxy_url:
+                    _gs_proxies.append(_gs_cfg.collect_proxy_url.strip())
+                if _gs_cfg.proxy_urls:
+                    _gs_proxies.extend(
+                        [p.strip() for p in _gs_cfg.proxy_urls.split(",") if p.strip()]
+                    )
+                client = GsShopSourcingClient(proxy_pool=_gs_proxies or None)
 
         else:
             # 직접 API 검색
@@ -1657,7 +1665,9 @@ class JobWorker:
                             )
                         else:
                             detail = await client.get_detail(p_id)
-                        await asyncio.sleep(0.15 if site == "Nike" else 0.3)
+                        await asyncio.sleep(
+                            0.15 if site == "Nike" else (0 if site == "GSShop" else 0.3)
+                        )
                     except Exception as e:
                         logger.warning(f"[잡워커] {site} 서버 상세 실패 {p_id}: {e}")
 
