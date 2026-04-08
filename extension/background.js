@@ -63,9 +63,14 @@ let capturedAt = 0
 
 let kreamCookie = ''
 
+// ==================== 롯데ON 쿠키 ====================
+
+let lotteonCookie = ''
+
 // 동기화 스케줄러 (sendCookiesToProxy 정의 후 초기화)
 let scheduleCookieSync
 let scheduleKreamCookieSync
+let scheduleLotteonCookieSync
 
 // 백엔드 URL 변경 감지
 chrome.storage.onChanged.addListener((changes) => {
@@ -76,7 +81,7 @@ chrome.storage.onChanged.addListener((changes) => {
 })
 
 // Service Worker 시작 시 저장된 쿠키 + 설정 복원
-chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'proxyUrl']).then(async data => {
+chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'lotteonCookie', 'proxyUrl']).then(async data => {
   if (data.proxyUrl) {
     PROXY_URL = data.proxyUrl
     console.log(`[복원] 백엔드 URL: ${PROXY_URL}`)
@@ -93,6 +98,12 @@ chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'proxyU
     kreamCookie = data.kreamCookie
     console.log(`[복원] KREAM 쿠키 복원: ${kreamCookie.split(';').length}개`)
     try { await sendKreamCookiesToProxy(kreamCookie) } catch {}
+  }
+  // 롯데ON
+  if (data.lotteonCookie) {
+    lotteonCookie = data.lotteonCookie
+    console.log(`[복원] 롯데ON 쿠키 복원: ${lotteonCookie.split(';').length}개`)
+    try { await sendLotteonCookiesToProxy(lotteonCookie) } catch {}
   }
 })
 
@@ -128,6 +139,23 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     }
   },
   { urls: ['https://*.kream.co.kr/*'] },
+  ['requestHeaders', 'extraHeaders']
+)
+
+// 롯데ON webRequest 캡처
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (details) => {
+    const cookieHeader = details.requestHeaders?.find(
+      h => h.name.toLowerCase() === 'cookie'
+    )
+    if (cookieHeader?.value && cookieHeader.value !== lotteonCookie) {
+      lotteonCookie = cookieHeader.value
+      chrome.storage.local.set({ lotteonCookie })
+      console.log(`[캡처] 롯데ON 쿠키 변경감지 ${lotteonCookie.split(';').length}개`)
+      scheduleLotteonCookieSync()
+    }
+  },
+  { urls: ['https://*.lotteon.com/*'] },
   ['requestHeaders', 'extraHeaders']
 )
 
@@ -188,9 +216,32 @@ async function sendKreamCookiesToProxy(cookieStr) {
   return res.json()
 }
 
+async function sendLotteonCookiesToProxy(cookieStr) {
+  // Cloud Run에 항상 전송 (로컬 실패와 무관하게 완료 보장)
+  if (PROXY_URL !== CLOUD_URL) {
+    try {
+      const cr = await apiFetch(`${CLOUD_URL}${API_PREFIX}/lotteon/set-cookie`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookie: cookieStr })
+      })
+      if (cr.ok) console.log('[클라우드] 롯데ON 쿠키 전송 성공')
+      else console.warn(`[클라우드] 롯데ON 쿠키 전송 실패: HTTP ${cr.status}`)
+    } catch (e) { console.warn('[클라우드] 롯데ON 쿠키 전송 실패 (네트워크)', e.message) }
+  }
+  const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/lotteon/set-cookie`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cookie: cookieStr })
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
 // 동기화 스케줄러 초기화
 scheduleCookieSync = makeScheduleSync('무신사', () => capturedCookie, sendCookiesToProxy)
 scheduleKreamCookieSync = makeScheduleSync('KREAM', () => kreamCookie, sendKreamCookiesToProxy)
+scheduleLotteonCookieSync = makeScheduleSync('롯데ON', () => lotteonCookie, sendLotteonCookiesToProxy)
 
 // ==================== 무신사 잔액 수신 (content script → background → server) ====================
 
@@ -876,6 +927,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'cookieSync') {
     if (capturedCookie) sendCookiesToProxy(capturedCookie).catch(() => {})
     if (kreamCookie) sendKreamCookiesToProxy(kreamCookie).catch(() => {})
+    if (lotteonCookie) sendLotteonCookiesToProxy(lotteonCookie).catch(() => {})
   }
   if (alarm.name === 'balanceCheckPoll') {
     pollBalanceCheckRequest()

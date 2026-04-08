@@ -111,6 +111,13 @@ class LotteonSourcingPlugin(SourcingPlugin):
         opt_stock = await client.fetch_option_stock(pbf, spd_no=_spd, sitm_no=sitm_no)
         if opt_stock:
             detail["options"] = opt_stock
+
+        # 옵션 가격을 혜택가/판매가로 보정 (sl_prc 정가 대신)
+        _eff_price = detail.get("bestBenefitPrice") or detail.get("salePrice") or 0
+        if _eff_price > 0 and detail.get("options"):
+            for _opt in detail["options"]:
+                _opt["price"] = _eff_price
+
         return detail
 
     def _parse_pbf_to_detail(self, pbf: dict) -> dict:
@@ -410,19 +417,27 @@ class LotteonSourcingPlugin(SourcingPlugin):
                 _original = _qapi_price.get("original", 0)
                 if _final > 0 and _final < _pbf_sale:
                     detail["salePrice"] = _final
-                    # 카드할인은 상한금액이 있어 API로 정확 계산 불가 → 판매가 그대로
-                    # 실제 혜택가는 확장앱 DOM 파싱으로 수집
-                    detail["bestBenefitPrice"] = _final
+                    # benefits API가 이미 더 낮은 혜택가를 설정했으면 보존
+                    _existing_benefit = detail.get("bestBenefitPrice") or 0
+                    if _existing_benefit <= 0 or _existing_benefit >= _final:
+                        detail["bestBenefitPrice"] = _final
                     if _original > 0:
                         detail["originalPrice"] = _original
                     logger.info(
                         f"[LOTTEON] qapi 프로모션가 보정: {site_product_id} "
-                        f"pbf={_pbf_sale:,} → final={_final:,}"
+                        f"pbf={_pbf_sale:,} → final={_final:,}, "
+                        f"bestBenefit={detail.get('bestBenefitPrice', 0):,}"
                     )
         except Exception as e:
             logger.debug(
                 f"[LOTTEON] qapi 프로모션가 조회 실패: {site_product_id} — {e}"
             )
+
+        # ── 옵션 가격 보정 (sl_prc 정가 대신 실제 판매가/혜택가 사용) ──
+        _effective = detail.get("bestBenefitPrice") or detail.get("salePrice") or 0
+        if _effective > 0 and detail.get("options"):
+            for _opt in detail["options"]:
+                _opt["price"] = _effective
 
         # ── 데이터 추출 ──
         new_sale_price = detail.get("salePrice") or 0

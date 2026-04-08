@@ -180,9 +180,12 @@ async def refresh_products(
             "sale_status": r.new_sale_status,
             "changed": r.changed,
         }
-        # KREAM 옵션별 가격도 기록
-        if r.new_options:
-            snapshot["options"] = r.new_options
+        # 옵션: 신규 수집 우선, 없으면 기존 DB 옵션 폴백
+        _snap_options = r.new_options
+        if not _snap_options and product.options:
+            _snap_options = product.options
+        if _snap_options:
+            snapshot["options"] = _snap_options
         history = list(product.price_history or [])
         history.insert(0, snapshot)
         updates["price_history"] = _trim_history(history)

@@ -182,6 +182,16 @@ def _filter_by_brands(items: list[dict], selected_brands: list[str]) -> list[dic
     ]
 
 
+# ── 롯데ON 쿠키 캐시 (확장앱→서버 동기화 후 benefits API에 사용) ──
+_lotteon_cookie_cache: str = ""
+
+
+def set_lotteon_cookie(cookie: str) -> None:
+    """확장앱에서 수신한 롯데ON 쿠키를 모듈 캐시에 설정."""
+    global _lotteon_cookie_cache
+    _lotteon_cookie_cache = cookie
+
+
 class LotteonSourcingClient:
     """롯데ON 소싱용 웹 스크래핑 클라이언트 (검색, 상세).
 
@@ -1654,15 +1664,18 @@ class LotteonSourcingClient:
         url = f"{self.PBF_BASE}/product/v2/extlmsa/promotion/favorBox/benefits"
         try:
             client = await self._get_pbf_client()
+            _benefit_headers = {
+                **self.HEADERS,
+                "Accept": "application/json, text/plain, */*",
+                "Content-Type": "application/json",
+                "Origin": "https://www.lotteon.com",
+            }
+            if _lotteon_cookie_cache:
+                _benefit_headers["Cookie"] = _lotteon_cookie_cache
             resp = await client.post(
                 url,
                 json=body,
-                headers={
-                    **self.HEADERS,
-                    "Accept": "application/json, text/plain, */*",
-                    "Content-Type": "application/json",
-                    "Origin": "https://www.lotteon.com",
-                },
+                headers=_benefit_headers,
             )
             if resp.status_code != 200:
                 logger.warning(

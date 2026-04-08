@@ -161,9 +161,17 @@ async def _autotune_loop():
                     now = datetime.now(timezone.utc)
                     repo = SambaCollectedProductRepository(session)
 
-                    # ① 등급 분류 ON/OFF 확인
+                    # ⓪ 롯데ON 쿠키 캐시 갱신 (benefits API에 사용)
                     from backend.api.v1.routers.samba.proxy import _get_setting
+                    from backend.domain.samba.proxy.lotteon_sourcing import (
+                        set_lotteon_cookie,
+                    )
 
+                    _lt_cookie = await _get_setting(session, "lotteon_cookie")
+                    if _lt_cookie:
+                        set_lotteon_cookie(str(_lt_cookie))
+
+                    # ① 등급 분류 ON/OFF 확인
                     _priority_enabled = await _get_setting(
                         session, AUTOTUNE_PRIORITY_ENABLED_KEY
                     )
@@ -414,8 +422,12 @@ async def _autotune_loop():
                                     "sale_status": r.new_sale_status,
                                     "changed": r.changed,
                                 }
-                                if r.new_options:
-                                    snapshot["options"] = r.new_options
+                                # 옵션: 신규 수집 우선, 없으면 기존 DB 옵션 폴백
+                                _snap_options = r.new_options
+                                if not _snap_options and product.options:
+                                    _snap_options = product.options
+                                if _snap_options:
+                                    snapshot["options"] = _snap_options
                                 history = list(product.price_history or [])
                                 history.insert(0, snapshot)
                                 updates["price_history"] = _trim_history(history)
