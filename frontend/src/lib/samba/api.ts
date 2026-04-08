@@ -424,9 +424,11 @@ export const collectorApi = {
     request<{ status: string; message: string }>(`${SAMBA_PREFIX}/collector/musinsa-auth-status`),
 
   // Collected Products
-  listProducts: (skip = 0, limit = 50, status?: string) => {
+  listProducts: (skip = 0, limit = 50, status?: string, source_site?: string, category?: string) => {
     const p = new URLSearchParams({ skip: String(skip), limit: String(limit) });
     if (status) p.set("status", status);
+    if (source_site) p.set("source_site", source_site);
+    if (category) p.set("category", category);
     return request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products?${p}`);
   },
   getProductsByIds: (ids: string[]) =>

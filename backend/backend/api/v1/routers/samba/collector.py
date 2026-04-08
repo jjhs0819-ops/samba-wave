@@ -1033,6 +1033,7 @@ async def list_collected_products(
     limit: int = Query(50, ge=1, le=100000),
     status: Optional[str] = None,
     source_site: Optional[str] = None,
+    category: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
@@ -1047,6 +1048,11 @@ async def list_collected_products(
         stmt = stmt.where(_CP.status == status)
     if source_site:
         stmt = stmt.where(_CP.source_site == source_site)
+    if category:
+        # prefix 매칭: "여성" → "여성" 또는 "여성 > ..." 모두 포함
+        stmt = stmt.where(
+            (_CP.category == category) | (_CP.category.startswith(category + " > "))
+        )
     stmt = stmt.order_by(_CP.created_at.desc()).offset(skip).limit(limit)
 
     result = await session.execute(stmt)

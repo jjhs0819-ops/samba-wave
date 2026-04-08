@@ -125,12 +125,6 @@ export default function CategoriesPage() {
       setMarketCatCounts(countResult.value)
     }
     setLoading(false)
-
-    // Phase 2: 상품 데이터 백그라운드 로드 (AI 리매핑 등에서 사용)
-    try {
-      const all = await collectorApi.listProducts(0, 100000)
-      if (Array.isArray(all) && all.length > 0) setProducts(all)
-    } catch { /* 백그라운드이므로 무시 */ }
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -192,38 +186,44 @@ export default function CategoriesPage() {
     setSelectedProducts([]); setSelectedPath('')
   }
 
-  // 선택 변경 시 경로 자동 업데이트
+  // 선택 변경 시 경로 업데이트 + 서버에서 상품 20건 조회
+  const [hasMore, setHasMore] = useState(false)
+  const productGridRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     if (!selectedSite && !selectedCat1 && !selectedCat2 && !selectedCat3 && !selectedCat4) {
-      setSelectedProducts([]); setSelectedPath('')
+      setSelectedProducts([]); setSelectedPath(''); setHasMore(false)
       return
     }
     const path = [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4].filter(Boolean)
     setSelectedPath(path.join(' > '))
-    // products 로드 완료 시 선택 상품 업데이트
-    // category 필드를 > 로 split하여 트리 레벨과 매칭 (categoryN 필드는 소싱처마다 구조가 달라 불일치)
-    if (products.length > 0) {
-      let filtered = products
-      if (selectedSite) filtered = filtered.filter(p => (p.source_site || '기타') === selectedSite)
-      if (selectedCat1) filtered = filtered.filter(p => {
-        const cats = (p.category || '').split('>').map((c: string) => c.trim())
-        return cats[0] === selectedCat1
-      })
-      if (selectedCat2) filtered = filtered.filter(p => {
-        const cats = (p.category || '').split('>').map((c: string) => c.trim())
-        return cats[1] === selectedCat2
-      })
-      if (selectedCat3) filtered = filtered.filter(p => {
-        const cats = (p.category || '').split('>').map((c: string) => c.trim())
-        return cats[2] === selectedCat3
-      })
-      if (selectedCat4) filtered = filtered.filter(p => {
-        const cats = (p.category || '').split('>').map((c: string) => c.trim())
-        return cats[3] === selectedCat4
-      })
-      setSelectedProducts(filtered)
+    // 선택된 카테고리의 상품을 서버에서 조회 (20건)
+    const catPath = [selectedCat1, selectedCat2, selectedCat3, selectedCat4].filter(Boolean).join(' > ')
+    if (selectedSite && catPath) {
+      collectorApi.listProducts(0, 20, undefined, selectedSite, catPath).then(data => {
+        if (Array.isArray(data)) {
+          setSelectedProducts(data)
+          setHasMore(data.length >= 20)
+        }
+      }).catch(() => { setSelectedProducts([]); setHasMore(false) })
+    } else {
+      setSelectedProducts([]); setHasMore(false)
     }
-  }, [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4, products])
+  }, [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4])
+
+  const loadMoreProducts = useCallback(() => {
+    if (!hasMore || !selectedSite) return
+    const catPath = [selectedCat1, selectedCat2, selectedCat3, selectedCat4].filter(Boolean).join(' > ')
+    if (!catPath) return
+    collectorApi.listProducts(selectedProducts.length, 20, undefined, selectedSite, catPath).then(data => {
+      if (Array.isArray(data) && data.length > 0) {
+        setSelectedProducts(prev => [...prev, ...data])
+        setHasMore(data.length >= 20)
+      } else {
+        setHasMore(false)
+      }
+    }).catch(() => setHasMore(false))
+  }, [hasMore, selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4, selectedProducts.length])
 
   // ── AI 카테고리 매핑 ──
 
@@ -1429,25 +1429,34 @@ export default function CategoriesPage() {
           </div>
 
           {selectedProducts.length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
-              {selectedProducts.slice(0, 100).map(p => (
-                <div key={p.id} style={{ ...card, overflow: 'hidden', cursor: 'pointer' }}
-                  onClick={() => router.push(`/samba/products?highlight=${p.id}`)}
-                >
-                  {/* 이미지 */}
-                  <div style={{ width: '100%', aspectRatio: '1', background: '#1A1A1A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                    {p.images && p.images.length > 0 ? (
-                      <img src={p.images[0]} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-                    ) : (
-                      <span style={{ color: '#555', fontSize: '2rem' }}>🖼</span>
-                    )}
+            <div ref={productGridRef}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
+                {selectedProducts.map(p => (
+                  <div key={p.id} style={{ ...card, overflow: 'hidden', cursor: 'pointer' }}
+                    onClick={() => router.push(`/samba/products?highlight=${p.id}`)}
+                  >
+                    {/* 이미지 */}
+                    <div style={{ width: '100%', aspectRatio: '1', background: '#1A1A1A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                      {p.images && p.images.length > 0 ? (
+                        <img src={p.images[0]} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                      ) : (
+                        <span style={{ color: '#555', fontSize: '2rem' }}>🖼</span>
+                      )}
+                    </div>
+                    <div style={{ padding: '0.75rem' }}>
+                      <p style={{ fontSize: '0.8125rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.25rem' }}>{p.name}</p>
+                      <p style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FF8C00' }}>₩{(p.sale_price || 0).toLocaleString()}</p>
+                    </div>
                   </div>
-                  <div style={{ padding: '0.75rem' }}>
-                    <p style={{ fontSize: '0.8125rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.25rem' }}>{p.name}</p>
-                    <p style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FF8C00' }}>₩{(p.sale_price || 0).toLocaleString()}</p>
-                  </div>
+                ))}
+              </div>
+              {hasMore && (
+                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                  <button onClick={loadMoreProducts} style={{ padding: '0.5rem 2rem', background: '#333', color: '#ccc', border: '1px solid #555', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8125rem' }}>
+                    더 보기
+                  </button>
                 </div>
-              ))}
+              )}
             </div>
           )}
         </div>
