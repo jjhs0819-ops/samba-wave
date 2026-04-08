@@ -300,10 +300,17 @@ class SambaShipmentService:
         client_secret = additional.get("clientSecret") or account.api_secret
         client = SmartStoreClient(client_id, client_secret)
 
-        # 카테고리 매핑 조회 (기존 _transmit_product 패턴과 동일)
+        # 카테고리 매핑 조회 — product.category(전체 경로) 우선
         first = products[0]
-        cat_parts = [first.category1, first.category2, first.category3, first.category4]
-        raw_category = " > ".join(c for c in cat_parts if c) or first.category or ""
+        raw_category = first.category or ""
+        if not raw_category:
+            cat_parts = [
+                first.category1,
+                first.category2,
+                first.category3,
+                first.category4,
+            ]
+            raw_category = " > ".join(c for c in cat_parts if c)
 
         # 그룹 매핑 조회
         group_mappings = None
@@ -754,16 +761,18 @@ class SambaShipmentService:
         # 상세 HTML은 항상 정책 기반으로 재생성 (원문 상세이미지 유출 방지)
         product_dict["detail_html"] = await self._build_detail_html(product_dict)
 
-        # 3. 카테고리 매핑 자동 조회 (성별 + category1~4 조합)
-        cat_parts = [
-            product_row.category1,
-            product_row.category2,
-            product_row.category3,
-            product_row.category4,
-        ]
-        raw_category = (
-            " > ".join(c for c in cat_parts if c) or product_row.category or ""
-        )
+        # 3. 카테고리 매핑 자동 조회 — product.category(전체 경로) 우선
+        #    category1~4 개별 필드는 일부 소싱처에서 불완전할 수 있으므로
+        #    전체 경로 문자열을 1순위로 사용
+        raw_category = product_row.category or ""
+        if not raw_category:
+            cat_parts = [
+                product_row.category1,
+                product_row.category2,
+                product_row.category3,
+                product_row.category4,
+            ]
+            raw_category = " > ".join(c for c in cat_parts if c)
 
         # 성별 prefix는 의류 카테고리일 때만 추가 (신발/가방 등은 제외)
         sex_prefix = ""

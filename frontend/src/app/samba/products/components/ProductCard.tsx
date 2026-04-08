@@ -351,14 +351,15 @@ const ProductCard = React.memo(function ProductCard({
         return sf.target_mappings as Record<string, string>
       }
     }
-    // 2순위: 카테고리 경로 기반 매핑
+    // 2순위: 카테고리 경로 기반 매핑 — product.category(전체 경로) 우선
     const site = p.source_site || ''
-    const cats = [p.category1, p.category2, p.category3, p.category4].filter(Boolean) as string[]
-    if (cats.length === 0 && p.category) {
-      cats.push(...p.category.split('>').map(c => c.trim()).filter(Boolean))
+    let leafPath = ''
+    if (p.category) {
+      leafPath = p.category.split('>').map((c: string) => c.trim()).filter(Boolean).join(' > ')
+    } else {
+      leafPath = [p.category1, p.category2, p.category3, p.category4].filter(Boolean).join(' > ')
     }
-    if (!site || cats.length === 0) return {}
-    const leafPath = cats.join(' > ')
+    if (!site || !leafPath) return {}
     return catMappingMap.get(`${site}::${leafPath}`) || {}
   }, [p.source_site, p.category, p.category1, p.category2, p.category3, p.category4, p.search_filter_id, catMappingMap, filters])
 

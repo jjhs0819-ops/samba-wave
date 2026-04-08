@@ -1620,6 +1620,7 @@ class JobWorker:
             _lotteon_cat1 = ""
             _lotteon_cat2 = ""
             _lotteon_cat3 = ""
+            _lotteon_cat4 = ""
             _lotteon_scat_no = ""
             if site == "LOTTEON":
                 from backend.domain.samba.proxy.lotteon_sourcing import (
@@ -1635,6 +1636,7 @@ class JobWorker:
                         _lotteon_cat1 = _parts[0] if len(_parts) > 0 else ""
                         _lotteon_cat2 = _parts[1] if len(_parts) > 1 else ""
                         _lotteon_cat3 = _parts[2] if len(_parts) > 2 else ""
+                        _lotteon_cat4 = _parts[3] if len(_parts) > 3 else ""
 
             # 상세 페이지에서 추가 이미지/고시정보 보충
             detail = {}
@@ -1707,6 +1709,7 @@ class JobWorker:
                 _cat1 = item.get("category1") or detail.get("category1") or ""
                 _cat2 = item.get("category2") or detail.get("category2") or ""
                 _cat3 = item.get("category3") or detail.get("category3") or ""
+                _cat4 = item.get("category4") or detail.get("category4") or ""
             else:
                 _cat = (
                     detail.get("category")
@@ -1728,6 +1731,11 @@ class JobWorker:
                     detail.get("category3")
                     or _lotteon_cat3
                     or item.get("category3", "")
+                )
+                _cat4 = (
+                    detail.get("category4")
+                    or _lotteon_cat4
+                    or item.get("category4", "")
                 )
             product_data = {
                 "source_site": site,
@@ -1754,6 +1762,7 @@ class JobWorker:
                 "category1": _cat1,
                 "category2": _cat2,
                 "category3": _cat3,
+                "category4": _cat4,
                 "detail_html": detail.get("detail_html") or item.get("detail_html", ""),
                 "detail_images": detail.get("detail_images")
                 if len(detail.get("detail_images") or []) > len(images)
