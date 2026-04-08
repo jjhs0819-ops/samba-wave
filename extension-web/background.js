@@ -1413,6 +1413,19 @@ async function handleSourcingJob(job) {
       } else {
         console.log(`[LOTTEON] 혜택가 없음 (로그인 필요?): ${job.productId}`)
       }
+    } else if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
+      // ABCmart/GrandStage SPA 렌더링 대기 후 최대혜택가 파싱
+      result = await extractDetailData(tabId, job.site, job.productId)
+      if (!result?.best_benefit_price) {
+        console.log(`[${job.site}] 혜택가 미수집 — 3초 후 재시도: ${job.productId}`)
+        await wait(3000)
+        result = await extractDetailData(tabId, job.site, job.productId)
+      }
+      if (result?.best_benefit_price) {
+        console.log(`[${job.site}] DOM 혜택가: ${job.productId} → ${result.best_benefit_price}`)
+      } else {
+        console.log(`[${job.site}] 혜택가 없음: ${job.productId}`)
+      }
     } else if (job.type === 'detail') {
       result = await extractDetailData(tabId, job.site, job.productId)
     }
