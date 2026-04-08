@@ -385,8 +385,8 @@ class GsShopSourcingClient:
             f"[GSSHOP] 카테고리 스캔: {len(product_ids)}개 상품 검색 완료, 상세 조회 시작"
         )
 
-        # 2. 전체 상품 상세 조회 → 카테고리 추출 (동시 15, Cloud Run 안정)
-        sem = asyncio.Semaphore(15)
+        # 2. 전체 상품 상세 조회 → 카테고리 추출 (동시 50, 가벼운 API 호출)
+        sem = asyncio.Semaphore(50)
         scan_timeout = httpx.Timeout(30.0, connect=15.0)
         cat_counter: dict[str, int] = {}
         ok_count = 0

@@ -697,24 +697,66 @@ async function handleCollectJob(job) {
   }
 }
 
-// 탭 로드 완료 대기
+// 탭 로드 완료 대기 — 이벤트 구동 방식 (500ms 폴링 제거)
 function waitForTabLoad(tabId, timeout) {
   return new Promise((resolve, reject) => {
-    const start = Date.now()
-    const check = () => {
-      chrome.tabs.get(tabId, (tab) => {
-        if (chrome.runtime.lastError) return reject(new Error('탭 접근 실패'))
-        if (tab.status === 'complete') return resolve()
-        if (Date.now() - start > timeout) return reject(new Error('탭 로드 타임아웃'))
-        setTimeout(check, 500)
-      })
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener)
+      reject(new Error('탭 로드 타임아웃'))
+    }, timeout)
+    const listener = (id, info) => {
+      if (id === tabId && info.status === 'complete') {
+        clearTimeout(timer)
+        chrome.tabs.onUpdated.removeListener(listener)
+        resolve()
+      }
     }
-    check()
+    chrome.tabs.onUpdated.addListener(listener)
+    // 이미 complete인 경우 즉시 resolve
+    chrome.tabs.get(tabId, (tab) => {
+      if (!chrome.runtime.lastError && tab?.status === 'complete') {
+        clearTimeout(timer)
+        chrome.tabs.onUpdated.removeListener(listener)
+        resolve()
+      }
+    })
   })
 }
 
 function wait(ms) {
   return new Promise(r => setTimeout(r, ms))
+}
+
+// GSShop 카테고리 렌더링 동적 대기 — "(숫자)" 패턴 3개 이상 출현 시 즉시 리턴
+async function waitForGSShopContent(tabId, timeoutMs = 8000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const [check] = await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN',
+        func: () => (document.body?.innerText?.match(/\(\d[\d,]*\)/g) || []).length >= 3
+      })
+      if (check?.result) return true
+    } catch {}
+    await wait(100)
+  }
+  return false
+}
+
+// GSShop 검색 결과 렌더링 동적 대기 — 상품 링크 1개 이상 출현 시 즉시 리턴
+async function waitForGSShopSearchResults(tabId, timeoutMs = 6000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const [check] = await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN',
+        func: () => document.querySelectorAll('a[href*="prd.gs"], a[href*="deal.gs"]').length >= 1
+      })
+      if (check?.result) return true
+    } catch {}
+    await wait(100)
+  }
+  return false
 }
 
 // ==================== KREAM 검색 큐 폴링 ====================
@@ -840,38 +882,36 @@ async function handleSearchJob(job) {
 
 // ==================== chrome.alarms 기반 폴링 엔진 ====================
 
-// 집중 폴링 모드 — job 발견 시 3초 간격 최대 20회 (약 60초)
+// 집중 폴링 모드 — job 발견 시 0.5초 간격 최대 120회 (약 60초)
 let focusPollActive = false
 async function runFocusPoll() {
   if (focusPollActive) return
   focusPollActive = true
-  console.log('[KREAM] 집중 폴링 모드 진입 (3초 간격, 최대 20회)')
+  console.log('[수집] 집중 폴링 모드 진입 (0.5초 간격, 최대 120회)')
   let emptyCount = 0
-  while (emptyCount < 20) {
-    const hadCollect = await pollCollectOnce()
-    const hadSearch = await pollSearchOnce()
-    const hadSourcing = await pollSourcingOnce()
-    const hadAi = await pollAiSourcingOnce()
+  while (emptyCount < 120) {
+    const [hadCollect, hadSearch, hadSourcing, hadAi] = await Promise.all([
+      pollCollectOnce(), pollSearchOnce(), pollSourcingOnce(), pollAiSourcingOnce(),
+    ])
     if (hadCollect || hadSearch || hadSourcing || hadAi) {
       emptyCount = 0
     } else {
       emptyCount++
     }
-    if (emptyCount < 20) await wait(3000)
+    if (emptyCount < 120) await wait(500)
   }
   focusPollActive = false
-  console.log('[KREAM] 집중 폴링 종료 → alarm 대기 모드 (30초 주기)')
+  console.log('[수집] 집중 폴링 종료 → alarm 대기 모드 (30초 주기)')
 }
 
 // alarm 트리거 시 1회 폴링 — job 있으면 집중 모드 진입, 없으면 카운트 증가
 let emptyPollCount = 0
-const MAX_EMPTY_POLLS = 30 // 10초 × 30 = 5분간 빈 결과 → 중지
+const MAX_EMPTY_POLLS = 300 // 1초 × 300 = 5분간 빈 결과 → 중지
 
 async function runPollCycle() {
-  const hadCollect = await pollCollectOnce()
-  const hadSearch = await pollSearchOnce()
-  const hadSourcing = await pollSourcingOnce()
-  const hadAi = await pollAiSourcingOnce()
+  const [hadCollect, hadSearch, hadSourcing, hadAi] = await Promise.all([
+    pollCollectOnce(), pollSearchOnce(), pollSourcingOnce(), pollAiSourcingOnce(),
+  ])
   if (hadCollect || hadSearch || hadSourcing || hadAi) {
     emptyPollCount = 0
     runFocusPoll()
@@ -890,12 +930,12 @@ function startCollectPolling() {
       console.log('[수집] alarm 등록 (30초/실제 1분 백업)')
     }
   })
-  // setInterval 10초 보조 폴링 — 서비스 워커 활성 중 빠른 응답
+  // setInterval 1초 보조 폴링 — 서비스 워커 활성 중 빠른 응답
   if (!quickPollTimer) {
     quickPollTimer = setInterval(() => {
       if (!focusPollActive) runPollCycle()
-    }, 10_000)
-    console.log('[수집] 폴링 시작 (10초 주기 + alarm 백업)')
+    }, 1_000)
+    console.log('[수집] 폴링 시작 (1초 주기 + alarm 백업)')
   }
   runPollCycle()
 }
@@ -1390,13 +1430,21 @@ async function handleSourcingJob(job) {
     const needsActive = (job.type === 'detail' && (job.site === 'FashionPlus' || job.site === 'LOTTEON')) || job.type === 'category-scan'
     const tab = await chrome.tabs.create({ url: job.url, active: needsActive })
     tabId = tab.id
-    await waitForTabLoad(tabId, 30000)
-    await wait(needsActive ? 5000 : 4000) // 패션플러스 상세는 렌더링 시간 추가
+    await waitForTabLoad(tabId, 15000)
+
+    // GSShop: 동적 DOM 감지 (고정 8초 → 평균 2~3초)
+    if (job.type === 'category-scan' && job.site === 'GSShop') {
+      await waitForGSShopContent(tabId, 8000)
+    } else if (job.type === 'search' && job.site === 'GSShop') {
+      await waitForGSShopSearchResults(tabId, 6000)
+    } else {
+      await wait(needsActive ? 5000 : 4000) // 패션플러스 등 기존 유지
+    }
 
     let result = null
     if (job.type === 'category-scan' && job.site === 'GSShop') {
       // GS샵 카테고리 스캔: 검색 결과 페이지에서 카테고리 분포 파싱
-      await wait(3000) // JS 렌더링 추가 대기 (active 탭이므로 5s+3s=8s)
+      // 동적 대기 완료 — 고정 대기 제거
 
       const [scanResult] = await chrome.scripting.executeScript({
         target: { tabId },
@@ -1478,8 +1526,8 @@ async function handleSourcingJob(job) {
           const nextUrl = new URL(job.url)
           nextUrl.searchParams.set('eh', eh)
           await chrome.tabs.update(tabId, { url: nextUrl.toString() })
-          await waitForTabLoad(tabId, 30000)
-          await wait(4000)
+          await waitForTabLoad(tabId, 15000)
+          await waitForGSShopSearchResults(tabId, 5000)
         }
 
         const pageResult = await extractSearchResults(tabId, job.site, 999)
