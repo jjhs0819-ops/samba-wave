@@ -1662,6 +1662,14 @@ class LotteonSourcingClient:
         }
 
         url = f"{self.PBF_BASE}/product/v2/extlmsa/promotion/favorBox/benefits"
+        _cookie_len = (
+            len(_lotteon_cookie_cache.split(";")) if _lotteon_cookie_cache else 0
+        )
+        logger.info(
+            f"[LOTTEON] benefits API 호출: {spd_no}, "
+            f"쿠키={'있음(' + str(_cookie_len) + '개)' if _lotteon_cookie_cache else '없음'}, "
+            f"slPrc={sl_prc:,}"
+        )
         try:
             client = await self._get_pbf_client()
             _benefit_headers = {
