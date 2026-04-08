@@ -564,13 +564,15 @@ export default function CollectorPage() {
     setCollecting(true)
     addLog(`${targetIds.length.toLocaleString()}개 그룹 상품수집 시작...`)
 
-    for (const id of targetIds) {
+    for (let gi = 0; gi < targetIds.length; gi++) {
+      const id = targetIds[gi]
       if (abort.signal.aborted) break
       const f = filters.find((x) => x.id === id)
       if (!f) continue
+      const gp = `[${gi + 1}/${targetIds.length}]`
       // 그룹 전환 시 렌더링 보장
       await new Promise(r => setTimeout(r, 100))
-      addLog(`[${f.name}] 수집 요청 중...`)
+      addLog(`${gp} [${f.name}] 수집 요청 중...`)
 
       try {
         // Job 생성
@@ -602,7 +604,7 @@ export default function CollectorPage() {
             }
 
             if (job.current > lastCurrent) {
-              addLog(`[${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`)
+              addLog(`${gp} [${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`)
               lastCurrent = job.current
               load()
             }
@@ -614,12 +616,12 @@ export default function CollectorPage() {
               const parts = [`신규 ${saved}건`]
               if (skipped > 0) parts.push(`중복 ${skipped}건`)
               if (policy) parts.push(policy)
-              addLog(`[${f.name}] 수집 완료: ${parts.join(' | ')}`)
+              addLog(`${gp} [${f.name}] 수집 완료: ${parts.join(' | ')}`)
               await new Promise(r => setTimeout(r, 100))
               break
             }
             if (job.status === 'failed') {
-              addLog(`[${f.name}] 수집 실패: ${job.error || '알 수 없는 오류'}`)
+              addLog(`${gp} [${f.name}] 수집 실패: ${job.error || '알 수 없는 오류'}`)
               await new Promise(r => setTimeout(r, 100))
               break
             }
@@ -628,7 +630,7 @@ export default function CollectorPage() {
           }
         }
       } catch (e) {
-        addLog(`[${f.name}] 수집 오류: ${(e as Error).message}`)
+        addLog(`${gp} [${f.name}] 수집 오류: ${(e as Error).message}`)
       }
     }
     setCollecting(false)
@@ -1004,15 +1006,8 @@ export default function CollectorPage() {
                 try {
                   const discoverKeyword = keyword || brand
                   const res = await collectorApi.brandDiscover(discoverKeyword, 'LOTTEON')
-                  // 키워드와 정확 일치하는 브랜드만 기본 체크 (공백 제거 후 비교)
-                  const normalizedKeyword = discoverKeyword.replace(/\s/g, '').toLowerCase()
-                  const defaultSelected = new Set(
-                    res.brands
-                      .filter(b => b.name.replace(/\s/g, '').toLowerCase() === normalizedKeyword)
-                      .map(b => b.name)
-                  )
                   setBrandModalList(res.brands)
-                  setBrandModalSelected(defaultSelected)
+                  setBrandModalSelected(new Set())
                   setBrandModalKeyword(discoverKeyword)
                   setBrandModalParsed({ brand, keyword, gf })
                   setShowBrandModal(true)
@@ -1698,9 +1693,11 @@ export default function CollectorPage() {
                         collectAbortRef.current = abort
                         setCollecting(true)
                         addLog(`${updatedFilters.length.toLocaleString()}개 그룹 상품수집 시작...`)
-                        for (const f of updatedFilters) {
+                        for (let gi = 0; gi < updatedFilters.length; gi++) {
+                          const f = updatedFilters[gi]
                           if (abort.signal.aborted) break
-                          addLog(`[${f.name}] 수집 요청 중...`)
+                          const gp = `[${gi + 1}/${updatedFilters.length}]`
+                          addLog(`${gp} [${f.name}] 수집 요청 중...`)
                           try {
                             const r = await fetchWithAuth(`${API_BASE}/api/v1/samba/collector/collect-filter/${f.id}`, { method: 'POST' })
                             if (!r.ok) { addLog(`[${f.name}] 수집 실패: HTTP ${r.status}`); continue }
@@ -1713,18 +1710,18 @@ export default function CollectorPage() {
                               const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
                               if (!jr.ok) break
                               const job = await jr.json()
-                              if (job.current > lastCurrent) { addLog(`[${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
+                              if (job.current > lastCurrent) { addLog(`${gp} [${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
                               if (job.status === 'completed') {
                                 const _s = job.result?.saved ?? 0, _sk = job.result?.skipped ?? 0, _p = job.result?.policy || ''
                                 const _parts = [`신규 ${_s}건`]
                                 if (_sk > 0) _parts.push(`중복 ${_sk}건`)
                                 if (_p) _parts.push(_p)
-                                addLog(`[${f.name}] 수집 완료: ${_parts.join(' | ')}`)
+                                addLog(`${gp} [${f.name}] 수집 완료: ${_parts.join(' | ')}`)
                                 break
                               }
-                              if (job.status === 'failed') { addLog(`[${f.name}] 수집 실패: ${job.error || '오류'}`); break }
+                              if (job.status === 'failed') { addLog(`${gp} [${f.name}] 수집 실패: ${job.error || '오류'}`); break }
                             }
-                          } catch (e) { addLog(`[${f.name}] 수집 오류: ${(e as Error).message}`) }
+                          } catch (e) { addLog(`${gp} [${f.name}] 수집 오류: ${(e as Error).message}`) }
                         }
                         setCollecting(false)
                         await syncRequestedCounts(updatedFilters.map(f => f.id))
