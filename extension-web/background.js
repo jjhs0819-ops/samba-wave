@@ -852,10 +852,9 @@ async function runFocusPoll() {
   console.log('[수집] 집중 폴링 모드 진입 (0.5초 간격, 최대 120회)')
   let emptyCount = 0
   while (emptyCount < 120) {
-    const [hadCollect, hadSearch, hadSourcing, hadAi] = await Promise.all([
-      pollCollectOnce(), pollSearchOnce(), pollSourcingOnce(), pollAiSourcingOnce(),
-    ])
-    if (hadCollect || hadSearch || hadSourcing || hadAi) {
+    // KREAM/AI소싱 폴링 비활성화
+    const hadSourcing = await pollSourcingOnce()
+    if (hadSourcing) {
       emptyCount = 0
     } else {
       emptyCount++
@@ -868,10 +867,9 @@ async function runFocusPoll() {
 
 // alarm 트리거 시 1회 폴링 — job 있으면 집중 모드 진입, 없으면 카운트 증가
 async function runPollCycle() {
-  const [hadCollect, hadSearch, hadSourcing, hadAi] = await Promise.all([
-    pollCollectOnce(), pollSearchOnce(), pollSourcingOnce(), pollAiSourcingOnce(),
-  ])
-  if (hadCollect || hadSearch || hadSourcing || hadAi) {
+  // KREAM(pollCollectOnce, pollSearchOnce), AI소싱(pollAiSourcingOnce) 폴링 비활성화 — 401 오류 방지
+  const hadSourcing = await pollSourcingOnce()
+  if (hadSourcing) {
     emptyPollCount = 0
     runFocusPoll()
   }
