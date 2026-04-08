@@ -1208,9 +1208,8 @@ async function fetchLotteonBenefitPrice(productId, sitmNo) {
       return null
     }
 
-    // 2. pbf API 호출 (credentials + Cookie 헤더 병용)
+    // 2. pbf API 호출 (수동 Cookie 헤더 — 서비스워커에서 credentials:'include' 무효)
     const pbfResp = await fetch(`https://pbf.lotteon.com/product/v2/detail/search/base/sitm/${sitmNo}`, {
-      credentials: 'include',
       headers: {
         'Cookie': cookieStr,
         'Accept': 'application/json, text/plain, */*',
