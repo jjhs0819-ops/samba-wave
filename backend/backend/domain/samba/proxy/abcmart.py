@@ -880,12 +880,11 @@ class ARTSourcingClient:
         )
 
         # 멤버십 상시 할인 (alwaysDscntRate: 쿠폰 후 가격 기준, 100원 단위 반올림)
+        # 비로그인 API 호출 시 alwaysDscntRate=0 → 수집가 등급 3% 기본 적용
         _always_rate = float(data.get("alwaysDscntRate") or 0)
-        _membership_discount = (
-            round(_after_coupon * _always_rate / 100 / 100) * 100
-            if _always_rate > 0
-            else 0
-        )
+        if _always_rate <= 0:
+            _always_rate = 3.0
+        _membership_discount = round(_after_coupon * _always_rate / 100 / 100) * 100
 
         best_benefit_price = _after_coupon - _membership_discount
         if best_benefit_price <= 0 or best_benefit_price > sale_price:

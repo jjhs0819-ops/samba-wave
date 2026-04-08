@@ -1241,7 +1241,7 @@ class JobWorker:
                 _req_id, _future = SourcingQueue.add_search_job(
                     site, keyword, url=_sq_url
                 )
-                ext_result = await asyncio.wait_for(_future, timeout=60)
+                ext_result = await asyncio.wait_for(_future, timeout=180)
                 items_list = ext_result.get("products", [])
                 logger.info(
                     f"[잡워커] {site} 확장앱 검색 '{keyword}' → {len(items_list)}건"
@@ -1624,36 +1624,19 @@ class JobWorker:
             if site == "Nike" and p_id in _nike_details:
                 detail = _nike_details[p_id]
             _skip_detail = _search_kwargs.get("_skip_detail", False)
-            # ABCmart 최대혜택가: 확장앱으로 상세조회 (로그인 세션 필요)
+            # ABCmart 최대혜택가: API에서 쿠폰+멤버십 직접 계산 (확장앱 불필요)
             if (
                 _use_max_discount
                 and site in ("ABCmart", "GrandStage")
                 and not _skip_detail
                 and not detail
             ):
-                from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
-
-                try:
-                    _drid, _dfut = SourcingQueue.add_detail_job(site, p_id)
-                    _ext_detail = await asyncio.wait_for(_dfut, timeout=30)
-                    if _ext_detail and _ext_detail.get("success"):
-                        _ext_bbp = int(_ext_detail.get("best_benefit_price", 0) or 0)
-                        if _ext_bbp > 0:
-                            # 서버 API 상세도 함께 조회 (이미지/옵션/고시정보)
-                            if hasattr(client, "get_detail"):
-                                detail = await client.get_detail(p_id)
-                            detail["bestBenefitPrice"] = _ext_bbp
-                            logger.info(
-                                f"[잡워커] {site} 확장앱 최대혜택가: {p_id} → {_ext_bbp:,}원"
-                            )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        f"[잡워커] {site} 확장앱 최대혜택가 타임아웃: {p_id}"
-                    )
-                except Exception as _ext_err:
-                    logger.warning(
-                        f"[잡워커] {site} 확장앱 최대혜택가 실패: {p_id} — {_ext_err}"
-                    )
+                if hasattr(client, "get_detail"):
+                    try:
+                        detail = await client.get_detail(p_id)
+                        await asyncio.sleep(0.3)
+                    except Exception as e:
+                        logger.warning(f"[잡워커] {site} 서버 상세 실패 {p_id}: {e}")
             if not _skip_detail and not detail:
                 # 서버 HTTP 상세 조회 (빠르고 안정적)
                 if hasattr(client, "get_detail"):
