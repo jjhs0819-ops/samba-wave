@@ -163,7 +163,8 @@ class AbcMartPlugin(SourcingPlugin):
 
             # API에서 쿠폰+멤버십 모두 계산하므로 확장앱 불필요
             logger.info(
-                f"[ABCmart] API 최대혜택가: {site_product_id} → {best_benefit_price:,}원"
+                f"[ABCmart] API 최대혜택가: {site_product_id} → {best_benefit_price:,}원, "
+                f"옵션={len(detail.get('options', []))}개"
             )
 
             # 옵션 데이터 변환
