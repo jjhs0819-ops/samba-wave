@@ -1866,13 +1866,21 @@ async def enrich_product(
                             updates.get("sale_price") or 999999
                         ):
                             updates["sale_price"] = _ext_sale
-                        # 옵션별 실재고 (확장앱 DOM에서 "N개 남음" 파싱)
-                        _ext_opts = _ext_result.get("options")
-                        if _ext_opts and len(_ext_opts) > 0:
-                            updates["options"] = _ext_opts
+                        # 옵션별 실재고 병합 (pbf 옵션명 유지 + DOM 재고 덮어쓰기)
+                        _ext_opts = _ext_result.get("options") or []
+                        _existing_opts = updates.get("options") or []
+                        if _ext_opts and _existing_opts:
+                            for i in range(min(len(_existing_opts), len(_ext_opts))):
+                                _es = _ext_opts[i].get("stock")
+                                if _es is not None:
+                                    _existing_opts[i]["stock"] = _es
+                                    _existing_opts[i]["isSoldOut"] = _ext_opts[i].get(
+                                        "isSoldOut", False
+                                    )
+                            updates["options"] = _existing_opts
                         logger.info(
-                            f"[LOTTEON] 확장앱 혜택가 반영: {product.site_product_id} "
-                            f"benefit={_ext_benefit}, sale={_ext_sale}"
+                            f"[LOTTEON] 확장앱 반영: {product.site_product_id} "
+                            f"benefit={_ext_benefit}, sale={_ext_sale}, opts={len(_ext_opts)}"
                         )
                 except asyncio.TimeoutError:
                     logger.info(

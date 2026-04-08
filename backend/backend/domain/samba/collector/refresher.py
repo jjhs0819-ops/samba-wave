@@ -518,12 +518,20 @@ async def _refresh_product_inner(
                     )
                     _ext_result = await asyncio.wait_for(_future, timeout=25)
                     if isinstance(_ext_result, dict) and _ext_result.get("success"):
-                        # 옵션별 실재고 반영 (DOM "N개 남음" 파싱)
-                        _ext_opts = _ext_result.get("options")
-                        if _ext_opts and len(_ext_opts) > 0:
-                            result.new_options = _ext_opts
+                        # 옵션별 실재고 병합 (pbf 옵션명 유지 + DOM 재고 덮어쓰기)
+                        _ext_opts = _ext_result.get("options") or []
+                        if _ext_opts and result.new_options:
+                            _merged = list(result.new_options)
+                            for i in range(min(len(_merged), len(_ext_opts))):
+                                _es = _ext_opts[i].get("stock")
+                                if _es is not None:
+                                    _merged[i]["stock"] = _es
+                                    _merged[i]["isSoldOut"] = _ext_opts[i].get(
+                                        "isSoldOut", False
+                                    )
+                            result.new_options = _merged
                             logger.info(
-                                f"[LOTTEON] 오토튠 옵션 재고: {_sid} → {len(_ext_opts)}개 옵션"
+                                f"[LOTTEON] 오토튠 옵션 재고 병합: {_sid} → {len(_merged)}개 옵션"
                             )
                         # 혜택가: benefits API 값이 없을 때만 확장앱 폴백
                         if not result.new_cost or result.new_cost <= 0:
