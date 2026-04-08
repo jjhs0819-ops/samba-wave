@@ -3,6 +3,13 @@
 let PROXY_URL = 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
 const DEFAULT_PROXY_URL = 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
 const API_PREFIX = '/api/v1/samba/proxy'
+const API_GATEWAY_KEY = '6woI2L8NjVrcgthMQ05VvvOTH-3HPoVdmvwa123ot1w'
+
+// API Gateway Key가 포함된 fetch 래퍼 (서버 API 호출 전용)
+function apiFetch(url, init = {}) {
+  const headers = { ...(init.headers || {}), 'X-Api-Key': API_GATEWAY_KEY }
+  return fetch(url, { ...init, headers })
+}
 
 // ==================== KREAM 셀렉터 설정 (서버에서 동적 변경 가능) ====================
 
@@ -16,7 +23,7 @@ const DEFAULT_SELECTORS = {
 
 // 서버에서 최신 셀렉터 설정 fetch (실패 시 기본값 유지)
 let selectors = { ...DEFAULT_SELECTORS }
-fetch(`${PROXY_URL}${API_PREFIX}/extension-config`)
+apiFetch(`${PROXY_URL}${API_PREFIX}/extension-config`)
   .then(r => r.ok ? r.json() : null)
   .then(config => {
     if (config?.selectors) {
@@ -126,7 +133,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 // ==================== 공용 결과 전송 함수 ====================
 
 async function postResult(endpoint, body) {
-  const res = await fetch(`${PROXY_URL}${API_PREFIX}/${endpoint}`, {
+  const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -137,7 +144,7 @@ async function postResult(endpoint, body) {
 // ==================== 프록시 전송 함수 ====================
 
 async function sendCookiesToProxy(cookieStr) {
-  const res = await fetch(`${PROXY_URL}${API_PREFIX}/musinsa/set-cookie`, {
+  const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/musinsa/set-cookie`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cookie: cookieStr })
@@ -147,7 +154,7 @@ async function sendCookiesToProxy(cookieStr) {
 }
 
 async function sendKreamCookiesToProxy(cookieStr) {
-  const res = await fetch(`${PROXY_URL}${API_PREFIX}/kream/set-cookie`, {
+  const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/kream/set-cookie`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cookie: cookieStr })
@@ -206,7 +213,7 @@ async function sendMusinsaBalance(data) {
   ]
   for (const url of endpoints) {
     try {
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -270,7 +277,7 @@ async function getMusinsaCookies() {
 // 공용 폴링 함수
 async function pollOnce(endpoint, handler, label, logField) {
   try {
-    const res = await fetch(`${PROXY_URL}${API_PREFIX}/${endpoint}`)
+    const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/${endpoint}`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const job = await res.json()
     if (job.hasJob) {
@@ -856,7 +863,7 @@ async function pollBalanceCheckRequest() {
   ]
   for (const url of urls) {
     try {
-      const r = await fetch(url)
+      const r = await apiFetch(url)
       if (r.ok) {
         const data = await r.json()
         if (data.requested) {
@@ -886,7 +893,7 @@ startCollectPolling()
 // AI소싱 큐는 /api/v1/samba/ai-sourcing/ 경로 사용 (proxy 아님)
 async function pollAiSourcingOnce() {
   try {
-    const res = await fetch(`${PROXY_URL}/api/v1/samba/ai-sourcing/collect-queue`)
+    const res = await apiFetch(`${PROXY_URL}/api/v1/samba/ai-sourcing/collect-queue`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const job = await res.json()
     if (job.hasJob) {
@@ -903,7 +910,7 @@ async function pollAiSourcingOnce() {
 
 // AI소싱 결과 전송도 별도 경로
 async function postAiSourcingResult(body) {
-  await fetch(`${PROXY_URL}/api/v1/samba/ai-sourcing/collect-result`, {
+  await apiFetch(`${PROXY_URL}/api/v1/samba/ai-sourcing/collect-result`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1523,6 +1530,84 @@ async function extractDetailData(tabId, site, productId) {
         }
       }
 
+      // ── 롯데ON 전용 파싱 (렌더된 DOM에서 프로모션가/혜택가 추출) ──
+      if (siteName === 'LOTTEON') {
+        let salePrice = 0
+        let originalPrice = 0
+        let benefitPrice = 0
+        let name = ''
+        let brand = ''
+
+        const nameEl = document.querySelector('h3[class*="product"], [class*="tit_product"], [class*="product-name"], [class*="pdp-title"]')
+        name = nameEl?.textContent?.trim() || document.querySelector('meta[property="og:title"]')?.content || ''
+
+        const brandEl = document.querySelector('[class*="brand"] a, [class*="brand-name"]')
+        brand = brandEl?.textContent?.trim() || ''
+
+        const bodyText = document.body?.innerText || ''
+
+        // "나의 혜택가" 추출
+        const benefitMatch = bodyText.match(/([\d,]+)\s*원\s*나의\s*혜택가/)
+        if (benefitMatch) {
+          benefitPrice = parseInt(benefitMatch[1].replace(/,/g, ''), 10)
+        }
+
+        // 프로모션 판매가
+        const promoMatch = bodyText.match(/(\d+)%\s+([\d,]+)\s*원/)
+        if (promoMatch) {
+          salePrice = parseInt(promoMatch[2].replace(/,/g, ''), 10)
+        }
+
+        // 정가
+        const delEl = document.querySelector('del, s, [class*="origin"] [class*="price"], [class*="before"] [class*="price"]')
+        if (delEl) {
+          const delNum = delEl.textContent.replace(/[^0-9]/g, '')
+          if (delNum) originalPrice = parseInt(delNum, 10)
+        }
+        if (!originalPrice) originalPrice = salePrice
+
+        // 옵션 (사이즈) + 실재고
+        const options = []
+        document.querySelectorAll('[class*="option"] li, [class*="option"] button, select option').forEach(el => {
+          const t = el.textContent.trim()
+          if (!t || t === '선택하세요.' || t.length > 50) return
+          const isSoldOut = t.includes('품절')
+          const stockMatch = t.match(/(\d+)\s*개\s*남음/)
+          let stock = 0
+          if (isSoldOut) stock = 0
+          else if (stockMatch) stock = parseInt(stockMatch[1], 10)
+          else stock = 1
+          const cleanName = t.replace(/\[품절\]\s*/g, '').replace(/\s*\d+개\s*남음.*/, '').replace(/\s*\(품절임박\)/, '').trim()
+          if (cleanName) {
+            options.push({ name: cleanName, stock, isSoldOut })
+          }
+        })
+
+        const images = []
+        document.querySelectorAll('[class*="thumb"] img, [class*="swiper"] img, [class*="slide"] img').forEach(img => {
+          let src = img.src || img.currentSrc || img.getAttribute('data-src') || ''
+          if (src.startsWith('//')) src = 'https:' + src
+          if (src && src.includes('http') && !src.includes('data:') && !images.includes(src)) {
+            images.push(src)
+          }
+        })
+
+        if (name || salePrice > 0) {
+          return {
+            success: true,
+            site_product_id: prdId,
+            name, brand,
+            original_price: originalPrice,
+            sale_price: salePrice || benefitPrice,
+            best_benefit_price: benefitPrice,
+            images: images.slice(0, 9),
+            source_site: siteName,
+            category: '', category1: '', category2: '', category3: '',
+            options,
+          }
+        }
+      }
+
       // ── 범용 파싱 ──
       const jsonLdScripts = document.querySelectorAll('script[type="application/ld+json"]')
       for (const script of jsonLdScripts) {
@@ -1753,7 +1838,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           penalty_rate: penData?.penaltyRate ? parseFloat(penData.penaltyRate) : null,
         }
 
-        const resp = await fetch(`${PROXY_URL}/api/v1/samba/monitor/store-scores/update`, {
+        const resp = await apiFetch(`${PROXY_URL}/api/v1/samba/monitor/store-scores/update`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -1780,7 +1865,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const productIds = msg.product_ids || []
     console.log(`[갱신] ${productIds.length}건 갱신 요청 수신`)
     // 현재는 서버에 다시 전달 (KREAM 등 인증 필요 사이트 수집 트리거)
-    fetch(`${PROXY_URL}/api/v1/samba/collector/products/refresh`, {
+    apiFetch(`${PROXY_URL}/api/v1/samba/collector/products/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ product_ids: productIds, auto_retransmit: true }),
@@ -1802,7 +1887,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 async function sendAbcmartBalance(data) {
   try {
-    const res = await fetch(`${PROXY_URL}/api/v1/samba/sourcing-accounts/sync-balance`, {
+    const res = await apiFetch(`${PROXY_URL}/api/v1/samba/sourcing-accounts/sync-balance`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...data, site: data.siteName }),

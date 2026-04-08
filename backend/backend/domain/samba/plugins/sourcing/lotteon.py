@@ -108,9 +108,16 @@ class LotteonSourcingPlugin(SourcingPlugin):
         sl_prc = int(price_info.get("slPrc", 0) or 0)
         immd_dc = int(price_info.get("immdDcAplyTotAmt", 0) or 0)
         adtn_dc = int(price_info.get("adtnDcAplyTotAmt", 0) or 0)
-        best_benefit = sl_prc - immd_dc - adtn_dc if sl_prc > 0 else 0
-        if best_benefit <= 0 or best_benefit >= sl_prc:
-            best_benefit = sl_prc
+
+        if immd_dc > 0 or adtn_dc > 0:
+            # PBF에 할인 정보 있음 → 최대혜택가 계산
+            best_benefit = sl_prc - immd_dc - adtn_dc if sl_prc > 0 else 0
+            if best_benefit <= 0 or best_benefit >= sl_prc:
+                best_benefit = sl_prc
+        else:
+            # PBF에 할인 정보 없음 → slPrc가 정상가(할인 전)일 수 있어
+            # bestBenefitPrice를 None으로 설정하여 HTML 폴백 유도
+            best_benefit = None
 
         # 재고
         stck = pbf.get("stckInfo") or {}
@@ -215,7 +222,31 @@ class LotteonSourcingPlugin(SourcingPlugin):
                     timeout=20,
                 )
                 if raw:
-                    detail = raw
+                    # PBF에서 할인 정보를 못 가져온 경우(bestBenefitPrice=None)
+                    # HTML 상세 페이지로 폴백하여 정확한 최대혜택가 확인
+                    if raw.get("bestBenefitPrice") is None:
+                        logger.debug(
+                            f"[LOTTEON] PBF 할인 미반영, HTML 폴백: {site_product_id}"
+                        )
+                        html_detail = await asyncio.wait_for(
+                            client.get_product_detail(site_product_id),
+                            timeout=45,
+                        )
+                        if html_detail:
+                            # HTML에서 재고/옵션은 PBF가 더 정확하므로 병합
+                            for k in (
+                                "isOutOfStock",
+                                "isSoldOut",
+                                "saleStatus",
+                                "options",
+                            ):
+                                if k in raw and raw[k] is not None:
+                                    html_detail[k] = raw[k]
+                            detail = html_detail
+                        else:
+                            detail = raw
+                    else:
+                        detail = raw
                     logger.debug(
                         f"[LOTTEON] refresh 빠른경로 성공: {site_product_id} (sitmNo={sitm_no})"
                     )
@@ -347,6 +378,40 @@ class LotteonSourcingPlugin(SourcingPlugin):
             return RefreshResult(
                 product_id=product_id,
                 error=f"롯데ON 상세 조회 실패: {site_product_id}",
+            )
+
+        # ── qapi 프로모션가 보정 ──
+        # pbf API의 slPrc는 정가(할인 전)를 반환하므로,
+        # qapi 검색의 priceInfo[type=final]로 실제 프로모션가를 조회하여 보정
+        _pbf_sale = detail.get("salePrice") or 0
+        _name = getattr(product, "name", "") or ""
+        try:
+            from backend.domain.samba.proxy.lotteon_sourcing import (
+                LotteonSourcingClient as _QClient,
+            )
+
+            _qapi_price = await _QClient().fetch_qapi_price(site_product_id)
+            if _qapi_price:
+                _final = _qapi_price.get("final", 0)
+                _original = _qapi_price.get("original", 0)
+                _card_pct = _qapi_price.get("card_discount", 0)
+                if _final > 0 and _final < _pbf_sale:
+                    detail["salePrice"] = _final
+                    detail["bestBenefitPrice"] = (
+                        round(_final * (1 - _card_pct / 100))
+                        if _card_pct > 0
+                        else _final
+                    )
+                    if _original > 0:
+                        detail["originalPrice"] = _original
+                    logger.info(
+                        f"[LOTTEON] qapi 프로모션가 보정: {site_product_id} "
+                        f"pbf={_pbf_sale:,} → final={_final:,}, "
+                        f"benefit={detail['bestBenefitPrice']:,}"
+                    )
+        except Exception as e:
+            logger.debug(
+                f"[LOTTEON] qapi 프로모션가 조회 실패: {site_product_id} — {e}"
             )
 
         # ── 데이터 추출 ──

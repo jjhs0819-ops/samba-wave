@@ -1469,6 +1469,51 @@ class LotteonSourcingClient:
         client = await self._get_pbf_client()
         return await self._fetch_pbf_detail(sitm_no, client)
 
+    async def fetch_qapi_price(self, spd_no: str) -> Optional[dict[str, Any]]:
+        """qapi 검색으로 프로모션 최종가 조회 — productId 매칭.
+
+        pbf API의 slPrc는 정가(할인 전)를 반환하므로,
+        qapi의 priceInfo[type=final]로 실제 프로모션가를 가져온다.
+
+        Returns:
+          {"original": 81750, "final": 65400, "card_discount": 5} 또는 None
+        """
+        # 상품번호에서 검색 키워드 추출 불가 → 상품번호 직접 검색
+        try:
+            url = (
+                f"{self.SEARCH_URL}?render=qapi&platform=pc"
+                f"&collection_id=201&q={spd_no}&mallId=2&u2=0&u3=5"
+            )
+            qapi_headers = {**self.HEADERS, "Accept": "application/json, */*"}
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=True
+            ) as client:
+                resp = await client.get(url, headers=qapi_headers)
+                if resp.status_code != 200:
+                    return None
+                data = resp.json()
+                items = data.get("itemList", [])
+                # productId로 정확 매칭
+                for item in items:
+                    pid = item.get("productId", "")
+                    if pid == spd_no:
+                        price_map: dict[str, int] = {}
+                        for p in item.get("priceInfo", []):
+                            price_map[p.get("type", "")] = p.get("num", 0)
+                        card_discount = 0
+                        for promo in item.get("promotionInfo", []):
+                            if promo.get("type") == "card":
+                                card_discount = promo.get("num", 0)
+                                break
+                        return {
+                            "original": price_map.get("original", 0),
+                            "final": price_map.get("final", 0),
+                            "card_discount": card_discount,
+                        }
+        except Exception as e:
+            logger.debug(f"[LOTTEON] qapi 가격 조회 실패: {spd_no} — {e}")
+        return None
+
     async def _fetch_pbf_detail(
         self, sitm_no: str, client: httpx.AsyncClient
     ) -> Optional[dict[str, Any]]:
@@ -1521,19 +1566,31 @@ class LotteonSourcingClient:
         # ── 가격 보완 ──────────────────────────────────────────────
         price_info = pbf.get("priceInfo") or {}
         sl_prc = self._safe_int(price_info.get("slPrc", 0))
-        if sl_prc > 0:
-            detail["salePrice"] = sl_prc
 
         # ── 최대혜택가 계산 (판매가 - 즉시할인 - 추가할인) ─────────
         immd_dc = self._safe_int(price_info.get("immdDcAplyTotAmt", 0))
         adtn_dc = self._safe_int(price_info.get("adtnDcAplyTotAmt", 0))
-        base_prc = sl_prc or detail.get("salePrice", 0)
-        if base_prc > 0:
-            best_benefit = base_prc - immd_dc - adtn_dc
-            if best_benefit > 0 and best_benefit < base_prc:
-                detail["bestBenefitPrice"] = best_benefit
-            else:
-                detail["bestBenefitPrice"] = base_prc
+
+        if immd_dc > 0 or adtn_dc > 0:
+            # PBF에 할인 정보 있음 → slPrc 기준으로 가격 갱신
+            if sl_prc > 0:
+                detail["salePrice"] = sl_prc
+            base_prc = sl_prc or detail.get("salePrice", 0)
+            if base_prc > 0:
+                best_benefit = base_prc - immd_dc - adtn_dc
+                if best_benefit > 0 and best_benefit < base_prc:
+                    detail["bestBenefitPrice"] = best_benefit
+                else:
+                    detail["bestBenefitPrice"] = base_prc
+        elif sl_prc > 0:
+            # PBF에 할인 정보 없음 → slPrc가 정상가(할인 전)일 수 있으므로
+            # 기존 JSON-LD/HTML 파싱값이 더 낮으면 보존
+            existing_sale = detail.get("salePrice", 0)
+            if existing_sale <= 0:
+                detail["salePrice"] = sl_prc
+            existing_bbp = detail.get("bestBenefitPrice", 0)
+            if existing_bbp <= 0:
+                detail["bestBenefitPrice"] = existing_sale or sl_prc
 
         # ── 카테고리 코드 저장 및 이름 변환 ──────────────────────────
         basic = pbf.get("basicInfo") or {}
@@ -1586,6 +1643,15 @@ class LotteonSourcingClient:
             detail["saleStatus"] = "sold_out" if is_out else "in_stock"
 
         # ── 옵션 ──────────────────────────────────────────────────
+        # 기존 옵션의 실재고(stockQty)를 옵션명으로 매핑 — pbf는 disabled 플래그만
+        # 있고 옵션별 재고 수량이 없으므로, 기존 파싱값을 보존한다.
+        _existing_stock_map: dict[str, int] = {}
+        for _eo in detail.get("options") or []:
+            _ename = _eo.get("name", "")
+            _estock = _eo.get("stock", 0)
+            if _ename and _estock > 0:
+                _existing_stock_map[_ename] = _estock
+
         opt_info = pbf.get("optionInfo") or {}
         option_groups = opt_info.get("optionList") or []
         options: list[dict[str, Any]] = []
@@ -1598,12 +1664,19 @@ class LotteonSourcingClient:
                 if not label:
                     continue
                 disabled = bool(opt.get("disabled", False))
+                # 기존 옵션에 실재고가 있으면 보존, 없으면 pbf 기본값 사용
+                _prev_stock = _existing_stock_map.get(label, 0)
+                _stock = (
+                    0
+                    if disabled
+                    else (_prev_stock if _prev_stock > 0 else (stk_qty or 1))
+                )
                 options.append(
                     {
                         "no": len(options),
                         "name": label,
                         "price": sl_prc or detail.get("salePrice", 0),
-                        "stock": 0 if disabled else (stk_qty or 1),
+                        "stock": _stock,
                         "isSoldOut": disabled,
                     }
                 )
@@ -1619,12 +1692,18 @@ class LotteonSourcingClient:
                         combined_label = f"{g1_opt.get('label', '')} / {g2_opt.get('label', '')}".strip(
                             " /"
                         )
+                        _prev_stock = _existing_stock_map.get(combined_label, 0)
+                        _stock = (
+                            0
+                            if combined_disabled
+                            else (_prev_stock if _prev_stock > 0 else (stk_qty or 1))
+                        )
                         options.append(
                             {
                                 "no": len(options),
                                 "name": combined_label,
                                 "price": sl_prc or detail.get("salePrice", 0),
-                                "stock": 0 if combined_disabled else (stk_qty or 1),
+                                "stock": _stock,
                                 "isSoldOut": bool(combined_disabled),
                             }
                         )

@@ -1689,6 +1689,44 @@ async def enrich_product(
                 updates["options"] = result.new_options
             if result.error:
                 return {"success": False, "message": result.error}
+
+            # LOTTEON: 확장앱 상세 페이지에서 "나의 혜택가" + 옵션별 실재고 파싱
+            if _src.upper() == "LOTTEON":
+                try:
+                    from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+
+                    _req_id, _future = SourcingQueue.add_detail_job(
+                        "LOTTEON", product.site_product_id
+                    )
+                    _ext_result = await asyncio.wait_for(_future, timeout=20)
+                    if isinstance(_ext_result, dict) and _ext_result.get("success"):
+                        # 나의 혜택가 → cost
+                        _ext_benefit = int(
+                            _ext_result.get("best_benefit_price", 0) or 0
+                        )
+                        if _ext_benefit > 0:
+                            updates["cost"] = _ext_benefit
+                        # 프로모션 판매가 → sale_price
+                        _ext_sale = int(_ext_result.get("sale_price", 0) or 0)
+                        if _ext_sale > 0 and _ext_sale < (
+                            updates.get("sale_price") or 999999
+                        ):
+                            updates["sale_price"] = _ext_sale
+                        # 옵션별 실재고 (확장앱 DOM에서 "N개 남음" 파싱)
+                        _ext_opts = _ext_result.get("options")
+                        if _ext_opts and len(_ext_opts) > 0:
+                            updates["options"] = _ext_opts
+                        logger.info(
+                            f"[LOTTEON] 확장앱 혜택가 반영: {product.site_product_id} "
+                            f"benefit={_ext_benefit}, sale={_ext_sale}"
+                        )
+                except asyncio.TimeoutError:
+                    logger.info(
+                        "[LOTTEON] 확장앱 응답 대기 타임아웃 (20초) — qapi 가격 유지"
+                    )
+                except Exception as _ext_err:
+                    logger.debug(f"[LOTTEON] 확장앱 상세 파싱 실패: {_ext_err}")
+
             if not updates:
                 return {"success": True, "message": "변동 없음", "product": product}
             # 가격이력 스냅샷

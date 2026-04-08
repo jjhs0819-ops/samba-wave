@@ -1291,6 +1291,32 @@ class JobWorker:
                             keyword, max_count=_max, **_search_kwargs
                         )
                         items_list = result.get("products", [])
+                        # ABCmart: 그랜드스테이지 결과 병합 (스캔과 동일 범위)
+                        if site == "ABCmart" and sf.category_filter:
+                            from backend.domain.samba.proxy.abcmart import (
+                                ARTSourcingClient as _ART,
+                            )
+
+                            _gs = _ART("10002")
+                            _gs_result = await _gs.search(
+                                keyword, max_count=_max, **_search_kwargs
+                            )
+                            _gs_products = _gs_result.get("products", [])
+                            if _gs_products:
+                                _seen = {
+                                    p.get("site_product_id", "")
+                                    for p in items_list
+                                    if p.get("site_product_id")
+                                }
+                                for p in _gs_products:
+                                    pid = p.get("site_product_id", "")
+                                    if pid and pid not in _seen:
+                                        _seen.add(pid)
+                                        items_list.append(p)
+                                logger.info(
+                                    f"[잡워커] ABCmart+GS 병합: ABC {len(result.get('products', []))}건 "
+                                    f"+ GS {len(_gs_products)}건 → 총 {len(items_list)}건"
+                                )
                         logger.info(
                             f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건"
                         )
@@ -1533,10 +1559,17 @@ class JobWorker:
             images = (
                 _detail_imgs if len(_detail_imgs) > len(_search_imgs) else _search_imgs
             )
-            cost = int(item.get("cost", 0)) or sale_price
+            # 원가: bestBenefitPrice(혜택가) → cost → sale_price 순으로 우선 사용
+            _bbp = int(detail.get("bestBenefitPrice", 0) or 0) or int(
+                item.get("best_benefit_price", 0) or 0
+            )
+            cost = _bbp if _bbp > 0 else (int(item.get("cost", 0)) or sale_price)
             # 배송비 원가 가산 (무료배송 아닌 경우)
             _sourcing_ship_fee = 0
-            if not item.get("free_shipping", False):
+            _is_free_ship = item.get("free_shipping", False) or detail.get(
+                "free_shipping", False
+            )
+            if not _is_free_ship:
                 _sourcing_ship_fee = int(detail.get("shipping_fee", 3000))
                 cost += _sourcing_ship_fee
             _style_code = detail.get("style_code") or item.get("style_code", "")
@@ -1553,7 +1586,12 @@ class JobWorker:
                 "cost": cost,
                 "images": images,
                 "options": [
-                    {**o, "stock": 99 if (o.get("stock") or 0) > 0 else 0}
+                    {
+                        **o,
+                        "stock": o.get("stock", 0)
+                        if (o.get("stock") or 0) > 1
+                        else (99 if (o.get("stock") or 0) > 0 else 0),
+                    }
                     for o in (detail.get("options") or item.get("options", []))
                 ],
                 "category": detail.get("category")
