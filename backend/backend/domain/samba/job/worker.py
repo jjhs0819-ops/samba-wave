@@ -1257,6 +1257,13 @@ class JobWorker:
                 return
             # 확장앱 결과는 검색 API와 동일 포맷으로 처리 (아래 중복필터+저장 로직 공유)
             result = {"products": items_list, "total": len(items_list)}
+            # GSShop: 검색은 확장앱, 상세조회는 서버 HTTP
+            if site == "GSShop":
+                from backend.domain.samba.proxy.gsshop_sourcing import (
+                    GsShopSourcingClient,
+                )
+
+                client = GsShopSourcingClient()
 
         else:
             # 직접 API 검색

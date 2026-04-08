@@ -544,6 +544,30 @@ class GsShopSourcingClient:
             logger.error(f"[GSSHOP] 상세 조회 실패: {product_id} — {e}")
             return {}
 
+    async def get_detail(self, product_id: str) -> dict[str, Any]:
+        """worker 호환 상세 조회 — get_product_detail 래핑 + snake_case 변환."""
+        raw = await self.get_product_detail(product_id)
+        if not raw:
+            return {}
+        return {
+            "name": raw.get("name", ""),
+            "brand": raw.get("brand", ""),
+            "manufacturer": raw.get("manufacturer", ""),
+            "category": raw.get("category", ""),
+            "category1": raw.get("category1", ""),
+            "category2": raw.get("category2", ""),
+            "category3": raw.get("category3", ""),
+            "images": raw.get("images", []),
+            "options": raw.get("options", []),
+            "detail_html": raw.get("detailHtml", ""),
+            "detail_images": raw.get("detailImages", []),
+            "bestBenefitPrice": raw.get("bestBenefitPrice", 0),
+            "source_url": raw.get("sourceUrl", ""),
+            "free_shipping": raw.get("freeShipping", False),
+            "shipping_fee": 0 if raw.get("freeShipping", False) else 3000,
+            "origin": raw.get("origin", ""),
+        }
+
     # ------------------------------------------------------------------
     # renderJson 파싱 (1순위)
     # ------------------------------------------------------------------
