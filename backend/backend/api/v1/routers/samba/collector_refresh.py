@@ -107,6 +107,22 @@ async def refresh_products(
             "errors": 0,
         }
 
+    # 롯데ON: benefits API 쿠키 캐시 로드
+    _has_lotteon = any(
+        (getattr(p, "source_site", "") or "").upper() == "LOTTEON" for p in products
+    )
+    if _has_lotteon:
+        from backend.api.v1.routers.samba.proxy import _get_setting
+        from backend.domain.samba.proxy.lotteon_sourcing import (
+            set_lotteon_cookie,
+            _lotteon_cookie_cache,
+        )
+
+        if not _lotteon_cookie_cache:
+            _lt_ck = await _get_setting(session, "lotteon_cookie")
+            if _lt_ck:
+                set_lotteon_cookie(str(_lt_ck))
+
     # 벌크 갱신 실행 (수동 갱신 — 오토튠 로그에 노출되지 않음)
     results, summary = await refresh_products_bulk(products, source="manual")
 

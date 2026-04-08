@@ -1823,6 +1823,19 @@ async def enrich_product(
         try:
             from datetime import datetime, timezone
 
+            # 롯데ON: benefits API 쿠키 캐시 로드
+            if _src.upper() == "LOTTEON":
+                from backend.api.v1.routers.samba.proxy import _get_setting
+                from backend.domain.samba.proxy.lotteon_sourcing import (
+                    set_lotteon_cookie,
+                    _lotteon_cookie_cache,
+                )
+
+                if not _lotteon_cookie_cache:
+                    _lt_ck = await _get_setting(session, "lotteon_cookie")
+                    if _lt_ck:
+                        set_lotteon_cookie(str(_lt_ck))
+
             result = await plugin.refresh(product)
             updates: dict[str, Any] = {}
             if result.new_sale_price is not None:
@@ -1850,6 +1863,12 @@ async def enrich_product(
                 "original_price": updates.get("original_price", product.original_price),
                 "cost": updates.get("cost", product.cost),
             }
+            # 옵션: 신규 수집 우선, 없으면 기존 DB 옵션 폴백
+            _snap_opts = result.new_options
+            if not _snap_opts and product.options:
+                _snap_opts = product.options
+            if _snap_opts:
+                snapshot["options"] = _snap_opts
             history = list(product.price_history or [])
             history.insert(0, snapshot)
             updates["price_history"] = _trim_history(history)
