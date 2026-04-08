@@ -880,6 +880,15 @@ class SambaShipmentService:
         if policy and policy.market_policies:
             policy_market_data = policy.market_policies
 
+        # 글로벌 삭제어 조회 (compose 전에 미리 로드)
+        from backend.domain.samba.forbidden.repository import (
+            SambaForbiddenWordRepository,
+        )
+
+        fw_repo = SambaForbiddenWordRepository(self.session)
+        forbidden_words = await fw_repo.list_active("deletion")
+        deletion_words = [fw.word for fw in (forbidden_words or []) if fw.word]
+
         # 정책의 상품명 규칙(name_rule) 기반 상품명 조합 적용
         if policy and policy.extras:
             name_rule_id = (policy.extras or {}).get("name_rule_id")
@@ -892,28 +901,12 @@ class SambaShipmentService:
                 name_rule = result.first()
                 if name_rule:
                     product_dict["name"] = self._compose_product_name(
-                        product_dict, name_rule
+                        product_dict, name_rule, deletion_words=deletion_words
                     )
                     # 마켓별 상품명 조합이 있으면 _dispatch_one에서 덮어쓸 수 있도록 name_rule 보관
                     product_dict["_name_rule"] = name_rule
                     product_dict["_original_name"] = product_row.name or ""
-
-        # 글로벌 삭제어 적용 (상품명에서 금칙어 제거)
-        # DB 실제 데이터: type='deletion', scope='all'
-        import re as _re
-        from backend.domain.samba.forbidden.repository import (
-            SambaForbiddenWordRepository,
-        )
-
-        fw_repo = SambaForbiddenWordRepository(self.session)
-        forbidden_words = await fw_repo.list_active("deletion")
-        if forbidden_words and product_dict.get("name"):
-            name = product_dict["name"]
-            for fw in forbidden_words:
-                if fw.word:
-                    name = _re.sub(_re.escape(fw.word), "", name, flags=_re.IGNORECASE)
-            # 연속 공백 정리
-            product_dict["name"] = _re.sub(r"\s{2,}", " ", name).strip()
+                    product_dict["_deletion_words"] = deletion_words
 
         # 정책이 있으면 계정 필터링, 없으면 사용자 선택 전체 유지
         if policy_market_data:
@@ -1206,7 +1199,10 @@ class SambaShipmentService:
                             "_original_name", product_dict.get("name", "")
                         )
                         acct_product["name"] = self._compose_product_name(
-                            _orig, _nr, market_type=market_type
+                            _orig,
+                            _nr,
+                            market_type=market_type,
+                            deletion_words=product_dict.get("_deletion_words"),
                         )
                 cost = (
                     acct_product.get("cost")
@@ -1502,7 +1498,12 @@ class SambaShipmentService:
     # ==================== 상품명 조합 ====================
 
     def _compose_product_name(
-        self, product: dict[str, Any], name_rule: Any, *, market_type: str | None = None
+        self,
+        product: dict[str, Any],
+        name_rule: Any,
+        *,
+        market_type: str | None = None,
+        deletion_words: list[str] | None = None,
     ) -> str:
         """정책의 상품명 규칙(name_composition)에 따라 상품명을 조합.
 
@@ -1555,6 +1556,12 @@ class SambaShipmentService:
                 )
                 flags = re.IGNORECASE if case_insensitive else 0
                 composed = re.sub(re.escape(fr), to or "", composed, flags=flags)
+
+        # 삭제어 적용 (dedup 전에 적용하여 중복 단어 감지 가능하게)
+        if deletion_words:
+            for dw in deletion_words:
+                composed = re.sub(re.escape(dw), " ", composed, flags=re.IGNORECASE)
+            composed = re.sub(r"\s{2,}", " ", composed).strip()
 
         # 중복 단어 제거
         if name_rule.dedup_enabled:
