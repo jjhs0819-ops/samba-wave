@@ -170,7 +170,7 @@ async def musinsa_auth_status(
 
 
 @router.get("/filters")
-async def list_filters(session: AsyncSession = Depends(get_read_session_dependency)):
+async def list_filters(session: AsyncSession = Depends(get_write_session_dependency)):
     svc = _get_services(session)
     all_filters = await svc.list_filters(limit=10000)
     # 폴더 제외, 리프 그룹만 반환 (기존 호환성)
