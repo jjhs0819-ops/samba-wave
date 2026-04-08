@@ -33,9 +33,24 @@ export default function ProductsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // URL searchParams에서 필터 읽기
-  const filterByGroupId = searchParams.get("search_filter_id") || "";
-  const filterGroupName = searchParams.get("group_name") || "";
+  // URL searchParams에서 필터 읽기 — 한 번 읽은 뒤 URL에서 제거 (새로고침 시 풀림)
+  const [filterByGroupId, setFilterByGroupId] = useState("")
+  const [filterGroupName, setFilterGroupName] = useState("")
+  useEffect(() => {
+    const gid = searchParams.get("search_filter_id") || ""
+    const gname = searchParams.get("group_name") || ""
+    if (gid) {
+      setFilterByGroupId(gid)
+      setFilterGroupName(gname)
+      // URL에서 그룹 필터 파라미터 제거 (새로고침 시 풀리도록)
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete("search_filter_id")
+      params.delete("group_name")
+      const qs = params.toString()
+      router.replace(`/samba/products${qs ? `?${qs}` : ""}`)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // highlight는 로컬 state로 관리 → 새로고침 시 자동 해제
   const [highlightProductId, setHighlightProductId] = useState(searchParams.get("highlight") || "");
@@ -777,14 +792,14 @@ export default function ProductsPage() {
             {filterGroupName || filterByGroupId}
           </span>
           <button
-            onClick={() => router.push("/samba/products")}
+            onClick={() => { setFilterByGroupId(""); setFilterGroupName("") }}
             style={{
               marginLeft: "auto", background: "transparent", border: "1px solid #3D3D3D",
               color: "#888", padding: "2px 10px", borderRadius: "4px",
               fontSize: "0.75rem", cursor: "pointer",
             }}
           >
-            전체보기
+            ✕ 해제
           </button>
         </div>
       )}
