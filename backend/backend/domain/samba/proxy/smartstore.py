@@ -1061,23 +1061,19 @@ class SmartStoreClient:
         elif "gif" in content_type:
             ext = "gif"
         elif "webp" in content_type or image_url.endswith(".webp"):
-            # GS샵 등 webp 이미지 → PNG 변환 (네이버 API webp 거부 대응)
-            if _is_gsshop_image:
-                try:
-                    from PIL import Image as _PILImage
-                    import io as _io
+            # 네이버 API는 WebP 미지원 → PNG 변환 (전 소싱처 공통)
+            try:
+                from PIL import Image as _PILImage
+                import io as _io
 
-                    pil_img = _PILImage.open(_io.BytesIO(img_bytes)).convert("RGB")
-                    buf = _io.BytesIO()
-                    pil_img.save(buf, format="PNG")
-                    img_bytes = buf.getvalue()
-                    ext = "png"
-                    upload_type = "image/png"
-                    del pil_img, buf
-                except Exception:
-                    ext = "webp"
-                    upload_type = "image/webp"
-            else:
+                pil_img = _PILImage.open(_io.BytesIO(img_bytes)).convert("RGB")
+                buf = _io.BytesIO()
+                pil_img.save(buf, format="PNG")
+                img_bytes = buf.getvalue()
+                ext = "png"
+                upload_type = "image/png"
+                del pil_img, buf
+            except Exception:
                 ext = "webp"
                 upload_type = "image/webp"
 
