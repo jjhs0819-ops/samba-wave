@@ -1604,24 +1604,30 @@ class LotteonSourcingClient:
         sitm_no = sitm_no or str(basic.get("sitmNo", "") or "").strip()
         sl_prc = self._safe_int(price.get("slPrc", 0))
         if not spd_no or not sitm_no or sl_prc <= 0:
+            logger.info(
+                f"[LOTTEON] benefits API 스킵: spd={spd_no}, sitm={sitm_no}, slPrc={sl_prc}"
+            )
             return None
+
+        logger.info(f"[LOTTEON] benefits API basicInfo keys: {sorted(basic.keys())}")
 
         body = {
             "spdNo": spd_no,
             "sitmNo": sitm_no,
             "slPrc": sl_prc,
             "slQty": 1,
-            "trGrpCd": str(basic.get("trGrpCd", "") or ""),
+            "trGrpCd": str(basic.get("trGrpCd", "") or "LE"),
             "trNo": str(basic.get("trNo", "") or ""),
             "lrtrNo": str(basic.get("lrtrNo", "") or ""),
             "brdNo": str(basic.get("brdNo", "") or ""),
             "scatNo": str(basic.get("scatNo", "") or ""),
             "strCd": str(basic.get("strCd", "") or ""),
+            # 채널 정보 — PC 웹 고정값 (basicInfo에 없을 수 있음)
             "chCsfCd": str(basic.get("chCsfCd", "") or "DI"),
-            "chDtlNo": str(basic.get("chDtlNo", "") or ""),
-            "chNo": str(basic.get("chNo", "") or ""),
-            "chTypCd": str(basic.get("chTypCd", "") or ""),
-            "ctrtTypCd": str(basic.get("ctrtTypCd", "") or ""),
+            "chDtlNo": str(basic.get("chDtlNo", "") or "1051900"),
+            "chNo": str(basic.get("chNo", "") or "101577"),
+            "chTypCd": str(basic.get("chTypCd", "") or "DI02"),
+            "ctrtTypCd": str(basic.get("ctrtTypCd", "") or "B"),
             "afflPdMrgnRt": self._safe_int(basic.get("afflPdMrgnRt", 0)),
             "afflPdLwstMrgnRt": self._safe_int(basic.get("afflPdLwstMrgnRt", 0)),
             "sfcoPdMrgnRt": self._safe_int(basic.get("sfcoPdMrgnRt", 0)),
@@ -1633,7 +1639,7 @@ class LotteonSourcingClient:
             "dvCstStdQty": self._safe_int(basic.get("dvCstStdQty", 0)),
             "stkMgtYn": str(basic.get("stkMgtYn", "") or "Y"),
             "thdyPdYn": str(basic.get("thdyPdYn", "") or "N"),
-            "fprdDvPdYn": basic.get("fprdDvPdYn"),
+            "fprdDvPdYn": str(basic.get("fprdDvPdYn", "") or "N"),
             "mallNo": str(basic.get("mallNo", "") or "1"),
             "cartDvsCd": "01",
             "infwMdiaCd": "PC",
@@ -1659,10 +1665,15 @@ class LotteonSourcingClient:
                 },
             )
             if resp.status_code != 200:
-                logger.debug(f"[LOTTEON] benefits API HTTP {resp.status_code}")
+                logger.warning(
+                    f"[LOTTEON] benefits API HTTP {resp.status_code}: {resp.text[:200]}"
+                )
                 return None
             result = resp.json()
             if str(result.get("returnCode")) != "200":
+                logger.warning(
+                    f"[LOTTEON] benefits API 실패: {result.get('message', '')[:100]}"
+                )
                 return None
             data = result.get("data") or {}
             tot_amt = data.get("totAmt")
