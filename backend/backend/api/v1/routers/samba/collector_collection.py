@@ -1350,7 +1350,7 @@ async def brand_refresh(
         raise HTTPException(500, f"카테고리 스캔 실패: {e}")
 
     # 2) 기존 그룹 조회 — source_site + category_filter로 매칭
-    all_filters = await svc.list_filters()
+    all_filters = await svc.list_filters(limit=10000)
     existing_cat_codes: dict[str, Any] = {}  # categoryCode → filter
     for f in all_filters:
         if f.source_site != site:
