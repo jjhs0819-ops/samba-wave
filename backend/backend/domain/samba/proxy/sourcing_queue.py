@@ -28,7 +28,7 @@ SITE_DETAIL_URLS: dict[str, str] = {
     "ABCmart": "https://www.a-rt.com/product?prdtNo={product_id}",
     "GrandStage": "https://www.a-rt.com/product?prdtNo={product_id}&tChnnlNo=10002",
     "REXMONDE": "https://www.okmall.com/products/detail/{product_id}",
-    "LOTTEON": "https://www.lotteon.com/product/productDetail.lotte?spdNo={product_id}",
+    "LOTTEON": "https://www.lotteon.com/p/product/{product_id}",
     "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={product_id}",
     "ElandMall": "https://www.elandmall.com/goods/goods.action?goodsNo={product_id}",
     "SSF": "https://www.ssfshop.com/goods/{product_id}",
