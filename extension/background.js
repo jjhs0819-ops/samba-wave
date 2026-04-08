@@ -1196,8 +1196,8 @@ function pollSourcingOnce() {
 async function handleSourcingJob(job) {
   let tabId = null
   try {
-    // active:true 필요: 패션플러스 상세(lazy 컨텐츠), GS샵 카테고리스캔(JS렌더링)
-    const needsActive = (job.type === 'detail' && job.site === 'FashionPlus') || job.type === 'category-scan'
+    // active:true 필요: SPA 상세(JS렌더링 필수), 카테고리스캔
+    const needsActive = (job.type === 'detail' && (job.site === 'FashionPlus' || job.site === 'LOTTEON')) || job.type === 'category-scan'
     const tab = await chrome.tabs.create({ url: job.url, active: needsActive })
     tabId = tab.id
     await waitForTabLoad(tabId, 30000)
