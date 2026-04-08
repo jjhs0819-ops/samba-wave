@@ -2019,7 +2019,7 @@ async def preview_ai_tags(
     # 스마트스토어 클라이언트 초기화 (태그사전 검증용)
     ss_client_preview = await _get_smartstore_tag_client(session)
 
-    async with httpx.AsyncClient(timeout=30) as http_client:
+    async with httpx.AsyncClient(timeout=90) as http_client:
         logger.info(
             f"[AI태그 미리보기] {method} model={model} key={api_key[:10]}... groups={len(groups)}"
         )
@@ -2216,7 +2216,9 @@ async def preview_ai_tags(
                 )
 
             except Exception as e:
-                logger.error(f"[AI태그 미리보기] 그룹 {gid} 실패: {e}")
+                logger.error(
+                    f"[AI태그 미리보기] 그룹 {gid} 실패: {type(e).__name__}: {e}"
+                )
                 failed_groups += 1
                 continue
 
