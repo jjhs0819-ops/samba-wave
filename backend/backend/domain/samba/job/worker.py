@@ -1137,6 +1137,7 @@ class JobWorker:
         site = sf.source_site
         filter_id = sf.id
         keyword = sf.keyword or ""
+        _original_url = keyword  # URL 원본 보존 (카테고리 필터 포함)
         requested_count = max(sf.requested_count or 100, 10)
 
         # URL에서 키워드/필터 추출
@@ -1349,6 +1350,9 @@ class JobWorker:
                             f"[잡워커] {site} 검색 캐시 히트 '{keyword}' → {len(items_list)}건"
                         )
                     else:
+                        # GSShop: 원본 URL(카테고리 필터 포함) 전달
+                        if site == "GSShop" and _original_url.startswith("http"):
+                            _search_kwargs["url"] = _original_url
                         result = await client.search(
                             keyword, max_count=_max, **_search_kwargs
                         )
