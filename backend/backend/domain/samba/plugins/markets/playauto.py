@@ -219,7 +219,9 @@ class PlayAutoPlugin(MarketPlugin):
             ext = ".png"
         elif low.endswith(".gif"):
             ext = ".gif"
-        r2_key = f"playauto/{url_hash}{ext}"
+        # WebP 소스는 JPG 변환 버전용 별도 키 (기존 깨진 캐시 우회)
+        suffix = "_c" if low.endswith(".webp") else ""
+        r2_key = f"playauto/{url_hash}{suffix}{ext}"
         r2_url = f"{public_url}/{r2_key}"
 
         # R2에 이미 존재하면 재업로드 스킵
@@ -285,7 +287,8 @@ class PlayAutoPlugin(MarketPlugin):
                 ext = ".png"
             elif image_url.lower().endswith(".gif"):
                 ext = ".gif"
-            r2_key = f"playauto/{url_hash}{ext}"
+            suffix = "_c" if image_url.lower().endswith(".webp") else ""
+            r2_key = f"playauto/{url_hash}{suffix}{ext}"
 
         content_type = "image/jpeg"
         if r2_key.endswith(".png"):

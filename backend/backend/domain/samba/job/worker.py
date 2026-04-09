@@ -1779,27 +1779,9 @@ class JobWorker:
             # Nike: 선취합된 상세 데이터 사용
             if site == "Nike" and p_id in _nike_details:
                 detail = _nike_details[p_id]
-            # GSShop: 선취합된 상세 데이터 사용 + 이름/가격 보충
+            # GSShop: 선취합된 상세 데이터 사용
             if site == "GSShop" and p_id in _gsshop_details:
                 detail = _gsshop_details[p_id]
-                # 검색 결과에 이름/가격 없으므로 상세에서 보충
-                if not p_name or p_name == "(GSShop)":
-                    p_name = detail.get("name", "") or p_name
-                if sale_price <= 1:
-                    sale_price = int(
-                        detail.get("salePrice", 0)
-                        or detail.get("bestBenefitPrice", 0)
-                        or detail.get("sale_price", 0)
-                        or 0
-                    )
-                    original_price = (
-                        int(
-                            detail.get("originalPrice", 0)
-                            or detail.get("original_price", 0)
-                            or 0
-                        )
-                        or sale_price
-                    )
             _skip_detail = _search_kwargs.get("_skip_detail", False)
             # ABCmart 최대혜택가: API에서 쿠폰+멤버십 직접 계산 (확장앱 불필요)
             if (
@@ -1832,6 +1814,21 @@ class JobWorker:
                         )
                     except Exception as e:
                         logger.warning(f"[잡워커] {site} 서버 상세 실패 {p_id}: {e}")
+
+            # GSShop: 검색 결과에 이름/가격 없으므로 상세에서 보충
+            # (선취합·폴백 상세조회 모두 거친 뒤 실행)
+            if site == "GSShop" and detail:
+                if not p_name or p_name == "(GSShop)":
+                    p_name = detail.get("name", "") or p_name
+                if sale_price <= 1:
+                    sale_price = int(
+                        detail.get("salePrice", 0)
+                        or detail.get("bestBenefitPrice", 0)
+                        or 0
+                    )
+                    original_price = (
+                        int(detail.get("originalPrice", 0) or 0) or sale_price
+                    )
 
             # 이미지: 확장앱 결과와 검색 API 중 더 많은 쪽 사용
             _detail_imgs = detail.get("images") or []

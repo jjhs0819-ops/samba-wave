@@ -1219,6 +1219,11 @@ class SambaShipmentService:
                     _mdt = policy.extras.get("market_detail_templates") or {}
                     _policy_key = MARKET_TYPE_TO_POLICY_KEY.get(market_type, "")
                     _market_tpl_id = _mdt.get(_policy_key)
+                    logger.info(
+                        f"[전송] 마켓별 상세 템플릿 조회: market={market_type}, "
+                        f"policy_key={_policy_key}, mdt_keys={list(_mdt.keys())}, "
+                        f"tpl_id={_market_tpl_id or '(없음)'}"
+                    )
                     if _market_tpl_id:
                         acct_product["detail_html"] = await self._build_detail_html(
                             acct_product,
