@@ -1009,16 +1009,22 @@ async def product_dashboard_stats(
 
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from backend.domain.samba.account.model import SambaMarketAccount as _MA
-    from sqlalchemy import func, case, literal, text
+    from sqlalchemy import func, case, literal, text, cast, String
 
     # 1) 소싱처별 수집현황
+    #    registered_accounts는 JSON null로 저장되므로 cast→text 비교 필요
     site_stmt = (
         select(
             _CP.source_site,
             func.count().label("total"),
-            func.count(case((_CP.registered_accounts != None, literal(1)))).label(
-                "registered"
-            ),
+            func.count(
+                case(
+                    (
+                        cast(_CP.registered_accounts, String) != "null",
+                        literal(1),
+                    )
+                )
+            ).label("registered"),
             func.count(case((_CP.sale_status == "sold_out", literal(1)))).label(
                 "sold_out"
             ),
@@ -1039,12 +1045,15 @@ async def product_dashboard_stats(
     ]
 
     # 2) 마켓/계정별 등록현황 — registered_accounts JSON 배열 언래핑
+    #    서브쿼리로 배열 타입만 먼저 필터링 (json_array_length 에러 방지)
     acct_stmt = text("""
         SELECT aid, COUNT(*) AS cnt
-        FROM samba_collected_product,
-             json_array_elements_text(registered_accounts) AS aid
-        WHERE registered_accounts IS NOT NULL
-          AND json_array_length(registered_accounts) > 0
+        FROM (
+            SELECT json_array_elements_text(registered_accounts) AS aid
+            FROM samba_collected_product
+            WHERE registered_accounts IS NOT NULL
+              AND json_typeof(registered_accounts) = 'array'
+        ) sub
         GROUP BY aid
         ORDER BY cnt DESC
     """)
