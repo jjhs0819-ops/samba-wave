@@ -188,6 +188,22 @@ const STORE_MARKETS: MarketConfig[] = [
       { value: '7', label: '7일' }, { value: '10', label: '10일' }, { value: '14', label: '14일' },
       { value: '20', label: '20일' }, { value: '30', label: '30일' },
     ]},
+    { name: '_divider_event_exclude', label: '행사 제외 설정', type: 'divider' },
+    { name: 'ownerDiscountExclude', label: '오너스할인', type: 'radio', options: [
+      { value: 'N', label: '제외안함' }, { value: 'Y', label: '제외' },
+    ]},
+    { name: 'unitCouponExclude', label: '상품단위쿠폰', type: 'radio', options: [
+      { value: 'N', label: '제외안함' }, { value: 'Y', label: '제외' },
+    ]},
+    { name: 'deliveryCouponExclude', label: '배송쿠폰', type: 'radio', options: [
+      { value: 'N', label: '제외안함' }, { value: 'Y', label: '제외' },
+    ]},
+    { name: 'cmPcsExclude', label: '가격비교채널할인(CM+PCS)', type: 'radio', options: [
+      { value: 'N', label: '제외안함' }, { value: 'Y', label: '제외' },
+    ]},
+    { name: 'pcsExclude', label: '가격비교(PCS)할인', type: 'radio', options: [
+      { value: 'N', label: '제외안함' }, { value: 'Y', label: '제외' },
+    ]},
   ]},
   { key: '11st', label: '11번가', authField: 'apiKey', guideUrl: 'https://openapi.11st.co.kr/openapi/OpenApiServiceRegister.tmall', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
@@ -1512,6 +1528,30 @@ export default function SettingsPage() {
                         >
                           {field.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
+                      ) : field.type === 'radio' ? (
+                        <div style={{ display: 'flex', gap: '0.5rem', flex: 1 }}>
+                          {field.options?.map(o => {
+                            const selected = (storeData[market.key]?.[field.name] || field.options?.[0]?.value || '') === o.value
+                            return (
+                              <button
+                                key={o.value}
+                                type="button"
+                                onClick={() => updateStoreField(market.key, field.name, o.value)}
+                                style={{
+                                  padding: '0.4rem 1rem',
+                                  background: selected ? '#FF8C00' : 'transparent',
+                                  color: selected ? '#000' : '#888',
+                                  border: `1px solid ${selected ? '#FF8C00' : '#2D2D2D'}`,
+                                  borderRadius: '6px',
+                                  fontSize: '0.8125rem',
+                                  fontWeight: selected ? 600 : 400,
+                                  cursor: 'pointer',
+                                  minWidth: '80px',
+                                }}
+                              >{o.label}</button>
+                            )
+                          })}
+                        </div>
                       ) : field.type === 'checkbox' ? (
                         <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
                           <input
