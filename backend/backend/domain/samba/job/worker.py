@@ -1422,16 +1422,28 @@ class JobWorker:
                 f"[잡워커] Nike 카테고리 필터 {sf.category_filter}: {before}→{len(items_list)}건"
             )
 
-        # ABCmart: category_filter(카테고리 코드)로 검색 결과 사후 필터링
+        # ABCmart: category_filter(카테고리 코드+이름) 로 검색 결과 사후 필터링
+        # ABC-MART/GrandStage 카테고리 코드가 채널별로 다르므로
+        # 코드 매칭 + 카테고리명(path) 매칭 병행
         if site == "ABCmart" and sf.category_filter:
             before = len(items_list)
+            # ABC-MART 코드에 대응하는 카테고리 이름(path) 수집
+            _target_cat_names: set[str] = set()
+            for item in items_list:
+                if (item.get("category_code") or "") == sf.category_filter:
+                    _cn = item.get("category") or ""
+                    if _cn:
+                        _target_cat_names.add(_cn)
+            # 코드 일치 OR 같은 카테고리명의 GS 상품 포함
             items_list = [
                 item
                 for item in items_list
                 if (item.get("category_code") or "") == sf.category_filter
+                or (item.get("category") or "") in _target_cat_names
             ]
             logger.info(
                 f"[잡워커] ABCmart 카테고리 필터 {sf.category_filter}: {before}→{len(items_list)}건"
+                f" (카테고리명 매칭: {_target_cat_names})"
             )
 
         # LOTTEON: category_filter(BC코드, 콤마 구분)로 검색 결과 사후 필터링
