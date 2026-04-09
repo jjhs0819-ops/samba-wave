@@ -403,18 +403,19 @@ export default function WarroomPage() {
     return timeAgo(new Date(iso))
   }
 
-  // 이벤트 필터링 — scheduler_tick 최신 3건 표시
+  // 이벤트 필터링 — scheduler_tick 소싱처별 최신 2건 표시
   const filteredEvents = (() => {
     const mapped = events.map(e => ({
       ...e,
       summary: e.summary?.replace(/오토튠\(registered\)\s*—\s*/, '') ?? e.summary,
     }))
-    // scheduler_tick 최신 3건만 유지
-    let tickCount = 0
+    // scheduler_tick 소싱처별 최신 2건만 유지
+    const tickCountBySite: Record<string, number> = {}
     const deduped = mapped.filter(e => {
       if (e.event_type === 'scheduler_tick') {
-        tickCount++
-        if (tickCount > 3) return false
+        const siteKey = e.source_site || '_none'
+        tickCountBySite[siteKey] = (tickCountBySite[siteKey] || 0) + 1
+        if (tickCountBySite[siteKey] > 2) return false
       }
       return true
     })
@@ -427,6 +428,19 @@ export default function WarroomPage() {
       return true
     })
   })()
+
+  // scheduler_tick 이벤트를 소싱처별로 그룹핑
+  const tickEventsBySite = (() => {
+    const ticks = filteredEvents.filter(e => e.event_type === 'scheduler_tick')
+    const groups: Record<string, typeof ticks> = {}
+    for (const e of ticks) {
+      const siteKey = e.source_site || '기타'
+      if (!groups[siteKey]) groups[siteKey] = []
+      groups[siteKey].push(e)
+    }
+    return groups
+  })()
+  const nonTickEvents = filteredEvents.filter(e => e.event_type !== 'scheduler_tick')
 
   if (loading || !stats) {
     return (
@@ -636,25 +650,83 @@ export default function WarroomPage() {
         {filteredEvents.length === 0 ? (
           <div style={{ fontSize: '0.8rem', color: '#666', padding: '1rem 0', textAlign: 'center' }}>이벤트 없음</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '360px', overflow: 'auto' }}>
-            {filteredEvents.map((e, ei) => {
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', maxHeight: '420px', overflow: 'auto' }}>
+            {/* 소싱처별 오토튠 사이클 그룹 */}
+            {Object.keys(tickEventsBySite).length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                {Object.entries(tickEventsBySite).map(([siteName, siteEvents]) => {
+                  const latest = siteEvents[0]
+                  const _d = latest?.detail as Record<string, unknown> | undefined
+                  const total = _d?.total as number | undefined
+                  const ok = _d?.ok as number | undefined
+                  const errs = _d?.errors as number | undefined
+                  const rate = _d?.rate as number | undefined
+                  const dur = _d?.duration_sec as number | undefined
+                  const priceTx = _d?.price_transmit as number | undefined
+                  const stockTx = _d?.stock_transmit as number | undefined
+                  const deleted = _d?.deleted as number | undefined
+                  const cycles = siteEvents.length
+                  const siteColor = SITE_COLORS[siteName] || '#888'
+                  return (
+                    <div key={siteName} style={{
+                      flex: '1 1 200px',
+                      padding: '0.5rem 0.6rem',
+                      borderRadius: '6px',
+                      border: `1px solid ${siteColor}30`,
+                      background: `${siteColor}08`,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.3rem' }}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: siteColor, flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: siteColor }}>{siteName}</span>
+                        <span style={{ fontSize: '0.65rem', color: '#666', marginLeft: 'auto' }}>
+                          {cycles > 1 ? `최근 ${cycles}사이클` : ''}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                        {total != null && (
+                          <span style={{ fontSize: '0.65rem', color: '#aaa' }}>대상 {total.toLocaleString()}</span>
+                        )}
+                        {ok != null && (
+                          <span style={{ fontSize: '0.65rem', color: '#51CF66' }}>성공 {ok.toLocaleString()}</span>
+                        )}
+                        {errs != null && errs > 0 && (
+                          <span style={{ fontSize: '0.65rem', color: '#FF6B6B' }}>실패 {errs.toLocaleString()}</span>
+                        )}
+                        {dur != null && (
+                          <span style={{ fontSize: '0.65rem', color: '#888' }}>{Math.round(dur)}초</span>
+                        )}
+                        {rate != null && (
+                          <span style={{ fontSize: '0.65rem', color: '#51CF66', fontWeight: 600 }}>{rate.toLocaleString()}건/초</span>
+                        )}
+                      </div>
+                      {((priceTx && priceTx > 0) || (stockTx && stockTx > 0) || (deleted && deleted > 0)) && (
+                        <div style={{ display: 'flex', gap: '0.3rem', marginTop: '0.2rem' }}>
+                          {priceTx != null && priceTx > 0 && (
+                            <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FFB34715', color: '#FFB347', border: '1px solid #FFB34730' }}>
+                              가격전송 {priceTx.toLocaleString()}
+                            </span>
+                          )}
+                          {stockTx != null && stockTx > 0 && (
+                            <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#A78BFA15', color: '#A78BFA', border: '1px solid #A78BFA30' }}>
+                              재고전송 {stockTx.toLocaleString()}
+                            </span>
+                          )}
+                          {deleted != null && deleted > 0 && (
+                            <span style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem', borderRadius: '3px', background: '#FF6B6B15', color: '#FF6B6B', border: '1px solid #FF6B6B30' }}>
+                              삭제 {deleted.toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            {/* 기타 이벤트 (scheduler_tick 외) */}
+            {nonTickEvents.map((e, ei) => {
               const t = new Date(e.created_at)
               const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`
-              // 시작~종료 시간 + 초당 처리건수 (detail에서 직접 읽기)
-              const _d = e.detail as Record<string, unknown> | undefined
-              let rateStr = ''
-              let durationStr = ''
-              if (e.event_type === 'scheduler_tick' && _d) {
-                if (_d.rate) rateStr = `${Number(_d.rate).toLocaleString()}건/초`
-                if (_d.duration_sec) durationStr = `${Math.round(Number(_d.duration_sec))}초`
-                if (_d.started_at && _d.ended_at) {
-                  const s = new Date(String(_d.started_at))
-                  const en = new Date(String(_d.ended_at))
-                  const sf = `${String(s.getHours()).padStart(2, '0')}:${String(s.getMinutes()).padStart(2, '0')}:${String(s.getSeconds()).padStart(2, '0')}`
-                  const ef = `${String(en.getHours()).padStart(2, '0')}:${String(en.getMinutes()).padStart(2, '0')}:${String(en.getSeconds()).padStart(2, '0')}`
-                  durationStr = `${sf}~${ef} (${durationStr})`
-                }
-              }
               const d = e.detail as Record<string, unknown> | undefined
               const detailTags: { label: string; value: string; color: string }[] = []
               if (d) {
@@ -713,8 +785,6 @@ export default function WarroomPage() {
                     <span style={{ fontSize: '0.75rem', color: '#666', minWidth: '3rem', flexShrink: 0 }}>{timeStr}</span>
                     <span style={{ fontSize: '0.8rem', color: '#E5E5E5', flex: 1 }}>
                       {e.summary}
-                      {durationStr && <span style={{ marginLeft: '6px', fontSize: '0.7rem', color: '#888' }}>{durationStr}</span>}
-                      {rateStr && <span style={{ marginLeft: '4px', fontSize: '0.7rem', color: '#51CF66', fontWeight: 600 }}>({rateStr})</span>}
                     </span>
                     {e.source_site && (
                       <span style={{

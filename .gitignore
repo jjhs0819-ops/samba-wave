@@ -4,6 +4,7 @@
 # 임시 개발 파일
 tmp_*
 tmp_captures/
+.push-approved
 
 # Claude IDE 캐시
 .claude/tsc-cache/

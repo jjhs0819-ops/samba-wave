@@ -487,11 +487,12 @@ class PlayAutoClient:
             stock_qty = int(max_stock)
             data["Count"] = str(stock_qty)
 
-        # 키워드 (태그에서 최대 5개)
+        # 키워드 (태그에서 내부태그 제외, 최대 10개)
         tags = product.get("tags") or []
         if isinstance(tags, list):
-            for i, tag in enumerate(tags[:5], 1):
-                tag_str = str(tag).strip() if tag else ""
+            clean_tags = [t for t in tags if t and not str(t).startswith("__")]
+            for i, tag in enumerate(clean_tags[:10], 1):
+                tag_str = str(tag).strip()
                 if tag_str:
                     data[f"Keyword{i}"] = tag_str
 
@@ -523,7 +524,8 @@ class PlayAutoClient:
                 "data3": "[상세설명참조]",
                 "data4": siil_origin,
                 "data5": maker or "[상세설명참조]",
-                "data6": "N",
+                # 수입품 여부: 원산지가 해외면 Y, 국내/기타면 N
+                "data6": "Y" if data.get("MadeIn", "").startswith("해외") else "N",
                 "data7": maker or "[상세설명참조]",
                 "data8": as_phone or "[상세설명참조]",
             }

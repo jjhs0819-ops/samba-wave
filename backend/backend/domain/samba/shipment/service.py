@@ -29,6 +29,7 @@ MARKET_TYPE_TO_POLICY_KEY: dict[str, str] = {
     "homeand": "홈앤쇼핑",
     "hmall": "HMALL",
     "kream": "KREAM",
+    "playauto": "플레이오토",
 }
 
 
@@ -348,6 +349,7 @@ class SambaShipmentService:
             "homeand": "홈앤쇼핑",
             "hmall": "HMALL",
             "kream": "KREAM",
+            "playauto": "플레이오토",
         }
         policy = None
         policy_market_data: dict[str, Any] = {}
@@ -884,6 +886,7 @@ class SambaShipmentService:
             "rakuten": "라쿠텐",
             "amazon": "아마존",
             "buyma": "바이마",
+            "playauto": "플레이오토",
         }
         if not product_row.applied_policy_id:
             logger.warning(f"[전송] 상품 {product_id} 정책 미설정 — 전송 차단")

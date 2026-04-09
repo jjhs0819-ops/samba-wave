@@ -268,6 +268,9 @@ async def _site_autotune_loop(site: str):
                         price_changed_count = 0
                         _all_price_pids: set[str] = set()
                         _all_stock_pids: set[str] = set()
+                        _cycle_deleted_pids: set[str] = (
+                            set()
+                        )  # 사이클 중 삭제된 상품 ID
                         _session_lock = asyncio.Lock()
                         # 사이클 중 감지된 전송 요청을 수집 (fire-and-forget 대신)
                         _pending_syncs: list[tuple] = []
@@ -292,7 +295,11 @@ async def _site_autotune_loop(site: str):
 
                         async def _on_result(product, r, idx=0, total=0):
                             """리프레시 직후 호출 — DB 업데이트 + 즉시 마켓 전송."""
-                            nonlocal retransmitted, deleted_count, price_changed_count
+                            nonlocal \
+                                retransmitted, \
+                                deleted_count, \
+                                price_changed_count, \
+                                _cycle_deleted_pids
 
                             async with _session_lock:
                                 if (
@@ -464,6 +471,7 @@ async def _site_autotune_loop(site: str):
                                                 )
                                         # 삭제 성공한 계정 → registered_accounts/market_product_nos 정리
                                         if _ok_del_ids:
+                                            _cycle_deleted_pids.add(r.product_id)
                                             _orig_reg = list(
                                                 product.registered_accounts or []
                                             )
@@ -770,10 +778,10 @@ async def _site_autotune_loop(site: str):
                         _ref_mod._refresh_log_buffer.append(
                             {
                                 "ts": _now.isoformat(),
-                                "site": "MUSINSA",
+                                "site": site,
                                 "product_id": "",
                                 "name": "",
-                                "msg": f"[{_kst.strftime('%H:%M:%S')}] -- 사이클 완료: {_ok_count:,}건 성공, {_err_count:,}건 실패{_err_detail} / 총 {len(results):,}건, 가격전송 {len(_all_price_pids):,}건, 재고전송 {len(_all_stock_pids):,}건, 동기 {_synced_count:,}건, 삭제 {deleted_count:,}건 --",
+                                "msg": f"[{_kst.strftime('%H:%M:%S')}] -- [{site}] 사이클 완료: {_ok_count:,}건 성공, {_err_count:,}건 실패{_err_detail} / 총 {len(results):,}건, 가격전송 {len(_all_price_pids):,}건, 재고전송 {len(_all_stock_pids):,}건, 동기 {_synced_count:,}건, 마켓삭제 {deleted_count:,}건 --",
                                 "level": "info",
                                 "source": "autotune",
                             }
@@ -790,15 +798,19 @@ async def _site_autotune_loop(site: str):
                         # ★ 품절 잔존 상품 마켓삭제 재시도
                         # sale_status="sold_out"인데 registered_accounts가 남아있는 상품
                         try:
-                            _soldout_retry_stmt = (
-                                select(_CP)
-                                .where(
-                                    *market_cond,
-                                    _CP.sale_status == "sold_out",
-                                    _CP.lock_delete != True,
-                                    _CP.source_site == site,
+                            _soldout_where = [
+                                *market_cond,
+                                _CP.sale_status == "sold_out",
+                                _CP.lock_delete != True,
+                                _CP.source_site == site,
+                            ]
+                            # 사이클 중 이미 삭제된 상품 제외
+                            if _cycle_deleted_pids:
+                                _soldout_where.append(
+                                    _CP.id.not_in(list(_cycle_deleted_pids))
                                 )
-                                .limit(50)
+                            _soldout_retry_stmt = (
+                                select(_CP).where(*_soldout_where).limit(50)
                             )
                             _soldout_result = await session.exec(_soldout_retry_stmt)
                             _soldout_products = _soldout_result.all()
@@ -946,7 +958,8 @@ async def _site_autotune_loop(site: str):
                                 await monitor.emit(
                                     "scheduler_tick",
                                     "info",
-                                    summary=f"오토튠 — 대상 {filtered_count:,}건, 갱신 {summary.refreshed:,}건 (성공 {_ok_count:,}, 실패 {_err_count:,}{_err_detail}) | {_duration_sec:,}초, {_rate:,}건/초",
+                                    summary=f"오토튠[{site}] — 대상 {filtered_count:,}건, 갱신 {summary.refreshed:,}건 (성공 {_ok_count:,}, 실패 {_err_count:,}{_err_detail}) | {_duration_sec:,}초, {_rate:,}건/초",
+                                    source_site=site,
                                     detail={
                                         "total": filtered_count,
                                         "refreshed": summary.refreshed,

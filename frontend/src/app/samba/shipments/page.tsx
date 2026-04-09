@@ -423,7 +423,8 @@ export default function ShipmentsPage() {
     for (let i = 0; i < targetProducts.length; i++) {
       const pid = targetProducts[i]
       const prod = products.find(p => p.id === pid)
-      const prodName = prod?.name?.slice(0, 30) || pid
+      const srcTag = prod?.source_site ? `[${prod.source_site}] ` : ''
+      const prodName = `${srcTag}${prod?.name?.slice(0, 30) || pid}`
       // 이 상품에 등록된 계정만 삭제 대상
       const prodAccIds = (prod?.registered_accounts || []).filter(aid => selectedSet.has(aid))
       if (prodAccIds.length === 0) continue
