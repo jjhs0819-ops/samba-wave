@@ -128,9 +128,10 @@ export default function PoliciesPage() {
   const [marketAccounts, setMarketAccounts] = useState<SambaMarketAccount[]>([])
 
 
-  // 현재 마켓 정책 가져오기
+  // 현재 마켓 정책 가져오기 (부분 데이터에도 기본값 보장)
   const getCurrentMarketPolicy = useCallback((): MarketPolicyForm => {
-    return marketPolicies[marketPolicyTab] || { accountId: '', accountIds: [], shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0, gsMarginRate: 0, discountRate: 0, maxStock: 0, dayMaxQty: 5, onceMinQty: 1, onceMaxQty: 5 }
+    const defaults: MarketPolicyForm = { accountId: '', accountIds: [], shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0, gsMarginRate: 0, discountRate: 0, maxStock: 0, dayMaxQty: 5, onceMinQty: 1, onceMaxQty: 5, origin: '', streetPriceRate: 0 }
+    return { ...defaults, ...(marketPolicies[marketPolicyTab] || {}) }
   }, [marketPolicies, marketPolicyTab])
 
   const setCurrentMarketPolicy = useCallback((mp: MarketPolicyForm) => {
