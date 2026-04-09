@@ -61,10 +61,12 @@ pnpm dev
 - `ruff check --fix .`도 함께 실행
 - 로컬 빌드(`pnpm build`)는 불필요 — CI + Vercel이 검증함
 
-## 숫자 포맷 규칙 [중요]
-- 모든 숫자(가격/건수/수량/재고/매출) 표시에 천 단위 콤마 적용 (1000 → 1,000)
-- UI 표시: fmtNum() 또는 .toLocaleString() 사용
-- 로그 메시지(addLog): .toLocaleString() 사용
+## 숫자 포맷 규칙 [최우선]
+- **UI에 표시되는 모든 숫자는 예외 없이 천 단위 콤마 적용** (1000 → 1,000)
+- 대상: 가격, 건수, 수량, 재고, 매출, 카운트, 배열.length 등 화면에 보이는 모든 숫자
+- UI 표시: `fmtNum()` 사용 (import from '@/lib/samba/styles')
+- 로그 메시지(addLog): `.toLocaleString()` 사용
+- 새 코드 작성 시 숫자를 직접 `{count}`, `{total}` 등으로 렌더링 금지 → 반드시 `{fmtNum(count)}` 형태
 - 제외: 백분율(%), 소수점 시간, 페이지번호, 인덱스
 
 ## 코드 반영 규칙 [중요]

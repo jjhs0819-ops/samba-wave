@@ -815,8 +815,12 @@ class SambaShipmentService:
 
             sf_repo = SambaSearchFilterRepository(self.session)
             sf = await sf_repo.get_async(product_row.search_filter_id)
-            if sf and sf.target_mappings:
-                group_mappings = sf.target_mappings
+            if sf:
+                if sf.target_mappings:
+                    group_mappings = sf.target_mappings
+                # 플레이오토 사용자 임의분류용 검색필터명 주입
+                if sf.name:
+                    product_dict["_search_filter_name"] = sf.name
 
         mapped_categories = await self._resolve_category_mappings(
             product_row.source_site or "",
@@ -1127,7 +1131,7 @@ class SambaShipmentService:
                                 f"[ESM 크로스매핑] {other}({other_id}) → {market_type}({category_id})"
                             )
 
-                if not category_id:
+                if not category_id and market_type != "playauto":
                     res["error"] = "카테고리 매핑 없음"
                     logger.warning(
                         f"[전송] 상품 {product_id} → {market_type} 카테고리 매핑 없음 (스킵)"
@@ -1138,6 +1142,7 @@ class SambaShipmentService:
                 _lotteon_like = market_type in ("lotteon", "ssg")
                 if (
                     market_type != "coupang"
+                    and market_type != "playauto"
                     and not _lotteon_like
                     and not str(category_id).isdigit()
                 ):

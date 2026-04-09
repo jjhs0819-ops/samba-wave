@@ -133,9 +133,10 @@ def _run_transmit_in_thread(worker: "JobWorker", job_id: str, payload: dict):
 
 
 class JobWorker:
-    """pending 잡을 폴링하여 순차 실행."""
+    """pending 잡을 폴링하여 병렬 실행 (전송 최대 3개 동시)."""
 
     POLL_INTERVAL = 5  # 초
+    MAX_CONCURRENT_TRANSMIT = 3  # 전송 잡 동시 실행 상한
 
     STUCK_CHECK_INTERVAL = 6  # 6회 폴링마다 stuck 체크 (≒30초)
     STUCK_THRESHOLD_SEC = 300  # 5분 이상 progress 변화 없으면 stuck 판정
@@ -143,19 +144,29 @@ class JobWorker:
     def __init__(self):
         self._running = True
         self._shutting_down = False  # SIGTERM 수신 시 True — 전송 루프가 체크
-        self._active_types: set[str] = set()  # 현재 실행 중인 잡 타입
-        self._active_job_id: str | None = None  # 현재 실행 중인 잡 ID (shutdown 복구용)
+        self._active_job_ids: set[str] = set()  # 현재 실행 중인 잡 ID 집합
+        self._active_tasks: dict[str, asyncio.Task] = {}  # job_id → Task (전송 병렬용)
+        self._active_collect = False  # 수집 잡 실행 중 여부
         self._poll_count = 0
         # 검색 결과 캐시: {(site, keyword): (items_list, timestamp)}
         # 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
         self._search_cache: dict[tuple[str, str], tuple[list, float]] = {}
 
     async def start(self):
-        """무한 루프: pending 잡 조회 → 타입별 병렬 실행."""
-        logger.info("[잡워커] 시작 (병렬 모드: collect/transmit 동시 실행)")
+        """무한 루프: pending 잡 조회 → 전송 잡 병렬 실행 (최대 3개)."""
+        logger.info(
+            f"[잡워커] 시작 (병렬 모드: 전송 최대 {self.MAX_CONCURRENT_TRANSMIT}개 동시 실행)"
+        )
         _worker_status["alive"] = "true"
         _worker_status["started_at"] = datetime.now(UTC).isoformat()
         _worker_status["restarts"] = str(int(_worker_status.get("restarts") or 0) + 1)
+        # 부팅 시 이전 프로세스의 잔류 세마포어 1회 클리어
+        try:
+            from backend.domain.samba.shipment.service import clear_account_semaphores
+
+            clear_account_semaphores()
+        except Exception:
+            pass
         # 배포/재시작으로 stuck된 running 잡 자동 복구
         await self._recover_stuck_jobs()
         while self._running:
@@ -176,7 +187,7 @@ class JobWorker:
         logger.info("[잡워커] 종료")
 
     async def _recover_stuck_jobs(self):
-        """stuck running 잡을 pending으로 복구 — 현재 워커가 실행 중인 타입은 제외."""
+        """stuck running 잡을 pending으로 복구 — 현재 워커가 실행 중인 잡은 제외."""
         try:
             from backend.db.orm import get_write_session
             from backend.domain.samba.job.repository import SambaJobRepository
@@ -184,7 +195,7 @@ class JobWorker:
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
                 recovered = await repo.recover_stuck_running(
-                    exclude_types=self._active_types,
+                    exclude_ids=self._active_job_ids,
                     threshold_sec=self.STUCK_THRESHOLD_SEC,
                 )
                 if recovered:
@@ -202,66 +213,95 @@ class JobWorker:
         """배포 시 호출 — 전송 루프에 종료 신호 보내고 대기.
 
         1) _shutting_down 플래그 세팅 → 전송 루프가 현재 건 완료 후 탈출
-        2) 최대 timeout초 대기 → 전송 루프 종료 확인
-        3) running transmit Job → pending으로 전환 (current 보존)
+        2) 최대 timeout초 대기 → 모든 전송 Task 종료 확인
+        3) running Job → pending으로 전환 (current 보존)
         """
         self._shutting_down = True
         self._running = False
-        logger.info("[잡워커] graceful_stop — 전송 루프 종료 대기")
+        logger.info(
+            f"[잡워커] graceful_stop — {len(self._active_job_ids)}개 잡 종료 대기"
+        )
 
-        # 전송 루프가 자연 종료될 때까지 대기
+        # 모든 활성 Task가 종료될 때까지 대기
         for _ in range(timeout):
-            if not self._active_types:
+            if not self._active_tasks and not self._active_collect:
                 break
             await asyncio.sleep(1)
 
-        # running 상태인 transmit Job → pending 복구 (current 보존, attempt 유지)
-        if self._active_job_id:
+        # 모든 running Job → pending 복구 (current 보존)
+        remaining_ids = list(self._active_job_ids)
+        if remaining_ids:
             try:
                 from backend.db.orm import get_write_session
                 from sqlalchemy import text
 
                 async with get_write_session() as session:
-                    await session.execute(
-                        text(
-                            "UPDATE samba_jobs SET status = 'pending', "
-                            "started_at = NULL "
-                            "WHERE id = :jid AND status = 'running'"
-                        ),
-                        {"jid": self._active_job_id},
-                    )
+                    for jid in remaining_ids:
+                        await session.execute(
+                            text(
+                                "UPDATE samba_jobs SET status = 'pending', "
+                                "started_at = NULL "
+                                "WHERE id = :jid AND status = 'running'"
+                            ),
+                            {"jid": jid},
+                        )
                     await session.commit()
                     logger.info(
-                        f"[잡워커] 배포 종료 — 잡 {self._active_job_id} → pending 복구"
+                        f"[잡워커] 배포 종료 — {len(remaining_ids)}개 잡 → pending 복구"
                     )
             except Exception as e:
                 logger.error(f"[잡워커] 배포 종료 잡 복구 실패: {e}")
 
     async def _poll_once(self) -> bool:
-        """OOM 방지: 한 번에 1개 잡만 실행 (수집+전송 동시 실행 차단).
+        """전송 잡 병렬 실행 (최대 MAX_CONCURRENT_TRANSMIT개).
 
         FOR UPDATE SKIP LOCKED로 원자적 잡 획득 — 멀티 worker 중복 실행 방지.
         """
         _worker_status["last_poll"] = datetime.now(UTC).isoformat()
 
-        # OOM 방지: 이미 실행 중인 잡이 있으면 대기
-        if self._active_types:
-            return False
+        # 완료된 전송 Task 정리
+        done_ids = [jid for jid, task in self._active_tasks.items() if task.done()]
+        for jid in done_ids:
+            task = self._active_tasks.pop(jid)
+            self._active_job_ids.discard(jid)
+            exc = task.exception()
+            if exc:
+                logger.error(f"[잡워커] 전송 Task 예외: {jid} — {exc}")
+
+        # 수집 실행 중이면 추가 claim 차단 (수집은 1개만)
+        if self._active_collect:
+            return bool(self._active_tasks)
+
+        # 전송 동시 실행 상한 도달 시 새 claim 차단
+        if len(self._active_tasks) >= self.MAX_CONCURRENT_TRANSMIT:
+            return True  # 실행 중이므로 sleep 안 함
 
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
 
         async with get_write_session() as session:
             repo = SambaJobRepository(session)
-            # 원자적 claim: FOR UPDATE SKIP LOCKED로 1개 잡만 획득
             job = await repo.claim_pending_job()
             if not job:
-                return False
+                return bool(self._active_tasks)
 
-            self._active_types.add(job.job_type)
+            self._active_job_ids.add(job.id)
             await session.commit()
 
-        # claim된 잡 실행
+        # 전송: asyncio.Task로 백그라운드 병렬 실행
+        if job.job_type == "transmit":
+            task = asyncio.create_task(
+                self._execute_job(job),
+                name=f"transmit-{job.id}",
+            )
+            self._active_tasks[job.id] = task
+            logger.info(
+                f"[잡워커] 전송 Task 생성: {job.id} "
+                f"(동시 실행: {len(self._active_tasks)}/{self.MAX_CONCURRENT_TRANSMIT})"
+            )
+            return True
+
+        # 수집/기타: 기존 방식 (동기 대기, 1개만)
         await self._execute_job(job)
         return True
 
@@ -276,6 +316,7 @@ class JobWorker:
             _job_type = job.job_type
             _job_payload = job.payload or {}
             if _job_type == "collect":
+                self._active_collect = True
                 logger.info(f"[잡워커] 수집 실행 (격리 스레드): {_job_id}")
                 thread = threading.Thread(
                     target=_run_collect_in_thread,
@@ -331,10 +372,9 @@ class JobWorker:
                             logger.error(f"[잡워커] 타임아웃 잡 상태 갱신 실패: {te}")
                 return
 
-            # 전송 + 기타: 메인 루프 직접 실행 (인메모리 로그 공유)
+            # 전송 + 기타: 직접 실행 (인메모리 로그 공유)
             _job_id = job.id
             _job_type = job.job_type
-            self._active_job_id = _job_id
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
                 # detached 객체 대신 현재 세션에서 job 재조회
@@ -367,8 +407,10 @@ class JobWorker:
                             f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {_job_id} — {fail_exc}"
                         )
         finally:
-            self._active_job_id = None
-            self._active_types.discard(_job_type)
+            self._active_job_ids.discard(_job_id)
+            self._active_tasks.pop(_job_id, None)
+            if _job_type == "collect":
+                self._active_collect = False
             # 프론트 폴링이 로그를 읽을 시간 확보 후 삭제 (60초)
             try:
                 asyncio.get_running_loop().call_later(60, clear_job_logs, _job_id)
@@ -442,17 +484,13 @@ class JobWorker:
             SambaShipmentService,
             is_cancel_requested,
             clear_cancel_transmit,
-            clear_account_semaphores,
         )
         from backend.domain.samba.shipment.repository import SambaShipmentRepository
 
-        # 이전 전송의 잔류 세마포어/상품 락 강제 해제
-        clear_account_semaphores()
-        from backend.domain.samba.emergency import clear_emergency_stop
-
-        # 이전 취소/비상정지 잔존 플래그 해제 (새 전송은 항상 정상 시작)
+        # 이 잡의 잔존 취소 플래그만 해제 (세마포어/비상정지는 건드리지 않음)
+        # — 세마포어: 다른 잡이 공유 중이므로 클리어 금지
+        # — 비상정지: 전체 중단 의도이므로 별도 API에서만 해제
         clear_cancel_transmit(job.id)
-        clear_emergency_stop()
 
         payload = job.payload or {}
         product_ids = payload.get("product_ids", [])

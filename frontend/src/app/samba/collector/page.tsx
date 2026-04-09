@@ -2020,7 +2020,7 @@ export default function CollectorPage() {
                         onMouseLeave={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'transparent' }}
                       >
                         {brand}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.74rem', color: '#FF8C00', fontWeight: 600 }}>{count}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.74rem', color: '#FF8C00', fontWeight: 600 }}>{count.toLocaleString()}</span>
                       </div>
                     )) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>브랜드 없음</div>
                   ) : null}
@@ -2190,7 +2190,7 @@ export default function CollectorPage() {
                           border: `1px solid ${mappedCount > 0 ? 'rgba(81,207,102,0.3)' : 'rgba(255,140,0,0.3)'}`,
                           color: mappedCount > 0 ? '#51CF66' : '#FF8C00',
                         }}
-                      >{mappedCount > 0 ? `${mappedCount}개 매핑` : '매핑'}</button>
+                      >{mappedCount > 0 ? `${mappedCount.toLocaleString()}개 매핑` : '매핑'}</button>
                     )
                   })() : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>

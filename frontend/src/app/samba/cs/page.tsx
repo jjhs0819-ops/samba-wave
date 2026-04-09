@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { csInquiryApi, orderApi, accountApi, returnApi, type SambaCSInquiry, type CSReplyTemplate, type SambaMarketAccount } from '@/lib/samba/api'
 import { CS_MARKET_FILTERS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { card, inputStyle } from '@/lib/samba/styles'
+import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { fmtDate } from '@/lib/samba/utils'
 
@@ -758,7 +758,7 @@ export default function CSPage() {
               이전
             </button>
             <span style={{ fontSize: '0.8125rem', color: '#888' }}>
-              {page + 1} / {totalPages} ({total}건)
+              {page + 1} / {totalPages} ({fmtNum(total)}건)
             </span>
             <button
               disabled={page >= totalPages - 1}

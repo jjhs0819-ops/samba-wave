@@ -3,6 +3,7 @@
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
   "permissions": {
+    "defaultMode": "plan",
     "allow": [
       "mcp__sequential-thinking__sequentialthinking",
       "mcp__playwright__browser_navigate",
@@ -27,7 +28,8 @@
       "Bash",
       "WebFetch",
       "WebSearch",
-      "mcp__codex__codex"
+      "mcp__codex__codex",
+      "Skill(review)"
     ],
     "deny": [],
     "ask": []

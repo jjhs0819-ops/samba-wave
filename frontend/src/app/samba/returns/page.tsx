@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react'
 import { returnApi, accountApi, orderApi, type SambaReturn, type SambaMarketAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { card, inputStyle } from '@/lib/samba/styles'
+import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
@@ -350,7 +350,7 @@ export default function ReturnsPage() {
         ].map(({ key, label, color }) => (
           <div key={key} style={{ ...card, padding: '1rem 1.25rem' }}>
             <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.375rem' }}>{label}</p>
-            <p style={{ fontSize: '1.5rem', fontWeight: 700, color }}>{completionCounts[key as keyof typeof completionCounts] ?? 0}{key === 'requested' ? '건' : ''}</p>
+            <p style={{ fontSize: '1.5rem', fontWeight: 700, color }}>{(completionCounts[key as keyof typeof completionCounts] ?? 0).toLocaleString()}{key === 'requested' ? '건' : ''}</p>
           </div>
         ))}
         {/* 수익총액 통계 */}

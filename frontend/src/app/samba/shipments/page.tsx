@@ -6,7 +6,7 @@ import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, fetchWit
 import { MARKET_TYPE_TO_POLICY_KEY as SHARED_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
-import { inputStyle } from '@/lib/samba/styles'
+import { inputStyle, fmtNum } from '@/lib/samba/styles'
 
 const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
   pending:      { bg: 'rgba(100,100,100,0.15)', text: '#888', label: '대기중' },
@@ -57,6 +57,7 @@ export default function ShipmentsPage() {
   const [logMessages, setLogMessages] = useState<string[]>(['— 전송 시작 버튼을 누르면 로그가 여기에 실시간으로 표시됩니다 —'])
   const [transmitting, setTransmitting] = useState(false)
   const [stopping, setStopping] = useState('')  // '' | 'cancel' | 'emergency'
+  const [pausedJobPayload, setPausedJobPayload] = useState<Record<string, unknown> | null>(null)
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const progressRef = useRef<NodeJS.Timeout | null>(null)
   const abortRef = useRef(false)
@@ -141,7 +142,7 @@ export default function ShipmentsPage() {
               const r = (j.result || {}) as Record<string, number>
               const _ts = new Date().toLocaleTimeString()
               const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
-              setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${r.success || 0}건, 스킵 ${r.skipped || 0}건, 실패 ${r.failed || 0}건`].slice(-30))
+              setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${(r.success || 0).toLocaleString()}건, 스킵 ${(r.skipped || 0).toLocaleString()}건, 실패 ${(r.failed || 0).toLocaleString()}건`].slice(-30))
               setTransmitting(false)
               activeJobIdRef.current = ''
               load()
@@ -473,6 +474,7 @@ export default function ShipmentsPage() {
     })
     if (visibleSelected.length === 0) { showAlert('선택된 소싱사이트에 해당하는 상품이 없습니다'); return }
 
+    setPausedJobPayload(null)
     setTransmitting(true)
 
     const ts = () => new Date().toLocaleTimeString()
@@ -564,19 +566,21 @@ export default function ShipmentsPage() {
     try {
       const allPids = tasks.map(t => t.pid)
       const allAccIds = [...effectiveAccountSet]
+      const jobPayload = {
+        job_type: 'transmit',
+        payload: {
+          product_ids: allPids,
+          update_items: items,
+          target_account_ids: allAccIds,
+          skip_unchanged: skipEnabled,
+        },
+      }
+      setPausedJobPayload(jobPayload)
       const { API_BASE_URL: apiBase } = await import('@/config/api')
       const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          job_type: 'transmit',
-          payload: {
-            product_ids: allPids,
-            update_items: items,
-            target_account_ids: allAccIds,
-            skip_unchanged: skipEnabled,
-          },
-        }),
+        body: JSON.stringify(jobPayload),
       })
       const jobData = await res.json()
       const jobId = jobData.id || ''
@@ -613,6 +617,7 @@ export default function ShipmentsPage() {
             const r = (j.result || {}) as Record<string, number>
             const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
             addLog(`[${_ts}] ${statusLabel} — 성공 ${(r.success || 0).toLocaleString()}건, 스킵 ${(r.skipped || 0).toLocaleString()}건, 실패 ${(r.failed || 0).toLocaleString()}건`)
+            if (j.status === 'completed') setPausedJobPayload(null)
             setTransmitting(false)
             activeJobIdRef.current = ''
             load()
@@ -622,6 +627,80 @@ export default function ShipmentsPage() {
       }, 500)
     } catch (e) {
       addLog(`[${ts()}] 전송 실패: ${e instanceof Error ? e.message : '오류'}`)
+      setTransmitting(false)
+    }
+  }
+
+  // 일시정지된 전송을 이어하기
+  const handleResume = async () => {
+    if (!pausedJobPayload) return
+    // 비상정지 해제
+    try {
+      const { API_BASE_URL: apiBase } = await import('@/config/api')
+      await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+    } catch { /* ignore */ }
+
+    setTransmitting(true)
+    abortRef.current = false
+    const ts = () => new Date().toLocaleTimeString()
+    const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
+
+    try {
+      const { API_BASE_URL: apiBase } = await import('@/config/api')
+      const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pausedJobPayload),
+      })
+      const jobData = await res.json()
+      const jobId = jobData.id || ''
+      activeJobIdRef.current = jobId
+      const resumedFrom = jobData.resumed_from || 0
+      const pl = pausedJobPayload as { payload?: { product_ids?: string[] } }
+      const total = pl.payload?.product_ids?.length || 0
+      setProgress({ current: resumedFrom, total })
+      addLog(`[${ts()}] 이어하기 — ${resumedFrom.toLocaleString()}/${total.toLocaleString()}부터 재개`)
+
+      // 전송 진행 폴링 + 링 버퍼 기반 실시간 로그
+      let polling = false
+      if (jobPollRef.current) clearInterval(jobPollRef.current)
+      jobPollRef.current = setInterval(async () => {
+        if (polling) return
+        polling = true
+        try {
+          const [jr, lr] = await Promise.all([
+            fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+            fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
+          ])
+          const j = await jr.json()
+          const logData = await lr.json()
+          const cur = j.current || 0
+          const tot = j.total || total
+          setProgress({ current: cur, total: tot })
+          const newLogs = (logData.logs || []) as string[]
+          sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+          if (newLogs.length > 0) {
+            for (const log of newLogs) {
+              setLogMessages(prev => [...prev, log].slice(-30))
+            }
+          }
+          if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
+            if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+            const _ts = new Date().toLocaleTimeString()
+            if (j.error) addLog(`[${_ts}] ${j.error}`)
+            const r = (j.result || {}) as Record<string, number>
+            const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '작업중지됨'
+            addLog(`[${_ts}] ${statusLabel} — 성공 ${(r.success || 0).toLocaleString()}건, 스킵 ${(r.skipped || 0).toLocaleString()}건, 실패 ${(r.failed || 0).toLocaleString()}건`)
+            if (j.status === 'completed') setPausedJobPayload(null)
+            setTransmitting(false)
+            activeJobIdRef.current = ''
+            load()
+          }
+        } catch { /* ignore */ }
+        polling = false
+      }, 500)
+    } catch (e) {
+      addLog(`[${ts()}] 이어하기 실패: ${e instanceof Error ? e.message : '오류'}`)
       setTransmitting(false)
     }
   }
@@ -846,29 +925,29 @@ export default function ShipmentsPage() {
             <button disabled={!!stopping} onClick={async () => {
                 setStopping('cancel')
                 const ts = new Date().toLocaleTimeString()
-                setLogMessages(prev => [...prev, `[${ts}] 전송 중단 요청...`].slice(-30))
+                setLogMessages(prev => [...prev, `[${ts}] 일시정지 요청...`].slice(-30))
                 abortRef.current = true
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  if (activeJobIdRef.current) {
-                    await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
-                  }
                   await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   activeJobIdRef.current = ''
-                  setLogMessages(prev => [...prev, `[${ts}] 전송 중단 완료`].slice(-30))
+                  setLogMessages(prev => [...prev, `[${ts}] 일시정지 완료 — 이어하기로 재개 가능`].slice(-30))
                 } catch {
-                  setLogMessages(prev => [...prev, `[${ts}] 전송 중단 실패`].slice(-30))
+                  setLogMessages(prev => [...prev, `[${ts}] 일시정지 실패`].slice(-30))
                 }
                 setTransmitting(false)
                 setStopping('')
               }}
-                style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'cancel' ? 'rgba(255,50,50,0.4)' : 'rgba(255,50,50,0.15)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.4)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: stopping ? 0.7 : 1 }}
-              >{stopping === 'cancel' ? '중단중...' : '전송 중단'}</button>
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'cancel' ? 'rgba(255,180,0,0.4)' : 'rgba(255,180,0,0.15)', color: '#FFB800', border: '1px solid rgba(255,180,0,0.4)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: stopping ? 0.7 : 1 }}
+              >{stopping === 'cancel' ? '일시정지중...' : '일시정지'}</button>
+            {pausedJobPayload && !transmitting && !stopping && <button onClick={handleResume}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(76,175,80,0.15)', color: '#4CAF50', border: '1px solid rgba(76,175,80,0.4)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
+              >이어하기</button>}
             <button disabled={!!stopping} onClick={async () => {
                 setStopping('emergency')
                 const ts = new Date().toLocaleTimeString()
-                setLogMessages(prev => [...prev, `[${ts}] 작업중단 요청...`].slice(-30))
+                setLogMessages(prev => [...prev, `[${ts}] 작업중지 요청...`].slice(-30))
                 abortRef.current = true
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                 try {
@@ -877,15 +956,16 @@ export default function ShipmentsPage() {
                   await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
                   activeJobIdRef.current = ''
-                  setLogMessages(prev => [...prev, `[${ts}] 작업중단 완료`].slice(-30))
+                  setPausedJobPayload(null)
+                  setLogMessages(prev => [...prev, `[${ts}] 작업중지 완료`].slice(-30))
                 } catch {
-                  setLogMessages(prev => [...prev, `[${ts}] 작업중단 실패`].slice(-30))
+                  setLogMessages(prev => [...prev, `[${ts}] 작업중지 실패`].slice(-30))
                 }
                 setTransmitting(false)
                 setStopping('')
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'emergency' ? 'rgba(255,50,50,0.6)' : 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: stopping ? 0.7 : 1 }}
-              >{stopping === 'emergency' ? '중단중...' : '작업중단'}</button>
+              >{stopping === 'emergency' ? '중지중...' : '작업중지'}</button>
             {<>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: loopEnabled ? '#FF8C00' : '#666', cursor: 'pointer' }}>
                 <input type="checkbox" checked={loopEnabled} onChange={() => setLoopEnabled(!loopEnabled)} style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
@@ -988,7 +1068,7 @@ export default function ShipmentsPage() {
                         const r = (j.result || {}) as Record<string, number>
                         const _ts = new Date().toLocaleTimeString()
                         const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
-                        setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${r.success || 0}건, 스킵 ${r.skipped || 0}건, 실패 ${r.failed || 0}건`].slice(-30))
+                        setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${(r.success || 0).toLocaleString()}건, 스킵 ${(r.skipped || 0).toLocaleString()}건, 실패 ${(r.failed || 0).toLocaleString()}건`].slice(-30))
                         setTransmitting(false)
                         activeJobIdRef.current = ''
                         load()
@@ -999,7 +1079,7 @@ export default function ShipmentsPage() {
                 } catch (e) { showAlert(e instanceof Error ? e.message : '전송 실패', 'error') }
               }}
                 style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
-              >검색결과전송 ({totalCount})</button>
+              >검색결과전송 ({fmtNum(totalCount)})</button>
             </>}
           </div>
         </div>

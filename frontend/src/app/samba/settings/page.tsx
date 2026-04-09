@@ -1953,7 +1953,7 @@ export default function SettingsPage() {
                     fontSize: '0.8125rem', fontWeight: sourcingTab === site.id ? 600 : 400,
                     cursor: 'pointer', marginBottom: '-1px', whiteSpace: 'nowrap',
                   }}
-                >{site.name}{count > 0 ? ` (${count})` : ''}</button>
+                >{site.name}{count > 0 ? ` (${count.toLocaleString()})` : ''}</button>
               )
             })}
           </div>

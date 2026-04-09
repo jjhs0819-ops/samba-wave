@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { snsApi, wholesaleApi, fetchWithAuth } from '@/lib/samba/api'
-import { card, inputStyle } from '@/lib/samba/styles'
+import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtDate as _fmtDate } from '@/lib/samba/utils'
 
@@ -736,7 +736,7 @@ export default function SNSPage() {
         <div style={cardPad}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <h3 style={{ ...sectionTitle, marginBottom: 0 }}>
-              포스팅 이력 <span style={{ fontSize: '0.72rem', color: '#8A95B0', fontWeight: 400 }}>({postsTotal}건)</span>
+              포스팅 이력 <span style={{ fontSize: '0.72rem', color: '#8A95B0', fontWeight: 400 }}>({fmtNum(postsTotal)}건)</span>
             </h3>
             <div style={{ display: 'flex', gap: '6px' }}>
               {[

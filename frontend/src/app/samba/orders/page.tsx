@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, forbiddenApi, fetchWithAuth, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
-import { inputStyle } from '@/lib/samba/styles'
+import { inputStyle, fmtNum } from '@/lib/samba/styles'
 
 const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   pending:    { label: '주문접수', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
@@ -739,7 +739,7 @@ export default function OrdersPage() {
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>주문 상황</h2>
           <p style={{ fontSize: '0.875rem', color: '#888' }}>
-            미배송: <span style={{ color: '#FF6B6B', fontWeight: 700 }}>{pendingCount}</span>건 / 전체: <span style={{ fontWeight: 700 }}>{filteredOrders.length}</span>건
+            미배송: <span style={{ color: '#FF6B6B', fontWeight: 700 }}>{fmtNum(pendingCount)}</span>건 / 전체: <span style={{ fontWeight: 700 }}>{fmtNum(filteredOrders.length)}</span>건
           </p>
         </div>
         {smsRemain && (

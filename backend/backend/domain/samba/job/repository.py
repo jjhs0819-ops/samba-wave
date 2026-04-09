@@ -156,14 +156,14 @@ class SambaJobRepository(BaseRepository[SambaJob]):
 
     async def recover_stuck_running(
         self,
-        exclude_types: set[str] | None = None,
+        exclude_ids: set[str] | None = None,
         threshold_sec: int = 0,
     ) -> int:
         """stuck된 running 잡을 pending으로 복구.
 
         FOR UPDATE SKIP LOCKED 적용 — 다른 worker가 처리 중인 잡은 건너뜀.
 
-        exclude_types: 현재 워커가 실행 중인 타입은 제외
+        exclude_ids: 현재 워커가 실행 중인 잡 ID 제외
         threshold_sec: >0이면 started_at 기준 N초 이상 경과한 잡만 복구
         """
         from datetime import timedelta
@@ -171,8 +171,8 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         from sqlalchemy import and_
 
         conditions = [SambaJob.status == JobStatus.RUNNING]
-        if exclude_types:
-            conditions.append(SambaJob.job_type.notin_(list(exclude_types)))
+        if exclude_ids:
+            conditions.append(SambaJob.id.notin_(list(exclude_ids)))
         if threshold_sec > 0:
             cutoff = datetime.now(UTC) - timedelta(seconds=threshold_sec)
             conditions.append(SambaJob.started_at < cutoff)

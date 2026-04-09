@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -887,12 +888,12 @@ class ARTSourcingClient:
             sale_price - _coupon_discount if _coupon_discount > 0 else sale_price
         )
 
-        # 멤버십 상시 할인 (alwaysDscntRate: 쿠폰 후 가격 기준, 100원 단위 반올림)
+        # 멤버십 상시 할인 (alwaysDscntRate: 쿠폰 후 가격 기준, 100원 단위 올림)
         # 비로그인 API → alwaysDscntRate=0 → 확장앱에서 감지한 캐시값 사용
         _always_rate = float(data.get("alwaysDscntRate") or 0)
         if _always_rate <= 0:
             _always_rate = self._cached_membership_rate
-        _membership_discount = round(_after_coupon * _always_rate / 100 / 100) * 100
+        _membership_discount = math.ceil(_after_coupon * _always_rate / 100 / 100) * 100
 
         best_benefit_price = _after_coupon - _membership_discount
         if best_benefit_price <= 0 or best_benefit_price > sale_price:

@@ -365,10 +365,9 @@ async def _autotune_loop():
                                     return
 
                                 site = product.source_site or "UNKNOWN"
-                                _brand = (product.brand or "")[:10]
-                                _prod_name = (product.name or "")[:30]
+                                _prod_name = (product.name or "")[:40]
                                 _site_pid = product.site_product_id or ""
-                                _name_part = f"{_brand} {_prod_name}".strip()
+                                _name_part = f"[{site}] {_prod_name}"
                                 _prod_label = (
                                     f"{_name_part} ({_site_pid})"
                                     if _site_pid
