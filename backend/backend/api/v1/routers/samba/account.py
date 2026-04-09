@@ -1,6 +1,6 @@
 """SambaWave Market Account API router."""
 
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -79,6 +79,26 @@ async def get_supported_markets():
     from backend.domain.samba.account.service import SambaAccountService
 
     return SambaAccountService.SUPPORTED_MARKETS
+
+
+class ReorderItem(BaseModel):
+    id: str
+    sort_order: int
+
+
+class ReorderRequest(BaseModel):
+    orders: List[ReorderItem]
+
+
+@router.put("/reorder")
+async def reorder_accounts(
+    body: ReorderRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """계정 정렬 순서 일괄 업데이트."""
+    svc = _get_service(session)
+    await svc.reorder_accounts([item.model_dump() for item in body.orders])
+    return {"ok": True}
 
 
 @router.get("/{account_id}")

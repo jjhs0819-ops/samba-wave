@@ -562,6 +562,7 @@ export interface SambaMarketAccount {
   seller_id?: string;
   business_name?: string;
   is_active: boolean;
+  sort_order: number;
   additional_fields?: Record<string, unknown>;
   created_at: string;
 }
@@ -579,6 +580,8 @@ export const accountApi = {
     request<SambaMarketAccount>(`${SAMBA_PREFIX}/accounts/${id}/toggle`, { method: "PUT" }),
   delete: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/accounts/${id}`, { method: "DELETE" }),
+  reorder: (orders: { id: string; sort_order: number }[]) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/accounts/reorder`, { method: "PUT", body: JSON.stringify({ orders }) }),
 };
 
 // ── Shipments ──
@@ -1029,6 +1032,10 @@ export const returnApi = {
   },
   patch: (id: string, data: { confirmed?: boolean; settlement_amount?: number; recovery_amount?: number; check_date?: string; memo?: string; product_location?: string; completion_detail?: string; status?: string; customer_order_no?: string; original_order_no?: string; type?: string; market_order_status?: string; return_source?: string }) =>
     request<SambaReturn>(`${SAMBA_PREFIX}/returns/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  exchangeAction: (id: string, action: string, reason?: string, extra?: { tracking_number?: string; shipping_company?: string; clm_no?: string }) =>
+    request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/returns/${id}/exchange-action`, {
+      method: "POST", body: JSON.stringify({ action, reason, ...extra }),
+    }),
 };
 
 // ── CS Inquiries ──
