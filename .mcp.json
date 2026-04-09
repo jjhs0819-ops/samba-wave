@@ -4,8 +4,12 @@
       "type": "http",
       "url": "https://mcp.context7.com/mcp",
       "headers": {
-     
+
       }
+    },
+    "shadcn": {
+      "command": "npx",
+      "args": ["shadcn@latest", "mcp"]
     }
   }
 }

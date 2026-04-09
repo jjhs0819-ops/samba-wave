@@ -1,5 +1,6 @@
 """SambaWave CS 문의 repository."""
 
+from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import func
@@ -77,6 +78,36 @@ class SambaCSInquiryRepository(BaseRepository[SambaCSInquiry]):
 
         result = await self.session.execute(stmt)
         return result.scalar_one()
+
+    async def find_by_external_id(
+        self, market: str, external_id: str
+    ) -> Optional[SambaCSInquiry]:
+        """마켓 + external_id로 문의 조회."""
+        stmt = select(SambaCSInquiry).where(
+            SambaCSInquiry.market == market,
+            SambaCSInquiry.external_id == external_id,
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def find_pending_since(
+        self,
+        market: str,
+        inquiry_type: str,
+        since: datetime,
+        account_id: Optional[str] = None,
+    ) -> List[SambaCSInquiry]:
+        """특정 마켓/타입의 pending 문의 중 since 이후 문의 조회."""
+        stmt = select(SambaCSInquiry).where(
+            SambaCSInquiry.market == market,
+            SambaCSInquiry.inquiry_type == inquiry_type,
+            SambaCSInquiry.reply_status == "pending",
+            SambaCSInquiry.inquiry_date >= since,
+        )
+        if account_id:
+            stmt = stmt.where(SambaCSInquiry.account_id == account_id)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
 
     async def delete_batch(self, ids: List[str]) -> int:
         """여러 문의 일괄 삭제."""

@@ -1,0 +1,97 @@
+name: Deploy Preview (PR → Cloud Run)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+    types: [opened, synchronize, reopened]
+
+jobs:
+  deploy-preview:
+    name: Deploy Preview to Cloud Run
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set service name
+        id: vars
+        run: |
+          # PR 브랜치명에서 특수문자 제거 → 서비스명 생성
+          BRANCH=$(echo "${{ github.head_ref }}" | sed 's/[^a-zA-Z0-9-]/-/g' | tr '[:upper:]' '[:lower:]' | cut -c1-40)
+          echo "service=samba-wave-api-${BRANCH}" >> $GITHUB_OUTPUT
+          echo "Preview 서비스명: samba-wave-api-${BRANCH}"
+
+      - name: Write env vars file
+        run: |
+          cat > /tmp/cloudrun-env.yaml << EOF
+          ENVIRONMENT: "preview"
+          WRITE_DB_USER: "postgres"
+          WRITE_DB_HOST: "/cloudsql/fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
+          WRITE_DB_PORT: "5432"
+          WRITE_DB_NAME: "railway"
+          READ_DB_USER: "postgres"
+          READ_DB_HOST: "/cloudsql/fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
+          READ_DB_PORT: "5432"
+          READ_DB_NAME: "railway"
+          DB_SSL_REQUIRED: "false"
+          WEB_CONCURRENCY: "1"
+          TERMINATION_GRACE_HACK: "1"
+          PROXY_URLS: "${{ secrets.PROXY_URLS }}"
+          COLLECT_PROXY_URL: "${{ secrets.COLLECT_PROXY_URL }}"
+          API_GATEWAY_KEY: "${{ secrets.API_GATEWAY_KEY }}"
+          EOF
+
+      - name: Deploy to Cloud Run (Preview)
+        run: |
+          gcloud run deploy ${{ steps.vars.outputs.service }} \
+            --source ./backend \
+            --region asia-northeast3 \
+            --project fresh-sanctuary-489804-v4 \
+            --env-vars-file /tmp/cloudrun-env.yaml \
+            --memory 1Gi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 1 \
+            --add-cloudsql-instances fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db \
+            --allow-unauthenticated \
+            --clear-base-image \
+            --quiet
+
+      - name: Get Preview URL
+        id: url
+        run: |
+          URL=$(gcloud run services describe ${{ steps.vars.outputs.service }} \
+            --region asia-northeast3 \
+            --project fresh-sanctuary-489804-v4 \
+            --format "value(status.url)")
+          echo "url=${URL}" >> $GITHUB_OUTPUT
+          echo "Preview URL: ${URL}"
+
+      - name: Health Check
+        run: |
+          sleep 15
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ steps.url.outputs.url }}/api/v1/health)
+          if [ "$STATUS" != "200" ]; then
+            echo "Health check failed: $STATUS"
+            exit 1
+          fi
+          echo "Health check passed"
+
+      - name: Comment PR with Preview URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🚀 Preview 배포 완료\n\n**URL:** ${{ steps.url.outputs.url }}\n**서비스:** \`${{ steps.vars.outputs.service }}\`\n**스펙:** 1GB / 1CPU / 최대 1인스턴스\n\n> PR이 닫히면 서비스를 수동으로 삭제해주세요.`
+            })

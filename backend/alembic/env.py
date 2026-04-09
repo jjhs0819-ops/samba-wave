@@ -1,9 +1,11 @@
+import asyncio
 import os
 import sys
 from logging.config import fileConfig
 
 from dotenv import load_dotenv
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import pool
+from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlmodel import SQLModel
 
 from alembic import context
@@ -30,32 +32,45 @@ from backend.domain.samba.returns.model import *  # noqa: F401,F403
 from backend.domain.samba.warroom.model import *  # noqa: F401,F403
 from backend.domain.samba.user.model import *  # noqa: F401,F403
 from backend.domain.samba.job.model import *  # noqa: F401,F403
-from backend.domain.samba.cs_inquiry.model import *  # noqa: F401,F403
 from backend.domain.samba.store_care.model import *  # noqa: F401,F403
 from backend.domain.samba.wholesale.model import *  # noqa: F401,F403
 
 config = context.config
 
 # DB URL을 .env에서 설정
-db_user = os.getenv("WRITE_DB_USER", "postgres")
-db_password = os.getenv("WRITE_DB_PASSWORD", "")
-db_host = os.getenv("WRITE_DB_HOST", "localhost")
-db_port = os.getenv("WRITE_DB_PORT", "5432")
-db_name = os.getenv("WRITE_DB_NAME", "railway")
+db_user = os.getenv("WRITE_DB_USER") or os.getenv("write_db_user", "postgres")
+db_password = os.getenv("WRITE_DB_PASSWORD") or os.getenv("write_db_password", "")
+db_host = os.getenv("WRITE_DB_HOST") or os.getenv("write_db_host", "localhost")
+db_port = os.getenv("WRITE_DB_PORT") or os.getenv("write_db_port", "5432")
+db_name = os.getenv("WRITE_DB_NAME") or os.getenv("write_db_name", "samba_wave")
 
-# ── 운영 DB 마이그레이션 안전장치 ──
-_PRODUCTION_DB_HOSTS = ["34.47.96.236", "/cloudsql/fresh-sanctuary"]
-if any(h in db_host for h in _PRODUCTION_DB_HOSTS):
-    if not os.getenv("ALEMBIC_PRODUCTION_CONFIRMED", "").lower() == "true":
-        raise RuntimeError(
-            f"[보안 차단] 운영 DB({db_host})에 대한 마이그레이션이 감지되었습니다. "
-            "운영 마이그레이션은 환경변수 ALEMBIC_PRODUCTION_CONFIRMED=true 설정이 필요합니다."
-        )
+# ── 운영 DB 직접 마이그레이션 차단 ──
+# Cloud Run(ENVIRONMENT=production)에서는 허용, 로컬 개발 환경에서만 차단
+_PRODUCTION_HOSTS = ["/cloudsql/fresh-sanctuary", "/cloudsql/samba-wave-molle"]
+_is_production_host = any(p in db_host for p in _PRODUCTION_HOSTS)
+_app_env = os.getenv("ENVIRONMENT", "development")
+if (
+    _is_production_host
+    and _app_env != "production"
+    and not os.getenv("ALEMBIC_PRODUCTION_CONFIRMED")
+):
+    raise RuntimeError(
+        f"[보안 차단] 로컬 개발 환경에서 운영 DB({db_host})에 직접 마이그레이션이 감지되었습니다. "
+        "운영 마이그레이션은 Cloud Run 배포(entrypoint.sh)를 통해서만 실행해야 합니다. "
+        "직접 실행이 필요하면: ALEMBIC_PRODUCTION_CONFIRMED=1 alembic upgrade heads"
+    )
 
-config.set_main_option(
-    "sqlalchemy.url",
-    f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}",
-)
+# Cloud SQL Unix 소켓 경로 감지 (/cloudsql/...)
+if db_host.startswith("/"):
+    config.set_main_option(
+        "sqlalchemy.url",
+        f"postgresql+asyncpg://{db_user}:{db_password}@/{db_name}?host={db_host}",
+    )
+else:
+    config.set_main_option(
+        "sqlalchemy.url",
+        f"postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}",
+    )
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -75,19 +90,28 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def run_migrations_online() -> None:
-    connectable = engine_from_config(
+def do_run_migrations(connection):
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations() -> None:
+    connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-        )
-        with context.begin_transaction():
-            context.run_migrations()
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+    await connectable.dispose()
+
+
+def run_migrations_online() -> None:
+    asyncio.run(run_async_migrations())
 
 
 if context.is_offline_mode():

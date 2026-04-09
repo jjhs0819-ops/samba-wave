@@ -21,9 +21,25 @@ fi
 echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
-  # Run the production server with Gunicorn
-  echo "Starting production server with Gunicorn..."
-  exec uv run -m gunicorn -w 2 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080
+  # Cloud SQL Auth Proxy 사이드카 대기
+  echo "Waiting for Cloud SQL proxy..."
+  sleep 5
+
+  # DB 마이그레이션 자동 실행 (최대 3회 재시도)
+  echo "Running database migrations..."
+  for i in 1 2 3; do
+    if uv run alembic upgrade heads; then
+      echo "Migrations complete."
+      break
+    else
+      echo "Migration attempt $i failed, retrying in 3s..."
+      sleep 3
+    fi
+  done
+
+  # Uvicorn 단일 프로세스 — --no-dev: 런타임에 dev 패키지 재설치 방지
+  echo "Starting production server with Uvicorn (single process)..."
+  exec uv run --no-dev -m uvicorn backend.main:app --host 0.0.0.0 --port 8080
 else
   # Run the development server with Uvicorn and --reload
   echo "Starting development server with Uvicorn..."

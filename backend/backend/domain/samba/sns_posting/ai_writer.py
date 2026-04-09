@@ -1,4 +1,4 @@
-"""Claude API 기반 SEO 최적화 블로그 글 생성기."""
+"""Gemma 4 API 기반 SEO 최적화 블로그 글 생성기."""
 
 from __future__ import annotations
 
@@ -6,19 +6,20 @@ import json
 import logging
 from typing import Any, Optional
 
-import anthropic
-
-from backend.core.config import settings
-
 logger = logging.getLogger(__name__)
 
 
 class AiWriter:
-    """Claude API를 활용한 SEO 최적화 블로그 글 자동 생성 클래스."""
+    """Gemma 4 API를 활용한 SEO 최적화 블로그 글 자동 생성 클래스."""
 
-    def __init__(self) -> None:
-        # anthropic 비동기 클라이언트 초기화
-        self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    def __init__(self, api_key: str = "") -> None:
+        self._api_key = api_key
+
+    async def _call_gemma(self, prompt: str, max_tokens: int = 4000) -> str:
+        """Gemma 4 API 호출 공통 메서드."""
+        from backend.domain.samba.ai.gemma_client import generate_text
+
+        return await generate_text(self._api_key, prompt, max_tokens=max_tokens)
 
     async def generate_post(
         self,
@@ -29,19 +30,7 @@ class AiWriter:
         product_info: Optional[dict[str, Any]] = None,
         word_count: int = 1500,
     ) -> dict[str, Any]:
-        """SEO 최적화 블로그 글을 생성합니다.
-
-        Args:
-            issue_title: 이슈/주제 제목
-            issue_description: 이슈/주제 상세 설명
-            category: 글 카테고리 (예: 패션, 뷰티, 라이프스타일)
-            language: 출력 언어 코드 (기본: "ko")
-            product_info: 상품 추천 섹션에 사용할 상품 정보 딕셔너리 (선택)
-            word_count: 목표 글자수 (기본: 1500자)
-
-        Returns:
-            dict: title, content(HTML), tags(list), excerpt(150자), category 포함
-        """
+        """SEO 최적화 블로그 글을 생성합니다."""
         # 상품 추천 섹션 지시문 구성
         product_section_instruction = ""
         if product_info:
@@ -56,7 +45,6 @@ class AiWriter:
 (상품명, 특징, 추천 이유를 2-3문장으로 자연스럽게 작성)
 """
 
-        # 언어 설정
         lang_label = "한국어" if language == "ko" else language
 
         prompt = f"""당신은 전문 블로거입니다. SEO 최적화된 블로그 글을 작성해주세요.
@@ -85,27 +73,16 @@ class AiWriter:
 }}"""
 
         try:
-            response = await self._client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4000,
-                messages=[{"role": "user", "content": prompt}],
-            )
-
-            raw_text = response.content[0].text.strip()
-
-            # 마크다운 코드블록 제거 후 JSON 파싱
-            cleaned = self._strip_markdown_codeblock(raw_text)
+            raw_text = await self._call_gemma(prompt, max_tokens=4000)
+            cleaned = self._strip_markdown_codeblock(raw_text.strip())
             result: dict[str, Any] = json.loads(cleaned)
             return result
 
         except (json.JSONDecodeError, KeyError, IndexError) as e:
             logger.warning("AI 글 생성 JSON 파싱 실패, fallback 반환: %s", e)
             return self._fallback_post(issue_title, issue_description, category)
-        except anthropic.APIError as e:
-            logger.error("Claude API 오류 (generate_post): %s", e)
-            return self._fallback_post(issue_title, issue_description, category)
         except Exception as e:
-            logger.error("예상치 못한 오류 (generate_post): %s", e)
+            logger.error("Gemma API 오류 (generate_post): %s", e)
             return self._fallback_post(issue_title, issue_description, category)
 
     async def generate_image_prompt(
@@ -113,15 +90,7 @@ class AiWriter:
         title: str,
         category: str,
     ) -> str:
-        """블로그 대표 이미지 생성용 영문 프롬프트를 생성합니다.
-
-        Args:
-            title: 블로그 글 제목
-            category: 글 카테고리
-
-        Returns:
-            str: 이미지 생성 AI에 전달할 영문 프롬프트 (50단어 이내)
-        """
+        """블로그 대표 이미지 생성용 영문 프롬프트를 생성합니다."""
         prompt = f"""Generate a concise English image prompt (under 50 words) for a blog post cover image.
 
 Blog title: {title}
@@ -136,18 +105,9 @@ Requirements:
 Respond with only the image prompt, nothing else."""
 
         try:
-            response = await self._client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=200,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            image_prompt = await self._call_gemma(prompt, max_tokens=200)
+            return image_prompt.strip()
 
-            image_prompt = response.content[0].text.strip()
-            return image_prompt
-
-        except anthropic.APIError as e:
-            logger.warning("Claude API 오류 (generate_image_prompt): %s", e)
-            return self._default_image_prompt(category)
         except Exception as e:
             logger.warning("이미지 프롬프트 생성 실패, 기본 프롬프트 반환: %s", e)
             return self._default_image_prompt(category)
@@ -160,11 +120,8 @@ Respond with only the image prompt, nothing else."""
     def _strip_markdown_codeblock(text: str) -> str:
         """마크다운 코드블록(```json ... ```) 감싸기를 제거합니다."""
         if text.startswith("```"):
-            # 첫 줄(```json 또는 ```) 제거
             lines = text.splitlines()
-            # 시작 fence 제거
             start = 1 if lines and lines[0].startswith("```") else 0
-            # 끝 fence 제거
             end = len(lines)
             if lines and lines[-1].strip() == "```":
                 end = len(lines) - 1

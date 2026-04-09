@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { accountApi, collectorApi, forbiddenApi, proxyApi, sourcingAccountApi, API_BASE, type SambaMarketAccount, type SambaSourcingAccount, type ChromeProfile } from '@/lib/samba/api'
+import { accountApi, collectorApi, forbiddenApi, proxyApi, proxyConfigApi, sourcingAccountApi, API_BASE, type SambaMarketAccount, type SambaSourcingAccount, type ChromeProfile, type ProxyConfigItem, type ProxyPurpose } from '@/lib/samba/api'
 import { MARKET_SELECT_OPTIONS } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum, parseNum } from '@/lib/samba/styles'
@@ -166,17 +166,18 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'bundleDelivery', label: '묶음배송', type: 'select', options: [
       { value: 'N', label: '불가능' }, { value: 'Y', label: '가능' },
     ]},
+    { name: 'dispatchDays', label: '발송완료 N일 이내', type: 'select', options: [
+      { value: '1', label: '1일' }, { value: '2', label: '2일' }, { value: '3', label: '3일' },
+    ]},
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '010-1234-5678' },
-    { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '상세페이지 참조' },
     { name: 'promotionMessage', label: '상품홍보문구', type: 'text', placeholder: '홍보 문구 입력' },
-    { name: 'discountRate', label: '즉시할인율(%)', type: 'number', placeholder: '0 (미설정)' },
     { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '3000' },
     { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '6000' },
     { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
     { name: '_divider_point', label: '스토어 즉시할인', type: 'divider' },
-    { name: 'purchasePointRate', label: '즉시 할인율 (%)', type: 'number', placeholder: '1' },
+    { name: 'discountRate', label: '즉시 할인율 (%)', type: 'number', placeholder: '0 (미설정)' },
     { name: '_divider_review', label: 'LPOINT 추가적립', type: 'divider' },
     { name: 'reviewTextPoint', label: '구매확정 적립 LPOINT', type: 'number', placeholder: '원' },
     { name: 'reviewPhotoPoint', label: '리뷰작성시 LPOINT', type: 'number', placeholder: '원' },
@@ -288,34 +289,24 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
     { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
   ]},
-  { key: 'ssg', label: 'SSG', authField: 'apiKey', guideUrl: 'https://opn-ssg.ssgadm.com', fields: [
+  { key: 'ssg', label: '신세계몰', authField: 'apiKey', guideUrl: 'https://opn-ssg.ssgadm.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
-    { name: 'apiId', label: 'API ID', type: 'text' },
     { name: 'apiKey', label: 'API KEY', type: 'text' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '010-1234-5678' },
     { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '상세페이지 참조' },
-    { name: 'discountRate', label: '즉시할인율(%)', type: 'number', placeholder: '0 (미설정)' },
-    { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '3000' },
-    { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '6000' },
-    { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
-    { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
+    { name: '_divider_margin', label: '가격 설정', type: 'divider' },
+    { name: 'marginRate', label: '마진율(%)', type: 'number', placeholder: '15' },
+    { name: '_divider_delivery_ssg', label: '배송 설정', type: 'divider' },
+    { name: 'shppRqrmDcnt', label: '배송소요일', type: 'number', placeholder: '3' },
+    { name: '_divider_shipping_code', label: '배송비/출고지 (SSG API 조회)', type: 'divider' },
+    { name: 'whoutShppcstId', label: '출고배송비', type: 'ssg-shipping-select', placeholder: '버튼으로 불러오기' },
+    { name: 'retShppcstId', label: '반품배송비', type: 'ssg-shipping-select', placeholder: '버튼으로 불러오기' },
+    { name: 'addShppcstIdJeju', label: '제주 추가배송비', type: 'ssg-extra-select', placeholder: '버튼으로 불러오기' },
+    { name: 'addShppcstIdIsland', label: '도서산간 추가배송비', type: 'ssg-extra-select', placeholder: '버튼으로 불러오기' },
+    { name: 'whoutAddrId', label: '출고지', type: 'ssg-addr-select', placeholder: '버튼으로 불러오기' },
+    { name: 'snbkAddrId', label: '반송지', type: 'ssg-addr-select', placeholder: '버튼으로 불러오기' },
     { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
-    { name: '_divider_purchase', label: '구매/리뷰 혜택 조건', type: 'divider' },
-    { name: 'multiPurchaseDiscount', label: '복수구매할인', type: 'select', options: [
-      { value: '', label: '설정안함' }, { value: 'true', label: '설정함' },
-    ]},
-    { name: 'multiPurchaseQty', label: '복수구매 수량 (N개 이상)', type: 'number', placeholder: '2' },
-    { name: 'multiPurchaseRate', label: '복수구매 할인율 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_point', label: '포인트', type: 'divider' },
-    { name: 'purchasePointEnabled', label: '상품 구매 시 지급', type: 'checkbox' },
-    { name: 'purchasePointRate', label: '구매 적립률 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_review', label: '상품리뷰 작성시 지급', type: 'divider' },
-    { name: 'reviewPointEnabled', label: '리뷰 포인트 지급', type: 'checkbox' },
-    { name: 'reviewTextPoint', label: '텍스트 리뷰 작성', type: 'number', placeholder: '원' },
-    { name: 'reviewPhotoPoint', label: '포토/동영상 리뷰 작성', type: 'number', placeholder: '원' },
-    { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
-    { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
   ]},
   { key: 'gsshop', label: 'GSSHOP', authField: 'apiKeyProd', guideUrl: 'https://partners.gsshop.com/api/apiMain', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
@@ -778,9 +769,9 @@ const STORE_MARKETS: MarketConfig[] = [
     { name: 'apiKey', label: 'API Key', type: 'text' },
     { name: 'apiSecret', label: '솔루션코드', type: 'password' },
     { name: '_divider_alias', label: '마켓번호 별칭 (주문페이지 표시용)', type: 'divider' },
-    { name: 'alias1', label: '별칭 1', type: 'text', placeholder: '037800LT-마놀' },
-    { name: 'alias2', label: '별칭 2', type: 'text', placeholder: '마켓번호-별칭' },
-    { name: 'alias3', label: '별칭 3', type: 'text', placeholder: '마켓번호-별칭' },
+    { name: 'alias1', label: '계정 1', type: 'alias', placeholder: '037800LT' },
+    { name: 'alias2', label: '계정 2', type: 'alias', placeholder: '마켓번호' },
+    { name: 'alias3', label: '계정 3', type: 'alias', placeholder: '마켓번호' },
   ]},
   { key: 'cafe24', label: '카페24', authField: 'accessToken', guideUrl: 'https://developers.cafe24.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
@@ -829,6 +820,9 @@ export default function SettingsPage() {
   const [savedStoreData, setSavedStoreData] = useState<Record<string, Record<string, string>>>({})
   const [storeStatus, setStoreStatus] = useState<Record<string, string>>({})
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null) // 수정 중인 계정 ID
+  // SSG 배송비/주소 옵션 (SSG 탭 진입 시 동적 로드)
+  const [ssgShippingOptions, setSsgShippingOptions] = useState<{ value: string; label: string; divCd: number }[]>([])
+  const [ssgAddrOptions, setSsgAddrOptions] = useState<{ value: string; label: string }[]>([])
 
   // 알리고 SMS 설정
   const [smsUserId, setSmsUserId] = useState('')
@@ -886,6 +880,25 @@ export default function SettingsPage() {
   const [r2BucketName, setR2BucketName] = useState('')
   const [r2PublicUrl, setR2PublicUrl] = useState('')
   const [r2Status, setR2Status] = useState('')
+
+  // 프록시 설정
+  const [proxies, setProxies] = useState<ProxyConfigItem[]>([])
+  const [proxyModalOpen, setProxyModalOpen] = useState(false)
+  const [proxyEditIdx, setProxyEditIdx] = useState<number | null>(null)
+  const [proxyForm, setProxyForm] = useState<ProxyConfigItem>({ name: '', url: '', purposes: [], enabled: true })
+  const [proxyFields, setProxyFields] = useState({ username: '', password: '', ip: '', port: '' })
+  const [proxyTesting, setProxyTesting] = useState<number | null>(null)
+  const [proxySaving, setProxySaving] = useState(false)
+
+  // URL ↔ 필드 변환
+  const parseProxyUrl = (url: string) => {
+    // http://user:pass@host:port
+    const m = url.match(/^https?:\/\/([^:]+):([^@]+)@([^:]+):(\d+)$/)
+    if (m) return { username: m[1], password: m[2], ip: m[3], port: m[4] }
+    return { username: '', password: '', ip: '', port: '' }
+  }
+  const buildProxyUrl = (f: typeof proxyFields) =>
+    f.ip ? `http://${f.username}:${f.password}@${f.ip}:${f.port}` : ''
 
   // 소싱처 계정 상태
   const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
@@ -1112,7 +1125,110 @@ export default function SettingsPage() {
     } catch { /* ignore */ }
   }, [])
 
-  useEffect(() => { loadAccounts(); loadSourcingAccounts() }, [loadAccounts, loadSourcingAccounts])
+  // 프록시 설정 로드
+  const loadProxies = useCallback(async () => {
+    try {
+      const data = await proxyConfigApi.list()
+      if (Array.isArray(data)) setProxies(data)
+    } catch { /* ignore */ }
+  }, [])
+
+  const saveProxies = async (items: ProxyConfigItem[], silent?: boolean) => {
+    setProxySaving(true)
+    try {
+      await proxyConfigApi.save(items)
+      setProxies(items)
+      if (!silent) showAlert('프록시 설정이 저장되었습니다.', 'success')
+    } catch {
+      if (!silent) showAlert('프록시 저장 실패', 'error')
+    }
+    setProxySaving(false)
+  }
+
+  const testProxy = async (idx: number) => {
+    const p = proxies[idx]
+    if (!p.url) {
+      // 메인 IP는 httpbin으로 직접 테스트
+      setProxyTesting(idx)
+      try {
+        const res = await fetch('https://httpbin.org/ip').then(r => r.json())
+        showAlert(`메인 IP 확인: ${res.origin}`, 'success')
+      } catch { showAlert('메인 IP 테스트 실패', 'error') }
+      setProxyTesting(null)
+      return
+    }
+    setProxyTesting(idx)
+    try {
+      const res = await proxyConfigApi.test(p.url)
+      if (res.success) {
+        showAlert(`연결 성공 — 외부 IP: ${res.ip}`, 'success')
+      } else {
+        showAlert(`연결 실패: ${res.message}`, 'error')
+      }
+    } catch (e) {
+      showAlert(`테스트 오류: ${e instanceof Error ? e.message : '오류'}`, 'error')
+    }
+    setProxyTesting(null)
+  }
+
+  const openProxyAdd = () => {
+    setProxyEditIdx(null)
+    setProxyForm({ name: '', url: '', purposes: [], enabled: true })
+    setProxyFields({ username: '', password: '', ip: '', port: '' })
+    setProxyModalOpen(true)
+  }
+
+  const openProxyEdit = (idx: number) => {
+    setProxyEditIdx(idx)
+    setProxyForm({ ...proxies[idx], purposes: [...proxies[idx].purposes] })
+    setProxyFields(parseProxyUrl(proxies[idx].url))
+    setProxyModalOpen(true)
+  }
+
+  const handleProxySave = async () => {
+    if (!proxyForm.name.trim()) {
+      showAlert('이름을 입력하세요.', 'error')
+      return
+    }
+    if (proxyForm.purposes.length === 0) {
+      showAlert('용도를 1개 이상 선택하세요.', 'error')
+      return
+    }
+    // 필드에서 URL 조합 (메인 IP는 빈값)
+    const assembledUrl = buildProxyUrl(proxyFields)
+    const formWithUrl = { ...proxyForm, url: assembledUrl }
+    const updated = [...proxies]
+    if (proxyEditIdx !== null) {
+      updated[proxyEditIdx] = formWithUrl
+    } else {
+      updated.push(formWithUrl)
+    }
+    await saveProxies(updated)
+    setProxyModalOpen(false)
+  }
+
+  const handleProxyDelete = async (idx: number) => {
+    if (!await showConfirm(`"${proxies[idx].name}" 프록시를 삭제하시겠습니까?`)) return
+    const updated = proxies.filter((_, i) => i !== idx)
+    await saveProxies(updated)
+  }
+
+  const handleProxyToggle = async (idx: number) => {
+    const updated = [...proxies]
+    updated[idx] = { ...updated[idx], enabled: !updated[idx].enabled }
+    await saveProxies(updated)
+  }
+
+  const toggleProxyPurpose = (purpose: ProxyConfigItem['purposes'][number]) => {
+    setProxyForm(prev => ({
+      ...prev,
+      purposes: prev.purposes.includes(purpose)
+        ? prev.purposes.filter(p => p !== purpose)
+        : [...prev.purposes, purpose],
+    }))
+  }
+
+  useEffect(() => { loadAccounts(); loadSourcingAccounts(); loadProxies() }, [loadAccounts, loadSourcingAccounts, loadProxies])
 
   const loadProbeStatus = useCallback(async () => {
     try {
@@ -1134,6 +1250,32 @@ export default function SettingsPage() {
   }
 
   useEffect(() => { loadExternalSettings(); loadStoreSettings(); loadProbeStatus() }, [loadExternalSettings, loadStoreSettings, loadProbeStatus])
+
+  // SSG 탭 진입 시 배송비/주소 옵션 자동 로드
+  useEffect(() => {
+    if (storeTab !== 'ssg') return
+    if (ssgShippingOptions.length > 0 || ssgAddrOptions.length > 0) return
+    const ssgData = savedStoreData['ssg'] || storeData['ssg'] || {}
+    if (!ssgData.apiKey) return
+    proxyApi.ssgShippingPolicies().then(res => {
+      if (!res.success || !res.policies?.length) return
+      const opts = res.policies.map((p: { shppcstId: string; feeAmt: number; prpayCodDivNm: string; shppcstAplUnitNm: string; divCd: number }) => {
+        const fee = p.feeAmt ? `${Number(p.feeAmt).toLocaleString()}원` : '무료'
+        const parts = [p.shppcstId, fee]
+        if (p.prpayCodDivNm) parts.push(p.prpayCodDivNm)
+        if (p.shppcstAplUnitNm) parts.push(p.shppcstAplUnitNm)
+        return { value: p.shppcstId, label: parts.join(' / '), divCd: p.divCd }
+      })
+      setSsgShippingOptions(opts)
+    }).catch(() => {})
+    proxyApi.ssgAddresses().then(res => {
+      if (!res.success || !res.addresses?.length) return
+      setSsgAddrOptions(res.addresses.map((a: { grpAddrId: string; doroAddrId?: string; addrNm: string; bascAddr: string }) => ({
+        value: a.doroAddrId || a.grpAddrId,
+        label: `${a.addrNm}${a.bascAddr ? ` (${a.bascAddr})` : ''}`,
+      })))
+    }).catch(() => {})
+  }, [storeTab, savedStoreData, storeData, ssgShippingOptions.length, ssgAddrOptions.length])
 
   // 금지어/삭제어 + 태그 금지어 로드
   useEffect(() => {
@@ -1461,7 +1603,7 @@ export default function SettingsPage() {
               const renderTab = (m: typeof STORE_MARKETS[number]) => (
                 <button
                   key={m.key}
-                  onClick={() => setStoreTab(m.key)}
+                  onClick={() => { setStoreTab(m.key); setEditingAccountId(null) }}
                   style={{
                     padding: '0.5rem 0.75rem', background: 'none', border: 'none',
                     borderBottom: storeTab === m.key ? '2px solid #FF8C00' : '2px solid transparent',
@@ -1510,17 +1652,112 @@ export default function SettingsPage() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   {market.fields.map(field => field.type === 'divider' ? (
-                    <div key={field.name} style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', marginTop: '0.25rem' }}>
+                    <div key={field.name} style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                       <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FFB84D' }}>{field.label}</span>
+                      {market.key === 'ssg' && field.name === '_divider_shipping_code' && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              // 현재 입력된 API Key로 먼저 설정 저장
+                              const data = storeData['ssg'] || savedStoreData['ssg'] || {}
+                              if (!data.apiKey) {
+                                showAlert('API KEY를 먼저 입력하세요.', 'error')
+                                return
+                              }
+                              await forbiddenApi.saveSetting('store_ssg', data)
+                              // 배송비정책 조회
+                              const shipRes = await proxyApi.ssgShippingPolicies()
+                              if (shipRes.success && shipRes.policies?.length) {
+                                setSsgShippingOptions(shipRes.policies.map((p: { shppcstId: string; feeAmt: number; prpayCodDivNm: string; shppcstAplUnitNm: string; divCd: number }) => {
+                                  const fee = p.feeAmt ? `${Number(p.feeAmt).toLocaleString()}원` : '무료'
+                                  const parts = [p.shppcstId, fee]
+                                  if (p.prpayCodDivNm) parts.push(p.prpayCodDivNm)
+                                  if (p.shppcstAplUnitNm) parts.push(p.shppcstAplUnitNm)
+                                  return { value: p.shppcstId, label: parts.join(' / '), divCd: p.divCd }
+                                }))
+                              }
+                              // 주소 조회
+                              const addrRes = await proxyApi.ssgAddresses()
+                              if (addrRes.success && addrRes.addresses?.length) {
+                                setSsgAddrOptions(addrRes.addresses.map((a: { grpAddrId: string; doroAddrId?: string; addrNm: string; bascAddr: string }) => ({
+                                  value: a.doroAddrId || a.grpAddrId,
+                                  label: `${a.addrNm}${a.bascAddr ? ` (${a.bascAddr})` : ''}`,
+                                })))
+                              }
+                              showAlert('배송비/주소 정보를 불러왔습니다.', 'success')
+                            } catch {
+                              showAlert('배송비/주소 조회 실패', 'error')
+                            }
+                          }}
+                          style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                        >배송비/주소 불러오기</button>
+                      )}
                     </div>
                   ) : field.type === 'info' ? (
                     <div key={field.name} style={{ padding: '0.4rem 0.6rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '4px' }}>
                       <span style={{ fontSize: '0.75rem', color: '#FF8C00' }}>{field.label}</span>
                     </div>
+                  ) : field.type === 'alias' ? (
+                    <div key={field.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>{field.label}</label>
+                      <input
+                        type="text"
+                        style={{ ...inputStyle, flex: 1 }}
+                        value={(() => {
+                          const v = storeData[market.key]?.[field.name] || ''
+                          return v.includes('-') ? v.split('-')[0] : v
+                        })()}
+                        onChange={(e) => {
+                          const nick = (storeData[market.key]?.[field.name] || '').split('-').slice(1).join('-')
+                          updateStoreField(market.key, field.name, nick ? `${e.target.value}-${nick}` : e.target.value)
+                        }}
+                        placeholder={field.placeholder || '마켓번호'}
+                      />
+                      <span style={{ color: '#555', fontSize: '0.8rem', flexShrink: 0 }}>—</span>
+                      <input
+                        type="text"
+                        style={{ ...inputStyle, width: '120px', flexShrink: 0 }}
+                        value={(() => {
+                          const v = storeData[market.key]?.[field.name] || ''
+                          return v.includes('-') ? v.split('-').slice(1).join('-') : ''
+                        })()}
+                        onChange={(e) => {
+                          const code = (storeData[market.key]?.[field.name] || '').split('-')[0]
+                          updateStoreField(market.key, field.name, e.target.value ? `${code}-${e.target.value}` : code)
+                        }}
+                        placeholder="사업자"
+                      />
+                    </div>
                   ) : (
                     <div key={field.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                       <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>{field.label}</label>
-                      {field.type === 'select' ? (
+                      {(field.type === 'ssg-shipping-select' || field.type === 'ssg-extra-select') ? (
+                        <select
+                          style={{ ...inputStyle, flex: 1 }}
+                          value={storeData[market.key]?.[field.name] || ''}
+                          onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                        >
+                          <option value=''>버튼으로 불러오기</option>
+                          {ssgShippingOptions
+                            .filter(o => {
+                              if (field.name === 'whoutShppcstId') return o.divCd === 10
+                              if (field.name === 'retShppcstId') return o.divCd === 20
+                              if (field.name === 'addShppcstIdJeju') return o.divCd === 70
+                              if (field.name === 'addShppcstIdIsland') return o.divCd === 60
+                              return false
+                            })
+                            .map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      ) : field.type === 'ssg-addr-select' ? (
+                        <select
+                          style={{ ...inputStyle, flex: 1 }}
+                          value={storeData[market.key]?.[field.name] || ''}
+                          onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                        >
+                          <option value=''>버튼으로 불러오기</option>
+                          {ssgAddrOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      ) : field.type === 'select' ? (
                         <select
                           style={{ ...inputStyle, flex: 1 }}
                           value={storeData[market.key]?.[field.name] || ''}
@@ -2340,6 +2577,175 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {/* 프록시 설정 */}
+      <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+          <div>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5' }}>프록시 / IP 설정</div>
+            <p style={{ fontSize: '0.8125rem', color: '#666', margin: '0.25rem 0 0' }}>전송·수집·오토튠에 사용할 IP/프록시를 관리합니다</p>
+          </div>
+          <button
+            onClick={openProxyAdd}
+            style={{ padding: '0.4rem 1rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer' }}
+          >+ 추가</button>
+        </div>
+
+        {proxies.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '2rem', color: '#555', fontSize: '0.8125rem' }}>
+            등록된 프록시가 없습니다
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem', fontSize: '0.8125rem' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #2D2D2D', color: '#888' }}>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem', fontWeight: 500 }}>이름</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem', fontWeight: 500 }}>IP / URL</th>
+                <th style={{ textAlign: 'center', padding: '0.5rem 0.75rem', fontWeight: 500 }}>용도</th>
+                <th style={{ textAlign: 'center', padding: '0.5rem 0.75rem', fontWeight: 500 }}>상태</th>
+                <th style={{ textAlign: 'center', padding: '0.5rem 0.75rem', fontWeight: 500 }}>관리</th>
+              </tr>
+            </thead>
+            <tbody>
+              {proxies.map((p, i) => {
+                const isMainIp = !p.url
+                const masked = isMainIp ? '34.47.122.131 (직접 연결)' : p.url.includes('@') ? `***@${p.url.split('@').pop()}` : p.url.replace(/^https?:\/\//, '')
+                const PURPOSE_STYLES: Record<ProxyPurpose, { bg: string; color: string; label: string }> = {
+                  transmit: { bg: 'rgba(0,200,150,0.1)', color: '#00C896', label: '전송' },
+                  collect: { bg: 'rgba(255,184,77,0.1)', color: '#FFB84D', label: '수집' },
+                  autotune: { bg: 'rgba(76,154,255,0.1)', color: '#4C9AFF', label: '오토튠' },
+                }
+                return (
+                  <tr key={i} style={{ borderBottom: '1px solid #1A1A1A' }}>
+                    <td style={{ padding: '0.6rem 0.75rem', color: '#E5E5E5' }}>
+                      {isMainIp && <span style={{ color: '#00C896', marginRight: '4px', fontSize: '0.7rem' }}>●</span>}
+                      {p.name}
+                    </td>
+                    <td style={{ padding: '0.6rem 0.75rem', color: isMainIp ? '#00C896' : '#999', fontFamily: 'monospace', fontSize: '0.75rem' }}>{masked}</td>
+                    <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                        {(p.purposes || []).map(pp => {
+                          const s = PURPOSE_STYLES[pp]
+                          return s ? <span key={pp} style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', background: s.bg, color: s.color }}>{s.label}</span> : null
+                        })}
+                      </div>
+                    </td>
+                    <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center' }}>
+                      <span
+                        onClick={() => handleProxyToggle(i)}
+                        style={{
+                          display: 'inline-block', width: '36px', height: '20px', borderRadius: '10px', cursor: 'pointer', position: 'relative',
+                          background: p.enabled ? '#FF8C00' : '#333',
+                          transition: 'background 0.2s',
+                        }}
+                      >
+                        <span style={{
+                          position: 'absolute', top: '2px', left: p.enabled ? '18px' : '2px',
+                          width: '16px', height: '16px', borderRadius: '50%', background: '#fff',
+                          transition: 'left 0.2s',
+                        }} />
+                      </span>
+                    </td>
+                    <td style={{ padding: '0.6rem 0.75rem', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      <button
+                        onClick={() => testProxy(i)}
+                        disabled={proxyTesting === i}
+                        style={{ background: 'none', border: '1px solid #2D2D2D', color: proxyTesting === i ? '#555' : '#4C9AFF', borderRadius: '4px', padding: '2px 8px', fontSize: '0.75rem', cursor: 'pointer', marginRight: '4px' }}
+                      >{proxyTesting === i ? '테스트중' : '테스트'}</button>
+                      <button
+                        onClick={() => openProxyEdit(i)}
+                        style={{ background: 'none', border: '1px solid #2D2D2D', color: '#999', borderRadius: '4px', padding: '2px 8px', fontSize: '0.75rem', cursor: 'pointer', marginRight: '4px' }}
+                      >수정</button>
+                      <button
+                        onClick={() => handleProxyDelete(i)}
+                        style={{ background: 'none', border: '1px solid #2D2D2D', color: '#C4736E', borderRadius: '4px', padding: '2px 8px', fontSize: '0.75rem', cursor: 'pointer' }}
+                      >삭제</button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* 프록시 추가/수정 모달 */}
+      {proxyModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setProxyModalOpen(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ ...card, padding: '1.5rem', width: '420px', maxWidth: '90vw' }}>
+            <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#E5E5E5', marginBottom: '1rem' }}>
+              {proxyEditIdx !== null ? '프록시 수정' : '프록시 추가'}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '4px', display: 'block' }}>이름</label>
+                <input value={proxyForm.name} onChange={e => setProxyForm(p => ({ ...p, name: e.target.value }))}
+                  placeholder="프록시칩 1" style={{ ...inputStyle }} />
+              </div>
+              <div style={{ background: '#141414', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.75rem' }}>
+                <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem' }}>프록시 인증 정보 <span style={{ color: '#555' }}>(비워두면 메인 IP)</span></div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#666', marginBottom: '2px', display: 'block' }}>Username</label>
+                    <input value={proxyFields.username} onChange={e => setProxyFields(f => ({ ...f, username: e.target.value }))}
+                      placeholder="username" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#666', marginBottom: '2px', display: 'block' }}>Password</label>
+                    <input value={proxyFields.password} onChange={e => setProxyFields(f => ({ ...f, password: e.target.value }))}
+                      placeholder="password" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#666', marginBottom: '2px', display: 'block' }}>IP Address</label>
+                    <input value={proxyFields.ip} onChange={e => setProxyFields(f => ({ ...f, ip: e.target.value }))}
+                      placeholder="0.0.0.0" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#666', marginBottom: '2px', display: 'block' }}>Port</label>
+                    <input value={proxyFields.port} onChange={e => setProxyFields(f => ({ ...f, port: e.target.value }))}
+                      placeholder="0000" style={{ ...inputStyle, fontSize: '0.8125rem', fontFamily: 'monospace' }} />
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', color: '#888', marginBottom: '6px', display: 'block' }}>용도 (복수 선택 가능)</label>
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                  {([
+                    { key: 'transmit' as ProxyPurpose, label: '전송', color: '#00C896' },
+                    { key: 'collect' as ProxyPurpose, label: '수집', color: '#FFB84D' },
+                    { key: 'autotune' as ProxyPurpose, label: '오토튠', color: '#4C9AFF' },
+                  ]).map(({ key, label, color }) => {
+                    const active = proxyForm.purposes.includes(key)
+                    return (
+                      <button key={key} onClick={() => toggleProxyPurpose(key)}
+                        style={{
+                          padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer',
+                          background: active ? `${color}20` : '#1A1A1A',
+                          border: `1px solid ${active ? color : '#2D2D2D'}`,
+                          color: active ? color : '#666',
+                          fontWeight: active ? 600 : 400,
+                        }}>{label}</button>
+                    )
+                  })}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input type="checkbox" checked={proxyForm.enabled} onChange={e => setProxyForm(p => ({ ...p, enabled: e.target.checked }))} />
+                <label style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>활성화</label>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1.25rem' }}>
+              <button onClick={() => setProxyModalOpen(false)}
+                style={{ padding: '0.4rem 1rem', background: '#333', color: '#999', border: 'none', borderRadius: '6px', fontSize: '0.8125rem', cursor: 'pointer' }}>취소</button>
+              <button onClick={handleProxySave} disabled={proxySaving}
+                style={{ padding: '0.4rem 1rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer', opacity: proxySaving ? 0.6 : 1 }}>
+                {proxySaving ? '저장중...' : '저장'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 프리셋 이미지 확대 모달 */}
       {presetZoom && (

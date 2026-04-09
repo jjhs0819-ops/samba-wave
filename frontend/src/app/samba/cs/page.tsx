@@ -55,7 +55,7 @@ export default function CSPage() {
   const [csSyncAccountId, setCsSyncAccountId] = useState('')
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [csCustomStart, setCsCustomStart] = useState(`${new Date().getFullYear()}-01-01`)
-  const [csCustomEnd, setCsCustomEnd] = useState(new Date().toISOString().slice(0, 10))
+  const [csCustomEnd, setCsCustomEnd] = useState(new Date().toLocaleDateString('sv-SE'))
   const [csStartLocked, setCsStartLocked] = useState(false)
   const [csDateLocked, setCsDateLocked] = useState(false)
   const [searchCategory, setSearchCategory] = useState('customer')
@@ -218,12 +218,26 @@ export default function CSPage() {
     switch (key) {
       case 'today': return now
       case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() - 7); return d }
+      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7); return d }
+      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 6); return d }
+      case '1month': { const d = new Date(now); d.setDate(d.getDate() - 29); return d }
       case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
       case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
       case 'thisyear': return new Date(now.getFullYear(), 0, 1)
       default: return null
+    }
+  }
+
+  // 기간 종료일 계산 (지난주/지난달/어제는 해당 기간 마지막 날)
+  const getPeriodEnd = (key: string): Date => {
+    const now = new Date()
+    now.setHours(0, 0, 0, 0)
+    switch (key) {
+      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 1); return d }
+      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth(), 0)
+      default: return now
     }
   }
 
@@ -235,13 +249,16 @@ export default function CSPage() {
       : '전체마켓'
     setCsLogMessages(prev => [...prev, `[${ts()}] ${label} CS 문의 동기화 중...`])
     try {
-      const result = await csInquiryApi.syncFromMarkets()
+      const selectedMarket = csSyncAccountId
+        ? accounts.find(a => a.id === csSyncAccountId)?.market_name
+        : undefined
+      const result = await csInquiryApi.syncFromMarkets(selectedMarket)
       setCsLogMessages(prev => [...prev, `[${ts()}] ${result.message}`])
       setPage(0)
       setSearch('')
       setSearchInput('')
       const [data, st, tpl] = await Promise.all([
-        csInquiryApi.list({ skip: 0, limit: pageSize, sort_desc: sortDesc }).catch(() => ({ items: [], total: 0 })),
+        csInquiryApi.list({ skip: 0, limit: pageSize, sort_desc: sortDesc, market: filterMarket || undefined }).catch(() => ({ items: [], total: 0 })),
         csInquiryApi.getStats().catch(() => ({})),
         csInquiryApi.getTemplates().catch(() => ({})),
       ])
@@ -408,11 +425,11 @@ export default function CSPage() {
               setCsPeriod(pb.key)
               if (!csStartLocked) {
                 const start = getPeriodStart(pb.key)
-                setCsCustomStart(start ? start.toISOString().slice(0, 10) : '')
+                setCsCustomStart(start ? start.toLocaleDateString('sv-SE') : '')
               }
-              setCsCustomEnd(new Date().toISOString().slice(0, 10))
+              setCsCustomEnd(getPeriodEnd(pb.key).toLocaleDateString('sv-SE'))
             }}
-              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: csPeriod === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: csPeriod === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: csPeriod === pb.key ? '#fff' : '#C5C5C5', cursor: csDateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: csDateLocked && csPeriod !== pb.key ? 0.5 : 1 }}
+              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: csPeriod === pb.key ? 'rgba(80,80,80,0.8)' : 'rgba(50,50,50,0.8)', border: csPeriod === pb.key ? '1px solid #666' : '1px solid #3D3D3D', color: csPeriod === pb.key ? '#fff' : '#C5C5C5', cursor: csDateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: csDateLocked && csPeriod !== pb.key ? 0.5 : 1 }}
             >{pb.label}</button>
           ))}
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 4px' }} />
@@ -467,7 +484,7 @@ export default function CSPage() {
           </select>
           <select style={{ ...inputStyle, width: '94px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={csSiteFilter} onChange={e => setCsSiteFilter(e.target.value)}>
             <option value="">전체사이트보기</option>
-            {['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','GrandStage','OKmall','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}
+            {['MUSINSA','KREAM','FashionPlus','Nike','Adidas','ABCmart','REXMONDE','SSG','LOTTEON','GSShop','ElandMall','SSF'].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
           <select style={{ ...inputStyle, width: '95px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(0) }}>
             <option value="">답변상태</option>

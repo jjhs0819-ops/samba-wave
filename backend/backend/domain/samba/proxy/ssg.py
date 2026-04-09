@@ -27,42 +27,140 @@ JSON 구조 주의: SSG는 XStream 기반이므로 배열을
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import httpx
 
-from backend.domain.samba.proxy.base_client import BaseProxyClient
+from backend.core.config import settings
 from backend.utils.logger import logger
 
+# fetch_infra() 결과 캐시 — api_key 기준, TTL 15분
+_infra_cache: dict[str, tuple[dict[str, Any], float]] = {}
+_INFRA_CACHE_TTL = 900  # 15분
 
-class SSGClient(BaseProxyClient):
+# httpx 클라이언트 풀 — api_key별 재사용 (TCP 커넥션 재활용으로 SSL handshake 제거)
+# 값: (클라이언트, 마지막 사용 시간)
+_client_pool: dict[str, tuple[httpx.AsyncClient, float]] = {}
+_CLIENT_STALE_TTL = 1800  # 30분 미사용 시 정리
+
+
+async def _cleanup_stale_clients() -> None:
+    """30분 이상 미사용 클라이언트를 닫고 풀에서 제거."""
+    now = time.time()
+    stale_keys = [
+        k
+        for k, (_, last_used) in _client_pool.items()
+        if now - last_used > _CLIENT_STALE_TTL
+    ]
+    for k in stale_keys:
+        client, _ = _client_pool.pop(k)
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+    if stale_keys:
+        logger.debug(f"[SSG] stale 클라이언트 {len(stale_keys)}개 정리 완료")
+
+
+def _get_ssg_client(api_key: str) -> httpx.AsyncClient:
+    """api_key별 재사용 클라이언트 반환. 없으면 생성, 사용 시간 갱신."""
+    now = time.time()
+    if api_key in _client_pool:
+        client, _ = _client_pool[api_key]
+        _client_pool[api_key] = (client, now)
+        return client
+    client = httpx.AsyncClient(
+        timeout=settings.http_timeout_default,
+        limits=httpx.Limits(
+            max_keepalive_connections=10,
+            max_connections=5,
+        ),
+    )
+    _client_pool[api_key] = (client, now)
+    return client
+
+
+async def invalidate_infra_cache(api_key: str) -> None:
+    """SSG 설정 변경 시 인프라 캐시 + stale 클라이언트 정리.
+
+    설정 저장 엔드포인트에서 호출하여
+    변경된 자격증명이 즉시 반영되도록 한다.
+    """
+    _infra_cache.pop(api_key, None)
+    # 해당 api_key 클라이언트도 닫고 제거 (자격증명 변경 대응)
+    entry = _client_pool.pop(api_key, None)
+    if entry is not None:
+        try:
+            await entry[0].aclose()
+        except Exception:
+            pass
+    # stale 클라이언트 일괄 정리
+    await _cleanup_stale_clients()
+    logger.info(f"[SSG] 인프라 캐시 무효화 완료 (api_key=...{api_key[-6:]})")
+
+
+class SSGClient:
     """SSG Open API 클라이언트."""
 
-    base_url = "https://eapi.ssgadm.com"
-    timeout = 60.0
-    market_name = "SSG"
-    DEFAULT_SITE_NO = "6004"  # 신세계몰 기본 사이트번호
+    BASE_URL = "https://eapi.ssgadm.com"
 
-    def __init__(self, api_key: str, site_no: str = DEFAULT_SITE_NO) -> None:
+    def __init__(self, api_key: str, site_no: str = "6004") -> None:
         """api_key: 업체 인증키, site_no: 사이트번호 (기본 신세계몰)."""
-        super().__init__()
         self.api_key = api_key
         self.site_no = site_no
 
-    # ── BaseProxyClient 오버라이드 ──────────────────
-
-    async def _build_headers(self, method: str, path: str) -> dict[str, str]:
-        """SSG API 키 인증 헤더 생성."""
+    def _headers(self, accept: str = "application/json") -> dict[str, str]:
         return {
             "Authorization": self.api_key,
             "Content-Type": "application/json",
-            "Accept": "application/json",
+            "Accept": accept,
         }
 
-    async def _check_error(self, resp: httpx.Response, data: dict[str, Any]) -> None:
-        """SSG 에러 포맷 처리 — HTTP 에러 시 result.resultDesc 추출."""
+    async def _call_api(
+        self,
+        method: str,
+        path: str,
+        body: Optional[dict[str, Any]] = None,
+        params: Optional[dict[str, str]] = None,
+    ) -> dict[str, Any]:
+        """공통 API 호출.
+
+        SSG는 에러 시 HTTP 500을 반환하면서도 JSON body에 에러 내용을 담으므로
+        500 응답도 JSON 파싱 후 반환한다.
+        """
+        url = f"{self.BASE_URL}{path}"
+        headers = self._headers()
+
+        # stale 클라이언트 정리 후 커넥션 풀 재사용
+        await _cleanup_stale_clients()
+        client = _get_ssg_client(self.api_key)
+        if method == "GET":
+            resp = await client.get(url, headers=headers, params=params)
+        elif method == "POST":
+            resp = await client.post(
+                url, headers=headers, json=body or {}, params=params
+            )
+        elif method == "PUT":
+            resp = await client.put(url, headers=headers, json=body or {})
+        elif method == "DELETE":
+            resp = await client.delete(url, headers=headers, params=params)
+        else:
+            raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
+
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"raw": resp.text}
+
+        logger.info(f"[SSG] {method} {path} → {resp.status_code}")
+
+        # SSG는 500 응답에도 JSON 에러를 담아 보냄 — 에러 내용 추출
         if not resp.is_success:
+            # 에러 응답 전체 로깅 (디버깅용)
+            logger.error(f"[SSG ERROR] {method} {path} 응답 전체: {resp.text[:2000]}")
+            # SSG JSON 에러 응답에서 상세 메시지 추출
             result_obj = data.get("result", {}) if isinstance(data, dict) else {}
             desc = ""
             if isinstance(result_obj, dict):
@@ -73,38 +171,61 @@ class SSGClient(BaseProxyClient):
                 desc
                 or data.get("message", "")
                 or data.get("msg", "")
-                or str(data)[:300]
+                or resp.text[:300]
             )
             raise SSGApiError(f"HTTP {resp.status_code}: {msg}")
 
-    async def _call_api(
+        return data
+
+    async def _call_api_xml(
         self,
         method: str,
         path: str,
-        body: Optional[dict[str, Any]] = None,
-        params: Optional[dict[str, str]] = None,
-        content: Optional[str] = None,
-        extra_headers: Optional[dict[str, str]] = None,
+        xml_body: str,
     ) -> dict[str, Any]:
-        """공통 API 호출 — 네트워크 에러를 SSGApiError로 변환."""
-        try:
-            logger.info(f"[SSG] {method} {path}")
-            return await super()._call_api(
-                method,
-                path,
-                body=body,
-                params=params,
-                content=content,
-                extra_headers=extra_headers,
+        """/api/postng/ 등 XStream 기반 XML POST 엔드포인트 전용 호출.
+
+        SSG의 일부 API(/api/postng/)는 JSON body가 아닌 XML body를 요구한다.
+        응답은 Accept: application/json으로 JSON을 받는다.
+        """
+        url = f"{self.BASE_URL}{path}"
+        headers = {
+            "Authorization": self.api_key,
+            "Content-Type": "application/xml",
+            "Accept": "application/json",
+        }
+
+        # XML 전송은 Content-Type이 달라 별도 클라이언트 생성
+        async with httpx.AsyncClient(
+            timeout=settings.http_timeout_default
+        ) as xml_client:
+            resp = await xml_client.post(
+                url, headers=headers, content=xml_body.encode("utf-8")
             )
-        except SSGApiError:
-            raise
-        except httpx.ConnectError as exc:
-            raise SSGApiError(f"SSG 서버 연결 실패: {exc}") from exc
-        except httpx.TimeoutException as exc:
-            raise SSGApiError(f"SSG 서버 응답 타임아웃 (60초): {exc}") from exc
-        except httpx.HTTPError as exc:
-            raise SSGApiError(f"SSG HTTP 에러: {exc}") from exc
+
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"raw": resp.text}
+
+        logger.info(f"[SSG] XML POST {path} → {resp.status_code}")
+
+        if not resp.is_success:
+            raw_bytes = resp.content
+            raw_text = raw_bytes.decode("utf-8", errors="replace")
+            logger.error(
+                f"[SSG ERROR XML] {path} status={resp.status_code} encoding={resp.encoding} body={raw_text[:2000]}"
+            )
+            result_obj = data.get("result", {}) if isinstance(data, dict) else {}
+            desc = ""
+            if isinstance(result_obj, dict):
+                desc = result_obj.get("resultDesc", "") or result_obj.get(
+                    "resultMessage", ""
+                )
+            msg = desc or raw_text[:300]
+            raise SSGApiError(f"HTTP {resp.status_code}: {msg}")
+
+        return data
 
     # ------------------------------------------------------------------
     # 인증 테스트
@@ -124,7 +245,12 @@ class SSGClient(BaseProxyClient):
 
         SSG Open API: POST /item/0.5/insertItem.ssg
         """
+        import json as _json
+
         body = {"insertItem": product_data}
+        logger.info(
+            f"[SSG DEBUG] insertItem 페이로드:\n{_json.dumps(body, ensure_ascii=False, indent=2)}"
+        )
         result = await self._call_api(
             "POST",
             "/item/0.5/insertItem.ssg",
@@ -137,20 +263,112 @@ class SSGClient(BaseProxyClient):
         body = {"updateItem": product_data}
         result = await self._call_api(
             "POST",
-            "/item/0.5/updateItem.ssg",
+            "/item/0.4/updateItem.ssg",
             body=body,
         )
         return {"success": True, "data": result}
 
     async def delete_product(self, item_id: str) -> dict[str, Any]:
-        """상품 삭제 (리스트에서 완전 제거)."""
-        body = {"deleteItem": {"itemId": item_id}}
-        result = await self._call_api(
-            "POST",
-            "/item/0.5/deleteItem.ssg",
-            body=body,
+        """상품 삭제 — 영구판매중지(sellStatCd=90)로 처리.
+
+        SSG는 실제 삭제 API(deleteItem.ssg)를 지원하지 않으므로
+        판매상태를 영구판매중지(90)로 변경하여 사실상 삭제 처리.
+        sellFrmCd 등 필수 필드를 유지하기 위해 현재 상태를 먼저 조회한 후 수정.
+        """
+        logger.info(f"[SSG] 영구판매중지 처리: itemId={item_id}")
+
+        # 현재 판매상태 조회 — sellFrmCd 등 필수 필드 유지용
+        current_status: dict[str, Any] = {}
+        try:
+            status_resp = await self.get_item_sales_status(item_id)
+            logger.info(f"[SSG] 판매상태 조회 응답 전문: {status_resp}")
+            res_obj = status_resp.get("result", {})
+            sales_status = (
+                (res_obj.get("salesStatus") if isinstance(res_obj, dict) else None)
+                or status_resp.get("salesStatus")
+                or {}
+            )
+            if isinstance(sales_status, dict):
+                current_status = sales_status
+                logger.info(f"[SSG] 현재 판매상태: {current_status}")
+        except Exception as e:
+            logger.warning(f"[SSG] 판매상태 조회 실패 (계속 진행): {e}")
+
+        # 기존 필드를 유지하면서 sellStatCd만 영구판매중지(90)로 변경
+        # optionInventories 유무로 옵션 여부를 판단하면 API가 빈 배열/null 반환 시 오판할 수 있음.
+        # SSG 서버는 itemSellTypeCd="20"(옵션상품)으로 등록된 상품에 usablInvQty 전송을 거부하므로
+        # 판매상태 변경에 불필요한 usablInvQty는 항상 제외한다.
+        option_inventories = current_status.get("optionInventories")
+        has_option_inventories = (
+            isinstance(option_inventories, list) and len(option_inventories) > 0
         )
+
+        payload: dict[str, Any] = {}
+        for field in ("invMngYn", "invQtyMarkgYn", "dispStrtDt", "dispEndDt"):
+            if field in current_status and current_status[field] is not None:
+                payload[field] = current_status[field]
+        # usablInvQty는 전송하지 않음 — 옵션상품(itemSellTypeCd=20)에서 에러 발생하며
+        # 영구판매중지 처리에 재고수량은 필수값이 아님
+        if "sellFrmCd" in current_status and current_status["sellFrmCd"] is not None:
+            payload["sellFrmCd"] = str(current_status["sellFrmCd"])
+        payload["sellStatCd"] = "90"
+        if has_option_inventories:
+            payload["optionInventories"] = [
+                {
+                    **opt,
+                    "sellStatCd": str(opt.get("sellStatCd", 20)),
+                    # sellFrmCd가 없거나 None이면 기본값 "10"(일반판매) 적용 — 빈값 전송 시 API 오류
+                    "sellFrmCd": str(opt["sellFrmCd"])
+                    if opt.get("sellFrmCd") is not None
+                    else "10",
+                }
+                for opt in option_inventories
+                if isinstance(opt, dict)
+            ]
+
+        result = await self.update_item_sales_status(item_id, payload)
+        logger.info(f"[SSG] 영구판매중지 응답: {result}")
+
+        res = result.get("result", {})
+        if isinstance(res, dict):
+            code = res.get("resultCode")
+            if code is not None and str(code) != "00" and str(code) != "0":
+                msg = (
+                    res.get("resultDesc", "")
+                    or res.get("resultMessage", "")
+                    or f"resultCode={code}"
+                )
+                # IV2-OP: 이미 영구판매중지된 상품 → 삭제 완료 상태이므로 성공으로 처리
+                if "IV2-OP" in msg or "영구판매중지(90)" in msg:
+                    logger.info(
+                        f"[SSG] 이미 영구판매중지된 상품 — 성공으로 처리: itemId={item_id}"
+                    )
+                    return {"success": True, "data": result}
+                raise SSGApiError(f"SSG 영구판매중지 실패: {msg}")
+
         return {"success": True, "data": result}
+
+    async def get_item_sales_status(self, item_id: str) -> dict[str, Any]:
+        """상품 판매상태 조회.
+
+        SSG Open API: GET /item/0.1/online/{itemId}/sales-status
+        """
+        return await self._call_api("GET", f"/item/0.1/online/{item_id}/sales-status")
+
+    async def update_item_sales_status(
+        self,
+        item_id: str,
+        sales_status: dict[str, Any],
+    ) -> dict[str, Any]:
+        """상품 판매상태 수정.
+
+        SSG Open API: POST /item/0.1/online/{itemId}/sales-status
+        sellStatCd: 20=판매중, 80=일시판매중지, 90=영구판매중지
+        """
+        body = {"online_updateSalesStatus": {"salesStatus": sales_status}}
+        return await self._call_api(
+            "POST", f"/item/0.1/online/{item_id}/sales-status", body=body
+        )
 
     async def get_product(self, item_id: str) -> dict[str, Any]:
         """상품 조회."""
@@ -159,6 +377,58 @@ class SSGClient(BaseProxyClient):
             "/item/0.1/getItemList.ssg",
             params={"itemId": item_id},
         )
+
+    async def get_product_list(
+        self, keyword: str = "", page_size: int = 10
+    ) -> dict[str, Any]:
+        """상품 목록 조회 (상품명 키워드 검색).
+
+        SSG Open API: GET /item/0.1/getItemList.ssg
+        """
+        params: dict[str, Any] = {"page": "1", "pageSize": str(page_size)}
+        if keyword:
+            params["itemNm"] = keyword
+        return await self._call_api("GET", "/item/0.1/getItemList.ssg", params=params)
+
+    async def get_product_count(self, site_no: str = "6004") -> int:
+        """전체 등록 상품 수 조회 (페이지네이션으로 전체 카운트).
+
+        SSG API는 totalCnt를 제공하지 않으므로 items 배열 길이를 집계.
+        XStream 특성상 상품 1개 → dict, 여러 개 → list로 반환되므로 양쪽 처리.
+        """
+        page = 1
+        page_size = 100
+        total = 0
+        while True:
+            params: dict[str, Any] = {
+                "page": str(page),
+                "pageSize": str(page_size),
+                "siteNo": site_no,
+            }
+            resp = await self._call_api(
+                "GET", "/item/0.1/getItemList.ssg", params=params
+            )
+            result_obj = resp.get("result", {})
+            items_raw = result_obj.get("items", {})
+            # XStream 응답: items는 dict 래퍼, item은 1개면 dict, 여러 개면 list
+            if isinstance(items_raw, dict):
+                item_val = items_raw.get("item", [])
+                if isinstance(item_val, dict):
+                    items_list: list[Any] = [item_val]
+                elif isinstance(item_val, list):
+                    items_list = item_val
+                else:
+                    items_list = []
+            elif isinstance(items_raw, list):
+                items_list = items_raw
+            else:
+                items_list = []
+            count = len(items_list)
+            total += count
+            if count < page_size:
+                break
+            page += 1
+        return total
 
     # ------------------------------------------------------------------
     # 업체정보 조회
@@ -173,30 +443,140 @@ class SSGClient(BaseProxyClient):
             "GET", "/venInfo/0.1/listBrand.ssg", params=params or None
         )
 
-    async def get_categories(self, std_ctg_id: str = "") -> dict[str, Any]:
-        """표준카테고리 조회 (구버전)."""
-        params: dict[str, str] = {}
+    async def get_categories(
+        self,
+        std_ctg_id: str = "",
+        item_reg_div_cd: str = "",
+        site_no: str = "",
+        std_cg_grp_cd: str = "",
+        std_ctg_lcls_id: str = "",
+        std_ctg_mcls_id: str = "",
+        std_ctg_scls_id: str = "",
+        std_ctg_srch_wrd: str = "",
+        page: int = 1,
+        page_size: int = 500,
+    ) -> dict[str, Any]:
+        """표준카테고리 조회 (키패스 포함).
+
+        SSG Open API: GET /venInfo/0.2/listStdCtgKeyPath.ssg
+        item_reg_div_cd: 상품등록구분 (10=온라인, 20=점포, 30=백화점, 미지정시 10)
+        site_no: 사이트 번호 (6001=이마트몰, 6004=신세계몰, 6009=신세계백화점몰)
+        std_ctg_srch_wrd: 표준 카테고리 소/세분류 명 검색어
+        """
+        params: dict[str, Any] = {"page": page, "pageSize": page_size}
         if std_ctg_id:
-            params["stdCtgId"] = std_ctg_id
+            params["stdCtgDclsId"] = std_ctg_id
+        if item_reg_div_cd:
+            params["itemRegDivCd"] = item_reg_div_cd
+        if site_no:
+            params["siteNo"] = site_no
+        if std_cg_grp_cd:
+            params["stdCgGrpCd"] = std_cg_grp_cd
+        if std_ctg_lcls_id:
+            params["stdCtgLclsId"] = std_ctg_lcls_id
+        if std_ctg_mcls_id:
+            params["stdCtgMclsId"] = std_ctg_mcls_id
+        if std_ctg_scls_id:
+            params["stdCtgSclsId"] = std_ctg_scls_id
+        if std_ctg_srch_wrd:
+            params["stdCtgSrchWrd"] = std_ctg_srch_wrd
         return await self._call_api(
-            "GET", "/venInfo/0.1/listStdCtg.ssg", params=params or None
+            "GET", "/venInfo/0.2/listStdCtgKeyPath.ssg", params=params
         )
 
     async def get_categories_v2(
         self,
         page: int = 1,
         page_size: int = 500,
-        item_reg_div_cd: str = "10",
     ) -> dict[str, Any]:
-        """표준카테고리 조회 v0.2 (경로 포함, 페이징 지원)."""
-        params: dict[str, str] = {
-            "itemRegDivCd": item_reg_div_cd,
-            "page": str(page),
-            "pageSize": str(page_size),
+        """표준카테고리 조회 v2 (get_categories alias).
+
+        category/service.py에서 호출하는 메서드명과 일치시키기 위한 래퍼.
+        """
+        return await self.get_categories(page=page, page_size=page_size)
+
+    async def get_display_categories(
+        self,
+        std_ctg_dcls_id: str = "",
+        site_no: str = "",
+        disp_ctg_nm: str = "",
+        page: int = 1,
+        page_size: int = 500,
+    ) -> dict[str, Any]:
+        """전시카테고리 조회.
+
+        SSG Open API: GET /common/0.2/listDispCtg.ssg
+        std_ctg_dcls_id: 표준카테고리 세분류ID
+        disp_ctg_nm: 전시카테고리명 검색어 (키워드 검색)
+        """
+        params: dict[str, Any] = {"page": page, "pageSize": page_size}
+        if std_ctg_dcls_id:
+            params["stdCtgDclsId"] = std_ctg_dcls_id
+        if site_no:
+            params["siteNo"] = site_no
+        if disp_ctg_nm:
+            params["dispCtgNm"] = disp_ctg_nm
+        return await self._call_api("GET", "/common/0.2/listDispCtg.ssg", params=params)
+
+    async def get_display_categories_all(
+        self,
+        site_no: str = "",
+        disp_ctg_nm: str = "",
+        page: int = 1,
+        page_size: int = 500,
+    ) -> dict[str, Any]:
+        """전시카테고리 전체 조회.
+
+        SSG Open API: GET /common/0.1/displayCategory.ssg
+        dispCtgId, dispCtgNm, siteNo 중 1개 이상 필수.
+        siteNo만으로 사이트 전체 전시카테고리 조회 가능.
+        응답: result.displayCategorys[].category → dispCtgId, dispCtgNm, dispCtgPathNm
+        """
+        params: dict[str, Any] = {"page": page, "pageSize": page_size}
+        if site_no:
+            params["siteNo"] = site_no
+        if disp_ctg_nm:
+            params["dispCtgNm"] = disp_ctg_nm
+        return await self._call_api(
+            "GET", "/common/0.1/displayCategory.ssg", params=params
+        )
+
+    async def search_display_categories(
+        self,
+        keyword: str,
+        site_no: str = "6005",
+    ) -> dict[str, Any]:
+        """전시카테고리명 키워드 검색 — displayCategory.ssg (v0.1).
+
+        dispCtgNm 파라미터로 전시카테고리 명 검색.
+        """
+        params: dict[str, Any] = {
+            "dispCtgNm": keyword,
+            "siteNo": site_no,
         }
         return await self._call_api(
-            "GET", "/venInfo/0.2/listStdCtgKeyPath.ssg", params=params
+            "GET", "/common/0.1/displayCategory.ssg", params=params
         )
+
+    async def list_origins(
+        self,
+        orplc_nm: str = "",
+        manuf_cntry_yn: str = "Y",
+        page: int = 1,
+        page_size: int = 500,
+    ) -> dict[str, Any]:
+        """원산지/제조국 코드 목록 조회.
+
+        SSG Open API: GET /common/0.1/listOrplc.ssg
+        orplc_nm: 원산지명 검색어 (부분 매칭)
+        manuf_cntry_yn: 제조국 사용 가능 여부 필터 (Y=사용가능만)
+        """
+        params: dict[str, Any] = {"page": page, "pageSize": page_size}
+        if orplc_nm:
+            params["orplcNm"] = orplc_nm
+        if manuf_cntry_yn:
+            params["manufCntryYn"] = manuf_cntry_yn
+        return await self._call_api("GET", "/common/0.1/listOrplc.ssg", params=params)
 
     async def get_shipping_policies(self) -> dict[str, Any]:
         """배송비정책 목록 조회."""
@@ -206,48 +586,131 @@ class SSGClient(BaseProxyClient):
         """출고/반품 주소 목록 조회 (v0.3 필수)."""
         return await self._call_api("GET", "/venInfo/0.3/listVenAddr.ssg")
 
-    async def fetch_infra(self) -> dict[str, str]:
+    async def fetch_infra(self) -> dict[str, Any]:
         """상품 등록에 필요한 인프라 ID 자동 조회.
 
-        반환: whoutShppcstId, retShppcstId, whoutAddrId, snbkAddrId
+        반환: whoutShppcstId, retShppcstId, whoutAddrId, snbkAddrId, origin_code_map
+
+        결과는 api_key 기준 15분간 인메모리 캐싱 — 상품마다 반복 호출하는 비용 제거.
         """
-        infra: dict[str, str] = {}
+        now = time.time()
+        cached = _infra_cache.get(self.api_key)
+        if cached is not None:
+            data, ts = cached
+            if now - ts < _INFRA_CACHE_TTL:
+                logger.debug(
+                    f"[SSG] fetch_infra 캐시 hit (잔여 {int(_INFRA_CACHE_TTL - (now - ts))}초)"
+                )
+                return data
 
-        # 배송비정책 조회
+        infra: dict[str, Any] = {}
+
+        # 원산지 응답 파싱 헬퍼
+        def _parse_origin_resp(resp: dict) -> dict[str, str]:
+            orplc_list_wrap = resp.get("result", {}).get("orplcs", [{}])
+            if isinstance(orplc_list_wrap, dict):
+                orplc_list_wrap = [orplc_list_wrap]
+            orplc_raw = orplc_list_wrap[0].get("orplc", []) if orplc_list_wrap else []
+            if isinstance(orplc_raw, dict):
+                orplc_items = [orplc_raw]
+            else:
+                orplc_items = orplc_raw
+            result: dict[str, str] = {}
+            for item in orplc_items:
+                nm = (item.get("orplcNm") or "").strip()
+                oid = item.get("orplcId", "")
+                if nm and oid:
+                    result[nm.lower()] = oid
+            return result
+
+        # 배송비정책 / 주소 / 원산지 3개 API 병렬 조회 (순차 → 동시)
+        import asyncio as _asyncio
+
+        sp_raw, addr_raw, origin_resp_raw = await _asyncio.gather(
+            self.get_shipping_policies(),
+            self.get_addresses(),
+            self.list_origins(manuf_cntry_yn="Y", page_size=500),
+            return_exceptions=True,
+        )
+
+        # 배송비정책 파싱
+        if isinstance(sp_raw, Exception):
+            logger.warning(f"[SSG] 배송비정책 조회 실패: {sp_raw}")
+        else:
+            try:
+                policies = sp_raw.get("result", {}).get("shppcstPlcys", [{}])
+                policy_list = policies[0].get("shppcstPlcy", []) if policies else []
+                for p in policy_list:
+                    div = p.get("shppcstPlcyDivCd")
+                    sid = p.get("shppcstId", "")
+                    # 10=출고(일반배송), 20=반품
+                    if div == 10 and "whoutShppcstId" not in infra:
+                        infra["whoutShppcstId"] = sid
+                    elif div == 20 and "retShppcstId" not in infra:
+                        infra["retShppcstId"] = sid
+            except Exception as exc:
+                logger.warning(f"[SSG] 배송비정책 파싱 실패: {exc}")
+
+        # 주소 파싱
+        if isinstance(addr_raw, Exception):
+            logger.warning(f"[SSG] 주소 조회 실패: {addr_raw}")
+        else:
+            try:
+                logger.info(f"[SSG DEBUG] 주소 조회 원본 응답: {addr_raw}")
+                addr_result = addr_raw.get("result", {})
+                addr_list = addr_result.get("venAddrDelInfo", [])
+                # XStream 래핑: list 또는 dict(단일 항목) 모두 처리
+                if isinstance(addr_list, dict):
+                    addr_list = [addr_list]
+                addrs_raw = (
+                    addr_list[0].get("venAddrDelInfoDto", []) if addr_list else []
+                )
+                # venAddrDelInfoDto도 단일 항목이면 dict로 올 수 있음
+                if isinstance(addrs_raw, dict):
+                    addrs = [addrs_raw]
+                else:
+                    addrs = addrs_raw
+
+                # 기본주소(bascAddrYn=Y) 우선, 없으면 첫 번째 사용
+                base_addr = next((a for a in addrs if a.get("bascAddrYn") == "Y"), None)
+                if not base_addr and addrs:
+                    base_addr = addrs[0]
+
+                if base_addr:
+                    # doroAddrId 우선 사용 (SSG API whoutAddrId 유효값), 없으면 grpAddrId 폴백
+                    addr_id = base_addr.get("doroAddrId", "") or base_addr.get(
+                        "grpAddrId", ""
+                    )
+                    logger.info(
+                        f"[SSG DEBUG] 선택된 주소: doroAddrId={base_addr.get('doroAddrId')}, grpAddrId={base_addr.get('grpAddrId')}, 사용={addr_id}, 전체={base_addr}"
+                    )
+                    infra["whoutAddrId"] = addr_id
+                    infra["snbkAddrId"] = addr_id
+            except Exception as exc:
+                logger.warning(f"[SSG] 주소 파싱 실패: {exc}")
+
+        # 원산지 파싱 (실패 시 필터 없이 재시도)
         try:
-            sp = await self.get_shipping_policies()
-            policies = sp.get("result", {}).get("shppcstPlcys", [{}])
-            policy_list = policies[0].get("shppcstPlcy", []) if policies else []
+            if isinstance(origin_resp_raw, Exception):
+                logger.warning(f"[SSG] 원산지 1차 조회 실패: {origin_resp_raw}")
+                origin_code_map: dict[str, str] = {}
+            else:
+                origin_code_map = _parse_origin_resp(origin_resp_raw)
 
-            for p in policy_list:
-                div = p.get("shppcstPlcyDivCd")
-                sid = p.get("shppcstId", "")
-                # 10=출고(일반배송), 20=반품
-                if div == 10 and "whoutShppcstId" not in infra:
-                    infra["whoutShppcstId"] = sid
-                elif div == 20 and "retShppcstId" not in infra:
-                    infra["retShppcstId"] = sid
+            # 빈 경우 필터 없이 재시도
+            if not origin_code_map:
+                logger.warning("[SSG] 원산지 코드 0개 — 필터 없이 재조회 시도")
+                origin_resp2 = await self.list_origins(manuf_cntry_yn="", page_size=500)
+                origin_code_map = _parse_origin_resp(origin_resp2)
+            infra["origin_code_map"] = origin_code_map
+            logger.info(f"[SSG] 원산지 코드 {len(origin_code_map)}개 조회 완료")
         except Exception as exc:
-            logger.warning(f"[SSG] 배송비정책 조회 실패: {exc}")
+            logger.warning(f"[SSG] 원산지 코드 조회 실패: {exc}")
+            infra["origin_code_map"] = {}
 
-        # 주소 조회
-        try:
-            addr = await self.get_addresses()
-            addr_list = addr.get("result", {}).get("venAddrDelInfo", [{}])
-            addrs = addr_list[0].get("venAddrDelInfoDto", []) if addr_list else []
-
-            # 기본주소(bascAddrYn=Y) 우선, 없으면 첫 번째 사용
-            base_addr = next((a for a in addrs if a.get("bascAddrYn") == "Y"), None)
-            if not base_addr and addrs:
-                base_addr = addrs[0]
-
-            if base_addr:
-                addr_id = base_addr.get("grpAddrId", "")
-                infra["whoutAddrId"] = addr_id
-                infra["snbkAddrId"] = addr_id
-        except Exception as exc:
-            logger.warning(f"[SSG] 주소 조회 실패: {exc}")
-
+        # 결과 캐싱
+        _infra_cache[self.api_key] = (infra, time.time())
+        logger.debug("[SSG] fetch_infra 결과 캐싱 완료 (TTL 15분)")
         return infra
 
     # ------------------------------------------------------------------
@@ -333,6 +796,88 @@ class SSGClient(BaseProxyClient):
         return cleaned or name  # 빈 문자열이면 원래 이름 유지
 
     # ------------------------------------------------------------------
+    # 원산지 코드 매핑
+    # ------------------------------------------------------------------
+
+    # 영문 국가명 → 한국어 국가명 (SSG listOrplc.ssg는 한국어 국가명 기반)
+    _ORIGIN_KO_MAP: dict[str, str] = {
+        "korea": "대한민국",
+        "south korea": "대한민국",
+        "한국": "대한민국",
+        "국내": "대한민국",
+        "china": "중국",
+        "중국": "중국",
+        "vietnam": "베트남",
+        "viet nam": "베트남",
+        "베트남": "베트남",
+        "indonesia": "인도네시아",
+        "인도네시아": "인도네시아",
+        "cambodia": "캄보디아",
+        "캄보디아": "캄보디아",
+        "italy": "이탈리아",
+        "이탈리아": "이탈리아",
+        "france": "프랑스",
+        "프랑스": "프랑스",
+        "usa": "미국",
+        "united states": "미국",
+        "미국": "미국",
+        "portugal": "포르투갈",
+        "포르투갈": "포르투갈",
+        "germany": "독일",
+        "독일": "독일",
+        "spain": "스페인",
+        "스페인": "스페인",
+        "bangladesh": "방글라데시",
+        "방글라데시": "방글라데시",
+        "myanmar": "미얀마",
+        "미얀마": "미얀마",
+        "thailand": "태국",
+        "태국": "태국",
+        "india": "인도",
+        "인도": "인도",
+        "taiwan": "대만",
+        "대만": "대만",
+        "japan": "일본",
+        "일본": "일본",
+        "philippines": "필리핀",
+        "필리핀": "필리핀",
+    }
+
+    @classmethod
+    def _resolve_origin_code(
+        cls,
+        origin_text: str,
+        origin_code_map: dict[str, str],
+    ) -> str:
+        """원산지 텍스트를 SSG 원산지 코드로 변환.
+
+        origin_text: 수집된 원산지 텍스트 (예: "Vietnam", "베트남")
+        origin_code_map: fetch_infra()에서 조회한 {orplcNm(소문자): orplcId} 딕셔너리
+        반환: SSG orplcId. 매핑 실패 시 빈 문자열
+        """
+        if not origin_text or not origin_code_map:
+            return ""
+
+        lower = origin_text.strip().lower()
+
+        # 1단계: 직접 매핑 (소문자 일치)
+        if lower in origin_code_map:
+            return origin_code_map[lower]
+
+        # 2단계: 영문 → 한국어 변환 후 재시도
+        ko_name = cls._ORIGIN_KO_MAP.get(lower, "")
+        if ko_name and ko_name.lower() in origin_code_map:
+            return origin_code_map[ko_name.lower()]
+
+        # 3단계: 부분 매칭 (origin_code_map 키에 lower가 포함되거나 그 반대)
+        for key, code in origin_code_map.items():
+            if lower in key or key in lower:
+                return code
+
+        logger.warning(f"[SSG] 원산지 코드 매핑 실패: {origin_text!r}")
+        return ""
+
+    # ------------------------------------------------------------------
     # XStream JSON 변환 헬퍼
     # ------------------------------------------------------------------
 
@@ -348,6 +893,18 @@ class SSGClient(BaseProxyClient):
             return {element_name: items[0]}
         return {element_name: items}
 
+    @staticmethod
+    def _wrap_list_always_array(
+        items: list[dict[str, Any]], element_name: str
+    ) -> dict[str, Any]:
+        """XStream 호환: 항상 배열로 감싸기 (uitems, uitemPluralPrcs 등 배열 강제 필드용).
+
+        SSG API v0.5에서 uitems, uitemPluralPrcs는 항목 수에 상관없이 배열이어야 함.
+        예) [{"a":1}] → {"item": [{"a":1}]}
+            [{"a":1},{"a":2}] → {"item": [{"a":1},{"a":2}]}
+        """
+        return {element_name: items}
+
     # ------------------------------------------------------------------
     # 상품 데이터 변환
     # ------------------------------------------------------------------
@@ -358,22 +915,42 @@ class SSGClient(BaseProxyClient):
         category_id: str = "",
         brand_id: str = "",
         infra: Optional[dict[str, str]] = None,
+        std_category_id: str = "",
+        margin_rate: int = 0,
+        shpp_rqrm_dcnt: int = 3,
+        day_max_qty: int = 5,
+        once_min_qty: int = 1,
+        once_max_qty: int = 5,
     ) -> dict[str, Any]:
         """SambaCollectedProduct → SSG insertItem 요청 데이터 변환.
 
         XStream JSON 형식으로 변환하며, infra 딕셔너리에서
         배송비/주소 ID를 가져온다.
+
+        Args:
+          category_id: 전시카테고리 ID (dispCtgId) — 사용자가 매핑한 "ssg" 카테고리
+          std_category_id: 표준카테고리 ID (stdCtgId) — 사용자가 매핑한 "ssg_std" 카테고리
+          margin_rate: 설정 페이지 마진율(%) — 0이면 판매가/원가로 역산
+          shpp_rqrm_dcnt: 배송소요일 — 설정 페이지 값
+          day_max_qty: 1일 최대 주문수량
+          once_min_qty: 1회 최소 주문수량
+          once_max_qty: 1회 최대 주문수량
         """
+        import re as _re
+
         inf = infra or {}
-        raw_name = (product.get("name", "") or "")[:100]
         sale_price = int(product.get("sale_price", 0) or 0)
         cost = int(product.get("cost", 0) or 0) or int(sale_price * 0.7)
-        detail_html = product.get("detail_html", "") or f"<p>{raw_name}</p>"
+        detail_html = (
+            product.get("detail_html", "")
+            or f"<p>{(product.get('name', '') or '')[:200]}</p>"
+        )
         images = product.get("images") or []
         brand = product.get("brand", "")
         material = product.get("material", "") or "상세설명참조"
         color = product.get("color", "") or "상세설명참조"
         manufacturer = product.get("manufacturer", "") or brand or "상세설명참조"
+        style_no = product.get("style_no", "") or product.get("styleNo", "") or ""
 
         # 브랜드 매칭 (계약 브랜드 자동 탐색)
         matched_brand_id, matched_brand_name = self.match_brand(brand)
@@ -383,27 +960,50 @@ class SSGClient(BaseProxyClient):
         if brand_id:
             matched_brand_id = brand_id  # 명시적 지정 우선
 
-        # 상품명 — 브랜드 제거는 삭제어 기능에서 처리
-        name = raw_name
+        # ── 상품명 처리 ──
+        # 1) 계약 브랜드명 제거 (CONTRACTED_BRANDS 매칭 결과)
+        raw_name = product.get("name", "") or ""
+        cleaned_name = self.remove_brand_from_name(raw_name, matched_brand_name)
+        # 1-2) 소싱처 brand 필드 직접 제거 (CONTRACTED_BRANDS 매칭 여부와 무관하게)
+        if brand and brand != matched_brand_name:
+            cleaned_name = self.remove_brand_from_name(cleaned_name, brand)
+        # 2) 특수문자 제거 (한글·영문·숫자·공백만 허용, 언더스코어도 제거)
+        cleaned_name = _re.sub(r"[^가-힣a-zA-Z0-9\s]", " ", cleaned_name)
+        cleaned_name = _re.sub(r"\s{2,}", " ", cleaned_name).strip()
+        # 3) 90byte 제한 (공백 포함)
+        encoded = cleaned_name.encode("utf-8")
+        if len(encoded) > 90:
+            # 90byte 이내로 잘라냄 (멀티바이트 경계 보호)
+            truncated = encoded[:90]
+            cleaned_name = truncated.decode("utf-8", errors="ignore").strip()
+        name = cleaned_name or raw_name[:30]
+
         logger.info(
-            f"[SSG] 브랜드 매칭: {brand} → {matched_brand_id}({matched_brand_name})"
+            f"[SSG] 브랜드 매칭: {brand} → {matched_brand_id}({matched_brand_name}), 상품명: {name!r}"
         )
 
         now = datetime.now(timezone.utc)
         disp_start = now.strftime("%Y%m%d")
-        disp_end = "20991231"
+        disp_end = "29991231"
 
         options = product.get("options") or []
-        # SSG 마진율: 정수 퍼센트 (예: 10 = 10%)
-        margin_pct = (
-            round((sale_price - cost) / sale_price * 100) if sale_price > 0 else 30
-        )
+
+        # ── 마진율 결정 ──
+        # 설정 페이지 마진율이 있으면 우선 사용, 없으면 판매가/원가 역산
+        if margin_rate > 0:
+            margin_pct = margin_rate
+        elif sale_price > 0 and cost > 0:
+            margin_pct = round((sale_price - cost) / sale_price * 100)
+        else:
+            margin_pct = 30
 
         # 배송/주소 ID
         whout_shppcst_id = inf.get("whoutShppcstId", "")
         ret_shppcst_id = inf.get("retShppcstId", "")
         whout_addr_id = inf.get("whoutAddrId", "")
         snbk_addr_id = inf.get("snbkAddrId", "")
+        add_shppcst_jeju = inf.get("addShppcstIdJeju", "")
+        add_shppcst_island = inf.get("addShppcstIdIsland", "")
 
         # ── 이미지 (XStream: itemImgs → imgInfo) ──
         item_imgs_list = []
@@ -416,98 +1016,226 @@ class SSGClient(BaseProxyClient):
                 }
             )
 
-        # ── 상품관리속성 (카테고리별 동적 생성) ──
+        # ── 상품관리속성 — 원산지 계산 이후 호출 (수입여부 일관성 보장) ──
+        # build_ssg_notice 호출은 아래 원산지 코드 결정 블록 이후로 이동됨
+
+        # std_category_id: 표준카테고리 ID (ssg_std 매핑값)
+        # category_id: 전시카테고리 ID (ssg 매핑값)
+        # stdCtgId는 반드시 표준카테고리여야 함 — 전시카테고리 ID를 넣으면 API 파싱 오류 발생
+        effective_std_cat = std_category_id or product.get("_std_category_id", "") or ""
+
+        # ── 검색어 (태그 기반, 최대 10개, 500byte) ──
+        tags = product.get("tags") or product.get("keywords") or []
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.split(",") if t.strip()]
+        # 상품명/브랜드/모델명과 중복 제거 후 최대 10개
+        name_lower = name.lower()
+        brand_lower = (matched_brand_name or brand or "").lower()
+        model_lower = style_no.lower()
+        filtered_tags: list[str] = []
+        total_bytes = 0
+        for tag in tags:
+            tag = tag.strip()
+            if not tag:
+                continue
+            # 메타 마커 태그 제거 (__ai_tagged__ 등 언더스코어로 감싼 마커)
+            if tag.startswith("__") and tag.endswith("__"):
+                continue
+            tag_lower = tag.lower()
+            # 상품명/브랜드/모델명에 포함된 키워드는 중복 제외
+            if (
+                tag_lower in name_lower
+                or tag_lower in brand_lower
+                or tag_lower in model_lower
+            ):
+                continue
+            tag_bytes = len(tag.encode("utf-8")) + 1  # 콤마 포함
+            if total_bytes + tag_bytes > 500:
+                break
+            if len(filtered_tags) >= 10:
+                break
+            filtered_tags.append(tag)
+            total_bytes += tag_bytes
+        search_keyword = ",".join(filtered_tags) if filtered_tags else ""
+
+        # 재고 수량 (단품 미래 활용 대비 보존)
+        stock_qty = int(product.get("stock", 999) or 999)
+
+        # 원산지 코드 결정
+        # 원산지 정보 없으면 베트남 폴백 (실제 제조 다발국 기준)
+        origin_map = inf.get("origin_code_map", {})
+        korea_origin_code = self._resolve_origin_code("한국", origin_map)
+        raw_origin = product.get("origin", "") or ""
+        direct_origin_code = self._resolve_origin_code(raw_origin, origin_map)
+        # fallback 순서: 상품 원산지 → 베트남 → 중국 → origin_map 첫 번째 값
+        resolved_origin = (
+            direct_origin_code
+            or self._resolve_origin_code("베트남", origin_map)
+            or self._resolve_origin_code("중국", origin_map)
+            or (next(iter(origin_map.values()), None) if origin_map else None)
+        )
+        # 수입여부: 실제 전송되는 제조국 코드(resolved_origin)가 한국 코드와 다르면 수입품
+        # prodManufCntryId에 들어가는 값과 반드시 일치해야 함 (불일치 시 SSG API 거부)
+        is_imported = (
+            (resolved_origin != korea_origin_code)
+            if (resolved_origin and korea_origin_code)
+            else True
+        )
+        # notice_utils가 동일한 수입여부를 쓰도록 product에 주입
+        product = {**product, "_ssg_import_yn": "Y" if is_imported else "N"}
+
+        # ── 상품관리속성 (카테고리별 동적 생성) — 원산지/_ssg_import_yn 주입 후 호출 ──
         from backend.domain.samba.proxy.notice_utils import build_ssg_notice
 
-        item_mng_attrs_list = build_ssg_notice(product)
+        item_mng_prop_cls_id, item_mng_attrs_list = build_ssg_notice(product)
 
         data: dict[str, Any] = {
             # 기본 정보
             "itemNm": name,
             "brandId": matched_brand_id,
-            "stdCtgId": category_id,
-            # 사이트 (XStream 래핑)
-            "sites": {"site": {"siteNo": self.site_no, "sellStatCd": "20"}},
-            # 검색
-            "srchPsblYn": "Y",
-            "itemSrchwdNm": name[:100],
-            # 상품 특성
-            "itemChrctDivCd": "10",
-            "exusItemDivCd": "10",
-            "exusItemDtlCd": "10",
-            # 상품관리속성 (XStream 래핑)
-            "itemMngPropClsId": "0000000001",
-            "itemMngAttrs": self._wrap_list(item_mng_attrs_list, "itemMngAttr"),
+            "stdCtgId": effective_std_cat,  # 표준카테고리 ID (ssg_std)
+            "mdlNm": style_no or None,  # 모델명 = 품번
             # 제조사/원산지
             "manufcoNm": manufacturer,
-            "prodManufCntryId": "1000000001",  # SSG 내부 국가코드
-            # 전시카테고리 (XStream 래핑)
-            "dispCtgs": {
-                "dispCtg": {
-                    "siteNo": self.site_no,
-                    "dispCtgId": category_id,
-                }
-            }
+            # resolved_origin이 None이면 필드 제외 — None 전송 시 SSG "필수값" 오류 발생
+            **({"prodManufCntryId": resolved_origin} if resolved_origin else {}),
+            # 사이트 (XStream list 래핑) — 신세계몰 판매, 판매상태 20=판매중
+            "sites": self._wrap_list_always_array(
+                [
+                    {
+                        "siteNo": self.site_no,
+                        "sellStatCd": "20",
+                    }
+                ],
+                "site",
+            ),
+            # 적용범위 — B2C/B2E/B2B 전체 적용 (판매자센터 기본값)
+            "b2eAplRngCd": "10",  # B2E 적용 범위: 전체 적용
+            "b2cAplRngCd": "10",  # B2C 적용 범위: 적용
+            "b2bAplRngCd": "10",  # B2B 적용 범위: 적용
+            # 상품관리속성 (XStream list 래핑) — 카테고리별 고시 클래스 ID 동적 설정
+            "itemMngPropClsId": item_mng_prop_cls_id,  # 카테고리별 동적 고시 클래스 ID
+            "itemMngAttrs": self._wrap_list(item_mng_attrs_list, "itemMngAttr"),
+            # 전시카테고리 (XStream list 래핑)
+            # siteNo는 항상 "6005" 고정 — SSG API 스펙상 6005로 전달해야 신세계몰(6004) 등에 매핑룰 적용
+            # dispCtgId는 계정 siteNo(self.site_no) 기준으로 동기화된 카테고리 ID 사용
+            "dispCtgs": self._wrap_list_always_array(
+                [
+                    {
+                        "siteNo": "6005",
+                        "dispCtgId": category_id,
+                    }
+                ],
+                "dispCtg",
+            )
             if category_id
             else None,
-            "dispStrtDts": disp_start,
-            "dispEndDts": disp_end,
-            "sellUnitQty": 1,
+            "dispStrtDts": disp_start,  # 전시 시작일 (최상위 레벨)
+            "dispEndDts": disp_end,  # 전시 종료일 (최상위 레벨)
+            # 검색 — srchPsblYn=Y 시 itemSrchwdNm 필수; 검색어 없으면 브랜드명 사용
+            "srchPsblYn": "Y",
+            "itemSrchwdNm": search_keyword
+            or (matched_brand_name or brand or "")[:50]
+            or None,
+            # 구매 수량 제한 — API 문서 필드명 기준
+            "minOnetOrdPsblQty": once_min_qty,  # 최소 1회 주문 가능 수량
+            "maxOnetOrdPsblQty": once_max_qty,  # 최대 1회 주문 가능 수량
+            "max1dyOrdPsblQty": day_max_qty,  # 최대 1일 주문 가능 수량
+            # 성인 상품 타입 — 90=일반 상품
+            "adultItemTypeCd": "90",
+            # 2024-08-28 추가 필수 필드
+            "hriskItemYn": "N",  # 고위험 상품 여부
+            "nitmAplYn": "N",  # 신상품 적용 여부
             # 매입/과세
             "buyFrmCd": "60",  # 위수탁
-            "txnDivCd": "30",  # 면세(의류 기본)
-            # 가격 (XStream 래핑)
-            "salesPrcInfos": {
-                "uitemPrc": {
-                    "splprc": cost,
-                    "sellprc": sale_price,
-                    "mrgrt": margin_pct,
-                }
-            },
-            # 재고
-            "invMngYn": "Y",
+            "txnDivCd": "10",  # 과세
+            # 가격 (XStream 래핑) — 공급가 자동계산 방식: 판매가 직접 입력
+            # prcMngMthd: 1=공급가 자동계산, 2=판매가 자동계산, 3=마진 자동계산
+            "prcMngMthd": "1",  # 공급가 자동계산
+            "salesPrcInfos": self._wrap_list_always_array(
+                [
+                    {
+                        "splprc": cost,  # 공급가 (필수)
+                        "sellprc": sale_price,  # 판매가 (필수)
+                        "mrgrt": margin_pct,  # 마진율 (필수)
+                    }
+                ],
+                "uitemPrc",
+            ),
             # 판매유형
             "itemSellTypeCd": "10",
             "itemSellTypeDtlCd": "10",
-            # 배송
-            "shppItemDivCd": "01",
-            "shppMthdCd": "20",  # 택배
-            "shppRqrmDcnt": 3,
-            # 배송비/주소 ID (root level)
-            "whoutShppcstId": whout_shppcst_id,
-            "retShppcstId": ret_shppcst_id,
-            "whoutAddrId": whout_addr_id,
-            "snbkAddrId": snbk_addr_id,
-            # 배송기준 (XStream 래핑 — v0.5 필수)
-            "itemShppCritns": {
-                "itemShppCritn": {
-                    "shppMainCd": "32",  # 업체창고
-                    "shppMthdCd": "20",
-                    "jejuShppDisabYn": "N",
-                    "ismtarShppDisabYn": "N",
-                    "whoutAddrId": whout_addr_id,
-                    "snbkAddrId": snbk_addr_id,
-                    "whoutShppcstId": whout_shppcst_id,
-                    "retShppcstId": ret_shppcst_id,
-                    "mareaShppYn": "Y",
-                }
-            },
-            # 이미지 (XStream 래핑)
-            "itemImgs": self._wrap_list(item_imgs_list, "imgInfo")
+            # 상품 특성 — 일반상품 (최상위 RequestItemInsertDto 레벨 필수값)
+            "itemChrctDivCd": "10",  # 상품특성구분: 일반
+            "itemChrctDtlCd": "10",  # 상품특성상세: 일반 (필수)
+            "exusItemDivCd": "10",  # 전용상품구분: 일반
+            "exusItemDtlCd": "10",  # 전용상품상세: 일반
+            "shppItemDivCd": "01",  # 배송상품구분: 일반 (최상위 필수)
+            "retExchPsblYn": "Y",  # 반품교환가능여부 (최상위 필수)
+            "ssgstrSellYn": "N",  # SSG 스토어(하남) 판매 안 함
+            # 선물
+            "giftPsblYn": "N",
+            # 병행수입 — 항상 N (SSG 병행수입 Y시 별도 인증 필요 → API 오류 발생)
+            "palimpItemYn": "N",
+            # 배송기준 (XStream list 래핑 — v0.5 필수)
+            "itemShppCritns": self._wrap_list_always_array(
+                [
+                    {
+                        "shppMainCd": "41",  # 협력업체 (온라인 상품 신세계/이마트 필수)
+                        "shppMthdCd": "20",  # 택배배송
+                        "tdShppPsblYn": "N",  # 오늘출발 가능여부 (필수)
+                        "jejuShppDisabYn": "N",  # 제주 배송불가 여부 (필수)
+                        "ismtarShppDisabYn": "N",  # 도서산간 배송불가 여부 (필수)
+                        "whoutAddrId": whout_addr_id,  # 출고주소 ID (필수)
+                        "snbkAddrId": snbk_addr_id,  # 반품주소 ID (필수)
+                        "whoutShppcstId": whout_shppcst_id,  # 출고배송비 ID (필수)
+                        "retShppcstId": ret_shppcst_id,  # 반품배송비 ID (필수)
+                        "mareaShppYn": "N",  # 수도권 외 배송불가 해제 — 전국 배송 가능
+                        # 제주/도서산간 추가배송비 ID (있을 때만 설정)
+                        **(
+                            {"jejuAddShppcstId": add_shppcst_jeju}
+                            if add_shppcst_jeju
+                            else {}
+                        ),
+                        **(
+                            {"ismtarAddShppcstId": add_shppcst_island}
+                            if add_shppcst_island
+                            else {}
+                        ),
+                    }
+                ],
+                "itemShppCritn",
+            ),
+            # 배송 소요일
+            "shppRqrmDcnt": shpp_rqrm_dcnt,
+            # 이미지 (XStream 래핑) — 항상 배열로 전송
+            "itemImgs": self._wrap_list_always_array(item_imgs_list, "imgInfo")
             if item_imgs_list
             else None,
             # 상세설명
             "itemDesc": detail_html,
+            # 재고 관리 (최상위 필수)
+            "invMngYn": "Y",
+            "invQtyMarkgYn": "N",  # 프런트 수량표시: 표시않음
             # 기타 필수
-            "giftPsblYn": "N",
-            "palimpItemYn": "N",
-            "itemSellWayCd": "10",
-            "itemStatTypeCd": "10",
-            "whinNotiYn": "N",
+            "itemSellWayCd": "10",  # 상품판매방식: 일반
+            "itemStatTypeCd": "10",  # 상품상태: 새상품
+            "whinNotiYn": "Y",  # 입고알림: 설정함
         }
 
-        # None 값 제거
-        data = {k: v for k, v in data.items() if v is not None}
+        # stdCtgId 필수 필드 누락 시 사전 경고 (빈 문자열이면 API 파싱 오류 발생)
+        if not effective_std_cat:
+            logger.warning(
+                "[SSG] stdCtgId(표준카테고리 ID)가 없습니다. API 등록 실패할 수 있습니다."
+            )
+
+        # itemNm은 필수 — 빈 문자열이면 raw_name[:30] 사용 (이미 name에 반영되어 있지만 안전장치)
+        if not data.get("itemNm"):
+            data["itemNm"] = raw_name[:49] or "상품명없음"
+
+        # None인 최상위 필드만 제거 (빈 문자열은 유지 — 중첩 구조 내부 값 보존)
+        # 단, 빈 문자열 최상위 필드도 XStream 파싱 오류 유발 가능하므로 제거
+        data = {k: v for k, v in data.items() if v is not None and v != ""}
 
         # 단품(옵션) 추가
         if options:
@@ -517,7 +1245,11 @@ class SSGClient(BaseProxyClient):
                 opt_name = (
                     opt.get("name", "") or opt.get("size", "") or f"옵션{idx + 1}"
                 )
-                opt_stock = opt.get("stock", 999)
+                # stock이 None/"" 이면 999(무한재고), 0은 그대로 유지 (품절 0과 미제공 구분)
+                _raw_stock = opt.get("stock")
+                opt_stock = (
+                    _raw_stock if (_raw_stock is not None and _raw_stock != "") else 999
+                )
                 is_sold_out = opt.get("isSoldOut", False)
                 temp_id = str(idx + 1)
 
@@ -527,15 +1259,15 @@ class SSGClient(BaseProxyClient):
                         "uitemOptnTypeNm1": "사이즈",
                         "uitemOptnNm1": opt_name,
                         "baseInvQty": 0 if is_sold_out else opt_stock,
-                        "useYn": "N" if is_sold_out else "Y",
+                        "useYn": "Y",  # 품절이어도 Y — useYn='N'이면 liveUitemCnt=0으로 등록 실패
                     }
                 )
                 uitem_prices_list.append(
                     {
                         "tempUitemId": temp_id,
-                        "splprc": cost,
-                        "sellprc": sale_price,
-                        "mrgrt": margin_pct,
+                        "splprc": cost,  # 공급가 (필수)
+                        "sellprc": sale_price,  # 판매가 (필수)
+                        "mrgrt": margin_pct,  # 마진율 (필수)
                     }
                 )
 
@@ -545,13 +1277,681 @@ class SSGClient(BaseProxyClient):
                 "uitemOptnChoiTypeCd1": "10",
                 "uitemOptnExpsrTypeCd1": "10",
             }
-            data["uitems"] = self._wrap_list(uitems_list, "uitem")
-            data["uitemPluralPrcs"] = self._wrap_list(uitem_prices_list, "uitemPrc")
+            # uitems/uitemPluralPrcs는 옵션 1개라도 항상 배열이어야 함
+            data["uitems"] = self._wrap_list_always_array(uitems_list, "uitem")
+            data["uitemPluralPrcs"] = self._wrap_list_always_array(
+                uitem_prices_list, "uitemPrc"
+            )
 
         return data
+
+    # ------------------------------------------------------------------
+    # 주문/반품 관련
+    # ------------------------------------------------------------------
+
+    async def get_orders(self, days: int = 7) -> list[dict[str, Any]]:
+        """주문 목록 조회 — 최근 days일 이내 (최대 180일)."""
+        KST = timezone(timedelta(hours=9))
+        now = datetime.now(KST)
+        days = min(days, 180)
+        start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
+        end_dt = now.strftime("%Y%m%d")
+        body = {
+            "requestShppDirection": {
+                "perdType": "02",
+                "perdStrDts": start_dt,
+                "perdEndDts": end_dt,
+            }
+        }
+        data = await self._call_api(
+            "POST", "/api/pd/1/listShppDirection.ssg", body=body
+        )
+        result = data.get("result", {})
+        if not isinstance(result, dict):
+            logger.warning(
+                f"[SSG 주문] result가 dict가 아님: {type(result)} — {str(result)[:500]}"
+            )
+            return []
+
+        directions = result.get("shppDirections", [])
+        # XStream 단일 항목: list가 아닌 dict로 올 수 있음
+        if isinstance(directions, dict):
+            directions = [directions]
+        elif not isinstance(directions, list):
+            logger.warning(
+                f"[SSG 주문] shppDirections 타입 이상: {type(directions)} — {str(directions)[:500]}"
+            )
+            return []
+
+        # SSG XStream 래핑 해제
+        # 실제 구조: [{"shppDirection": [{주문1}, {주문2}, ...]}, ...]
+        # shppDirection 값이 list(여러 주문) 또는 dict(단일 주문)일 수 있음
+        unwrapped: list[dict[str, Any]] = []
+        unwrap_list_count = 0
+        unwrap_dict_count = 0
+        unwrap_invalid_count = 0
+        for index, direction in enumerate(directions):
+            if not isinstance(direction, dict):
+                unwrap_invalid_count += 1
+                logger.warning(
+                    f"[SSG 주문] shppDirections[{index}]가 dict가 아님: "
+                    f"type={type(direction).__name__}, value={str(direction)[:300]}"
+                )
+                continue
+            inner = direction.get("shppDirection")
+            if isinstance(inner, list):
+                unwrap_list_count += 1
+                # shppDirection이 배열 — 각 항목이 개별 주문
+                for item in inner:
+                    if isinstance(item, dict):
+                        unwrapped.append(item)
+                    else:
+                        unwrap_invalid_count += 1
+                        logger.warning(
+                            f"[SSG 주문] shppDirection 리스트 내부 항목이 dict가 아님: "
+                            f"type={type(item).__name__}, value={str(item)[:300]}"
+                        )
+            elif isinstance(inner, dict):
+                unwrap_dict_count += 1
+                # shppDirection이 단일 dict — 주문 1건
+                unwrapped.append(inner)
+            else:
+                unwrap_invalid_count += 1
+                # shppDirection이 None이거나 비정상 타입 — 건너뜀
+                logger.warning(
+                    f"[SSG 주문] shppDirection 언래핑 실패: "
+                    f"index={index}, type={type(inner).__name__}, "
+                    f"direction_keys={list(direction.keys())}, value={str(inner)[:300]}"
+                )
+
+        logger.info(
+            f"[SSG 주문] 언래핑 결과: directions={len(directions)}, "
+            f"list_wrapper={unwrap_list_count}, dict_wrapper={unwrap_dict_count}, "
+            f"invalid={unwrap_invalid_count}, orders={len(unwrapped)}"
+        )
+        if unwrapped:
+            first = unwrapped[0]
+            logger.info(
+                f"[SSG 주문] {len(unwrapped)}건 파싱, 첫 주문 키 샘플: "
+                f"{list(first.keys())[:20]}"
+            )
+            logger.info(
+                f"[SSG 주문] 첫 주문 실제 필드명: "
+                f"{', '.join(sorted(map(str, first.keys()))[:30])}"
+            )
+            logger.info(
+                f"[SSG 주문] 샘플 값 — ordNo={first.get('ordNo')}, "
+                f"orordNo={first.get('orordNo')}, "
+                f"shppNo={first.get('shppNo')}, ordItemSeq={first.get('ordItemSeq')}, "
+                f"itemNm={first.get('itemNm')}, siteNo={first.get('siteNo')}, "
+                f"rlordAmt={first.get('rlordAmt')}"
+            )
+            # 전체 주문 번호 목록 로그 (중복 진단용)
+            for _i, _o in enumerate(unwrapped):
+                logger.info(
+                    f"[SSG 주문] [{_i}] ordNo={_o.get('ordNo')}, orordNo={_o.get('orordNo')}, "
+                    f"shppNo={_o.get('shppNo')}, ordItemSeq={_o.get('ordItemSeq')}, "
+                    f"siteNo={_o.get('siteNo')}, itemId={_o.get('itemId')}"
+                )
+        else:
+            logger.info(
+                f"[SSG 주문] 언래핑 후 0건: raw directions={str(directions)[:500]}"
+            )
+        return unwrapped
+
+    async def get_cancel_requests(self, days: int = 7) -> list[dict[str, Any]]:
+        """취소신청 목록 조회 — 최근 days일 이내 (최대 7일).
+
+        API: GET /api/claim/v2/cancel/requests
+        listShppDirection과 달리 취소신청 상태 주문만 반환한다.
+        """
+        KST = timezone(timedelta(hours=9))
+        now = datetime.now(KST)
+        # 취소신청 API는 7일 이내만 허용
+        days = min(days, 7)
+        start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
+        end_dt = now.strftime("%Y%m%d")
+        data = await self._call_api(
+            "GET",
+            "/api/claim/v2/cancel/requests",
+            params={"perdStrDts": start_dt, "perdEndDts": end_dt},
+        )
+        result_obj = data.get("result", {})
+        if not isinstance(result_obj, dict):
+            result_obj = {}
+        result_list = result_obj.get("resultData", [])
+        if isinstance(result_list, dict):
+            result_list = [result_list]
+        elif not isinstance(result_list, list):
+            logger.warning(
+                f"[SSG 취소신청] resultData 타입 이상: {type(result_list)} — {str(result_list)[:300]}"
+            )
+            return []
+        logger.info(f"[SSG 취소신청] {len(result_list)}건 조회")
+        return result_list
+
+    def parse_cancel_request(
+        self,
+        raw: dict[str, Any],
+        account_id: str,
+        label: str,
+        fee_rate: float,
+    ) -> dict[str, Any]:
+        """취소신청 목록 응답 1건을 SambaOrder insert 형식으로 변환."""
+        ord_no = str(raw.get("ordNo", "") or "")
+        ord_item_seq = str(raw.get("ordItemSeq", "") or "")
+        or_ord_no = str(raw.get("orordNo", "") or "")
+        item_id_str = str(raw.get("itemId", "") or "")
+        product_image = ""
+        if len(item_id_str) >= 6:
+            d1, d2, d3 = item_id_str[-2:], item_id_str[-4:-2], item_id_str[-6:-4]
+            product_image = (
+                f"https://sitem.ssgcdn.com/{d1}/{d2}/{d3}/item/{item_id_str}_i1_250.jpg"
+            )
+        return {
+            "order_number": ord_no,
+            # 형식: "|ordItemSeq|orordNo" (shppNo 없음, 취소신청에는 배송번호 불필요)
+            "shipment_id": f"|{ord_item_seq}|{or_ord_no}",
+            "channel_id": account_id,
+            "channel_name": label,
+            "product_id": item_id_str,
+            "product_name": str(raw.get("itemNm", "") or ""),
+            "product_image": product_image,
+            "customer_name": "",
+            "customer_phone": "",
+            "customer_address": "",
+            "quantity": int(raw.get("procOrdQty", 1) or 1),
+            "sale_price": 0.0,
+            "cost": 0,
+            "fee_rate": fee_rate,
+            "revenue": 0.0,
+            "source": "ssg",
+            "status": "cancel_requested",
+            "shipping_status": "취소요청",
+        }
+
+    async def confirm_order(self, shpp_no: str, shpp_seq: str) -> dict[str, Any]:
+        """발주확인 처리."""
+        body = {
+            "requestOrderSubjectManage": {
+                "shppNo": shpp_no,
+                "shppSeq": shpp_seq,
+            }
+        }
+        return await self._call_api(
+            "POST", "/api/pd/1/updateOrderSubjectManage.ssg", body=body
+        )
+
+    async def approve_cancel(self, ord_no: str, ord_item_seq: str) -> dict[str, Any]:
+        """취소 요청 승인.
+
+        SSG 클레임 API는 POST이지만 파라미터를 query string으로 전달해야 한다.
+        """
+        data = await self._call_api(
+            "POST",
+            "/api/claim/v2/cancel/request/approve",
+            params={"ordNo": ord_no, "ordItemSeq": ord_item_seq},
+        )
+        # result 래핑 또는 최상위 모두 대응
+        result_obj = data.get("result", data) if isinstance(data, dict) else {}
+        if not isinstance(result_obj, dict):
+            result_obj = {}
+        result_code = result_obj.get("resultCode", "")
+        # 91 = SSG 서버에서 취소처리는 완료되었으나 Server Exception 코드를 반환하는 케이스
+        # 실제 취소가 완료된 경우이므로 성공으로 처리
+        if result_code not in ("00", "91"):
+            raise SSGApiError(
+                f"취소 승인 실패: resultCode={result_code}, "
+                f"msg={result_obj.get('resultMessage', '')}"
+            )
+        if result_code == "91":
+            logger.warning(
+                f"[취소승인] SSG resultCode=91(Server Exception) — 취소는 완료된 것으로 간주: ordNo={ord_no}"
+            )
+        return data
+
+    def parse_order(
+        self,
+        raw: dict[str, Any],
+        account_id: str,
+        label: str,
+        fee_rate: float,
+    ) -> dict[str, Any]:
+        """listShppDirection 응답 1건을 SambaOrder insert 형식으로 변환."""
+        ord_item_div = str(raw.get("ordItemDiv", ""))
+        shpp_prog = str(raw.get("shppProgStatDtlCd", ""))
+
+        # 상태 매핑
+        if ord_item_div == "021":
+            status, shipping_status = "cancel_requested", "취소요청"
+        elif ord_item_div == "031":
+            status, shipping_status = "return_requested", "반품요청"
+        elif ord_item_div in ("041", "042"):
+            status, shipping_status = "return_requested", "교환요청"
+        elif shpp_prog == "11":
+            status, shipping_status = "pending", "상품준비중"
+        elif shpp_prog in ("21", "22", "31", "41"):
+            status, shipping_status = "pending", "상품준비중"
+        elif shpp_prog == "43":
+            status, shipping_status = "shipped", "배송중"
+        elif shpp_prog == "51":
+            status, shipping_status = "delivered", "배송완료"
+        else:
+            status, shipping_status = "pending", "상품준비중"
+
+        rl_ord_amt = float(raw.get("rlordAmt", 0) or 0)
+        # 수령인 우선, 없으면 주문자 fallback (str 정규화)
+        customer_name = str(raw.get("rcptpeNm", "") or raw.get("ordpeNm", "") or "")
+        # 수령인 연락처 우선 (휴대폰 → 집전화 → 주문자 휴대폰)
+        customer_phone = str(
+            raw.get("rcptpeHpno", "")
+            or raw.get("rcptpeTelno", "")
+            or raw.get("ordpeHpno", "")
+        )
+        # 도로명+상세주소 우선, 없으면 지번주소
+        bsc = raw.get("shpplocBascAddr", "") or raw.get("ordpeRoadAddr", "")
+        dtl = raw.get("shpplocDtlAddr", "")
+        customer_address = str(
+            (f"{bsc} {dtl}".strip() if bsc else "") or raw.get("shpplocAddr", "") or ""
+        )
+
+        # SSG CDN 이미지 URL 생성 (itemId 끝 6자리 역순 2글자씩)
+        item_id_str = str(raw.get("itemId", "") or "")
+        product_image = ""
+        if len(item_id_str) >= 6:
+            d1, d2, d3 = item_id_str[-2:], item_id_str[-4:-2], item_id_str[-6:-4]
+            product_image = (
+                f"https://sitem.ssgcdn.com/{d1}/{d2}/{d3}/item/{item_id_str}_i1_250.jpg"
+            )
+
+        item_nm = str(raw.get("itemNm", "") or "")
+        raw_keys = list(raw.keys())
+        ord_no = str(raw.get("ordNo", "") or "")
+        ord_item_seq = str(raw.get("ordItemSeq", "") or "")
+        shpp_no = str(raw.get("shppNo", "") or "")
+        # orordNo: 원주문번호 (신세계몰 주문관리 페이지의 '원주문번호' 항목)
+        or_ord_no = str(raw.get("orordNo", "") or "")
+
+        # ordNo가 비어있으면 orordNo → shppNo|ordItemSeq 복합키 순으로 fallback
+        if not ord_no:
+            if or_ord_no:
+                ord_no = or_ord_no
+                logger.warning(
+                    f"[SSG 주문] ordNo 누락으로 orordNo fallback 사용: "
+                    f"order_number={ord_no}, raw_keys={raw_keys}"
+                )
+            else:
+                ord_no = f"{shpp_no}|{ord_item_seq}"
+                logger.warning(
+                    f"[SSG 주문] ordNo/orordNo 모두 누락으로 복합키 fallback 사용: "
+                    f"order_number={ord_no}, raw_keys={raw_keys}"
+                )
+        logger.info(
+            f"[SSG 주문 파싱] order_number={ord_no}, shipment_id_parts=({shpp_no}|{ord_item_seq}|{or_ord_no}), "
+            f"product_id={item_id_str}, status={status}, shppProgStatDtlCd={shpp_prog}"
+        )
+
+        # shipment_id에 shppNo|ordItemSeq|orordNo 형식으로 저장
+        # - shppNo: 배송번호 (발주확인 시 필요)
+        # - ordItemSeq: 주문상품순번 (취소승인 시 필요)
+        # - orordNo: 원주문번호 (프론트 '상품주문번호' 란 표시용)
+        shipment_id = f"{shpp_no}|{ord_item_seq}|{or_ord_no}"
+
+        return {
+            "order_number": ord_no,
+            "shipment_id": shipment_id,
+            "notes": str(raw.get("ordMemoCntt", "") or ""),
+            "channel_id": account_id,
+            "channel_name": label,
+            "product_id": item_id_str,
+            "product_name": item_nm,
+            "product_image": product_image,
+            "customer_name": customer_name,
+            "customer_phone": customer_phone,
+            "customer_address": customer_address,
+            "quantity": raw.get("ordQty", 1) or 1,
+            "sale_price": rl_ord_amt,
+            "cost": 0,
+            "fee_rate": fee_rate,
+            "revenue": rl_ord_amt * (1 - fee_rate / 100),
+            "source": "ssg",
+            "status": status,
+            "shipping_status": shipping_status,
+        }
+
+    async def confirm_rcov(
+        self, shpp_no: str, shpp_seq: str, proc_item_qty: int = 1
+    ) -> dict[str, Any]:
+        """반품 회수확인 처리."""
+        body = {
+            "requestConfirmRcov": {
+                "shppNo": shpp_no,
+                "shppSeq": shpp_seq,
+                "procItemQty": proc_item_qty,
+                "shppTypeDtlCd": "22",
+                "delicoVenId": "0000033012",
+                "wblNo": "0000000000",
+                "resellPsblYn": "N",
+                "retImptMainCd": "10",
+                "shppMainCd": "32",
+            }
+        }
+        resp = await self._call_api("POST", "/api/pd/1/saveConfirmRcov.ssg", body=body)
+        result_code = resp.get("resultCode") or resp.get("result_code", "")
+        if result_code and result_code != "00":
+            raise SSGApiError(
+                f"반품 회수확인 실패 (resultCode={result_code}): {resp.get('resultMessage', '')}"
+            )
+        return resp
+
+    async def complete_rcov(
+        self, shpp_no: str, shpp_seq: str, proc_item_qty: int = 1
+    ) -> dict[str, Any]:
+        """반품 완료 처리."""
+        body = {
+            "requestConfirmRcov": {
+                "shppNo": shpp_no,
+                "shppSeq": shpp_seq,
+                "procItemQty": proc_item_qty,
+                "shppTypeDtlCd": "22",
+                "resellPsblYn": "N",
+                "retImptMainCd": "10",
+                "shppMainCd": "32",
+            }
+        }
+        resp = await self._call_api("POST", "/api/pd/1/saveCompleteRcov.ssg", body=body)
+        result_code = resp.get("resultCode") or resp.get("result_code", "")
+        if result_code and result_code != "00":
+            raise SSGApiError(
+                f"반품 완료 실패 (resultCode={result_code}): {resp.get('resultMessage', '')}"
+            )
+        return resp
+
+    async def refuse_return(
+        self,
+        shpp_no: str,
+        shpp_seq: str,
+        memo: str = "",
+        reason_cd: str = "11",
+        proc_item_qty: int = 1,
+    ) -> dict[str, Any]:
+        """반품 거부 처리."""
+        body = {
+            "requestRefusualReturn": {
+                "shppNo": shpp_no,
+                "shppSeq": shpp_seq,
+                "procItemQty": proc_item_qty,
+                "retRefusRsnCd": reason_cd,
+                "retProcMemoCntt": memo,
+            }
+        }
+        resp = await self._call_api(
+            "POST", "/api/pd/1/saveRefusualReturn.ssg", body=body
+        )
+        result_code = resp.get("resultCode") or resp.get("result_code", "")
+        if result_code and result_code != "00":
+            raise SSGApiError(
+                f"반품 거부 실패 (resultCode={result_code}): {resp.get('resultMessage', '')}"
+            )
+        return resp
+
+    async def close(self) -> None:
+        """리소스 정리 — 매 호출마다 httpx 클라이언트를 생성/해제하므로 no-op."""
+        pass
+
+    # ------------------------------------------------------------------
+    # CS 연동 — 쪽지 / Q&A
+    # ------------------------------------------------------------------
+
+    async def get_notes(
+        self,
+        start_date: str,
+        end_date: str,
+        page: int = 1,
+        page_size: int = 100,
+    ) -> list[dict[str, Any]]:
+        """쪽지 목록 조회 (최대 6개월). start_date/end_date: YYYYMMDD 형식."""
+        params = {
+            "modDtsStart": start_date,
+            "modDtsEnd": end_date,
+            "page": str(page),
+            "pageSize": str(page_size),
+            "ntRcvYn": "N",  # 마지막 수신쪽지가 읽지않음(미답변)인 쪽지만 수집
+        }
+        res = await self._call_api("GET", "/api/cm/0.1/notes.ssg", params=params)
+        logger.debug(f"[SSG] 쪽지 목록 응답: {res}")
+        result = res.get("result", {})
+        if not isinstance(result, dict) or result.get("resultCode") not in (
+            "00",
+            "SUCCESS",
+        ):
+            logger.warning(f"[SSG] 쪽지 목록 조회 실패 (전체응답): {res}")
+            return []
+        data = result.get("resultData", {})
+        note_list = data.get("noteList", {})
+        # noteList 자체가 list로 내려오는 경우 처리
+        if isinstance(note_list, list):
+            notes = note_list
+        else:
+            notes = note_list.get("note", [])
+        if isinstance(notes, dict):
+            notes = [notes]
+        return notes
+
+    async def get_note_detail_no_recv(self, bo_nt_id: str) -> dict[str, Any]:
+        """쪽지 상세 조회 (수신처리 없음). 대화 스레드 확인용 — 읽음 처리 불필요할 때 사용."""
+        try:
+            res = await self._call_api(
+                "POST",
+                f"/api/cm/0.1/note/detail/{bo_nt_id}.ssg",
+                body={},
+            )
+        except Exception as e:
+            logger.debug(f"[SSG] 쪽지 상세(no-recv) 조회 실패 ({bo_nt_id}): {e}")
+            return {}
+        result = res.get("result", {})
+        if result.get("resultCode") != "00":
+            logger.debug(
+                f"[SSG] 쪽지 상세(no-recv) 조회 실패 ({bo_nt_id}): {result.get('resultMessage')}"
+            )
+            return {}
+        return result.get("resultData", {})
+
+    async def get_note_detail(self, bo_nt_id: str) -> dict[str, Any]:
+        """쪽지 상세 조회 + 수신 처리. 답장 전 호출 — 실패해도 답장은 계속 시도."""
+        try:
+            res = await self._call_api(
+                "POST",
+                f"/api/cm/0.1/note/{bo_nt_id}.ssg",
+                body={},
+            )
+        except Exception as e:
+            logger.warning(
+                f"[SSG] 쪽지 수신처리 실패 ({bo_nt_id}): {e} — 답장은 계속 시도"
+            )
+            return {}
+        result = res.get("result", {})
+        if result.get("resultCode") != "00":
+            logger.warning(
+                f"[SSG] 쪽지 상세 조회 실패 ({bo_nt_id}): {result.get('resultMessage')}"
+            )
+            return {}
+        return result.get("resultData", {})
+
+    async def reply_note(self, bo_nt_id: str, content: str) -> bool:
+        """쪽지 답장. 반드시 get_note_detail 호출 후 사용."""
+        body = {"note": {"boNtId": bo_nt_id, "ntCntt": content}}
+        res = await self._call_api("POST", "/api/cm/0.1/note/reply.ssg", body=body)
+        result = res.get("result", {})
+        if result.get("resultCode") != "00":
+            logger.warning(
+                f"[SSG] 쪽지 답장 실패 ({bo_nt_id}): {result.get('resultMessage')}"
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _xml_escape(s: str) -> str:
+        """XML 특수문자 이스케이프."""
+        return (
+            s.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;")
+        )
+
+    async def get_qna_list(
+        self, start_date: str, end_date: str
+    ) -> list[dict[str, Any]]:
+        """미답변 상품 Q&A 목록 조회.
+
+        start_date/end_date: YYYYMMDD 형식(8자). 내부적으로 YYYYMMDDHHMM(12자)으로 보정하여 전달.
+
+        SSG 서버 SQL 분석:
+          AND A.REG_DTS >= TO_DATE(? || '00', 'YYYYMMDDHH24MISS')  -- 시작: SS='00' 붙임
+          AND A.REG_DTS <= TO_DATE(? || '59', 'YYYYMMDDHH24MISS')  -- 종료: SS='59' 붙임
+        포맷 'YYYYMMDDHH24MISS'(14자) - SS(2자) = '?'는 12자 = YYYYMMDDHHMM 을 기대.
+        따라서 시작은 '000000'시, 종료는 '235959'시로 맞춰서 하루 전체 범위 커버.
+        """
+
+        # 8자(YYYYMMDD) 입력을 12자(YYYYMMDDHHMM)로 보정
+        def _to_12(d: str, is_end: bool) -> str:
+            s = (d or "").replace("-", "").strip()
+            if len(s) == 8:
+                return s + ("2359" if is_end else "0000")
+            if len(s) == 12:
+                return s
+            # 예외: 길이가 다르면 그대로 넘겨 서버 에러 메시지 받기
+            return s
+
+        start_param = _to_12(start_date, is_end=False)
+        end_param = _to_12(end_date, is_end=True)
+
+        # SSG Q&A API: XML body + YYYYMMDDHHMM(12자) 형식 (Oracle TO_DATE('YYYYMMDDHH24MISS') 기준)
+        xml_body = (
+            f"<ssg.eapi.dp.postng.dto.PostngReqDto>"
+            f"<qnaStartDt>{self._xml_escape(start_param)}</qnaStartDt>"
+            f"<qnaEndDt>{self._xml_escape(end_param)}</qnaEndDt>"
+            f"</ssg.eapi.dp.postng.dto.PostngReqDto>"
+        )
+        res = await self._call_api_xml("POST", "/api/postng/qnaList.ssg", xml_body)
+        logger.debug(f"[SSG] Q&A 목록 응답: {res}")
+        result = res.get("result", {}) if isinstance(res, dict) else {}
+        if not isinstance(result, dict) or result.get("resultCode") not in (
+            "00",
+            "SUCCESS",
+        ):
+            logger.warning(f"[SSG] Q&A 목록 조회 실패 (전체응답): {res}")
+            return []
+        qna_list = result.get("qnaList") or {}
+        # 실제 응답 구조: {"qnaList": [{"qna": [{...}, {...}]}]}
+        # qnaList가 list → 첫 번째 원소의 "qna" 키에서 실제 목록 추출
+        if isinstance(qna_list, list):
+            items: list = []
+            for entry in qna_list:
+                if isinstance(entry, dict):
+                    qna_items = entry.get("qna") or []
+                    if isinstance(qna_items, dict):
+                        qna_items = [qna_items]
+                    if isinstance(qna_items, list):
+                        items.extend(qna_items)
+        elif isinstance(qna_list, dict):
+            items = qna_list.get("qna") or []
+            if isinstance(items, dict):
+                items = [items]
+        else:
+            items = []
+        return [x for x in items if isinstance(x, dict)]
+
+    async def reply_qna(self, postng_id: str, content: str) -> bool:
+        """상품 Q&A 답변. 미답변 Q&A에만 가능."""
+        xml_body = (
+            f"<ssg.eapi.dp.postng.dto.PostngReqDto>"
+            f"<postngId>{self._xml_escape(postng_id)}</postngId>"
+            f"<postngCntt>{self._xml_escape(content)}</postngCntt>"
+            f"</ssg.eapi.dp.postng.dto.PostngReqDto>"
+        )
+        try:
+            res = await self._call_api_xml("POST", "/api/postng/ansQna.ssg", xml_body)
+        except SSGApiError as e:
+            logger.warning(f"[SSG] Q&A 답변 실패 ({postng_id}): {e}")
+            return False
+        result = res.get("result", {}) if isinstance(res, dict) else {}
+        if result.get("resultCode") != "00":
+            logger.warning(
+                f"[SSG] Q&A 답변 실패 ({postng_id}): {result.get('resultMessage')}"
+            )
+            return False
+        return True
 
 
 class SSGApiError(Exception):
     """SSG API 에러."""
 
     pass
+
+
+def extract_ssg_std_items(payload: Any) -> list[dict[str, Any]]:
+    """SSG listStdCtgKeyPath 응답에서 표준카테고리 항목을 추출한다.
+
+    래퍼 형태(stdctgs[{stdctg:[...]}])와 직접 항목 형태(stdctgs[{...}])를 모두 지원.
+    리스트 내 혼합 형태도 원소별로 독립 판별하여 안전하게 처리한다.
+    """
+    candidates: list[Any] = []
+    if isinstance(payload, dict):
+        result_obj = payload.get("result")
+        if result_obj is not None:
+            candidates.append(result_obj)
+        candidates.append(payload)
+    else:
+        candidates.append(payload)
+
+    items: list[dict[str, Any]] = []
+    for inner in candidates:
+        if isinstance(inner, list):
+            items.extend(x for x in inner if isinstance(x, dict))
+            continue
+        if not isinstance(inner, dict):
+            continue
+
+        for wrapper_key in ("stdctgs", "stdCtgs", "stdctg", "stdCtg", "data"):
+            value = inner.get(wrapper_key)
+            if not isinstance(value, list):
+                continue
+
+            for entry in value:
+                if not isinstance(entry, dict):
+                    continue
+
+                # 원소별로 래퍼/직접 형태를 독립적으로 판별
+                wrapped = False
+                for item_key in ("stdctg", "stdCtg"):
+                    sub = entry.get(item_key)
+                    if isinstance(sub, list):
+                        items.extend(x for x in sub if isinstance(x, dict))
+                        wrapped = True
+                    elif isinstance(sub, dict):
+                        items.append(sub)
+                        wrapped = True
+                if not wrapped:
+                    items.append(entry)
+
+    # (stdCtgDclsId, 경로명) 기준 중복 제거
+    dedup: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in items:
+        key = (
+            str(item.get("stdCtgDclsId") or item.get("stdCtgId") or ""),
+            str(
+                item.get("stdCtgKeyPath")
+                or item.get("wholeStdCtgNm")
+                or item.get("stdCtgDclsNm")
+                or item.get("stdCtgNm")
+                or ""
+            ),
+        )
+        if key not in seen:
+            seen.add(key)
+            dedup.append(item)
+    return dedup

@@ -9,9 +9,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from urllib.parse import urlparse
 
 from backend.domain.samba.proxy.notice_utils import (
     build_lotteon_notice as _build_lot_notice,
@@ -23,6 +23,164 @@ from backend.core.config import settings
 from backend.utils.logger import logger
 
 
+# ──────────────────────────────────────────────────────────────────────
+# 원산지 → 롯데ON ISO alpha-2 코드 매핑
+# ──────────────────────────────────────────────────────────────────────
+
+_LOTTEON_ORIGIN_CODE: dict[str, str] = {
+    # 국내
+    "한국": "KR",
+    "대한민국": "KR",
+    "국내": "KR",
+    "국산": "KR",
+    "korea": "KR",
+    # 아시아
+    "중국": "CN",
+    "china": "CN",
+    "베트남": "VN",
+    "vietnam": "VN",
+    "일본": "JP",
+    "japan": "JP",
+    "인도": "IN",
+    "india": "IN",
+    "인도네시아": "ID",
+    "indonesia": "ID",
+    "태국": "TH",
+    "thailand": "TH",
+    "캄보디아": "KH",
+    "cambodia": "KH",
+    "방글라데시": "BD",
+    "bangladesh": "BD",
+    "미얀마": "MM",
+    "myanmar": "MM",
+    "필리핀": "PH",
+    "philippines": "PH",
+    "홍콩": "HK",
+    "hong kong": "HK",
+    "대만": "TW",
+    "taiwan": "TW",
+    "말레이시아": "MY",
+    "malaysia": "MY",
+    # 유럽
+    "이탈리아": "IT",
+    "italy": "IT",
+    "프랑스": "FR",
+    "france": "FR",
+    "독일": "DE",
+    "germany": "DE",
+    "스페인": "ES",
+    "spain": "ES",
+    "영국": "GB",
+    "uk": "GB",
+    "포르투갈": "PT",
+    "portugal": "PT",
+    # 북미
+    "미국": "US",
+    "usa": "US",
+    "us": "US",
+    "캐나다": "CA",
+    "canada": "CA",
+}
+
+
+def _get_lotteon_origin_code(origin: str) -> str:
+    """원산지 텍스트 → 롯데ON ISO alpha-2 코드. 미매핑 시 KR 폴백."""
+    if not origin:
+        return "KR"
+    lower = origin.lower().strip()
+    if lower in _LOTTEON_ORIGIN_CODE:
+        return _LOTTEON_ORIGIN_CODE[lower]
+    for keyword, code in _LOTTEON_ORIGIN_CODE.items():
+        if keyword in lower or keyword in origin:
+            return code
+    return "KR"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# SEO 키워드 생성
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _build_lotteon_keywords(product: dict[str, Any]) -> list[str]:
+    """SEO 검색 키워드 빌드 — 최대 20개, 각 30자 이내.
+
+    우선순위: seo_keywords → tags → 브랜드 → 카테고리 → 상품명 단어 분리
+    """
+    seen: set[str] = set()
+    keywords: list[str] = []
+
+    def _add(kw: str) -> None:
+        kw = kw.strip()[:30]
+        if kw and kw not in seen:
+            seen.add(kw)
+            keywords.append(kw)
+
+    for kw in product.get("seo_keywords") or []:
+        _add(str(kw))
+    for tag in product.get("tags") or []:
+        _add(str(tag))
+
+    brand = product.get("brand", "")
+    if brand:
+        _add(brand)
+
+    for cat_field in ("category1", "category2", "category3"):
+        cat = product.get(cat_field, "")
+        if cat:
+            _add(cat)
+
+    name = product.get("name", "")
+    for word in re.split(r"[\s\[\]()（）,./·|]+", name):
+        word = word.strip()
+        if len(word) >= 2:
+            _add(word)
+
+    return keywords[:20]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 상품 소개문 자동 생성
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _build_lotteon_intro(product: dict[str, Any]) -> str:
+    """상품 소개문 자동 생성 — 최대 200자.
+
+    "[브랜드] 상품명 | 카테고리 | 소재: OOO, 색상: OOO, 원산지: OOO"
+    """
+    parts: list[str] = []
+    brand = product.get("brand", "")
+    name = product.get("name", "")
+    category = product.get("category2") or product.get("category1") or ""
+    material = product.get("material", "")
+    color = product.get("color", "")
+    origin = product.get("origin", "")
+
+    if brand:
+        parts.append(f"[{brand}]")
+    if name:
+        parts.append(name)
+    if category:
+        parts.append(f"| {category}")
+
+    details: list[str] = []
+    if material:
+        details.append(f"소재: {material}")
+    if color:
+        details.append(f"색상: {color}")
+    if origin:
+        details.append(f"원산지: {origin}")
+    if details:
+        parts.append("| " + ", ".join(details))
+
+    return " ".join(parts)[:200]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 상품홍보문구 자동 생성
+# ──────────────────────────────────────────────────────────────────────
+
+
 class LotteonClient:
     """롯데ON Open API 클라이언트."""
 
@@ -31,7 +189,7 @@ class LotteonClient:
     ONPICK_URL = "https://onpick-api.lotteon.com"
 
     def __init__(self, api_key: str) -> None:
-        self.api_key = api_key
+        self.api_key = api_key.strip()
         self.tr_grp_cd: str = ""
         self.tr_no: str = ""
 
@@ -51,54 +209,66 @@ class LotteonClient:
         body: Optional[dict[str, Any]] = None,
         params: Optional[dict[str, str]] = None,
         base_url: Optional[str] = None,
+        _shared_client: Optional[Any] = None,
     ) -> dict[str, Any]:
-        """공통 API 호출."""
+        """공통 API 호출. _shared_client 제공 시 TCP 연결 재사용."""
         url = f"{base_url or self.BASE_URL}{path}"
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
+        async def _do(c: Any) -> Any:
             if method == "GET":
-                resp = await client.get(url, headers=headers, params=params)
+                return await c.get(url, headers=headers, params=params)
             elif method == "POST":
-                resp = await client.post(url, headers=headers, json=body or {})
+                return await c.post(url, headers=headers, json=body or {})
             elif method == "PUT":
-                resp = await client.put(url, headers=headers, json=body or {})
+                return await c.put(url, headers=headers, json=body or {})
             elif method == "DELETE":
-                resp = await client.delete(url, headers=headers, params=params)
-            else:
-                raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
+                return await c.delete(url, headers=headers, params=params)
+            raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
 
-            try:
-                data = resp.json()
-            except Exception:
-                data = {"raw": resp.text}
+        if _shared_client is not None:
+            resp = await _do(_shared_client)
+        else:
+            async with httpx.AsyncClient(
+                timeout=settings.http_timeout_default
+            ) as client:
+                resp = await _do(client)
 
-            logger.info(f"[롯데ON] {method} {path} → {resp.status_code}")
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"raw": resp.text}
 
-            if not resp.is_success:
-                msg = data.get("message", "") or data.get("msg", "") or resp.text[:200]
-                raise LotteonApiError(f"HTTP {resp.status_code}: {msg}")
+        logger.info(f"[롯데ON] {method} {path} → {resp.status_code}")
 
-            # HTTP 200이어도 응답 body에 에러 코드가 있을 수 있음
-            # returnCode: 요청 레벨 에러 (카테고리 누락 등)
-            res_code = (
-                data.get("returnCode")
-                or data.get("code")
-                or data.get("resultCode")
-                or data.get("rspnCd")
-                or ""
+        if not resp.is_success:
+            msg = data.get("message", "") or data.get("msg", "") or resp.text[:300]
+            logger.warning(
+                f"[롯데ON] HTTP {resp.status_code} 응답 body: {resp.text[:500]}"
             )
-            if res_code and res_code not in ("0000", "00", "SUCCESS"):
-                msg = (
-                    data.get("message", "")
-                    or data.get("msg", "")
-                    or data.get("rspnMsgCntn", "")
-                    or str(data)
-                )
-                logger.warning(f"[롯데ON] 응답 에러 코드: {res_code} — {msg}")
-                raise LotteonApiError(f"응답 에러 ({res_code}): {msg}")
+            raise LotteonApiError(f"HTTP {resp.status_code}: {msg}")
 
-            return data
+        # HTTP 200이어도 응답 body에 에러 코드가 있을 수 있음
+        # returnCode: 요청 레벨 에러 (카테고리 누락 등)
+        res_code = (
+            data.get("returnCode")
+            or data.get("code")
+            or data.get("resultCode")
+            or data.get("rspnCd")
+            or ""
+        )
+        if res_code and res_code not in ("0000", "00", "SUCCESS"):
+            msg = (
+                data.get("message", "")
+                or data.get("msg", "")
+                or data.get("rspnMsgCntn", "")
+                or str(data)
+            )
+            logger.warning(f"[롯데ON] 응답 에러 코드: {res_code} — {msg}")
+            logger.warning(f"[롯데ON] 응답 전체 body: {data}")
+            raise LotteonApiError(f"응답 에러 ({res_code}): {msg}")
+
+        return data
 
     # ------------------------------------------------------------------
     # 인증
@@ -167,6 +337,57 @@ class LotteonClient:
                 return {"success": True, "data": result, "spdNo": spd_no}
         return {"success": True, "data": result}
 
+    async def register_publicity_sentence(self, spd_no: str, phrase: str) -> None:
+        """상품 홍보문구 등록 — 등록 후 자동 호출.
+
+        실패해도 상품 등록 자체는 롤백하지 않음 (best-effort).
+        기간미설정(None)으로 등록 — 무기한 노출.
+        """
+        now = datetime.now()
+        # 시작일: 내일 00:00 — 즉시 등록 시 "과거일시" 에러 방지
+        tomorrow = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        start_dt = tomorrow.strftime("%Y%m%d%H%M%S")
+        # 종료일: 180일 — 1년은 판매기간 초과 에러, 기간미설정 API 미지원
+        end_dt = (now + timedelta(days=180)).strftime("%Y%m%d235959")
+        body = {
+            "pblcStncLst": [
+                {
+                    "trGrpCd": self.tr_grp_cd or "SR",
+                    "trNo": self.tr_no,
+                    "lrtrNo": None,
+                    "spdNo": spd_no,
+                    "pblcStnc": phrase[:75],  # API 최대 75자
+                    "pblcStncStrtDttm": start_dt,
+                    "pblcStncEndDttm": end_dt,
+                }
+            ]
+        }
+        logger.debug(
+            f"[롯데ON] 홍보문구 API 요청 — trGrpCd={self.tr_grp_cd!r} trNo={self.tr_no!r} spdNo={spd_no!r}"
+        )
+        result = await self._call_api(
+            "POST",
+            "/v1/openapi/product/v1/product/publicitysentence/registration/request",
+            body=body,
+        )
+        rc_outer = result.get("returnCode", "")
+        data_list = result.get("data", [])
+        logger.debug(
+            f"[롯데ON] 홍보문구 API 응답 — returnCode={rc_outer!r} data={data_list}"
+        )
+        if isinstance(data_list, list) and data_list:
+            item = data_list[0]
+            if isinstance(item, dict):
+                rc = item.get("resultCode", "")
+                if rc and rc not in ("0000", "00", "SUCCESS"):
+                    logger.warning(
+                        f"[롯데ON] 홍보문구 등록 실패: {rc} — {item.get('resultMessage', '')}"
+                    )
+                    return
+        logger.info(f"[롯데ON] 홍보문구 등록 완료 — spdNo={spd_no!r}")
+
     async def get_product(self, spd_no: str) -> dict[str, Any]:
         """상품 단건 조회 (POST 방식)."""
         body = {
@@ -177,6 +398,181 @@ class LotteonClient:
         return await self._call_api(
             "POST",
             "/v1/openapi/product/v1/product/detail",
+            body=body,
+        )
+
+    # ── 프로모션 API ───────────────────────────────────────────────────
+
+    async def save_product_exception(
+        self, spd_no: str, flags: dict[str, str]
+    ) -> dict[str, Any]:
+        """행사 제외 설정.
+
+        flags 예시:
+          ownrDscExYn: Y/N    오너스할인 제외
+          pdUtCpnExYn: Y/N    상품단위쿠폰 제외
+          dvCpnExYn: Y/N      배송쿠폰 제외
+          cmPcsDscExYn: Y/N   가격비교채널할인(CM+PCS) 제외
+          pcsDscExYn: Y/N     가격비교(PCS)할인 제외
+        """
+        body = {"spdNo": spd_no, **flags}
+        return await self._call_api(
+            "POST",
+            "/v1/openapi/promotion/v1/OpenApiService/saveProductException",
+            body=body,
+        )
+
+    async def save_immediate_discount(
+        self,
+        spd_no: str,
+        discount_rate: int,
+        is_update: bool = False,  # 현재 미사용, 향후 기존 할인 수정 시 활용
+    ) -> dict[str, Any]:
+        """판매자할인(스토어할인) 저장.
+
+        API 스펙:
+          saveDvsCd: C=등록, U=수정(종료일만), D=삭제(시작 전만)
+          afflPrNo: 셀러 자체 프로모션번호(PK, 중복 불가)
+          dcTypCd: FX=정율, FL=정액
+          aplyStrtDttm / aplyEndDttm: yyyymmddhhmiss 포맷
+        """
+        now = datetime.now()
+        # afflPrNo: 셀러 고유 프로모션번호 (최대 20자)
+        # spdNo 숫자 부분(≤12자) + timestamp 끝 8자 = 최대 20자 이내
+        spd_num = re.sub(r"[^0-9]", "", spd_no)[-12:]  # 숫자만 추출, 최대 12자
+        ts_suffix = str(int(now.timestamp()))[-8:]  # timestamp 끝 8자리
+        affil_pr_no = f"{spd_num}{ts_suffix}"  # 최대 20자
+        start_dt = now.strftime("%Y%m%d%H%M%S")
+        # 1년 후 종료 (포맷: yyyymmddhhmiss) — timedelta 사용 (윤년 2/29 안전)
+        end_dt = (now + timedelta(days=365)).strftime("%Y%m%d235959")
+        body = {
+            "saveDvsCd": "C",  # 항상 신규 등록 (U=수정은 awyDcPdRegNo 필요)
+            "awyDcPdRegNo": "",  # 신규 등록 시 빈값
+            "afflPrNo": affil_pr_no,  # 셀러 자체 프로모션번호(PK)
+            "trNo": self.tr_no,  # 롯데ON 거래처번호
+            "spdNo": spd_no,
+            "aplyStrtDttm": start_dt,
+            "aplyEndDttm": end_dt,
+            "dcTypCd": "FX",  # FX=정율, FL=정액
+            "dcVal": float(discount_rate),
+        }
+        logger.info(f"[롯데ON] 즉시할인 요청 body: {body}")
+        return await self._call_api(
+            "POST",
+            "/v1/openapi/promotion/v1/OpenApiService/saveProductImmediateDiscount",
+            body=body,
+        )
+
+    async def save_lpoint_accumulation(
+        self,
+        spd_no: str,
+        accm_val1: int = 0,
+        accm_vp_knd_cd: str = "7",
+        accm_val2: int = 0,
+        accm_val3: int = 0,
+        accm_val4: int = 0,
+    ) -> dict[str, Any]:
+        """L.POINT 추가적립 저장.
+
+        API 스펙:
+          cndAccmVal1: 구매확정시 L.POINT (>0이면 accmVpKndCd 필수)
+          accmVpKndCd: 발송일로부터 N일 이내 구매확정 시 적립 (3~8 중 택1)
+          cndAccmVal2/3/4: 리뷰/사진/동영상 포인트 (하이마트/홈쇼핑 전용, 일반은 0)
+        """
+        now = datetime.now()
+        spd_num = re.sub(r"[^0-9]", "", spd_no)[-12:]
+        ts_suffix = str(int(now.timestamp()))[-8:]
+        affil_pr_no = f"{spd_num}{ts_suffix}"
+        start_dt = now.strftime("%Y%m%d%H%M%S")
+        end_dt = (now + timedelta(days=365)).strftime("%Y%m%d235959")
+        body = {
+            "saveDvsCd": "C",
+            "accmPdRegNo": "",
+            "afflPrNo": affil_pr_no,
+            "trNo": self.tr_no,
+            "aplyStrtDttm": start_dt,
+            "aplyEndDttm": end_dt,
+            "spdNo": spd_no,
+            "cndAccmVal1": accm_val1,
+            "accmVpKndCd": accm_vp_knd_cd,
+            "cndAccmVal2": accm_val2,
+            "cndAccmVal3": accm_val3,
+            "cndAccmVal4": accm_val4,
+        }
+        logger.info(f"[롯데ON] L.POINT 적립 요청 body: {body}")
+        return await self._call_api(
+            "POST",
+            "/v1/openapi/promotion/v1/OpenApiService/saveProductLPoint",
+            body=body,
+        )
+
+    async def search_quantity_discount_list(self, spd_no: str) -> dict[str, Any]:
+        """살수록할인 목록 조회 — 기존 프로모션 prNo 확인용.
+
+        반환 data 예시:
+          {"prList": [{"prNo": "12345", "prNm": "...", ...}]}
+        """
+        return await self._call_api(
+            "POST",
+            "/v1/openapi/promotion/v1/OpenApiService/searchQuantityDiscountList",
+            body={"spdNo": spd_no, "prKndCd": "PRD_MAM_BUY"},
+        )
+
+    async def insert_quantity_discount(
+        self,
+        spd_no: str,
+        min_qty: int,
+        discount_rate: float,
+        eitm_nos: list[str] | None = None,
+        pr_no: str = "",
+    ) -> dict[str, Any]:
+        """살수록할인(수량 기준 정율 할인) 등록/수정.
+
+        API 스펙:
+          saveDvsCd: C=신규, U=수정(pr_no 필수), D=삭제(pr_no 필수)
+          prKndCd: PRD_MAM_BUY (살수록/배수할인)
+          fvrOffrValDvsDtlCd: QTY_DC (수량 기준 할인)
+          dcTypCd: FX=정율, FL=정액
+          dcQtyList[].minPurQty: 최소 구매수량
+          dcQtyList[].dcRt: 할인율 (정율일 때)
+          dcQtyList[].dcAmt: 할인액 (정액일 때, 정율이면 0)
+          spdList[].spdNo: 적용 상품번호
+        """
+        now = datetime.now()
+        spd_num = re.sub(r"[^0-9]", "", spd_no)[-12:]
+        ts_suffix = str(int(now.timestamp()))[-8:]
+        affil_pr_no = f"{spd_num}{ts_suffix}"  # 최대 20자
+        start_dt = now.strftime("%Y%m%d%H%M%S")
+        end_dt = (now + timedelta(days=365)).strftime("%Y%m%d235959")
+        save_dvs_cd = "U" if pr_no else "C"
+        body = {
+            "saveDvsCd": save_dvs_cd,  # C=신규, U=수정
+            "prKndCd": "PRD_MAM_BUY",  # 살수록/배수할인
+            "prNo": pr_no,  # 수정 시 기존 prNo, 신규 시 빈값
+            "prNm": "삼바 살수록할인",
+            "afflPrNo": affil_pr_no,  # 셀러 자체 프로모션번호(PK, 최대 20자)
+            "trNo": self.tr_no,
+            "aplyStrtDttm": start_dt,
+            "aplyEndDttm": end_dt,
+            "fvrOffrValDvsDtlCd": "QTY_DC",  # 수량 기준 할인
+            "dcTypCd": "FX",  # 정율 할인
+            "dcQtyList": [
+                {
+                    "minPurQty": int(min_qty),  # 최소 구매수량
+                    "dcAmt": 0,  # 정액할인액 (정율이므로 0)
+                    "dcRt": float(discount_rate),  # 할인율 (%)
+                }
+            ],
+            "spdList": (
+                [{"spdNo": spd_no, "sitmNo": eitm_no} for eitm_no in eitm_nos]
+                if eitm_nos
+                else [{"spdNo": spd_no, "sitmNo": ""}]  # eitm_nos 없을 때 폴백
+            ),
+        }
+        logger.info(f"[롯데ON] 살수록할인 요청 body: {body}")
+        return await self._call_api(
+            "POST",
+            "/v1/openapi/promotion/v1/OpenApiService/insertQuantityDiscount",
             body=body,
         )
 
@@ -197,11 +593,20 @@ class LotteonClient:
         )
 
     async def change_status(self, spd_lst: list[dict[str, Any]]) -> dict[str, Any]:
-        """상품 판매상태 변경 (slStatCd: SALE | SOUT | END)."""
+        """상품 판매상태 변경 (slStatCd: SALE | SOUT | END).
+
+        trGrpCd/trNo는 등록/수정 API와 동일하게 spdLst 각 아이템 안에 위치해야 함.
+        """
+        enriched = [
+            {"trGrpCd": self.tr_grp_cd or "SR", "trNo": self.tr_no, **item}
+            for item in spd_lst
+        ]
+        body: dict[str, Any] = {"spdLst": enriched}
+        logger.info(f"[롯데ON] change_status 요청 body: {body}")
         return await self._call_api(
             "POST",
             "/v1/openapi/product/v1/product/status/change",
-            body={"spdLst": spd_lst},
+            body=body,
         )
 
     async def delete_product(self, spd_no: str) -> dict[str, Any]:
@@ -237,6 +642,186 @@ class LotteonClient:
         return {"success": True, "data": result}
 
     # ------------------------------------------------------------------
+    # 주문 조회
+    # ------------------------------------------------------------------
+
+    async def get_orders(self, days: int = 7) -> list[dict[str, Any]]:
+        """최근 N일 주문 목록 조회.
+
+        롯데ON Order API — camelCase 액션 방식 사용.
+        날짜 형식: yyyymmddhh24miss (전체 datetime)
+        """
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+        start = (now - timedelta(days=days)).strftime("%Y%m%d") + "000000"
+        end = now.strftime("%Y%m%d") + "235959"
+
+        body: dict[str, Any] = {
+            "trGrpCd": self.tr_grp_cd or "SR",
+            "trNo": self.tr_no,
+            "lrtrNo": self.tr_no,
+            "srchStrtDttm": start,
+            "srchEndDttm": end,
+            "pageNo": 1,
+            "pageSize": 100,
+            # 주문 상태 전체 조회 (일부 API에서 필수)
+            "orderStatusList": [],
+        }
+        logger.info(
+            f"[롯데ON] 주문 조회 {start}~{end}, trGrpCd={self.tr_grp_cd}, trNo={self.tr_no}"
+        )
+
+        # 문서 확인된 경로: getSROrderList
+        result = await self._call_api(
+            "POST", "/v1/openapi/order/v1/getSROrderList", body=body
+        )
+        logger.info(f"[롯데ON] 주문 API 응답 키: {list(result.keys())}")
+
+        # 응답 구조 탐색 (data.orderItems 또는 data.list 등)
+        data = result.get("data") or {}
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            for key in (
+                "orderItems",
+                "orderList",
+                "list",
+                "content",
+                "items",
+                "orders",
+            ):
+                val = data.get(key)
+                if isinstance(val, list):
+                    logger.info(f"[롯데ON] 주문 데이터 키='{key}', 건수={len(val)}")
+                    return val
+        logger.warning(f"[롯데ON] 주문 응답 구조 미파악: {list(result.keys())}")
+        return []
+
+    async def get_claims(self, days: int = 7) -> list[dict[str, Any]]:
+        """최근 N일 클레임(반품/교환/취소) 목록 조회.
+
+        문서 확인된 경로:
+        - 반품: returningOpenApi/returnRequestSearch
+        - 교환: exchangeOpenApi/exchangeSearch
+        - 취소: cancellationOpenApi/getCancellationRequestAndComplateList
+             + cancellationOpenApi/purFvrCnclSearch (구매자 취소)
+        """
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+        start = (now - timedelta(days=days)).strftime("%Y%m%d")
+        end = now.strftime("%Y%m%d")
+
+        body: dict[str, Any] = {
+            "trGrpCd": self.tr_grp_cd or "SR",
+            "trNo": self.tr_no,
+            "srchStDt": start,
+            "srchEdDt": end,
+            "pageNo": 1,
+            "pageSize": 100,
+        }
+
+        # (경로, 클레임 타입) 쌍 — 타입을 각 아이템에 주입해 구분
+        claim_endpoints = [
+            ("/v1/openapi/claim/v1/returningOpenApi/returnRequestSearch", "RETURN"),
+            ("/v1/openapi/claim/v1/exchangeOpenApi/exchangeSearch", "EXCHANGE"),
+            (
+                "/v1/openapi/claim/v1/cancellationOpenApi/getCancellationRequestAndComplateList",
+                "CANCEL",
+            ),
+            ("/v1/openapi/claim/v1/cancellationOpenApi/purFvrCnclSearch", "CANCEL"),
+        ]
+        all_claims: list[dict[str, Any]] = []
+        for path, claim_type in claim_endpoints:
+            try:
+                r = await self._call_api("POST", path, body=body)
+                logger.info(f"[롯데ON] 클레임 API 성공: {path}, 키: {list(r.keys())}")
+                logger.info(f"[롯데ON] 클레임 응답 전체: {str(r)[:300]}")
+                d = r.get("data") or r.get("list") or []
+                if isinstance(d, dict):
+                    d = (
+                        d.get("list")
+                        or d.get("content")
+                        or d.get("claimList")
+                        or d.get("items")
+                        or []
+                    )
+                if isinstance(d, list) and d:
+                    for item in d:
+                        if isinstance(item, dict):
+                            item.setdefault("_claimType", claim_type)
+                    all_claims.extend(d)
+                    logger.info(f"[롯데ON] {claim_type} 클레임 {len(d)}건")
+            except LotteonApiError as e:
+                err_str = str(e)
+                if "404" in err_str or "403" in err_str:
+                    logger.info(f"[롯데ON] 클레임 API {err_str[:20]} — 건너뜀: {path}")
+                    continue
+                raise
+
+        logger.info(f"[롯데ON] 클레임 총 {len(all_claims)}건 수집")
+        return all_claims
+
+    async def get_cs_inquiries(self, days: int = 30) -> list[dict[str, Any]]:
+        """CS 문의(QnA) 목록 조회 — 엔드포인트 자동 탐색."""
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+        start = (now - timedelta(days=days)).strftime("%Y%m%d")
+        end = now.strftime("%Y%m%d")
+
+        body: dict[str, Any] = {
+            "trGrpCd": self.tr_grp_cd or "SR",
+            "trNo": self.tr_no,
+            "srchStDt": start,
+            "srchEdDt": end,
+            "pageNo": 1,
+            "pageSize": 100,
+        }
+        candidate_paths = [
+            "/v1/openapi/qna/v1/qna/list",
+            "/v1/openapi/cs/v1/qna/list",
+            "/v1/openapi/cs/v1/inquiry/list",
+            "/v1/openapi/qna/v1/qnas",
+        ]
+        result: dict[str, Any] = {}
+        for path in candidate_paths:
+            try:
+                result = await self._call_api("POST", path, body=body)
+                logger.info(f"[롯데ON] CS문의 API 성공 경로: {path}")
+                break
+            except LotteonApiError as e:
+                if "404" in str(e):
+                    logger.info(f"[롯데ON] CS문의 API 404 — 다음 경로 시도: {path}")
+                    continue
+                raise
+        if not result:
+            logger.warning("[롯데ON] CS문의 API — 모든 후보 경로 404")
+            return []
+        data = result.get("data") or result.get("qnaList") or result.get("list") or []
+        if isinstance(data, dict):
+            data = data.get("qnaList") or data.get("list") or data.get("content") or []
+        return data if isinstance(data, list) else []
+
+    async def reply_cs_inquiry(self, qna_no: str, content: str) -> dict[str, Any]:
+        """CS 문의 답변 등록.
+
+        롯데ON QnA 답변 API: POST /v1/openapi/qna/v1/qna/answer
+        """
+        body: dict[str, Any] = {
+            "trGrpCd": self.tr_grp_cd or "SR",
+            "trNo": self.tr_no,
+            "qnaNo": qna_no,
+            "answerContent": content,
+        }
+        return await self._call_api(
+            "POST",
+            "/v1/openapi/qna/v1/qna/answer",
+            body=body,
+        )
+
+    # ------------------------------------------------------------------
     # 카테고리 / 브랜드 (onpick-api 도메인)
     # ------------------------------------------------------------------
 
@@ -247,6 +832,7 @@ class LotteonClient:
         parent_id: str = "",
         skip: int = 0,
         limit: int = 500,
+        _shared_client: Optional[Any] = None,
     ) -> dict[str, Any]:
         """표준카테고리 조회 (onpick-api 도메인).
 
@@ -256,6 +842,7 @@ class LotteonClient:
           parent_id: filter_2 — 부모 카테고리 ID로 하위 목록 조회
           skip: 페이지네이션 시작 위치
           limit: 페이지당 건수 (최대 500)
+          _shared_client: 대량 조회 시 TCP 연결 재사용용 httpx 클라이언트
         """
         params: dict[str, str] = {
             "job": "cheetahStandardCategory",
@@ -273,6 +860,27 @@ class LotteonClient:
             "/cheetah/econCheetah.ecn",
             params=params,
             base_url=self.ONPICK_URL,
+            _shared_client=_shared_client,
+        )
+
+    async def get_category_attributes(self, scat_no: str) -> dict[str, Any]:
+        """표준카테고리 속성목록 조회 (onpick-api 도메인).
+
+        scatAttrLst 구성에 필요한 optCd / optValCd 조회.
+        """
+        return await self._call_api(
+            "GET",
+            "/cheetah/econCheetah.ecn",
+            params={"job": "cheetahScatAttr", "mf_1": scat_no},
+            base_url=self.ONPICK_URL,
+        )
+
+    async def get_category_attribute_list(self, category_id: str) -> dict[str, Any]:
+        """표준카테고리 속성목록 조회 — 메인 API 경로 시도."""
+        return await self._call_api(
+            "GET",
+            "/v1/openapi/product/v1/category/attribute/list",
+            params={"scatNo": category_id},
         )
 
     async def search_brand(self, keyword: str) -> dict[str, Any]:
@@ -302,49 +910,118 @@ class LotteonClient:
           category_id: 표준카테고리번호 (BC...)
           disp_cat_id: 전시카테고리번호 (FC...) — 없으면 category_id 사용
         """
-        images = (product.get("images") or [])[:10]
+        from backend.utils.logger import logger as _log
+
+        # ── 이미지 URL 정규화 ──────────────────────────────────────
+        def _normalize_url(url: str) -> str:
+            if url.startswith("//"):
+                return "https:" + url
+            return url
+
+        raw_images = product.get("images") or []
+        images = [
+            _normalize_url(u)
+            for u in raw_images
+            if u and (u.startswith("http") or u.startswith("//"))
+        ][:10]
+        _log.info(f"[롯데ON] 이미지: 원본 {len(raw_images)}개 → 정규화 {len(images)}개")
+
+        # ── 기본 상품 정보 ──────────────────────────────────────────
         sale_price = int(product.get("sale_price", 0))
         name = (product.get("name", "") or "")[:150]
+        brand = product.get("brand", "") or ""
+        # 제조사: manufacturer → brand → "제조사 미확인" 순 폴백
+        manufacturer = product.get("manufacturer", "") or brand or "제조사 미확인"
+        style_code = product.get("style_code", "") or product.get("styleCode", "") or ""
+        origin = product.get("origin", "") or ""
 
-        # 판매 시작/종료 일시 (현재~1년 후)
+        # ── 할인율 적용 ─────────────────────────────────────────────
+        discount_rate = product.get("_discount_rate", 0)
+        if discount_rate:
+            sale_price = int(sale_price * (1 - discount_rate / 100))
+
+        # ── 재고 / 배송비 ───────────────────────────────────────────
+        # _stock_quantity: 설정된 경우 상한선(cap)으로 동작
+        max_stock = int(product.get("_stock_quantity") or 0)
+        default_stock = max_stock if max_stock > 0 else 999
+        return_fee = product.get("_return_fee", 0) or 0
+        exchange_fee = product.get("_exchange_fee", 0) or 0
+        jeju_fee = product.get("_jeju_fee", 0) or 0
+
+        # ── 판매 기간 ───────────────────────────────────────────────
         now = datetime.now()
         sl_strt = now.strftime("%Y%m%d%H%M%S")
         sl_end = (now + timedelta(days=365)).strftime("%Y%m%d%H%M%S")
 
-        # URL에서 파일명 추출 헬퍼
-        def _extract_filename(url: str) -> str:
-            """URL에서 파일명 추출. 없으면 image.jpg 반환."""
-            path = urlparse(url).path
-            fname = path.rsplit("/", 1)[-1] if "/" in path else ""
-            return fname if fname else "image.jpg"
+        # ── 옵션에서 사이즈/색상 추출 (고시정보용) ──────────────────
+        options = product.get("options") or []
+        sizes = [
+            o.get("size", "") or o.get("name", "")
+            for o in options
+            if o.get("size") or o.get("name")
+        ]
+        size_text = (
+            ", ".join(sorted(set(s for s in sizes if s)))[:200] or "상세페이지 참조"
+        )
+        db_color = product.get("color", "")
+        color_part = ""
+        if " - " in (product.get("name") or ""):
+            color_part = product["name"].split(" - ", 1)[1].split("/")[0].strip()
+        color_text = db_color or (color_part[:200] if color_part else "상세페이지 참조")
 
-        # 상품 파일 목록
+        # ── 이미지 파일 목록 (origFileNm, origImgFileNm 모두 URL 필수) ─
         pd_file_lst = [
             {
                 "fileTypCd": "PD",
                 "fileDvsCd": "WDTH",
+                "origFileNm": url,
                 "origImgFileNm": url,
-                "origFileNm": _extract_filename(url),
             }
             for url in images
         ]
 
-        # 단품 이미지
+        # ── 단품 이미지 목록 ────────────────────────────────────────
         itm_img_lst = [
             {
                 "epsrTypCd": "IMG",
                 "epsrTypDtlCd": "IMG_SQRE",
+                "origFileNm": url,
                 "origImgFileNm": url,
-                "origFileNm": _extract_filename(url),
                 "rprtImgYn": "Y" if idx == 0 else "N",
             }
             for idx, url in enumerate(images)
         ]
 
-        # 단품(옵션) 목록
-        options = product.get("options") or []
-        itm_lst = []
+        # ── 옵션 타입 감지 ──────────────────────────────────────────
+        def _detect_opt_nm(opt: dict[str, Any]) -> str:
+            """옵션 타입 자동 감지 (색상/사이즈/기타)."""
+            keys = set(opt.keys())
+            if "color" in keys or any("color" in str(k).lower() for k in keys):
+                return "색상"
+            if "size" in keys or any("size" in str(k).lower() for k in keys):
+                return "사이즈"
+            val = opt.get("name", "") or opt.get("value", "") or ""
+            size_keywords = {
+                "S",
+                "M",
+                "L",
+                "XL",
+                "XXL",
+                "XS",
+                "FREE",
+                "프리",
+                "스몰",
+                "라지",
+            }
+            if val.strip().upper() in size_keywords or val.replace(".", "").isdigit():
+                return "사이즈"
+            return "옵션"
+
+        # ── 단품(옵션) 목록 ─────────────────────────────────────────
+        itm_lst: list[dict[str, Any]] = []
         if options:
+            # 상품 전체에서 optNm 한 번만 결정 (단품 간 불일치 시 9999 에러)
+            product_opt_nm = _detect_opt_nm(options[0])
             for idx, opt in enumerate(options):
                 opt_name = (
                     opt.get("name", "")
@@ -352,13 +1029,20 @@ class LotteonClient:
                     or opt.get("value", "")
                     or f"옵션{idx + 1}"
                 )
-                opt_stock = opt.get("stock", 999)
+                raw_stock = opt.get("stock")
+                if raw_stock is None or raw_stock == 0:
+                    opt_stock = default_stock
+                elif max_stock > 0:
+                    # _stock_quantity 설정 시 상한선으로 cap
+                    opt_stock = min(int(raw_stock), max_stock)
+                else:
+                    opt_stock = int(raw_stock)
                 itm_lst.append(
                     {
-                        "eitmNo": f"OPT-{idx}",
+                        "eitmNo": f"OPT{idx}",
                         "dpYn": "Y",
                         "sortSeq": idx + 1,
-                        "itmOptLst": [{"optNm": "옵션", "optVal": opt_name}],
+                        "itmOptLst": [{"optNm": product_opt_nm, "optVal": opt_name}],
                         "itmImgLst": itm_img_lst,
                         "slPrc": sale_price,
                         "stkQty": opt_stock,
@@ -367,75 +1051,1164 @@ class LotteonClient:
         else:
             itm_lst.append(
                 {
-                    "eitmNo": "OPT-0",
+                    "eitmNo": "OPT0",
                     "dpYn": "Y",
                     "sortSeq": 1,
                     "itmOptLst": [],
                     "itmImgLst": itm_img_lst,
                     "slPrc": sale_price,
-                    "stkQty": 999,
+                    "stkQty": default_stock,
                 }
             )
 
+        # ── 상세설명 ────────────────────────────────────────────────
         detail_html = product.get("detail_html", "") or f"<p>{name}</p>"
-        brand = product.get("brand", "")
 
-        return {
-            "spdLst": [
+        # ── SEO: 검색 키워드 / 상품 소개문 ─────────────────────────
+        keywords = _build_lotteon_keywords(product)
+        intro = _build_lotteon_intro(product)
+
+        # ── 고시정보 (실제 수집 데이터 주입) ───────────────────────
+        notice = _build_lot_notice(
+            product,
+            size_text=size_text,
+            color_text=color_text,
+            mfr=manufacturer,
+        )
+
+        # ── 원산지 코드 동적 매핑 ───────────────────────────────────
+        origin_code = _get_lotteon_origin_code(origin)
+
+        spd: dict[str, Any] = {
+            "trGrpCd": tr_grp_cd,
+            "trNo": tr_no,
+            "scatNo": category_id,
+            # 전시카테고리(FC...) 있으면 사용, 없으면 표준카테고리 fallback
+            "dcatLst": [{"mallCd": "LTON", "lfDcatNo": disp_cat_id or category_id}],
+            "slTypCd": "GNRL",
+            "pdTypCd": "GNRL_GNRL",
+            "spdNm": name,
+            # 브랜드번호 — 브랜드 API 검색 후 주입 (없으면 무브랜드)
+            "brdNo": product.get("brand_no", ""),
+            # 제조사: manufacturer 우선, 없으면 brand
+            "mfcrNm": manufacturer,
+            # 원산지: 무신사 origin 필드 기반 ISO alpha-2 코드
+            "oplcCd": origin_code,
+            "tdfDvsCd": "01",
+            # 판매 기간
+            "slStrtDttm": sl_strt,
+            "slEndDttm": sl_end,
+            # 출고지/배송비정책/회수지/도서산간추가배송정책 (응답 확인: adtnDvCstPolNo)
+            "owhpNo": product.get("owhp_no", ""),
+            "dvCstPolNo": product.get("dv_cst_pol_no", ""),
+            "adtnDvCstPolNo": product.get("island_dv_cst_pol_no", "") or None,
+            "rtrpNo": product.get("rtrp_no", ""),
+            # 선물포장/메시지
+            "prstPckPsbYn": "N",
+            "prstMsgPsbYn": "N",
+            "pdItmsInfo": notice,
+            "purPsbQtyInfo": {
+                "itmByMinPurYn": "N",
+                "itmByMaxPurPsbQtyYn": "N",
+                "maxPurLmtTypCd": "PERIOD",
+            },
+            "ageLmtCd": "0",
+            "prcCmprEpsrYn": "Y",
+            "pdStatCd": "NEW",
+            "dpYn": "Y",
+            "pdFileLst": pd_file_lst if pd_file_lst else None,
+            # 상세설명 (A/S 안내는 고시정보 pdArtlCd=0090으로 전달)
+            "epnLst": [
+                {"pdEpnTypCd": "DSCRP", "cnts": detail_html},
+            ],
+            "cnclPsbYn": "Y",
+            "dmstOvsDvDvsCd": "DMST",
+            "impDvsCd": "DRC_IMP",  # 공식수입 (직수입)
+            "dvProcTypCd": "LO_ENTP",
+            "dvPdTypCd": "GNRL",
+            "dvRsvDvsCd": "GNRL_DV",
+            "sndBgtNday": product.get("_dispatch_days", 2),
+            "dvMnsCd": "DPCL",
+            "cmbnDvPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
+            "cmbnRtngPsbYn": product.get("cmbn_dv_psb_yn", "Y"),
+            "rtngPsbYn": "Y",
+            "xchgPsbYn": "Y",
+            **({"rtngFee": return_fee} if return_fee else {}),
+            **({"xchgFee": exchange_fee} if exchange_fee else {}),
+            **({"islandAddDlvFee": jeju_fee} if jeju_fee else {}),
+            "stkMgtYn": "Y",
+            "sitmYn": "Y" if options else "N",
+            "itmLst": itm_lst,
+            "rtrvTypCd": "ENTP_RTRV",
+            "dvRgsprGrpCd": "GN000",
+        }
+
+        # ── SEO: 검색 키워드 (있을 때만) ────────────────────────────
+        if keywords:
+            spd["spdKeyword"] = keywords
+
+        # ── SEO: 상품 소개문 (있을 때만) ────────────────────────────
+        if intro:
+            spd["pdIntrdCnts"] = intro
+
+        # ── 판매자 상품코드 (품번 있을 때만) ────────────────────────
+        if style_code:
+            spd["selPrdNo"] = style_code[:50]
+
+        # ── 기타정보 ─────────────────────────────────────────────────
+        # 모델번호: 품번(style_code) 활용
+        if style_code:
+            spd["mdlNo"] = style_code[:50]
+        # 온누리상품권 결제가능여부: 기본 사용안함 (응답 확인: onnuriPyPsbYn)
+        spd["onnuriPyPsbYn"] = "N"
+        # 임직원상품 여부: 기본 해당없음
+        spd["empPrdYn"] = "N"
+        # 출시년월(rlsYm): 롯데ON Open API 미지원 필드 — 파트너센터에서 수동 입력 필요
+        # 제품/포장 사이즈: pdSzInfo 하나의 객체에 모두 포함 (API 응답 확인)
+        spd["pdSzInfo"] = {
+            "pdWdthSz": 29,  # 제품 가로 (cm)
+            "pdLnthSz": 20,  # 제품 세로 (cm)
+            "pdHghtSz": 16,  # 제품 높이 (cm)
+            "pckWdthSz": 34,  # 포장 가로 (cm)
+            "pckLnthSz": 25,  # 포장 세로 (cm)
+            "pckHghtSz": 21,  # 포장 높이 (cm)
+        }
+
+        # ── 카테고리 속성정보 (scatAttrLst) ─────────────────────────
+        # _scat_attr_lst: [{"optCd": attr_id, "optValCd": attr_val_id}, ...]
+        # scatAttrChgYn: 수정 API에서 속성정보 변경 여부 명시 플래그 (필요 시)
+        scat_attr_lst = product.get("_scat_attr_lst") or []
+        if scat_attr_lst:
+            spd["scatAttrLst"] = scat_attr_lst
+            spd["scatAttrChgYn"] = "Y"
+
+        # ── 상품홍보문구 — 자동 설정 불가
+        # - OpenAPI 페이로드에 포함 시 무시됨 (200 OK 반환하지만 미반영)
+        # - soapi updateProduct → 403 (API key 권한 없음, 브라우저 세션 전용)
+        # 롯데ON 어드민에서 수동 설정 필요
+        return {"spdLst": [spd]}
+
+    # ------------------------------------------------------------------
+    # 날짜 범위 helper
+    # ------------------------------------------------------------------
+
+    def _datetime_range(self, days: int) -> tuple[str, str]:
+        """최근 N일 범위를 yyyymmddHHmmss 형식으로 반환 (최대 30일)."""
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=min(days, 30))
+        fmt = "%Y%m%d%H%M%S"
+        return start.strftime(fmt), now.strftime(fmt)
+
+    # ------------------------------------------------------------------
+    # 주문 조회
+    # ------------------------------------------------------------------
+
+    async def get_delivery_orders(self, days: int = 7) -> list[dict]:
+        """최근 N일 배송 주문 조회 (SellerDeliveryOrdersSearch).
+
+        API 제약: 조회 기간 1일 초과 불가 → 하루씩 병렬 조회 (동시 5건 제한).
+        """
+        import asyncio
+
+        KST = timezone(timedelta(hours=9))
+        now = datetime.now(KST)
+        actual_days = min(days, 30)
+        sem = asyncio.Semaphore(5)
+
+        async def _fetch_day(offset: int) -> list[dict]:
+            base_date = (now - timedelta(days=offset)).date()
+            day_start = datetime(
+                base_date.year, base_date.month, base_date.day, 0, 0, 0
+            )
+            day_end = datetime(
+                base_date.year, base_date.month, base_date.day, 23, 59, 59
+            )
+            srch_strt = day_start.strftime("%Y%m%d%H%M%S")
+            srch_end = day_end.strftime("%Y%m%d%H%M%S")
+            async with sem:
+                try:
+                    data = await self._call_api(
+                        "POST",
+                        "/v1/openapi/delivery/v1/SellerDeliveryOrdersSearch",
+                        body={
+                            "srchStrtDt": srch_strt,
+                            "srchEndDt": srch_end,
+                        },
+                    )
+                    inner = data.get("data") or {}
+                    items = inner.get("deliveryOrderList") or []
+                    logger.info(
+                        f"[롯데ON][주문] {srch_strt}~{srch_end} "
+                        f"deliveryOrderList={len(items) if isinstance(items, list) else repr(items)}"
+                    )
+                    if isinstance(items, list) and items:
+                        s = items[0]
+                        logger.info(
+                            f"[롯데ON][주문] 샘플 키값: odNo={s.get('odNo')} spdNo={s.get('spdNo')} "
+                            f"sitmNo={s.get('sitmNo')} odSeq={s.get('odSeq')} procSeq={s.get('procSeq')} "
+                            f"odPrgsStepCd={s.get('odPrgsStepCd')}"
+                        )
+                        logger.info(f"[롯데ON][주문] 샘플 전체 필드: {list(s.keys())}")
+                        logger.info(f"[롯데ON][주문] 샘플 전체 데이터: {s}")
+                        return items
+                    return []
+                except Exception as e:
+                    logger.warning(
+                        f"[롯데ON] 주문 조회 실패 ({srch_strt}~{srch_end}): {e}"
+                    )
+                    return []
+
+        day_results = await asyncio.gather(*[_fetch_day(i) for i in range(actual_days)])
+        result: list[dict] = []
+        for items in day_results:
+            result.extend(items)
+        return result
+
+    async def get_settlement_items(self, days: int = 7) -> list[dict]:
+        """개별거래처 매출 정산 조회 (SettleItmdSales).
+
+        pymtAmt(지급대상금액)가 실제 정산금액.
+        주문과 (odNo, odSeq, procSeq) 키로 매칭하여 revenue/fee_rate 계산에 사용.
+        """
+        KST = timezone(timedelta(hours=9))
+        now = datetime.now(KST)
+        actual_days = min(days, 30)
+        start_date = (now - timedelta(days=actual_days - 1)).strftime("%Y%m%d")
+        end_date = now.strftime("%Y%m%d")
+        try:
+            resp = await self._call_api(
+                "POST",
+                "/v1/openapi/settle/v1/se/SettleItmdSales",
+                body={"startDate": start_date, "endDate": end_date},
+            )
+            data = resp.get("data") or []
+            if not isinstance(data, list):
+                data = []
+            logger.info(
+                f"[롯데ON][정산] {start_date}~{end_date} SettleItmdSales={len(data)}건"
+            )
+            return data
+        except Exception as e:
+            logger.warning(f"[롯데ON][정산] 조회 실패 ({start_date}~{end_date}): {e}")
+            return []
+
+    # 판매자 취소 사유코드
+    SELLER_CANCEL_REASON_CODES: dict[str, str] = {
+        "soldout": "111",  # 판매자 취소(품절)
+        "price": "132",  # 가격오등록
+        "reseller": "133",  # 리셀러주문
+        "delivery": "137",  # 택배지원불가
+        "customer": "135",  # 판매자 취소(고객변심)
+    }
+
+    async def seller_cancel_order(
+        self,
+        od_no: str,
+        reason_code: str = "111",
+        reason_text: str = "",
+        od_seq: int = 1,
+        proc_seq: int = 1,
+    ) -> tuple[bool, str]:
+        """판매자 주도 주문 취소 (slrDirectCnclProc).
+
+        Args:
+            od_no: 주문번호
+            reason_code: 판매자 사유코드 (111=품절, 132=가격오등록, 133=리셀러, 135=고객변심, 137=택배불가)
+            reason_text: 판매자 사유 내용 (선택)
+            od_seq: 주문순번 (기본 1)
+            proc_seq: 처리순번 (기본 1)
+
+        Returns:
+            (성공여부, 메시지)
+        """
+        payload = {
+            "odNo": od_no,
+            "itemList": [
                 {
-                    "trGrpCd": tr_grp_cd,
-                    "trNo": tr_no,
-                    "scatNo": category_id,
-                    "dcatLst": [
-                        {"mallCd": "LTON", "lfDcatNo": disp_cat_id or category_id}
-                    ],
-                    "slTypCd": "GNRL",
-                    "pdTypCd": "GNRL_GNRL",
-                    "spdNm": name,
-                    # 브랜드번호 (brdNo) — 브랜드 API로 검색 후 번호 전달 필요
-                    # 미지정 시 무브랜드로 등록
-                    "brdNo": product.get("brand_no", ""),
-                    "mfcrNm": brand or "제조사 미확인",
-                    "oplcCd": "KR",
-                    "tdfDvsCd": "01",
-                    # 판매 기간 (필수)
-                    "slStrtDttm": sl_strt,
-                    "slEndDttm": sl_end,
-                    # 출고지/배송비정책/회수지 번호 (거래처 사전 등록 필요)
-                    "owhpNo": product.get("owhp_no", ""),
-                    "dvCstPolNo": product.get("dv_cst_pol_no", ""),
-                    "rtrpNo": product.get("rtrp_no", ""),
-                    # 선물포장/메시지 여부
-                    "prstPckPsbYn": "N",
-                    "prstMsgPsbYn": "N",
-                    "pdItmsInfo": _build_lot_notice(product),
-                    "purPsbQtyInfo": {
-                        "itmByMinPurYn": "N",
-                        "itmByMaxPurPsbQtyYn": "N",
-                        "maxPurLmtTypCd": "PERIOD",
-                    },
-                    "ageLmtCd": "0",
-                    "prcCmprEpsrYn": "Y",
-                    "pdStatCd": "NEW",
-                    "dpYn": "Y",
-                    "pdFileLst": pd_file_lst if pd_file_lst else None,
-                    "epnLst": [{"pdEpnTypCd": "DSCRP", "cnts": detail_html}],
-                    "cnclPsbYn": "Y",
-                    "dmstOvsDvDvsCd": "DMST",
-                    "dvProcTypCd": "LO_ENTP",
-                    "dvPdTypCd": "GNRL",
-                    "sndBgtNday": 2,
-                    "dvMnsCd": "DPCL",
-                    "cmbnDvPsbYn": "Y",
-                    "rtngPsbYn": "Y",
-                    "xchgPsbYn": "Y",
-                    "stkMgtYn": "Y",
-                    "sitmYn": "Y" if options else "N",
-                    "itmLst": itm_lst,
-                    "rtrvTypCd": "ENTP_RTRV",
+                    "odSeq": od_seq,
+                    "procSeq": proc_seq,
+                    "slrRsnCd": reason_code,
+                    "slrRsnCnts": reason_text or "판매자 취소",
+                    "lrtrNo": "",
+                }
+            ],
+        }
+        logger.info(
+            f"[롯데ON][판매자취소] odNo={od_no} rsnCd={reason_code} rsnText={reason_text}"
+        )
+        try:
+            resp = await self._call_api(
+                "POST",
+                "/v1/openapi/claim/v1/cancellationOpenApi/slrDirectCnclProc",
+                body=payload,
+            )
+            data = resp.get("data") or resp
+            return_code = str(data.get("returnCode") or data.get("rsltCd") or "")
+            message = str(data.get("message") or data.get("rsltMsg") or "")
+            success = return_code == "0000"
+            logger.info(
+                f"[롯데ON][판매자취소] 응답: odNo={od_no} returnCode={return_code} message={message}"
+            )
+            return success, message or ("정상 처리" if success else "실패")
+        except Exception as e:
+            logger.warning(f"[롯데ON][판매자취소] 실패: odNo={od_no} / {e}")
+            return False, str(e)
+
+    async def confirm_orders(self, order_items: list[dict]) -> bool:
+        """주문확인 = 연동완료 처리 (SellerIfCompleteInform, ifCplYN=Y).
+
+        롯데ON 판매자센터 "신규주문" 목록은 ifCplYN=N 기준.
+        ifCplYN=Y 로 통보해야 신규주문에서 제거되고 주문확인 처리됨.
+        """
+        items = []
+        for item in order_items:
+            entry = {
+                "dvRtrvDvsCd": "DV",
+                "odNo": str(item.get("odNo", "")),
+                "odSeq": int(item.get("odSeq", 1) or 1),
+                "procSeq": int(item.get("procSeq", 1) or 1),
+                "ifCplYN": "Y",
+                "ifFlRsnCnts": "",
+            }
+            clm_no = item.get("clmNo") or ""
+            if clm_no:
+                entry["clmNo"] = str(clm_no)
+                entry["orglProcSeq"] = int(item.get("orglProcSeq", 1) or 1)
+            items.append(entry)
+        try:
+            resp = await self._call_api(
+                "POST",
+                "/v1/openapi/delivery/v1/SellerIfCompleteInform",
+                body={"ifCompleteList": items},
+            )
+            rs = (resp.get("data") or {}).get("rsltCd", "") or resp.get(
+                "returnCode", ""
+            )
+            logger.info(
+                f"[롯데ON] 주문확인(SellerIfCompleteInform) 응답: rsltCd={rs} count={len(items)}"
+            )
+            return str(rs) == "0000"
+        except Exception as e:
+            logger.warning(f"[롯데ON] 주문확인 실패: {e}")
+            return False
+
+    # 택배사 한글명 → 롯데ON dvCoCd 매핑 (SellerDeliveryProgressStateInform 기준)
+    DELIVERY_COMPANY_MAP: dict[str, str] = {
+        "CJ대한통운": "0002",
+        "한진택배": "0006",
+        "롯데택배": "0001",
+        "로젠택배": "0005",
+        "우체국택배": "0004",
+        "경동택배": "0019",
+        "대신택배": "0011",
+        "일양로지스": "0007",
+        "편의점택배": "0016",
+        "DHL": "0009",
+    }
+
+    async def ship_order(
+        self,
+        od_no: str,
+        sitm_no: str,
+        spd_no: str,
+        quantity: int,
+        shipping_company: str,
+        tracking_number: str,
+    ) -> bool:
+        """발송처리 + 송장번호 등록 (SellerDeliveryProgressStateInform, odPrgsStepCd=13)."""
+        KST = timezone(timedelta(hours=9))
+        dv_co_cd = self.DELIVERY_COMPANY_MAP.get(shipping_company, shipping_company)
+        dv_trc_stat_dttm = datetime.now(KST).strftime("%Y%m%d%H%M%S")
+
+        # API 스펙: deliveryProgressStateList, odPrgsStepCd=13(발송완료), dvRtrvDvsCd=DV 필수
+        payload = {
+            "deliveryProgressStateList": [
+                {
+                    "dvRtrvDvsCd": "DV",
+                    "odNo": od_no,
+                    "odSeq": "1",
+                    "procSeq": "1",
+                    "orglProcSeq": "",
+                    "clmNo": "",
+                    "odPrgsStepCd": "13",
+                    "dvTrcStatDttm": dv_trc_stat_dttm,
+                    "invcNbr": "1",
+                    "dvCoCd": dv_co_cd,
+                    "invcNo": tracking_number,
+                    "spdNo": spd_no,
+                    "spdNm": "",
+                    "sitmNo": sitm_no,
+                    "itmNm": "",
+                    "itmSlPrc": "",
+                    "slQty": str(quantity),
+                    "dvTrcStatCd": "",
+                    "dvArclNm": "",
+                    "dvArclTelNo": "",
+                    "dvLocCnts": "",
+                    "eofcTelNo": "",
                 }
             ]
         }
+        logger.info(f"[롯데ON] 발송처리 요청: {payload}")
+        try:
+            resp_data = await self._call_api(
+                "POST",
+                "/v1/openapi/delivery/v1/SellerDeliveryProgressStateInform",
+                body=payload,
+            )
+            rs = (resp_data.get("data") or {}).get("rsltCd", "")
+            rm = (resp_data.get("data") or {}).get("rsltMsg", "")
+            logger.info(f"[롯데ON] 발송처리 응답: rsltCd={rs} rsltMsg={rm}")
+            if rs in ("0000", "00", "SUCCESS", ""):
+                logger.info(
+                    f"[롯데ON] 발송처리 완료: odNo={od_no} invcNo={tracking_number}"
+                )
+                return True
+            logger.warning(f"[롯데ON] 발송처리 실패 rsltCd={rs}: {rm}")
+            return False
+        except Exception as e:
+            logger.warning(f"[롯데ON] 발송처리 실패: odNo={od_no} / {e}")
+            return False
+
+    # ------------------------------------------------------------------
+    # 취소/반품 클레임 조회
+    # ------------------------------------------------------------------
+
+    async def get_cancel_orders(self, days: int = 7) -> list[dict]:
+        """최근 N일 취소 클레임 조회 (getCancellationRequestAndComplateList, clmTpCd=CCNL).
+
+        응답: data[].itemList[] 중첩 구조 → odNo/clmNo 포함 flat list로 변환.
+        """
+        start_dt, end_dt = self._datetime_range(days)
+        data = await self._call_api(
+            "POST",
+            "/v1/openapi/claim/v1/cancellationOpenApi/getCancellationRequestAndComplateList",
+            body={
+                "srchStrtDttm": start_dt,
+                "srchEndDttm": end_dt,
+                "clmTpCd": "CCNL",
+            },
+        )
+        raw_list = data.get("data") or []
+        if not isinstance(raw_list, list):
+            raw_list = []
+        result = []
+        for claim in raw_list:
+            od_no = claim.get("odNo", "")
+            clm_no = claim.get("clmNo", "")
+            step_cd = claim.get("odPrgsStepCd", "")
+            logger.debug(
+                f"[롯데ON][취소] odNo={od_no} clmNo={clm_no} stepCd={step_cd} "
+                f"clmRsnCd={claim.get('clmRsnCd', '')} itemCount={len(claim.get('itemList') or [])}"
+            )
+            for item in claim.get("itemList") or []:
+                item["odNo"] = od_no
+                item["clmNo"] = clm_no
+                logger.debug(
+                    f"  └ sitmNo={item.get('sitmNo', '')} spdNm={item.get('spdNm', '')[:30]} "
+                    f"cnclQty={item.get('cnclQty', '')} stepCd={item.get('odPrgsStepCd', '')}"
+                )
+                result.append(item)
+        return result
+
+    async def get_returns(self, days: int = 7) -> list[dict]:
+        """최근 N일 반품 클레임 조회.
+
+        1차: getCancellationRequestAndComplateList(clmTpCd=RETN)
+        2차: getCancellationRequestAndComplateList(clmTpCd=EXCH)에서 clmRsnCd=300번대 건 보완 수집.
+
+        롯데ON API 버그 대응: 반품 사유코드(300번대) 클레임이 EXCH API에는 나타나지만
+        RETN API에는 누락되는 경우가 있어 EXCH API에서도 보완 수집한다.
+        get_exchanges()에서는 이 건들을 이미 제외하므로 중복 처리 없음.
+        """
+        start_dt, end_dt = self._datetime_range(days)
+        result: list[dict] = []
+        seen_keys: set[str] = set()
+
+        # 1차: RETN API
+        data = await self._call_api(
+            "POST",
+            "/v1/openapi/claim/v1/cancellationOpenApi/getCancellationRequestAndComplateList",
+            body={
+                "srchStrtDttm": start_dt,
+                "srchEndDttm": end_dt,
+                "clmTpCd": "RETN",
+            },
+        )
+        raw_list = data.get("data") or []
+        if not isinstance(raw_list, list):
+            raw_list = []
+        for claim in raw_list:
+            od_no = claim.get("odNo", "")
+            clm_no = claim.get("clmNo", "")
+            for item in claim.get("itemList") or []:
+                item["odNo"] = od_no
+                item["clmNo"] = clm_no
+                key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
+                seen_keys.add(key)
+                result.append(item)
+
+        # 2차: EXCH API에서 clmRsnCd=300번대(반품 사유코드) 건 보완 수집
+        # (롯데ON API 버그: 반품 사유 클레임이 EXCH 타입으로 잘못 분류되는 케이스 대응)
+        try:
+            data2 = await self._call_api(
+                "POST",
+                "/v1/openapi/claim/v1/cancellationOpenApi/getCancellationRequestAndComplateList",
+                body={
+                    "srchStrtDttm": start_dt,
+                    "srchEndDttm": end_dt,
+                    "clmTpCd": "EXCH",
+                },
+            )
+            raw_list2 = data2.get("data") or []
+            if not isinstance(raw_list2, list):
+                raw_list2 = []
+            for claim in raw_list2:
+                od_no = claim.get("odNo", "")
+                clm_no = claim.get("clmNo", "")
+                for item in claim.get("itemList") or []:
+                    clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
+                    if not clm_rsn_cd.startswith(("2", "3")):
+                        continue  # 반품 사유코드(200/300번대)만 보완 대상
+                    item["odNo"] = od_no
+                    item["clmNo"] = clm_no
+                    key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        logger.warning(
+                            f"[롯데ON][반품보완] EXCH API 반품 사유코드({clm_rsn_cd}) → 반품으로 재수집: "
+                            f"odNo={od_no} clmNo={clm_no}"
+                        )
+                        result.append(item)
+        except Exception as e:
+            logger.warning(
+                f"[롯데ON][get_returns] EXCH API 반품 보완 조회 실패 (무시): {e}"
+            )
+
+        # 3차: exchangeSearch API에서 clmRsnCd=300번대 건 보완 수집
+        # (롯데ON API 버그: 반품 사유 클레임이 exchangeSearch에 포함되는 케이스 대응)
+        try:
+            data3 = await self._call_api(
+                "POST",
+                "/v1/openapi/claim/v1/exchangeOpenApi/exchangeSearch",
+                body={
+                    "srchStrtDttm": start_dt,
+                    "srchEndDttm": end_dt,
+                },
+            )
+            raw_list3 = data3.get("data") or []
+            if not isinstance(raw_list3, list):
+                raw_list3 = []
+            for claim in raw_list3:
+                od_no = claim.get("odNo", "")
+                clm_no = claim.get("clmNo", "")
+                for item in claim.get("itemList") or []:
+                    clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
+                    if not clm_rsn_cd.startswith(("2", "3")):
+                        continue  # 반품 사유코드(200/300번대)만 보완 대상
+                    item["odNo"] = od_no
+                    item["clmNo"] = clm_no
+                    key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        logger.warning(
+                            f"[롯데ON][반품보완-exchangeSearch] 반품 사유코드({clm_rsn_cd}) → 반품으로 재수집: "
+                            f"odNo={od_no} clmNo={clm_no}"
+                        )
+                        result.append(item)
+        except Exception as e:
+            logger.warning(
+                f"[롯데ON][get_returns] exchangeSearch 반품 보완 조회 실패 (무시): {e}"
+            )
+
+        return result
+
+    async def get_exchanges(self, days: int = 7) -> list[dict]:
+        """최근 N일 교환 클레임 조회.
+
+        1차: exchangeSearch API
+        2차: getCancellationRequestAndComplateList(clmTpCd=EXCH)
+        두 결과를 clmNo 기준으로 중복 제거 후 합산 반환.
+        """
+        start_dt, end_dt = self._datetime_range(days)
+        result: list[dict] = []
+        seen_clm_keys: set[str] = set()
+
+        # 1차: exchangeSearch API (교환접수(03) 단계 — 접수 후 30분 내 건만 조회됨)
+        try:
+            data = await self._call_api(
+                "POST",
+                "/v1/openapi/claim/v1/exchangeOpenApi/exchangeSearch",
+                body={
+                    "srchStrtDttm": start_dt,
+                    "srchEndDttm": end_dt,
+                },
+            )
+            raw_list = data.get("data") or []
+            if not isinstance(raw_list, list):
+                raw_list = []
+            for claim in raw_list:
+                od_no = claim.get("odNo", "")
+                clm_no = claim.get("clmNo", "")
+                for item in claim.get("itemList") or []:
+                    item["odNo"] = od_no
+                    item["clmNo"] = clm_no
+                    step_cd = str(item.get("odPrgsStepCd", "") or "")
+                    dv_rtrv = item.get("dvRtrvDvsCd", "")
+                    clm_rsn_cd_es = str(item.get("clmRsnCd", "") or "")
+                    # 반품 사유 코드(300번대)가 exchangeSearch에 잘못 포함된 경우 제외
+                    if clm_rsn_cd_es.startswith(("2", "3")):
+                        logger.warning(
+                            f"[롯데ON][교환-exchangeSearch] 반품 사유코드({clm_rsn_cd_es}) 교환 목록에서 제외: "
+                            f"odNo={od_no} clmNo={clm_no}"
+                        )
+                        continue
+                    logger.info(
+                        f"[롯데ON][교환-exchangeSearch] odNo={od_no} clmNo={clm_no} stepCd={step_cd} "
+                        f"dvRtrvDvsCd={dv_rtrv} clmRsnCd={clm_rsn_cd_es}"
+                    )
+                    key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
+                    if key not in seen_clm_keys:
+                        seen_clm_keys.add(key)
+                        result.append(item)
+        except Exception as e:
+            logger.warning(f"[롯데ON][교환-exchangeSearch] 조회 실패 (무시): {e}")
+
+        # 2차: getCancellationRequestAndComplateList(clmTpCd=EXCH)
+        try:
+            data2 = await self._call_api(
+                "POST",
+                "/v1/openapi/claim/v1/cancellationOpenApi/getCancellationRequestAndComplateList",
+                body={
+                    "srchStrtDttm": start_dt,
+                    "srchEndDttm": end_dt,
+                    "clmTpCd": "EXCH",
+                },
+            )
+            raw_list2 = data2.get("data") or []
+            if not isinstance(raw_list2, list):
+                raw_list2 = []
+            for claim in raw_list2:
+                od_no = claim.get("odNo", "")
+                clm_no = claim.get("clmNo", "")
+                for item in claim.get("itemList") or []:
+                    item["odNo"] = od_no
+                    item["clmNo"] = clm_no
+                    step_cd = str(item.get("odPrgsStepCd", "") or "")
+                    clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
+                    # 반품 사유 코드(300번대)가 교환 API에 잘못 포함된 경우 제외
+                    if clm_rsn_cd.startswith(("2", "3")):
+                        logger.warning(
+                            f"[롯데ON][교환-EXCH] 반품 사유코드({clm_rsn_cd}) 교환 목록에서 제외: "
+                            f"odNo={od_no} clmNo={clm_no}"
+                        )
+                        continue
+                    logger.info(
+                        f"[롯데ON][교환-EXCH] odNo={od_no} clmNo={clm_no} stepCd={step_cd} "
+                        f"clmRsnCd={clm_rsn_cd}"
+                    )
+                    key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
+                    if key not in seen_clm_keys:
+                        seen_clm_keys.add(key)
+                        result.append(item)
+        except Exception as e:
+            logger.warning(f"[롯데ON][교환-EXCH] 조회 실패 (무시): {e}")
+
+        # 3차: SellerDeliveryOrdersSearch(odTypCd=30) — 배송 모듈로 이동한 교환 회수 주문
+        try:
+            now = datetime.now(timezone.utc)
+            actual_days = min(days, 30)
+            for i in range(actual_days):
+                day_end = now - timedelta(days=i)
+                day_start = day_end - timedelta(days=1)
+                srch_strt = day_start.strftime("%Y%m%d%H%M%S")
+                srch_end = day_end.strftime("%Y%m%d%H%M%S")
+                try:
+                    ddata = await self._call_api(
+                        "POST",
+                        "/v1/openapi/delivery/v1/SellerDeliveryOrdersSearch",
+                        body={
+                            "srchStrtDt": srch_strt,
+                            "srchEndDt": srch_end,
+                        },
+                    )
+                    dl = (ddata.get("data") or {}).get("deliveryOrderList") or []
+                    if not isinstance(dl, list):
+                        dl = []
+                    for item in dl:
+                        # 교환 주문(odTypCd=30)만 처리
+                        if str(item.get("odTypCd", "") or "") != "30":
+                            continue
+                        od_no = item.get("odNo", "")
+                        clm_no = item.get("clmNo", "")
+                        step_cd = str(item.get("odPrgsStepCd", "") or "")
+                        logger.info(
+                            f"[롯데ON][교환-배송모듈] odNo={od_no} clmNo={clm_no} "
+                            f"stepCd={step_cd} dvRtrvDvsCd={item.get('dvRtrvDvsCd', '')}"
+                        )
+                        key = f"{od_no}_{clm_no}_{item.get('odSeq', '')}"
+                        if key not in seen_clm_keys:
+                            seen_clm_keys.add(key)
+                            # 배송 API의 stepCd는 교환 클레임 단계와 다른 체계이므로
+                            # 교환요청(21)으로 고정 — 정확한 단계는 1차/2차 클레임 API에서 결정
+                            delivery_item = dict(item)
+                            delivery_item["odPrgsStepCd"] = "21"
+                            result.append(delivery_item)
+                except Exception as day_e:
+                    logger.debug(
+                        f"[롯데ON][교환-배송모듈] {srch_strt} 조회 실패: {day_e}"
+                    )
+        except Exception as e:
+            logger.warning(f"[롯데ON][교환-배송모듈] 조회 실패 (무시): {e}")
+
+        return result
+
+    async def approve_exchange(
+        self,
+        od_no: str,
+        clm_no: str,
+        items: list[dict],
+    ) -> bool:
+        """교환 승인 처리 (exchangeRequestApproval) — 회수 지시.
+
+        items: [{"odSeq": 1, "procSeq": 2, "orglProcSeq": 1, "slrRsnCd": "204"}]
+        """
+        payload = {
+            "odNo": od_no,
+            "clmNo": clm_no,
+            "itemList": items,
+        }
+        logger.info(
+            f"[롯데ON][교환승인] odNo={od_no} clmNo={clm_no} items={len(items)}건"
+        )
+        try:
+            resp = await self._call_api(
+                "POST",
+                "/v1/openapi/claim/v1/exchangeOpenApi/exchangeRequestApproval",
+                body=payload,
+            )
+            rc = str(resp.get("returnCode") or resp.get("rspnCd") or "")
+            if rc == "0000":
+                logger.info(f"[롯데ON][교환승인] 성공: odNo={od_no} clmNo={clm_no}")
+                return True
+            logger.warning(
+                f"[롯데ON][교환승인] 실패: returnCode={rc} msg={resp.get('message', '')}"
+            )
+            return False
+        except Exception as e:
+            logger.warning(f"[롯데ON] 교환승인 실패: {e}")
+            return False
+
+    async def ship_order_exchange(
+        self,
+        od_no: str,
+        sitm_no: str,
+        spd_no: str,
+        clm_no: str,
+        quantity: int,
+        shipping_company: str,
+        tracking_number: str,
+    ) -> bool:
+        """교환 재배송 처리 (SellerDeliveryProgressStateInform, odPrgsStepCd=13, clmNo 포함)."""
+        KST = timezone(timedelta(hours=9))
+        dv_co_cd = self.DELIVERY_COMPANY_MAP.get(shipping_company, shipping_company)
+        dv_trc_stat_dttm = datetime.now(KST).strftime("%Y%m%d%H%M%S")
+
+        payload = {
+            "deliveryProgressStateList": [
+                {
+                    "dvRtrvDvsCd": "DV",
+                    "odNo": od_no,
+                    "odSeq": "1",
+                    "procSeq": "1",
+                    "orglProcSeq": "",
+                    "clmNo": clm_no,
+                    "odPrgsStepCd": "13",
+                    "dvTrcStatDttm": dv_trc_stat_dttm,
+                    "invcNbr": "1",
+                    "dvCoCd": dv_co_cd,
+                    "invcNo": tracking_number,
+                    "spdNo": spd_no,
+                    "spdNm": "",
+                    "sitmNo": sitm_no,
+                    "itmNm": "",
+                    "itmSlPrc": "",
+                    "slQty": str(quantity),
+                    "dvTrcStatCd": "",
+                    "dvArclNm": "",
+                    "dvArclTelNo": "",
+                    "dvLocCnts": "",
+                    "eofcTelNo": "",
+                }
+            ]
+        }
+        logger.info(
+            f"[롯데ON][교환재배송] odNo={od_no} clmNo={clm_no} invcNo={tracking_number} dvCoCd={dv_co_cd}"
+        )
+        try:
+            resp = await self._call_api(
+                "POST",
+                "/v1/openapi/delivery/v1/SellerDeliveryProgressStateInform",
+                body=payload,
+            )
+            result_list = (
+                resp.get("deliveryProgressStateList") or resp.get("data") or []
+            )
+            if isinstance(result_list, list) and result_list:
+                item = result_list[0]
+                rslt_cd = str(item.get("rsltCd", ""))
+                rslt_msg = item.get("rsltMsg", "")
+                if rslt_cd == "0000":
+                    logger.info(
+                        f"[롯데ON][교환재배송] 성공: odNo={od_no} clmNo={clm_no}"
+                    )
+                    return True
+                else:
+                    logger.warning(
+                        f"[롯데ON][교환재배송] 실패: rsltCd={rslt_cd} rsltMsg={rslt_msg}"
+                    )
+                    return False
+            logger.info(f"[롯데ON][교환재배송] 응답: {resp}")
+            return True
+        except Exception as e:
+            logger.warning(
+                f"[롯데ON] 교환재배송 실패: odNo={od_no} clmNo={clm_no} / {e}"
+            )
+            return False
+
+    async def approve_return(self, od_no: str, clm_no: str, items: list[dict]) -> bool:
+        """반품 승인 처리 (returnRequestApproval).
+
+        Args:
+          od_no: 주문번호
+          clm_no: 클레임번호
+          items: itemList — 각 항목에 odSeq, procSeq, orglProcSeq 필수
+        """
+        payload = {
+            "odNo": od_no,
+            "clmNo": clm_no,
+            "itemList": items,
+        }
+        resp = await self._call_api(
+            "POST",
+            "/v1/openapi/claim/v1/returningOpenApi/returnRequestApproval",
+            body=payload,
+        )
+        rc = str(resp.get("returnCode", ""))
+        if rc != "0000":
+            msg = resp.get("message", f"returnCode={rc}")
+            raise Exception(f"롯데ON 반품 승인 오류: {msg}")
+        return True
+
+    async def reject_return(
+        self, order_no: str, reason: str = "", clm_no: str = ""
+    ) -> bool:
+        """반품 거부 처리 (returnRequestReject).
+
+        Args:
+          order_no: 주문번호 (odNo)
+          reason: 거부 사유
+          clm_no: 클레임번호 (선택 — 전달 시 더 정확한 처리)
+        """
+        payload: dict[str, Any] = {
+            "odNo": order_no,
+            "clmRsnCnts": reason or "판매자 반품 거부",
+        }
+        if clm_no:
+            payload["clmNo"] = clm_no
+        try:
+            await self._call_api(
+                "POST",
+                "/v1/openapi/claim/v1/returningOpenApi/returnRequestReject",
+                body=payload,
+            )
+            logger.info(f"[롯데ON] 반품 거부 완료: odNo={order_no} clmNo={clm_no}")
+            return True
+        except Exception as e:
+            logger.warning(f"[롯데ON] 반품 거부 실패: odNo={order_no} / {e}")
+            return False
+
+    # ------------------------------------------------------------------
+    # CS 문의 (Q&A)
+    # ------------------------------------------------------------------
+
+    async def get_qna_list(self, days: int = 30) -> list[dict[str, Any]]:
+        """판매자 문의 목록 조회.
+
+        POST /v1/openapi/customer/v1/getSellerInquiryList
+
+        Args:
+          days: 조회 기간 (일 수, 기본 30일)
+
+        Returns:
+          rsltList 항목 리스트. 주요 필드:
+            slrInqNo        — 판매자문의번호 (market_inquiry_no)
+            vocLcsfCd       — 문의유형코드 (IC00000263~IC00000621)
+            vocTypNm        — 문의유형명
+            slrInqProcStatCd — 처리상태 (ANS=답변, UNANS=미답변)
+            inqCnts         — 문의내용
+            ansCnts         — 답변내용
+            odNo            — 주문번호
+            pdNo            — 상품번호 (market_product_no)
+            pdNm            — 상품명
+            spdNo           — 판매자상품번호
+            accpDttm        — 접수일시 (yyyyMMddHHmmss)
+            procDttm        — 처리일시
+        """
+
+        now = datetime.now()
+        end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
+        start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
+
+        body = {
+            "scStrtDt": start_dt,
+            "scEndDt": end_dt,
+            "pageNo": "1",
+            "rowsPerPage": "100",
+        }
+
+        try:
+            result = await self._call_api(
+                "POST", "/v1/openapi/customer/v1/getSellerInquiryList", body=body
+            )
+            items = result.get("rsltList") or []
+            if not isinstance(items, list):
+                items = []
+            logger.info(
+                f"[롯데ON][CS] 판매자문의 조회 완료: {len(items)}건 (기간: {start_dt}~{end_dt})"
+            )
+            return items
+        except LotteonApiError as e:
+            logger.warning(f"[롯데ON][CS] 판매자문의 목록 조회 실패: {e}")
+            return []
+
+    async def answer_qna(self, qna_no: str, content: str) -> dict[str, Any]:
+        """판매자 문의 답변 등록/수정.
+
+        POST /v1/openapi/customer/v1/updateSellerInquiry
+        (등록과 수정 모두 동일 엔드포인트 사용)
+
+        Args:
+          qna_no: 판매자문의번호 (slrInqNo)
+          content: 답변 내용 (ansCnts)
+
+        Returns:
+          응답 dict (rsltCd, rsltMsg)
+        """
+        body = {
+            "slrInqNo": qna_no,
+            "ansCnts": content,
+        }
+        result = await self._call_api(
+            "POST", "/v1/openapi/customer/v1/updateSellerInquiry", body=body
+        )
+        logger.info(f"[롯데ON][CS] 판매자문의 답변 완료: slrInqNo={qna_no}")
+        return result
+
+    async def update_qna_answer(
+        self, qna_no: str, answer_no: str, content: str
+    ) -> dict[str, Any]:
+        """판매자 문의 답변 수정 (등록과 동일 엔드포인트).
+
+        POST /v1/openapi/customer/v1/updateSellerInquiry
+
+        Args:
+          qna_no: 판매자문의번호
+          answer_no: 미사용 (롯데ON은 문의번호로만 식별)
+          content: 수정할 답변 내용
+        """
+        return await self.answer_qna(qna_no, content)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # CS — 상품 Q&A
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def get_product_qna_list(self, days: int = 30) -> list[dict[str, Any]]:
+        """상품 Q&A 목록 조회.
+
+        GET /v1/openapi/product/v1/product/qna/list
+
+        Args:
+          days: 조회 기간 (일 수, 기본 30일)
+
+        Returns:
+          목록 항목 리스트. 주요 필드:
+            qnaNo           — Q&A 번호 (market_inquiry_no: PQNA_{qnaNo})
+            qnaCnts         — 질문 내용
+            ansCnts         — 답변 내용
+            ansStatCd       — 답변 상태 (ANS=답변완료, UNANS=미답변)
+            pdNo            — 상품번호 (market_product_no)
+            pdNm            — 상품명
+            spdNo           — 판매자상품번호
+            buyerId         — 구매자 ID
+            regDttm         — 등록일시 (yyyyMMddHHmmss)
+        """
+
+        now = datetime.now()
+        end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
+        start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
+
+        try:
+            result = await self._call_api(
+                "GET",
+                "/v1/openapi/product/v1/product/qna/list",
+                params={
+                    "scStrtDt": start_dt,
+                    "scEndDt": end_dt,
+                    "pageNo": "1",
+                    "rowsPerPage": "100",
+                },
+            )
+            # 응답 구조: rsltList 또는 content 또는 list
+            items = (
+                result.get("rsltList")
+                or result.get("content")
+                or result.get("list")
+                or []
+            )
+            if not isinstance(items, list):
+                items = []
+            logger.info(
+                f"[롯데ON][CS] 상품Q&A 조회 완료: {len(items)}건 (기간: {start_dt}~{end_dt})"
+            )
+            return items
+        except LotteonApiError as e:
+            logger.warning(f"[롯데ON][CS] 상품Q&A 목록 조회 실패: {e}")
+            return []
+
+    async def reply_product_qna(self, qna_no: str, content: str) -> dict[str, Any]:
+        """상품 Q&A 답변 등록/수정.
+
+        POST /v1/openapi/product/v1/product/qna/reply
+
+        Args:
+          qna_no: Q&A 번호 (qnaNo)
+          content: 답변 내용 (ansCnts)
+
+        Returns:
+          응답 dict
+        """
+        body = {
+            "qnaNo": qna_no,
+            "ansCnts": content,
+        }
+        result = await self._call_api(
+            "POST", "/v1/openapi/product/v1/product/qna/reply", body=body
+        )
+        logger.info(f"[롯데ON][CS] 상품Q&A 답변 완료: qnaNo={qna_no}")
+        return result
+
+    # ──────────────────────────────────────────────────────────────────────
+    # CS — 판매자 연락 (Contact)
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def get_contact_list(self, days: int = 30) -> list[dict[str, Any]]:
+        """판매자 연락 목록 조회.
+
+        POST /v1/openapi/customer/v1/getSellerContactList
+
+        Returns:
+          rsltList 항목 리스트. 주요 필드:
+            cntcNo          — 연락번호 (market_inquiry_no)
+            cntcCnts        — 연락 내용
+            ansCnts         — 답변 내용
+            procStatCd      — 처리상태 (ANS/UNANS)
+            odNo            — 주문번호
+            pdNo            — 상품번호
+            pdNm            — 상품명
+            accpDttm        — 접수일시 (yyyyMMddHHmmss)
+            vocLcsfCd       — 문의유형코드
+        """
+
+        now = datetime.now()
+        end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
+        start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
+
+        body = {
+            "scStrtDt": start_dt,
+            "scEndDt": end_dt,
+            "pageNo": "1",
+            "rowsPerPage": "100",
+        }
+        try:
+            result = await self._call_api(
+                "POST", "/v1/openapi/customer/v1/getSellerContactList", body=body
+            )
+            items = result.get("rsltList") or []
+            if not isinstance(items, list):
+                items = []
+            logger.info(
+                f"[롯데ON][CS] 판매자연락 조회 완료: {len(items)}건 (기간: {start_dt}~{end_dt})"
+            )
+            return items
+        except LotteonApiError as e:
+            logger.warning(f"[롯데ON][CS] 판매자연락 목록 조회 실패: {e}")
+            return []
+
+    async def answer_contact(self, contact_no: str, content: str) -> dict[str, Any]:
+        """판매자 연락 답변 등록.
+
+        POST /v1/openapi/customer/v1/updateSellerContact
+
+        Args:
+          contact_no: 연락번호 (cntcNo)
+          content: 답변 내용 (ansCnts)
+        """
+        body = {
+            "cntcNo": contact_no,
+            "ansCnts": content,
+        }
+        result = await self._call_api(
+            "POST", "/v1/openapi/customer/v1/updateSellerContact", body=body
+        )
+        logger.info(f"[롯데ON][CS] 판매자연락 답변 완료: cntcNo={contact_no}")
+        return result
+
+    # ──────────────────────────────────────────────────────────────────────
+    # CS — 보상 요청 (Compensate)
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def get_compensate_list(self, days: int = 30) -> list[dict[str, Any]]:
+        """보상 요청 목록 조회.
+
+        POST /v1/openapi/customer/v1/getSellerCompensateList
+
+        Returns:
+          rsltList 항목 리스트. 주요 필드:
+            compNo          — 보상요청번호 (market_inquiry_no)
+            compCnts        — 보상 요청 내용
+            ansCnts         — 답변/처리 내용
+            procStatCd      — 처리상태
+            odNo            — 주문번호
+            pdNo            — 상품번호
+            pdNm            — 상품명
+            accpDttm        — 접수일시
+        """
+
+        now = datetime.now()
+        end_dt = (now + timedelta(days=1)).strftime("%Y%m%d")
+        start_dt = (now - timedelta(days=days)).strftime("%Y%m%d")
+
+        body = {
+            "scStrtDt": start_dt,
+            "scEndDt": end_dt,
+            "pageNo": "1",
+            "rowsPerPage": "100",
+        }
+        try:
+            result = await self._call_api(
+                "POST", "/v1/openapi/customer/v1/getSellerCompensateList", body=body
+            )
+            items = result.get("rsltList") or []
+            if not isinstance(items, list):
+                items = []
+            logger.info(
+                f"[롯데ON][CS] 보상요청 조회 완료: {len(items)}건 (기간: {start_dt}~{end_dt})"
+            )
+            return items
+        except LotteonApiError as e:
+            logger.warning(f"[롯데ON][CS] 보상요청 목록 조회 실패: {e}")
+            return []
 
 
 class LotteonApiError(Exception):

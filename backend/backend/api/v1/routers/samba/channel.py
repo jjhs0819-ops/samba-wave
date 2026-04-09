@@ -23,7 +23,7 @@ def _write_service(session: AsyncSession) -> SambaChannelService:
 @router.get("", response_model=list[SambaChannel])
 async def list_channels(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=500),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     svc = _read_service(session)

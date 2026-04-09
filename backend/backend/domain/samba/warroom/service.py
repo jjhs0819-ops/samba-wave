@@ -214,7 +214,7 @@ class SambaMonitorService:
         repo = SambaSettingsRepository(self.session)
 
         # probe 결과 조회
-        for site in ["MUSINSA", "KREAM"]:
+        for site in ["MUSINSA", "KREAM", "LOTTEON"]:
             probe_data = None
             row = await repo.find_by_async(key=f"probe_{site}")
             if row and row.value:
