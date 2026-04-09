@@ -1137,7 +1137,7 @@ class JobWorker:
         site = sf.source_site
         filter_id = sf.id
         keyword = sf.keyword or ""
-        requested_count = sf.requested_count or 100
+        requested_count = max(sf.requested_count or 100, 10)
 
         # URL에서 키워드/필터 추출
         _search_kwargs: dict = {}
@@ -1212,6 +1212,20 @@ class JobWorker:
             from backend.domain.samba.proxy.abcmart import ARTSourcingClient
 
             client = ARTSourcingClient()
+        elif site == "GSShop":
+            from backend.core.config import settings as _gs_cfg
+            from backend.domain.samba.proxy.gsshop_sourcing import (
+                GsShopSourcingClient,
+            )
+
+            _gs_proxies: list[str] = []
+            if _gs_cfg.collect_proxy_url:
+                _gs_proxies.append(_gs_cfg.collect_proxy_url.strip())
+            if _gs_cfg.proxy_urls:
+                _gs_proxies.extend(
+                    [p.strip() for p in _gs_cfg.proxy_urls.split(",") if p.strip()]
+                )
+            client = GsShopSourcingClient(proxy_pool=_gs_proxies or None)
 
         # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
         if not client:
@@ -1263,21 +1277,6 @@ class JobWorker:
                 return
             # 확장앱 결과는 검색 API와 동일 포맷으로 처리 (아래 중복필터+저장 로직 공유)
             result = {"products": items_list, "total": len(items_list)}
-            # GSShop: 검색은 확장앱, 상세조회는 서버 HTTP (프록시 3개 로테이션)
-            if site == "GSShop":
-                from backend.core.config import settings as _gs_cfg
-                from backend.domain.samba.proxy.gsshop_sourcing import (
-                    GsShopSourcingClient,
-                )
-
-                _gs_proxies: list[str] = []
-                if _gs_cfg.collect_proxy_url:
-                    _gs_proxies.append(_gs_cfg.collect_proxy_url.strip())
-                if _gs_cfg.proxy_urls:
-                    _gs_proxies.extend(
-                        [p.strip() for p in _gs_cfg.proxy_urls.split(",") if p.strip()]
-                    )
-                client = GsShopSourcingClient(proxy_pool=_gs_proxies or None)
 
         else:
             # 직접 API 검색
@@ -1771,7 +1770,7 @@ class JobWorker:
                 "color": detail.get("color", ""),
                 "manufacturer": detail.get("manufacturer") or item.get("brand", ""),
                 "origin": detail.get("origin", ""),
-                "sex": detail.get("sex", "") or item.get("category2", "") or "남녀공용",
+                "sex": detail.get("sex", "") or "남녀공용",
                 "season": detail.get("season", "") or "사계절",
                 "care_instructions": detail.get("care_instructions", ""),
                 "quality_guarantee": detail.get("quality_guarantee", ""),

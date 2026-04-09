@@ -562,6 +562,8 @@ class GsShopSourcingClient:
                     render_data, product_id, timestamp, now_iso
                 )
                 if result.get("name"):
+                    # PC 페이지에서 제조국/색상/재질 보충
+                    await self._enrich_from_pc(result, product_id, _proxy)
                     return result
 
             # 2순위: JSON-LD 파싱
@@ -607,7 +609,92 @@ class GsShopSourcingClient:
             "free_shipping": raw.get("freeShipping", False),
             "shipping_fee": 0 if raw.get("freeShipping", False) else 3000,
             "origin": raw.get("origin", ""),
+            "style_code": raw.get("modelName", ""),
+            "material": raw.get("material", ""),
+            "color": raw.get("color", ""),
+            "care_instructions": raw.get("careInstructions", ""),
+            "quality_guarantee": raw.get("qualityGuarantee", ""),
         }
+
+    # ------------------------------------------------------------------
+    # PC 페이지 상품정보 보충 (제조국/색상/재질만)
+    # ------------------------------------------------------------------
+
+    async def _enrich_from_pc(
+        self,
+        result: dict[str, Any],
+        product_id: str,
+        proxy: str | None = None,
+    ) -> None:
+        """PC 상세 페이지의 상품정보 테이블에서 누락 필드 보충.
+
+        100개 상품 전수조사 기반 th 변형 패턴:
+        - 소재: "제품 소재 (섬유의 조성...)" (55%), "소재" (12%)
+        - 색상: "공통색상" (55%), "색상" (17%)
+        - 제조국: "제조국" (97%)
+        - 세탁방법: "세탁방법 및 취급시 주의사항" (55%), "취급시 주의사항" (20%)
+        - 품질보증: "품질보증기준" (97%), "품질보증기간" (15%)
+        - 품번: "품명 및 모델명" (15%)
+        """
+        pc_url = f"{self.BASE_PC}/prd/prd.gs?prdid={product_id}"
+        try:
+            _ck: dict[str, Any] = {
+                "timeout": self._timeout,
+                "follow_redirects": True,
+            }
+            if proxy:
+                _ck["proxy"] = proxy
+            async with httpx.AsyncClient(**_ck) as client:
+                resp = await client.get(pc_url, headers=self._headers(mobile=False))
+                if resp.status_code != 200:
+                    return
+                html = resp.text
+        except Exception:
+            return
+
+        # 상품정보 테이블에서 th-td 추출
+        tables = re.findall(r"<table[^>]*>(.*?)</table>", html, re.DOTALL)
+        for table in tables:
+            rows = re.findall(
+                r"<th[^>]*>(.*?)</th>\s*<td[^>]*>(.*?)</td>",
+                table,
+                re.DOTALL,
+            )
+            if len(rows) < 3:
+                continue
+            has_spec = any(
+                "소재" in r[0] or "제조" in r[0] or "색상" in r[0] for r in rows
+            )
+            if not has_spec:
+                continue
+
+            for th_raw, td_raw in rows:
+                th = re.sub(r"<[^>]+>", "", th_raw).strip()
+                td = re.sub(r"<[^>]+>", "", td_raw).strip()
+                td = re.sub(r"\s+", " ", td)
+                if not th or not td:
+                    continue
+                # 제조국
+                if "제조국" in th and not result.get("origin"):
+                    result["origin"] = td
+                # 색상 ("공통색상", "색상")
+                elif "색상" in th and not result.get("color"):
+                    result["color"] = td
+                # 소재/재질 ("제품 소재 (섬유의 조성...)", "소재")
+                elif ("소재" in th or "재질" in th) and not result.get("material"):
+                    result["material"] = td
+                # 세탁방법/취급주의사항
+                elif ("세탁" in th or "취급" in th) and not result.get(
+                    "careInstructions"
+                ):
+                    result["careInstructions"] = td
+                # 품질보증 ("품질보증기준", "품질보증기간")
+                elif "품질보증" in th and not result.get("qualityGuarantee"):
+                    result["qualityGuarantee"] = td
+                # 품명 및 모델명 (품번 폴백)
+                elif "모델명" in th and not result.get("modelName"):
+                    result["modelName"] = td
+            break
 
     # ------------------------------------------------------------------
     # renderJson 파싱 (1순위)
@@ -684,12 +771,16 @@ class GsShopSourcingClient:
         if best_benefit_price <= 0:
             best_benefit_price = sale_price
 
-        # 카테고리
+        # 카테고리 — GNB 대카테고리 매핑 포함
         ctgr = prd.get("ctgrInfo") or {}
         category_levels = []
+        lsect = (ctgr.get("lsectNm") or "").strip()
+        gnb = self.GNB_MAP.get(lsect, "")
+        if gnb:
+            category_levels.append(gnb)
         for key in ["lsectNm", "msectNm", "ssectNm", "dsectNm"]:
             val = ctgr.get(key, "")
-            if val:
+            if val and val.strip() not in category_levels:
                 category_levels.append(val.strip())
         category_str = " > ".join(category_levels)
 
@@ -735,6 +826,13 @@ class GsShopSourcingClient:
         if "참조" in origin or "상세" in origin:
             origin = ""
 
+        # 모델명 (품번) — renderJson 없으면 상품명에서 영숫자 코드 추출
+        model_name = prd.get("modelNm", "").strip()
+        if not model_name and name:
+            _code_m = re.search(r"[A-Z]\w{5,}", name)
+            if _code_m:
+                model_name = _code_m.group(0)
+
         return {
             "id": f"col_gsshop_{product_id}_{timestamp}",
             "sourceSite": "GSSHOP",
@@ -761,6 +859,9 @@ class GsShopSourcingClient:
             "freeShipping": free_shipping,
             "sameDayDelivery": quick_delivery,
             "origin": origin,
+            "modelName": model_name,
+            "material": "",
+            "color": "",
             "collectedAt": now_iso,
             "updatedAt": now_iso,
             "status": "collected",
