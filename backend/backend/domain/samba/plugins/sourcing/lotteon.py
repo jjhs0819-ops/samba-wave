@@ -472,7 +472,6 @@ class LotteonSourcingPlugin(SourcingPlugin):
         is_sold_out = detail.get("isOutOfStock", False) or detail.get(
             "isSoldOut", False
         )
-        new_sale_status = "sold_out" if is_sold_out else "in_stock"
 
         # 옵션 데이터 변환
         new_options = None
@@ -487,6 +486,23 @@ class LotteonSourcingPlugin(SourcingPlugin):
                 }
                 for opt in raw_options
             ]
+
+        # 전 옵션 품절 → sold_out 승격
+        # 롯데ON pbf API는 상품 overall isOutOfStock을 정확히 반환하지 않아
+        # 옵션 단위 disabled/stock 플래그로만 판단 가능한 경우가 있음
+        if not is_sold_out and raw_options:
+            _all_opts_sold = all(
+                (int(o.get("stock", 0) or 0) <= 0) or bool(o.get("isSoldOut"))
+                for o in raw_options
+            )
+            if _all_opts_sold:
+                is_sold_out = True
+                logger.info(
+                    f"[LOTTEON] 전 옵션 품절 → sold_out 승격: {site_product_id} "
+                    f"({len(raw_options)}개 옵션)"
+                )
+
+        new_sale_status = "sold_out" if is_sold_out else "in_stock"
 
         # ── 변동 판정 ──
         old_sale = getattr(product, "sale_price", 0) or 0
