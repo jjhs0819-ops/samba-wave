@@ -47,7 +47,7 @@ class BackendSettings(BaseSettings):
     jwt_algorithm: str = "HS256"
 
     # Token expiration settings
-    access_token_expire_minutes: int = 720  # 12 hours
+    access_token_expire_minutes: int = 43200  # 30일
     refresh_token_expire_days: int = 30
 
     # ===========================================
