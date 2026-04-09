@@ -25,6 +25,16 @@ import httpx
 from backend.utils.logger import logger
 
 
+# ── 롯데ON 쿠키 캐시 (확장앱→서버 동기화 후 benefits API에 사용) ──
+_lotteon_cookie_cache: str = ""
+
+
+def set_lotteon_cookie(cookie: str) -> None:
+    """확장앱에서 수신한 롯데ON 쿠키를 모듈 캐시에 설정."""
+    global _lotteon_cookie_cache
+    _lotteon_cookie_cache = cookie
+
+
 class RateLimitError(Exception):
     """롯데ON 차단 감지 (429/403)."""
 
@@ -1258,3 +1268,296 @@ class LotteonSourcingClient:
             digits = re.sub(r"[^\d]", "", value)
             return int(digits) if digits else 0
         return 0
+
+    # ── pbf API 클라이언트 (커넥션 풀 재사용) ─────────────────────
+
+    PBF_BASE = "https://pbf.lotteon.com"
+
+    _pbf_shared_client: Optional[httpx.AsyncClient] = None
+
+    async def _get_pbf_client(self) -> httpx.AsyncClient:
+        """pbf refresh용 공유 클라이언트 (커넥션 풀 재사용으로 TCP 핸드셰이크 절감)."""
+        if self._pbf_shared_client is None or self._pbf_shared_client.is_closed:
+            LotteonSourcingClient._pbf_shared_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(15.0, connect=5.0),
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            )
+        return self._pbf_shared_client
+
+    async def fetch_pbf_standalone(self, sitm_no: str) -> Optional[dict[str, Any]]:
+        """pbf.lotteon.com API — 공유 클라이언트로 커넥션 풀 재사용."""
+        client = await self._get_pbf_client()
+        return await self._fetch_pbf_detail(sitm_no, client)
+
+    async def fetch_qapi_price(self, spd_no: str) -> Optional[dict[str, Any]]:
+        """qapi 검색으로 프로모션 최종가 조회 — productId 매칭.
+
+        Returns:
+          {"original": 81750, "final": 65400} 또는 None
+        """
+        try:
+            url = (
+                f"{self.BASE}/csearch/search/search?render=qapi&platform=pc"
+                f"&collection_id=201&q={spd_no}&mallId=2&u2=0&u3=5"
+            )
+            qapi_headers = {**self.HEADERS, "Accept": "application/json, */*"}
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=True
+            ) as client:
+                resp = await client.get(url, headers=qapi_headers)
+                if resp.status_code != 200:
+                    return None
+                data = resp.json()
+                items = data.get("itemList", [])
+                for item in items:
+                    pid = item.get("productId", "")
+                    if pid == spd_no:
+                        price_map: dict[str, int] = {}
+                        for p in item.get("priceInfo", []):
+                            price_map[p.get("type", "")] = p.get("num", 0)
+                        return {
+                            "original": price_map.get("original", 0),
+                            "final": price_map.get("final", 0),
+                        }
+        except Exception as e:
+            logger.debug(f"[LOTTEON] qapi 가격 조회 실패: {spd_no} — {e}")
+        return None
+
+    async def fetch_option_stock(
+        self,
+        pbf_data: dict[str, Any],
+        spd_no: str = "",
+        sitm_no: str = "",
+    ) -> Optional[list[dict[str, Any]]]:
+        """option/mapping API로 옵션별 실재고 조회.
+
+        Returns:
+          [{"name": "250", "stock": 6, "isSoldOut": False}, ...] 또는 None
+        """
+        basic = pbf_data.get("basicInfo") or {}
+        spd_no = spd_no or str(basic.get("spdNo", "") or "").strip()
+        sitm_no = sitm_no or str(basic.get("sitmNo", "") or "").strip()
+        tr_no = str(basic.get("trNo", "") or "").strip()
+        tr_grp_cd = str(basic.get("trGrpCd", "") or "").strip()
+        lrtr_no = str(basic.get("lrtrNo", "") or "").strip()
+        pd_no = str(basic.get("pdNo", "") or spd_no).strip()
+        if not spd_no or not sitm_no:
+            return None
+
+        url = (
+            f"{self.PBF_BASE}/product/v2/detail/option/mapping"
+            f"/{spd_no}/{sitm_no}"
+            f"?trNo={tr_no}&trGrpCd={tr_grp_cd}"
+            f"&lrtrNo={lrtr_no}&pdNo={pd_no}"
+        )
+        try:
+            client = await self._get_pbf_client()
+            resp = await client.get(
+                url,
+                headers={
+                    **self.HEADERS,
+                    "Accept": "application/json, text/plain, */*",
+                    "Origin": "https://www.lotteon.com",
+                },
+            )
+            if resp.status_code != 200:
+                return None
+            body = resp.json()
+            if str(body.get("returnCode")) != "200":
+                return None
+
+            data = body.get("data") or {}
+            opt_info = data.get("optionInfo") or {}
+            opt_list = opt_info.get("optionList") or []
+            mapping = opt_info.get("optionMappingInfo") or {}
+            if not opt_list or not mapping:
+                return None
+
+            options: list[dict[str, Any]] = []
+            price_info = pbf_data.get("priceInfo") or {}
+            sl_prc = self._safe_int(price_info.get("slPrc", 0))
+
+            for group in opt_list:
+                for opt in group.get("options", []):
+                    label = opt.get("label", "").strip()
+                    value = str(opt.get("value", ""))
+                    disabled = bool(opt.get("disabled", False))
+                    m = mapping.get(value, {})
+                    stk_qty = int(m.get("stkQty", 0) or 0)
+                    is_sold_out = disabled or stk_qty == 0
+                    options.append(
+                        {
+                            "name": label,
+                            "price": sl_prc,
+                            "stock": 0 if is_sold_out else stk_qty,
+                            "isSoldOut": is_sold_out,
+                        }
+                    )
+
+            if options:
+                logger.info(
+                    f"[LOTTEON] option/mapping 재고: {spd_no} → "
+                    f"{len(options)}개 옵션 "
+                    f"(재고: {[o['stock'] for o in options]})"
+                )
+            return options if options else None
+        except Exception as e:
+            logger.debug(f"[LOTTEON] option/mapping 실패: {spd_no} — {e}")
+        return None
+
+    async def fetch_benefit_price(
+        self,
+        pbf_data: dict[str, Any],
+        spd_no: str = "",
+        sitm_no: str = "",
+    ) -> Optional[int]:
+        """favorBox/benefits API로 최대혜택가(totAmt) 조회.
+
+        Returns:
+          최대혜택가(int) 또는 None (실패 시)
+        """
+        basic = pbf_data.get("basicInfo") or {}
+        price = pbf_data.get("priceInfo") or {}
+        spd_no = spd_no or str(basic.get("spdNo", "") or "").strip()
+        sitm_no = sitm_no or str(basic.get("sitmNo", "") or "").strip()
+        sl_prc = self._safe_int(price.get("slPrc", 0))
+        if not spd_no or not sitm_no or sl_prc <= 0:
+            logger.info(
+                f"[LOTTEON] benefits API 스킵: spd={spd_no}, sitm={sitm_no}, slPrc={sl_prc}"
+            )
+            return None
+
+        body = {
+            "spdNo": spd_no,
+            "sitmNo": sitm_no,
+            "slPrc": sl_prc,
+            "slQty": 1,
+            "trGrpCd": str(basic.get("trGrpCd", "") or "SR"),
+            "trNo": str(basic.get("trNo", "") or ""),
+            "lrtrNo": str(basic.get("lrtrNo", "") or ""),
+            "brdNo": str(basic.get("brdNo", "") or ""),
+            "scatNo": str(basic.get("scatNo", "") or ""),
+            "strCd": str(basic.get("strCd", "") or ""),
+            # 채널 정보 — 롯데ON 파트너 채널 고정값 (pbf basicInfo에 미포함)
+            "chCsfCd": str(basic.get("chCsfCd", "") or "PA"),
+            "chDtlNo": str(basic.get("chDtlNo", "") or "1025188"),
+            "chNo": str(basic.get("chNo", "") or "100994"),
+            "chTypCd": str(basic.get("chTypCd", "") or "PA07"),
+            "ctrtTypCd": str(basic.get("ctrtTypCd", "") or "A"),
+            "afflPdMrgnRt": basic.get("afflPdMrgnRt"),
+            "afflPdLwstMrgnRt": basic.get("afflPdLwstMrgnRt"),
+            "sfcoPdMrgnRt": self._safe_int(basic.get("sfcoPdMrgnRt", 0)),
+            "sfcoPdLwstMrgnRt": self._safe_int(basic.get("sfcoPdLwstMrgnRt", 0)),
+            "pcsLwstMrgnRt": self._safe_int(basic.get("pcsLwstMrgnRt", 0)),
+            "dmstOvsDvDvsCd": str(basic.get("dmstOvsDvDvsCd", "") or "DMST"),
+            "dvPdTypCd": str(basic.get("dvPdTypCd", "") or "GNRL"),
+            "dvCst": self._safe_int(basic.get("dvCst", 0)),
+            "dvCstStdQty": self._safe_int(basic.get("dvCstStdQty", 0)),
+            "stkMgtYn": str(basic.get("stkMgtYn", "") or "Y"),
+            "thdyPdYn": str(basic.get("thdyPdYn", "") or "N"),
+            "fprdDvPdYn": str(basic.get("fprdDvPdYn", "") or "N"),
+            "mallNo": str(basic.get("mallNo", "") or "1"),
+            "cartDvsCd": "01",
+            "infwMdiaCd": "PC",
+            "screenType": "PRODUCT",
+            "maxPurQty": self._safe_int(basic.get("maxPurQty", 0)) or 999999,
+            "aplyBestPrcChk": "Y",
+            "aplyStdDttm": datetime.now().strftime("%Y%m%d%H%M%S"),
+            "pyMnsExcpLst": [],
+            "discountApplyProductList": [],
+        }
+
+        url = f"{self.PBF_BASE}/product/v2/extlmsa/promotion/favorBox/benefits"
+        _cookie_len = (
+            len(_lotteon_cookie_cache.split(";")) if _lotteon_cookie_cache else 0
+        )
+        logger.info(
+            f"[LOTTEON] benefits API 호출: {spd_no}, "
+            f"쿠키={'있음(' + str(_cookie_len) + '개)' if _lotteon_cookie_cache else '없음'}, "
+            f"slPrc={sl_prc:,}"
+        )
+        try:
+            client = await self._get_pbf_client()
+            _benefit_headers = {
+                **self.HEADERS,
+                "Accept": "application/json, text/plain, */*",
+                "Content-Type": "application/json",
+                "Origin": "https://www.lotteon.com",
+            }
+            if _lotteon_cookie_cache:
+                _benefit_headers["Cookie"] = _lotteon_cookie_cache
+            resp = await client.post(
+                url,
+                json=body,
+                headers=_benefit_headers,
+            )
+            if resp.status_code != 200:
+                logger.warning(
+                    f"[LOTTEON] benefits API HTTP {resp.status_code}: {resp.text[:200]}"
+                )
+                return None
+            result = resp.json()
+            if str(result.get("returnCode")) != "200":
+                logger.warning(
+                    f"[LOTTEON] benefits API 실패: {result.get('message', '')[:100]}"
+                )
+                return None
+            data = result.get("data") or {}
+            tot_amt = data.get("totAmt")
+            if tot_amt is not None and float(tot_amt) > 0:
+                benefit = int(float(tot_amt))
+                logger.info(
+                    f"[LOTTEON] benefits API 혜택가: {spd_no} → {benefit:,}"
+                    f" (정가={sl_prc:,}, 할인={int(float(data.get('totDcAmt', 0))):,})"
+                )
+                return benefit
+        except Exception as e:
+            logger.debug(f"[LOTTEON] benefits API 실패: {spd_no} — {e}")
+        return None
+
+    async def _fetch_pbf_detail(
+        self, sitm_no: str, client: httpx.AsyncClient
+    ) -> Optional[dict[str, Any]]:
+        """pbf.lotteon.com API로 옵션/재고/이미지 데이터 조회."""
+        url = f"{self.PBF_BASE}/product/v2/detail/search/base/sitm/{sitm_no}"
+        pbf_headers = {
+            **self.HEADERS,
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://www.lotteon.com",
+        }
+        try:
+            resp = await client.get(url, headers=pbf_headers)
+            if resp.status_code != 200:
+                return None
+            body = resp.json()
+            if body.get("returnCode") != "200" and body.get("returnCode") != 200:
+                return None
+            return body.get("data")
+        except Exception as e:
+            logger.debug(f"[LOTTEON] pbf API 실패: {sitm_no} — {e}")
+            return None
+
+    async def _fetch_pbf_pd_detail(
+        self, pd_no: str, client: httpx.AsyncClient
+    ) -> Optional[dict[str, Any]]:
+        """pbf /base/pd/ API — artlInfo(고시정보), dispCategoryInfo 포함."""
+        url = (
+            f"{self.PBF_BASE}/product/v2/detail/search/base/pd"
+            f"/{pd_no}?isNotContainOptMapping=true"
+        )
+        pbf_headers = {
+            **self.HEADERS,
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://www.lotteon.com",
+        }
+        try:
+            resp = await client.get(url, headers=pbf_headers)
+            if resp.status_code != 200:
+                return None
+            body = resp.json()
+            if body.get("returnCode") != "200" and body.get("returnCode") != 200:
+                return None
+            return body.get("data")
+        except Exception as e:
+            logger.debug(f"[LOTTEON] pbf pd API 실패: {pd_no} — {e}")
+            return None
