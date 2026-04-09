@@ -1381,15 +1381,25 @@ async def brand_refresh(
             )
             categories = scan_result.get("categories", [])
         else:
-            # MUSINSA (기존 로직)
-            from backend.domain.samba.proxy.musinsa import MusinsaClient
+            # MUSINSA — 쿠키 로드 후 통합 스캔 방식 사용
+            from backend.domain.samba.forbidden.model import SambaSettings
+            from sqlmodel import select as sql_select
 
-            client = MusinsaClient()
-            categories = await client.scan_brand_categories(
-                brand=req.brand,
-                gf=req.gf,
-                keyword=keyword,
+            try:
+                row = (
+                    await session.execute(
+                        sql_select(SambaSettings).where(
+                            SambaSettings.key == "musinsa_cookie"
+                        )
+                    )
+                ).scalar_one_or_none()
+                cookie = (row.value if row and row.value else "") or ""
+            except Exception:
+                cookie = ""
+            scan_result = await _scan_musinsa_categories(
+                keyword, req.brand, req.gf, cookie
             )
+            categories = scan_result.get("categories", [])
     except Exception as e:
         raise HTTPException(500, f"카테고리 스캔 실패: {e}")
 
@@ -2134,27 +2144,21 @@ async def brand_scan(
         return await plugin.scan_categories(keyword, selected_brands=selected)
 
     if body.source_site == "MUSINSA":
-        # 무신사 쿠키 로드
-        from backend.domain.samba.forbidden.model import SambaSettings
-        from sqlmodel import select as sql_select
+        # 무신사 — 필터 API 재귀 탐색 방식으로 전체 카테고리별 상품 수 조회
+        from backend.domain.samba.proxy.musinsa import MusinsaClient
 
-        try:
-            row = (
-                await session.execute(
-                    sql_select(SambaSettings).where(
-                        SambaSettings.key == "musinsa_cookie"
-                    )
-                )
-            ).scalar_one_or_none()
-            cookie = (row.value if row and row.value else "") or ""
-        except Exception:
-            cookie = ""
-        if not cookie:
-            raise HTTPException(
-                400,
-                "무신사 쿠키가 없습니다. 확장앱에서 무신사 로그인 후 다시 시도하세요.",
-            )
-        return await _scan_musinsa_categories(keyword, body.brand, body.gf, cookie)
+        client = MusinsaClient()
+        categories = await client.scan_brand_categories(
+            brand=body.brand,
+            gf=body.gf,
+            keyword=keyword,
+        )
+        total = sum(c["count"] for c in categories)
+        return {
+            "categories": categories,
+            "total": total,
+            "groupCount": len(categories),
+        }
 
     if body.source_site in ("ABCmart", "GrandStage"):
         from backend.domain.samba.plugins.sourcing.abcmart import AbcMartPlugin
