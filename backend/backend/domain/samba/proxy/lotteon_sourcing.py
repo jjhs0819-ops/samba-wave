@@ -1561,4 +1561,3 @@ class LotteonSourcingClient:
         except Exception as e:
             logger.debug(f"[LOTTEON] pbf pd API 실패: {pd_no} — {e}")
             return None
-
