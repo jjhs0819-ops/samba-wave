@@ -132,19 +132,49 @@ export default function ReturnsPage() {
 
   // 가져오기 버튼 — 마켓 동기화 후 DB 데이터 로드
   const loadReturns = async () => {
-    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    setLogMessages(prev => [...prev, `[${now}] 반품교환 데이터 동기화 중...`])
-    try {
-      const syncResult = await returnApi.syncFromMarkets(30, syncAccountId || undefined)
-      const ts = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-      for (const r of syncResult.results) {
-        if (r.status === 'success') {
-          setLogMessages(prev => [...prev, `[${ts}] ${r.account}: ${r.fetched ?? 0}건 조회, ${r.synced ?? 0}건 신규`])
-        } else if (r.status === 'error') {
-          setLogMessages(prev => [...prev, `[${ts}] ${r.account}: 오류 — ${r.message}`])
+    const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+
+    // 마켓타입 선택 시 해당 마켓 계정들만 순회 동기화
+    if (syncAccountId.startsWith('type:')) {
+      const marketType = syncAccountId.replace('type:', '')
+      const marketAccs = accounts.filter(a => a.market_type === marketType)
+      const marketName = marketAccs[0]?.market_name || marketType
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 반품교환 동기화 시작 (${marketAccs.length}개 계정)...`])
+      let totalSynced = 0
+      for (const acc of marketAccs) {
+        try {
+          const syncResult = await returnApi.syncFromMarkets(30, acc.id)
+          for (const r of syncResult.results) {
+            if (r.status === 'success') {
+              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${(r.fetched ?? 0).toLocaleString()}건 조회, ${(r.synced ?? 0).toLocaleString()}건 신규`])
+            } else if (r.status === 'error') {
+              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
+            }
+          }
+          totalSynced += syncResult.total_synced
+        } catch (e) {
+          setLogMessages(prev => [...prev, `[${ts()}] ${acc.market_name}(${acc.seller_id || '-'}) 오류: ${e}`])
         }
       }
-      setLogMessages(prev => [...prev, `[${ts}] 동기화 완료 (신규 ${syncResult.total_synced}건)`])
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 동기화 완료 (신규 ${totalSynced.toLocaleString()}건)`])
+      await load()
+      return
+    }
+
+    // 전체마켓 또는 개별 계정 동기화
+    const isAll = !syncAccountId
+    const label = isAll ? '전체마켓' : (accounts.find(a => a.id === syncAccountId)?.market_name || syncAccountId)
+    setLogMessages(prev => [...prev, `[${ts()}] ${label} 반품교환 동기화 중...`])
+    try {
+      const syncResult = await returnApi.syncFromMarkets(30, isAll ? undefined : syncAccountId)
+      for (const r of syncResult.results) {
+        if (r.status === 'success') {
+          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${(r.fetched ?? 0).toLocaleString()}건 조회, ${(r.synced ?? 0).toLocaleString()}건 신규`])
+        } else if (r.status === 'error') {
+          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
+        }
+      }
+      setLogMessages(prev => [...prev, `[${ts()}] 동기화 완료 (신규 ${syncResult.total_synced.toLocaleString()}건)`])
     } catch (e) {
       setLogMessages(prev => [...prev, `[오류] 동기화 실패: ${e}`])
     }
@@ -368,15 +398,22 @@ export default function ReturnsPage() {
           <button onClick={() => setDateLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: dateLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: dateLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: dateLocked ? '#fff' : '#C5C5C5' }}>고정</button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-          <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0 0.4rem', fontSize: '0.75rem', height: '28px', minWidth: '140px' }}>
-            <option value="">전체 계정</option>
-            {[...new Set(accounts.map(a => a.market_name))].map(market => (
-              <optgroup key={market} label={market}>
-                {accounts.filter(a => a.market_name === market).map(a => (
-                  <option key={a.id} value={a.id}>{a.seller_id || a.business_name || '-'}</option>
-                ))}
-              </optgroup>
-            ))}
+          <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '200px' }}>
+            <option value="">전체마켓보기</option>
+            {(() => {
+              const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
+              const items: { value: string; label: string; isGroup: boolean }[] = []
+              marketTypes.forEach(([type, name]) => {
+                items.push({ value: `type:${type}`, label: name, isGroup: true })
+                accounts.filter(a => a.market_type === type).forEach(a => {
+                  const label = `  ${name} ${a.business_name || ''} ${a.seller_id || ''}`.trim()
+                  items.push({ value: a.id, label, isGroup: false })
+                })
+              })
+              return items.map(item => (
+                <option key={item.value} value={item.value} style={{ fontWeight: item.isGroup ? 600 : 400 }}>{item.label}</option>
+              ))
+            })()}
           </select>
           <button onClick={loadReturns} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
         </div>
@@ -384,22 +421,22 @@ export default function ReturnsPage() {
 
       {/* 필터 바 */}
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
-        <select style={{ ...inputStyle, width: '80px', fontSize: '0.75rem', padding: '0.28rem 0.4rem', height: '28px' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
+        <select style={{ ...inputStyle, width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품</option>
           <option value="customer">고객</option>
+          <option value="product_id">상품번호</option>
           <option value="order_number">주문번호</option>
-          <option value="content">사유</option>
         </select>
-        <input style={{ ...inputStyle, width: '140px', fontSize: '0.75rem', padding: '0.28rem 0.4rem', height: '28px' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadReturns() }} />
-        <button onClick={loadReturns} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px' }}>검색</button>
+        <input style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadReturns() }} />
+        <button onClick={loadReturns} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>검색</button>
         <button
           onClick={handleBatchDelete}
-          style={{ padding: '0 0.6rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #FF6B6B33', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap', height: '28px' }}
+          style={{ padding: '0.22rem 0.6rem', fontSize: '0.75rem', background: 'transparent', border: '1px solid #FF6B6B33', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap' }}
         >
           선택삭제
         </button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
-          <select style={{ ...inputStyle, width: '200px', fontSize: '0.72rem', padding: '0.28rem 0.4rem', height: '28px' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체마켓보기</option>
             {(() => {
               const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
@@ -416,7 +453,10 @@ export default function ReturnsPage() {
               ))
             })()}
           </select>
-          <select style={{ ...inputStyle, width: '110px', fontSize: '0.75rem', padding: '0.28rem 0.4rem', height: '28px' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체내역</option>{['진행중','취소','교환','반품','거부'].map(s => <option key={s} value={s}>{s}</option>)}</select>
+          <select style={{ ...inputStyle, width: '110px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체내역</option>{['진행중','취소','교환','반품','거부'].map(s => <option key={s} value={s}>{s}</option>)}</select>
+          <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
+            <option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
+          </select>
         </div>
       </div>
 
