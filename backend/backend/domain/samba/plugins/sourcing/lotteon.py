@@ -102,13 +102,15 @@ class LotteonSourcingPlugin(SourcingPlugin):
         # spdNo 추출 (sitmNo: LE1220771485_1325086305 → spdNo: LE1220771485)
         _spd = sitm_no.split("_")[0] if "_" in sitm_no else sitm_no
 
-        # benefits API로 최대혜택가 보강 (쿠키 불필요)
-        benefit = await client.fetch_benefit_price(pbf, spd_no=_spd, sitm_no=sitm_no)
+        # benefits + option 병렬 호출 (순차 대비 ~1초 절감)
+        import asyncio
+
+        benefit, opt_stock = await asyncio.gather(
+            client.fetch_benefit_price(pbf, spd_no=_spd, sitm_no=sitm_no),
+            client.fetch_option_stock(pbf, spd_no=_spd, sitm_no=sitm_no),
+        )
         if benefit and benefit > 0:
             detail["bestBenefitPrice"] = benefit
-
-        # option/mapping API로 옵션별 실재고 보강 (탭/DOM 불필요)
-        opt_stock = await client.fetch_option_stock(pbf, spd_no=_spd, sitm_no=sitm_no)
         if opt_stock:
             detail["options"] = opt_stock
 
