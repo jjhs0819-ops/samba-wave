@@ -114,6 +114,17 @@ class GsShopSourcingClient:
     # 검색
     # ------------------------------------------------------------------
 
+    async def search(
+        self,
+        keyword: str,
+        max_count: int = 40,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """worker 호환 검색 — search_products 래핑."""
+        url = kwargs.get("url", "")
+        products = await self.search_products(keyword, size=max_count, url=url)
+        return {"products": products, "total": len(products)}
+
     async def search_products(
         self,
         keyword: str,
