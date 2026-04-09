@@ -532,11 +532,6 @@ class PlayAutoClient:
         # 인증정보 (기본: 해당없음)
         data["CertType"] = "C"
 
-        # 사용자 임의분류 (검색필터명 기반)
-        filter_name = product.get("_search_filter_name", "")
-        if filter_name:
-            data["MyCateName"] = f"SAMBA-WAVE/{filter_name}"
-
         return data
 
 

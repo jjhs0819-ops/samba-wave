@@ -7,15 +7,6 @@ tmp_captures/
 
 # Claude IDE 캐시
 .claude/tsc-cache/
-.omc/
-backend/.omc/
-
-# Codex 세션 파일
-.context/
-backend/.context/
-
-# AI 모델 바이너리 (대용량)
-backend/models/
 
 # 생성 산출물
 backend/backend/static/images/
@@ -487,5 +478,4 @@ sketch
 
 # End of https://www.toptal.com/developers/gitignore/api/react,node
 *.sql
-.gstack/
-backend/cloud-sql-proxy.exe
+backend/gcp-key.json

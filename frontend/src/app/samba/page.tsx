@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { orderApi, collectorApi, type DashboardStats } from "@/lib/samba/api"
+import { orderApi, collectorApi, type SambaOrder, type DashboardStats } from "@/lib/samba/api"
 
 const card = {
   background: 'rgba(30,30,30,0.5)',
@@ -26,6 +26,7 @@ export default function SambaDashboard() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    // DB에서 집계된 결과만 받음 (빠름)
     const [s, counts] = await Promise.all([
       orderApi.dashboardStats().catch(() => null),
       collectorApi.productCounts().catch(() => ({ total: 0, registered: 0, policy_applied: 0, sold_out: 0 })),
@@ -40,98 +41,26 @@ export default function SambaDashboard() {
   // 집계 데이터에서 KPI 추출
   const thisMonthSales = stats?.thisMonth.sales || 0
   const thisMonthCount = stats?.thisMonth.count || 0
-  const thisMonthFulfillmentSales = stats?.thisMonth.fulfillmentSales || 0
-  const thisMonthFulfillment = thisMonthSales > 0 ? Math.round(thisMonthFulfillmentSales / thisMonthSales * 100) : 0
+  const thisMonthFulfillment = stats?.thisMonth.fulfillment || 0
   const lastMonthSales = stats?.lastMonth.sales || 0
-  const lastMonthFulfillmentSales = stats?.lastMonth.fulfillmentSales || 0
-  const lastMonthFulfillment = lastMonthSales > 0 ? Math.round(lastMonthFulfillmentSales / lastMonthSales * 100) : 0
+  const lastMonthFulfillment = stats?.lastMonth.fulfillment || 0
   const salesChange = stats?.salesChange || 0
   const weeklyData = (stats?.weekly || []).map(w => ({
     date: new Date(w.date),
     totalSale: w.sales,
-    fulfillmentSale: w.fulfillmentSales,
-    rate: w.sales > 0 ? Math.round(w.fulfillmentSales / w.sales * 100) : 0,
+    deliveredSale: w.delivered > 0 && w.count > 0 ? Math.round(w.sales * w.delivered / w.count) : 0,
+    rate: w.count > 0 ? Math.round(w.delivered / w.count * 100) : 0,
   }))
-  const monthlyData = stats?.monthly || []
+  const orders = stats?.recentOrders || []
+  const fulfillmentRate = thisMonthFulfillment
+  const totalSales = thisMonthSales
+  const lastMonthDeliveredSales = stats?.lastMonth.delivered && stats?.lastMonth.count
+    ? Math.round(lastMonthSales * stats.lastMonth.delivered / stats.lastMonth.count) : 0
+  const thisMonthDeliveredSales = stats?.thisMonth.delivered && stats?.thisMonth.count
+    ? Math.round(thisMonthSales * stats.thisMonth.delivered / stats.thisMonth.count) : 0
 
   if (loading && !stats) {
     return <div style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</div>
-  }
-
-  // 선 그래프 렌더링
-  const renderLineChart = () => {
-    const W = 720
-    const H = 180
-    const padL = 45
-    const padR = 20
-    const padT = 20
-    const padB = 30
-    const chartW = W - padL - padR
-    const chartH = H - padT - padB
-
-    const allValues = monthlyData.flatMap(d => [d.sales, d.fulfillmentSales])
-    const maxVal = Math.max(...allValues, 1000)
-    // Y축 눈금 계산 (천원 단위)
-    const maxK = Math.ceil(maxVal / 1000)
-    const step = 50000 // 5천만원 단위
-    const yMax = Math.ceil(maxK / step) * step
-    const gridLines = []
-    for (let v = 0; v <= yMax; v += step) gridLines.push(v)
-
-    const getX = (i: number) => padL + (i / 11) * chartW
-    const getY = (v: number) => padT + chartH - (v / 1000 / yMax) * chartH
-
-    // 총매출 선
-    const totalPoints = monthlyData.map((d, i) => `${getX(i)},${getY(d.sales)}`).join(' ')
-    // 이행매출 선
-    const fulfillmentPoints = monthlyData.map((d, i) => `${getX(i)},${getY(d.fulfillmentSales)}`).join(' ')
-
-    return (
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ overflow: 'visible' }}>
-        {/* Y축 눈금선 + 라벨 */}
-        {gridLines.map(v => {
-          const y = padT + chartH - (v / yMax) * chartH
-          return (
-            <g key={v}>
-              <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="#2D2D2D" strokeWidth={1} />
-              <text x={padL - 6} y={y + 4} textAnchor="end" fill="#666" fontSize="8">{v.toLocaleString()}</text>
-            </g>
-          )
-        })}
-        {/* X축 라벨 */}
-        {monthlyData.map((_, i) => (
-          <text key={i} x={getX(i)} y={H - 5} textAnchor="middle" fill={i === month ? '#FF8C00' : '#666'} fontSize="8" fontWeight={i === month ? 700 : 400}>{i + 1}월</text>
-        ))}
-        {/* 총매출 선 */}
-        <polyline points={totalPoints} fill="none" stroke="rgba(255,140,0,0.4)" strokeWidth={2} />
-        {/* 이행매출 선 */}
-        <polyline points={fulfillmentPoints} fill="none" stroke="#FF8C00" strokeWidth={2} />
-        {/* 총매출 점 + 값 */}
-        {monthlyData.map((d, i) => {
-          const x = getX(i)
-          const y = getY(d.sales)
-          const kVal = Math.round(d.sales / 1000)
-          return (
-            <g key={`t-${i}`}>
-              <circle cx={x} cy={y} r={3} fill="rgba(255,140,0,0.4)" />
-              {kVal > 0 && <text x={x} y={y - 10} textAnchor="middle" fill="#888" fontSize="7">{kVal.toLocaleString()}</text>}
-            </g>
-          )
-        })}
-        {/* 이행매출 점 + 값 */}
-        {monthlyData.map((d, i) => {
-          const x = getX(i)
-          const y = getY(d.fulfillmentSales)
-          const kVal = Math.round(d.fulfillmentSales / 1000)
-          return (
-            <g key={`f-${i}`}>
-              <circle cx={x} cy={y} r={3} fill="#FF8C00" />
-              {kVal > 0 && <text x={x} y={y - 10} textAnchor="middle" fill="#FF8C00" fontSize="7" fontWeight={600}>{kVal.toLocaleString()}</text>}
-            </g>
-          )
-        })}
-      </svg>
-    )
   }
 
   return (
@@ -148,13 +77,13 @@ export default function SambaDashboard() {
       {/* KPI 카드 4개 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
         <div style={{ ...card, padding: '1.5rem', borderColor: 'rgba(255,140,0,0.25)' }}>
-          <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '0.5rem' }}>총 매출 (금월)</p>
-          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>₩{thisMonthSales.toLocaleString()}</p>
-          <p style={{ fontSize: '0.8125rem', color: '#888', marginTop: '0.5rem' }}>{thisMonthCount.toLocaleString()}건</p>
+          <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '0.5rem' }}>총 매출 (누적)</p>
+          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>₩{totalSales.toLocaleString()}</p>
+          <p style={{ fontSize: '0.8125rem', color: '#888', marginTop: '0.5rem' }}>{orders.length.toLocaleString()}건</p>
         </div>
         <div style={{ ...card, padding: '1.5rem', borderColor: 'rgba(255,140,0,0.25)' }}>
-          <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '0.5rem' }}>이행매출 (금월)</p>
-          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>₩{thisMonthFulfillmentSales.toLocaleString()}</p>
+          <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '0.5rem' }}>이번 달 주문</p>
+          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>{thisMonthCount.toLocaleString()}건</p>
           <p style={{ fontSize: '0.8125rem', color: '#888', marginTop: '0.5rem' }}>{month + 1}월 기준 · {Number(salesChange) >= 0 ? '▲' : '▼'}{Math.abs(Number(salesChange))}%</p>
         </div>
         <div style={{ ...card, padding: '1.5rem', borderColor: 'rgba(255,140,0,0.25)' }}>
@@ -164,7 +93,7 @@ export default function SambaDashboard() {
         </div>
         <div style={{ ...card, padding: '1.5rem', borderColor: 'rgba(255,140,0,0.25)' }}>
           <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '0.5rem' }}>주문이행율</p>
-          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>{thisMonthFulfillment}%</p>
+          <p style={{ fontSize: '1.75rem', fontWeight: 700, color: '#FF8C00' }}>{fulfillmentRate}%</p>
           <p style={{ fontSize: '0.8125rem', color: '#888', marginTop: '0.5rem' }}>이번 달 기준</p>
         </div>
       </div>
@@ -180,7 +109,7 @@ export default function SambaDashboard() {
                 <th style={{ textAlign: 'left', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>날짜</th>
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>총매출</th>
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>이행매출</th>
-                <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>이행율</th>
+                <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>주문이행율</th>
               </tr>
             </thead>
             <tbody>
@@ -188,7 +117,7 @@ export default function SambaDashboard() {
                 <tr key={d.date.toISOString()} style={{ borderBottom: '1px solid rgba(45,45,45,0.3)' }}>
                   <td style={{ padding: '0.625rem 0', color: '#E5E5E5' }}>{formatShortDate(d.date)}</td>
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{d.totalSale.toLocaleString()}</td>
-                  <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{d.fulfillmentSale.toLocaleString()}</td>
+                  <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{d.deliveredSale.toLocaleString()}</td>
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>{d.rate}%</td>
                 </tr>
               ))}
@@ -205,20 +134,20 @@ export default function SambaDashboard() {
                 <th style={{ textAlign: 'left', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>구분</th>
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>총매출</th>
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>이행매출</th>
-                <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>이행율</th>
+                <th style={{ textAlign: 'right', padding: '0.625rem 0', color: '#888', fontWeight: 500 }}>주문이행율</th>
               </tr>
             </thead>
             <tbody>
               <tr style={{ borderBottom: '1px solid rgba(45,45,45,0.3)' }}>
                 <td style={{ padding: '0.625rem 0', color: '#E5E5E5' }}>금월</td>
                 <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{thisMonthSales.toLocaleString()}</td>
-                <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{thisMonthFulfillmentSales.toLocaleString()}</td>
+                <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{thisMonthDeliveredSales.toLocaleString()}</td>
                 <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>{thisMonthFulfillment}%</td>
               </tr>
               <tr>
                 <td style={{ padding: '0.625rem 0', color: '#E5E5E5' }}>전월</td>
                 <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{lastMonthSales.toLocaleString()}</td>
-                <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{lastMonthFulfillmentSales.toLocaleString()}</td>
+                <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>₩{lastMonthDeliveredSales.toLocaleString()}</td>
                 <td style={{ padding: '0.625rem 0', textAlign: 'right', color: '#E5E5E5' }}>{lastMonthFulfillment}%</td>
               </tr>
             </tbody>
@@ -231,18 +160,37 @@ export default function SambaDashboard() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
           <div>
             <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>월별 매출 추이</h3>
-            <p style={{ fontSize: '0.75rem', color: '#888' }}>{year}년 월간 매출액 (단위: 천원)</p>
+            <p style={{ fontSize: '0.75rem', color: '#888' }}>{year}년 마켓별 월간 매출액</p>
           </div>
           <div style={{ display: 'flex', gap: '1rem' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.75rem', color: '#888' }}>
-              <span style={{ width: '12px', height: '2px', background: 'rgba(255,140,0,0.4)' }} /> 총매출
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.75rem', color: '#FF8C00' }}>
-              <span style={{ width: '12px', height: '2px', background: '#FF8C00' }} /> 이행매출
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#FF8C00' }} /> 전체매출
             </span>
           </div>
         </div>
-        {renderLineChart()}
+        {/* 간이 바 차트 */}
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem', height: '160px', paddingTop: '1rem' }}>
+          {(() => {
+            const monthlySales = Array.from({ length: 12 }, (_, j) =>
+              orders.filter(o => { const d = new Date(o.created_at); return d.getFullYear() === year && d.getMonth() === j })
+                .reduce((s, o) => s + (o.sale_price || 0), 0)
+            )
+            const maxSales = Math.max(...monthlySales, 1)
+            return monthlySales.map((monthSales, i) => {
+            const heightPct = (monthSales / maxSales) * 100
+
+            return (
+              <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.375rem' }}>
+                {monthSales > 0 && (
+                  <span style={{ fontSize: '0.625rem', color: '#888' }}>₩{(monthSales / 1000).toFixed(0)}K</span>
+                )}
+                <div style={{ width: '100%', background: i === month ? '#FF8C00' : 'rgba(255,140,0,0.3)', borderRadius: '4px 4px 0 0', height: `${Math.max(heightPct, 2)}%`, minHeight: '2px', transition: 'height 0.3s' }} />
+                <span style={{ fontSize: '0.6875rem', color: i === month ? '#FF8C00' : '#666' }}>{i + 1}월</span>
+              </div>
+            )
+          })
+          })()}
+        </div>
       </div>
 
     </div>

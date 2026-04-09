@@ -4,7 +4,7 @@
  * Handles all API requests with automatic token management.
  */
 
-import { API_BASE_URL, API_GATEWAY_KEY } from '@/config/api'
+import { API_BASE_URL } from '@/config/api'
 
 export interface LoginResponse {
   user_id: string;
@@ -166,9 +166,6 @@ async function apiRequest<T>(
     ...options.headers,
   };
 
-  if (API_GATEWAY_KEY) {
-    (headers as Record<string, string>)["X-Api-Key"] = API_GATEWAY_KEY;
-  }
   if (accessToken) {
     (headers as Record<string, string>)["Authorization"] =
       `Bearer ${accessToken}`;
@@ -211,21 +208,10 @@ export async function emailLogin(
   email: string,
   password: string
 ): Promise<LoginResponse> {
-  const u = await apiRequest<{
-    id: string;
-    name: string;
-    email: string;
-    token: string;
-  }>("/api/v1/samba/users/login", {
+  return apiRequest<LoginResponse>("/api/v1/auth/email/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
-  return {
-    app_auth_token: u.token,
-    refresh_token: u.token,
-    user_id: u.id,
-    nickname: u.name,
-  };
 }
 
 /**
@@ -236,12 +222,10 @@ export async function emailSignUp(
   password: string,
   username: string
 ): Promise<LoginResponse> {
-  // 가입 → 즉시 로그인
-  await apiRequest<unknown>("/api/v1/samba/users", {
+  return apiRequest<LoginResponse>("/api/v1/auth/email/sign-up", {
     method: "POST",
-    body: JSON.stringify({ email, password, name: username }),
+    body: JSON.stringify({ email, password, username }),
   });
-  return emailLogin(email, password);
 }
 
 /**

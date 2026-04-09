@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
-from backend.utils.logger import logger
 
 
 class CoupangPlugin(MarketPlugin):
@@ -60,80 +59,7 @@ class CoupangPlugin(MarketPlugin):
                 "message": "쿠팡 Access Key/Secret Key가 없습니다.",
             }
 
-        if not vendor_id:
-            return {
-                "success": False,
-                "message": "쿠팡 Vendor ID가 없습니다. 계정 설정을 확인해주세요.",
-            }
-
         client = CoupangClient(access_key, secret_key, vendor_id)
-
-        # ── 경량 가격/재고 업데이트 (오토튠 최적화) ──────────────────────
-        # _skip_image_upload=True → price/stock만 변경된 경우
-        # 반품지/출고지/카테고리 조회 없이 기존 상품 가격/재고만 수정
-        if product.get("_skip_image_upload") and existing_no:
-            try:
-                existing = await client.get_product(existing_no)
-                prod_data = existing.get("data", existing)
-                if isinstance(prod_data, dict):
-                    items = prod_data.get("items") or []
-                else:
-                    items = []
-
-                if not items:
-                    logger.warning(
-                        f"[쿠팡] 경량 업데이트 실패 — items 없음, 전체 수정으로 폴백: {existing_no}"
-                    )
-                else:
-                    new_price = int(product.get("sale_price", 0)) // 10 * 10
-                    new_options = product.get("options") or []
-                    opt_stock_map = {
-                        (o.get("name", "") or o.get("size", "") or ""): o.get(
-                            "stock", 999
-                        )
-                        for o in new_options
-                    }
-
-                    for item in items:
-                        # 가격 업데이트
-                        if new_price > 0:
-                            item["originalPrice"] = new_price
-                            item["salePrice"] = new_price
-                        # 재고 업데이트 (옵션명으로 매칭)
-                        item_name = item.get("itemName", "")
-                        if item_name in opt_stock_map:
-                            stk = opt_stock_map[item_name]
-                        elif new_options:
-                            stk = min(
-                                (o.get("stock", 999) for o in new_options),
-                                default=999,
-                            )
-                        else:
-                            stk = 999
-                        item["maximumBuyCount"] = min(int(stk), 99999)
-
-                    prod_data["items"] = items
-                    await client.update_product(existing_no, prod_data)
-
-                    _parts = []
-                    if new_price > 0:
-                        _parts.append(f"가격({new_price:,}원)")
-                    if new_options:
-                        _parts.append(f"옵션({len(new_options)}건)")
-                    logger.info(
-                        f"[쿠팡] 경량 업데이트 완료: {existing_no} — {', '.join(_parts)}"
-                    )
-                    return {
-                        "success": True,
-                        "message": f"쿠팡 경량 업데이트: {', '.join(_parts)}",
-                        "data": {"sellerProductId": existing_no},
-                    }
-
-            except Exception as e:
-                logger.warning(
-                    f"[쿠팡] 경량 업데이트 실패, 전체 수정으로 폴백: {existing_no} — {e}"
-                )
-                # 폴백: 아래 전체 로직으로 계속 진행
 
         # 카테고리 코드가 숫자가 아니면 쿠팡 API로 동적 조회
         if category_id and not str(category_id).isdigit():
@@ -158,8 +84,8 @@ class CoupangPlugin(MarketPlugin):
             if rc_content:
                 rc = rc_content[0]
                 return_center_code = rc.get("returnCenterCode", "")
-        except Exception as e:
-            logger.warning(f"[쿠팡] 반품지 조회 실패 (vendor_id={vendor_id}): {e}")
+        except Exception:
+            pass
 
         # 출고지 코드 조회
         outbound_code = ""
@@ -174,14 +100,8 @@ class CoupangPlugin(MarketPlugin):
             )
             if ob_content:
                 outbound_code = str(ob_content[0].get("outboundShippingPlaceCode", ""))
-        except Exception as e:
-            logger.warning(f"[쿠팡] 출고지 조회 실패 (vendor_id={vendor_id}): {e}")
-
-        if not return_center_code:
-            return {
-                "success": False,
-                "message": "쿠팡 반품지 코드를 조회할 수 없습니다. Wing 센터에서 반품지를 등록해주세요.",
-            }
+        except Exception:
+            pass
 
         # AS 전화번호 주입은 base._apply_market_settings 에서 처리됨
         data = CoupangClient.transform_product(

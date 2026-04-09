@@ -38,7 +38,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko" className={`${pretendard.variable} scroll-smooth`} suppressHydrationWarning>
-      <body className="min-h-screen bg-background text-foreground font-sans antialiased" suppressHydrationWarning>
+      <body className="min-h-screen bg-background text-foreground font-sans antialiased">
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>

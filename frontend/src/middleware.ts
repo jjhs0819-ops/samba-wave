@@ -4,7 +4,7 @@ import type { NextRequest } from "next/server";
 /**
  * Authentication Middleware
  *
- * JWT 토큰 검증으로 보호된 경로 접근 제어
+ * Protects routes that require authentication.
  */
 
 // Samba 경로 인증 필수 (로그인 없이 접근 차단)
@@ -25,20 +25,6 @@ const PUBLIC_PATHS = [
 
 const ACCESS_TOKEN_COOKIE = "app_access_token";
 
-/** JWT 토큰 payload를 디코딩하여 만료 여부 확인 */
-function isTokenValid(token: string): boolean {
-  try {
-    const parts = token.split('.')
-    if (parts.length !== 3) return false
-    const payload = JSON.parse(atob(parts[1]))
-    if (!payload.exp || !payload.sub) return false
-    // 만료 시간 체크 (30초 여유)
-    return payload.exp * 1000 > Date.now() - 30_000
-  } catch {
-    return false
-  }
-}
-
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -47,32 +33,33 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // JWT 토큰 유효성 검증 (존재 여부가 아닌 실제 값 확인)
+  // Get the access token from cookies (Samba 유저는 samba_user 쿠키 사용)
   const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value;
-  const sambaToken = request.cookies.get("samba_user")?.value;
-  const isAuthenticated =
-    (!!accessToken && isTokenValid(accessToken)) ||
-    (!!sambaToken && isTokenValid(sambaToken));
+  const sambaUser = request.cookies.get("samba_user")?.value;
+  const isAuthenticated = !!accessToken || !!sambaUser;
 
-  // Check if current path is protected (로그인/회원가입 페이지는 제외)
+  // Check if current path is protected (로그인 페이지는 제외)
   const isProtectedPath =
     PROTECTED_PATHS.some((path) => pathname.startsWith(path)) &&
-    !pathname.startsWith("/samba/login") &&
-    !pathname.startsWith("/samba/sign-up");
+    !pathname.startsWith("/samba/login");
+
+  // Check if current path is an auth path (login/signup)
+  const isAuthPath = AUTH_PATHS.some((path) => pathname.startsWith(path));
 
   // Redirect unauthenticated users from protected routes to login
   if (isProtectedPath && !isAuthenticated) {
-    // 만료된 쿠키 삭제
+    // Samba 경로는 Samba 전용 로그인으로 리다이렉트
     const loginPath = pathname.startsWith("/samba") ? "/samba/login" : "/login";
     const loginUrl = new URL(loginPath, request.url);
     loginUrl.searchParams.set("redirect", pathname);
-    const response = NextResponse.redirect(loginUrl);
-    // 유효하지 않은 쿠키 제거
-    if (sambaToken && !isTokenValid(sambaToken)) {
-      response.cookies.delete("samba_user");
-    }
-    return response;
+    return NextResponse.redirect(loginUrl);
   }
+
+  // Optionally redirect authenticated users from auth pages to home
+  // (commented out to allow viewing login page when logged in)
+  // if (isAuthPath && isAuthenticated) {
+  //   return NextResponse.redirect(new URL("/", request.url));
+  // }
 
   return NextResponse.next();
 }

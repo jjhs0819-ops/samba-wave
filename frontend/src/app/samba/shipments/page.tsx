@@ -1,8 +1,8 @@
 'use client'
 
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, fetchWithAuth, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
+import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
 import { MARKET_TYPE_TO_POLICY_KEY as SHARED_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
@@ -16,7 +16,7 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }>
   failed:       { bg: 'rgba(255,107,107,0.15)', text: '#FF6B6B', label: '실패' },
 }
 
-const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
+const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'GrandStage', 'OKmall', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
 // 영문 market_type → 한글 정책 키 (markets.ts에서 import)
 const MARKET_TYPE_TO_POLICY_KEY = SHARED_POLICY_KEY
@@ -83,8 +83,8 @@ export default function ShipmentsPage() {
       try {
         const { API_BASE_URL: apiBase } = await import('@/config/api')
         const [runRes, penRes] = await Promise.all([
-          fetchWithAuth(`${apiBase}/api/v1/samba/jobs?status=running&limit=100`),
-          fetchWithAuth(`${apiBase}/api/v1/samba/jobs?status=pending&limit=100`),
+          fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=100`),
+          fetch(`${apiBase}/api/v1/samba/jobs?status=pending&limit=100`),
         ])
         const runJobs = await runRes.json()
         const penJobs = await penRes.json()
@@ -108,7 +108,7 @@ export default function ShipmentsPage() {
       try {
         const { API_BASE_URL: apiBase } = await import('@/config/api')
         // 실행 중인 Job 확인 (가벼운 호출만)
-        const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`)
+        const res = await fetch(`${apiBase}/api/v1/samba/jobs?status=running&limit=1`)
         const jobs = await res.json()
         const job = Array.isArray(jobs) ? jobs.find((j: Record<string, unknown>) => j.job_type === 'transmit') : null
         if (!job) return
@@ -124,8 +124,8 @@ export default function ShipmentsPage() {
           polling = true
           try {
             const [jr, lr] = await Promise.all([
-              fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}`),
-              fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
+              fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+              fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
             ])
             const j = await jr.json()
             const logData = await lr.json()
@@ -137,11 +137,6 @@ export default function ShipmentsPage() {
             }
             if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
               if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
-              // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
-              const r = (j.result || {}) as Record<string, number>
-              const _ts = new Date().toLocaleTimeString()
-              const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
-              setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${r.success || 0}건, 스킵 ${r.skipped || 0}건, 실패 ${r.failed || 0}건`].slice(-30))
               setTransmitting(false)
               activeJobIdRef.current = ''
               load()
@@ -188,14 +183,11 @@ export default function ShipmentsPage() {
     setSelectedProducts([])
     // URL에서 selected 파라미터 제거
     const url = new URL(window.location.href)
-    if (url.searchParams.has('selected') || url.searchParams.has('fromStorage')) {
+    if (url.searchParams.has('selected')) {
       url.searchParams.delete('selected')
       url.searchParams.delete('sites')
-      url.searchParams.delete('fromStorage')
       url.searchParams.delete('autoAll')
       url.searchParams.delete('priceOnly')
-      sessionStorage.removeItem('shipment_selected')
-      sessionStorage.removeItem('shipment_sites')
       window.history.replaceState({}, '', url.toString())
     }
   }, [])
@@ -215,13 +207,7 @@ export default function ShipmentsPage() {
       scrollParams.search_type = typeMap[searchField] || 'name'
     }
     if (siteFilter !== '전체') scrollParams.source_site = siteFilter
-    if (registrationFilter !== '전체') {
-      if (registrationFilter.startsWith('reg_') || registrationFilter.startsWith('unreg_') || registrationFilter.startsWith('mtype_')) {
-        scrollParams.status = registrationFilter
-      } else {
-        scrollParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
-      }
-    }
+    if (registrationFilter !== '전체') scrollParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
     if (sortBy) scrollParams.sort_by = sortBy
 
     // 선택된 상품이 있으면 해당 상품만 조회, 없으면 scroll API
@@ -254,13 +240,13 @@ export default function ShipmentsPage() {
   useEffect(() => { load() }, [load])
   useEffect(() => { return () => { if (progressRef.current) clearInterval(progressRef.current) } }, [])
 
-  // sessionStorage 또는 URL에서 선택된 상품 ID 자동 적용 + 필터링
-  const fromStorage = searchParams.get('fromStorage') === '1'
-  const preSelectedIds = fromStorage
-    ? (sessionStorage.getItem('shipment_selected')?.split(',') || [])
+  // URL에서 선택된 상품 ID 자동 적용 + 필터링
+  const fromSession = searchParams.get('fromSession') === '1'
+  const preSelectedIds = fromSession
+    ? (typeof window !== 'undefined' ? sessionStorage.getItem('shipment_selected_ids')?.split(',').filter(Boolean) || [] : [])
     : (searchParams.get('selected')?.split(',') || [])
-  const preSelectedSites = fromStorage
-    ? (sessionStorage.getItem('shipment_sites')?.split(',') || [])
+  const preSelectedSites = fromSession
+    ? (typeof window !== 'undefined' ? sessionStorage.getItem('shipment_selected_sites')?.split(',').filter(Boolean) || [] : [])
     : (searchParams.get('sites')?.split(',') || [])
   const autoAll = searchParams.get('autoAll') === '1'
   const priceOnly = searchParams.get('priceOnly') === '1'
@@ -269,14 +255,6 @@ export default function ShipmentsPage() {
     if (initializedRef.current) return
     if (products.length === 0 || policies.length === 0) return
     initializedRef.current = true
-    // sessionStorage 정리
-    if (fromStorage) {
-      sessionStorage.removeItem('shipment_selected')
-      sessionStorage.removeItem('shipment_sites')
-      const url = new URL(window.location.href)
-      url.searchParams.delete('fromStorage')
-      window.history.replaceState({}, '', url.toString())
-    }
 
     if (preSelectedIds.length > 0) {
       const ids = preSelectedIds.filter(id => products.some(p => p.id === id))
@@ -309,7 +287,7 @@ export default function ShipmentsPage() {
           }
         }
       }
-      // 정책에 연결된 마켓: 카테고리 매핑 불필요 — 정책에 연결되어 있으면 자동 체크
+      // 플레이오토: 카테고리 매핑 불필요 — 정책에 연결되어 있으면 자동 체크
       for (const prod of selectedProds) {
         if (!prod?.applied_policy_id) continue
         const policy = policies.find(p => p.id === prod.applied_policy_id)
@@ -321,7 +299,7 @@ export default function ShipmentsPage() {
             : marketPolicy.accountId ? [marketPolicy.accountId] : []
           for (const aid of ids) {
             const acc = accounts.find(a => a.id === aid)
-            if (acc?.market_type) mappedMarketTypes.add(acc.market_type)
+            if (acc?.market_type === 'playauto') mappedMarketTypes.add('playauto')
           }
         }
       }
@@ -378,7 +356,7 @@ export default function ShipmentsPage() {
     // 비상정지 해제 (이전 중단 상태 초기화)
     try {
       const { API_BASE_URL: apiBase } = await import('@/config/api')
-      await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+      await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
     } catch { /* ignore */ }
     // 등록된 마켓이 있는 상품만 필터
     const targetProducts = selectedProducts.filter(pid => {
@@ -457,7 +435,7 @@ export default function ShipmentsPage() {
     // 비상정지 해제 (이전 중단 상태 초기화)
     try {
       const { API_BASE_URL: apiBase } = await import('@/config/api')
-      await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+      await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
     } catch { /* ignore */ }
 
     // 소싱사이트 체크 + 현재 필터에 표시된 상품만 전송
@@ -562,7 +540,7 @@ export default function ShipmentsPage() {
       const allPids = tasks.map(t => t.pid)
       const allAccIds = [...effectiveAccountSet]
       const { API_BASE_URL: apiBase } = await import('@/config/api')
-      const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs`, {
+      const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -587,8 +565,8 @@ export default function ShipmentsPage() {
         polling = true
         try {
           const [jr, lr] = await Promise.all([
-            fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}`),
-            fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
+            fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+            fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
           ])
           const j = await jr.json()
           const logData = await lr.json()
@@ -604,12 +582,7 @@ export default function ShipmentsPage() {
           }
           if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
             if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
-            const _ts = new Date().toLocaleTimeString()
-            if (j.error) addLog(`[${_ts}] ${j.error}`)
-            // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
-            const r = (j.result || {}) as Record<string, number>
-            const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
-            addLog(`[${_ts}] ${statusLabel} — 성공 ${r.success || 0}건, 스킵 ${r.skipped || 0}건, 실패 ${r.failed || 0}건`)
+            if (j.error) addLog(`[${new Date().toLocaleTimeString()}] ${j.error}`)
             setTransmitting(false)
             activeJobIdRef.current = ''
             load()
@@ -660,36 +633,8 @@ export default function ShipmentsPage() {
         {/* 마켓등록 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
           <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>마켓등록</span>
-          <select value={registrationFilter} onChange={e => { onFilterChange(); setRegistrationFilter(e.target.value) }} style={{ ...inputStyle, width: '180px' }}>
-            <option value="전체">전체</option>
-            <optgroup label="── 전체 ──">
-              <option value="품절">품절상품</option>
-              <option value="미등록">미등록상품</option>
-              <option value="등록">등록상품</option>
-            </optgroup>
-            {(() => {
-              const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name] as const)).entries()]
-              return marketTypes.length > 0 ? (
-                <optgroup label="── 마켓구분 ──">
-                  {marketTypes.map(([type, name]) => (
-                    <React.Fragment key={type}>
-                      <option value={`mtype_reg_${type}`}>{name} 등록</option>
-                      <option value={`mtype_unreg_${type}`}>{name} 미등록</option>
-                    </React.Fragment>
-                  ))}
-                </optgroup>
-              ) : null
-            })()}
-            {accounts.length > 0 && (
-              <optgroup label="── 계정구분 ──">
-                {accounts.map(a => (
-                  <React.Fragment key={a.id}>
-                    <option value={`reg_${a.id}`}>{a.market_name}({a.account_label}) 등록</option>
-                    <option value={`unreg_${a.id}`}>{a.market_name}({a.account_label}) 미등록</option>
-                  </React.Fragment>
-                ))}
-              </optgroup>
-            )}
+          <select value={registrationFilter} onChange={e => { onFilterChange(); setRegistrationFilter(e.target.value) }} style={{ ...inputStyle, width: '100px' }}>
+            <option>전체</option><option>등록</option><option>미등록</option><option>품절</option>
           </select>
         </div>
         {/* 실패건처리 */}
@@ -821,10 +766,10 @@ export default function ShipmentsPage() {
                 background: jobQueueStatus.running > 0 ? '#51CF66' : jobQueueStatus.pending > 0 ? '#FAB005' : '#444',
               }} />
               <span style={{ color: jobQueueStatus.running > 0 ? '#51CF66' : jobQueueStatus.pending > 0 ? '#FAB005' : '#555' }}>
-                {jobQueueStatus.running > 0 ? `전송 중 ${jobQueueStatus.running.toLocaleString()}건` : jobQueueStatus.pending > 0 ? `대기 ${jobQueueStatus.pending.toLocaleString()}건` : '대기 잡 없음'}
+                {jobQueueStatus.running > 0 ? `전송 중 ${jobQueueStatus.running}건` : jobQueueStatus.pending > 0 ? `대기 ${jobQueueStatus.pending}건` : '대기 잡 없음'}
               </span>
               {jobQueueStatus.pending > 0 && jobQueueStatus.running > 0 && (
-                <span style={{ color: '#FAB005' }}>+ 대기 {jobQueueStatus.pending.toLocaleString()}건</span>
+                <span style={{ color: '#FAB005' }}>+ 대기 {jobQueueStatus.pending}건</span>
               )}
             </div>
           </div>
@@ -835,7 +780,7 @@ export default function ShipmentsPage() {
               sinceIdxRef.current = 0
               try {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
-                await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' })
+                await fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' })
               } catch { /* ignore */ }
             }} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
             <button onClick={handleMarketDelete} disabled={transmitting}
@@ -849,9 +794,9 @@ export default function ShipmentsPage() {
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   if (activeJobIdRef.current) {
-                    await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
+                    await fetch(`${apiBase}/api/v1/samba/jobs/${activeJobIdRef.current}`, { method: 'DELETE' })
                   }
-                  await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
+                  await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   activeJobIdRef.current = ''
                   setLogMessages(prev => [...prev, `[${ts}] 전송 중단 완료`].slice(-30))
                 } catch {
@@ -870,9 +815,9 @@ export default function ShipmentsPage() {
                 if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
-                  await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
-                  await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
+                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+                  await fetch(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
+                  await fetch(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
                   activeJobIdRef.current = ''
                   setLogMessages(prev => [...prev, `[${ts}] 작업중단 완료`].slice(-30))
                 } catch {
@@ -897,7 +842,7 @@ export default function ShipmentsPage() {
                 if (selectedSites.length === 0) { showAlert('소싱사이트를 선택해주세요'); return }
                 try {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
+                  await fetch(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
                 } catch { /* ignore */ }
                 const allParams: Record<string, string | number> = { skip: 0, limit: 10000 }
                 if (searchText.trim()) {
@@ -906,13 +851,7 @@ export default function ShipmentsPage() {
                   allParams.search_type = typeMap[searchField] || 'name'
                 }
                 if (siteFilter !== '전체') allParams.source_site = siteFilter
-                if (registrationFilter !== '전체') {
-                  if (registrationFilter.startsWith('reg_') || registrationFilter.startsWith('unreg_') || registrationFilter.startsWith('mtype_')) {
-                    allParams.status = registrationFilter
-                  } else {
-                    allParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : registrationFilter === '품절' ? 'sold_out' : ''
-                  }
-                }
+                if (registrationFilter !== '전체') allParams.status = registrationFilter === '등록' ? 'market_registered' : registrationFilter === '미등록' ? 'market_unregistered' : ''
                 try {
                   const all = await collectorApi.scrollProducts(allParams)
                   // 소싱사이트 필터
@@ -949,7 +888,7 @@ export default function ShipmentsPage() {
                   }).join(', ')
                   addLog(`[${ts()}] 전송 시작 — 상품 ${allIds.length.toLocaleString()}개, ${accLabels || '연결 계정 없음'}`)
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
-                  const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs`, {
+                  const res = await fetch(`${apiBase}/api/v1/samba/jobs`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -968,8 +907,8 @@ export default function ShipmentsPage() {
                     polling = true
                     try {
                       const [jr, lr] = await Promise.all([
-                        fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}`),
-                        fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
+                        fetch(`${apiBase}/api/v1/samba/jobs/${jobId}`),
+                        fetch(`${apiBase}/api/v1/samba/jobs/shipment-logs?since_idx=${sinceIdxRef.current}`),
                       ])
                       const j = await jr.json()
                       const logData = await lr.json()
@@ -981,11 +920,6 @@ export default function ShipmentsPage() {
                       }
                       if (j.status === 'completed' || j.status === 'failed') {
                         if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
-                        // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
-                        const r = (j.result || {}) as Record<string, number>
-                        const _ts = new Date().toLocaleTimeString()
-                        const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
-                        setLogMessages(prev => [...prev, `[${_ts}] ${statusLabel} — 성공 ${r.success || 0}건, 스킵 ${r.skipped || 0}건, 실패 ${r.failed || 0}건`].slice(-30))
                         setTransmitting(false)
                         activeJobIdRef.current = ''
                         load()
@@ -1080,7 +1014,7 @@ export default function ShipmentsPage() {
                         onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
                         onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
                       >
-                        [{p.site_product_id || ''}] {p.name} {optCount > 0 ? <span style={{ color: '#DCE0E8' }}>[옵션수:{optCount.toLocaleString()}]</span> : ''}
+                        [{p.site_product_id || ''}] {p.name} {optCount > 0 ? <span style={{ color: '#DCE0E8' }}>[옵션수:{optCount}]</span> : ''}
                       </a>
                     </div>
                     {regMarkets.length > 0 && (
@@ -1158,7 +1092,7 @@ export default function ShipmentsPage() {
               style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage >= Math.ceil(totalCount / pageSize) ? '#444' : '#C5C5C5', cursor: currentPage >= Math.ceil(totalCount / pageSize) ? 'default' : 'pointer' }}
             >▶</button>
             <span style={{ fontSize: '0.72rem', color: '#666', marginLeft: '8px' }}>
-              {totalCount.toLocaleString()}개 중 {((currentPage - 1) * pageSize + 1).toLocaleString()}~{Math.min(currentPage * pageSize, totalCount).toLocaleString()}
+              {totalCount}개 중 {(currentPage - 1) * pageSize + 1}~{Math.min(currentPage * pageSize, totalCount)}
             </span>
           </div>
         )}

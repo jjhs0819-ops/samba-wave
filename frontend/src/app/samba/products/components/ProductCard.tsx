@@ -1,8 +1,8 @@
 'use client'
 
-import React, { useState, useMemo, useCallback } from 'react'
+import React, { useState, useMemo, useCallback, useRef } from 'react'
+import { API_BASE_URL as API_BASE } from '@/config/api'
 import {
-  API_BASE,
   collectorApi,
   shipmentApi,
   proxyApi,
@@ -25,7 +25,7 @@ export const MARKETS = [
   { id: 'gmarket', name: '지마켓', url: 'https://www.esmplus.com', searchUrl: 'https://browse.gmarket.co.kr/search?keyword=' },
   { id: 'auction', name: '옥션', url: 'https://www.esmplus.com', searchUrl: 'https://browse.auction.co.kr/search?keyword=' },
   { id: 'coupang', name: '쿠팡', url: 'https://wing.coupang.com', searchUrl: 'https://www.coupang.com/np/search?q=' },
-  { id: 'lotteon', name: '롯데ON', url: 'https://partner.lotteon.com', searchUrl: 'https://www.lotteon.com/csearch/search/search?render=search&platform=pc&mallId=2&q=' },
+  { id: 'lotteon', name: '롯데ON', url: 'https://partner.lotteon.com', searchUrl: 'https://www.lotteon.com/search/search/search.ecn?render=search&platform=pc&q=' },
   { id: '11st', name: '11번가', url: 'https://spc.11st.co.kr', searchUrl: 'https://search.11st.co.kr/Search.tmall?kwd=' },
   { id: 'toss', name: '토스', url: 'https://seller.toss.im', searchUrl: 'https://shopping.toss.im/search?keyword=' },
   { id: 'ssg', name: '신세계몰', url: 'https://sellerpick.ssg.com', searchUrl: 'https://www.ssg.com/search.ssg?query=' },
@@ -47,8 +47,6 @@ export const MARKETS = [
   { id: 'zoom', name: 'Zum(줌)', url: 'https://zum.com', searchUrl: 'https://search.zum.com/search.zum?method=uni&query=' },
   { id: 'ebay', name: 'eBay', url: 'https://www.ebay.com/sh/ovw', searchUrl: 'https://www.ebay.com/sch/i.html?_nkw=' },
   { id: 'amazon', name: '아마존', url: 'https://sellercentral.amazon.com', searchUrl: 'https://www.amazon.com/s?k=' },
-  // 종합솔루션
-  { id: 'playauto', name: '플레이오토', url: '', searchUrl: '' },
 ]
 
 // 마켓별 상품명 글자수 제한
@@ -83,7 +81,7 @@ function buildMarketProductUrl(marketType: string, sellerId: string, productNo: 
     case 'ssg':
       return `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`
     case 'lotteon':
-      return `https://www.lotteon.com/p/product/${productNo}`
+      return `https://www.lotteon.com/product/productDetail.lotte?spdNo=${productNo}`
     case 'gsshop':
       return `https://www.gsshop.com/prd/prd.gs?prdid=${productNo}`
     case 'lottehome':
@@ -125,7 +123,7 @@ const SOURCE_URL_MAP: Record<string, string> = {
   FASHIONPLUS: 'https://www.fashionplus.co.kr/goods/detail/{id}',
   ABCMART: 'https://www.a-rt.com/product?prdtNo={id}',
   GRANDSTAGE: 'https://www.a-rt.com/product?prdtNo={id}&tChnnlNo=10002',
-  REXMONDE: 'https://www.okmall.com/products/detail/{id}',
+  OKMALL: 'https://www.okmall.com/products/detail/{id}',
   LOTTEON: 'https://www.lotteon.com/product/productDetail.lotte?spdNo={id}',
   GSSHOP: 'https://www.gsshop.com/prd/prd.gs?prdid={id}',
   ELANDMALL: 'https://www.elandmall.com/goods/goods.action?goodsNo={id}',
@@ -173,7 +171,6 @@ function getReplacementRegex(from: string, caseInsensitive: boolean): RegExp {
 export function composeProductName(
   product: SambaCollectedProduct,
   nameRule: SambaNameRule | undefined,
-  deletionWords?: string[],
 ): string {
   if (!nameRule?.name_composition?.length) return product.name
   const seoKws = product.seo_keywords || []
@@ -196,13 +193,6 @@ export function composeProductName(
       if (!r.from) continue
       const regex = getReplacementRegex(r.from, !!r.caseInsensitive)
       composed = composed.replace(regex, r.to || '')
-    }
-  }
-  // 삭제어 적용 (dedup 전에 적용하여 중복 단어 감지 가능하게)
-  if (deletionWords?.length) {
-    const delRegex = getDeletionRegex(deletionWords)
-    if (delRegex) {
-      composed = composed.replace(delRegex, ' ').replace(/\s{2,}/g, ' ').trim()
     }
   }
   // 중복 제거
@@ -287,16 +277,18 @@ const ProductCard = React.memo(function ProductCard({
   const [zoomImg, setZoomImg] = useState<string | null>(null)
   const [zoomIdx, setZoomIdx] = useState(0)
   const [zoomList, setZoomList] = useState<string[]>([])
-  const openZoom = (url: string, images?: string[]) => {
-    const list = images || productImages || p.images || []
-    setZoomList(list)
-    const idx = list.indexOf(url)
+  const [zoomExtraCount, setZoomExtraCount] = useState(0)
+  const openZoom = (url: string, images: string[], extraCount?: number) => {
+    setZoomList(images)
+    if (extraCount !== undefined) setZoomExtraCount(extraCount)
+    const idx = images.indexOf(url)
     setZoomIdx(idx >= 0 ? idx : 0)
     setZoomImg(url)
   }
   // 알림/확인 모달 (alert/confirm 대체)
   const [cardAlert, setCardAlert] = useState<{ msg: string; type?: 'success' | 'error' } | null>(null)
-  const [cardConfirm, setCardConfirm] = useState<{ msg: string; onOk: () => void } | null>(null)
+  const [cardConfirm, setCardConfirm] = useState<{ msg: React.ReactNode; onOk: () => void } | null>(null)
+  const trackDeleteFieldsRef = useRef<string[]>(['images'])
   const [imageTab, setImageTab] = useState<'main' | 'extra' | 'detail' | 'video'>('main')
   const [productImages, setProductImages] = useState<string[]>(p.images || [])
   const [detailImgList, setDetailImgList] = useState<string[]>(
@@ -351,15 +343,14 @@ const ProductCard = React.memo(function ProductCard({
         return sf.target_mappings as Record<string, string>
       }
     }
-    // 2순위: 카테고리 경로 기반 매핑 — product.category(전체 경로) 우선
+    // 2순위: 카테고리 경로 기반 매핑
     const site = p.source_site || ''
-    let leafPath = ''
-    if (p.category) {
-      leafPath = p.category.split('>').map((c: string) => c.trim()).filter(Boolean).join(' > ')
-    } else {
-      leafPath = [p.category1, p.category2, p.category3, p.category4].filter(Boolean).join(' > ')
+    const cats = [p.category1, p.category2, p.category3, p.category4].filter(Boolean) as string[]
+    if (cats.length === 0 && p.category) {
+      cats.push(...p.category.split('>').map(c => c.trim()).filter(Boolean))
     }
-    if (!site || !leafPath) return {}
+    if (!site || cats.length === 0) return {}
+    const leafPath = cats.join(' > ')
     return catMappingMap.get(`${site}::${leafPath}`) || {}
   }, [p.source_site, p.category, p.category1, p.category2, p.category3, p.category4, p.search_filter_id, catMappingMap, filters])
 
@@ -618,6 +609,9 @@ const ProductCard = React.memo(function ProductCard({
         // 상세페이지 이미지: detail_images 필드 우선, 없으면 detail_html에서 추출
         const detailImgs = detailImgList
             ?.map((url: string) => url.startsWith('//') ? `https:${url}` : url) || []
+        // 전체 이미지 리스트 (대표 + 추가 + 상세) — 확대 시 순차 탐색용
+        const allImages = [mainImg, ...extraImgs, ...detailImgs].filter(Boolean)
+        const extraCount = extraImgs.length
 
         const tabStyle = (active: boolean) => ({
           padding: '8px 16px', fontSize: '0.8rem', fontWeight: active ? 600 : 400,
@@ -634,7 +628,7 @@ const ProductCard = React.memo(function ProductCard({
             border: label ? '1px solid rgba(255,140,0,0.2)' : '1px solid #2D2D2D',
           }}>
             <div
-              onClick={() => openZoom(img)}
+              onClick={() => openZoom(img, allImages, extraCount)}
               style={{ width: 64, height: 64, borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer', overflow: 'hidden', background: '#1A1A1A', position: 'relative' }}
             >
               <img src={img} alt="" loading="lazy" referrerPolicy="no-referrer"
@@ -661,13 +655,28 @@ const ProductCard = React.memo(function ProductCard({
               {i < list.length - 1 && <button onClick={() => { const a = [...list]; [a[i+1], a[i]] = [a[i], a[i+1]]; setList(a) }}
                 style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888' }}>▼</button>}
               <button onClick={() => {
+                trackDeleteFieldsRef.current = ['images']
                 setCardConfirm({
-                  msg: '이 이미지를 모든 상품에서 삭제하시겠습니까?',
+                  msg: (<div style={{ textAlign: 'left' }}>
+                    <p style={{ margin: '0 0 12px', textAlign: 'center' }}>이 이미지를 모든 상품에서 삭제하시겠습니까?</p>
+                    <p style={{ margin: '0 0 8px', fontSize: '0.75rem', color: '#888' }}>적용 범위</p>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#CCC', cursor: 'pointer', marginBottom: '4px' }}>
+                      <input type="checkbox" defaultChecked onChange={e => {
+                        const cur = trackDeleteFieldsRef.current
+                        trackDeleteFieldsRef.current = e.target.checked ? [...cur.filter(f => f !== 'images'), 'images'] : cur.filter(f => f !== 'images')
+                      }} /> 추가이미지
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#CCC', cursor: 'pointer' }}>
+                      <input type="checkbox" onChange={e => {
+                        const cur = trackDeleteFieldsRef.current
+                        trackDeleteFieldsRef.current = e.target.checked ? [...cur.filter(f => f !== 'detail_images'), 'detail_images'] : cur.filter(f => f !== 'detail_images')
+                      }} /> 상세이미지
+                    </label>
+                  </div>),
                   onOk: async () => {
                     setCardConfirm(null)
                     try {
-                      const field = list === detailImgList ? 'detail_images' : 'images'
-                      const res = await collectorApi.bulkRemoveImage(img, [field])
+                      const res = await collectorApi.bulkRemoveImage(img, trackDeleteFieldsRef.current)
                       setList(list.filter((_, j) => j !== i))
                       setCardAlert({ msg: `${res.removed}개 상품에서 삭제 완료`, type: 'success' })
                     } catch (e) { setCardAlert({ msg: '추적삭제 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' }) }
@@ -718,7 +727,7 @@ const ProductCard = React.memo(function ProductCard({
                           <div>
                             <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 대표이미지]</p>
                             <img src={mainImg} alt="대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                              onClick={() => openZoom(mainImg)}
+                              onClick={() => openZoom(mainImg, allImages, extraCount)}
                               style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #2D2D2D', cursor: 'pointer' }} />
                             <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{mainImg}</p>
                           </div>
@@ -761,12 +770,28 @@ const ProductCard = React.memo(function ProductCard({
                               color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap',
                             }}>대표이미지 삭제</button>
                             <button onClick={() => {
+                              trackDeleteFieldsRef.current = ['images']
                               setCardConfirm({
-                                msg: '이 대표이미지를 동일 이미지를 가진 모든 상품에서 삭제하시겠습니까?',
+                                msg: (<div style={{ textAlign: 'left' }}>
+                                  <p style={{ margin: '0 0 12px', textAlign: 'center' }}>이 대표이미지를 동일 이미지를 가진 모든 상품에서 삭제하시겠습니까?</p>
+                                  <p style={{ margin: '0 0 8px', fontSize: '0.75rem', color: '#888' }}>적용 범위</p>
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#CCC', cursor: 'pointer', marginBottom: '4px' }}>
+                                    <input type="checkbox" defaultChecked onChange={e => {
+                                      const cur = trackDeleteFieldsRef.current
+                                      trackDeleteFieldsRef.current = e.target.checked ? [...cur.filter(f => f !== 'images'), 'images'] : cur.filter(f => f !== 'images')
+                                    }} /> 추가이미지
+                                  </label>
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#CCC', cursor: 'pointer' }}>
+                                    <input type="checkbox" onChange={e => {
+                                      const cur = trackDeleteFieldsRef.current
+                                      trackDeleteFieldsRef.current = e.target.checked ? [...cur.filter(f => f !== 'detail_images'), 'detail_images'] : cur.filter(f => f !== 'detail_images')
+                                    }} /> 상세이미지
+                                  </label>
+                                </div>),
                                 onOk: async () => {
                                   setCardConfirm(null)
                                   try {
-                                    const res = await collectorApi.bulkRemoveImage(mainImg, ['images'])
+                                    const res = await collectorApi.bulkRemoveImage(mainImg, trackDeleteFieldsRef.current)
                                     const remaining = productImages.slice(1)
                                     setProductImages(remaining)
                                     setCardAlert({ msg: `${res.removed}개 상품에서 대표이미지 추적삭제 완료`, type: 'success' })
@@ -796,7 +821,7 @@ const ProductCard = React.memo(function ProductCard({
                           <div>
                             <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 쿠팡 대표이미지]</p>
                             <img src={coupangMainImg} alt="쿠팡 대표이미지" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                              onClick={() => openZoom(coupangMainImg)}
+                              onClick={() => openZoom(coupangMainImg, allImages, extraCount)}
                               style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #00B4D8', cursor: 'pointer' }} />
                             <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{coupangMainImg}</p>
                           </div>
@@ -971,7 +996,7 @@ const ProductCard = React.memo(function ProductCard({
                     style={{ maxWidth: '85vw', maxHeight: '80vh', objectFit: 'contain', borderRadius: '8px' }}
                   />
                   <span style={{ color: '#888', fontSize: '0.8rem' }}>
-                    {zoomIdx === 0 ? '대표' : `추가 ${zoomIdx}`} ({zoomIdx + 1}/{zoomList.length})
+                    {zoomIdx === 0 ? '대표' : zoomIdx <= zoomExtraCount ? `추가${zoomIdx}` : `상세${zoomIdx - zoomExtraCount}`} ({zoomIdx + 1}/{zoomList.length})
                   </span>
                 </div>
                 {/* 오른쪽 화살표 */}
@@ -1111,7 +1136,7 @@ const ProductCard = React.memo(function ProductCard({
               <span style={{ color: '#FFB84D', fontWeight: 600, flexShrink: 0 }}>₩{fmt(cost)}</span>
             </div>
             <div style={{ color: '#888', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id), deletionWords)}
+              {composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))}
             </div>
           </div>
         </div>
@@ -1233,9 +1258,10 @@ const ProductCard = React.memo(function ProductCard({
               <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
                 <td style={tdLabel}>등록 상품명</td>
                 <td style={tdVal}>
-                  <span style={{ color: '#FFFFFF', fontSize: '0.8rem' }}>{
-                    composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id), deletionWords)
-                  }</span>
+                  <span style={{ color: '#FFFFFF', fontSize: '0.8rem' }}>{renderRegisteredName(
+                    composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id)),
+                    deletionWords
+                  )}</span>
                 </td>
               </tr>
               {/* SEO 검색키워드 */}
@@ -1307,7 +1333,7 @@ const ProductCard = React.memo(function ProductCard({
               {marketPriceList.length > 0 ? marketPriceList.map((m) => {
                 const marketNames = (p.market_names || {}) as Record<string, string>
                 const nameLimit = MARKET_NAME_LIMITS[m.marketName] || 100
-                const composedName = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id), deletionWords)
+                const composedName = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))
                 const currentMarketName = marketNames[m.marketName] || ''
                 // 마켓별 개별 상품명이 없으면 조합명을 글자수 제한에 맞게 자름
                 const displayName = currentMarketName || (composedName.length > nameLimit ? composedName.slice(0, nameLimit) : composedName)
@@ -1326,20 +1352,13 @@ const ProductCard = React.memo(function ProductCard({
                           const mappedCat = productCatMapping[marketKey] || ''
                           return (<>
                             {rm && (<>
-                              {rm.url ? (
-                                <button
-                                  onClick={() => window.open(rm.url, '_blank')}
-                                  style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
-                                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
-                                  title={`${rm.label} 판매페이지`}
-                                >판매페이지</button>
-                              ) : (
-                                <span
-                                  style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', whiteSpace: 'nowrap' }}
-                                  title={`${rm.label} 등록됨`}
-                                >등록됨</span>
-                              )}
+                              <button
+                                onClick={() => window.open(rm.url, '_blank')}
+                                style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
+                                title={`${rm.label} 구매페이지`}
+                              >구매페이지</button>
                               {(() => {
                                 const sentAt = p.last_sent_data?.[rm.accId]?.sent_at
                                 if (!sentAt) return null
@@ -1411,7 +1430,7 @@ const ProductCard = React.memo(function ProductCard({
               {/* 스토어별 상품명 — 마켓가격 행에 없는 등록 스토어도 상품명 편집 가능 */}
               {(() => {
                 const _mktNames = (p.market_names || {}) as Record<string, string>
-                const _composed = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id), deletionWords)
+                const _composed = composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id))
                 // 마켓가격 행에 이미 표시된 마켓명 목록
                 const priceMarketNames = new Set(marketPriceList.map(m => m.marketName))
                 // 등록된 스토어 중 마켓가격 행이 없는 것만 추출

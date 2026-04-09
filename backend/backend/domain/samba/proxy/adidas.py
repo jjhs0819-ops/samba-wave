@@ -104,10 +104,6 @@ class AdidasClient:
         # 할인율
         sale_pct = item.get("salePercentage", 0)
 
-        # 원문링크: link 필드 활용 (예: "/팬츠/KD1499.html")
-        link = item.get("link", "")
-        source_url = f"https://www.adidas.co.kr{link}" if link else ""
-
         return {
             "site_product_id": item.get("productId", ""),
             "name": item.get("displayName", "") or item.get("subTitle", ""),
@@ -116,7 +112,6 @@ class AdidasClient:
             "images": [img_url] if img_url else [],
             "brand": "Adidas",
             "source_site": "Adidas",
-            "source_url": source_url,
             "category": " > ".join(cat_parts),
             "category1": "Adidas",
             "category2": category,

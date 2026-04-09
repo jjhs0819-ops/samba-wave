@@ -1,9 +1,3 @@
-const API_GATEWAY_KEY = '6woI2L8NjVrcgthMQ05VvvOTH-3HPoVdmvwa123ot1w'
-function apiFetch(url, init = {}) {
-  const headers = { ...(init.headers || {}), 'X-Api-Key': API_GATEWAY_KEY }
-  return fetch(url, { ...init, headers })
-}
-
 // 팝업 초기화
 document.addEventListener('DOMContentLoaded', () => {
   // 버전 표시
@@ -27,7 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
           resolve(data.proxyUrl || 'http://localhost:28080')
         })
       })
-      const resp = await apiFetch(`${proxyUrl}/api/v1/samba/monitor/store-scores`)
+      const resp = await fetch(`${proxyUrl}/api/v1/samba/monitor/store-scores`)
       const scores = await resp.json()
       const ssAccounts = Object.entries(scores).filter(([, v]) => v.market_type === 'smartstore')
       if (ssAccounts.length > 0) {

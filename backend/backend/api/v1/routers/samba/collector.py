@@ -170,7 +170,7 @@ async def musinsa_auth_status(
 
 
 @router.get("/filters")
-async def list_filters(session: AsyncSession = Depends(get_write_session_dependency)):
+async def list_filters(session: AsyncSession = Depends(get_read_session_dependency)):
     svc = _get_services(session)
     all_filters = await svc.list_filters(limit=10000)
     # 폴더 제외, 리프 그룹만 반환 (기존 호환성)
@@ -548,15 +548,7 @@ async def scroll_products(
     Returns: {items: [...], total: int, sites: [str]}
     """
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import (
-        inspect as _sa_inspect,
-        func,
-        cast,
-        String,
-        and_,
-        text,
-        select,
-    )
+    from sqlalchemy import inspect as _sa_inspect, func, cast, String
 
     mapper = _sa_inspect(_CP)
     light_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]
@@ -657,66 +649,6 @@ async def scroll_products(
         )
     elif status == "sold_out":
         conditions.append(_CP.sale_status == "sold_out")
-    elif status and status.startswith("mtype_reg_"):
-        # 마켓타입별 등록 필터: 해당 마켓타입의 계정 중 하나라도 등록된 상품
-        market_type = status[10:]
-        from backend.domain.samba.account.model import SambaMarketAccount as _MA
-
-        acc_result = await session.execute(
-            select(_MA.id).where(_MA.market_type == market_type, _MA.is_active == True)
-        )
-        acc_ids = acc_result.scalars().all()
-        if acc_ids:
-            conditions.append(
-                or_(
-                    *[
-                        cast(_CP.registered_accounts, String).like(f'%"{aid}"%')
-                        for aid in acc_ids
-                    ]
-                )
-            )
-        else:
-            conditions.append(text("1=0"))
-    elif status and status.startswith("mtype_unreg_"):
-        # 마켓타입별 미등록 필터: 해당 마켓타입의 계정이 하나도 등록되지 않은 상품
-        market_type = status[12:]
-        from backend.domain.samba.account.model import SambaMarketAccount as _MA
-
-        acc_result = await session.execute(
-            select(_MA.id).where(_MA.market_type == market_type, _MA.is_active == True)
-        )
-        acc_ids = acc_result.scalars().all()
-        if acc_ids:
-            conditions.append(
-                or_(
-                    _CP.registered_accounts.is_(None),
-                    cast(_CP.registered_accounts, String) == "null",
-                    cast(_CP.registered_accounts, String) == "[]",
-                    and_(
-                        *[
-                            ~cast(_CP.registered_accounts, String).like(f'%"{aid}"%')
-                            for aid in acc_ids
-                        ]
-                    ),
-                )
-            )
-    elif status and status.startswith("reg_"):
-        # 특정 계정에 등록된 상품: registered_accounts JSON에 account_id 포함
-        account_id = status[4:]  # "reg_ma_xxx" → "ma_xxx"
-        conditions.append(
-            cast(_CP.registered_accounts, String).like(f'%"{account_id}"%')
-        )
-    elif status and status.startswith("unreg_"):
-        # 특정 계정에 미등록된 상품: registered_accounts에 account_id 미포함
-        account_id = status[6:]  # "unreg_ma_xxx" → "ma_xxx"
-        conditions.append(
-            or_(
-                _CP.registered_accounts.is_(None),
-                cast(_CP.registered_accounts, String) == "null",
-                cast(_CP.registered_accounts, String) == "[]",
-                ~cast(_CP.registered_accounts, String).like(f'%"{account_id}"%'),
-            )
-        )
     elif status and status in _KNOWN_STATUS_VALUES:
         conditions.append(_CP.status == status)
 
@@ -1017,13 +949,7 @@ async def product_category_tree(
             _CP.category,
             func.count().label("cnt"),
         )
-        .where(
-            _CP.source_site != None,
-            _CP.category != None,
-            _CP.category != "",
-            # fallback 카테고리 제외 (category가 source_site와 동일한 경우)
-            _CP.category != _CP.source_site,
-        )
+        .where(_CP.source_site != None, _CP.category != None)
         .group_by(_CP.source_site, _CP.category)
         .order_by(_CP.source_site, _CP.category)
     )
@@ -1039,7 +965,6 @@ async def list_collected_products(
     limit: int = Query(50, ge=1, le=100000),
     status: Optional[str] = None,
     source_site: Optional[str] = None,
-    category: Optional[str] = None,
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
@@ -1054,11 +979,6 @@ async def list_collected_products(
         stmt = stmt.where(_CP.status == status)
     if source_site:
         stmt = stmt.where(_CP.source_site == source_site)
-    if category:
-        # prefix 매칭: "여성" → "여성" 또는 "여성 > ..." 모두 포함
-        stmt = stmt.where(
-            (_CP.category == category) | (_CP.category.startswith(category + " > "))
-        )
     stmt = stmt.order_by(_CP.created_at.desc()).offset(skip).limit(limit)
 
     result = await session.execute(stmt)
@@ -1398,52 +1318,6 @@ async def bulk_reset_registration(
     result = await session.exec(stmt)  # type: ignore[arg-type]
     await session.commit()
     return {"reset": result.rowcount}
-
-
-@router.post("/products/fix-nike-categories")
-async def fix_nike_categories(
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """기존 Nike 상품 카테고리를 search_filter.category_filter 기반으로 보정."""
-    from backend.domain.samba.collector.model import (
-        SambaCollectedProduct,
-        SambaSearchFilter,
-    )
-
-    stmt = (
-        select(SambaCollectedProduct, SambaSearchFilter.category_filter)
-        .join(
-            SambaSearchFilter,
-            SambaCollectedProduct.search_filter_id == SambaSearchFilter.id,
-        )
-        .where(SambaCollectedProduct.source_site == "Nike")
-    )
-    rows = (await session.execute(stmt)).all()
-
-    updated = 0
-    for product, cat_filter in rows:
-        if not cat_filter:
-            continue
-        # "남성_러닝화" → cat2="남성", cat3="러닝화"
-        # "가방" (언더스코어 없음) → cat2="", cat3="가방"
-        parts = cat_filter.split("_", 1)
-        if len(parts) == 2:
-            cat2, cat3 = parts
-        else:
-            cat2, cat3 = "", parts[0]
-        new_category = " > ".join([x for x in [cat2, cat3] if x])
-        if product.category != new_category:
-            product.category = new_category
-            product.category2 = cat2
-            product.category3 = cat3
-            session.add(product)
-            updated += 1
-
-    await session.commit()
-    # category-tree 캐시 무효화
-    await cache.delete("products:category-tree")
-    await cache.delete("products:counts")
-    return {"updated": updated, "total": len(rows)}
 
 
 @router.post("/products/bulk-update-tags")

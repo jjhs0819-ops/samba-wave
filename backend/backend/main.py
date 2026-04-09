@@ -2,7 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -31,9 +31,6 @@ from backend.api.v1.routers.samba.contact import router as samba_contact_router
 from backend.api.v1.routers.samba.returns import router as samba_returns_router
 from backend.api.v1.routers.samba.analytics import router as samba_analytics_router
 from backend.api.v1.routers.samba.proxy import router as samba_proxy_router
-from backend.api.v1.routers.samba.proxy import (
-    sourcing_queue_router as samba_sourcing_queue_router,
-)
 from backend.api.v1.routers.samba.warroom import router as samba_warroom_router
 from backend.api.v1.routers.samba.user import router as samba_user_router
 from backend.api.v1.routers.samba.ai_sourcing import router as samba_ai_sourcing_router
@@ -47,7 +44,6 @@ from backend.api.v1.routers.samba.sourcing_account import (
     router as samba_sourcing_account_router,
 )
 
-from backend.domain.user.auth_service import get_user_id
 from backend.middleware.error_handler import register_exception_handlers
 
 
@@ -70,65 +66,6 @@ async def lifespan(app: FastAPI):
     _revision = _os.environ.get("K_REVISION", "local")
     _commit = _os.environ.get("COMMIT_SHA", "unknown")
     _startup_log.info(f"[startup] 리비전={_revision}, 커밋={_commit}")
-
-    # 누락 컬럼 자동 추가 (CI/CD가 DB를 건드리지 않으므로 앱에서 보완)
-    _migrations = [
-        ("samba_order", "paid_at", "TIMESTAMPTZ"),
-    ]
-    try:
-        from backend.db.orm import get_write_session
-        from sqlalchemy import text
-
-        async with get_write_session() as session:
-            for _tbl, _col, _typ in _migrations:
-                await session.execute(
-                    text(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS {_col} {_typ}")
-                )
-            # samba_login_history 테이블 자동 생성
-            await session.execute(
-                text(
-                    """
-                    CREATE TABLE IF NOT EXISTS samba_login_history (
-                        id VARCHAR(30) PRIMARY KEY,
-                        user_id TEXT NOT NULL,
-                        email TEXT NOT NULL,
-                        ip_address TEXT,
-                        region TEXT,
-                        user_agent TEXT,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                    )
-                    """
-                )
-            )
-            await session.execute(
-                text(
-                    "CREATE INDEX IF NOT EXISTS ix_samba_login_history_user_id ON samba_login_history (user_id)"
-                )
-            )
-            # [일회성] ABCmart 배송비 초기화 — 무료배송인데 sourcing_shipping_fee=3000 잘못 저장된 건
-            _fix = await session.execute(
-                text(
-                    "UPDATE samba_collected_product SET sourcing_shipping_fee = 0 WHERE source_site = 'ABCmart' AND sourcing_shipping_fee > 0"
-                )
-            )
-            if _fix.rowcount > 0:
-                _startup_log.info(
-                    f"[startup] ABCmart sourcing_shipping_fee 초기화: {_fix.rowcount}건"
-                )
-            # 파생 주문 일괄 삭제 (사본-* + ★교환주문 — 원주문에 이미 정보 포함)
-            _del = await session.execute(
-                text(
-                    "DELETE FROM samba_order WHERE product_name LIKE '[사본-%' OR product_name LIKE '%★교환주문%'"
-                )
-            )
-            if _del.rowcount > 0:
-                _startup_log.info(f"[startup] 파생 주문 {_del.rowcount}건 삭제")
-            await session.commit()
-            _startup_log.info(
-                f"[startup] 스키마 마이그레이션 완료 ({len(_migrations)}건)"
-            )
-    except Exception as _mig_err:
-        _startup_log.warning(f"[startup] 스키마 마이그레이션 실패: {_mig_err}")
 
     # 서버 시작 시 좀비 running Job 처리
     # - transmit: attempt < 3이면 pending 복구 (배포 중단 → 자동 재개)
@@ -312,105 +249,37 @@ def create_application() -> FastAPI:
         allow_origin_regex=settings.cors_origin_regex,
     )
 
-    # API Gateway Key 미들웨어 — 외부 앱 차단 (CORS 뒤에 등록해야 preflight 통과)
-    from backend.middleware.api_gateway import ApiGatewayMiddleware
-
-    app.add_middleware(ApiGatewayMiddleware, api_key=settings.api_gateway_key)
-
-    # JWT 인증 의존성 (모든 보호 라우터에 일괄 적용)
-    _samba_auth = [Depends(get_user_id)]
-
-    # 레거시 auth/user 라우터
-    # auth_router: login/signup/refresh는 공개, /me만 인증 (자체 처리)
+    # Register routers
     app.include_router(auth_router, prefix="/api/v1")
-    # user_router: 레거시 사용자 관리 — 인증 필수
-    app.include_router(user_router, prefix="/api/v1", dependencies=_samba_auth)
+    app.include_router(user_router, prefix="/api/v1")
 
-    # SambaWave routers — 로그인/회원가입만 공개, 나머지 전부 인증 필수
+    # SambaWave routers (개별 엔드포인트에서 인증 의존성 적용)
+    app.include_router(samba_product_router, prefix="/api/v1/samba")
+    app.include_router(samba_order_router, prefix="/api/v1/samba")
+    app.include_router(samba_channel_router, prefix="/api/v1/samba")
+    app.include_router(samba_policy_router, prefix="/api/v1/samba")
+    app.include_router(samba_collector_router, prefix="/api/v1/samba")
+    app.include_router(samba_collector_collection_router, prefix="/api/v1/samba")
+    app.include_router(samba_collector_refresh_router, prefix="/api/v1/samba")
+    app.include_router(samba_collector_autotune_router, prefix="/api/v1/samba")
+    app.include_router(samba_category_router, prefix="/api/v1/samba")
+    app.include_router(samba_account_router, prefix="/api/v1/samba")
+    app.include_router(samba_shipment_router, prefix="/api/v1/samba")
+    app.include_router(samba_forbidden_router, prefix="/api/v1/samba")
+    app.include_router(samba_contact_router, prefix="/api/v1/samba")
+    app.include_router(samba_returns_router, prefix="/api/v1/samba")
+    app.include_router(samba_analytics_router, prefix="/api/v1/samba")
+    app.include_router(samba_proxy_router, prefix="/api/v1/samba")
+    app.include_router(samba_warroom_router, prefix="/api/v1/samba")
     app.include_router(samba_user_router, prefix="/api/v1/samba")
-
-    # 나머지 모든 samba 라우터 — 인증 필수
-    app.include_router(
-        samba_product_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_order_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_channel_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_policy_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_collector_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_collector_collection_router,
-        prefix="/api/v1/samba",
-        dependencies=_samba_auth,
-    )
-    app.include_router(
-        samba_collector_refresh_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_collector_autotune_router,
-        prefix="/api/v1/samba",
-        dependencies=_samba_auth,
-    )
-    app.include_router(
-        samba_category_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_account_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_shipment_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_forbidden_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_contact_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_returns_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_analytics_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_proxy_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    # 소싱큐 엔드포인트 — 확장앱 폴링용, 인증 불필요
-    app.include_router(samba_sourcing_queue_router, prefix="/api/v1/samba")
-    app.include_router(
-        samba_warroom_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_ai_sourcing_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_tenant_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_job_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_cs_inquiry_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_store_care_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_wholesale_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_sns_posting_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
-    app.include_router(
-        samba_sourcing_account_router, prefix="/api/v1/samba", dependencies=_samba_auth
-    )
+    app.include_router(samba_ai_sourcing_router, prefix="/api/v1/samba")
+    app.include_router(samba_tenant_router, prefix="/api/v1/samba")
+    app.include_router(samba_job_router, prefix="/api/v1/samba")
+    app.include_router(samba_cs_inquiry_router, prefix="/api/v1/samba")
+    app.include_router(samba_store_care_router, prefix="/api/v1/samba")
+    app.include_router(samba_wholesale_router, prefix="/api/v1/samba")
+    app.include_router(samba_sns_posting_router, prefix="/api/v1/samba")
+    app.include_router(samba_sourcing_account_router, prefix="/api/v1/samba")
 
     # 로컬 이미지 저장 디렉토리 서빙 (R2 미설정 시 사용)
     static_dir = Path(__file__).resolve().parent / "static" / "images"

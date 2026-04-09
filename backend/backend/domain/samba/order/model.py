@@ -141,11 +141,6 @@ class SambaOrder(SQLModel, table=True):
         default=None, sa_column=Column(Text, nullable=True)
     )
 
-    # 고객 결제시간
-    paid_at: Optional[datetime] = Field(
-        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
-    )
-
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),

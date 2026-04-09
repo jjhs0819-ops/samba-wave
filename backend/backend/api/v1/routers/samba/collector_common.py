@@ -166,10 +166,7 @@ def _build_product_data(
         "cost": cost,
         "images": detail.get("images", []),
         "detail_images": detail.get("detailImages") or [],
-        "options": [
-            {**o, "stock": 99 if (o.get("stock") or 0) > 0 else 0}
-            for o in cleaned_options
-        ],
+        "options": cleaned_options,
         "category": raw_cat,
         "category1": cat_parts[0] if len(cat_parts) > 0 else None,
         "category2": cat_parts[1] if len(cat_parts) > 1 else None,
@@ -181,8 +178,8 @@ def _build_product_data(
         "material": _clean_text(detail.get("material") or ""),
         "color": _clean_text(detail.get("color") or "")
         or parse_color_from_name(detail.get("name", "")),
-        "sex": detail.get("sex", "") or "남녀공용",
-        "season": detail.get("season", "") or "사계절",
+        "sex": detail.get("sex", ""),
+        "season": detail.get("season", ""),
         "care_instructions": _clean_text(detail.get("care_instructions", "")),
         "quality_guarantee": _clean_text(detail.get("quality_guarantee", "")),
         "similar_no": str(detail.get("similarNo", "0")),

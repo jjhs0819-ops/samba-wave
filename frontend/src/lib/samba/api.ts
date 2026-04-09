@@ -1,79 +1,20 @@
 /**
- * SambaWave API client — JWT 인증 필수
+ * SambaWave API client - 인증 없이 접근
  */
 
-import { API_BASE_URL, API_GATEWAY_KEY } from '@/config/api'
-import { STORAGE_KEYS } from '@/lib/samba/constants'
+import { API_BASE_URL } from '@/config/api'
 
 export const API_BASE = API_BASE_URL
 
 const SAMBA_PREFIX = `${API_BASE}/api/v1/samba`;
 
-/** localStorage에서 JWT 액세스 토큰 추출 */
-function getAccessToken(): string | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.SAMBA_USER)
-    if (!raw) return null
-    const user = JSON.parse(raw)
-    return user?.access_token ?? null
-  } catch {
-    return null
-  }
-}
-
-/** JWT 인증이 포함된 fetch — Response 그대로 반환 (SSE·FormData 등 raw 응답 필요 시 사용) */
-export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Response> {
-  const token = getAccessToken()
-  const headers: Record<string, string> = {
-    ...(init?.headers as Record<string, string>),
-  }
-  if (API_GATEWAY_KEY) {
-    headers['X-Api-Key'] = API_GATEWAY_KEY
-  }
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-  const res = await fetch(url, { cache: 'no-store', ...init, headers })
-  // 401 토큰 만료 시 자동 로그아웃
-  if (res.status === 401 && typeof window !== 'undefined') {
-    localStorage.removeItem(STORAGE_KEYS.SAMBA_USER)
-    document.cookie = 'samba_user=; path=/; max-age=0'
-    window.location.href = '/samba/login'
-    throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.')
-  }
-  return res
-}
-
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(init?.headers as Record<string, string>),
-  }
-
-  // API Gateway Key
-  if (API_GATEWAY_KEY) {
-    headers['X-Api-Key'] = API_GATEWAY_KEY
-  }
-  // JWT 인증 헤더 자동 추가
-  const token = getAccessToken()
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-
   const res = await fetch(url, {
     cache: 'no-store',
+    headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
-    headers,
   });
   if (!res.ok) {
-    // 401이면 토큰 만료 — 로그인 페이지로 리다이렉트
-    if (res.status === 401 && typeof window !== 'undefined') {
-      localStorage.removeItem(STORAGE_KEYS.SAMBA_USER)
-      document.cookie = 'samba_user=; path=/; max-age=0'
-      window.location.href = '/samba/login'
-      throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.')
-    }
     const data = await res.json().catch(() => null);
     const detail = data?.detail
     const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: Record<string, unknown>) => d.msg || JSON.stringify(d)).join(', ') : `HTTP ${res.status}`
@@ -91,11 +32,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 // ── Orders ──
 
 export interface DashboardStats {
-  thisMonth: { count: number; sales: number; fulfillmentSales: number; fulfillmentCount: number; fulfillment: number }
-  lastMonth: { count: number; sales: number; fulfillmentSales: number; fulfillmentCount: number; fulfillment: number }
+  thisMonth: { count: number; sales: number; delivered: number; fulfillment: number }
+  lastMonth: { count: number; sales: number; delivered: number; fulfillment: number }
   salesChange: number
-  weekly: { date: string; sales: number; count: number; fulfillmentSales: number; fulfillmentCount: number }[]
-  monthly: { month: number; sales: number; fulfillmentSales: number }[]
+  weekly: { date: string; sales: number; count: number; delivered: number }[]
+  recentOrders: SambaOrder[]
 }
 
 export interface SambaOrder {
@@ -132,7 +73,6 @@ export interface SambaOrder {
   sourcing_account_id?: string;
   source?: string;
   shipment_id?: string;
-  paid_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -143,8 +83,6 @@ export const orderApi = {
     if (status) params.set("status", status);
     return request<SambaOrder[]>(`${SAMBA_PREFIX}/orders?${params}`);
   },
-  listByDateRange: (start: string, end: string) =>
-    request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/by-date-range?start=${start}&end=${end}`),
   dashboardStats: () => request<DashboardStats>(`${SAMBA_PREFIX}/orders/dashboard-stats`),
   get: (id: string) => request<SambaOrder>(`${SAMBA_PREFIX}/orders/${id}`),
   search: (q: string) => request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/search?q=${encodeURIComponent(q)}`),
@@ -161,24 +99,20 @@ export const orderApi = {
       `${SAMBA_PREFIX}/orders/sync-from-markets`, { method: "POST", body: JSON.stringify({ days, account_id: accountId || undefined }) }),
   approveCancel: (id: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/approve-cancel`, { method: "POST" }),
-  sellerCancel: (id: string, reasonCode: string, reasonText?: string) =>
-    request<{ ok: boolean; message: string; detail?: string }>(`${SAMBA_PREFIX}/orders/${id}/seller-cancel`, {
-      method: "POST", body: JSON.stringify({ reason_code: reasonCode, reason_text: reasonText || "" }),
+  rejectCancel11st: (accountId: string, ordPrdCnSeq: string, ordNo: string, ordPrdSeq: string) =>
+    request<{ success: boolean; message: string }>(`${SAMBA_PREFIX}/orders/11st/cancel-reject`, {
+      method: "POST", body: JSON.stringify({ account_id: accountId, ord_prd_cn_seq: ordPrdCnSeq, ord_no: ordNo, ord_prd_seq: ordPrdSeq }),
     }),
-  confirmOrder: (id: string) =>
-    request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/confirm`, { method: "POST" }),
-  marketDelete: (id: string) =>
-    request<{ ok: boolean; message: string; detail?: unknown }>(`${SAMBA_PREFIX}/orders/${id}/market-delete`, { method: "POST" }),
-  exchangeAction: (id: string, action: string, reason?: string, extra?: { tracking_number?: string; shipping_company?: string; clm_no?: string }) =>
+  exchangeAction: (id: string, action: string, reason?: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/exchange-action`, {
-      method: "POST", body: JSON.stringify({ action, reason, ...extra }),
+      method: "POST", body: JSON.stringify({ action, reason }),
     }),
   returnAction: (id: string, action: string, reason?: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/return-action`, {
       method: "POST", body: JSON.stringify({ action, reason }),
     }),
   findByOrderNumber: (orderNumber: string) =>
-    request<{ id: string; order_number: string } | null>(`${SAMBA_PREFIX}/orders/find-by-number?order_number=${encodeURIComponent(orderNumber)}`),
+    request<{ id: string; order_number: string; channel_id?: string } | null>(`${SAMBA_PREFIX}/orders/find-by-number?order_number=${encodeURIComponent(orderNumber)}`),
   shipOrder: (id: string, shippingCompany: string, trackingNumber: string) =>
     request<{ ok: boolean; market_sent: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/ship`, {
       method: "POST", body: JSON.stringify({ shipping_company: shippingCompany, tracking_number: trackingNumber }),
@@ -401,34 +335,20 @@ export const collectorApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/filters/${id}`, { method: "DELETE" }),
 
   // Brand Sourcing
-  brandDiscover: (keyword: string, source_site?: string) =>
-    request<{ brands: { name: string; count: number }[]; total: number }>(
-      `${SAMBA_PREFIX}/collector/brand-discover`, { method: "POST", body: JSON.stringify({ keyword, source_site: source_site || 'LOTTEON' }) }),
-  gsshopScanProgress: () =>
-    request<{ stage: string; keyword?: string; page?: number; products?: number; detail_ok?: number; detail_fail?: number; detail_total?: number }>(
-      `${SAMBA_PREFIX}/collector/gsshop-scan-progress`),
-  brandScan: (brand: string, gf?: string, keyword?: string, source_site?: string, selected_brands?: string[]) =>
+  brandScan: (brand: string, gf?: string, keyword?: string) =>
     request<{ categories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[]; total: number; groupCount: number }>(
-      `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA', selected_brands: selected_brands || [] }) }),
-  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean>; source_site?: string; selected_brands?: string[] }) =>
+      `${SAMBA_PREFIX}/collector/brand-scan`, { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '' }) }),
+  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean> }) =>
     request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
       `${SAMBA_PREFIX}/collector/brand-create-groups`, { method: "POST", body: JSON.stringify(data) }),
-  brandRefresh: (data: { brand: string; brand_name?: string; gf?: string; options?: Record<string, boolean>; source_site?: string }) =>
+  brandRefresh: (data: { brand: string; brand_name?: string; gf?: string; options?: Record<string, boolean> }) =>
     request<{ scanned: number; new_groups: number; updated_groups: number; message: string }>(
       `${SAMBA_PREFIX}/collector/brand-refresh`, { method: "POST", body: JSON.stringify(data) }),
 
-  // 상태 확인
-  proxyStatus: () =>
-    request<{ status: string; message: string }>(`${SAMBA_PREFIX}/collector/proxy-status`),
-  musinsaAuthStatus: () =>
-    request<{ status: string; message: string }>(`${SAMBA_PREFIX}/collector/musinsa-auth-status`),
-
   // Collected Products
-  listProducts: (skip = 0, limit = 50, status?: string, source_site?: string, category?: string) => {
+  listProducts: (skip = 0, limit = 50, status?: string) => {
     const p = new URLSearchParams({ skip: String(skip), limit: String(limit) });
     if (status) p.set("status", status);
-    if (source_site) p.set("source_site", source_site);
-    if (category) p.set("category", category);
     return request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products?${p}`);
   },
   getProductsByIds: (ids: string[]) =>
@@ -534,22 +454,19 @@ export const collectorApi = {
   autotuneStop: () =>
     request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/stop`, { method: 'POST' }),
   autotuneStatus: () =>
-    request<{ running: boolean; last_tick: string | null; cycle_count: number; restart_count: number; target: string; refreshed_count: number; breaker_tripped: Record<string, number>; site_intervals?: Record<string, number>; traffic?: { collecting: boolean; transmitting: boolean; busy: boolean } }>(`${SAMBA_PREFIX}/collector/autotune/status`),
+    request<{ running: boolean; last_tick: string | null; cycle_count: number; target: string; refreshed_count: number; breaker_tripped: Record<string, number>; site_intervals?: Record<string, number>; traffic?: { collecting: boolean; transmitting: boolean; busy: boolean } }>(`${SAMBA_PREFIX}/collector/autotune/status`),
   autotuneUpdateInterval: (site: string, interval: number) =>
     request<{ ok: boolean; site: string; interval: number }>(`${SAMBA_PREFIX}/collector/autotune/interval`, { method: 'POST', body: JSON.stringify({ site, interval }) }),
-  autotuneGetFilters: () =>
-    request<{
-      enabled_sources: string[] | null
-      enabled_markets: string[] | null
-      available_sources: string[]
-      available_markets: string[]
-    }>(`${SAMBA_PREFIX}/collector/autotune/filters`),
-  autotuneSetFilters: (enabledSources: string[] | null, enabledMarkets: string[] | null) =>
-    request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/autotune/filters`, { method: 'PUT', body: JSON.stringify({ enabled_sources: enabledSources, enabled_markets: enabledMarkets }) }),
-  autotuneGetPriority: () =>
-    request<{ ok: boolean; priority_enabled: boolean }>(`${SAMBA_PREFIX}/collector/autotune/priority`),
-  autotuneSetPriority: (enabled: boolean) =>
-    request<{ ok: boolean; priority_enabled: boolean }>(`${SAMBA_PREFIX}/collector/autotune/priority`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+  ssgBrandScan: (keyword: string) =>
+    request<{ brands: { name: string; value: string; count: number }[]; total: number }>(
+      `${SAMBA_PREFIX}/collector/ssg-brand-scan`,
+      { method: 'POST', body: JSON.stringify({ keyword }) }
+    ),
+  ssgBrandCreateGroups: (data: { keyword: string; brands: { name: string; value: string }[]; max_discount?: boolean }) =>
+    request<{ created: number }>(
+      `${SAMBA_PREFIX}/collector/ssg-brand-create-groups`,
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
 }
 
 // ── Market Accounts ──
@@ -562,6 +479,7 @@ export interface SambaMarketAccount {
   seller_id?: string;
   business_name?: string;
   is_active: boolean;
+  sort_order: number;
   additional_fields?: Record<string, unknown>;
   created_at: string;
 }
@@ -579,6 +497,8 @@ export const accountApi = {
     request<SambaMarketAccount>(`${SAMBA_PREFIX}/accounts/${id}/toggle`, { method: "PUT" }),
   delete: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/accounts/${id}`, { method: "DELETE" }),
+  reorder: (orders: { id: string; sort_order: number }[]) =>
+    request<{ ok: boolean }>(`${SAMBA_PREFIX}/accounts/reorder`, { method: "PUT", body: JSON.stringify(orders) }),
 };
 
 // ── Shipments ──
@@ -718,32 +638,6 @@ export const forbiddenApi = {
     request<{ rejected: string[]; brands: string[]; source_sites: string[] }>(`${SAMBA_PREFIX}/forbidden/tag-banned-words`),
 };
 
-// ── Proxy Config (프록시 설정 관리) ──
-
-export type ProxyPurpose = 'transmit' | 'collect' | 'autotune'
-
-export interface ProxyConfigItem {
-  name: string
-  url: string       // 비어있으면 메인 IP (직접 연결)
-  purposes: ProxyPurpose[]
-  enabled: boolean
-}
-
-export const proxyConfigApi = {
-  list: () => request<ProxyConfigItem[]>(`${SAMBA_PREFIX}/proxy/config/proxies`),
-  save: (proxies: ProxyConfigItem[]) =>
-    request<{ ok: boolean; count: number }>(`${SAMBA_PREFIX}/proxy/config/proxies`, {
-      method: 'PUT',
-      body: JSON.stringify({ proxies }),
-    }),
-  test: (url: string) => {
-    const form = new FormData()
-    form.append('url', url)
-    return fetchWithAuth(`${SAMBA_PREFIX}/proxy/config/proxies/test`, { method: 'POST', body: form })
-      .then(r => r.json() as Promise<{ success: boolean; ip?: string; message?: string }>)
-  },
-}
-
 // ── Proxy (외부 API 프록시) ──
 
 export const proxyApi = {
@@ -774,12 +668,6 @@ export const proxyApi = {
   ssgAuthTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/ssg/auth-test`, { method: 'POST' }),
-  ssgShippingPolicies: (accountId?: string) =>
-    request<{ success: boolean; policies: { shppcstId: string; feeAmt: number; prpayCodDivNm: string; shppcstAplUnitNm: string; divCd: number }[] }>(
-      `${SAMBA_PREFIX}/proxy/ssg/shipping-policies${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''}`),
-  ssgAddresses: (accountId?: string) =>
-    request<{ success: boolean; addresses: { grpAddrId: string; addrNm: string; bascAddr: string }[] }>(
-      `${SAMBA_PREFIX}/proxy/ssg/addresses${accountId ? `?account_id=${encodeURIComponent(accountId)}` : ''}`),
   gsshopAuthTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/gsshop/auth-test`, { method: 'POST' }),
@@ -827,7 +715,7 @@ export const proxyApi = {
     const formData = new FormData()
     formData.append('preset_key', presetKey)
     formData.append('file', file)
-    const res = await fetchWithAuth(`${SAMBA_PREFIX}/proxy/preset-images/upload`, { method: 'POST', body: formData })
+    const res = await fetch(`${SAMBA_PREFIX}/proxy/preset-images/upload`, { method: 'POST', body: formData })
     return res.json() as Promise<{ success: boolean; message: string; image?: string }>
   },
   transformImages: (productIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
@@ -870,7 +758,7 @@ export const proxyApi = {
     request<{ success: boolean; results: Record<string, { action: string; removed?: number; kept?: number; count?: number }>; total: number; total_removed?: number; errors: Record<string, string> }>(
       `${SAMBA_PREFIX}/proxy/image-filter/filter`, {
         method: 'POST',
-        body: JSON.stringify({ product_ids: productIds, filter_id: filterId || '', scope: scope || 'images', method: filterMethod || 'gemma' }),
+        body: JSON.stringify({ product_ids: productIds, filter_id: filterId || '', scope: scope || 'images', method: filterMethod || 'clip' }),
       }),
   // 소싱처 검색/상세
   sourcingSearch: (site: string, keyword: string, page = 1) =>
@@ -912,6 +800,12 @@ export const categoryApi = {
           ...(sourceSite ? { source_site: sourceSite } : {}),
           ...(categoryPrefix ? { category_prefix: categoryPrefix } : {}),
         }),
+      }),
+  fixBadMappings: (targetMarkets?: string[]) =>
+    request<{ detected: number; fixed: number; remapped: number; bad_list: { source_site: string; source_category: string; bad_markets: Record<string, string> }[]; errors: string[]; message: string }>(
+      `${SAMBA_PREFIX}/categories/fix-bad-mappings`, {
+        method: 'POST',
+        body: JSON.stringify({ ...(targetMarkets ? { target_markets: targetMarkets } : {}) }),
       }),
   seedMarketCategories: () =>
     request<{ ok: boolean; markets: Record<string, number> }>(
@@ -961,6 +855,14 @@ export const categoryApi = {
 
 // ── Returns ──
 
+export interface ExchangeTrackingUpdate {
+  exchange_retrieval_status?: '미회수' | '회수중' | '회수완료';
+  exchange_retrieved_at?: string;
+  exchange_reship_company?: string;
+  exchange_reship_tracking?: string;
+  exchange_delivered_at?: string;
+}
+
 export interface SambaReturn {
   id: string;
   order_id: string;
@@ -997,15 +899,22 @@ export interface SambaReturn {
   customer_order_no?: string;
   original_order_no?: string;
   created_at: string;
+  // 11번가 교환 추적 필드
+  exchange_retrieval_status?: string;
+  exchange_retrieved_at?: string;
+  exchange_reship_company?: string;
+  exchange_reship_tracking?: string;
+  exchange_delivered_at?: string;
+  clm_req_seq?: string;
+  ord_prd_seq?: string;
 }
 
 export const returnApi = {
-  list: (orderId?: string, status?: string, type?: string, limit = 500) => {
+  list: (orderId?: string, status?: string, type?: string) => {
     const p = new URLSearchParams();
     if (orderId) p.set("order_id", orderId);
     if (status) p.set("status", status);
     if (type) p.set("type", type);
-    p.set("limit", String(limit));
     return request<SambaReturn[]>(`${SAMBA_PREFIX}/returns?${p}`);
   },
   create: (data: Partial<SambaReturn>) =>
@@ -1027,8 +936,25 @@ export const returnApi = {
       `${SAMBA_PREFIX}/returns/sync-from-markets`, { method: "POST", body: JSON.stringify(body) }
     )
   },
-  patch: (id: string, data: { confirmed?: boolean; settlement_amount?: number; recovery_amount?: number; check_date?: string; memo?: string; product_location?: string; completion_detail?: string; status?: string; customer_order_no?: string; original_order_no?: string; type?: string; market_order_status?: string; return_source?: string }) =>
+  patch: (id: string, data: { confirmed?: boolean; settlement_amount?: number; recovery_amount?: number; check_date?: string; memo?: string; product_location?: string; completion_detail?: string; status?: string; customer_order_no?: string; original_order_no?: string; return_source?: string }) =>
     request<SambaReturn>(`${SAMBA_PREFIX}/returns/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  // 11번가 교환 승인/거부
+  exchangeAction: (returnId: string, action: 'approve' | 'reject', reason?: string) =>
+    request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/returns/${returnId}/exchange-action`, {
+      method: "POST",
+      body: JSON.stringify({ action, ...(reason ? { reason } : {}) }),
+    }),
+  // 교환 추적 정보 업데이트 (회수 상태, 소싱처 출고 정보 등)
+  updateExchangeTracking: (returnId: string, data: ExchangeTrackingUpdate) =>
+    request<SambaReturn>(`${SAMBA_PREFIX}/returns/${returnId}/exchange-tracking`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  // 교환 전용 동기화 (11번가 교환 신청 목록 가져오기)
+  syncExchangeFromMarkets: (days = 7) =>
+    request<{ total_synced: number; results: { account: string; status: string; fetched?: number; synced?: number; message?: string }[] }>(
+      `${SAMBA_PREFIX}/returns/sync-from-markets`, { method: "POST", body: JSON.stringify({ days }) }
+    ),
 };
 
 // ── CS Inquiries ──
@@ -1105,10 +1031,9 @@ export const csInquiryApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates`, { method: 'POST', body: JSON.stringify({ key, name, content }) }),
   deleteTemplate: (key: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates/${key}`, { method: 'DELETE' }),
-  syncFromMarkets: (marketName?: string) =>
+  syncFromMarkets: () =>
     request<{ success: boolean; synced: number; errors: string[]; message: string }>(
-      `${SAMBA_PREFIX}/cs-inquiries/sync-from-markets`,
-      { method: 'POST', body: JSON.stringify({ market_name: marketName || undefined }) }
+      `${SAMBA_PREFIX}/cs-inquiries/sync-from-markets`, { method: 'POST' }
     ),
   sendReply: (id: string, reply: string) =>
     request<{ success: boolean; message: string }>(
@@ -1337,8 +1262,6 @@ export interface SambaUser {
   access_token?: string
   created_at: string
   updated_at: string
-  token?: string
-  tenant_id?: string
 }
 
 export const userApi = {
@@ -1354,14 +1277,6 @@ export const userApi = {
     request<SambaUser>(
       `${SAMBA_PREFIX}/users/login`, { method: 'POST', body: JSON.stringify({ email, password }) }
     ),
-  loginHistory: (start?: string, end?: string, limit = 100) => {
-    const p = new URLSearchParams({ limit: String(limit) })
-    if (start) p.set('start', start)
-    if (end) p.set('end', end)
-    return request<{ id: string; email: string; ip_address: string | null; region: string | null; created_at: string }[]>(
-      `${SAMBA_PREFIX}/users/login-history?${p}`
-    )
-  },
 }
 
 // ── AI Sourcing (AI 소싱기) ──
@@ -1424,7 +1339,7 @@ export const aiSourcingApi = {
     naver_categories?: string[]
     target_count: number
   }) =>
-    fetchWithAuth(`${SAMBA_PREFIX}/ai-sourcing/analyze`, {
+    fetch(`${SAMBA_PREFIX}/ai-sourcing/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -1442,7 +1357,7 @@ export const aiSourcingApi = {
     formData.append('main_category', data.main_category)
     formData.append('target_count', String(data.target_count))
     if (data.file) formData.append('file', data.file)
-    return fetchWithAuth(`${SAMBA_PREFIX}/ai-sourcing/analyze-full`, {
+    return fetch(`${SAMBA_PREFIX}/ai-sourcing/analyze-full`, {
       method: 'POST',
       body: formData,
     })
@@ -1452,7 +1367,7 @@ export const aiSourcingApi = {
   analyzeExcel: async (file: File) => {
     const formData = new FormData()
     formData.append('file', file)
-    const res = await fetchWithAuth(`${SAMBA_PREFIX}/ai-sourcing/analyze-excel`, {
+    const res = await fetch(`${SAMBA_PREFIX}/ai-sourcing/analyze-excel`, {
       method: 'POST',
       body: formData,
     })
@@ -1613,6 +1528,31 @@ export interface BalanceResult {
   balance: number | null
   status: string
   message?: string
+}
+
+export interface SambaJob {
+  id: string;
+  job_type: string;
+  status: string;
+  progress: number;
+  current: number;
+  total: number;
+  error?: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export const jobApi = {
+  list: (status?: string) => {
+    const p = new URLSearchParams()
+    if (status) p.set('status', status)
+    return request<SambaJob[]>(`${SAMBA_PREFIX}/jobs?${p}`)
+  },
+  get: (jobId: string) =>
+    request<SambaJob & { payload?: Record<string, unknown> }>(`${SAMBA_PREFIX}/jobs/${jobId}`),
+  getLogs: (jobId: string, since = 0) =>
+    request<{ logs: string[] }>(`${SAMBA_PREFIX}/jobs/${jobId}/logs?since=${since}`),
 }
 
 export const sourcingAccountApi = {

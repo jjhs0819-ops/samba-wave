@@ -107,22 +107,6 @@ async def refresh_products(
             "errors": 0,
         }
 
-    # 롯데ON: benefits API 쿠키 캐시 로드
-    _has_lotteon = any(
-        (getattr(p, "source_site", "") or "").upper() == "LOTTEON" for p in products
-    )
-    if _has_lotteon:
-        from backend.api.v1.routers.samba.proxy import _get_setting
-        from backend.domain.samba.proxy.lotteon_sourcing import (
-            set_lotteon_cookie,
-            _lotteon_cookie_cache,
-        )
-
-        if not _lotteon_cookie_cache:
-            _lt_ck = await _get_setting(session, "lotteon_cookie")
-            if _lt_ck:
-                set_lotteon_cookie(str(_lt_ck))
-
     # 벌크 갱신 실행 (수동 갱신 — 오토튠 로그에 노출되지 않음)
     results, summary = await refresh_products_bulk(products, source="manual")
 
@@ -196,12 +180,9 @@ async def refresh_products(
             "sale_status": r.new_sale_status,
             "changed": r.changed,
         }
-        # 옵션: 신규 수집 우선, 없으면 기존 DB 옵션 폴백
-        _snap_options = r.new_options
-        if not _snap_options and product.options:
-            _snap_options = product.options
-        if _snap_options:
-            snapshot["options"] = _snap_options
+        # KREAM 옵션별 가격도 기록
+        if r.new_options:
+            snapshot["options"] = r.new_options
         history = list(product.price_history or [])
         history.insert(0, snapshot)
         updates["price_history"] = _trim_history(history)
@@ -237,10 +218,7 @@ async def refresh_products(
             if r.new_original_price is not None:
                 updates["original_price"] = r.new_original_price
             if r.new_cost is not None:
-                _old_cost = getattr(product, "cost", None) or 0
-                # 기존 원가가 더 낮으면(확장앱 혜택가) 보존
-                if not (_old_cost > 0 and _old_cost < r.new_cost):
-                    updates["cost"] = r.new_cost
+                updates["cost"] = r.new_cost
 
             updates["sale_status"] = r.new_sale_status
             # is_sold_out 제거 → sale_status로 통일

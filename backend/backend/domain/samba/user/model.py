@@ -13,10 +13,6 @@ def generate_samba_user_id() -> str:
     return f"su_{ULID()}"
 
 
-def generate_login_history_id() -> str:
-    return f"lh_{ULID()}"
-
-
 class SambaUser(SQLModel, table=True):
     """삼바웨이브 사용자 테이블 - 이메일/비밀번호 인증 계정."""
 
@@ -69,29 +65,4 @@ class SambaUser(SQLModel, table=True):
     deleted_at: Optional[datetime] = Field(
         sa_column=Column(DateTime(timezone=True), nullable=True),
         default=None,
-    )
-
-
-class SambaLoginHistory(SQLModel, table=True):
-    """로그인 이력 테이블."""
-
-    __tablename__ = "samba_login_history"
-
-    id: str = Field(
-        default_factory=generate_login_history_id,
-        primary_key=True,
-        max_length=30,
-    )
-    user_id: str = Field(sa_column=Column(Text, nullable=False, index=True))
-    email: str = Field(sa_column=Column(Text, nullable=False))
-    ip_address: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
-    region: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    user_agent: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
-    created_at: datetime = Field(
-        sa_column=Column(DateTime(timezone=True), nullable=False),
-        default_factory=lambda: datetime.now(tz=timezone.utc),
     )

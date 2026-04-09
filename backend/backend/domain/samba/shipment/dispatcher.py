@@ -343,14 +343,23 @@ async def _delete_lotteon(
     product: dict[str, Any],
     account: Any = None,
 ) -> dict[str, Any]:
-    """롯데ON 상품 판매중지 — 플러그인 delete() 위임."""
-    from backend.domain.samba.plugins.markets.lotteon import LotteonPlugin
+    """롯데ON 상품 삭제 (판매종료)."""
+    from backend.domain.samba.proxy.lotteon import LotteonClient
 
-    product_no = product.get("market_product_no", {}).get("lotteon", "")
-    if not product_no:
-        return {"success": True, "message": "롯데ON 상품번호 없음 (건너뜀)"}
-    plugin = LotteonPlugin()
-    return await plugin.delete(session, product_no, account)
+    api_key = ""
+    if account:
+        extras = getattr(account, "additional_fields", None) or {}
+        api_key = extras.get("apiKey", "") or getattr(account, "api_key", "") or ""
+    if not api_key:
+        creds = await _get_setting(session, "store_lotteon")
+        if creds and isinstance(creds, dict):
+            api_key = creds.get("apiKey", "")
+    if not api_key:
+        return {"success": False, "message": "롯데ON 인증 정보 없음"}
+
+    client = LotteonClient(api_key)
+    await client.test_auth()
+    return await _safe_delete("롯데ON", "lotteon", product, client.delete_product)
 
 
 async def _delete_ssg(

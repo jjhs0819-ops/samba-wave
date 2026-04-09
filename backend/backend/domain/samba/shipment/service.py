@@ -15,31 +15,10 @@ from backend.utils.logger import logger
 import math
 
 # 마켓타입(영문 코드) → 정책키(한글 표시명) 매핑
-# 마켓 계정의 market_type 필드 값을 정책 설정의 per_market 키로 변환할 때 사용
-MARKET_TYPE_TO_POLICY_KEY: dict[str, str] = {
-    "coupang": "쿠팡",
-    "ssg": "신세계몰",
-    "smartstore": "스마트스토어",
-    "11st": "11번가",
-    "gmarket": "지마켓",
-    "auction": "옥션",
-    "gsshop": "GS샵",
-    "lotteon": "롯데ON",
-    "lottehome": "롯데홈쇼핑",
-    "homeand": "홈앤쇼핑",
-    "hmall": "HMALL",
-    "kream": "KREAM",
-}
-
-
-def _resolve_margin_rate(cost: float, pricing: dict) -> float:
-    """원가 기반 범위 마진율 반환. useRangeMargin이면 해당 구간 rate 사용."""
-    if pricing.get("useRangeMargin") and pricing.get("rangeMargins"):
-        for r in pricing["rangeMargins"]:
-            max_val = r.get("max") or 9999999999
-            if cost >= r.get("min", 0) and cost < max_val:
-                return r.get("rate", 15)
-    return pricing.get("marginRate", 15)
+# 플러그인 레지스트리에서 자동 생성 — 새 마켓 추가 시 플러그인만 만들면 자동 반영
+from backend.domain.samba.plugins import (
+    MARKET_TYPE_TO_POLICY_KEY,
+)
 
 
 def calc_market_price(
@@ -51,12 +30,12 @@ def calc_market_price(
     """정책 기반 마켓 최종 판매가 계산.
 
     원가 + 마진 + 배송비 → 수수료 역산 → 추가요금.
-    마켓별 오버라이드 적용. 범위 마진 지원.
+    마켓별 오버라이드 적용.
     """
     if not policy_pricing:
         return int(cost)
     pr = policy_pricing
-    common_margin_rate = _resolve_margin_rate(cost, pr)
+    common_margin_rate = pr.get("marginRate", 15)
     common_shipping = pr.get("shippingCost", 0)
     common_extra = pr.get("extraCharge", 0)
     common_fee = pr.get("feeRate", 0)
@@ -88,58 +67,22 @@ _transmitting_products: set[str] = set()
 # 계정별 세마포어 — API Rate Limit 방지 (계정당 동시 1건)
 _account_semaphores: dict[str, asyncio.Semaphore] = {}
 
-# 전송 중단 플래그 — job_id별 분리 (멀티유저 격리)
+# 전송 중단 플래그 (threading.Event — 스레드 간 동기화 보장)
 import threading as _threading
 
-_cancel_events: dict[str, _threading.Event] = {}
-_cancel_lock = _threading.Lock()
+_cancel_event = _threading.Event()
 
 
-def request_cancel_transmit(job_id: str | None = None):
-    """전송 취소 요청.
-
-    job_id가 주어지면 해당 잡만, None이면 모든 잡을 취소한다.
-    """
-    with _cancel_lock:
-        if job_id is None:
-            # 전체 취소 — 기존 이벤트 모두 set + 글로벌 마커
-            for evt in _cancel_events.values():
-                evt.set()
-            _cancel_events.setdefault("__all__", _threading.Event()).set()
-        else:
-            evt = _cancel_events.setdefault(job_id, _threading.Event())
-            evt.set()
+def request_cancel_transmit():
+    _cancel_event.set()
 
 
-def clear_cancel_transmit(job_id: str | None = None):
-    """취소 플래그 해제.
-
-    job_id가 주어지면 해당 잡만, None이면 모든 이벤트를 제거한다.
-    """
-    with _cancel_lock:
-        if job_id is None:
-            _cancel_events.clear()
-        else:
-            _cancel_events.pop(job_id, None)
-            # 글로벌 마커도 정리 (남아있으면 새 잡이 즉시 취소됨)
-            _cancel_events.pop("__all__", None)
+def clear_cancel_transmit():
+    _cancel_event.clear()
 
 
-def is_cancel_requested(job_id: str | None = None) -> bool:
-    """취소가 요청되었는지 확인.
-
-    job_id가 주어지면 해당 잡 또는 글로벌 취소를 확인,
-    None이면 아무 이벤트라도 set이면 True.
-    """
-    with _cancel_lock:
-        if job_id is None:
-            return any(evt.is_set() for evt in _cancel_events.values())
-        # 해당 job_id 이벤트 또는 글로벌(__all__) 이벤트 확인
-        evt = _cancel_events.get(job_id)
-        if evt and evt.is_set():
-            return True
-        global_evt = _cancel_events.get("__all__")
-        return bool(global_evt and global_evt.is_set())
+def is_cancel_requested() -> bool:
+    return _cancel_event.is_set()
 
 
 def _get_group_lock(account_id: str) -> asyncio.Lock:
@@ -151,6 +94,7 @@ def _get_group_lock(account_id: str) -> asyncio.Lock:
 def clear_account_semaphores():
     """별도 스레드 실행 시 이전 이벤트 루프 세마포어 정리."""
     _account_semaphores.clear()
+    _transmitting_products.clear()  # 재시작 시 잔류 상품 정리
 
 
 def _get_account_semaphore(account_id: str) -> asyncio.Semaphore:
@@ -213,9 +157,9 @@ class SambaShipmentService:
         update_items: list[str],
         target_account_ids: list[str],
         skip_unchanged: bool = False,
+        skip_refresh: bool = False,
     ) -> dict[str, Any]:
         """여러 상품을 대상 마켓 계정으로 실제 전송. 마켓별 결과 반환."""
-
         # 이전 취소 플래그 잔존 방지
         clear_cancel_transmit()
 
@@ -238,6 +182,7 @@ class SambaShipmentService:
                     target_account_ids,
                     update_items,
                     skip_unchanged=skip_unchanged,
+                    skip_refresh=skip_refresh,
                 )
                 results.append(
                     {
@@ -300,17 +245,10 @@ class SambaShipmentService:
         client_secret = additional.get("clientSecret") or account.api_secret
         client = SmartStoreClient(client_id, client_secret)
 
-        # 카테고리 매핑 조회 — product.category(전체 경로) 우선
+        # 카테고리 매핑 조회 (기존 _transmit_product 패턴과 동일)
         first = products[0]
-        raw_category = first.category or ""
-        if not raw_category:
-            cat_parts = [
-                first.category1,
-                first.category2,
-                first.category3,
-                first.category4,
-            ]
-            raw_category = " > ".join(c for c in cat_parts if c)
+        cat_parts = [first.category1, first.category2, first.category3, first.category4]
+        raw_category = " > ".join(c for c in cat_parts if c) or first.category or ""
 
         # 그룹 매핑 조회
         group_mappings = None
@@ -334,21 +272,7 @@ class SambaShipmentService:
         if not category_id:
             raise ValueError("카테고리 매핑을 찾을 수 없습니다")
 
-        # 정책 조회 (가격 계산용)
-        MARKET_TYPE_TO_POLICY_KEY = {
-            "coupang": "쿠팡",
-            "ssg": "신세계몰",
-            "smartstore": "스마트스토어",
-            "11st": "11번가",
-            "gmarket": "지마켓",
-            "auction": "옥션",
-            "gsshop": "GS샵",
-            "lotteon": "롯데ON",
-            "lottehome": "롯데홈쇼핑",
-            "homeand": "홈앤쇼핑",
-            "hmall": "HMALL",
-            "kream": "KREAM",
-        }
+        # 정책 조회 (가격 계산용) — 모듈 레벨 MARKET_TYPE_TO_POLICY_KEY 사용
         policy = None
         policy_market_data: dict[str, Any] = {}
         if first.applied_policy_id:
@@ -392,10 +316,8 @@ class SambaShipmentService:
                             delete_no = delete_no.get("originProductNo", delete_no)
                         await client.delete_product(str(delete_no))
                         deleted_nos.append(delete_no)
-                    except Exception as exc:
-                        logger.warning(
-                            f"[전송] 그룹전송 기존 단일상품 삭제 실패 (no={delete_no}): {exc}"
-                        )
+                    except Exception:
+                        pass
 
             # 상품 데이터 준비 (가격 계산, 이미지 업로드)
             product_dicts = []
@@ -403,8 +325,10 @@ class SambaShipmentService:
                 # OOM 방지: 전송에 불필요한 대용량 필드 제외
                 pd = p.model_dump(exclude={"last_sent_data", "extra_data"})
 
-                # 상세 HTML 재생성
-                pd["detail_html"] = await self._build_detail_html(pd)
+                # 상세 HTML 재생성 (스마트스토어 그룹전송)
+                pd["detail_html"] = await self._build_detail_html(
+                    pd, market_type="smartstore"
+                )
 
                 # 정책 기반 판매가 계산 (기존 _transmit_product 라인 313-341 동일 패턴)
                 if policy and policy.pricing:
@@ -414,13 +338,32 @@ class SambaShipmentService:
                         or pd.get("original_price")
                         or 0
                     )
-                    calc_price = calc_market_price(
-                        cost, policy.pricing, "smartstore", policy_market_data
-                    )
+                    pr = policy.pricing
+                    common_margin_rate = pr.get("marginRate", 15)
+                    common_shipping = pr.get("shippingCost", 0)
+                    common_extra = pr.get("extraCharge", 0)
+                    common_fee = pr.get("feeRate", 0)
+                    min_margin = pr.get("minMarginAmount", 0)
+
+                    policy_key = MARKET_TYPE_TO_POLICY_KEY.get("smartstore")
+                    mp = policy_market_data.get(policy_key, {}) if policy_key else {}
+                    m_margin_rate = mp.get("marginRate") or common_margin_rate
+                    m_shipping = mp.get("shippingCost") or common_shipping
+                    m_fee = mp.get("feeRate") or common_fee
+
+                    margin_amt = round(cost * m_margin_rate / 100)
+                    if min_margin > 0 and margin_amt < min_margin:
+                        margin_amt = min_margin
+                    calc_price = cost + margin_amt + m_shipping
+                    if m_fee > 0 and calc_price > 0:
+                        calc_price = math.ceil(calc_price / (1 - m_fee / 100))
+                    if common_extra > 0:
+                        calc_price += common_extra
 
                     pd["_final_sale_price"] = calc_price
                     logger.info(
-                        f"[그룹전송] 가격 계산: 원가={cost} → 판매가={calc_price}"
+                        f"[그룹전송] 가격 계산: 원가={cost}, 마진={margin_amt}({m_margin_rate}%), "
+                        f"배송={m_shipping}, 수수료={m_fee}% → 판매가={calc_price}"
                     )
 
                 # 이미지 업로드
@@ -429,10 +372,7 @@ class SambaShipmentService:
                     try:
                         naver_url = await client.upload_image_from_url(img_url)
                         uploaded_images.append(naver_url)
-                    except Exception as exc:
-                        logger.warning(
-                            f"[전송] 그룹전송 이미지 업로드 실패, 원본 URL 사용: {exc}"
-                        )
+                    except Exception:
                         uploaded_images.append(img_url)
                 pd["images"] = uploaded_images
                 product_dicts.append(pd)
@@ -461,10 +401,8 @@ class SambaShipmentService:
                             [account_id],
                             ["price", "stock", "image", "description"],
                         )
-                    except Exception as rollback_exc:
-                        logger.warning(
-                            f"[전송] 그룹등록 실패 후 단일상품 롤백 실패 (pid={p.id}): {rollback_exc}"
-                        )
+                    except Exception:
+                        pass
                 raise e
 
             # 결과 저장
@@ -503,6 +441,7 @@ class SambaShipmentService:
         target_account_ids: list[str],
         update_items: list[str],
         skip_unchanged: bool = False,
+        skip_refresh: bool = False,
     ) -> SambaShipment:
         """단일 상품에 대한 실제 마켓 전송."""
 
@@ -527,6 +466,7 @@ class SambaShipmentService:
                     target_account_ids,
                     update_items,
                     skip_unchanged,
+                    skip_refresh=skip_refresh,
                 ),
                 timeout=180,  # 상품 1건당 최대 180초 (최신화+이미지업로드 포함)
             )
@@ -551,6 +491,7 @@ class SambaShipmentService:
         target_account_ids: list[str],
         update_items: list[str],
         skip_unchanged: bool = False,
+        skip_refresh: bool = False,
     ) -> SambaShipment:
         """상품 전송 실제 구현 (락 획득 후 호출)."""
 
@@ -560,8 +501,7 @@ class SambaShipmentService:
                     for line in f:
                         if line.startswith("VmRSS:"):
                             return int(line.split()[1]) // 1024
-            except Exception as exc:
-                logger.debug(f"[전송] 메모리 측정 실패 (비Linux 환경): {exc}")
+            except Exception:
                 return -1
 
         logger.info(f"[메모리] 전송시작: {_mem_mb()}MB")
@@ -601,10 +541,16 @@ class SambaShipmentService:
         product_dict = product_row.model_dump(exclude={"last_sent_data", "extra_data"})
 
         # 업데이트 항목이 체크되어 있으면 소싱처 최신화 먼저 실행
+        # skip_refresh=True이면 오토튠에서 이미 리프레시 완료 → 이중 호출 방지
         has_update = bool(update_items) and len(update_items) > 0
         refresh_status = ""  # 프론트 로그용
         pending_refresh_updates: dict[str, Any] = {}  # 최종 업데이트에 통합
-        if has_update and product_row.source_site and product_row.site_product_id:
+        if (
+            has_update
+            and not skip_refresh
+            and product_row.source_site
+            and product_row.site_product_id
+        ):
             try:
                 from backend.domain.samba.collector.refresher import refresh_product
 
@@ -761,18 +707,16 @@ class SambaShipmentService:
         # 상세 HTML은 항상 정책 기반으로 재생성 (원문 상세이미지 유출 방지)
         product_dict["detail_html"] = await self._build_detail_html(product_dict)
 
-        # 3. 카테고리 매핑 자동 조회 — product.category(전체 경로) 우선
-        #    category1~4 개별 필드는 일부 소싱처에서 불완전할 수 있으므로
-        #    전체 경로 문자열을 1순위로 사용
-        raw_category = product_row.category or ""
-        if not raw_category:
-            cat_parts = [
-                product_row.category1,
-                product_row.category2,
-                product_row.category3,
-                product_row.category4,
-            ]
-            raw_category = " > ".join(c for c in cat_parts if c)
+        # 3. 카테고리 매핑 자동 조회 (성별 + category1~4 조합)
+        cat_parts = [
+            product_row.category1,
+            product_row.category2,
+            product_row.category3,
+            product_row.category4,
+        ]
+        raw_category = (
+            " > ".join(c for c in cat_parts if c) or product_row.category or ""
+        )
 
         # 성별 prefix는 의류 카테고리일 때만 추가 (신발/가방 등은 제외)
         sex_prefix = ""
@@ -849,30 +793,7 @@ class SambaShipmentService:
         # 정책 기반 계정 필터링: 정책이 있으면 참조하되, 사용자 선택 계정은 보존
         policy = None
         policy_market_data: dict[str, Any] = {}
-        MARKET_TYPE_TO_POLICY_KEY = {
-            "coupang": "쿠팡",
-            "ssg": "신세계몰",
-            "smartstore": "스마트스토어",
-            "11st": "11번가",
-            "gmarket": "지마켓",
-            "auction": "옥션",
-            "gsshop": "GS샵",
-            "lotteon": "롯데ON",
-            "lottehome": "롯데홈쇼핑",
-            "homeand": "홈앤쇼핑",
-            "hmall": "HMALL",
-            "kream": "KREAM",
-            "ebay": "eBay",
-            "lazada": "Lazada",
-            "qoo10": "Qoo10",
-            "shopee": "Shopee",
-            "shopify": "Shopify",
-            "zoom": "Zum(줌)",
-            "toss": "토스",
-            "rakuten": "라쿠텐",
-            "amazon": "아마존",
-            "buyma": "바이마",
-        }
+        # 모듈 레벨 MARKET_TYPE_TO_POLICY_KEY 사용
         if not product_row.applied_policy_id:
             logger.warning(f"[전송] 상품 {product_id} 정책 미설정 — 전송 차단")
             await self.repo.update_async(
@@ -889,15 +810,6 @@ class SambaShipmentService:
         if policy and policy.market_policies:
             policy_market_data = policy.market_policies
 
-        # 글로벌 삭제어 조회 (compose 전에 미리 로드)
-        from backend.domain.samba.forbidden.repository import (
-            SambaForbiddenWordRepository,
-        )
-
-        fw_repo = SambaForbiddenWordRepository(self.session)
-        forbidden_words = await fw_repo.list_active("deletion")
-        deletion_words = [fw.word for fw in (forbidden_words or []) if fw.word]
-
         # 정책의 상품명 규칙(name_rule) 기반 상품명 조합 적용
         if policy and policy.extras:
             name_rule_id = (policy.extras or {}).get("name_rule_id")
@@ -910,12 +822,28 @@ class SambaShipmentService:
                 name_rule = result.first()
                 if name_rule:
                     product_dict["name"] = self._compose_product_name(
-                        product_dict, name_rule, deletion_words=deletion_words
+                        product_dict, name_rule
                     )
                     # 마켓별 상품명 조합이 있으면 _dispatch_one에서 덮어쓸 수 있도록 name_rule 보관
                     product_dict["_name_rule"] = name_rule
                     product_dict["_original_name"] = product_row.name or ""
-                    product_dict["_deletion_words"] = deletion_words
+
+        # 글로벌 삭제어 적용 (상품명에서 금칙어 제거)
+        # DB 실제 데이터: type='deletion', scope='all'
+        import re as _re
+        from backend.domain.samba.forbidden.repository import (
+            SambaForbiddenWordRepository,
+        )
+
+        fw_repo = SambaForbiddenWordRepository(self.session)
+        forbidden_words = await fw_repo.list_active("deletion")
+        if forbidden_words and product_dict.get("name"):
+            name = product_dict["name"]
+            for fw in forbidden_words:
+                if fw.word:
+                    name = _re.sub(_re.escape(fw.word), "", name, flags=_re.IGNORECASE)
+            # 연속 공백 정리
+            product_dict["name"] = _re.sub(r"\s{2,}", " ", name).strip()
 
         # 정책이 있으면 계정 필터링, 없으면 사용자 선택 전체 유지
         if policy_market_data:
@@ -1096,6 +1024,8 @@ class SambaShipmentService:
 
         async def _dispatch_one(account_id: str) -> dict[str, Any]:
             """단일 계정 전송 — 결과 dict 반환."""
+            from backend.db.orm import get_write_sessionmaker
+
             res: dict[str, Any] = {
                 "account_id": account_id,
                 "status": "failed",
@@ -1105,6 +1035,8 @@ class SambaShipmentService:
                 "is_update": False,
                 "clear_nos": [],
             }
+            # 병렬 실행 시 AsyncSession 공유 방지 — 계정별 독립 세션 사용
+            acct_session = get_write_sessionmaker()()
             try:
                 account = _dispatch_account_map.get(account_id)
                 if not account:
@@ -1127,18 +1059,15 @@ class SambaShipmentService:
                                 f"[ESM 크로스매핑] {other}({other_id}) → {market_type}({category_id})"
                             )
 
-                if not category_id:
+                if not category_id and market_type != "playauto":
                     res["error"] = "카테고리 매핑 없음"
                     logger.warning(
                         f"[전송] 상품 {product_id} → {market_type} 카테고리 매핑 없음 (스킵)"
                     )
                     return res
 
-                # 롯데ON은 BC 접두사 카테고리 코드 사용 (BC41030100 형식)
-                _lotteon_like = market_type in ("lotteon", "ssg")
                 if (
-                    market_type != "coupang"
-                    and not _lotteon_like
+                    market_type not in ("coupang", "playauto")
                     and not str(category_id).isdigit()
                 ):
                     res["error"] = f"최하단 카테고리 매핑 필요 (현재: {category_id})"
@@ -1146,6 +1075,15 @@ class SambaShipmentService:
                         f"[전송] 상품 {product_id} → {market_type} 최하단 카테고리 미매핑: '{category_id}' (스킵)"
                     )
                     return res
+
+                # 기존 상품번호 확인 (품절 삭제 판단에도 필요)
+                existing_nos = product_row.market_product_nos or {}
+                if market_type == "smartstore":
+                    existing_product_no = existing_nos.get(
+                        f"{account_id}_origin", ""
+                    ) or existing_nos.get(account_id, "")
+                else:
+                    existing_product_no = existing_nos.get(account_id, "")
 
                 # 전 옵션 품절 체크 — 마켓 등록 상품이면 마켓 삭제, 미등록이면 스킵
                 _opts = product_dict.get("options") or []
@@ -1156,19 +1094,19 @@ class SambaShipmentService:
                 ):
                     # 이미 마켓 등록된 상품이면 삭제 처리
                     _reg_accs = product_dict.get("registered_accounts") or []
-                    if account_id in _reg_accs:
+                    if account_id in _reg_accs and existing_product_no:
                         try:
                             from backend.domain.samba.shipment.dispatcher import (
                                 delete_from_market,
                             )
 
                             del_result = await delete_from_market(
-                                self.session, market_type, product_dict, account_id
+                                acct_session, market_type, product_dict, account_id
                             )
                             if del_result.get("success"):
                                 # registered_accounts에서 제거 + DB 반영
                                 _prod = await SambaCollectedProductRepository(
-                                    self.session
+                                    acct_session
                                 ).get_async(product_id)
                                 if _prod:
                                     new_reg = [
@@ -1179,7 +1117,8 @@ class SambaShipmentService:
                                     _prod.registered_accounts = (
                                         new_reg if new_reg else None
                                     )
-                                    await self.session.commit()
+                                    # 순차 실행이므로 세션 커밋 안전 (병렬 시 충돌 위험)
+                                    await acct_session.commit()
                                 res["status"] = "completed"
                                 res["results"] = {account_id: "deleted"}
                                 logger.info(
@@ -1197,6 +1136,23 @@ class SambaShipmentService:
                 # 마켓별 판매가 계산 (product_dict 원본 보호를 위해 복사본 사용)
                 acct_product = dict(product_dict)
 
+                # 마켓별 상세페이지 템플릿이 있으면 재생성
+                _policy_extras = {}
+                if product_row.applied_policy_id:
+                    _pol_repo = SambaPolicyRepository(acct_session)
+                    _pol = await _pol_repo.get_async(product_row.applied_policy_id)
+                    if _pol and _pol.extras:
+                        _policy_extras = _pol.extras
+                _mkt_templates = _policy_extras.get("market_detail_templates") or {}
+                if _mkt_templates.get(market_type):
+                    # 마켓 전용 템플릿 존재 → 해당 마켓용 상세 HTML 재생성
+                    _svc = SambaShipmentService(
+                        SambaShipmentRepository(acct_session), acct_session
+                    )
+                    acct_product["detail_html"] = await _svc._build_detail_html(
+                        acct_product, market_type=market_type
+                    )
+
                 # 마켓별 상품명 조합 덮어쓰기
                 _nr = product_dict.get("_name_rule")
                 if _nr and getattr(_nr, "market_name_compositions", None):
@@ -1208,10 +1164,7 @@ class SambaShipmentService:
                             "_original_name", product_dict.get("name", "")
                         )
                         acct_product["name"] = self._compose_product_name(
-                            _orig,
-                            _nr,
-                            market_type=market_type,
-                            deletion_words=product_dict.get("_deletion_words"),
+                            _orig, _nr, market_type=market_type
                         )
                 cost = (
                     acct_product.get("cost")
@@ -1220,13 +1173,31 @@ class SambaShipmentService:
                     or 0
                 )
                 if policy and policy.pricing:
-                    calc_price = calc_market_price(
-                        cost, policy.pricing, market_type, policy_market_data
-                    )
+                    pr = policy.pricing
+                    common_margin_rate = pr.get("marginRate", 15)
+                    common_shipping = pr.get("shippingCost", 0)
+                    common_extra = pr.get("extraCharge", 0)
+                    common_fee = pr.get("feeRate", 0)
+                    min_margin = pr.get("minMarginAmount", 0)
+
+                    policy_key = MARKET_TYPE_TO_POLICY_KEY.get(market_type)
+                    mp = policy_market_data.get(policy_key, {}) if policy_key else {}
+                    m_margin_rate = mp.get("marginRate") or common_margin_rate
+                    m_shipping = mp.get("shippingCost") or common_shipping
+                    m_fee = mp.get("feeRate") or common_fee
+
+                    margin_amt = round(cost * m_margin_rate / 100)
+                    if min_margin > 0 and margin_amt < min_margin:
+                        margin_amt = min_margin
+                    calc_price = cost + margin_amt + m_shipping
+                    if m_fee > 0 and calc_price > 0:
+                        calc_price = math.ceil(calc_price / (1 - m_fee / 100))
+                    if common_extra > 0:
+                        calc_price += common_extra
 
                     acct_product["sale_price"] = calc_price
                     logger.info(
-                        f"[전송] 정책 가격 계산: 원가={cost} → 판매가={calc_price}"
+                        f"[전송] 정책 가격 계산: 원가={cost}, 마진={margin_amt}({m_margin_rate}%), 배송={m_shipping}, 수수료={m_fee}% → 판매가={calc_price}"
                     )
                     logger.info(f"[메모리] 가격계산 후: {_mem_mb()}MB")
 
@@ -1287,7 +1258,7 @@ class SambaShipmentService:
                 try:
                     logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
                     result = await dispatch_to_market(
-                        self.session,
+                        acct_session,
                         market_type,
                         acct_product,
                         category_id,
@@ -1307,9 +1278,7 @@ class SambaShipmentService:
                 if result.get("success"):
                     res["status"] = "success"
                     # 상품번호 추출
-                    # product_no: 플러그인이 "product_no" 키로 반환 (롯데ON 등)
-                    # spdNo: 이전 방식 또는 일부 마켓 직접 반환 — 둘 다 확인
-                    product_no = result.get("product_no") or result.get("spdNo") or ""
+                    product_no = result.get("spdNo") or ""
                     api_data: dict[str, Any] = {}
                     if not product_no:
                         result_data = result.get("data", {})
@@ -1379,13 +1348,18 @@ class SambaShipmentService:
                 else:
                     logger.error(f"[전송] 계정 {account_id} 예외: {exc}")
                 res["error"] = _err
+            finally:
+                await acct_session.close()
             return res
 
-        # 모든 계정 병렬 전송
-        account_results = await asyncio.gather(
-            *[_dispatch_one(aid) for aid in target_account_ids],
-            return_exceptions=True,
-        )
+        # 계정별 순차 전송 — AsyncSession 동시 접근 방지
+        account_results = []
+        for aid in target_account_ids:
+            try:
+                r = await _dispatch_one(aid)
+                account_results.append(r)
+            except Exception as e:
+                account_results.append(e)
 
         # 결과 병합 + DB 일괄 업데이트
         merged_nos = dict(product_row.market_product_nos or {})
@@ -1507,12 +1481,7 @@ class SambaShipmentService:
     # ==================== 상품명 조합 ====================
 
     def _compose_product_name(
-        self,
-        product: dict[str, Any],
-        name_rule: Any,
-        *,
-        market_type: str | None = None,
-        deletion_words: list[str] | None = None,
+        self, product: dict[str, Any], name_rule: Any, *, market_type: str | None = None
     ) -> str:
         """정책의 상품명 규칙(name_composition)에 따라 상품명을 조합.
 
@@ -1566,12 +1535,6 @@ class SambaShipmentService:
                 flags = re.IGNORECASE if case_insensitive else 0
                 composed = re.sub(re.escape(fr), to or "", composed, flags=flags)
 
-        # 삭제어 적용 (dedup 전에 적용하여 중복 단어 감지 가능하게)
-        if deletion_words:
-            for dw in deletion_words:
-                composed = re.sub(re.escape(dw), " ", composed, flags=re.IGNORECASE)
-            composed = re.sub(r"\s{2,}", " ", composed).strip()
-
         # 중복 단어 제거
         if name_rule.dedup_enabled:
             words = composed.split()
@@ -1594,8 +1557,13 @@ class SambaShipmentService:
 
     # ==================== 상세페이지 HTML 생성 ====================
 
-    async def _build_detail_html(self, product: dict[str, Any]) -> str:
+    async def _build_detail_html(
+        self, product: dict[str, Any], market_type: str = ""
+    ) -> str:
         """정책의 상세 템플릿(상단/하단 이미지)과 상품 이미지를 조합하여 상세 HTML 생성.
+
+        market_type이 주어지면 마켓별 전용 템플릿을 우선 사용하고,
+        없으면 공통 템플릿으로 fallback.
 
         구조: 상단이미지 → 대표이미지 → 추가이미지 → 하단이미지
         """
@@ -1605,17 +1573,6 @@ class SambaShipmentService:
 
         parts: list[str] = []
         img_tag = '<div style="text-align:center;"><img src="{url}" style="max-width:860px;width:100%;" /></div>'
-
-        def _extract_url(value: str) -> str:
-            """img 태그가 저장된 경우 src URL만 추출."""
-            if not value:
-                return value
-            if value.strip().startswith("<img"):
-                import re as _re
-
-                m = _re.search(r'src=["\']([^"\']+)["\']', value)
-                return m.group(1) if m else value
-            return value
 
         # 정책에서 상세 템플릿 조회
         policy_id = product.get("applied_policy_id")
@@ -1645,14 +1602,20 @@ class SambaShipmentService:
             policy_repo = SambaPolicyRepository(self.session)
             policy = await policy_repo.get_async(policy_id)
             if policy and policy.extras:
-                template_id = policy.extras.get("detail_template_id")
-                logger.info(f"[상세HTML] 정책 {policy_id} 템플릿ID: {template_id}")
+                # 마켓별 전용 템플릿 우선, 없으면 공통 템플릿 fallback
+                market_templates = policy.extras.get("market_detail_templates") or {}
+                template_id = (
+                    market_templates.get(market_type) if market_type else None
+                ) or policy.extras.get("detail_template_id")
+                logger.info(
+                    f"[상세HTML] 정책 {policy_id} 마켓={market_type} 템플릿ID: {template_id}"
+                )
                 if template_id:
                     tpl_repo = BaseRepository(self.session, SambaDetailTemplate)
                     tpl = await tpl_repo.get_async(template_id)
                     if tpl:
-                        top_img = _extract_url(tpl.top_image_s3_key or "")
-                        bottom_img = _extract_url(tpl.bottom_image_s3_key or "")
+                        top_img = tpl.top_image_s3_key or ""
+                        bottom_img = tpl.bottom_image_s3_key or ""
                         if tpl.img_checks:
                             img_checks.update(tpl.img_checks)
                         if tpl.img_order:

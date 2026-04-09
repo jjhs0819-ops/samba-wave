@@ -12,7 +12,8 @@ export const SITE_COLORS: Record<string, string> = {
   Nike: '#FF6B6B',
   Adidas: '#FFD93D',
   ABCmart: '#FF8C00',
-  REXMONDE: '#F06595',
+  GrandStage: '#20C997',
+  OKmall: '#F06595',
   SSG: '#FF5A2E',
   LOTTEON: '#E10044',
   GSShop: '#6B5CE7',
@@ -28,8 +29,6 @@ export const PERIOD_BUTTONS = [
   { key: 'thisweek', label: '이번주' },
   { key: 'yesterday', label: '어제' },
   { key: 'today', label: '오늘' },
-  { key: '1week', label: '일주일' },
-  { key: '1month', label: '한달' },
   { key: 'thisyear', label: '올해' },
 ] as const
 
@@ -38,7 +37,6 @@ export const SOURCING_SEARCH_URLS: Record<string, string> = {
   MUSINSA: 'https://www.musinsa.com/search/musinsa/integration?q=',
   KREAM: 'https://kream.co.kr/search?keyword=',
   ABCmart: 'https://abcmart.a-rt.com/search?q=',
-  LOTTEON: 'https://www.lotteon.com/csearch/search/search?render=search&platform=pc&mallId=2&q=',
 }
 
 /** 소싱처 상품 상세 URL (상품번호 뒤에 붙여 사용) */
@@ -48,7 +46,6 @@ export const SOURCING_PRODUCT_URLS: Record<string, string> = {
   FashionPlus: 'https://www.fashionplus.co.kr/goods/detail/',
   ABCmart: 'https://www.a-rt.com/product?prdtNo=',
   Nike: 'https://www.nike.com/kr/t/',
-  LOTTEON: 'https://www.lotteon.com/p/product/',
 }
 
 /** 소싱처 주문 상세 URL (주문번호 뒤에 붙여 사용) */

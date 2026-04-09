@@ -72,7 +72,6 @@ async def create_job(
                         ),
                         SambaJob.total > 0,
                         SambaJob.current > 0,
-                        SambaJob.current < SambaJob.total,  # 전체 완료된 Job 제외
                     )
                     .order_by(SambaJob.created_at.desc())
                     .limit(1)
@@ -223,8 +222,6 @@ async def cancel_job(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     """잡 취소 (pending/running 모두 가능)."""
-    from backend.domain.samba.shipment.service import request_cancel_transmit
-
     repo = SambaJobRepository(session)
     ok = await repo.cancel_job(job_id)
     if not ok:
@@ -232,6 +229,4 @@ async def cancel_job(
             400, "취소할 수 없는 상태입니다 (pending/running만 취소 가능)"
         )
     await session.commit()
-    # 실행 중인 전송 잡이면 인메모리 취소 플래그로 즉시 중단
-    request_cancel_transmit(job_id)
     return {"ok": True}

@@ -16,43 +16,8 @@ class SambaJobRepository(BaseRepository[SambaJob]):
     def __init__(self, session: AsyncSession):
         super().__init__(session, SambaJob)
 
-    # ── 원자적 잡 획득 (멀티 worker race condition 방지) ──
-
-    async def claim_pending_job(
-        self,
-        exclude_types: set[str] | None = None,
-    ) -> Optional[SambaJob]:
-        """Pending 잡 1개를 원자적으로 claim (FOR UPDATE SKIP LOCKED).
-
-        다른 worker가 이미 lock 잡은 row는 건너뛰므로 중복 실행 불가.
-        write session 컨텍스트 안에서 호출해야 하며, 호출부에서 commit() 필요.
-        """
-        stmt = (
-            select(SambaJob)
-            .where(SambaJob.status == JobStatus.PENDING)
-            .order_by(SambaJob.created_at.asc())
-            .limit(1)
-            .with_for_update(skip_locked=True)
-        )
-        if exclude_types:
-            stmt = stmt.where(SambaJob.job_type.notin_(list(exclude_types)))
-
-        result = await self.session.execute(stmt)
-        job = result.scalars().first()
-        if job:
-            job.status = JobStatus.RUNNING
-            job.started_at = datetime.now(UTC)
-            self.session.add(job)
-            await self.session.flush()
-        return job
-
-    # ── 레거시 메서드 (하위 호환용, 다른 호출부가 있을 수 있음) ──
-
     async def pick_next_pending(self) -> Optional[SambaJob]:
-        """가장 오래된 pending 잡 1개를 running으로 변경 후 반환.
-
-        [DEPRECATED] claim_pending_job()을 사용하세요 — FOR UPDATE SKIP LOCKED 적용.
-        """
+        """가장 오래된 pending 잡 1개를 running으로 변경 후 반환."""
         stmt = (
             select(SambaJob)
             .where(SambaJob.status == JobStatus.PENDING)
@@ -69,10 +34,7 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         return job
 
     async def list_pending(self, limit: int = 5) -> list[SambaJob]:
-        """pending 잡을 오래된 순으로 조회 (running 변경 포함).
-
-        [DEPRECATED] claim_pending_job()을 사용하세요 — FOR UPDATE SKIP LOCKED 적용.
-        """
+        """pending 잡을 오래된 순으로 조회 (running 변경 포함)."""
         stmt = (
             select(SambaJob)
             .where(SambaJob.status == JobStatus.PENDING)
@@ -161,26 +123,20 @@ class SambaJobRepository(BaseRepository[SambaJob]):
     ) -> int:
         """stuck된 running 잡을 pending으로 복구.
 
-        FOR UPDATE SKIP LOCKED 적용 — 다른 worker가 처리 중인 잡은 건너뜀.
-
         exclude_types: 현재 워커가 실행 중인 타입은 제외
         threshold_sec: >0이면 started_at 기준 N초 이상 경과한 잡만 복구
         """
-        from datetime import timedelta
-
         from sqlalchemy import and_
 
         conditions = [SambaJob.status == JobStatus.RUNNING]
         if exclude_types:
             conditions.append(SambaJob.job_type.notin_(list(exclude_types)))
         if threshold_sec > 0:
-            cutoff = datetime.now(UTC) - timedelta(seconds=threshold_sec)
+            cutoff = datetime.now(UTC) - __import__("datetime").timedelta(
+                seconds=threshold_sec
+            )
             conditions.append(SambaJob.started_at < cutoff)
-
-        # FOR UPDATE SKIP LOCKED — 다른 worker가 lock 잡은 running 잡은 skip
-        stmt = (
-            select(SambaJob).where(and_(*conditions)).with_for_update(skip_locked=True)
-        )
+        stmt = select(SambaJob).where(and_(*conditions))
         result = await self.session.execute(stmt)
         stuck = list(result.scalars().all())
         for job in stuck:

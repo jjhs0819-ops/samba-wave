@@ -530,13 +530,6 @@ class ImageTransformService:
         from rembg import remove
 
         def _process(data: bytes) -> bytes:
-            # 큰 이미지 리사이즈 (메모리/시간 절약)
-            src = Image.open(io.BytesIO(data))
-            if max(src.size) > 1500:
-                src.thumbnail((1500, 1500), Image.LANCZOS)
-                buf_resized = io.BytesIO()
-                src.save(buf_resized, format="PNG")
-                data = buf_resized.getvalue()
             # 배경 제거 (U2-Net 모델 사용, 첫 실행 시 자동 다운로드)
             result = remove(data)
             # 흰배경 합성 + WebP 변환

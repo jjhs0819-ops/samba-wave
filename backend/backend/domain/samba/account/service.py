@@ -145,7 +145,7 @@ class SambaAccountService:
         self.repo = repo
 
     async def list_accounts(
-        self, skip: int = 0, limit: int = 500
+        self, skip: int = 0, limit: int = 50
     ) -> List[SambaMarketAccount]:
         return await self.repo.list_async(skip=skip, limit=limit, order_by="sort_order")
 

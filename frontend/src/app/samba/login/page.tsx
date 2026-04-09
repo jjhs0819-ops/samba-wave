@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { userApi } from '@/lib/samba/api'
+import { STORAGE_KEYS } from '@/lib/samba/constants'
 
 export default function SambaLoginPage() {
   const router = useRouter()
@@ -23,9 +24,11 @@ export default function SambaLoginPage() {
     setSubmitting(true)
     try {
       const user = await userApi.login(email, password)
-      // JWT 토큰과 사용자 정보를 localStorage에 저장
-      if (user.token) localStorage.setItem('samba_token', user.token)
-      localStorage.setItem('samba_user', JSON.stringify(user))
+      localStorage.setItem(STORAGE_KEYS.SAMBA_USER, JSON.stringify(user))
+      // JWT 토큰을 쿠키에 저장 (미들웨어 인증용)
+      if (user.access_token) {
+        document.cookie = `samba_user=${user.access_token}; path=/; max-age=${60 * 60 * 12}; SameSite=Lax`
+      }
       router.replace('/samba')
     } catch (err) {
       setError(err instanceof Error ? err.message : '로그인에 실패했습니다')

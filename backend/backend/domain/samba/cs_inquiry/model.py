@@ -37,19 +37,8 @@ class SambaCSInquiry(SQLModel, table=True):
     market_answer_no: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
-    account_id: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True, index=True)
-    )
     account_name: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
-    )
-
-    # SSG 외부 연동
-    external_id: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True, index=True)
-    )
-    external_sent: bool = Field(
-        default=False, sa_column=Column(Boolean, nullable=False, server_default="false")
     )
 
     # 문의 정보

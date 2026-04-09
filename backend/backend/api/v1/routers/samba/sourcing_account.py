@@ -9,17 +9,45 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from sqlmodel import select
-
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
-from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 from backend.dtos.samba.sourcing_account import (
     SourcingAccountCreate,
+    SourcingAccountOut,
     SourcingAccountUpdate,
 )
 from backend.utils.logger import logger
 
 router = APIRouter(prefix="/sourcing-accounts", tags=["samba-sourcing-accounts"])
+
+
+def _mask_password(value: str) -> str:
+    """비밀번호 마스킹 — 앞 2자만 표시."""
+    if len(value) <= 2:
+        return "****"
+    return value[:2] + "****"
+
+
+def _to_sourcing_account_out(account: object) -> SourcingAccountOut:
+    """ORM 모델 → 마스킹된 응답 DTO."""
+    # additional_fields에서 민감 쿠키 정보 제거
+    safe_fields = dict(account.additional_fields or {})
+    safe_fields.pop("musinsa_cookie", None)
+    return SourcingAccountOut(
+        id=account.id,
+        tenant_id=account.tenant_id,
+        site_name=account.site_name,
+        account_label=account.account_label,
+        username=account.username,
+        password=_mask_password(account.password),
+        chrome_profile=account.chrome_profile,
+        memo=account.memo,
+        balance=account.balance,
+        balance_updated_at=account.balance_updated_at,
+        is_active=account.is_active,
+        additional_fields=safe_fields if safe_fields else None,
+        created_at=account.created_at,
+        updated_at=account.updated_at,
+    )
 
 
 def _read_service(session: AsyncSession):
@@ -44,32 +72,13 @@ def _write_service(session: AsyncSession):
     return SambaSourcingAccountService(SambaSourcingAccountRepository(session))
 
 
-@router.get("")
+@router.get("", response_model=list[SourcingAccountOut])
 async def list_sourcing_accounts(
     site_name: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_read_session_dependency),
-    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
-
-    # tenant_id가 있으면 해당 테넌트 + 기존(NULL) 소싱처 계정 모두 조회
-    if tenant_id is not None:
-        from sqlalchemy import or_
-
-        stmt = select(SambaSourcingAccount).order_by(
-            SambaSourcingAccount.created_at.desc()
-        )
-        stmt = stmt.where(
-            or_(
-                SambaSourcingAccount.tenant_id == tenant_id,
-                SambaSourcingAccount.tenant_id == None,  # noqa: E711
-            )
-        )
-        if site_name:
-            stmt = stmt.where(SambaSourcingAccount.site_name == site_name)
-        result = await session.execute(stmt)
-        return result.scalars().all()
-    return await _read_service(session).list_accounts(site_name=site_name)
+    accounts = await _read_service(session).list_accounts(site_name=site_name)
+    return [_to_sourcing_account_out(a) for a in accounts]
 
 
 @router.get("/sites")
@@ -83,7 +92,12 @@ async def get_supported_sites():
 
 @router.get("/chrome-profiles")
 async def get_chrome_profiles():
-    """PC에 존재하는 크롬 프로필 목록 반환."""
+    """PC에 존재하는 크롬 프로필 목록 반환 (개발 환경 전용)."""
+    from backend.core.config import settings
+
+    # 프로덕션에서는 호스트 정보 노출 방지
+    if not settings.is_development:
+        return []
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     local_state_path = (
         Path(local_app_data) / "Google" / "Chrome" / "User Data" / "Local State"
@@ -130,7 +144,7 @@ async def get_balance_check_requested():
     return {"requested": False}
 
 
-@router.get("/{account_id}")
+@router.get("/{account_id}", response_model=SourcingAccountOut)
 async def get_sourcing_account(
     account_id: str,
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -139,116 +153,52 @@ async def get_sourcing_account(
     account = await svc.get_account(account_id)
     if not account:
         raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
-    return account
+    return _to_sourcing_account_out(account)
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, response_model=SourcingAccountOut)
 async def create_sourcing_account(
     body: SourcingAccountCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
-    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    data = body.model_dump(exclude_unset=True)
-    # tenant_id가 있으면 신규 소싱처 계정에 테넌트 정보 설정
-    if tenant_id is not None:
-        data["tenant_id"] = tenant_id
-    return await _write_service(session).create_account(data)
+    account = await _write_service(session).create_account(
+        body.model_dump(exclude_unset=True)
+    )
+    return _to_sourcing_account_out(account)
 
 
-@router.put("/{account_id}")
+@router.put("/{account_id}", response_model=SourcingAccountOut)
 async def update_sourcing_account(
     account_id: str,
     body: SourcingAccountUpdate,
     session: AsyncSession = Depends(get_write_session_dependency),
-    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     svc = _write_service(session)
-    # tenant_id가 있으면 소유권 검증
-    if tenant_id is not None:
-        existing = await svc.get_account(account_id)
-        if not existing:
-            raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
-        if existing.tenant_id != tenant_id:
-            raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
     result = await svc.update_account(account_id, body.model_dump(exclude_unset=True))
     if not result:
         raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
-    return result
+    return _to_sourcing_account_out(result)
 
 
-@router.put("/{account_id}/toggle")
+@router.put("/{account_id}/toggle", response_model=SourcingAccountOut)
 async def toggle_sourcing_account(
     account_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
-    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    svc = _write_service(session)
-    # tenant_id가 있으면 소유권 검증
-    if tenant_id is not None:
-        existing = await svc.get_account(account_id)
-        if not existing:
-            raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
-        if existing.tenant_id != tenant_id:
-            raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
-    result = await svc.toggle_active(account_id)
+    result = await _write_service(session).toggle_active(account_id)
     if not result:
         raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
-    return result
+    return _to_sourcing_account_out(result)
 
 
 @router.delete("/{account_id}")
 async def delete_sourcing_account(
     account_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
-    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    svc = _write_service(session)
-    # tenant_id가 있으면 소유권 검증
-    if tenant_id is not None:
-        existing = await svc.get_account(account_id)
-        if not existing:
-            raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
-        if existing.tenant_id != tenant_id:
-            raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
-    if not await svc.delete_account(account_id):
+    if not await _write_service(session).delete_account(account_id):
         raise HTTPException(404, "소싱처 계정을 찾을 수 없습니다")
     return {"ok": True}
-
-
-class SyncMembershipRequest(BaseModel):
-    site_name: str
-    membership_rate: float
-    membership_grade: str = ""
-
-
-@router.post("/sync-membership")
-async def sync_membership_from_extension(
-    body: SyncMembershipRequest,
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    """확장앱에서 멤버십 등급 수신 → 소싱처 계정에 저장 + 캐시 갱신."""
-    from backend.domain.samba.proxy.abcmart import ARTSourcingClient
-
-    svc = _write_service(session)
-    accounts = await svc.list_accounts(site_name=body.site_name)
-
-    for account in accounts:
-        extra = dict(account.additional_fields or {})
-        extra["membership_rate"] = body.membership_rate
-        extra["membership_grade"] = body.membership_grade
-        await svc.repo.update_async(account.id, additional_fields=extra)
-
-    # 인메모리 캐시 갱신
-    ARTSourcingClient.set_membership_rate(body.membership_rate)
-
-    logger.info(
-        f"[멤버십동기화] {body.site_name}: {body.membership_grade} ({body.membership_rate}%)"
-    )
-    return {
-        "ok": True,
-        "rate": body.membership_rate,
-        "grade": body.membership_grade,
-    }
 
 
 class SyncBalanceRequest(BaseModel):

@@ -92,13 +92,6 @@ class MarketPlugin(ABC):
                 product["_delivery_base_fee"] = int(mp["shippingCost"])
             if mp.get("maxStock"):
                 product["_max_stock"] = mp["maxStock"]
-            # SSG 주문수량 제한 (정책 → 상품에 주입)
-            if mp.get("dayMaxQty"):
-                product["_day_max_qty"] = int(mp["dayMaxQty"])
-            if mp.get("onceMinQty"):
-                product["_once_min_qty"] = int(mp["onceMinQty"])
-            if mp.get("onceMaxQty"):
-                product["_once_max_qty"] = int(mp["onceMaxQty"])
         if account:
             extras = account.additional_fields or {}
             if extras.get("asPhone"):

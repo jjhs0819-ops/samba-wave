@@ -61,12 +61,6 @@ class BackendSettings(BaseSettings):
     # ===========================================
 
     # ===========================================
-    # API Gateway Key (외부 앱 차단용)
-    # ===========================================
-    api_gateway_key: str = ""
-    """API 게이트웨이 키 — 프론트엔드·확장앱만 허용, 외부 앱 차단."""
-
-    # ===========================================
     # AI / Anthropic Configuration
     # ===========================================
     anthropic_api_key: str = ""
@@ -149,11 +143,7 @@ class BackendSettings(BaseSettings):
 _settings = BackendSettings()
 
 # ── 개발 환경에서 운영 DB 접속 차단 ──
-_PRODUCTION_DB_HOSTS = [
-    "34.47.96.236",
-    "/cloudsql/fresh-sanctuary",  # 팀장님 운영 DB
-    "/cloudsql/samba-wave-molle",  # 준길 운영 DB
-]
+_PRODUCTION_DB_HOSTS = ["34.47.96.236", "/cloudsql/fresh-sanctuary"]
 if _settings.is_development:
     for _h in _PRODUCTION_DB_HOSTS:
         if _h in _settings.write_db_host or _h in _settings.read_db_host:

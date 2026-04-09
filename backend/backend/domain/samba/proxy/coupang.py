@@ -9,206 +9,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
 
 from backend.core.config import settings
 from backend.utils.logger import logger
-
-# ------------------------------------------------------------------
-# SEO 헬퍼 함수 (모듈 레벨)
-# ------------------------------------------------------------------
-
-# 노출상품명 불용어
-_DISPLAY_NAME_STOPWORDS = {
-    "무료배송",
-    "당일발송",
-    "특가",
-    "할인",
-    "세일",
-    "SALE",
-    "신상",
-    "인기",
-    "추천",
-    "베스트",
-    "HOT",
-    "NEW",
-    "한정",
-    "사은품",
-}
-
-# 사이즈 패턴 (숫자 2~3자리, 알파벳 사이즈, FREE 등)
-_SIZE_PATTERN = re.compile(
-    r"^(\d{2,3}(?:\([A-Za-z]+\))?|(?:XX?[SL]|[SML]|FREE))$", re.IGNORECASE
-)
-
-
-def _build_display_product_name(product: dict[str, Any]) -> str:
-    """쿠팡 노출상품명 생성 (최대 100자).
-
-    우선순위: market_names["쿠팡"] → 자동생성
-    자동생성: 브랜드 + 성별 + 카테고리키워드 + 특성 + 품번
-    """
-    # 수동 설정된 쿠팡 노출상품명 우선
-    market_names = product.get("market_names") or {}
-    if isinstance(market_names, dict) and market_names.get("쿠팡"):
-        return str(market_names["쿠팡"])[:100]
-
-    parts: list[str] = []
-
-    # 브랜드
-    brand = (product.get("brand") or "").strip()
-    if brand:
-        parts.append(brand)
-
-    # 성별
-    sex = (product.get("sex") or "").strip()
-    sex_map = {
-        "남성": "남성",
-        "여성": "여성",
-        "남": "남성",
-        "여": "여성",
-        "M": "남성",
-        "F": "여성",
-        "MALE": "남성",
-        "FEMALE": "여성",
-        "공용": "공용",
-        "남녀공용": "남녀공용",
-    }
-    mapped_sex = sex_map.get(sex, "")
-    if mapped_sex:
-        parts.append(mapped_sex)
-
-    # 카테고리 키워드 (category4 → 3 → 2 우선)
-    for key in ("category4", "category3", "category2"):
-        cat_val = (product.get(key) or "").strip()
-        if cat_val and cat_val not in parts:
-            parts.append(cat_val)
-            break
-
-    # 원본 상품명에서 특성 추출 (브랜드/카테고리 제외, 불용어 제외)
-    original_name = product.get("name") or ""
-    name_tokens = re.split(r"[\s/\-_#]+", original_name)
-    existing_lower = {p.lower() for p in parts}
-    for token in name_tokens:
-        token_clean = token.strip()
-        if (
-            len(token_clean) >= 2
-            and token_clean not in _DISPLAY_NAME_STOPWORDS
-            and token_clean.lower() not in existing_lower
-        ):
-            parts.append(token_clean)
-            existing_lower.add(token_clean.lower())
-            # 특성은 최대 3개까지
-            if len(parts) >= 7:
-                break
-
-    # 품번 (style_code)
-    style_code = (product.get("style_code") or "").strip()
-    if style_code and style_code.lower() not in existing_lower:
-        parts.append(style_code)
-
-    result = " ".join(parts)
-
-    # 100자 초과 시 품번 유지하고 중간 잘라내기
-    if len(result) > 100 and style_code:
-        max_body = 100 - len(style_code) - 1  # 공백 1자
-        body = " ".join(parts[:-1])
-        result = body[:max_body].rstrip() + " " + style_code
-    return result[:100]
-
-
-def _build_search_tags(product: dict[str, Any]) -> str:
-    """쿠팡 검색어 태그 생성 (최대 20개, 콤마 구분, 각 20자 이내)."""
-    seen: set[str] = set()
-    tags: list[str] = []
-
-    def _add(keyword: str) -> None:
-        kw = keyword.strip()
-        if len(kw) < 2 or len(kw) > 20:
-            return
-        kw_lower = kw.lower()
-        if kw_lower in seen or kw in _DISPLAY_NAME_STOPWORDS:
-            return
-        seen.add(kw_lower)
-        tags.append(kw)
-
-    brand = (product.get("brand") or "").strip()
-    if brand:
-        _add(brand)
-    seo_keywords = product.get("seo_keywords") or []
-    if isinstance(seo_keywords, list):
-        for kw in seo_keywords:
-            _add(str(kw))
-    for key in ("category4", "category3", "category2", "category1"):
-        cat_val = (product.get(key) or "").strip()
-        if cat_val:
-            _add(cat_val)
-    original_name = product.get("name") or ""
-    name_tokens = re.split(r"[\s/\-_,()]+", original_name)
-    for token in name_tokens:
-        _add(token)
-    style_code = (product.get("style_code") or "").strip()
-    if style_code:
-        _add(style_code)
-    material = (product.get("material") or "").strip()
-    if material:
-        _add(material)
-    color = (product.get("color") or "").strip()
-    if color:
-        _add(color)
-    return ",".join(tags[:20])
-
-
-def _parse_option_color_size(opt_name: str, default_color: str) -> tuple[str, str]:
-    """옵션명에서 색상/사이즈 분리."""
-    opt_name = opt_name.strip()
-    if not opt_name:
-        return default_color, "FREE"
-    parts = re.split(r"\s*/\s*|\s*,\s*", opt_name)
-    parts = [p.strip() for p in parts if p.strip()]
-    if len(parts) >= 2:
-        last = parts[-1]
-        if _SIZE_PATTERN.match(last):
-            color_part = " ".join(parts[:-1])
-            return color_part or default_color, last
-        first = parts[0]
-        if _SIZE_PATTERN.match(first):
-            color_part = " ".join(parts[1:])
-            return color_part or default_color, first
-        return parts[0], parts[-1]
-    single = parts[0] if parts else opt_name
-    if _SIZE_PATTERN.match(single):
-        return default_color, single
-    return single, "FREE"
-
-
-def _build_content_details(detail_html: str) -> list[dict[str, Any]]:
-    """상세 HTML에서 IMAGE/TEXT 혼합 contentDetails 생성."""
-    if not detail_html:
-        return [{"content": "", "detailType": "TEXT"}]
-    img_pattern = re.compile(
-        r'<img\s+[^>]*?src=["\']([^"\']+)["\'][^>]*?>', re.IGNORECASE
-    )
-    segments = img_pattern.split(detail_html)
-    if len(segments) <= 1:
-        return [{"content": detail_html, "detailType": "TEXT"}]
-    details: list[dict[str, Any]] = []
-    for i, segment in enumerate(segments):
-        segment = segment.strip()
-        if not segment:
-            continue
-        if i % 2 == 0:
-            details.append({"content": segment, "detailType": "TEXT"})
-        else:
-            url = segment
-            if url.startswith("//"):
-                url = "https:" + url
-            details.append({"content": url, "detailType": "IMAGE"})
-    return details if details else [{"content": detail_html, "detailType": "TEXT"}]
 
 
 class CoupangClient:
@@ -277,8 +84,6 @@ class CoupangClient:
                 resp = await client.post(url, headers=headers, json=body or {})
             elif method == "PUT":
                 resp = await client.put(url, headers=headers, json=body or {})
-            elif method == "PATCH":
-                resp = await client.patch(url, headers=headers, json=body or {})
             elif method == "DELETE":
                 resp = await client.delete(url, headers=headers)
             else:
@@ -449,13 +254,12 @@ class CoupangClient:
         """SambaCollectedProduct → 쿠팡 상품 등록 데이터 변환.
 
         쿠팡 Wing API 공식 스펙 기준 전체 필수필드 포함.
-        SEO 최적화: 노출상품명 자동생성, 검색태그, 옵션별 색상분리, 상세이미지 분리.
         """
         from datetime import datetime as dt, timezone as tz
 
         images_raw = product.get("images") or []
         coupang_main = product.get("coupang_main_image") or ""
-        default_color = product.get("color", "") or "상세 이미지 참조"
+        color = product.get("color", "") or "상세 이미지 참조"
         detail_html = (
             product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>"
         )
@@ -473,13 +277,10 @@ class CoupangClient:
 
         notices = build_coupang_notices(product)
 
-        # 상세 컨텐츠 (IMAGE/TEXT 혼합)
-        content_details = _build_content_details(detail_html)
-
         # 아이템별 공통 필드 생성 함수
-        def _build_item(
-            item_name: str, stock: int, size_val: str, item_color: str = ""
-        ) -> dict[str, Any]:
+        def _build_item(item_name: str, stock: int, size_val: str) -> dict[str, Any]:
+            # 아이템별 이미지 (대표 + 상세)
+            # 쿠팡 전용 대표이미지가 있으면 우선 사용, 없으면 공통 대표(images[0])
             rep_image = coupang_main or (images_raw[0] if images_raw else "")
             item_images: list[dict[str, Any]] = []
             if rep_image:
@@ -499,13 +300,10 @@ class CoupangClient:
                         }
                     )
 
-            # 아이템별 색상 (옵션에서 파싱된 개별 색상 우선)
-            resolved_color = item_color or default_color
-
             return {
                 "itemName": item_name,
-                "originalPrice": int(product.get("original_price", 0)) // 10 * 10,
-                "salePrice": int(product.get("sale_price", 0)) // 10 * 10,
+                "originalPrice": int(product.get("original_price", 0)),
+                "salePrice": int(product.get("sale_price", 0)),
                 "maximumBuyCount": min(stock, 99999),
                 "maximumBuyForPerson": 0,
                 "maximumBuyForPersonPeriod": 1,
@@ -525,12 +323,14 @@ class CoupangClient:
                         "attributeTypeName": "패션의류/잡화 사이즈",
                         "attributeValueName": size_val,
                     },
-                    {"attributeTypeName": "색상", "attributeValueName": resolved_color},
+                    {"attributeTypeName": "색상", "attributeValueName": color},
                 ],
                 "contents": [
                     {
                         "contentsType": "HTML",
-                        "contentDetails": content_details,
+                        "contentDetails": [
+                            {"content": detail_html, "detailType": "TEXT"}
+                        ],
                     }
                 ],
                 "notices": notices,
@@ -540,35 +340,27 @@ class CoupangClient:
                 ],
             }
 
-        # 옵션 처리 — 색상/사이즈 분리
+        # 옵션 처리
         options = product.get("options") or []
         items = []
         if options:
             for opt in options:
                 opt_name = opt.get("name", "") or opt.get("size", "") or "기본"
                 opt_stock = opt.get("stock", 999)
-                opt_color, size_val = _parse_option_color_size(opt_name, default_color)
-                items.append(_build_item(opt_name, opt_stock, size_val, opt_color))
+                size_val = opt_name.split("/")[-1] if "/" in opt_name else opt_name
+                items.append(_build_item(opt_name, opt_stock, size_val))
         else:
-            items.append(
-                _build_item(product.get("name", "기본"), 999, "FREE", default_color)
-            )
+            items.append(_build_item(product.get("name", "기본"), 999, "FREE"))
 
-        # SEO 최적화: 노출상품명 + 검색태그
-        display_name = _build_display_product_name(product)
-        search_tags = _build_search_tags(product)
-
-        result: dict[str, Any] = {
+        return {
             "displayCategoryCode": display_category,
-            "sellerProductName": re.sub(
-                r"\s{2,}", " ", re.sub(r"[#_]+", " ", product.get("name", ""))
-            ).strip()[:100],
+            "sellerProductName": product.get("name", "")[:100],
             "vendorId": "",  # 런타임에 디스패처에서 채움
             "saleStartedAt": now,
             "saleEndedAt": "2099-01-01T23:59:59",
-            "displayProductName": display_name,
+            "displayProductName": product.get("name", "")[:100],
             "brand": product.get("brand", ""),
-            "generalProductName": display_name,
+            "generalProductName": product.get("name", "")[:100],
             "productGroup": "",
             "deliveryMethod": "SEQUENCIAL",
             "deliveryCompanyCode": "CJGLS",
@@ -578,7 +370,7 @@ class CoupangClient:
             "deliveryChargeOnReturn": 2500,
             "remoteAreaDeliverable": "N",
             "unionDeliveryType": "NOT_UNION_DELIVERY",
-            "returnCenterCode": return_center_code,
+            "returnCenterCode": return_center_code or "NO_RETURN_CENTERCODE",
             "returnChargeName": "반품지",
             "companyContactNumber": product.get("_as_phone", "") or "상세페이지 참조",
             "returnZipCode": "00000",
@@ -595,311 +387,6 @@ class CoupangClient:
             "extraInfoMessage": "",
             "manufacture": product.get("manufacturer", "") or product.get("brand", ""),
         }
-
-        # 검색태그 추가
-        if search_tags:
-            result["searchTags"] = search_tags
-
-        return result
-
-    # ------------------------------------------------------------------
-    # 주문 조회
-    # ------------------------------------------------------------------
-
-    async def get_orders(
-        self,
-        days: int = 7,
-        status: str = "",
-        max_per_page: int = 50,
-    ) -> list[dict[str, Any]]:
-        """최근 N일간 주문시트 조회.
-
-        쿠팡 Wing API: GET /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets
-        페이징: nextToken 기반 커서 방식
-        """
-
-        now = datetime.now(timezone.utc)
-        since = now - timedelta(days=days)
-        created_at_from = since.strftime("%Y-%m-%dT00:00:00")
-        created_at_to = now.strftime("%Y-%m-%dT23:59:59")
-
-        all_orders: list[dict[str, Any]] = []
-        next_token = ""
-
-        for _ in range(100):  # 무한루프 방지
-            params: dict[str, str] = {
-                "createdAtFrom": created_at_from,
-                "createdAtTo": created_at_to,
-                "maxPerPage": str(max_per_page),
-            }
-            if status:
-                params["status"] = status
-            if next_token:
-                params["nextToken"] = next_token
-
-            path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets"
-            result = await self._call_api("GET", path, params=params)
-
-            data = result.get("data", []) if isinstance(result, dict) else []
-            if isinstance(data, list):
-                all_orders.extend(data)
-            elif isinstance(data, dict):
-                # data가 dict인 경우 orderSheets 키에서 추출
-                sheets = data.get("orderSheets", data.get("content", []))
-                if isinstance(sheets, list):
-                    all_orders.extend(sheets)
-
-            # 다음 페이지 토큰
-            next_token = result.get("nextToken", "") if isinstance(result, dict) else ""
-            if not next_token:
-                break
-
-        logger.info(f"[쿠팡] 주문 조회 완료: {len(all_orders)}건 (최근 {days}일)")
-        return all_orders
-
-    async def confirm_orders(
-        self,
-        shipment_box_ids: list[int],
-    ) -> list[dict[str, Any]]:
-        """발주확인 (주문시트 확인).
-
-        쿠팡 Wing API: PUT /v2/providers/openapi/apis/api/v4/vendors/{vendorId}/ordersheets/confirmation
-        """
-        results: list[dict[str, Any]] = []
-        # 쿠팡은 shipmentBoxId 단위로 확인
-        for box_id in shipment_box_ids:
-            try:
-                path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets/{box_id}/confirmation"
-                result = await self._call_api("PUT", path)
-                results.append(
-                    {"shipmentBoxId": box_id, "success": True, "data": result}
-                )
-            except CoupangApiError as e:
-                logger.warning(f"[쿠팡] 발주확인 실패 (boxId={box_id}): {e}")
-                results.append(
-                    {"shipmentBoxId": box_id, "success": False, "error": str(e)}
-                )
-        logger.info(
-            f"[쿠팡] 발주확인 요청: {len(shipment_box_ids)}건, 성공: {sum(1 for r in results if r['success'])}건"
-        )
-        return results
-
-    # ------------------------------------------------------------------
-    # 송장 전송
-    # ------------------------------------------------------------------
-
-    async def update_shipping(
-        self,
-        shipment_box_id: int,
-        delivery_company_code: str,
-        invoice_number: str,
-    ) -> dict[str, Any]:
-        """송장번호 입력 (배송 시작).
-
-        쿠팡 Wing API: PUT /v2/.../vendors/{vendorId}/ordersheets/{shipmentBoxId}/invoices
-        """
-        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets/{shipment_box_id}/invoices"
-        body = {
-            "vendorId": self.vendor_id,
-            "shipmentBoxId": shipment_box_id,
-            "deliveryCompanyCode": delivery_company_code,
-            "invoiceNumber": invoice_number,
-        }
-        result = await self._call_api("PUT", path, body=body)
-        logger.info(
-            f"[쿠팡] 송장 입력 완료: boxId={shipment_box_id}, 송장={invoice_number}"
-        )
-        return result
-
-    # ------------------------------------------------------------------
-    # 반품/교환
-    # ------------------------------------------------------------------
-
-    async def get_return_requests(
-        self,
-        days: int = 30,
-        status: str = "",
-        max_per_page: int = 50,
-    ) -> list[dict[str, Any]]:
-        """반품요청 목록 조회.
-
-        쿠팡 Wing API: GET /v2/.../vendors/{vendorId}/returnRequests
-        페이징: nextToken 기반 커서 방식
-        """
-        now = datetime.now(timezone.utc)
-        since = now - timedelta(days=days)
-
-        all_returns: list[dict[str, Any]] = []
-        next_token = ""
-
-        for _ in range(100):  # 무한루프 방지
-            params: dict[str, str] = {
-                "createdAtFrom": since.strftime("%Y-%m-%d"),
-                "createdAtTo": now.strftime("%Y-%m-%d"),
-                "maxPerPage": str(max_per_page),
-            }
-            if status:
-                params["status"] = status
-            if next_token:
-                params["nextToken"] = next_token
-
-            path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/returnRequests"
-            result = await self._call_api("GET", path, params=params)
-
-            data = result.get("data", []) if isinstance(result, dict) else []
-            if isinstance(data, list):
-                all_returns.extend(data)
-            elif isinstance(data, dict):
-                items = data.get("returnRequests", data.get("content", []))
-                if isinstance(items, list):
-                    all_returns.extend(items)
-
-            next_token = result.get("nextToken", "") if isinstance(result, dict) else ""
-            if not next_token:
-                break
-
-        logger.info(f"[쿠팡] 반품요청 조회 완료: {len(all_returns)}건 (최근 {days}일)")
-        return all_returns
-
-    async def approve_return(
-        self,
-        receipt_id: int,
-    ) -> dict[str, Any]:
-        """반품요청 승인.
-
-        쿠팡 Wing API: PATCH /v2/.../vendors/{vendorId}/returnRequests/{receiptId}/approval
-        """
-        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/returnRequests/{receipt_id}/approval"
-        result = await self._call_api("PATCH", path)
-        logger.info(f"[쿠팡] 반품 승인 완료: receiptId={receipt_id}")
-        return result
-
-    async def get_exchange_requests(
-        self,
-        days: int = 30,
-        status: str = "",
-        max_per_page: int = 50,
-    ) -> list[dict[str, Any]]:
-        """교환요청 목록 조회.
-
-        쿠팡 Wing API: GET /v2/.../vendors/{vendorId}/exchangeRequests
-        페이징: nextToken 기반 커서 방식
-        """
-        now = datetime.now(timezone.utc)
-        since = now - timedelta(days=days)
-
-        all_exchanges: list[dict[str, Any]] = []
-        next_token = ""
-
-        for _ in range(100):  # 무한루프 방지
-            params: dict[str, str] = {
-                "createdAtFrom": since.strftime("%Y-%m-%d"),
-                "createdAtTo": now.strftime("%Y-%m-%d"),
-                "maxPerPage": str(max_per_page),
-            }
-            if status:
-                params["status"] = status
-            if next_token:
-                params["nextToken"] = next_token
-
-            path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/exchangeRequests"
-            result = await self._call_api("GET", path, params=params)
-
-            data = result.get("data", []) if isinstance(result, dict) else []
-            if isinstance(data, list):
-                all_exchanges.extend(data)
-            elif isinstance(data, dict):
-                items = data.get("exchangeRequests", data.get("content", []))
-                if isinstance(items, list):
-                    all_exchanges.extend(items)
-
-            next_token = result.get("nextToken", "") if isinstance(result, dict) else ""
-            if not next_token:
-                break
-
-        logger.info(
-            f"[쿠팡] 교환요청 조회 완료: {len(all_exchanges)}건 (최근 {days}일)"
-        )
-        return all_exchanges
-
-    async def approve_exchange(
-        self,
-        receipt_id: int,
-    ) -> dict[str, Any]:
-        """교환요청 승인.
-
-        쿠팡 Wing API: PATCH /v2/.../vendors/{vendorId}/exchangeRequests/{receiptId}/approval
-        """
-        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/exchangeRequests/{receipt_id}/approval"
-        result = await self._call_api("PATCH", path)
-        logger.info(f"[쿠팡] 교환 승인 완료: receiptId={receipt_id}")
-        return result
-
-    # ------------------------------------------------------------------
-    # CS 문의 수집
-    # ------------------------------------------------------------------
-
-    async def get_inquiries(
-        self,
-        days: int = 7,
-        answered: Optional[bool] = None,
-        max_per_page: int = 50,
-    ) -> list[dict[str, Any]]:
-        """CS 문의 목록 조회.
-
-        쿠팡 Wing API: GET /v2/.../vendors/{vendorId}/onlineInquiries
-        페이징: nextToken 기반 커서 방식
-        """
-
-        now = datetime.now(timezone.utc)
-        since = now - timedelta(days=days)
-
-        all_inquiries: list[dict[str, Any]] = []
-        next_token = ""
-
-        for _ in range(100):  # 무한루프 방지
-            params: dict[str, str] = {
-                "createdAtFrom": since.strftime("%Y-%m-%dT00:00:00"),
-                "createdAtTo": now.strftime("%Y-%m-%dT23:59:59"),
-                "maxPerPage": str(max_per_page),
-            }
-            if answered is not None:
-                params["answered"] = str(answered).lower()
-            if next_token:
-                params["nextToken"] = next_token
-
-            path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/onlineInquiries"
-            result = await self._call_api("GET", path, params=params)
-
-            data = result.get("data", []) if isinstance(result, dict) else []
-            if isinstance(data, list):
-                all_inquiries.extend(data)
-            elif isinstance(data, dict):
-                items = data.get("inquiries", data.get("content", []))
-                if isinstance(items, list):
-                    all_inquiries.extend(items)
-
-            next_token = result.get("nextToken", "") if isinstance(result, dict) else ""
-            if not next_token:
-                break
-
-        logger.info(f"[쿠팡] CS 문의 조회 완료: {len(all_inquiries)}건 (최근 {days}일)")
-        return all_inquiries
-
-    async def reply_inquiry(
-        self,
-        inquiry_id: int,
-        content: str,
-    ) -> dict[str, Any]:
-        """CS 문의 답변 등록.
-
-        쿠팡 Wing API: POST /v2/.../vendors/{vendorId}/onlineInquiries/{inquiryId}/reply
-        """
-        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/onlineInquiries/{inquiry_id}/reply"
-        body = {"content": content, "vendorId": self.vendor_id}
-        result = await self._call_api("POST", path, body=body)
-        logger.info(f"[쿠팡] CS 문의 답변 완료: inquiryId={inquiry_id}")
-        return result
 
 
 class CoupangApiError(Exception):

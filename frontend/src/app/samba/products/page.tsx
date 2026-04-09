@@ -12,7 +12,6 @@ import {
   nameRuleApi,
   categoryApi,
   detailTemplateApi,
-  fetchWithAuth,
   type SambaCollectedProduct,
   type SambaPolicy,
   type SambaSearchFilter,
@@ -33,24 +32,9 @@ export default function ProductsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // URL searchParams에서 필터 읽기 — 한 번 읽은 뒤 URL에서 제거 (새로고침 시 풀림)
-  const [filterByGroupId, setFilterByGroupId] = useState(searchParams.get("search_filter_id") || "")
-  const [filterGroupName, setFilterGroupName] = useState(searchParams.get("group_name") || "")
-  useEffect(() => {
-    const gid = searchParams.get("search_filter_id") || ""
-    const gname = searchParams.get("group_name") || ""
-    if (gid) {
-      setFilterByGroupId(gid)
-      setFilterGroupName(gname)
-      // URL에서 그룹 필터 파라미터 제거 (새로고침 시 풀리도록)
-      const params = new URLSearchParams(searchParams.toString())
-      params.delete("search_filter_id")
-      params.delete("group_name")
-      const qs = params.toString()
-      router.replace(`/samba/products${qs ? `?${qs}` : ""}`)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // URL searchParams에서 필터 읽기
+  const filterByGroupId = searchParams.get("search_filter_id") || "";
+  const filterGroupName = searchParams.get("group_name") || "";
 
   // highlight는 로컬 state로 관리 → 새로고침 시 자동 해제
   const [highlightProductId, setHighlightProductId] = useState(searchParams.get("highlight") || "");
@@ -118,17 +102,15 @@ export default function ProductsPage() {
   const [aiImgMode, setAiImgMode] = useState('background')
   const [aiModelPreset, setAiModelPreset] = useState('auto')
   const [aiPresetList, setAiPresetList] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
-  const [aiImgScope, setAiImgScope] = useState({ thumbnail: true, additional: false, detail: false })
   const [aiImgTransforming, setAiImgTransforming] = useState(false)
   const [imgFiltering, setImgFiltering] = useState(false)
-  const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['detail_images']))
+  const [imgFilterScopes, setImgFilterScopes] = useState<Set<string>>(new Set(['images']))
 
   // AI 작업 진행 모달
   const [aiJobModal, setAiJobModal] = useState(false)
   const [aiJobTitle, setAiJobTitle] = useState('')
   const [aiJobLogs, setAiJobLogs] = useState<string[]>([])
   const [aiJobDone, setAiJobDone] = useState(false)
-  const aiJobAbortRef = useRef(false)
   const aiJobLogRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
@@ -171,8 +153,7 @@ export default function ProductsPage() {
     try {
       const skip = (targetPage - 1) * pageSize
       // status 필터에서 특수값 분리
-      const knownStatus = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
-      const statusParam = (knownStatus.includes(statusFilter) || statusFilter.startsWith('reg_') || statusFilter.startsWith('unreg_'))
+      const statusParam = (statusFilter === 'has_orders' || statusFilter === 'free_ship' || statusFilter === 'same_day' || statusFilter === 'free_same' || statusFilter === 'market_registered' || statusFilter === 'market_unregistered' || statusFilter === 'sold_out')
         ? statusFilter : statusFilter || undefined
       const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
       const res = await collectorApi.scrollProducts({
@@ -208,8 +189,7 @@ export default function ProductsPage() {
     setLoading(true)
     try {
       // 메타데이터 8개 + 상품 scroll 동시 호출
-      const knownStatus2 = ['has_orders', 'free_ship', 'same_day', 'free_same', 'market_registered', 'market_unregistered', 'sold_out']
-      const statusParam = (knownStatus2.includes(statusFilter) || statusFilter.startsWith('reg_') || statusFilter.startsWith('unreg_'))
+      const statusParam = (statusFilter === 'has_orders' || statusFilter === 'free_ship' || statusFilter === 'same_day' || statusFilter === 'free_same' || statusFilter === 'market_registered' || statusFilter === 'market_unregistered' || statusFilter === 'sold_out')
         ? statusFilter : statusFilter || undefined
       const aiParam = (aiFilter === 'has_orders') ? aiFilter : aiFilter || undefined
       const [pol, filters, words, accs, orderPids, rules, mappings, tpls, productsRes] = await Promise.all([
@@ -266,17 +246,6 @@ export default function ProductsPage() {
 
   useEffect(() => { load() }, [load])
 
-  // 드롭다운 필터/정렬 변경 시 그룹 필터 자동 해제
-  const groupClearInitRef = useRef(true)
-  useEffect(() => {
-    if (groupClearInitRef.current) { groupClearInitRef.current = false; return }
-    if (filterByGroupId) {
-      setFilterByGroupId("")
-      setFilterGroupName("")
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteFilter, statusFilter, aiFilter, sortBy])
-
   // 필터/정렬 변경 시 1페이지로 리셋 + 선택 초기화 (디바운싱 300ms, 초기 로드 제외)
   const filterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const filterInitRef = useRef(true)
@@ -329,8 +298,7 @@ export default function ProductsPage() {
     // highlight + 그룹 필터 무조건 해제
     if (highlightProductId) setHighlightProductId("")
     if (filterByGroupId) {
-      setFilterByGroupId("")
-      setFilterGroupName("")
+      router.replace('/samba/products')
     }
     setCurrentPage(1)
   };
@@ -424,7 +392,7 @@ export default function ProductsPage() {
     setActiveLog({ productId, message: `[업데이트 중] ${productName}...` })
     try {
       const { API_BASE_URL: apiBase } = await import('@/config/api')
-      const res = await fetchWithAuth(`${apiBase}/api/v1/samba/collector/enrich/${productId}`, { method: "POST" });
+      const res = await fetch(`${apiBase}/api/v1/samba/collector/enrich/${productId}`, { method: "POST" });
       const data = await res.json();
       if (res.ok && data.success) {
         const p = data.product
@@ -609,22 +577,15 @@ export default function ProductsPage() {
                 <p style={{ margin: 0, color: '#FFB84D' }}>처리 중...</p>
               )}
             </div>
-            <div style={{ padding: '12px 20px', borderTop: '1px solid #2D2D2D', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-              {!aiJobDone && (
-                <button onClick={() => { aiJobAbortRef.current = true }} style={{
-                  padding: '6px 20px', borderRadius: '6px', fontSize: '0.56rem',
-                  background: 'rgba(255,107,107,0.15)', border: '1px solid rgba(255,107,107,0.4)',
-                  color: '#FF6B6B', cursor: 'pointer', fontWeight: 600,
-                }}>중단</button>
-              )}
-              {aiJobDone && (
+            {aiJobDone && (
+              <div style={{ padding: '12px 20px', borderTop: '1px solid #2D2D2D', textAlign: 'right' }}>
                 <button onClick={() => setAiJobModal(false)} style={{
                   padding: '6px 20px', borderRadius: '6px', fontSize: '0.56rem',
                   background: 'rgba(81,207,102,0.15)', border: '1px solid rgba(81,207,102,0.4)',
                   color: '#51CF66', cursor: 'pointer', fontWeight: 600,
                 }}>확인</button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -805,14 +766,14 @@ export default function ProductsPage() {
             {filterGroupName || filterByGroupId}
           </span>
           <button
-            onClick={() => { setFilterByGroupId(""); setFilterGroupName("") }}
+            onClick={() => router.push("/samba/products")}
             style={{
               marginLeft: "auto", background: "transparent", border: "1px solid #3D3D3D",
               color: "#888", padding: "2px 10px", borderRadius: "4px",
               fontSize: "0.75rem", cursor: "pointer",
             }}
           >
-            ✕ 해제
+            전체보기
           </button>
         </div>
       )}
@@ -891,34 +852,9 @@ export default function ProductsPage() {
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "rgba(22,22,22,0.95)", border: "1px solid #353535", color: "#C5C5C5", borderRadius: "6px" }}>
             <option value="">판매현황</option>
-            <optgroup label="── 전체 ──">
-              <option value="sold_out">품절상품</option>
-              <option value="market_unregistered">미등록상품</option>
-              <option value="market_registered">등록상품</option>
-            </optgroup>
-            {(() => {
-              const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name] as const)).entries()]
-              return marketTypes.length > 0 ? (
-                <optgroup label="── 마켓구분 ──">
-                  {marketTypes.map(([type, name]) => (
-                    <React.Fragment key={type}>
-                      <option value={`mtype_reg_${type}`}>{name} 등록</option>
-                      <option value={`mtype_unreg_${type}`}>{name} 미등록</option>
-                    </React.Fragment>
-                  ))}
-                </optgroup>
-              ) : null
-            })()}
-            {accounts.length > 0 && (
-              <optgroup label="── 계정구분 ──">
-                {accounts.map(a => (
-                  <React.Fragment key={a.id}>
-                    <option value={`reg_${a.id}`}>{a.market_name}({a.account_label}) 등록</option>
-                    <option value={`unreg_${a.id}`}>{a.market_name}({a.account_label}) 미등록</option>
-                  </React.Fragment>
-                ))}
-              </optgroup>
-            )}
+            <option value="market_registered">마켓등록</option>
+            <option value="market_unregistered">미등록</option>
+            <option value="sold_out">품절상품</option>
           </select>
           <select value={searchType} onChange={(e) => setSearchType(e.target.value)}
             style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px", color: "#C5C5C5", width: "90px" }}>
@@ -986,17 +922,8 @@ export default function ProductsPage() {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
-        {([['thumbnail', '대표'], ['additional', '추가'], ['detail', '상세']] as const).map(([key, label]) => (
-          <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={aiImgScope[key]}
-              onChange={() => setAiImgScope(prev => ({ ...prev, [key]: !prev[key] }))}
-              style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
-            <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{label}</span>
-          </label>
-        ))}
         <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
           <option value="background">배경 제거</option>
-          <option value="model_to_product">모델→상품</option>
           <option value="scene">연출컷</option>
           <option value="model">모델 착용</option>
         </select>
@@ -1025,19 +952,16 @@ export default function ProductsPage() {
             })}
           </select>
         )}
-        <span style={{ fontSize: '0.78rem', color: '#888' }}>({selectedIds.size.toLocaleString()}개 상품)</span>
+        <span style={{ fontSize: '0.78rem', color: '#888' }}>({selectedIds.size}개 상품)</span>
         <button
           onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            if (!aiImgScope.thumbnail && !aiImgScope.additional && !aiImgScope.detail) { showAlert('변환 대상 이미지를 선택해주세요 (대표/추가/상세)'); return }
-            const scopeLabel = [aiImgScope.thumbnail && '대표', aiImgScope.additional && '추가', aiImgScope.detail && '상세'].filter(Boolean).join('+')
-            const ok = await showConfirm(`선택된 ${selectedIds.size.toLocaleString()}개 상품의 ${scopeLabel} 이미지를 변환하시겠습니까?`)
+            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 이미지를 변환하시겠습니까?`)
             if (!ok) return
             const ids = [...selectedIds]
             const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
             setAiImgTransforming(true)
-            aiJobAbortRef.current = false
-            setAiJobTitle(`AI 이미지변환 (${ids.length.toLocaleString()}개)`)
+            setAiJobTitle(`AI 이미지변환 (${ids.length}개)`)
             setAiJobLogs([])
             setAiJobDone(false)
             setAiJobModal(true)
@@ -1047,29 +971,15 @@ export default function ProductsPage() {
             let success = 0
             let fail = 0
             for (let i = 0; i < ids.length; i++) {
-              if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i}/${ids.length})`); break }
               const prod = allProducts.find(p => p.id === ids[i])
-              const brand = prod?.brand || ''
-              const name = prod?.name?.slice(0, 30) || ''
-              const prodNo = prod?.site_product_id || ids[i].slice(-8)
-              const label = [brand, name, prodNo].filter(Boolean).join(' / ')
+              const label = prod?.name?.slice(0, 30) || ids[i].slice(-8)
               setAiJobTitle(`AI 이미지변환 [${i + 1}/${ids.length}] ${label}`)
-              const delays = [3000, 5000]
-              let done = false
-              for (let attempt = 0; attempt <= 2; attempt++) {
-                if (attempt > 0) {
-                  addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 재시도 ${attempt}/2`)
-                  await new Promise(r => setTimeout(r, delays[attempt - 1]))
-                }
-                try {
-                  const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset)
-                  if (res.success && res.total_transformed > 0) { success++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 완료 (${res.total_transformed}장)`) }
-                  else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`) }
-                  done = true; break
-                } catch (e) {
-                  if (attempt === 2) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
-                }
-              }
+              try {
+                const autoScope = { thumbnail: true, additional: true, detail: true }
+                const res = await proxyApi.transformImages([ids[i]], autoScope, aiImgMode, aiModelPreset)
+                if (res.success && res.total_transformed > 0) { success++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 완료 (${res.total_transformed}장)`) }
+                else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`) }
+              } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
             }
             const endTime = ts()
             setAiJobTitle(`AI 이미지변환 완료 (${success}/${ids.length})`)
@@ -1105,41 +1015,23 @@ export default function ProductsPage() {
             if (imgFilterScopes.size === 0) { showAlert('필터링 대상을 선택해주세요'); return }
             const scopeLabel = [...imgFilterScopes].map(s => s === 'images' ? '대표' : s === 'detail_images' ? '추가' : '상세').join('+')
             const scope = imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') && imgFilterScopes.has('detail') ? 'all' : imgFilterScopes.has('images') && imgFilterScopes.has('detail_images') ? 'images' : imgFilterScopes.has('detail') ? 'detail' : [...imgFilterScopes][0] || 'images'
-            const ok = await showConfirm(`선택된 ${selectedIds.size.toLocaleString()}개 상품의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
+            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 ${scopeLabel} 이미지를 필터링하시겠습니까?\n(모델컷/연출컷/배너를 자동 제거합니다)`)
             if (!ok) return
             const ids = [...selectedIds]
             setImgFiltering(true)
-            aiJobAbortRef.current = false
-            setAiJobTitle(`이미지 필터링 (${ids.length.toLocaleString()}개)`)
+            setAiJobTitle(`이미지 필터링 (${ids.length}개)`)
             setAiJobLogs([])
             setAiJobDone(false)
             setAiJobModal(true)
             const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
-            const ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
-            // allProducts에 없는 상품 정보 미리 로드 (500개씩 청크)
-            const missingIds = ids.filter(id => !allProducts.find(p => p.id === id))
-            const productMap: Record<string, typeof allProducts[0]> = {}
-            allProducts.forEach(p => { productMap[p.id] = p })
-            for (let ci = 0; ci < missingIds.length; ci += 500) {
-              try {
-                const chunk = missingIds.slice(ci, ci + 500)
-                const fetched = await collectorApi.getProductsByIds(chunk)
-                if (Array.isArray(fetched)) fetched.forEach(p => { productMap[p.id] = p })
-              } catch { /* 조회 실패 시 기존 fallback */ }
-            }
             let success = 0
             let fail = 0
             let totalTall = 0
             let totalVisionRemoved = 0
-            const startTime = ts()
             for (let i = 0; i < ids.length; i++) {
-              if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i}/${ids.length})`); break }
-              const prod = productMap[ids[i]] || null
-              const prodName = prod?.name?.slice(0, 25) || ids[i].slice(-8)
-              const prodNo = prod?.site_product_id || ids[i].slice(-8)
-              const prodBrand = prod?.brand || '-'
-              const label = `${prodBrand} / ${prodNo} / ${prodName}${prod?.name && prod.name.length > 25 ? '...' : ''}`
-              setAiJobTitle(`이미지 필터링 [${i + 1}/${ids.length}] ${prodBrand} / ${prodNo}`)
+              const prod = allProducts.find(p => p.id === ids[i])
+              const label = prod?.name?.slice(0, 30) || ids[i].slice(-8)
+              setAiJobTitle(`이미지 필터링 [${i + 1}/${ids.length}] ${label}`)
               try {
                 const steps: string[] = []
                 // 1) 프론트에서 추가이미지 비율 체크 (세로 2배 이상 → 제거)
@@ -1167,24 +1059,23 @@ export default function ProductsPage() {
                     }
                   }
                 }
-                // 2) 백엔드 이미지 필터링
+                // 2) 백엔드 Claude Vision 필터링
                 const r = await proxyApi.filterProductImages([ids[i]], '', scope)
                 if (r.success) {
                   success++
                   const removed = r.total_removed || 0
                   totalVisionRemoved += removed
-                  if (removed > 0) steps.push(`필터 ${removed}장 제거`)
-                  else steps.push('필터 변동없음')
-                  addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — ${steps.join(' → ')}`)
-                } else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
-              } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                  if (removed > 0) steps.push(`Vision ${removed}장 제거`)
+                  else steps.push('Vision 변동없음')
+                  addLog(`[${i + 1}/${ids.length}] ${label} — ${steps.join(' → ')}`)
+                } else { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
+              } catch (e) { fail++; addLog(`[${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
             }
             const summary = [`성공 ${success}개`, `실패 ${fail}개`]
             if (totalTall > 0) summary.push(`긴이미지 ${totalTall}장 제거`)
-            if (totalVisionRemoved > 0) summary.push(`필터 ${totalVisionRemoved}장 제거`)
+            if (totalVisionRemoved > 0) summary.push(`Vision ${totalVisionRemoved}장 제거`)
             setAiJobTitle(`이미지 필터링 완료 (${success}/${ids.length})`)
             addLog(`\n완료: ${summary.join(' / ')}`)
-            addLog(`시작 ${startTime} → 종료 ${ts()}`)
             setAiJobDone(true)
             setImgFiltering(false)
             const apiCalls = success + fail
@@ -1214,11 +1105,11 @@ export default function ProductsPage() {
             />
           </label>
           <span style={{ fontSize: "0.875rem", color: "#E5E5E5", fontWeight: 600, whiteSpace: "nowrap" }}>
-            상품관리 <span style={{ color: "#FF8C00" }}>( <span>{totalCount.toLocaleString()}</span>개 )</span>
+            상품관리 <span style={{ color: "#FF8C00" }}>( 총 <span>{totalCount.toLocaleString()}</span>개 검색 )</span>
           </span>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            const ok = await showConfirm(`선택된 ${selectedIds.size.toLocaleString()}개 상품의 영상을 생성하시겠습니까?`)
+            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 영상을 생성하시겠습니까?`)
             if (!ok) return
             for (const pid of selectedIds) {
               const prod = products.find(p => p.id === pid)
@@ -1233,8 +1124,8 @@ export default function ProductsPage() {
             reloadProducts()
           }} style={{
             fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid #3D3D3D", borderRadius: "5px",
-            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+            border: "1px solid rgba(76,154,255,0.3)", borderRadius: "5px",
+            color: "#4C9AFF", background: "rgba(76,154,255,0.08)", cursor: "pointer", whiteSpace: "nowrap",
           }}>영상</button>
           <button style={{
             fontSize: "0.78rem", padding: "4px 12px",
@@ -1243,7 +1134,7 @@ export default function ProductsPage() {
           }}>AI상품명</button>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            const ok = await showConfirm(`선택된 ${selectedIds.size.toLocaleString()}개 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
+            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품에 AI 태그를 생성하시겠습니까?\n(그룹별 대표 1개로 API 호출, 미리보기 후 확정)`)
             if (!ok) return
             setTagPreviewLoading(true)
             try {
@@ -1266,31 +1157,41 @@ export default function ProductsPage() {
           }}>{tagPreviewLoading ? 'AI태그 생성중...' : 'AI태그'}</button>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-            const ok = await showConfirm(`선택된 ${selectedIds.size.toLocaleString()}개 상품의 태그를 모두 삭제하시겠습니까?`)
+            const ok = await showConfirm(`선택된 ${selectedIds.size}개 상품의 태그를 모두 삭제하시겠습니까?`)
             if (!ok) return
             await collectorApi.bulkUpdateTags([...selectedIds], [], [])
             setAllProducts(prev => prev.map(p => selectedIds.has(p.id) ? { ...p, tags: [], seo_keywords: [] as string[] } : p))
-            showAlert(`${selectedIds.size.toLocaleString()}개 상품 태그 삭제 완료`, 'success')
+            showAlert(`${selectedIds.size}개 상품 태그 삭제 완료`, 'success')
             setSelectedIds(new Set()); setSelectAll(false)
           }} style={{
             fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid #3D3D3D", borderRadius: "5px",
-            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+            border: "1px solid rgba(255,107,107,0.3)", borderRadius: "5px",
+            color: "#FF6B6B", background: "rgba(255,107,107,0.08)", cursor: "pointer", whiteSpace: "nowrap",
           }}>태그 삭제</button>
           <button
             onClick={() => {
               if (selectedIds.size === 0) { showAlert('전송할 상품을 선택해주세요'); return }
-              const ids = Array.from(selectedIds).join(',')
+              const ids = Array.from(selectedIds)
               const sites = [...new Set(
-                Array.from(selectedIds).map(id => products.find(p => p.id === id)?.source_site).filter(Boolean)
-              )].join(',')
-              window.location.href = `/samba/shipments?selected=${encodeURIComponent(ids)}&sites=${encodeURIComponent(sites)}&autoAll=1`
+                ids.map(id => products.find(p => p.id === id)?.source_site).filter(Boolean)
+              )]
+              sessionStorage.setItem('shipment_selected_ids', ids.join(','))
+              sessionStorage.setItem('shipment_selected_sites', sites.join(','))
+              window.location.href = `/samba/shipments?autoAll=1&priceOnly=1&fromSession=1`
             }}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
               border: "1px solid #3D3D3D", borderRadius: "5px",
               color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}>상품전송</button>
+          <button
+            onClick={handleBulkDelete}
+            style={{
+              fontSize: "0.78rem", padding: "4px 12px",
+              border: "1px solid #3D3D3D", borderRadius: "5px",
+              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+            }}
+          >상품삭제</button>
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
@@ -1305,25 +1206,16 @@ export default function ProductsPage() {
             }}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid #3D3D3D", borderRadius: "5px",
-              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+              border: "1px solid rgba(255,107,107,0.3)", borderRadius: "5px",
+              color: "#FF6B6B", background: "rgba(255,107,107,0.08)", cursor: "pointer", whiteSpace: "nowrap",
             }}
           >수집차단</button>
-          <button
-            onClick={handleBulkDelete}
-            style={{
-              fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid #3D3D3D", borderRadius: "5px",
-              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
-            }}
-          >상품삭제</button>
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
               const targets = allProducts.filter(p => selectedIds.has(p.id) && (p.registered_accounts?.length ?? 0) > 0)
               if (!targets.length) { showAlert('마켓에 등록된 상품이 없습니다.'); return }
               if (!await showConfirm(`${targets.length}개 상품을 마켓에서 삭제(판매중지)하시겠습니까?`)) return
-              aiJobAbortRef.current = false
               setAiJobTitle(`마켓삭제 (${targets.length}건)`)
               setAiJobLogs([])
               setAiJobDone(false)
@@ -1336,7 +1228,6 @@ export default function ProductsPage() {
               const successMap = new Map<string, string[]>()
               const ts = () => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
               for (let i = 0; i < targets.length; i++) {
-                if (aiJobAbortRef.current) { logsRef.push(`\n⛔ 사용자 중단 (${i}/${targets.length})`); flushLogs(); break }
                 const t = targets[i]
                 const name = t.name.slice(0, 20)
                 try {
@@ -1440,8 +1331,8 @@ export default function ProductsPage() {
             }}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid #3D3D3D", borderRadius: "5px",
-              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+              border: "1px solid #FF6B6B", borderRadius: "5px",
+              color: "#FF6B6B", background: "rgba(255,107,107,0.1)", cursor: "pointer", whiteSpace: "nowrap",
             }}
           >그룹상품삭제</button>
         </div>
@@ -1504,6 +1395,9 @@ export default function ProductsPage() {
             <option value="update-desc">업데이트일 최신순</option>
             <option value="update-asc">업데이트일 오래된순</option>
           </select>
+          <span style={{ fontSize: '0.75rem', color: '#888' }}>
+            {fmt(allProducts.length)} / {fmt(serverTotal)}
+          </span>
         </div>
       </div>
 

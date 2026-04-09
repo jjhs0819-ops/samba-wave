@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react'
-import { returnApi, accountApi, orderApi, type SambaReturn, type SambaMarketAccount } from '@/lib/samba/api'
+import { returnApi, accountApi, orderApi, type SambaReturn, type SambaMarketAccount, type ExchangeTrackingUpdate } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
@@ -69,7 +69,7 @@ export default function ReturnsPage() {
   const [period, setPeriod] = useState('thisyear')
   const [syncAccountId, setSyncAccountId] = useState('')
   const [customStart, setCustomStart] = useState(`${new Date().getFullYear()}-01-01`)
-  const [customEnd, setCustomEnd] = useState(new Date().toLocaleDateString('sv-SE'))
+  const [customEnd, setCustomEnd] = useState(new Date().toISOString().slice(0, 10))
   const [startLocked, setStartLocked] = useState(false)
   const [dateLocked, setDateLocked] = useState(false)
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
@@ -84,26 +84,12 @@ export default function ReturnsPage() {
     switch (key) {
       case 'today': return now
       case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 7); return d }
-      case '1week': { const d = new Date(now); d.setDate(d.getDate() - 6); return d }
-      case '1month': { const d = new Date(now); d.setDate(d.getDate() - 29); return d }
+      case 'thisweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); return d }
+      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - d.getDay() - 7); return d }
       case 'thismonth': return new Date(now.getFullYear(), now.getMonth(), 1)
       case 'lastmonth': return new Date(now.getFullYear(), now.getMonth() - 1, 1)
       case 'thisyear': return new Date(now.getFullYear(), 0, 1)
       default: return null
-    }
-  }
-
-  // 기간 종료일 계산 (지난주/지난달/어제는 해당 기간 마지막 날)
-  const getPeriodEnd = (key: string): Date => {
-    const now = new Date()
-    now.setHours(0, 0, 0, 0)
-    switch (key) {
-      case 'yesterday': { const d = new Date(now); d.setDate(d.getDate() - 1); return d }
-      case 'lastweek': { const d = new Date(now); d.setDate(d.getDate() - ((d.getDay() + 6) % 7) - 1); return d }
-      case 'lastmonth': return new Date(now.getFullYear(), now.getMonth(), 0)
-      default: return now
     }
   }
 
@@ -130,10 +116,17 @@ export default function ReturnsPage() {
 
   useEffect(() => { load() }, [load])
 
-  // 가져오기 버튼 — 마켓 동기화 후 DB 데이터 로드
+  // 가져오기 버튼 핸들러 (load 래핑)
   const loadReturns = async () => {
     const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    setLogMessages(prev => [...prev, `[${now}] 반품교환 데이터 동기화 중...`])
+    setLogMessages(prev => [...prev, `[${now}] 반품교환 데이터 가져오는 중...`])
+    await load()
+    setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}] 반품교환 데이터 가져오기 완료`])
+  }
+
+  const loadAllMarkets = async () => {
+    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    setLogMessages(prev => [...prev, `[${now}] 전체마켓 반품교환 데이터 동기화 중...`])
     try {
       const syncResult = await returnApi.syncFromMarkets(30, syncAccountId || undefined)
       const ts = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -224,22 +217,58 @@ export default function ReturnsPage() {
 
   // 교환/취소 액션
   const [exchangeActionItem, setExchangeActionItem] = useState<SambaReturn | null>(null)
-  const [reshipStep, setReshipStep] = useState(false) // 교환재배송 송장 입력 단계
-  const [reshipForm, setReshipForm] = useState({ tracking_number: '', shipping_company: '롯데택배' })
 
-  const handleExchangeAction = async (r: SambaReturn, action: string, extra?: { tracking_number?: string; shipping_company?: string }) => {
+  // 교환 추적 모달
+  const [exchangeTrackingModal, setExchangeTrackingModal] = useState<{
+    id: string
+    exchange_retrieval_status: string
+    exchange_reship_company: string
+    exchange_reship_tracking: string
+    exchange_delivered_at: string
+  } | null>(null)
+
+  const openExchangeTracking = (r: SambaReturn) => {
+    setExchangeTrackingModal({
+      id: r.id,
+      exchange_retrieval_status: r.exchange_retrieval_status || '',
+      exchange_reship_company: r.exchange_reship_company || '',
+      exchange_reship_tracking: r.exchange_reship_tracking || '',
+      exchange_delivered_at: r.exchange_delivered_at ? r.exchange_delivered_at.slice(0, 10) : '',
+    })
+  }
+
+  const saveExchangeTracking = async () => {
+    if (!exchangeTrackingModal) return
+    const data: ExchangeTrackingUpdate = {}
+    if (exchangeTrackingModal.exchange_retrieval_status)
+      data.exchange_retrieval_status = exchangeTrackingModal.exchange_retrieval_status as ExchangeTrackingUpdate['exchange_retrieval_status']
+    if (exchangeTrackingModal.exchange_reship_company)
+      data.exchange_reship_company = exchangeTrackingModal.exchange_reship_company
+    if (exchangeTrackingModal.exchange_reship_tracking)
+      data.exchange_reship_tracking = exchangeTrackingModal.exchange_reship_tracking
+    if (exchangeTrackingModal.exchange_delivered_at)
+      data.exchange_delivered_at = exchangeTrackingModal.exchange_delivered_at
+    try {
+      await returnApi.updateExchangeTracking(exchangeTrackingModal.id, data)
+      showAlert('교환 추적 정보 저장 완료', 'success')
+      setExchangeTrackingModal(null)
+      load()
+    } catch (e) {
+      showAlert(e instanceof Error ? e.message : '저장 실패', 'error')
+    }
+  }
+
+  const handleExchangeAction = async (r: SambaReturn, action: string) => {
     const orderNum = r.order_number || r.order_id
     if (!orderNum) { showAlert('주문번호가 없습니다', 'error'); return }
-    const labels: Record<string, string> = { reship: '교환재배송', reject: '교환거부', convert_return: '반품변경' }
+    const labels: Record<string, string> = { reship: '교환재배송', reject: '교환거부' }
     if (!await showConfirm(`${orderNum} 주문을 ${labels[action]} 처리하시겠습니까?`)) return
     try {
       const order = await orderApi.findByOrderNumber(orderNum)
       if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
-      const res = await orderApi.exchangeAction(order.id, action, undefined, extra)
+      const res = await orderApi.exchangeAction(order.id, action)
       showAlert(res.message || `${labels[action]} 완료`, 'success')
       setExchangeActionItem(null)
-      setReshipStep(false)
-      setReshipForm({ tracking_number: '', shipping_company: '롯데택배' })
       load()
     } catch (e) { showAlert(e instanceof Error ? e.message : `${labels[action]} 실패`, 'error') }
   }
@@ -257,10 +286,29 @@ export default function ReturnsPage() {
     } catch (e) { showAlert(e instanceof Error ? e.message : '취소승인 실패', 'error') }
   }
 
+  const handleCancelReject = async (r: SambaReturn) => {
+    const orderNum = r.order_number || r.order_id
+    if (!orderNum) { showAlert('주문번호가 없습니다', 'error'); return }
+    if (!r.clm_req_seq || !r.ord_prd_seq) { showAlert('취소 클레임 정보가 없습니다', 'error'); return }
+    if (!await showConfirm(`${orderNum} 주문의 취소요청을 거절하시겠습니까?`)) return
+    try {
+      const order = await orderApi.findByOrderNumber(orderNum)
+      if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
+      const res = await orderApi.rejectCancel11st(order.channel_id || '', r.clm_req_seq, orderNum, r.ord_prd_seq)
+      showAlert(res.message || '취소거절 완료', 'success')
+      load()
+    } catch (e) { showAlert(e instanceof Error ? e.message : '취소거절 실패', 'error') }
+  }
+
   const handleReturnAction = async (r: SambaReturn, action: string) => {
     const orderNum = r.order_number || r.order_id
     if (!orderNum) { showAlert('주문번호가 없습니다', 'error'); return }
     const label = action === 'approve' ? '반품승인' : '반품거부'
+    // 11번가 반품거부는 API 미지원 → 셀러오피스 안내
+    if (action === 'reject' && r.market === '11번가') {
+      showAlert('11번가 반품거부는 API 미지원입니다. 셀러오피스에서 직접 처리해주세요.', 'error')
+      return
+    }
     if (!await showConfirm(`${orderNum} 주문을 ${label} 처리하시겠습니까?`)) return
     try {
       const order = await orderApi.findByOrderNumber(orderNum)
@@ -353,11 +401,11 @@ export default function ReturnsPage() {
               setPeriod(pb.key)
               if (!startLocked) {
                 const start = getPeriodStart(pb.key)
-                setCustomStart(start ? start.toLocaleDateString('sv-SE') : '')
+                setCustomStart(start ? start.toISOString().slice(0, 10) : '')
               }
-              setCustomEnd(getPeriodEnd(pb.key).toLocaleDateString('sv-SE'))
+              setCustomEnd(new Date().toISOString().slice(0, 10))
             }}
-              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? 'rgba(80,80,80,0.8)' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #666' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
+              style={{ padding: '0.22rem 0.55rem', borderRadius: '5px', fontSize: '0.75rem', background: period === pb.key ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: period === pb.key ? '1px solid #C0392B' : '1px solid #3D3D3D', color: period === pb.key ? '#fff' : '#C5C5C5', cursor: dateLocked ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: dateLocked && period !== pb.key ? 0.5 : 1 }}
             >{pb.label}</button>
           ))}
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 4px' }} />
@@ -379,6 +427,7 @@ export default function ReturnsPage() {
             ))}
           </select>
           <button onClick={loadReturns} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>가져오기</button>
+          <button onClick={loadAllMarkets} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap' }}>전체마켓 가져오기</button>
         </div>
       </div>
 
@@ -552,31 +601,20 @@ export default function ReturnsPage() {
                       <td style={{ ...tdCenter, padding: '0.625rem' }}>
                         <button onClick={() => setDetailItem(r)} style={{ background: 'none', border: 'none', color: '#E5E5E5', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 400 }}>{r.order_number || r.order_id || '-'}</button>
                       </td>
-                      <td style={tdCenter}>
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.2rem' }}>
-                          <span>{r.market || '-'}</span>
-                          {r.type && TYPE_LABELS[r.type] && (
-                            <span
-                              title="클릭하여 교환/반품 전환"
-                              onClick={async () => {
-                                const newType = r.type === 'exchange' ? 'return' : 'exchange'
-                                const newStatus = newType === 'exchange' ? '교환요청' : '반품요청'
-                                try {
-                                  await returnApi.patch(r.id, { type: newType, market_order_status: newStatus })
-                                  setReturns(prev => prev.map(x => x.id === r.id ? { ...x, type: newType, market_order_status: newStatus } : x))
-                                } catch (_e) { /* 무시 */ }
-                              }}
-                              style={{ fontSize: '0.65rem', fontWeight: 700, color: TYPE_LABELS[r.type].color, background: `${TYPE_LABELS[r.type].color}22`, padding: '0.1rem 0.4rem', borderRadius: '4px', border: `1px solid ${TYPE_LABELS[r.type].color}44`, cursor: 'pointer' }}>
-                              {TYPE_LABELS[r.type].label}
-                            </span>
-                          )}
-                        </div>
-                      </td>
+                      <td style={tdCenter}>{r.market || '-'}</td>
                       <td style={{ ...tdCenter, fontSize: '0.75rem' }}>
                         {r.market_order_status?.includes('교환') && !r.market_order_status?.includes('완료') && !r.market_order_status?.includes('거부') ? (
-                          <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
-                            <button onClick={() => setExchangeActionItem(r)} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(76,154,255,0.15)', color: '#4C9AFF', border: '1px solid rgba(76,154,255,0.3)', cursor: 'pointer' }}>교환승인</button>
-                            <button onClick={() => handleExchangeAction(r, 'reject')} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(255,107,107,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.3)', cursor: 'pointer' }}>교환거부</button>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', gap: '0.25rem' }}>
+                              <button onClick={() => handleExchangeAction(r, 'reship')} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(76,154,255,0.15)', color: '#4C9AFF', border: '1px solid rgba(76,154,255,0.3)', cursor: 'pointer' }}>교환승인</button>
+                              <button onClick={() => handleExchangeAction(r, 'reject')} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(255,107,107,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.3)', cursor: 'pointer' }}>교환거부</button>
+                            </div>
+                            <button onClick={() => openExchangeTracking(r)} style={{ padding: '0.15rem 0.5rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(81,207,102,0.12)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.3)', cursor: 'pointer' }}>추적</button>
+                          </div>
+                        ) : r.type === 'exchange' ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', alignItems: 'center' }}>
+                            <span style={{ color: r.market_order_status?.includes('완료') ? '#51CF66' : r.market_order_status?.includes('거부') ? '#FF6B6B' : '#E5E5E5', fontSize: '0.8rem' }}>{r.market_order_status || '-'}</span>
+                            <button onClick={() => openExchangeTracking(r)} style={{ padding: '0.15rem 0.5rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(81,207,102,0.12)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.3)', cursor: 'pointer' }}>추적</button>
                           </div>
                         ) : r.market_order_status?.includes('반품') && !r.market_order_status?.includes('완료') && !r.market_order_status?.includes('거부') ? (
                           <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
@@ -584,7 +622,10 @@ export default function ReturnsPage() {
                             <button onClick={() => handleReturnAction(r, 'reject')} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(255,107,107,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.3)', cursor: 'pointer' }}>반품거부</button>
                           </div>
                         ) : r.market_order_status?.includes('취소') && !r.market_order_status?.includes('완료') ? (
-                          <button onClick={() => handleCancelApprove(r)} style={{ padding: '0.15rem 0.5rem', borderRadius: '12px', fontSize: '0.72rem', fontWeight: 600, background: 'rgba(255,80,80,0.15)', color: '#FF5050', border: '1px solid rgba(255,80,80,0.3)', cursor: 'pointer' }}>{r.market_order_status}</button>
+                          <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
+                            <button onClick={() => handleCancelApprove(r)} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(255,80,80,0.15)', color: '#FF5050', border: '1px solid rgba(255,80,80,0.3)', cursor: 'pointer' }}>취소승인</button>
+                            <button onClick={() => handleCancelReject(r)} style={{ padding: '0.15rem 0.4rem', borderRadius: '8px', fontSize: '0.68rem', fontWeight: 600, background: 'rgba(100,100,100,0.15)', color: '#888', border: '1px solid rgba(100,100,100,0.3)', cursor: 'pointer' }}>취소거절</button>
+                          </div>
                         ) : (
                           <span style={{ color: r.market_order_status?.includes('완료') ? '#51CF66' : r.market_order_status?.includes('거부') ? '#FF6B6B' : '#E5E5E5' }}>{r.market_order_status || '-'}</span>
                         )}
@@ -823,43 +864,72 @@ export default function ReturnsPage() {
       {/* 교환 액션 선택 모달 */}
       {exchangeActionItem && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '380px', maxWidth: '90vw' }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '360px', maxWidth: '90vw' }}>
             <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.5rem' }}>교환요청 처리</h3>
             <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '1.5rem' }}>주문번호: {exchangeActionItem.order_number || exchangeActionItem.order_id || '-'}</p>
-            {!reshipStep ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                <button onClick={() => setReshipStep(true)} style={{ padding: '0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '8px', color: '#4C9AFF', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>교환재배송</button>
-                <button onClick={() => handleExchangeAction(exchangeActionItem, 'convert_return')} style={{ padding: '0.75rem', background: 'rgba(255,165,0,0.1)', border: '1px solid rgba(255,165,0,0.3)', borderRadius: '8px', color: '#FFA500', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>반품변경</button>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                <p style={{ fontSize: '0.8125rem', color: '#aaa', margin: 0 }}>재배송 송장 정보를 입력하세요 (롯데ON 필수)</p>
-                <select
-                  value={reshipForm.shipping_company}
-                  onChange={e => setReshipForm(f => ({ ...f, shipping_company: e.target.value }))}
-                  style={{ padding: '0.5rem 0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', fontSize: '0.875rem' }}
-                >
-                  {['CJ대한통운','한진택배','롯데택배','로젠택배','우체국택배','경동택배','대신택배','일양로지스'].map(c => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-                <input
-                  placeholder="송장번호 입력"
-                  value={reshipForm.tracking_number}
-                  onChange={e => setReshipForm(f => ({ ...f, tracking_number: e.target.value }))}
-                  style={{ padding: '0.5rem 0.75rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#E5E5E5', fontSize: '0.875rem' }}
-                />
-                <button
-                  onClick={() => handleExchangeAction(exchangeActionItem, 'reship', { tracking_number: reshipForm.tracking_number, shipping_company: reshipForm.shipping_company })}
-                  style={{ padding: '0.75rem', background: 'rgba(76,154,255,0.15)', border: '1px solid rgba(76,154,255,0.4)', borderRadius: '8px', color: '#4C9AFF', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
-                >재배송 처리</button>
-              </div>
-            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <button onClick={() => handleExchangeAction(exchangeActionItem, 'reship')} style={{ padding: '0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '8px', color: '#4C9AFF', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>교환재배송</button>
+              <button onClick={() => handleExchangeAction(exchangeActionItem, 'reject')} style={{ padding: '0.75rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '8px', color: '#FF6B6B', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>교환거부</button>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
-              <button
-                onClick={() => { setExchangeActionItem(null); setReshipStep(false); setReshipForm({ tracking_number: '', shipping_company: '롯데택배' }) }}
-                style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}
-              >닫기</button>
+              <button onClick={() => setExchangeActionItem(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 교환 추적 정보 입력 모달 */}
+      {exchangeTrackingModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '420px', maxWidth: '90vw' }}>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1.5rem' }}>교환 추적 정보</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.4rem' }}>회수 상태</p>
+                <select
+                  value={exchangeTrackingModal.exchange_retrieval_status}
+                  onChange={e => setExchangeTrackingModal({ ...exchangeTrackingModal, exchange_retrieval_status: e.target.value })}
+                  style={{ ...inputStyle, width: '100%' }}
+                >
+                  <option value="">선택 안 함</option>
+                  <option value="미회수">미회수</option>
+                  <option value="회수중">회수중</option>
+                  <option value="회수완료">회수완료</option>
+                </select>
+              </div>
+              <div>
+                <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.4rem' }}>소싱처 재출고 택배사</p>
+                <input
+                  type="text"
+                  placeholder="예: CJ대한통운"
+                  value={exchangeTrackingModal.exchange_reship_company}
+                  onChange={e => setExchangeTrackingModal({ ...exchangeTrackingModal, exchange_reship_company: e.target.value })}
+                  style={{ ...inputStyle, width: '100%' }}
+                />
+              </div>
+              <div>
+                <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.4rem' }}>소싱처 재출고 송장번호</p>
+                <input
+                  type="text"
+                  placeholder="송장번호 입력"
+                  value={exchangeTrackingModal.exchange_reship_tracking}
+                  onChange={e => setExchangeTrackingModal({ ...exchangeTrackingModal, exchange_reship_tracking: e.target.value })}
+                  style={{ ...inputStyle, width: '100%' }}
+                />
+              </div>
+              <div>
+                <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.4rem' }}>고객 도착일</p>
+                <input
+                  type="date"
+                  value={exchangeTrackingModal.exchange_delivered_at}
+                  onChange={e => setExchangeTrackingModal({ ...exchangeTrackingModal, exchange_delivered_at: e.target.value })}
+                  style={{ ...inputStyle, width: '100%' }}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
+              <button onClick={() => setExchangeTrackingModal(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>
+              <button onClick={saveExchangeTracking} style={{ padding: '0.625rem 1.25rem', background: '#4C9AFF', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>저장</button>
             </div>
           </div>
         </div>

@@ -29,7 +29,6 @@ _autotune_task: Optional[asyncio.Task] = None
 _autotune_running_event = threading.Event()  # 스레드 간 동기화
 _autotune_last_tick: Optional[str] = None
 _autotune_cycle_count = 0
-_autotune_restart_count = 0  # 사이클 재시작 횟수 추적
 
 # 소싱처별 품절 서킷브레이커
 SOLDOUT_BREAK_THRESHOLD = 10  # 연속 품절 N개 → 해당 소싱처 중단
@@ -40,10 +39,11 @@ _site_breaker_tripped: dict[str, bool] = {}  # {소싱처: 중단 여부}
 # 등급 분류 기준 기간 (일)
 CLASSIFY_WINDOW_DAYS = 7
 
-# 오토튠 필터 설정 키 (samba_settings)
-AUTOTUNE_FILTER_SOURCES_KEY = "autotune_enabled_sources"
-AUTOTUNE_FILTER_MARKETS_KEY = "autotune_enabled_markets"
-AUTOTUNE_PRIORITY_ENABLED_KEY = "autotune_priority_enabled"
+# 연속 무변동 스킵 설정
+SKIP_AFTER_NO_CHANGE = 5  # 연속 N회 변동 없으면 스킵
+SKIP_CYCLES = 3  # 스킵 사이클 수
+_no_change_count: dict[str, int] = {}  # {상품ID: 연속 무변동 횟수}
+_skip_remaining: dict[str, int] = {}  # {상품ID: 남은 스킵 사이클}
 
 
 async def _classify_products(session) -> dict[str, int]:
@@ -122,7 +122,7 @@ async def _autotune_loop():
     순서: hot → warm → cold (소싱처별 병렬, 등급순 정렬)
     품절: 마켓 삭제(DELETE) → DB 삭제 (서킷브레이커: 소싱처별 연속 10건)
     """
-    global _autotune_last_tick, _autotune_cycle_count, _autotune_restart_count
+    global _autotune_last_tick, _autotune_cycle_count
     import logging
 
     log = logging.getLogger("autotune")
@@ -161,56 +161,26 @@ async def _autotune_loop():
                     now = datetime.now(timezone.utc)
                     repo = SambaCollectedProductRepository(session)
 
-                    # ⓪ 롯데ON 쿠키 캐시 갱신 (benefits API에 사용)
-                    from backend.api.v1.routers.samba.proxy import _get_setting
-                    from backend.domain.samba.proxy.lotteon_sourcing import (
-                        set_lotteon_cookie,
+                    # ① 등급 자동 분류 (매 사이클) — 실패해도 사이클 계속
+                    try:
+                        await _classify_products(session)
+                    except Exception as cls_err:
+                        log.warning(
+                            "[오토튠] 등급 분류 실패 (무시하고 진행): %s", cls_err
+                        )
+
+                    # ② 마켓등록상품만 조회 + hot→warm→cold 정렬
+                    priority_order = case(
+                        (_CP.monitor_priority == "hot", 0),
+                        (_CP.monitor_priority == "warm", 1),
+                        else_=2,
                     )
-
-                    _lt_cookie = await _get_setting(session, "lotteon_cookie")
-                    if _lt_cookie:
-                        set_lotteon_cookie(str(_lt_cookie))
-
-                    # ① 등급 분류 ON/OFF 확인
-                    _priority_enabled = await _get_setting(
-                        session, AUTOTUNE_PRIORITY_ENABLED_KEY
-                    )
-                    # 기본값 True (기존 동작 유지)
-                    _use_priority = (
-                        _priority_enabled
-                        if isinstance(_priority_enabled, bool)
-                        else True
-                    )
-
-                    if _use_priority:
-                        try:
-                            await _classify_products(session)
-                        except Exception as cls_err:
-                            log.warning(
-                                "[오토튠] 등급 분류 실패 (무시하고 진행): %s", cls_err
-                            )
-
-                    # ② 마켓등록상품 조회
                     # 마켓등록상품 공통 조건 (collector_common에서 통합 관리)
                     from backend.api.v1.routers.samba.collector_common import (
                         build_market_registered_conditions,
                     )
 
                     market_cond = build_market_registered_conditions(_CP)
-
-                    if _use_priority:
-                        priority_order = case(
-                            (_CP.monitor_priority == "hot", 0),
-                            (_CP.monitor_priority == "warm", 1),
-                            else_=2,
-                        )
-                        _order_clause = (
-                            priority_order,
-                            _CP.last_refreshed_at.asc().nullsfirst(),
-                        )
-                    else:
-                        _order_clause = (_CP.last_refreshed_at.asc().nullsfirst(),)
-
                     stmt = (
                         select(_CP)
                         .where(
@@ -220,7 +190,9 @@ async def _autotune_loop():
                             # sale_status 기준 품절 제외
                             _CP.sale_status != "sold_out",
                         )
-                        .order_by(*_order_clause)
+                        .order_by(
+                            priority_order, _CP.last_refreshed_at.asc().nullsfirst()
+                        )
                         # 오토튠에 불필요한 대형 컬럼 제외 — OOM 방지
                         .options(
                             defer(_CP.detail_html),
@@ -237,25 +209,6 @@ async def _autotune_loop():
                         if p.id not in _seen_ids:
                             _seen_ids.add(p.id)
                             products.append(p)
-
-                    # 사용자 지정 소싱처 필터 적용
-                    from backend.api.v1.routers.samba.proxy import _get_setting
-
-                    _enabled_sources = await _get_setting(
-                        session, AUTOTUNE_FILTER_SOURCES_KEY
-                    )
-                    if _enabled_sources and isinstance(_enabled_sources, list):
-                        _before_src = len(products)
-                        products = [
-                            p for p in products if p.source_site in _enabled_sources
-                        ]
-                        _skipped_src = _before_src - len(products)
-                        if _skipped_src > 0:
-                            log.info(
-                                "[오토튠] 소싱처 필터 — %d개 제외 (허용: %s)",
-                                _skipped_src,
-                                ", ".join(_enabled_sources),
-                            )
 
                     # 서킷브레이커 걸린 소싱처 상품 제외
                     if products:
@@ -290,6 +243,12 @@ async def _autotune_loop():
                         from backend.domain.samba.account.repository import (
                             SambaMarketAccountRepository,
                         )
+                        from backend.domain.samba.shipment.repository import (
+                            SambaShipmentRepository,
+                        )
+                        from backend.domain.samba.shipment.service import (
+                            SambaShipmentService,
+                        )
                         from backend.domain.samba.shipment.dispatcher import (
                             delete_from_market,
                         )
@@ -300,14 +259,6 @@ async def _autotune_loop():
                         _account_cache: dict[str, object] = {}
                         account_repo = SambaMarketAccountRepository(session)
                         policy_repo = SambaPolicyRepository(session)
-
-                        # 판매처 필터 사전 로드
-                        _enabled_markets = await _get_setting(
-                            session, AUTOTUNE_FILTER_MARKETS_KEY
-                        )
-                        _market_filter_active = bool(
-                            _enabled_markets and isinstance(_enabled_markets, list)
-                        )
 
                         # 계정 사전 로드
                         _all_account_ids: set[str] = set()
@@ -325,6 +276,9 @@ async def _autotune_loop():
                             _acc_result = await session.exec(_acc_stmt)
                             for _acc in _acc_result.all():
                                 _account_cache[_acc.id] = _acc
+
+                        ship_repo = SambaShipmentRepository(session)
+                        ship_svc = SambaShipmentService(ship_repo, session)
 
                         retransmitted = 0
                         deleted_count = 0
@@ -422,12 +376,8 @@ async def _autotune_loop():
                                     "sale_status": r.new_sale_status,
                                     "changed": r.changed,
                                 }
-                                # 옵션: 신규 수집 우선, 없으면 기존 DB 옵션 폴백
-                                _snap_options = r.new_options
-                                if not _snap_options and product.options:
-                                    _snap_options = product.options
-                                if _snap_options:
-                                    snapshot["options"] = _snap_options
+                                if r.new_options:
+                                    snapshot["options"] = r.new_options
                                 history = list(product.price_history or [])
                                 history.insert(0, snapshot)
                                 updates["price_history"] = _trim_history(history)
@@ -439,10 +389,7 @@ async def _autotune_loop():
                                 if r.new_original_price is not None:
                                     updates["original_price"] = r.new_original_price
                                 if r.new_cost is not None:
-                                    _old_cost = getattr(product, "cost", None) or 0
-                                    # 기존 원가가 더 낮으면(확장앱 혜택가) 보존
-                                    if not (_old_cost > 0 and _old_cost < r.new_cost):
-                                        updates["cost"] = r.new_cost
+                                    updates["cost"] = r.new_cost
                                 if r.new_options is not None:
                                     updates["options"] = r.new_options
                                 updates["sale_status"] = r.new_sale_status
@@ -567,19 +514,6 @@ async def _autotune_loop():
                                 # ★ 마켓별 최종 판매가 비교 → 전송 판정
                                 new_cost = _cur_cost
                                 reg_accounts = product.registered_accounts or []
-                                # 판매처 필터 적용 (market_type 기준)
-                                if _market_filter_active:
-                                    reg_accounts = [
-                                        a
-                                        for a in reg_accounts
-                                        if (
-                                            _account_cache.get(a)
-                                            and getattr(
-                                                _account_cache[a], "market_type", ""
-                                            )
-                                            in _enabled_markets
-                                        )
-                                    ]
                                 last_sent = product.last_sent_data or {}
 
                                 if product.applied_policy_id:
@@ -674,6 +608,18 @@ async def _autotune_loop():
                                         f"{_idx_prefix}{_prod_label}: 스킵{_tail}",
                                     )
 
+                                # 연속 무변동 카운터 — 마켓 전송 기준
+                                _any_transmitted = len(_actions) > 0
+                                if _any_transmitted or r.stock_changed:
+                                    _no_change_count.pop(r.product_id, None)
+                                    _skip_remaining.pop(r.product_id, None)
+                                else:
+                                    cnt = _no_change_count.get(r.product_id, 0) + 1
+                                    _no_change_count[r.product_id] = cnt
+                                    if cnt >= SKIP_AFTER_NO_CHANGE:
+                                        _skip_remaining[r.product_id] = SKIP_CYCLES
+                                        _no_change_count[r.product_id] = 0
+
                             # lock 밖: 전송 큐에 수집 (사이클 후 일괄 처리)
                             for _tx_args in _transmit_queue:
                                 _pending_syncs.append(_tx_args)
@@ -692,9 +638,7 @@ async def _autotune_loop():
 
                         # ③ 소싱처별 병렬 갱신 + 결과 즉시 처리 (콜백)
                         results, summary = await refresh_products_bulk(
-                            products,
-                            max_concurrency={"MUSINSA": 2},
-                            on_result=_on_result,
+                            products, max_concurrency=2, on_result=_on_result
                         )
 
                         # 에러 결과 후처리 (콜백에서 처리 안 된 에러 건)
@@ -761,13 +705,8 @@ async def _autotune_loop():
                                                 )
                                                 await tx_s.commit()
                                         except Exception as _se:
-                                            _s_site = getattr(
-                                                product_map.get(s_pid),
-                                                "source_site",
-                                                "UNKNOWN",
-                                            )
                                             _log_line(
-                                                _s_site,
+                                                "MUSINSA",
                                                 s_pid,
                                                 f"{s_label} 동기실패: {str(_se)[:80]}",
                                                 "error",
@@ -1085,40 +1024,13 @@ async def _autotune_loop():
                     log.info("[오토튠] 루프 취소됨 (정상 종료)")
                     break
                 # running 상태인데 CancelledError → 일시적 취소, 루프 계속
-                _autotune_restart_count += 1
                 log.warning(
-                    "[오토튠] CancelledError 발생했으나 running 상태 — 사이클 재시작 (누적 %d회)",
-                    _autotune_restart_count,
+                    "[오토튠] CancelledError 발생했으나 running 상태 — 사이클 재시작"
                 )
-                try:
-                    import backend.domain.samba.collector.refresher as _ref_cancel
-
-                    _now_cancel = datetime.now(timezone.utc)
-                    _kst_cancel = _now_cancel + timedelta(hours=9)
-                    _ref_cancel._refresh_log_buffer.append(
-                        {
-                            "ts": _now_cancel.isoformat(),
-                            "site": "",
-                            "product_id": "",
-                            "name": "",
-                            "msg": f"[{_kst_cancel.strftime('%H:%M:%S')}] !! CancelledError — 사이클 재시작 (누적 {_autotune_restart_count}회)",
-                            "level": "error",
-                            "source": "autotune",
-                        }
-                    )
-                    _ref_cancel._refresh_log_total += 1
-                except Exception:
-                    pass
                 await asyncio.sleep(2)
             except Exception as e:
-                _autotune_restart_count += 1
-                log.error(
-                    "[오토튠] tick 오류 (누적 재시작 %d회): %s",
-                    _autotune_restart_count,
-                    e,
-                    exc_info=True,
-                )
-                # 오토튠 실시간 로그에도 에러 표시
+                log.error("[오토튠] tick 오류: %s", e, exc_info=True)
+                # 오토튠 실시간 로그에도 에러 표시 (이모지 제거 — cp949 에러 방지)
                 try:
                     import backend.domain.samba.collector.refresher as _ref_err
 
@@ -1127,10 +1039,10 @@ async def _autotune_loop():
                     _ref_err._refresh_log_buffer.append(
                         {
                             "ts": _now_err.isoformat(),
-                            "site": "",
+                            "site": "MUSINSA",
                             "product_id": "",
                             "name": "",
-                            "msg": f"[{_kst_err.strftime('%H:%M:%S')}] !! tick 오류 (누적 {_autotune_restart_count}회): {type(e).__name__}: {str(e)[:100]}",
+                            "msg": f"[{_kst_err.strftime('%H:%M:%S')}] tick 오류: {type(e).__name__}: {str(e)[:100]}",
                             "level": "error",
                             "source": "autotune",
                         }
@@ -1148,7 +1060,7 @@ async def _autotune_loop():
 
 
 class AutotuneStartRequest(BaseModel):
-    pass
+    target: str = "registered"  # 하위 호환용 (무시됨, 항상 마켓등록상품만)
 
 
 async def _save_autotune_state(enabled: bool):
@@ -1220,14 +1132,13 @@ async def auto_start_if_enabled():
 @router.post("/autotune/start")
 async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     """오토튠 무한 루프 시작 — 메인 이벤트 루프에서 실행."""
-    global _autotune_task, _autotune_cycle_count, _autotune_restart_count
+    global _autotune_task, _autotune_cycle_count
     from backend.domain.samba.collector.refresher import clear_bulk_cancel
 
     if _autotune_running_event.is_set():
         return {"ok": True, "status": "already_running"}
     _autotune_running_event.set()
     _autotune_cycle_count = 0
-    _autotune_restart_count = 0
     clear_bulk_cancel()
     _autotune_task = asyncio.create_task(_autotune_loop())
     await _save_autotune_state(True)
@@ -1280,29 +1191,16 @@ async def autotune_status():
 
     intervals_info = get_site_intervals_info()
 
-    # 등급 분류 ON/OFF
-    priority_enabled = True
-    try:
-        from backend.api.v1.routers.samba.proxy import _get_setting
-
-        async with get_read_session() as rs2:
-            _pv = await _get_setting(rs2, AUTOTUNE_PRIORITY_ENABLED_KEY)
-        priority_enabled = _pv if isinstance(_pv, bool) else True
-    except Exception:
-        pass
-
     return {
         "running": _autotune_running_event.is_set()
         and _autotune_task is not None
         and not _autotune_task.done(),
         "last_tick": _autotune_last_tick,
         "cycle_count": _autotune_cycle_count,
-        "restart_count": _autotune_restart_count,
         "refreshed_count": refreshed_24h,
         "target": "registered",
         "breaker_tripped": tripped,
         "site_intervals": intervals_info.get("base_intervals", {}),
-        "priority_enabled": priority_enabled,
     }
 
 
@@ -1336,127 +1234,3 @@ async def autotune_breaker_reset(site: str = ""):
         _site_consecutive_soldout.clear()
         logger.info("[오토튠] 서킷브레이커 전체 해제")
         return {"ok": True, "reset": "all"}
-
-
-# ── 등급 분류(hot/warm/cold) ON/OFF ──
-
-
-@router.get("/autotune/priority")
-async def autotune_get_priority():
-    """등급 분류 ON/OFF 상태 조회."""
-    from backend.db.orm import get_read_session
-    from backend.api.v1.routers.samba.proxy import _get_setting
-
-    async with get_read_session() as session:
-        val = await _get_setting(session, AUTOTUNE_PRIORITY_ENABLED_KEY)
-    enabled = val if isinstance(val, bool) else True
-    return {"ok": True, "priority_enabled": enabled}
-
-
-class AutotunePriorityRequest(BaseModel):
-    enabled: bool
-
-
-@router.post("/autotune/priority")
-async def autotune_set_priority(body: AutotunePriorityRequest):
-    """등급 분류 ON/OFF 설정 변경."""
-    from backend.db.orm import get_write_session
-    from backend.api.v1.routers.samba.proxy import _set_setting
-
-    async with get_write_session() as session:
-        await _set_setting(session, AUTOTUNE_PRIORITY_ENABLED_KEY, body.enabled)
-        await session.commit()
-    label = "ON" if body.enabled else "OFF"
-    logger.info("[오토튠] 등급 분류 %s", label)
-    return {"ok": True, "priority_enabled": body.enabled}
-
-
-# ── 오토튠 필터 (소싱처 / 판매처 선택) ──
-
-
-class AutotuneFilterRequest(BaseModel):
-    enabled_sources: Optional[list[str]] = None
-    enabled_markets: Optional[list[str]] = None
-
-
-@router.get("/autotune/filters")
-async def autotune_get_filters():
-    """오토튠 필터 설정 + 실제 존재하는 소싱처/판매처(마켓 단위) 목록 반환."""
-    import json as _json
-
-    from backend.db.orm import get_read_session
-    from backend.api.v1.routers.samba.proxy import _get_setting
-    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from backend.domain.samba.account.model import SambaMarketAccount
-    from sqlalchemy import distinct
-
-    async with get_read_session() as session:
-        # 현재 저장된 필터
-        saved_sources = await _get_setting(session, AUTOTUNE_FILTER_SOURCES_KEY)
-        saved_markets = await _get_setting(session, AUTOTUNE_FILTER_MARKETS_KEY)
-
-        # 실제 수집된 소싱처 목록 (상품이 존재하는 것만)
-        src_stmt = select(distinct(_CP.source_site)).where(
-            _CP.source_site != None, _CP.source_site != ""
-        )
-        src_result = await session.execute(src_stmt)
-        available_sources = sorted([r[0] for r in src_result.all() if r[0]])
-
-        # 등록된 상품의 registered_accounts → 계정 ID 수집
-        reg_stmt = select(_CP.registered_accounts).where(
-            _CP.status == "registered",
-            _CP.registered_accounts.isnot(None),
-        )
-        reg_result = await session.execute(reg_stmt)
-        _acc_ids: set[str] = set()
-        for row in reg_result.all():
-            val = row[0]
-            if not val:
-                continue
-            # JSON 컬럼이 문자열로 반환될 수 있음
-            if isinstance(val, str):
-                try:
-                    val = _json.loads(val)
-                except Exception:
-                    continue
-            if isinstance(val, list):
-                _acc_ids.update(str(a) for a in val if a)
-
-        # 계정 → market_type 매핑 후 중복 제거 (마켓 단위)
-        available_markets: list[str] = []
-        if _acc_ids:
-            acc_stmt = select(distinct(SambaMarketAccount.market_type)).where(
-                SambaMarketAccount.id.in_(list(_acc_ids))
-            )
-            acc_result = await session.execute(acc_stmt)
-            available_markets = sorted([r[0] for r in acc_result.all() if r[0]])
-
-    return {
-        "enabled_sources": saved_sources if isinstance(saved_sources, list) else None,
-        "enabled_markets": saved_markets if isinstance(saved_markets, list) else None,
-        "available_sources": available_sources,
-        "available_markets": available_markets,
-    }
-
-
-@router.put("/autotune/filters")
-async def autotune_set_filters(body: AutotuneFilterRequest):
-    """오토튠 소싱처/판매처 필터 저장. None이면 전체 허용(필터 해제)."""
-    from backend.db.orm import get_write_session
-    from backend.api.v1.routers.samba.proxy import _set_setting
-
-    async with get_write_session() as session:
-        await _set_setting(session, AUTOTUNE_FILTER_SOURCES_KEY, body.enabled_sources)
-        await _set_setting(session, AUTOTUNE_FILTER_MARKETS_KEY, body.enabled_markets)
-        await session.commit()
-
-    logger.info(
-        "[오토튠] 필터 저장 — 소싱처: %s, 판매처: %s",
-        body.enabled_sources if body.enabled_sources else "전체",
-        f"{len(body.enabled_markets)}개" if body.enabled_markets else "전체",
-    )
-    return {
-        "ok": True,
-        "enabled_sources": body.enabled_sources,
-        "enabled_markets": body.enabled_markets,
-    }

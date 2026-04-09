@@ -57,18 +57,6 @@ class SmartStorePlugin(MarketPlugin):
 
         naver_images = []
         detail_html = product.get("detail_html", "")
-        # detail_html이 비어있으면 detail_images에서 HTML 자동 생성
-        if not detail_html:
-            detail_imgs = product.get("detail_images") or []
-            if detail_imgs:
-                detail_html = "\n".join(
-                    f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
-                    for img in detail_imgs
-                )
-                product["detail_html"] = detail_html
-                logger.info(
-                    f"[스마트스토어] detail_html 비어있어 detail_images {len(detail_imgs)}장으로 자동 생성"
-                )
         # 프로토콜 없는 이미지 URL 보정 (src="//... → src="https://...)
         if detail_html:
             detail_html = re.sub(r'(src=["\'])\/\/', r"\1https://", detail_html)
@@ -436,12 +424,6 @@ class SmartStorePlugin(MarketPlugin):
         except Exception:
             pass
 
-        # 디버그: 전송 직전 detail_html 로그
-        _dh = product_copy.get("detail_html", "")
-        logger.info(
-            f"[스마트스토어] detailContent 전송 직전 — 길이:{len(_dh)}, 미리보기:{_dh[:300]}"
-        )
-
         data = SmartStoreClient.transform_product(product_copy, category_id)
 
         # PUT은 전체 데이터가 필요 → 기존 상품 GET 후 변경 필드만 덮어쓰기
@@ -583,19 +565,7 @@ class SmartStorePlugin(MarketPlugin):
                             }
                     raise
             else:
-                try:
-                    r = await client.register_product(d)
-                except Exception as _reg_e:
-                    if "leafCategoryId" in str(_reg_e):
-                        # 카테고리 ID 유효하지 않음 → 기본 카테고리로 fallback
-                        _default_cat = "50000803"
-                        logger.warning(
-                            f"[스마트스토어] leafCategoryId 에러 → 기본 카테고리({_default_cat})로 재시도: {_reg_e}"
-                        )
-                        d["originProduct"]["leafCategoryId"] = _default_cat
-                        r = await client.register_product(d)
-                    else:
-                        raise
+                r = await client.register_product(d)
                 return {"success": True, "message": "스마트스토어 등록 성공", "data": r}
 
         # 태그사전 미등록 태그 사전 필터링 (누적 DB 기반)

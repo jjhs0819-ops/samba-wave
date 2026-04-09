@@ -85,39 +85,15 @@ _CATEGORY_GROUP: dict[str, str] = {
     "디지털": "electronics",
     "컴퓨터": "electronics",
     "모바일": "electronics",
-    # 스포츠/레저
-    "스포츠": "sports",
-    "레저": "sports",
-    "스포츠/레저": "sports",
-    "등산": "sports",
-    "아웃도어": "sports",
-    "골프": "sports",
-    "헬스": "sports",
-    "피트니스": "sports",
-    "캠핑": "sports",
-    "낚시": "sports",
-    "자전거": "sports",
-    "수영": "sports",
 }
 
 
 def detect_notice_group(product: dict[str, Any]) -> str:
     """상품의 category1 기반으로 고시정보 그룹을 판별한다.
 
-    Returns: "wear" | "shoes" | "bag" | "accessories" | "cosmetic" | "food" | "electronics" | "sports" | "etc"
+    Returns: "wear" | "shoes" | "bag" | "accessories" | "cosmetic" | "food" | "electronics" | "etc"
     """
     cat1 = (product.get("category1") or "").strip()
-
-    # "스포츠/레저", "소품" 등 복합 카테고리는 category2로 세분화
-    if cat1 in ("스포츠/레저", "소품"):
-        cat2 = (product.get("category2") or "").strip()
-        if cat2 in _CATEGORY_GROUP:
-            return _CATEGORY_GROUP[cat2]
-        for keyword, group in _CATEGORY_GROUP.items():
-            if keyword in cat2:
-                return group
-        return "etc"  # 기구/용품/장비 등 → 기타 재화
-
     if cat1 in _CATEGORY_GROUP:
         return _CATEGORY_GROUP[cat1]
 
@@ -131,10 +107,6 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     for keyword, group in _CATEGORY_GROUP.items():
         if keyword in full_cat:
             return group
-
-    # GS샵 등 미분류 카테고리 폴백
-    if full_cat == "기타 재화":
-        return "wear"
 
     # 상품명에서 카테고리 추론 (카테고리 미설정 소싱처 대응)
     name = (product.get("name") or "").lower()
@@ -168,31 +140,9 @@ def detect_notice_group(product: dict[str, Any]) -> str:
             "코트",
             "조거",
             "트레이닝",
-            "베스트",
-            "조끼",
-            "레깅스",
-            "패딩",
-            "점퍼",
-            "윈드",
-            "바람막이",
         ],
         "bag": ["가방", "백팩", "크로스백", "토트백", "숄더백"],
-        "accessories": [
-            "모자",
-            "벨트",
-            "지갑",
-            "시계",
-            "양말",
-            "장갑",
-            "팔토시",
-            "토시",
-            "넥워머",
-            "게이터",
-            "마스크",
-            "워머",
-            "아대",
-            "밴드",
-        ],
+        "accessories": ["모자", "벨트", "지갑", "시계", "양말"],
     }
     for group, hints in name_hints.items():
         for h in hints:
@@ -627,270 +577,67 @@ def build_smartstore_notice(product: dict[str, Any], **kwargs: str) -> dict[str,
 
 # 롯데ON pdItmsCd 매핑
 _LOTTEON_NOTICE_CODE: dict[str, str] = {
-    "wear": "01",  # [01]의류
-    "shoes": "02",  # [02]구두/신발
-    "bag": "03",  # [03]가방
-    "accessories": "04",  # [04]패션잡화
-    "cosmetic": "18",  # [18]화장품
-    "food": "21",  # [21]가공식품
-    "electronics": "10",  # [10]사무용기기(컴퓨터/노트북 등)
-    "sports": "25",  # [25]스포츠용품
-    "etc": "38",  # [38]기타(재화)
+    "wear": "38",  # 의류
+    "shoes": "39",  # 신발
+    "bag": "40",  # 가방
+    "accessories": "41",  # 패션잡화
+    "cosmetic": "42",  # 화장품
+    "food": "01",  # 식품
+    "electronics": "14",  # 전자제품
+    "etc": "35",  # 기타
 }
 
 
-def build_lotteon_notice(product: dict[str, Any], **kwargs: str) -> dict[str, Any]:
-    """상품 카테고리에 맞는 롯데ON 고시정보를 생성한다.
-
-    pdItmsCd별 유효 pdArtlCd 코드 (롯데ON 어드민 확인):
-      01(의류): 0010소재 0020색상 0030치수 0040제조년월 0050세탁취급 0060제조국 0070제조자 0080품질보증 0090A/S
-      02(신발): 01과 동일 구조로 추정 — 어드민 재확인 필요
-      03/04:    01과 동일 구조로 추정 — 어드민 재확인 필요
-      35(기타): 0060 0070 0080 0090 사용
-    """
-    from datetime import datetime as _dt
-    import logging as _logging
-
-    _log = _logging.getLogger(__name__)
-
+def build_lotteon_notice(product: dict[str, Any]) -> dict[str, Any]:
+    """상품 카테고리에 맞는 롯데ON 고시정보를 생성한다."""
     group = detect_notice_group(product)
-    code = _LOTTEON_NOTICE_CODE.get(group, "38")
-    _log.info(
-        f"[롯데ON 고시정보] category1={product.get('category1')} group={group} pdItmsCd={code}"
-    )
+    code = _LOTTEON_NOTICE_CODE.get(group, "35")
 
-    fallback = "상세페이지 참조"
-    brand = product.get("brand", "") or ""
-    material = product.get("material", "") or fallback
-    color_text = kwargs.get("color_text") or product.get("color", "") or fallback
-    size_text = kwargs.get("size_text") or fallback
-    mfr = (
-        kwargs.get("mfr")
-        or product.get("manufacturer", "")
-        or brand
-        or "제조자 정보 없음"
-    )
-    origin = product.get("origin", "") or fallback
-    quality = product.get("quality_guarantee", "") or "소비자 기본법에 따름"
-    as_message = (product.get("_as_message", "") or "").strip()
-    as_phone = (product.get("_as_phone", "") or "").strip()
-    as_contact = (
-        as_message or as_phone or (f"{brand} 고객센터" if brand else "판매자 문의")
-    )
-    care = product.get("care_instructions", "") or fallback
-    manufacture_ym = _dt.now().strftime("%Y%m")  # 등록일 기준 yyyyMM
+    name = product.get("name", "")
+    brand = product.get("brand", "")
 
-    if code == "01":
-        # 의류: 0010소재 0020색상 0030치수 0040제조년월 0050세탁취급 0060제조국 0070제조자 0080품질보증 0090A/S
-        articles: list[dict[str, str]] = [
-            {"pdArtlCd": "0010", "pdArtlCnts": material},
-            {"pdArtlCd": "0020", "pdArtlCnts": color_text},
-            {"pdArtlCd": "0030", "pdArtlCnts": size_text},
-            {"pdArtlCd": "0040", "pdArtlCnts": manufacture_ym},
-            {"pdArtlCd": "0050", "pdArtlCnts": care},
-            {"pdArtlCd": "0060", "pdArtlCnts": origin},
-            {"pdArtlCd": "0070", "pdArtlCnts": mfr},
-            {"pdArtlCd": "0080", "pdArtlCnts": quality},
-            {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
-        ]
-    elif code == "02":
-        # 신발: 0100소재 0020색상 0030치수 0060제조국 0070제조자 0110취급주의 0080품질보증 0090A/S
-        articles = [
-            {"pdArtlCd": "0100", "pdArtlCnts": material},
-            {"pdArtlCd": "0020", "pdArtlCnts": color_text},
-            {"pdArtlCd": "0030", "pdArtlCnts": size_text},
-            {"pdArtlCd": "0060", "pdArtlCnts": origin},
-            {"pdArtlCd": "0070", "pdArtlCnts": mfr},
-            {"pdArtlCd": "0110", "pdArtlCnts": care},
-            {"pdArtlCd": "0080", "pdArtlCnts": quality},
-            {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
-        ]
-    elif code == "03":
-        # 가방: 0130종류 0120소재 0020색상 0140크기 0060제조국 0070제조자 0110취급주의 0080품질보증 0090A/S
-        articles = [
-            {"pdArtlCd": "0130", "pdArtlCnts": fallback},
-            {"pdArtlCd": "0120", "pdArtlCnts": material},
-            {"pdArtlCd": "0020", "pdArtlCnts": color_text},
-            {"pdArtlCd": "0140", "pdArtlCnts": size_text},
-            {"pdArtlCd": "0060", "pdArtlCnts": origin},
-            {"pdArtlCd": "0070", "pdArtlCnts": mfr},
-            {"pdArtlCd": "0110", "pdArtlCnts": care},
-            {"pdArtlCd": "0080", "pdArtlCnts": quality},
-            {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
-        ]
-    elif code == "04":
-        # 패션잡화: 0130종류 0120소재 0030치수 0060제조국 0070제조자 0110취급주의 0080품질보증 0090A/S
-        articles = [
-            {"pdArtlCd": "0130", "pdArtlCnts": fallback},
-            {"pdArtlCd": "0120", "pdArtlCnts": material},
-            {"pdArtlCd": "0030", "pdArtlCnts": size_text},
-            {"pdArtlCd": "0060", "pdArtlCnts": origin},
-            {"pdArtlCd": "0070", "pdArtlCnts": mfr},
-            {"pdArtlCd": "0110", "pdArtlCnts": care},
-            {"pdArtlCd": "0080", "pdArtlCnts": quality},
-            {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
-        ]
-    elif code == "25":
-        # 스포츠용품: 공식 고시코드표 기준 (롯데ON 품목고시 현행화 PDF)
-        # 0210품명 0780크기/중량 0220출시년월 0150제품구성 0020색상 0410재질
-        # 0810세부사양 0060제조국 0070제조자 0080품질보증 0090A/S 0200안전인증
-        articles = [
-            {"pdArtlCd": "0210", "pdArtlCnts": fallback},
-            {"pdArtlCd": "0780", "pdArtlCnts": size_text},
-            {"pdArtlCd": "0220", "pdArtlCnts": manufacture_ym},
-            {"pdArtlCd": "0150", "pdArtlCnts": fallback},
-            {"pdArtlCd": "0020", "pdArtlCnts": color_text},
-            {"pdArtlCd": "0410", "pdArtlCnts": material},
-            {"pdArtlCd": "0810", "pdArtlCnts": fallback},
-            {"pdArtlCd": "0060", "pdArtlCnts": origin},
-            {"pdArtlCd": "0070", "pdArtlCnts": mfr},
-            {"pdArtlCd": "0080", "pdArtlCnts": quality},
-            {"pdArtlCd": "0090", "pdArtlCnts": as_contact},
-            {"pdArtlCd": "0200", "pdArtlCnts": fallback},
-        ]
-    elif code == "38":
-        # 기타재화: 공식 고시코드표 기준 (롯데ON 품목고시 현행화 PDF)
-        # 0210품명 1400인증/허가 1420제조국/원산지 0070제조자 1440A/S 0200안전인증
-        articles = [
-            {"pdArtlCd": "0210", "pdArtlCnts": fallback},
-            {"pdArtlCd": "1400", "pdArtlCnts": fallback},
-            {"pdArtlCd": "1420", "pdArtlCnts": origin},
-            {"pdArtlCd": "0070", "pdArtlCnts": mfr},
-            {"pdArtlCd": "1440", "pdArtlCnts": as_contact},
-            {"pdArtlCd": "0200", "pdArtlCnts": fallback},
-        ]
-    else:
-        # 기타 미분류 — 기타재화(38)와 동일 코드셋으로 fallback
-        articles = [
-            {"pdArtlCd": "0210", "pdArtlCnts": fallback},
-            {"pdArtlCd": "1420", "pdArtlCnts": origin},
-            {"pdArtlCd": "0070", "pdArtlCnts": mfr},
-            {"pdArtlCd": "1440", "pdArtlCnts": as_contact},
-        ]
+    articles = [
+        {"pdArtlCd": "0160", "pdArtlCnts": name},
+        {
+            "pdArtlCd": "0060",
+            "pdArtlCnts": product.get("origin", "") or "상세페이지 참조",
+        },
+        {
+            "pdArtlCd": "0070",
+            "pdArtlCnts": product.get("manufacturer", "")
+            or brand
+            or "제조자 정보 없음",
+        },
+        {"pdArtlCd": "0080", "pdArtlCnts": "소비자 기본법에 따름"},
+        {"pdArtlCd": "0090", "pdArtlCnts": brand or "판매자 문의"},
+    ]
 
-    return {"pdItmsCd": code, "pdItmsArtlLst": articles}
+    return {
+        "pdItmsCd": code,
+        "pdItmsArtlLst": articles,
+    }
 
 
 # ────────────────────────────────────────────
 # 5. SSG 고시정보 (상품관리속성)
 # ────────────────────────────────────────────
 
-_DOMESTIC_ORIGIN_KEYWORDS = {"한국", "대한민국", "국내", "korea", "south korea"}
-_UNKNOWN_ORIGIN_KEYWORDS = {"없음", "미상", "미확인", "알수없음", "상세설명참조", ""}
 
-# SSG 고시정보 타입 매핑 (카테고리 그룹 → SSG itemMngPropClsId)
-_SSG_NOTICE_TYPE_MAP: dict[str, str] = {
-    "wear": "0000000001",
-    "shoes": "0000000002",
-    "bag": "0000000004",
-    "accessories": "0000000004",  # 패션잡화 — bag과 동일 클래스
-    "cosmetic": "0000000005",
-    "food": "0000000006",
-    "electronics": "0000000007",
-    "etc": "0000000035",
-}
-
-
-def _is_domestic_origin(origin: str) -> bool:
-    """원산지가 국내산인지 판별한다."""
-    stripped = origin.strip().lower()
-    return stripped in _DOMESTIC_ORIGIN_KEYWORDS or stripped in _UNKNOWN_ORIGIN_KEYWORDS
-
-
-def build_ssg_notice(
-    product: dict[str, Any],
-) -> tuple[str, list[dict[str, str]]]:
-    """상품 카테고리에 맞는 SSG 상품관리속성을 생성한다.
-
-    Returns:
-        (itemMngPropClsId, itemMngAttrs 배열)
-    """
+def build_ssg_notice(product: dict[str, Any]) -> list[dict[str, str]]:
+    """상품 카테고리에 맞는 SSG 상품관리속성을 생성한다."""
     fallback = "상세설명참조"
     material = product.get("material", "") or fallback
     color = product.get("color", "") or fallback
     manufacturer = (
         product.get("manufacturer", "") or product.get("brand", "") or fallback
     )
-    origin = product.get("origin", "") or ""
 
-    # 수입여부
-    if "_ssg_import_yn" in product:
-        import_yn = product["_ssg_import_yn"]
-    else:
-        import_yn = "N" if (origin and _is_domestic_origin(origin)) else "Y"
-    importer = manufacturer if import_yn == "Y" else fallback
-
-    # A/S 정보
-    as_phone = product.get("_as_phone", "") or ""
-    as_message = product.get("_as_message", "") or ""
-    as_info = ""
-    if as_phone:
-        as_info = as_phone
-        if as_message:
-            as_info += f" | {as_message}"
-    elif as_message:
-        as_info = as_message
-    as_info = as_info or fallback
-
-    group = detect_notice_group(product)
-    cls_id = _SSG_NOTICE_TYPE_MAP.get(group, "0000000035")
-
-    if group == "wear":
-        attrs: list[dict[str, str]] = [
-            {"itemMngPropId": "0000000001", "itemMngCntt": material},
-            {"itemMngPropId": "0000000002", "itemMngCntt": color},
-            {"itemMngPropId": "0000000003", "itemMngCntt": fallback},
-            {"itemMngPropId": "0000000008", "itemMngCntt": import_yn},
-            {"itemMngPropId": "0000000009", "itemMngCntt": importer},
-            {"itemMngPropId": "0000000005", "itemMngCntt": fallback},
-            {"itemMngPropId": "0000000004", "itemMngCntt": fallback},
-            {
-                "itemMngPropId": "0000000006",
-                "itemMngCntt": "관련 법 및 소비자 분쟁해결 규정에 따름",
-            },
-            {"itemMngPropId": "0000000012", "itemMngCntt": as_info},
-        ]
-    elif group == "shoes":
-        attrs = [
-            {"itemMngPropId": "0000000184", "itemMngCntt": material},
-            {"itemMngPropId": "0000000002", "itemMngCntt": color},
-            {"itemMngPropId": "0000000170", "itemMngCntt": fallback},
-            {"itemMngPropId": "0000000008", "itemMngCntt": import_yn},
-            {"itemMngPropId": "0000000009", "itemMngCntt": importer},
-            {"itemMngPropId": "0000000013", "itemMngCntt": fallback},
-            {
-                "itemMngPropId": "0000000006",
-                "itemMngCntt": "관련 법 및 소비자 분쟁해결 규정에 따름",
-            },
-            {"itemMngPropId": "0000000012", "itemMngCntt": as_info},
-        ]
-    elif group in ("bag", "accessories"):
-        attrs = [
-            {"itemMngPropId": "0000000014", "itemMngCntt": fallback},
-            {"itemMngPropId": "0000000001", "itemMngCntt": material},
-            {"itemMngPropId": "0000000003", "itemMngCntt": fallback},
-            {"itemMngPropId": "0000000008", "itemMngCntt": import_yn},
-            {"itemMngPropId": "0000000009", "itemMngCntt": importer},
-            {"itemMngPropId": "0000000013", "itemMngCntt": fallback},
-            {
-                "itemMngPropId": "0000000006",
-                "itemMngCntt": "관련 법 및 소비자 분쟁해결 규정에 따름",
-            },
-            {"itemMngPropId": "0000000012", "itemMngCntt": as_info},
-        ]
-    else:
-        attrs = [
-            {"itemMngPropId": "0000000001", "itemMngCntt": material},
-            {"itemMngPropId": "0000000002", "itemMngCntt": color},
-            {"itemMngPropId": "0000000003", "itemMngCntt": fallback},
-            {
-                "itemMngPropId": "0000000006",
-                "itemMngCntt": "관련 법 및 소비자 분쟁해결 규정에 따름",
-            },
-            {"itemMngPropId": "0000000007", "itemMngCntt": manufacturer},
-            {"itemMngPropId": "0000000008", "itemMngCntt": "N"},
-            {"itemMngPropId": "0000000011", "itemMngCntt": "1000000001"},
-            {"itemMngPropId": "0000000012", "itemMngCntt": as_info},
-        ]
-
-    return cls_id, attrs
+    return [
+        {"itemMngPropId": "0000000001", "itemMngCntt": material},  # 소재
+        {"itemMngPropId": "0000000003", "itemMngCntt": color},  # 색상
+        {"itemMngPropId": "0000000006", "itemMngCntt": fallback},  # 품질보증
+        {"itemMngPropId": "0000000007", "itemMngCntt": manufacturer},  # 제조자
+        {"itemMngPropId": "0000000008", "itemMngCntt": "N"},  # 사이즈표기안내
+        {"itemMngPropId": "0000000011", "itemMngCntt": "1000000001"},  # 제조국
+        {"itemMngPropId": "0000000012", "itemMngCntt": fallback},  # A/S
+    ]

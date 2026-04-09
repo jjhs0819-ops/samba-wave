@@ -265,23 +265,13 @@ class SambaCollectorService:
             )
         # 가격 계산 필요 → 상품별 처리 (sale_price가 다름)
         products = await self.product_repo.list_by_filter(filter_id)
-        use_range = policy_data.get("use_range_margin", False)
-        range_margins = policy_data.get("range_margins", [])
-        default_margin = policy_data.get("margin_rate", 15)
+        margin = policy_data.get("margin_rate", 15) / 100
         shipping = policy_data.get("shipping_cost", 0)
         extra = policy_data.get("extra_charge", 0)
         updated = 0
         for p in products:
             base = p.sale_price or p.original_price or 0
-            # 범위 마진: 원가 구간별 마진율 적용
-            margin_rate = default_margin
-            if use_range and range_margins:
-                for r in range_margins:
-                    max_val = r.get("max") or 9999999999
-                    if base >= r.get("min", 0) and base < max_val:
-                        margin_rate = r.get("rate", 15)
-                        break
-            calculated = int(base * (1 + margin_rate / 100) + shipping + extra)
+            calculated = int(base * (1 + margin) + shipping + extra)
             await self.product_repo.update_async(
                 p.id,
                 applied_policy_id=policy_id,

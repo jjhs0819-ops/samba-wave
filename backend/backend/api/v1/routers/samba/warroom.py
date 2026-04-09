@@ -30,7 +30,7 @@ async def get_dashboard(
 async def list_events(
     event_type: Optional[str] = Query(None),
     severity: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_read_session_dependency),
 ):
     """이벤트 목록 — 필터 가능."""

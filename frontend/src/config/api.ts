@@ -4,7 +4,3 @@
  */
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || 'http://localhost:28080'
-
-/** API Gateway Key — 외부 앱 차단용 */
-export const API_GATEWAY_KEY =
-  process.env.NEXT_PUBLIC_API_GATEWAY_KEY || ''
