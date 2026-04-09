@@ -203,9 +203,12 @@ export default function ShipmentsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     // URL에서 선택된 상품 ID 먼저 확인 (단, 사용자가 필터를 변경했으면 무시)
+    const urlParams = new URLSearchParams(window.location.search)
     const preIds = userFilterChangedRef.current
       ? []
-      : new URLSearchParams(window.location.search).get('selected')?.split(',').filter(Boolean) || []
+      : urlParams.get('selected')?.split(',').filter(Boolean)
+        || (urlParams.get('fromStorage') === '1' ? sessionStorage.getItem('shipment_selected')?.split(',').filter(Boolean) : null)
+        || []
 
     // 검색 조건에 따라 서버 API 파라미터 구성
     const scrollParams: Record<string, string | number> = { skip: (currentPage - 1) * pageSize, limit: pageSize }
