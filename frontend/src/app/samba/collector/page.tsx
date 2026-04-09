@@ -1046,10 +1046,10 @@ export default function CollectorPage() {
                   try {
                     const p = await collectorApi.gsshopScanProgress()
                     if (p.stage === 'search') {
-                      addLog(`[카테고리스캔] 검색 중... ${p.page}페이지, ${p.products.toLocaleString()}개 상품 발견`)
+                      addLog(`[카테고리스캔] 검색 중... ${p.page}페이지, ${(p.products ?? 0).toLocaleString()}개 상품 발견`)
                     } else if (p.stage === 'detail') {
-                      const done = (p.detail_ok || 0) + (p.detail_fail || 0)
-                      addLog(`[카테고리스캔] 상세 조회 중... ${done.toLocaleString()}/${p.detail_total.toLocaleString()}건 (성공: ${p.detail_ok.toLocaleString()}, 실패: ${p.detail_fail.toLocaleString()})`)
+                      const done = (p.detail_ok ?? 0) + (p.detail_fail ?? 0)
+                      addLog(`[카테고리스캔] 상세 조회 중... ${done.toLocaleString()}/${(p.detail_total ?? 0).toLocaleString()}건 (성공: ${(p.detail_ok ?? 0).toLocaleString()}, 실패: ${(p.detail_fail ?? 0).toLocaleString()})`)
                     }
                   } catch { /* 폴링 실패 무시 */ }
                 }, 3000)
