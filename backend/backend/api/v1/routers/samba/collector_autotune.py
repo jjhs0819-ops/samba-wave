@@ -36,6 +36,11 @@ SOLDOUT_BREAK_THRESHOLD = 10  # 연속 품절 N개 → 해당 소싱처 중단
 _site_consecutive_soldout: dict[str, int] = {}  # {소싱처: 연속 품절 수}
 _site_breaker_tripped: dict[str, bool] = {}  # {소싱처: 중단 여부}
 
+# 소싱처별 독립 루프 관리
+_site_tasks: dict[str, asyncio.Task] = {}  # 소싱처별 asyncio 태스크
+_site_cycle_counts: dict[str, int] = {}  # 소싱처별 누적 사이클 수
+_site_last_ticks: dict[str, str] = {}  # 소싱처별 마지막 tick 시간
+
 
 # 등급 분류 기준 기간 (일)
 CLASSIFY_WINDOW_DAYS = 7
@@ -115,34 +120,27 @@ async def _classify_products(session) -> dict[str, int]:
     return counts
 
 
-async def _autotune_loop():
-    """오토튠 무한 루프 — tick 완료 즉시 다음 tick 시작.
-
-    대상: 마켓등록상품만 (registered_accounts + market_product_nos 존재)
-    순서: hot → warm → cold (소싱처별 병렬, 등급순 정렬)
-    품절: 마켓 삭제(DELETE) → DB 삭제 (서킷브레이커: 소싱처별 연속 10건)
-    """
-    global _autotune_last_tick, _autotune_cycle_count, _autotune_restart_count
+async def _site_autotune_loop(site: str):
+    """소싱처별 독립 오토튠 루프 — 작업 완료 즉시 다음 사이클 재시작."""
     import logging
 
     log = logging.getLogger("autotune")
-    log.info("[오토튠] 루프 시작")
+    log.info("[오토튠][%s] 소싱처 루프 시작", site)
 
     try:
         while _autotune_running_event.is_set():
             try:
-                # 이전 취소/비상정지 플래그 잔존 방지
-                from backend.domain.samba.collector.refresher import clear_bulk_cancel
+                from backend.domain.samba.emergency import is_emergency_stopped
 
-                clear_bulk_cancel()
-                from backend.domain.samba.emergency import (
-                    clear_emergency_stop,
-                    is_emergency_stopped as _is_es,
-                )
+                if is_emergency_stopped():
+                    await asyncio.sleep(5)
+                    continue
 
-                if _is_es():
-                    clear_emergency_stop()
-                    log.info("[오토튠] 잔존 비상정지 해제 — 사이클 계속")
+                # 서킷브레이커 확인
+                if _site_breaker_tripped.get(site):
+                    log.info("[오토튠][%s] 서킷브레이커 작동 중 — 대기", site)
+                    await asyncio.sleep(30)
+                    continue
 
                 from backend.db.orm import get_write_session
 
@@ -161,42 +159,22 @@ async def _autotune_loop():
                     now = datetime.now(timezone.utc)
                     repo = SambaCollectedProductRepository(session)
 
-                    # ⓪ 롯데ON 쿠키 캐시 갱신 (benefits API에 사용)
-                    from backend.api.v1.routers.samba.proxy import _get_setting
-                    from backend.domain.samba.proxy.lotteon_sourcing import (
-                        set_lotteon_cookie,
+                    # 이 소싱처 상품만 조회
+                    from backend.api.v1.routers.samba.collector_common import (
+                        build_market_registered_conditions,
                     )
+                    from backend.api.v1.routers.samba.proxy import _get_setting
 
-                    _lt_cookie = await _get_setting(session, "lotteon_cookie")
-                    if _lt_cookie:
-                        set_lotteon_cookie(str(_lt_cookie))
+                    market_cond = build_market_registered_conditions(_CP)
 
-                    # ① 등급 분류 ON/OFF 확인
                     _priority_enabled = await _get_setting(
                         session, AUTOTUNE_PRIORITY_ENABLED_KEY
                     )
-                    # 기본값 True (기존 동작 유지)
                     _use_priority = (
                         _priority_enabled
                         if isinstance(_priority_enabled, bool)
                         else True
                     )
-
-                    if _use_priority:
-                        try:
-                            await _classify_products(session)
-                        except Exception as cls_err:
-                            log.warning(
-                                "[오토튠] 등급 분류 실패 (무시하고 진행): %s", cls_err
-                            )
-
-                    # ② 마켓등록상품 조회
-                    # 마켓등록상품 공통 조건 (collector_common에서 통합 관리)
-                    from backend.api.v1.routers.samba.collector_common import (
-                        build_market_registered_conditions,
-                    )
-
-                    market_cond = build_market_registered_conditions(_CP)
 
                     if _use_priority:
                         priority_order = case(
@@ -215,13 +193,11 @@ async def _autotune_loop():
                         select(_CP)
                         .where(
                             *market_cond,
-                            # 정책 적용 + 품절 아님
                             _CP.applied_policy_id != None,
-                            # sale_status 기준 품절 제외
                             _CP.sale_status != "sold_out",
+                            _CP.source_site == site,
                         )
                         .order_by(*_order_clause)
-                        # 오토튠에 불필요한 대형 컬럼 제외 — OOM 방지
                         .options(
                             defer(_CP.detail_html),
                             defer(_CP.detail_images),
@@ -230,51 +206,12 @@ async def _autotune_loop():
                         )
                     )
                     result = await session.exec(stmt)
-                    # ID 기준 중복 제거 (동일 상품 2회 이상 처리 방지)
                     _seen_ids: set[str] = set()
                     products = []
                     for p in result.all():
                         if p.id not in _seen_ids:
                             _seen_ids.add(p.id)
                             products.append(p)
-
-                    # 사용자 지정 소싱처 필터 적용
-                    from backend.api.v1.routers.samba.proxy import _get_setting
-
-                    _enabled_sources = await _get_setting(
-                        session, AUTOTUNE_FILTER_SOURCES_KEY
-                    )
-                    if _enabled_sources and isinstance(_enabled_sources, list):
-                        _before_src = len(products)
-                        products = [
-                            p for p in products if p.source_site in _enabled_sources
-                        ]
-                        _skipped_src = _before_src - len(products)
-                        if _skipped_src > 0:
-                            log.info(
-                                "[오토튠] 소싱처 필터 — %d개 제외 (허용: %s)",
-                                _skipped_src,
-                                ", ".join(_enabled_sources),
-                            )
-
-                    # 서킷브레이커 걸린 소싱처 상품 제외
-                    if products:
-                        before_filter = len(products)
-                        products = [
-                            p
-                            for p in products
-                            if not _site_breaker_tripped.get(p.source_site)
-                        ]
-                        skipped_by_breaker = before_filter - len(products)
-                        if skipped_by_breaker > 0:
-                            tripped_sites = [
-                                s for s, v in _site_breaker_tripped.items() if v
-                            ]
-                            log.warning(
-                                "[오토튠] 서킷브레이커 작동 중 — %s (%d개 제외)",
-                                ", ".join(tripped_sites),
-                                skipped_by_breaker,
-                            )
 
                     if products:
                         filtered_count = len(products)
@@ -859,6 +796,7 @@ async def _autotune_loop():
                                     *market_cond,
                                     _CP.sale_status == "sold_out",
                                     _CP.lock_delete != True,
+                                    _CP.source_site == site,
                                 )
                                 .limit(50)
                             )
@@ -1074,21 +1012,21 @@ async def _autotune_loop():
                             deleted_count,
                         )
                     else:
-                        await asyncio.sleep(5)
+                        log.info("[오토튠][%s] 대상 상품 없음 — 루프 종료", site)
+                        break
 
-                    _autotune_last_tick = now.isoformat()
-                    _autotune_cycle_count += 1
+                    _site_cycle_counts[site] = _site_cycle_counts.get(site, 0) + 1
+                    _site_last_ticks[site] = now.isoformat()
+                    log.info(
+                        "[오토튠][%s] 사이클 완료 (누적 %d회) — 즉시 재시작",
+                        site,
+                        _site_cycle_counts.get(site, 0),
+                    )
 
             except asyncio.CancelledError:
                 if not _autotune_running_event.is_set():
-                    log.info("[오토튠] 루프 취소됨 (정상 종료)")
+                    log.info("[오토튠][%s] 루프 취소됨 (정상 종료)", site)
                     break
-                # running 상태인데 CancelledError → 일시적 취소, 루프 계속
-                _autotune_restart_count += 1
-                log.warning(
-                    "[오토튠] CancelledError 발생했으나 running 상태 — 사이클 재시작 (누적 %d회)",
-                    _autotune_restart_count,
-                )
                 try:
                     import backend.domain.samba.collector.refresher as _ref_cancel
 
@@ -1097,10 +1035,10 @@ async def _autotune_loop():
                     _ref_cancel._refresh_log_buffer.append(
                         {
                             "ts": _now_cancel.isoformat(),
-                            "site": "",
+                            "site": site,
                             "product_id": "",
                             "name": "",
-                            "msg": f"[{_kst_cancel.strftime('%H:%M:%S')}] !! CancelledError — 사이클 재시작 (누적 {_autotune_restart_count}회)",
+                            "msg": f"[{_kst_cancel.strftime('%H:%M:%S')}] !! [{site}] CancelledError — 사이클 재시작",
                             "level": "error",
                             "source": "autotune",
                         }
@@ -1110,14 +1048,12 @@ async def _autotune_loop():
                     pass
                 await asyncio.sleep(2)
             except Exception as e:
-                _autotune_restart_count += 1
                 log.error(
-                    "[오토튠] tick 오류 (누적 재시작 %d회): %s",
-                    _autotune_restart_count,
+                    "[오토튠][%s] tick 오류: %s",
+                    site,
                     e,
                     exc_info=True,
                 )
-                # 오토튠 실시간 로그에도 에러 표시
                 try:
                     import backend.domain.samba.collector.refresher as _ref_err
 
@@ -1126,24 +1062,192 @@ async def _autotune_loop():
                     _ref_err._refresh_log_buffer.append(
                         {
                             "ts": _now_err.isoformat(),
-                            "site": "",
+                            "site": site,
                             "product_id": "",
                             "name": "",
-                            "msg": f"[{_kst_err.strftime('%H:%M:%S')}] !! tick 오류 (누적 {_autotune_restart_count}회): {type(e).__name__}: {str(e)[:100]}",
+                            "msg": f"[{_kst_err.strftime('%H:%M:%S')}] !! [{site}] tick 오류: {type(e).__name__}: {str(e)[:100]}",
                             "level": "error",
                             "source": "autotune",
                         }
                     )
                     _ref_err._refresh_log_total += 1
                 except Exception:
-                    pass  # 로그 실패가 루프를 죽이면 안 됨
-                # 에러 후 즉시 다음 사이클 시작 (새 세션으로)
+                    pass
                 await asyncio.sleep(2)
 
     finally:
-        # 어떤 이유로든 루프 종료 시 running event 해제 (유령 상태 방지)
+        log.info("[오토튠][%s] 소싱처 루프 종료", site)
+
+
+async def _autotune_loop():
+    """오토튠 코디네이터 — 소싱처별 독립 루프 생성/관리.
+
+    공통 작업(등급 분류, 쿠키 갱신)을 수행하고
+    소싱처별 독립 태스크를 생성한다.
+    각 소싱처는 자기 작업이 끝나면 즉시 다음 사이클을 시작한다.
+    """
+    global _autotune_last_tick, _autotune_cycle_count, _autotune_restart_count
+    import logging
+
+    log = logging.getLogger("autotune")
+    log.info("[오토튠] 코디네이터 시작")
+
+    try:
+        while _autotune_running_event.is_set():
+            try:
+                # 이전 취소/비상정지 플래그 잔존 방지
+                from backend.domain.samba.collector.refresher import clear_bulk_cancel
+
+                clear_bulk_cancel()
+                from backend.domain.samba.emergency import (
+                    clear_emergency_stop,
+                    is_emergency_stopped as _is_es,
+                )
+
+                if _is_es():
+                    clear_emergency_stop()
+                    log.info("[오토튠] 잔존 비상정지 해제")
+
+                from backend.db.orm import get_write_session
+
+                # 공통 사전 작업 (분류, 쿠키)
+                async with get_write_session() as session:
+                    from backend.domain.samba.collector.model import (
+                        SambaCollectedProduct as _CP,
+                    )
+                    from backend.api.v1.routers.samba.proxy import _get_setting
+
+                    # 롯데ON 쿠키 갱신
+                    from backend.domain.samba.proxy.lotteon_sourcing import (
+                        set_lotteon_cookie,
+                    )
+
+                    _lt_cookie = await _get_setting(session, "lotteon_cookie")
+                    if _lt_cookie:
+                        set_lotteon_cookie(str(_lt_cookie))
+
+                    # 등급 분류
+                    _priority_enabled = await _get_setting(
+                        session, AUTOTUNE_PRIORITY_ENABLED_KEY
+                    )
+                    _use_priority = (
+                        _priority_enabled
+                        if isinstance(_priority_enabled, bool)
+                        else True
+                    )
+                    if _use_priority:
+                        try:
+                            await _classify_products(session)
+                        except Exception as cls_err:
+                            log.warning("[오토튠] 등급 분류 실패: %s", cls_err)
+
+                    # 활성 소싱처 목록 파악
+                    from backend.api.v1.routers.samba.collector_common import (
+                        build_market_registered_conditions,
+                    )
+
+                    market_cond = build_market_registered_conditions(_CP)
+
+                    _enabled_sources = await _get_setting(
+                        session, AUTOTUNE_FILTER_SOURCES_KEY
+                    )
+
+                    site_stmt = select(func.distinct(_CP.source_site)).where(
+                        *market_cond,
+                        _CP.applied_policy_id != None,
+                        _CP.sale_status != "sold_out",
+                        _CP.source_site != None,
+                        _CP.source_site != "",
+                    )
+                    site_result = await session.execute(site_stmt)
+                    active_sites = [r[0] for r in site_result.all() if r[0]]
+
+                    # 소싱처 필터 적용
+                    if _enabled_sources and isinstance(_enabled_sources, list):
+                        active_sites = [
+                            s for s in active_sites if s in _enabled_sources
+                        ]
+
+                    # 서킷브레이커 제외
+                    active_sites = [
+                        s for s in active_sites if not _site_breaker_tripped.get(s)
+                    ]
+
+                # 소싱처별 독립 루프 태스크 생성
+                _newly_spawned = []
+                for _site in active_sites:
+                    existing = _site_tasks.get(_site)
+                    if existing and not existing.done():
+                        continue
+                    task = asyncio.create_task(
+                        _site_autotune_loop(_site),
+                        name=f"autotune-{_site}",
+                    )
+                    _site_tasks[_site] = task
+                    _newly_spawned.append(_site)
+
+                if _newly_spawned:
+                    log.info(
+                        "[오토튠] 소싱처 루프 시작: %s (활성 %d개)",
+                        ", ".join(_newly_spawned),
+                        len([t for t in _site_tasks.values() if not t.done()]),
+                    )
+
+                # 완료된 태스크 정리
+                for _s in list(_site_tasks.keys()):
+                    if _site_tasks[_s].done():
+                        try:
+                            _site_tasks[_s].result()
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as _te:
+                            log.error(
+                                "[오토튠] %s 소싱처 루프 예외 종료: %s",
+                                _s,
+                                _te,
+                            )
+                        del _site_tasks[_s]
+
+                # 전역 통계 갱신
+                _autotune_cycle_count = sum(_site_cycle_counts.values())
+                _ticks = [v for v in _site_last_ticks.values() if v]
+                if _ticks:
+                    _autotune_last_tick = max(_ticks)
+
+                # 30초 대기 (1초 단위로 중지 확인)
+                for _ in range(30):
+                    if not _autotune_running_event.is_set():
+                        break
+                    await asyncio.sleep(1)
+
+            except asyncio.CancelledError:
+                if not _autotune_running_event.is_set():
+                    log.info("[오토튠] 코디네이터 취소 (정상 종료)")
+                    break
+                _autotune_restart_count += 1
+                log.warning(
+                    "[오토튠] CancelledError — 코디네이터 재시작 (누적 %d회)",
+                    _autotune_restart_count,
+                )
+                await asyncio.sleep(2)
+            except Exception as e:
+                _autotune_restart_count += 1
+                log.error(
+                    "[오토튠] 코디네이터 오류 (누적 %d회): %s",
+                    _autotune_restart_count,
+                    e,
+                    exc_info=True,
+                )
+                await asyncio.sleep(5)
+
+    finally:
+        # 모든 소싱처 태스크 종료
+        for _s, _t in list(_site_tasks.items()):
+            if not _t.done():
+                _t.cancel()
+        _site_tasks.clear()
         _autotune_running_event.clear()
-        log.info("[오토튠] 루프 종료 — running event 해제")
+        log.info("[오토튠] 코디네이터 종료 — running event 해제")
 
 
 class AutotuneStartRequest(BaseModel):
@@ -1209,6 +1313,9 @@ async def auto_start_if_enabled():
             if not _autotune_running_event.is_set():
                 _autotune_running_event.set()
                 _autotune_cycle_count = 0
+                _site_cycle_counts.clear()
+                _site_last_ticks.clear()
+                _site_tasks.clear()
                 clear_bulk_cancel()
                 _autotune_task = asyncio.create_task(_autotune_loop())
                 logger.info("[오토튠] 서버 시작 — DB 설정에 따라 자동 시작")
@@ -1227,6 +1334,9 @@ async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     _autotune_running_event.set()
     _autotune_cycle_count = 0
     _autotune_restart_count = 0
+    _site_cycle_counts.clear()
+    _site_last_ticks.clear()
+    _site_tasks.clear()
     clear_bulk_cancel()
     _autotune_task = asyncio.create_task(_autotune_loop())
     await _save_autotune_state(True)
@@ -1243,6 +1353,11 @@ async def autotune_stop():
         return {"ok": True, "status": "already_stopped"}
     _autotune_running_event.clear()
     request_bulk_cancel()  # 벌크 갱신 즉시 중단
+    # 소싱처별 태스크 전부 취소
+    for _st in list(_site_tasks.values()):
+        if not _st.done():
+            _st.cancel()
+    _site_tasks.clear()
     if _autotune_task and not _autotune_task.done():
         _autotune_task.cancel()
     _autotune_task = None
@@ -1290,6 +1405,12 @@ async def autotune_status():
     except Exception:
         pass
 
+    # 소싱처별 활성 루프 정보
+    _active_site_loops = {
+        s: {"running": not t.done(), "cycles": _site_cycle_counts.get(s, 0)}
+        for s, t in _site_tasks.items()
+    }
+
     return {
         "running": _autotune_running_event.is_set()
         and _autotune_task is not None
@@ -1302,6 +1423,7 @@ async def autotune_status():
         "breaker_tripped": tripped,
         "site_intervals": intervals_info.get("base_intervals", {}),
         "priority_enabled": priority_enabled,
+        "site_loops": _active_site_loops,
     }
 
 

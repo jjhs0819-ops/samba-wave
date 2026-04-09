@@ -480,6 +480,11 @@ export const collectorApi = {
     request<string[]>(`${SAMBA_PREFIX}/collector/products/with-orders`),
   productCounts: () =>
     request<{ total: number; registered: number; policy_applied: number; sold_out: number }>(`${SAMBA_PREFIX}/collector/products/counts`),
+  dashboardStats: () =>
+    request<{
+      by_source: { source_site: string; total: number; registered: number; policy_applied: number; sold_out: number }[]
+      by_account: { account_id: string; market_name: string; account_label: string; registered: number }[]
+    }>(`${SAMBA_PREFIX}/collector/products/dashboard-stats`),
   categoryTree: () =>
     request<{ source_site: string; category: string; count: number }[]>(`${SAMBA_PREFIX}/collector/products/category-tree`),
   searchProducts: (q: string) =>

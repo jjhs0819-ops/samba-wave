@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { orderApi, collectorApi, type DashboardStats } from "@/lib/samba/api"
+import { fmtNum } from "@/lib/samba/styles"
 
 const card = {
   background: 'rgba(30,30,30,0.5)',
@@ -19,6 +20,8 @@ export default function SambaDashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [collectedCount, setCollectedCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [bySource, setBySource] = useState<{ source_site: string; total: number; registered: number; policy_applied: number; sold_out: number }[]>([])
+  const [byAccount, setByAccount] = useState<{ account_id: string; market_name: string; account_label: string; registered: number }[]>([])
 
   const now = new Date()
   const year = now.getFullYear()
@@ -26,12 +29,15 @@ export default function SambaDashboard() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [s, counts] = await Promise.all([
+    const [s, counts, dStats] = await Promise.all([
       orderApi.dashboardStats().catch(() => null),
       collectorApi.productCounts().catch(() => ({ total: 0, registered: 0, policy_applied: 0, sold_out: 0 })),
+      collectorApi.dashboardStats().catch(() => ({ by_source: [], by_account: [] })),
     ])
     setStats(s)
     setCollectedCount(counts.total)
+    setBySource(dStats.by_source)
+    setByAccount(dStats.by_account)
     setLoading(false)
   }, [])
 
@@ -243,6 +249,80 @@ export default function SambaDashboard() {
           </div>
         </div>
         {renderLineChart()}
+      </div>
+
+      {/* 소싱처별 수집현황 + 마켓/계정별 등록현황 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1.5rem' }}>
+        {/* 소싱처별 수집현황 */}
+        <div style={{ ...card, padding: '1.5rem' }}>
+          <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>소싱처별 수집현황</h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>소싱처</th>
+                <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>수집</th>
+                <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>정책적용</th>
+                <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>등록</th>
+                <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>품절</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bySource.map((s) => (
+                <tr key={s.source_site} style={{ borderBottom: '1px solid rgba(45,45,45,0.3)' }}>
+                  <td style={{ padding: '0.5rem 0', color: '#E5E5E5' }}>{s.source_site}</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#E5E5E5' }}>{fmtNum(s.total)}</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#E5E5E5' }}>{fmtNum(s.policy_applied)}</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00' }}>{fmtNum(s.registered)}</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#888' }}>{fmtNum(s.sold_out)}</td>
+                </tr>
+              ))}
+              {bySource.length > 0 && (
+                <tr style={{ borderTop: '1px solid #2D2D2D' }}>
+                  <td style={{ padding: '0.5rem 0', color: '#FF8C00', fontWeight: 600 }}>합계</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(bySource.reduce((a, s) => a + s.total, 0))}</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(bySource.reduce((a, s) => a + s.policy_applied, 0))}</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(bySource.reduce((a, s) => a + s.registered, 0))}</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#888', fontWeight: 600 }}>{fmtNum(bySource.reduce((a, s) => a + s.sold_out, 0))}</td>
+                </tr>
+              )}
+              {bySource.length === 0 && (
+                <tr><td colSpan={5} style={{ padding: '1.5rem 0', textAlign: 'center', color: '#555' }}>데이터 없음</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* 마켓/계정별 등록현황 */}
+        <div style={{ ...card, padding: '1.5rem' }}>
+          <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>마켓/계정별 등록현황</h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>마켓</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>계정</th>
+                <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>등록 상품</th>
+              </tr>
+            </thead>
+            <tbody>
+              {byAccount.map((a) => (
+                <tr key={a.account_id} style={{ borderBottom: '1px solid rgba(45,45,45,0.3)' }}>
+                  <td style={{ padding: '0.5rem 0', color: '#E5E5E5' }}>{a.market_name}</td>
+                  <td style={{ padding: '0.5rem 0', color: '#888' }}>{a.account_label}</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00' }}>{fmtNum(a.registered)}</td>
+                </tr>
+              ))}
+              {byAccount.length > 0 && (
+                <tr style={{ borderTop: '1px solid #2D2D2D' }}>
+                  <td colSpan={2} style={{ padding: '0.5rem 0', color: '#FF8C00', fontWeight: 600 }}>합계</td>
+                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(byAccount.reduce((a, r) => a + r.registered, 0))}</td>
+                </tr>
+              )}
+              {byAccount.length === 0 && (
+                <tr><td colSpan={3} style={{ padding: '1.5rem 0', textAlign: 'center', color: '#555' }}>데이터 없음</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
     </div>
