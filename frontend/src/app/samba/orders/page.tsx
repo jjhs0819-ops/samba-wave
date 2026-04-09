@@ -83,6 +83,7 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState('active')
   const [searchText, setSearchText] = useState('')
   const [pageSize, setPageSize] = useState(50)
+  const [currentPage, setCurrentPage] = useState(1)
   const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
   const setLogMessages: typeof _setLogMessagesRaw = (v) => _setLogMessagesRaw(prev => {
     const next = typeof v === 'function' ? v(prev) : v
@@ -1376,6 +1377,43 @@ export default function OrdersPage() {
           </tbody>
         </table>
       </div>
+
+      {/* 페이지네이션 */}
+      {filteredOrders.length > pageSize && (() => {
+        const totalPages = Math.ceil(filteredOrders.length / pageSize)
+        const pages: (number | string)[] = []
+        if (totalPages <= 7) {
+          for (let i = 1; i <= totalPages; i++) pages.push(i)
+        } else {
+          pages.push(1)
+          if (currentPage > 3) pages.push('...')
+          for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) pages.push(i)
+          if (currentPage < totalPages - 2) pages.push('...')
+          pages.push(totalPages)
+        }
+        const btnStyle = (active: boolean) => ({
+          background: active ? '#FF8C00' : 'rgba(30,30,30,0.9)',
+          color: active ? '#fff' : '#aaa',
+          border: active ? 'none' : '1px solid #333',
+          borderRadius: '6px',
+          padding: '0.3rem 0.6rem',
+          fontSize: '0.75rem',
+          cursor: 'pointer' as const,
+          minWidth: '32px',
+          fontWeight: active ? 600 : 400,
+        })
+        return (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', padding: '1rem 0' }}>
+            <button style={btnStyle(false)} disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>‹</button>
+            {pages.map((p, i) =>
+              typeof p === 'string'
+                ? <span key={`dot-${i}`} style={{ color: '#555', padding: '0 4px' }}>…</span>
+                : <button key={p} style={btnStyle(p === currentPage)} onClick={() => setCurrentPage(p)}>{p}</button>
+            )}
+            <button style={btnStyle(false)} disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)}>›</button>
+          </div>
+        )
+      })()}
 
       {/* 주문 수정 모달 */}
       {showForm && (
