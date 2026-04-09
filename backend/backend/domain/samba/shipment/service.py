@@ -806,7 +806,7 @@ class SambaShipmentService:
             else raw_category
         )
 
-        # 그룹 매핑 조회
+        # 그룹 매핑 조회 + 검색필터명(플레이오토 임의분류용)
         group_mappings = None
         if product_row.search_filter_id:
             from backend.domain.samba.collector.repository import (
@@ -815,12 +815,20 @@ class SambaShipmentService:
 
             sf_repo = SambaSearchFilterRepository(self.session)
             sf = await sf_repo.get_async(product_row.search_filter_id)
+            logger.info(
+                f"[전송] 검색필터 조회: search_filter_id={product_row.search_filter_id}, "
+                f"found={sf is not None}, name={getattr(sf, 'name', None)}"
+            )
             if sf:
                 if sf.target_mappings:
                     group_mappings = sf.target_mappings
                 # 플레이오토 사용자 임의분류용 검색필터명 주입
                 if sf.name:
                     product_dict["_search_filter_name"] = sf.name
+        else:
+            logger.warning(
+                f"[전송] 상품 {product_row.id} search_filter_id 없음 → 임의분류 불가"
+            )
 
         mapped_categories = await self._resolve_category_mappings(
             product_row.source_site or "",

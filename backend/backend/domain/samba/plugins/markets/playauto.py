@@ -92,7 +92,8 @@ class PlayAutoPlugin(MarketPlugin):
                 f"Image1={str(emp_data.get('Image1', ''))[:60]}, "
                 f"Opts={len(emp_data.get('Opts', []))}건, "
                 f"Content={len(emp_data.get('Content', ''))}자, "
-                f"Keywords={','.join(emp_data.get(f'Keyword{i}', '') for i in range(1, 6) if emp_data.get(f'Keyword{i}'))}"
+                f"Keywords={','.join(emp_data.get(f'Keyword{i}', '') for i in range(1, 6) if emp_data.get(f'Keyword{i}'))}, "
+                f"MyCateName={emp_data.get('MyCateName', '(미설정)')}"
             )
 
             if existing_no:
