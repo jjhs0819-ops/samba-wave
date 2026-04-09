@@ -348,9 +348,25 @@ export default function ProductsPage() {
     setDeleteConfirm({ ids: [id], label: p ? `"${p.name.slice(0, 30)}"` : "이 상품" });
   };
 
-  const handleBulkDelete = () => {
+  const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
-    const selected = allProducts.filter(p => selectedIds.has(p.id))
+    // 전체선택 시 현재 페이지에 없는 상품도 서버에서 조회
+    let selected = allProducts.filter(p => selectedIds.has(p.id))
+    if (selected.length < selectedIds.size) {
+      try {
+        const res = await collectorApi.scrollProducts({
+          skip: 0, limit: serverTotal,
+          search: searchQ.trim() || undefined,
+          search_type: searchQ.trim() ? searchType : undefined,
+          source_site: siteFilter || undefined,
+          status: statusFilter || undefined,
+          ai_filter: aiFilter || undefined,
+          search_filter_id: filterByGroupId || undefined,
+          sort_by: sortBy,
+        })
+        selected = (res.items as SambaCollectedProduct[]).filter(p => selectedIds.has(p.id))
+      } catch { /* 폴백: 현재 페이지만 */ }
+    }
     const locked = selected.filter(p => p.lock_delete)
     const registered = selected.filter(p => !p.lock_delete && (p.registered_accounts?.length ?? 0) > 0)
     const deletableIds = selected
@@ -1333,7 +1349,24 @@ export default function ProductsPage() {
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-              const targets = allProducts.filter(p => selectedIds.has(p.id) && (p.registered_accounts?.length ?? 0) > 0)
+              // 전체선택 시 현재 페이지에 없는 상품도 서버에서 조회
+              let marketPool: SambaCollectedProduct[] = allProducts.filter(p => selectedIds.has(p.id))
+              if (marketPool.length < selectedIds.size) {
+                try {
+                  const res = await collectorApi.scrollProducts({
+                    skip: 0, limit: serverTotal,
+                    search: searchQ.trim() || undefined,
+                    search_type: searchQ.trim() ? searchType : undefined,
+                    source_site: siteFilter || undefined,
+                    status: statusFilter || undefined,
+                    ai_filter: aiFilter || undefined,
+                    search_filter_id: filterByGroupId || undefined,
+                    sort_by: sortBy,
+                  })
+                  marketPool = (res.items as SambaCollectedProduct[]).filter(p => selectedIds.has(p.id))
+                } catch { /* 폴백: 현재 페이지만 */ }
+              }
+              const targets = marketPool.filter(p => (p.registered_accounts?.length ?? 0) > 0)
               if (!targets.length) { showAlert('마켓에 등록된 상품이 없습니다.'); return }
               if (!await showConfirm(`${targets.length}개 상품을 마켓에서 삭제(판매중지)하시겠습니까?`)) return
               aiJobAbortRef.current = false
@@ -1427,11 +1460,28 @@ export default function ProductsPage() {
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
               // 선택된 상품의 group_key 수집
-              const selectedProducts = allProducts.filter(p => selectedIds.has(p.id))
-              const groupKeys = new Set(selectedProducts.map(p => p.group_key).filter(Boolean))
+              // 전체선택 시 현재 페이지에 없는 상품도 서버에서 조회
+              let fullProducts: SambaCollectedProduct[] = allProducts
+              if (serverTotal > allProducts.length) {
+                try {
+                  const res = await collectorApi.scrollProducts({
+                    skip: 0, limit: serverTotal,
+                    search: searchQ.trim() || undefined,
+                    search_type: searchQ.trim() ? searchType : undefined,
+                    source_site: siteFilter || undefined,
+                    status: statusFilter || undefined,
+                    ai_filter: aiFilter || undefined,
+                    search_filter_id: filterByGroupId || undefined,
+                    sort_by: sortBy,
+                  })
+                  fullProducts = res.items as SambaCollectedProduct[]
+                } catch { /* 폴백: 현재 페이지만 */ }
+              }
+              const selectedProds = fullProducts.filter(p => selectedIds.has(p.id))
+              const groupKeys = new Set(selectedProds.map(p => p.group_key).filter(Boolean))
               if (groupKeys.size === 0) { showAlert('선택한 상품에 그룹 정보가 없습니다'); return }
               // 동일 그룹의 모든 상품 찾기
-              const groupIds = allProducts
+              const groupIds = fullProducts
                 .filter(p => p.group_key && groupKeys.has(p.group_key))
                 .map(p => p.id)
               if (!await showConfirm(`선택한 ${selectedIds.size}건의 그룹(${groupKeys.size}개) 전체 ${groupIds.length}건을 삭제하시겠습니까?`)) return
