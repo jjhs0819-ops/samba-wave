@@ -47,10 +47,17 @@ async def list_accounts(
 ):
     from backend.domain.samba.account.model import SambaMarketAccount
 
-    # tenant_id가 있으면 해당 테넌트 계정만 조회
+    # tenant_id가 있으면 해당 테넌트 + 기존(NULL) 마켓 계정 모두 조회
     stmt = select(SambaMarketAccount).order_by(SambaMarketAccount.created_at.desc())
     if tenant_id is not None:
-        stmt = stmt.where(SambaMarketAccount.tenant_id == tenant_id)
+        from sqlalchemy import or_
+
+        stmt = stmt.where(
+            or_(
+                SambaMarketAccount.tenant_id == tenant_id,
+                SambaMarketAccount.tenant_id == None,  # noqa: E711
+            )
+        )
     result = await session.execute(stmt)
     return result.scalars().all()
 
@@ -62,14 +69,21 @@ async def list_active_accounts(
 ):
     from backend.domain.samba.account.model import SambaMarketAccount
 
-    # tenant_id가 있으면 해당 테넌트 활성 계정만 조회
+    # tenant_id가 있으면 해당 테넌트 + 기존(NULL) 활성 계정 모두 조회
     stmt = (
         select(SambaMarketAccount)
         .where(SambaMarketAccount.is_active == True)  # noqa: E712
         .order_by(SambaMarketAccount.created_at.desc())
     )
     if tenant_id is not None:
-        stmt = stmt.where(SambaMarketAccount.tenant_id == tenant_id)
+        from sqlalchemy import or_
+
+        stmt = stmt.where(
+            or_(
+                SambaMarketAccount.tenant_id == tenant_id,
+                SambaMarketAccount.tenant_id == None,  # noqa: E711
+            )
+        )
     result = await session.execute(stmt)
     return result.scalars().all()
 

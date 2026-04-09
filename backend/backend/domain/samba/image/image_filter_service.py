@@ -744,10 +744,13 @@ class ImageFilterService:
                     }
 
         if update_data:
-            # __img_filtered__ 태그 추가
-            existing_tags = product.tags or []
+            # __img_filtered__ + __img_edited__ 태그 추가
+            existing_tags = list(product.tags or [])
             if "__img_filtered__" not in existing_tags:
-                update_data["tags"] = existing_tags + ["__img_filtered__"]
+                existing_tags.append("__img_filtered__")
+            if "__img_edited__" not in existing_tags:
+                existing_tags.append("__img_edited__")
+            update_data["tags"] = existing_tags
             await repo.update_async(product_id, **update_data)
         else:
             result_info["action"] = "skipped"

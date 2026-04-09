@@ -744,7 +744,7 @@ export default function ProductsPage() {
             )}
             {tagPreviewCost && (
               <p style={{ margin: '0 0 16px', fontSize: '0.72rem', color: '#666', textAlign: 'right' }}>
-                API {tagPreviewCost.api_calls}회 | {tagPreviewCost.input_tokens + tagPreviewCost.output_tokens} 토큰 | ~{tagPreviewCost.cost_krw}원
+                API {tagPreviewCost.api_calls.toLocaleString()}회 | {(tagPreviewCost.input_tokens + tagPreviewCost.output_tokens).toLocaleString()} 토큰 | ~{tagPreviewCost.cost_krw.toLocaleString()}원
               </p>
             )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
@@ -1042,38 +1042,49 @@ export default function ProductsPage() {
             setAiJobDone(false)
             setAiJobModal(true)
             const addLog = (msg: string) => setAiJobLogs(prev => [...prev, msg])
+            // allProducts에 없는 상품 정보 미리 로드 (500개씩 청크)
+            const missingIds = ids.filter(id => !allProducts.find(p => p.id === id))
+            const productMap: Record<string, typeof allProducts[0]> = {}
+            allProducts.forEach(p => { productMap[p.id] = p })
+            for (let ci = 0; ci < missingIds.length; ci += 500) {
+              try {
+                const chunk = missingIds.slice(ci, ci + 500)
+                const fetched = await collectorApi.getProductsByIds(chunk)
+                if (Array.isArray(fetched)) fetched.forEach(p => { productMap[p.id] = p })
+              } catch { /* 조회 실패 시 기존 fallback */ }
+            }
             const startTime = ts()
-            addLog(`시작: ${startTime} (${ids.length}개 상품)`)
+            addLog(`시작: ${startTime} (${ids.length.toLocaleString()}개 상품)`)
             let success = 0
             let fail = 0
             for (let i = 0; i < ids.length; i++) {
-              if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i}/${ids.length})`); break }
-              const prod = allProducts.find(p => p.id === ids[i])
+              if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i.toLocaleString()}/${ids.length.toLocaleString()})`); break }
+              const prod = productMap[ids[i]] || allProducts.find(p => p.id === ids[i])
               const brand = prod?.brand || ''
               const name = prod?.name?.slice(0, 30) || ''
               const prodNo = prod?.site_product_id || ids[i].slice(-8)
               const label = [brand, name, prodNo].filter(Boolean).join(' / ')
-              setAiJobTitle(`AI 이미지변환 [${i + 1}/${ids.length}] ${label}`)
+              setAiJobTitle(`AI 이미지변환 [${(i + 1).toLocaleString()}/${ids.length.toLocaleString()}] ${label}`)
               const delays = [3000, 5000]
               let done = false
               for (let attempt = 0; attempt <= 2; attempt++) {
                 if (attempt > 0) {
-                  addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 재시도 ${attempt}/2`)
+                  addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${ids.length.toLocaleString()}] ${label} — 재시도 ${attempt}/2`)
                   await new Promise(r => setTimeout(r, delays[attempt - 1]))
                 }
                 try {
                   const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset)
-                  if (res.success && res.total_transformed > 0) { success++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 완료 (${res.total_transformed}장)`) }
-                  else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`) }
+                  if (res.success && res.total_transformed > 0) { success++; addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${ids.length.toLocaleString()}] ${label} — 완료 (${res.total_transformed}장)`) }
+                  else { fail++; addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${ids.length.toLocaleString()}] ${label} — 실패: ${res.message || '변환된 이미지 0장'}`) }
                   done = true; break
                 } catch (e) {
-                  if (attempt === 2) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                  if (attempt === 2) { fail++; addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${ids.length.toLocaleString()}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
                 }
               }
             }
             const endTime = ts()
-            setAiJobTitle(`AI 이미지변환 완료 (${success}/${ids.length})`)
-            addLog(`\n완료: 성공 ${success}개 / 실패 ${fail}개`)
+            setAiJobTitle(`AI 이미지변환 완료 (${success.toLocaleString()}/${ids.length.toLocaleString()})`)
+            addLog(`\n완료: 성공 ${success.toLocaleString()}개 / 실패 ${fail.toLocaleString()}개`)
             addLog(`시작 ${startTime} → 종료 ${endTime}`)
             setAiJobDone(true)
             setAiImgTransforming(false)
@@ -1133,13 +1144,13 @@ export default function ProductsPage() {
             let totalVisionRemoved = 0
             const startTime = ts()
             for (let i = 0; i < ids.length; i++) {
-              if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i}/${ids.length})`); break }
+              if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i.toLocaleString()}/${ids.length.toLocaleString()})`); break }
               const prod = productMap[ids[i]] || null
               const prodName = prod?.name?.slice(0, 25) || ids[i].slice(-8)
               const prodNo = prod?.site_product_id || ids[i].slice(-8)
               const prodBrand = prod?.brand || '-'
               const label = `${prodBrand} / ${prodNo} / ${prodName}${prod?.name && prod.name.length > 25 ? '...' : ''}`
-              setAiJobTitle(`이미지 필터링 [${i + 1}/${ids.length}] ${prodBrand} / ${prodNo}`)
+              setAiJobTitle(`이미지 필터링 [${(i + 1).toLocaleString()}/${ids.length.toLocaleString()}] ${prodBrand} / ${prodNo}`)
               try {
                 const steps: string[] = []
                 // 1) 프론트에서 추가이미지 비율 체크 (세로 2배 이상 → 제거)
@@ -1175,14 +1186,14 @@ export default function ProductsPage() {
                   totalVisionRemoved += removed
                   if (removed > 0) steps.push(`필터 ${removed}장 제거`)
                   else steps.push('필터 변동없음')
-                  addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — ${steps.join(' → ')}`)
-                } else { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
-              } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${ids.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                  addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${ids.length.toLocaleString()}] ${label} — ${steps.join(' → ')}`)
+                } else { fail++; addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${ids.length.toLocaleString()}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
+              } catch (e) { fail++; addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${ids.length.toLocaleString()}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
             }
-            const summary = [`성공 ${success}개`, `실패 ${fail}개`]
-            if (totalTall > 0) summary.push(`긴이미지 ${totalTall}장 제거`)
-            if (totalVisionRemoved > 0) summary.push(`필터 ${totalVisionRemoved}장 제거`)
-            setAiJobTitle(`이미지 필터링 완료 (${success}/${ids.length})`)
+            const summary = [`성공 ${success.toLocaleString()}개`, `실패 ${fail.toLocaleString()}개`]
+            if (totalTall > 0) summary.push(`긴이미지 ${totalTall.toLocaleString()}장 제거`)
+            if (totalVisionRemoved > 0) summary.push(`필터 ${totalVisionRemoved.toLocaleString()}장 제거`)
+            setAiJobTitle(`이미지 필터링 완료 (${success.toLocaleString()}/${ids.length.toLocaleString()})`)
             addLog(`\n완료: ${summary.join(' / ')}`)
             addLog(`시작 ${startTime} → 종료 ${ts()}`)
             setAiJobDone(true)

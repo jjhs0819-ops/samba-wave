@@ -567,7 +567,7 @@ const ProductCard = React.memo(function ProductCard({
                               const stockLabel = soldOut
                                 ? '품절'
                                 : opt.stock !== undefined
-                                  ? `${opt.stock}개`
+                                  ? `${opt.stock.toLocaleString()}개`
                                   : 'O'
                               return (
                                 <tr key={oi} style={{ borderTop: '1px solid #1A1A1A' }}>

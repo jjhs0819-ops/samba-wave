@@ -412,7 +412,7 @@ export default function ShipmentsPage() {
       accLabelMap[acc.id] = `${acc.market_name}(${acc.seller_id || acc.business_name || '-'})`
     }
     const targetAccLabels = effectiveDeleteList.map(aid => accLabelMap[aid] || aid).join(', ')
-    addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length}개, ${targetAccLabels}`)
+    addLog(`[${ts()}] 마켓삭제 시작 — 상품 ${targetProducts.length.toLocaleString()}개, ${targetAccLabels}`)
 
     let totalSuccess = 0
     let totalFail = 0
@@ -430,20 +430,20 @@ export default function ShipmentsPage() {
           for (const [aid, st] of Object.entries(r.delete_results)) {
             const accLabel = accLabelMap[aid] || aid
             if (st === 'success') {
-              addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName} → ${accLabel}: 삭제 성공`)
+              addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${targetProducts.length.toLocaleString()}] ${prodName} → ${accLabel}: 삭제 성공`)
               totalSuccess++
             } else {
-              addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName} → ${accLabel}: ${st}`)
+              addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${targetProducts.length.toLocaleString()}] ${prodName} → ${accLabel}: ${st}`)
               totalFail++
             }
           }
         }
       } catch (e) {
-        addLog(`[${ts()}] [${i + 1}/${targetProducts.length}] ${prodName}: 오류 — ${e instanceof Error ? e.message : ''}`)
+        addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${targetProducts.length.toLocaleString()}] ${prodName}: 오류 — ${e instanceof Error ? e.message : ''}`)
         totalFail++
       }
     }
-    addLog(`[${ts()}] 마켓삭제 완료 — 성공 ${totalSuccess}건, 실패 ${totalFail}건`)
+    addLog(`[${ts()}] 마켓삭제 완료 — 성공 ${totalSuccess.toLocaleString()}건, 실패 ${totalFail.toLocaleString()}건`)
     await load()
     setTransmitting(false)
   }
@@ -490,13 +490,13 @@ export default function ShipmentsPage() {
     const total = policyProducts.length
 
     if (total === 0) {
-      addLog(`[${ts()}] 전송 대상 없음 — 선택된 ${visibleSelected.length}개 상품 중 정책 적용된 상품이 없습니다`)
+      addLog(`[${ts()}] 전송 대상 없음 — 선택된 ${visibleSelected.length.toLocaleString()}개 상품 중 정책 적용된 상품이 없습니다`)
       setTransmitting(false)
       return
     }
 
     if (noPolicyCount > 0) {
-      addLog(`[${ts()}] 정책 미적용 ${noPolicyCount}개 제외 (선택 ${visibleSelected.length}개 → 전송 대상 ${total}개)`)
+      addLog(`[${ts()}] 정책 미적용 ${noPolicyCount.toLocaleString()}개 제외 (선택 ${visibleSelected.length.toLocaleString()}개 → 전송 대상 ${total.toLocaleString()}개)`)
     }
 
     setProgress({ current: 0, total })
@@ -553,7 +553,7 @@ export default function ShipmentsPage() {
     }
 
     if (skipCount > 0) {
-      addLog(`[${ts()}] 선택 마켓 미연결 ${skipCount}개 스킵 → 실제 전송 ${tasks.length}개`)
+      addLog(`[${ts()}] 선택 마켓 미연결 ${skipCount.toLocaleString()}개 스킵 → 실제 전송 ${tasks.length.toLocaleString()}개`)
     }
     setProgress({ current: 0, total: tasks.length })
 
@@ -609,7 +609,7 @@ export default function ShipmentsPage() {
             // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
             const r = (j.result || {}) as Record<string, number>
             const statusLabel = j.status === 'completed' ? '전송 완료' : j.status === 'failed' ? '전송 실패' : '전송 중단'
-            addLog(`[${_ts}] ${statusLabel} — 성공 ${r.success || 0}건, 스킵 ${r.skipped || 0}건, 실패 ${r.failed || 0}건`)
+            addLog(`[${_ts}] ${statusLabel} — 성공 ${(r.success || 0).toLocaleString()}건, 스킵 ${(r.skipped || 0).toLocaleString()}건, 실패 ${(r.failed || 0).toLocaleString()}건`)
             setTransmitting(false)
             activeJobIdRef.current = ''
             load()

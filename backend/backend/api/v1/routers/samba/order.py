@@ -48,7 +48,14 @@ async def list_orders(
             .offset(skip)
             .limit(limit)
         )
-        stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
+        from sqlalchemy import or_
+
+        stmt = stmt.where(
+            or_(
+                SambaOrder.tenant_id == tenant_id,
+                SambaOrder.tenant_id == None,  # noqa: E711
+            )
+        )
         if status:
             stmt = stmt.where(SambaOrder.status == status)
         result = await session.execute(stmt)
@@ -63,7 +70,7 @@ async def dashboard_stats(
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """대시보드 집계 — DB에서 SUM/COUNT 후 결과만 반환 (빠름)."""
-    from sqlalchemy import select, func, case, and_, extract, text
+    from sqlalchemy import select, func, case, and_, extract, text, or_
     from datetime import datetime, timedelta, timezone as tz
 
     # 이행매출 대상 상태 (주문상태 드롭박스 기준)
@@ -119,7 +126,12 @@ async def dashboard_stats(
         ).label("fulfillment_count"),
     ).where(order_date >= this_month_start)
     if tenant_id is not None:
-        this_month_q = this_month_q.where(SambaOrder.tenant_id == tenant_id)
+        this_month_q = this_month_q.where(
+            or_(
+                SambaOrder.tenant_id == tenant_id,
+                SambaOrder.tenant_id == None,  # noqa: E711
+            )
+        )
     tm = (await session.execute(this_month_q)).one()
 
     # 전월 집계
@@ -146,7 +158,12 @@ async def dashboard_stats(
         ).label("fulfillment_count"),
     ).where(and_(order_date >= last_month_start, order_date < this_month_start))
     if tenant_id is not None:
-        last_month_q = last_month_q.where(SambaOrder.tenant_id == tenant_id)
+        last_month_q = last_month_q.where(
+            or_(
+                SambaOrder.tenant_id == tenant_id,
+                SambaOrder.tenant_id == None,  # noqa: E711
+            )
+        )
     lm = (await session.execute(last_month_q)).one()
 
     # 최근 7일 일별 집계
@@ -178,7 +195,12 @@ async def dashboard_stats(
         .group_by(func.date(order_date))
     )
     if tenant_id is not None:
-        daily_q = daily_q.where(SambaOrder.tenant_id == tenant_id)
+        daily_q = daily_q.where(
+            or_(
+                SambaOrder.tenant_id == tenant_id,
+                SambaOrder.tenant_id == None,  # noqa: E711
+            )
+        )
     daily_rows = (await session.execute(daily_q)).all()
     weekly = []
     for i in range(7):
@@ -223,7 +245,12 @@ async def dashboard_stats(
         .group_by(extract("month", order_date))
     )
     if tenant_id is not None:
-        monthly_q = monthly_q.where(SambaOrder.tenant_id == tenant_id)
+        monthly_q = monthly_q.where(
+            or_(
+                SambaOrder.tenant_id == tenant_id,
+                SambaOrder.tenant_id == None,  # noqa: E711
+            )
+        )
     monthly_rows = (await session.execute(monthly_q)).all()
     monthly = []
     for m in range(1, 13):

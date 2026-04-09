@@ -121,7 +121,14 @@ async def list_shipments(
             .offset(skip)
             .limit(limit)
         )
-        stmt = stmt.where(SambaShipment.tenant_id == tenant_id)
+        from sqlalchemy import or_
+
+        stmt = stmt.where(
+            or_(
+                SambaShipment.tenant_id == tenant_id,
+                SambaShipment.tenant_id == None,  # noqa: E711
+            )
+        )
         if status:
             stmt = stmt.where(SambaShipment.status == status)
         result = await session.execute(stmt)

@@ -35,11 +35,18 @@ async def list_policies(
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    # tenant_id가 있으면 해당 테넌트 정책만 조회
+    # tenant_id가 있으면 해당 테넌트 + 기존(NULL) 정책 모두 조회
     if tenant_id:
+        from sqlalchemy import or_
+
         stmt = (
             select(SambaPolicy)
-            .where(SambaPolicy.tenant_id == tenant_id)
+            .where(
+                or_(
+                    SambaPolicy.tenant_id == tenant_id,
+                    SambaPolicy.tenant_id == None,  # noqa: E711
+                )
+            )
             .offset(skip)
             .limit(limit)
         )

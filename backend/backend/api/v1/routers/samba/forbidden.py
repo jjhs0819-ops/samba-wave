@@ -58,7 +58,14 @@ async def list_words(
     if type:
         stmt = stmt.where(SambaForbiddenWord.type == type)
     if tenant_id is not None:
-        stmt = stmt.where(SambaForbiddenWord.tenant_id == tenant_id)
+        from sqlalchemy import or_
+
+        stmt = stmt.where(
+            or_(
+                SambaForbiddenWord.tenant_id == tenant_id,
+                SambaForbiddenWord.tenant_id == None,  # noqa: E711
+            )
+        )
     result = await session.execute(stmt)
     return result.scalars().all()
 
@@ -94,7 +101,14 @@ async def bulk_save_words(
     # tenant_id가 있으면 해당 테넌트 타입만, 없으면 전체 삭제
     del_stmt = delete(SambaForbiddenWord).where(SambaForbiddenWord.type == body.type)
     if tenant_id is not None:
-        del_stmt = del_stmt.where(SambaForbiddenWord.tenant_id == tenant_id)
+        from sqlalchemy import or_
+
+        del_stmt = del_stmt.where(
+            or_(
+                SambaForbiddenWord.tenant_id == tenant_id,
+                SambaForbiddenWord.tenant_id == None,  # noqa: E711
+            )
+        )
     await session.exec(del_stmt)
 
     # 새 단어 일괄 추가 (중복 제거)

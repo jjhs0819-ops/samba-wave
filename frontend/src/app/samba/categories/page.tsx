@@ -1660,7 +1660,7 @@ export default function CategoriesPage() {
               <p style={{ fontSize: '0.75rem', color: '#888' }}>
                 {marketAiProgress.current >= marketAiProgress.total
                   ? '매핑 완료'
-                  : `${marketAiProgress.current} / ${marketAiProgress.total}건 처리 중...`}
+                  : `${marketAiProgress.current.toLocaleString()} / ${marketAiProgress.total.toLocaleString()}건 처리 중...`}
               </p>
             </div>
 
@@ -1680,15 +1680,15 @@ export default function CategoriesPage() {
               {/* 결과 카드 */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
                 <div style={{ padding: '0.75rem', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#22C55E' }}>{marketAiProgress.success}</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#22C55E' }}>{marketAiProgress.success.toLocaleString()}</div>
                   <div style={{ fontSize: '0.6875rem', color: '#888' }}>성공</div>
                 </div>
                 <div style={{ padding: '0.75rem', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#EF4444' }}>{marketAiProgress.fail}</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#EF4444' }}>{marketAiProgress.fail.toLocaleString()}</div>
                   <div style={{ fontSize: '0.6875rem', color: '#888' }}>실패</div>
                 </div>
                 <div style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.03)', border: '1px solid #2D2D2D', borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#888' }}>{marketAiProgress.total - marketAiProgress.current}</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#888' }}>{(marketAiProgress.total - marketAiProgress.current).toLocaleString()}</div>
                   <div style={{ fontSize: '0.6875rem', color: '#888' }}>대기</div>
                 </div>
               </div>

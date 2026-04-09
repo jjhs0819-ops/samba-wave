@@ -485,14 +485,14 @@ export default function CollectorPage() {
       try {
         const keyword = pendingKeyword
         const gf = pendingScanGf.current
-        addLog(`[카테고리스캔] 무신사 "${keyword}" 스캔 시작... (${brandList.length}개 브랜드)`)
+        addLog(`[카테고리스캔] 무신사 "${keyword}" 스캔 시작... (${brandList.length.toLocaleString()}개 브랜드)`)
         const allCategories: { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }[] = []
         let totalCount = 0
         for (const code of brandList.length > 0 ? brandList : ['']) {
           const res = await collectorApi.brandScan(code, gf, keyword)
           allCategories.push(...res.categories)
           totalCount += res.total
-          if (code) addLog(`[카테고리스캔] ${code}: ${res.groupCount}개 카테고리, ${res.total}건`)
+          if (code) addLog(`[카테고리스캔] ${code}: ${res.groupCount.toLocaleString()}개 카테고리, ${res.total.toLocaleString()}건`)
         }
         setBrandCategories(allCategories)
         setBrandTotal(totalCount)
@@ -618,7 +618,7 @@ export default function CollectorPage() {
             }
 
             if (job.current > lastCurrent) {
-              addLog(`${gp} [${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`)
+              addLog(`${gp} [${f.name}] [${job.current.toLocaleString()}/${job.total.toLocaleString()}] 수집 중... (${job.progress}%)`)
               lastCurrent = job.current
               load()
             }
@@ -1046,10 +1046,10 @@ export default function CollectorPage() {
                   try {
                     const p = await collectorApi.gsshopScanProgress()
                     if (p.stage === 'search') {
-                      addLog(`[카테고리스캔] 검색 중... ${p.page}페이지, ${p.products}개 상품 발견`)
+                      addLog(`[카테고리스캔] 검색 중... ${p.page}페이지, ${p.products.toLocaleString()}개 상품 발견`)
                     } else if (p.stage === 'detail') {
                       const done = (p.detail_ok || 0) + (p.detail_fail || 0)
-                      addLog(`[카테고리스캔] 상세 조회 중... ${done}/${p.detail_total}건 (성공: ${p.detail_ok}, 실패: ${p.detail_fail})`)
+                      addLog(`[카테고리스캔] 상세 조회 중... ${done.toLocaleString()}/${p.detail_total.toLocaleString()}건 (성공: ${p.detail_ok.toLocaleString()}, 실패: ${p.detail_fail.toLocaleString()})`)
                     }
                   } catch { /* 폴링 실패 무시 */ }
                 }, 3000)
@@ -1059,7 +1059,7 @@ export default function CollectorPage() {
                   setBrandCategories(res.categories)
                   setBrandTotal(res.total)
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                  addLog(`[카테고리스캔] 완료: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                  addLog(`[카테고리스캔] 완료: ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
                 } catch (e) {
                   clearInterval(pollId)
                   showAlert(e instanceof Error ? e.message : '스캔 실패', 'error')
@@ -1077,7 +1077,7 @@ export default function CollectorPage() {
                   setBrandCategories(res.categories)
                   setBrandTotal(res.total)
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                  addLog(`[카테고리스캔] ABC마트: ${scanKeyword} → ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                  addLog(`[카테고리스캔] ABC마트: ${scanKeyword} → ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
                 } catch (e) { addLog(`[카테고리스캔] ABC마트 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                 setBrandScanning(false)
                 return
@@ -1092,7 +1092,7 @@ export default function CollectorPage() {
                   setBrandCategories(res.categories)
                   setBrandTotal(res.total)
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                  addLog(`[카테고리스캔] Nike: ${scanKeyword} → ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                  addLog(`[카테고리스캔] Nike: ${scanKeyword} → ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
                 } catch (e) { addLog(`[카테고리스캔] Nike 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                 setBrandScanning(false)
                 return
@@ -1120,7 +1120,7 @@ export default function CollectorPage() {
                 setBrandCategories(res.categories)
                 setBrandTotal(res.total)
                 setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                addLog(`[카테고리스캔] ${keyword || brand}: ${res.groupCount}개 카테고리, 총 ${res.total}건`)
+                addLog(`[카테고리스캔] ${keyword || brand}: ${res.groupCount.toLocaleString()}개 카테고리, 총 ${res.total.toLocaleString()}건`)
               } catch (e) { addLog(`[카테고리스캔] ${selectedSite} 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
               setBrandScanning(false)
             }} disabled={brandScanning}
@@ -1149,9 +1149,9 @@ export default function CollectorPage() {
                     source_site: selectedSite,
                     selected_brands: brandModalParsed ? Array.from(brandModalSelected) : undefined,
                   })
-                  addLog(`[카테고리분류] ${res.created}개 그룹 생성 완료`)
-                  showAlert(`${res.created}개 그룹이 생성되었습니다`, 'success')
-                  addLog(`[카테고리분류] ${res.created}개 그룹 생성 (카테고리 간 중복은 수집 시 자동 스킵)`)
+                  addLog(`[카테고리분류] ${res.created.toLocaleString()}개 그룹 생성 완료`)
+                  showAlert(`${res.created.toLocaleString()}개 그룹이 생성되었습니다`, 'success')
+                  addLog(`[카테고리분류] ${res.created.toLocaleString()}개 그룹 생성 (카테고리 간 중복은 수집 시 자동 스킵)`)
                   setBrandCategories([]); setBrandSelectedCats(new Set())
                   load(); loadTree()
                 } catch (e) { showAlert(e instanceof Error ? e.message : '그룹 생성 실패', 'error') }
@@ -1293,7 +1293,7 @@ export default function CollectorPage() {
                   setBrandCategories([]); setBrandSelectedCats(new Set())
                   const { brand, keyword, gf } = brandModalParsed || { brand: '', keyword: brandModalKeyword, gf: 'A' }
                   const selectedBrands = Array.from(brandModalSelected)
-                  addLog(`[카테고리스캔] 롯데ON "${keyword || brand}" 스캔 시작... (${selectedBrands.length}개 브랜드)`)
+                  addLog(`[카테고리스캔] 롯데ON "${keyword || brand}" 스캔 시작... (${selectedBrands.length.toLocaleString()}개 브랜드)`)
                   try {
                     const res = await collectorApi.brandScan(brand, gf, keyword, 'LOTTEON', selectedBrands)
                     setBrandCategories(res.categories)
@@ -1463,18 +1463,18 @@ export default function CollectorPage() {
               let success = 0
               let fail = 0
               for (let i = 0; i < productIds.length; i++) {
-                if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i}/${productIds.length})`); break }
+                if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${i.toLocaleString()}/${productIds.length.toLocaleString()})`); break }
                 const label = productIds[i].slice(-8)
-                setAiJobTitle(`AI 이미지변환 [${i + 1}/${productIds.length}]`)
+                setAiJobTitle(`AI 이미지변환 [${(i + 1).toLocaleString()}/${productIds.length.toLocaleString()}]`)
                 try {
                   const res = await proxyApi.transformImages([productIds[i]], aiImgScope, aiImgMode, aiModelPreset)
-                  if (res.success) { success++; addLog(`[${ts()}] [${i + 1}/${productIds.length}] ${label} — 완료`) }
-                  else { fail++; addLog(`[${ts()}] [${i + 1}/${productIds.length}] ${label} — 실패: ${res.message}`) }
-                } catch (e) { fail++; addLog(`[${ts()}] [${i + 1}/${productIds.length}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                  if (res.success) { success++; addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${productIds.length.toLocaleString()}] ${label} — 완료`) }
+                  else { fail++; addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${productIds.length.toLocaleString()}] ${label} — 실패: ${res.message}`) }
+                } catch (e) { fail++; addLog(`[${ts()}] [${(i + 1).toLocaleString()}/${productIds.length.toLocaleString()}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
               }
               const endTime = ts()
-              setAiJobTitle(`AI 이미지변환 완료 (${success}/${productIds.length})`)
-              addLog(`\n완료: 성공 ${success}개 / 실패 ${fail}개`)
+              setAiJobTitle(`AI 이미지변환 완료 (${success.toLocaleString()}/${productIds.length.toLocaleString()})`)
+              addLog(`\n완료: 성공 ${success.toLocaleString()}개 / 실패 ${fail.toLocaleString()}개`)
               addLog(`시작 ${startTime} → 종료 ${endTime}`)
               setAiJobDone(true)
               setAiImgTransforming(false)
@@ -1535,21 +1535,21 @@ export default function CollectorPage() {
                   if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단`); break }
                   const gid = groupIds[gi]
                   const groupLabel = tree.find(t => t.id === gid)?.keyword?.slice(0, 20) || gid.slice(-8)
-                  addLog(`\n[그룹 ${gi + 1}/${groupIds.length.toLocaleString()}] ${groupLabel} — 상품 조회중...`)
+                  addLog(`\n[그룹 ${(gi + 1).toLocaleString()}/${groupIds.length.toLocaleString()}] ${groupLabel} — 상품 조회중...`)
                   try {
                     const { items: products } = await collectorApi.scrollProducts({ search_filter_id: gid, limit: 10000 })
                     totalProducts += products.length
-                    addLog(`[그룹 ${gi + 1}/${groupIds.length.toLocaleString()}] ${groupLabel} — ${products.length.toLocaleString()}개 상품`)
-                    if (gi === 0 && products.length > 0) addLog(`\n시작: ${startTime} (${totalProducts}개 상품)\n`)
+                    addLog(`[그룹 ${(gi + 1).toLocaleString()}/${groupIds.length.toLocaleString()}] ${groupLabel} — ${products.length.toLocaleString()}개 상품`)
+                    if (gi === 0 && products.length > 0) addLog(`\n시작: ${startTime} (${totalProducts.toLocaleString()}개 상품)\n`)
                     for (let i = 0; i < products.length; i++) {
-                      if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${processedProducts}/${totalProducts})`); break }
+                      if (aiJobAbortRef.current) { addLog(`\n⛔ 사용자 중단 (${processedProducts.toLocaleString()}/${totalProducts.toLocaleString()})`); break }
                       const prod = products[i]
                       const prodName = prod.name?.slice(0, 25) || '이름없음'
                       const prodNo = prod.site_product_id || prod.id.slice(-8)
                       const prodBrand = prod.brand || '-'
                       const label = `${prodBrand} / ${prodNo} / ${prodName}${prod.name && prod.name.length > 25 ? '...' : ''}`
                       processedProducts++
-                      setAiJobTitle(`이미지 필터링 [${processedProducts}/${totalProducts}] ${prodBrand} / ${prodNo}`)
+                      setAiJobTitle(`이미지 필터링 [${processedProducts.toLocaleString()}/${totalProducts.toLocaleString()}] ${prodBrand} / ${prodNo}`)
                       try {
                         const steps: string[] = []
                         // 1) 프론트에서 추가이미지 비율 체크 (세로 2배 이상 → 제거)
@@ -1585,17 +1585,17 @@ export default function CollectorPage() {
                           totalVisionRemoved += removed
                           if (removed > 0) steps.push(`CLIP ${removed}장 제거`)
                           else steps.push('CLIP 변동없음')
-                          addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — ${steps.join(' → ')}`)
-                        } else { fail++; addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
-                      } catch (e) { fail++; addLog(`[${ts()}] [${processedProducts}/${totalProducts}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
+                          addLog(`[${ts()}] [${processedProducts.toLocaleString()}/${totalProducts.toLocaleString()}] ${label} — ${steps.join(' → ')}`)
+                        } else { fail++; addLog(`[${ts()}] [${processedProducts.toLocaleString()}/${totalProducts.toLocaleString()}] ${label} — ${steps.length > 0 ? steps.join(' → ') + ' → ' : ''}실패`) }
+                      } catch (e) { fail++; addLog(`[${ts()}] [${processedProducts.toLocaleString()}/${totalProducts.toLocaleString()}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
                     }
                   } catch (e) {
-                    addLog(`[그룹 ${gi + 1}/${groupIds.length.toLocaleString()}] ${groupLabel} — 상품 조회 실패: ${e instanceof Error ? e.message : ''}`)
+                    addLog(`[그룹 ${(gi + 1).toLocaleString()}/${groupIds.length.toLocaleString()}] ${groupLabel} — 상품 조회 실패: ${e instanceof Error ? e.message : ''}`)
                   }
                 }
-                const summary = [`성공 ${success}개`, `실패 ${fail}개`]
-                if (totalTall > 0) summary.push(`긴이미지 ${totalTall}장 제거`)
-                if (totalVisionRemoved > 0) summary.push(`CLIP ${totalVisionRemoved}장 제거`)
+                const summary = [`성공 ${success.toLocaleString()}개`, `실패 ${fail.toLocaleString()}개`]
+                if (totalTall > 0) summary.push(`긴이미지 ${totalTall.toLocaleString()}장 제거`)
+                if (totalVisionRemoved > 0) summary.push(`CLIP ${totalVisionRemoved.toLocaleString()}장 제거`)
                 const endTime = ts()
                 setAiJobTitle(`이미지 필터링 완료 (${success}/${totalProducts})`)
                 addLog(`\n완료: ${summary.join(' / ')}`)
@@ -1762,7 +1762,7 @@ export default function CollectorPage() {
                               const jr = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/${job_id}`)
                               if (!jr.ok) break
                               const job = await jr.json()
-                              if (job.current > lastCurrent) { addLog(`${gp} [${f.name}] [${job.current}/${job.total}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
+                              if (job.current > lastCurrent) { addLog(`${gp} [${f.name}] [${job.current.toLocaleString()}/${job.total.toLocaleString()}] 수집 중... (${job.progress}%)`); lastCurrent = job.current }
                               if (job.status === 'completed') {
                                 const _s = job.result?.saved ?? 0, _sk = job.result?.skipped ?? 0, _p = job.result?.policy || ''
                                 const _parts = [`신규 ${_s}건`]
@@ -2242,7 +2242,7 @@ export default function CollectorPage() {
                 }}>
                   <span style={{ fontSize: "0.85rem", color: "#999" }}>{item.label}</span>
                   <span style={{ fontSize: "0.95rem", fontWeight: 700, color: item.color }}>
-                    {item.value}건
+                    {item.value.toLocaleString()}건
                   </span>
                 </div>
               ))}
