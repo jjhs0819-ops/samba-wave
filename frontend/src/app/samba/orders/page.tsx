@@ -193,82 +193,77 @@ export default function OrdersPage() {
   }, [])
 
   const handleFetch = async () => {
-    if (!syncAccountId) {
-      setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] 주문 목록 새로고침...`])
-      await loadOrders()
-      setLogMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] 완료`])
-      return
-    }
     setSyncing(true)
     const ts = () => new Date().toLocaleTimeString()
-    const acc = accounts.find(a => a.id === syncAccountId)
-    const label = acc ? `${acc.market_name}(${acc.seller_id || '-'})` : syncAccountId
     const daysMap: Record<string, number> = {
       today: 1, '1week': 7, '15days': 15, '1month': 30,
       '3months': 90, '6months': 180, thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
     }
     const days = daysMap[period] || 7
-    setLogMessages(prev => [...prev, `[${ts()}] ${label} 주문 가져오기 시작 (최근 ${days}일)...`])
+
+    // 마켓타입 선택 시 해당 마켓 계정들만 순회 동기화
+    if (syncAccountId.startsWith('type:')) {
+      const marketType = syncAccountId.replace('type:', '')
+      const marketAccs = accounts.filter(a => a.market_type === marketType)
+      const marketName = marketAccs[0]?.market_name || marketType
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 전체 계정 주문 동기화 시작 (${marketAccs.length}개 계정, 최근 ${days}일)...`])
+      let totalSynced = 0
+      let totalCancelRequested = 0
+      for (const acc of marketAccs) {
+        const label = `${acc.market_name}(${acc.seller_id || '-'})`
+        try {
+          const res = await orderApi.syncFromMarkets(days, acc.id)
+          for (const r of res.results) {
+            if (r.status === 'success') {
+              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.fetched?.toLocaleString()}건 조회, ${r.synced?.toLocaleString()}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${(r as Record<string, unknown>).confirmed}건 발주확인` : ''}`])
+            } else if (r.status === 'skip') {
+              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.message}`])
+            } else {
+              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
+            }
+            totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
+          }
+          totalSynced += res.total_synced
+        } catch (e) {
+          setLogMessages(prev => [...prev, `[${ts()}] ${label} 오류: ${e}`])
+        }
+      }
+      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 동기화 완료 — 총 ${totalSynced.toLocaleString()}건 신규 저장`])
+      if (totalCancelRequested > 0) {
+        showNotification(`주문 취소요청 ${totalCancelRequested.toLocaleString()}건이 감지되었습니다. 확인이 필요합니다.`)
+      }
+      await loadOrders()
+      setSyncing(false)
+      return
+    }
+
+    // 전체마켓 또는 개별 계정 동기화
+    const isAll = !syncAccountId
+    const acc = isAll ? null : accounts.find(a => a.id === syncAccountId)
+    const label = isAll ? '전체마켓' : (acc ? `${acc.market_name}(${acc.seller_id || '-'})` : syncAccountId)
+    setLogMessages(prev => [...prev, `[${ts()}] ${label} 주문 동기화 시작 (최근 ${days}일)...`])
     try {
-      const res = await orderApi.syncFromMarkets(days, syncAccountId)
+      const res = await orderApi.syncFromMarkets(days, isAll ? undefined : syncAccountId)
       for (const r of res.results) {
         if (r.status === 'success') {
-          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.fetched}건 조회, ${r.synced}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${(r as Record<string, unknown>).confirmed}건 발주확인` : ''}`])
+          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.fetched?.toLocaleString()}건 조회, ${r.synced?.toLocaleString()}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${(r as Record<string, unknown>).confirmed}건 발주확인` : ''}`])
         } else if (r.status === 'skip') {
           setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.message}`])
         } else {
           setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
         }
       }
-      setLogMessages(prev => [...prev, `[${ts()}] 완료 — ${res.total_synced}건 신규 저장`])
-      // 취소요청 알람
+      setLogMessages(prev => [...prev, `[${ts()}] 동기화 완료 — 총 ${res.total_synced.toLocaleString()}건 신규 저장`])
       let totalCancelRequested = 0
       for (const r of res.results) {
         totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
       }
       if (totalCancelRequested > 0) {
-        showNotification(`주문 취소요청 ${totalCancelRequested}건이 감지되었습니다. 확인이 필요합니다.`)
+        showNotification(`주문 취소요청 ${totalCancelRequested.toLocaleString()}건이 감지되었습니다. 확인이 필요합니다.`)
       }
       await loadOrders()
     } catch (e) {
       setLogMessages(prev => [...prev, `[${ts()}] 오류: ${e}`])
-    }
-    setSyncing(false)
-  }
-
-  const handleSyncFromMarkets = async () => {
-    setSyncing(true)
-    const ts = () => new Date().toLocaleTimeString()
-    const daysMap: Record<string, number> = {
-      today: 1, '1week': 7, '15days': 15, '1month': 30,
-      '3months': 90, '6months': 180, thisyear: Math.ceil((Date.now() - new Date(new Date().getFullYear(), 0, 1).getTime()) / 86400000) + 1, all: 365,
-    }
-    const days = daysMap[period] || 7
-    setLogMessages(prev => [...prev, `[${ts()}] 전체마켓 주문 동기화 시작 (최근 ${days}일)...`])
-
-    try {
-      const res = await orderApi.syncFromMarkets(days)
-      for (const r of res.results) {
-        if (r.status === 'success') {
-          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.fetched}건 조회, ${r.synced}건 신규 저장${(r as Record<string, unknown>).confirmed ? `, ${(r as Record<string, unknown>).confirmed}건 발주확인` : ''}`])
-        } else if (r.status === 'skip') {
-          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${r.message}`])
-        } else {
-          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
-        }
-      }
-      setLogMessages(prev => [...prev, `[${ts()}] 동기화 완료 — 총 ${res.total_synced}건 신규 저장`])
-      // 취소요청 알람
-      let totalCancelRequested = 0
-      for (const r of res.results) {
-        totalCancelRequested += ((r as Record<string, unknown>).cancel_requested as number) || 0
-      }
-      if (totalCancelRequested > 0) {
-        showNotification(`주문 취소요청 ${totalCancelRequested}건이 감지되었습니다. 확인이 필요합니다.`)
-      }
-      await loadOrders()
-    } catch (e) {
-      setLogMessages(prev => [...prev, `[${ts()}] 동기화 오류: ${e}`])
     }
     setSyncing(false)
   }
@@ -819,25 +814,23 @@ export default function OrdersPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
           <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '200px' }}>
-            <option value="">전체 계정</option>
+            <option value="">전체마켓보기</option>
             {(() => {
               const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
               const items: { value: string; label: string; isGroup: boolean }[] = []
-              marketTypes.forEach(([, name]) => {
-                const accs = accounts.filter(a => a.market_name === name)
-                accs.forEach(a => {
-                  const label = `${name} ${a.business_name || ''} ${a.seller_id || ''}`.trim()
+              marketTypes.forEach(([type, name]) => {
+                items.push({ value: `type:${type}`, label: name, isGroup: true })
+                accounts.filter(a => a.market_type === type).forEach(a => {
+                  const label = `  ${name} ${a.business_name || ''} ${a.seller_id || ''}`.trim()
                   items.push({ value: a.id, label, isGroup: false })
                 })
               })
               return items.map(item => (
-                <option key={item.value} value={item.value}>{item.label}</option>
+                <option key={item.value} value={item.value} style={{ fontWeight: item.isGroup ? 600 : 400 }}>{item.label}</option>
               ))
             })()}
           </select>
           <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '동기화 중...' : '가져오기'}</button>
-          <button onClick={handleSyncFromMarkets} disabled={syncing}
-            style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: syncing ? '#333' : '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '동기화 중...' : '전체마켓 가져오기'}</button>
         </div>
       </div>
 
