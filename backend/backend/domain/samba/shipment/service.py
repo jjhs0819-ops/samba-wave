@@ -1845,8 +1845,12 @@ class SambaShipmentService:
 
             sf_repo = SambaSearchFilterRepository(self.session)
             sf = await sf_repo.get_async(product_row.search_filter_id)
-            if sf and sf.target_mappings:
-                group_mappings = sf.target_mappings
+            if sf:
+                if sf.target_mappings:
+                    group_mappings = sf.target_mappings
+                # 플레이오토 사용자 임의분류용 검색필터명 주입
+                if sf.name:
+                    product_dict["_search_filter_name"] = sf.name
 
         mapped_categories = await self._resolve_category_mappings(
             product_row.source_site or "",
