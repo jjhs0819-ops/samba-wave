@@ -1,63 +1,16 @@
 """SambaWave Market Account API router."""
 
-from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
+from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 
 router = APIRouter(prefix="/accounts", tags=["samba-accounts"])
-
-
-def _mask_secret(value: Optional[str]) -> Optional[str]:
-    """민감 필드 마스킹 — 앞 4자만 표시."""
-    if not value:
-        return None
-    if len(value) <= 4:
-        return "****"
-    return value[:4] + "****"
-
-
-class AccountOut(BaseModel):
-    """마켓 계정 응답 DTO — api_key/api_secret 마스킹."""
-
-    id: str
-    tenant_id: Optional[str] = None
-    market_type: str
-    market_name: str
-    account_label: str
-    seller_id: Optional[str] = None
-    business_name: Optional[str] = None
-    api_key: Optional[str] = None
-    api_secret: Optional[str] = None
-    additional_fields: Optional[Any] = None
-    is_active: bool = True
-    sort_order: int = 0
-    created_at: datetime
-    updated_at: datetime
-
-
-def _to_account_out(account: Any) -> AccountOut:
-    """ORM 모델 → 마스킹된 응답 DTO."""
-    return AccountOut(
-        id=account.id,
-        tenant_id=account.tenant_id,
-        market_type=account.market_type,
-        market_name=account.market_name,
-        account_label=account.account_label,
-        seller_id=account.seller_id,
-        business_name=account.business_name,
-        api_key=_mask_secret(account.api_key),
-        api_secret=_mask_secret(account.api_secret),
-        additional_fields=account.additional_fields,
-        is_active=account.is_active,
-        sort_order=account.sort_order,
-        created_at=account.created_at,
-        updated_at=account.updated_at,
-    )
 
 
 class AccountCreate(BaseModel):
@@ -87,18 +40,38 @@ def _get_service(session: AsyncSession):
     return SambaAccountService(SambaMarketAccountRepository(session))
 
 
-@router.get("", response_model=list[AccountOut])
-async def list_accounts(session: AsyncSession = Depends(get_read_session_dependency)):
-    accounts = await _get_service(session).list_accounts()
-    return [_to_account_out(a) for a in accounts]
+@router.get("")
+async def list_accounts(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    from backend.domain.samba.account.model import SambaMarketAccount
+
+    # tenant_id가 있으면 해당 테넌트 계정만 조회
+    stmt = select(SambaMarketAccount).order_by(SambaMarketAccount.created_at.desc())
+    if tenant_id is not None:
+        stmt = stmt.where(SambaMarketAccount.tenant_id == tenant_id)
+    result = await session.execute(stmt)
+    return result.scalars().all()
 
 
-@router.get("/active", response_model=list[AccountOut])
+@router.get("/active")
 async def list_active_accounts(
     session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    accounts = await _get_service(session).get_active_accounts()
-    return [_to_account_out(a) for a in accounts]
+    from backend.domain.samba.account.model import SambaMarketAccount
+
+    # tenant_id가 있으면 해당 테넌트 활성 계정만 조회
+    stmt = (
+        select(SambaMarketAccount)
+        .where(SambaMarketAccount.is_active == True)  # noqa: E712
+        .order_by(SambaMarketAccount.created_at.desc())
+    )
+    if tenant_id is not None:
+        stmt = stmt.where(SambaMarketAccount.tenant_id == tenant_id)
+    result = await session.execute(stmt)
+    return result.scalars().all()
 
 
 @router.get("/markets")
@@ -108,7 +81,7 @@ async def get_supported_markets():
     return SambaAccountService.SUPPORTED_MARKETS
 
 
-@router.get("/{account_id}", response_model=AccountOut)
+@router.get("/{account_id}")
 async def get_account(
     account_id: str,
     session: AsyncSession = Depends(get_read_session_dependency),
@@ -117,34 +90,21 @@ async def get_account(
     account = await svc.get_account(account_id)
     if not account:
         raise HTTPException(404, "계정을 찾을 수 없습니다")
-    return _to_account_out(account)
+    return account
 
 
-@router.post("", status_code=201, response_model=AccountOut)
+@router.post("", status_code=201)
 async def create_account(
     body: AccountCreate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     data = body.model_dump(exclude_unset=True)
+    # tenant_id가 있으면 신규 계정에 테넌트 정보 설정
+    if tenant_id is not None:
+        data["tenant_id"] = tenant_id
     await _enrich_store_slug(data)
-    account = await _get_service(session).create_account(data)
-    return _to_account_out(account)
-
-
-class AccountReorderItem(BaseModel):
-    id: str
-    sort_order: int
-
-
-@router.put("/reorder")
-async def reorder_accounts(
-    body: list[AccountReorderItem],
-    session: AsyncSession = Depends(get_write_session_dependency),
-):
-    await _get_service(session).reorder_accounts(
-        [{"id": item.id, "sort_order": item.sort_order} for item in body]
-    )
-    return {"ok": True}
+    return await _get_service(session).create_account(data)
 
 
 @router.put("/{account_id}")
@@ -152,6 +112,7 @@ async def update_account(
     account_id: str,
     body: AccountUpdate,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     data = body.model_dump(exclude_unset=True)
     svc = _get_service(session)
@@ -159,13 +120,16 @@ async def update_account(
     existing = await svc.get_account(account_id)
     if not existing:
         raise HTTPException(404, "계정을 찾을 수 없습니다")
+    # tenant_id가 있으면 소유권 검증
+    if tenant_id is not None and existing.tenant_id != tenant_id:
+        raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
     data.setdefault("_market_type", existing.market_type)
     await _enrich_store_slug(data)
     data.pop("_market_type", None)
     result = await svc.update_account(account_id, data)
     if not result:
         raise HTTPException(404, "계정을 찾을 수 없습니다")
-    return _to_account_out(result)
+    return result
 
 
 async def _enrich_store_slug(data: dict[str, Any]) -> None:
@@ -208,22 +172,40 @@ async def _enrich_store_slug(data: dict[str, Any]) -> None:
         logger.warning(f"[계정] 스토어 슬러그 조회 실패 (무시): {e}")
 
 
-@router.put("/{account_id}/toggle", response_model=AccountOut)
+@router.put("/{account_id}/toggle")
 async def toggle_account(
     account_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    result = await _get_service(session).toggle_active(account_id)
+    svc = _get_service(session)
+    # tenant_id가 있으면 소유권 검증
+    if tenant_id is not None:
+        existing = await svc.get_account(account_id)
+        if not existing:
+            raise HTTPException(404, "계정을 찾을 수 없습니다")
+        if existing.tenant_id != tenant_id:
+            raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
+    result = await svc.toggle_active(account_id)
     if not result:
         raise HTTPException(404, "계정을 찾을 수 없습니다")
-    return _to_account_out(result)
+    return result
 
 
 @router.delete("/{account_id}")
 async def delete_account(
     account_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    if not await _get_service(session).delete_account(account_id):
+    svc = _get_service(session)
+    # tenant_id가 있으면 소유권 검증
+    if tenant_id is not None:
+        existing = await svc.get_account(account_id)
+        if not existing:
+            raise HTTPException(404, "계정을 찾을 수 없습니다")
+        if existing.tenant_id != tenant_id:
+            raise HTTPException(403, "해당 계정에 대한 권한이 없습니다")
+    if not await svc.delete_account(account_id):
         raise HTTPException(404, "계정을 찾을 수 없습니다")
     return {"ok": True}

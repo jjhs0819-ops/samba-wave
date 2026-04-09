@@ -3,6 +3,13 @@
 let PROXY_URL = 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
 const DEFAULT_PROXY_URL = 'https://samba-wave-api-363598397345.asia-northeast3.run.app'
 const API_PREFIX = '/api/v1/samba/proxy'
+const API_GATEWAY_KEY = '6woI2L8NjVrcgthMQ05VvvOTH-3HPoVdmvwa123ot1w'
+
+// API Gateway Key가 포함된 fetch 래퍼 (서버 API 호출 전용)
+function apiFetch(url, init = {}) {
+  const headers = { ...(init.headers || {}), 'X-Api-Key': API_GATEWAY_KEY }
+  return fetch(url, { ...init, headers })
+}
 
 // ==================== KREAM 셀렉터 설정 (서버에서 동적 변경 가능) ====================
 
@@ -16,7 +23,7 @@ const DEFAULT_SELECTORS = {
 
 // 서버에서 최신 셀렉터 설정 fetch (실패 시 기본값 유지)
 let selectors = { ...DEFAULT_SELECTORS }
-fetch(`${PROXY_URL}${API_PREFIX}/extension-config`)
+apiFetch(`${PROXY_URL}${API_PREFIX}/extension-config`)
   .then(r => r.ok ? r.json() : null)
   .then(config => {
     if (config?.selectors) {
@@ -55,9 +62,14 @@ let capturedAt = 0
 
 let kreamCookie = ''
 
+// ==================== 롯데ON 쿠키 ====================
+
+let lotteonCookie = ''
+
 // 동기화 스케줄러 (sendCookiesToProxy 정의 후 초기화)
 let scheduleCookieSync
 let scheduleKreamCookieSync
+let scheduleLotteonCookieSync
 
 // 백엔드 URL 변경 감지
 chrome.storage.onChanged.addListener((changes) => {
@@ -68,7 +80,7 @@ chrome.storage.onChanged.addListener((changes) => {
 })
 
 // Service Worker 시작 시 저장된 쿠키 + 설정 복원
-chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'proxyUrl']).then(async data => {
+chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'lotteonCookie', 'proxyUrl']).then(async data => {
   if (data.proxyUrl) {
     PROXY_URL = data.proxyUrl
     console.log(`[복원] 백엔드 URL: ${PROXY_URL}`)
@@ -85,6 +97,12 @@ chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'proxyU
     kreamCookie = data.kreamCookie
     console.log(`[복원] KREAM 쿠키 복원: ${kreamCookie.split(';').length}개`)
     try { await sendKreamCookiesToProxy(kreamCookie) } catch {}
+  }
+  // 롯데ON
+  if (data.lotteonCookie) {
+    lotteonCookie = data.lotteonCookie
+    console.log(`[복원] 롯데ON 쿠키 복원: ${lotteonCookie.split(';').length}개`)
+    try { await sendLotteonCookiesToProxy(lotteonCookie) } catch {}
   }
 })
 
@@ -123,10 +141,27 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   ['requestHeaders', 'extraHeaders']
 )
 
+// 롯데ON webRequest 캡처
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (details) => {
+    const cookieHeader = details.requestHeaders?.find(
+      h => h.name.toLowerCase() === 'cookie'
+    )
+    if (cookieHeader?.value && cookieHeader.value !== lotteonCookie) {
+      lotteonCookie = cookieHeader.value
+      chrome.storage.local.set({ lotteonCookie })
+      console.log(`[캡처] 롯데ON 쿠키 변경감지 ${lotteonCookie.split(';').length}개`)
+      scheduleLotteonCookieSync()
+    }
+  },
+  { urls: ['https://*.lotteon.com/*'] },
+  ['requestHeaders', 'extraHeaders']
+)
+
 // ==================== 공용 결과 전송 함수 ====================
 
 async function postResult(endpoint, body) {
-  const res = await fetch(`${PROXY_URL}${API_PREFIX}/${endpoint}`, {
+  const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -137,7 +172,7 @@ async function postResult(endpoint, body) {
 // ==================== 프록시 전송 함수 ====================
 
 async function sendCookiesToProxy(cookieStr) {
-  const res = await fetch(`${PROXY_URL}${API_PREFIX}/musinsa/set-cookie`, {
+  const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/musinsa/set-cookie`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cookie: cookieStr })
@@ -147,7 +182,17 @@ async function sendCookiesToProxy(cookieStr) {
 }
 
 async function sendKreamCookiesToProxy(cookieStr) {
-  const res = await fetch(`${PROXY_URL}${API_PREFIX}/kream/set-cookie`, {
+  const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/kream/set-cookie`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cookie: cookieStr })
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+async function sendLotteonCookiesToProxy(cookieStr) {
+  const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/lotteon/set-cookie`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cookie: cookieStr })
@@ -159,6 +204,7 @@ async function sendKreamCookiesToProxy(cookieStr) {
 // 동기화 스케줄러 초기화
 scheduleCookieSync = makeScheduleSync('무신사', () => capturedCookie, sendCookiesToProxy)
 scheduleKreamCookieSync = makeScheduleSync('KREAM', () => kreamCookie, sendKreamCookiesToProxy)
+scheduleLotteonCookieSync = makeScheduleSync('롯데ON', () => lotteonCookie, sendLotteonCookiesToProxy)
 
 // ==================== 무신사 잔액 수신 (content script → background → server) ====================
 
@@ -173,6 +219,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       getProfileEmailAndSend({ money, mileage, username })
     }
     sendResponse({ ok: true })
+  }
+  if (msg.action === 'abcmartBalance') {
+    const { siteName, money, mileage, username, expired } = msg
+    console.log(`[잔액] ${siteName} 잔액 수신: 머니 ${money?.toLocaleString()} / 적립금 ${mileage?.toLocaleString()} / 유저: ${username}`)
+    sendAbcmartBalance({ siteName, money, mileage, username, expired: !!expired })
+    sendResponse({ ok: true })
+  }
+  if (msg.action === 'abcmartMembership') {
+    const { membershipRate, membershipGrade } = msg
+    console.log(`[ABCmart] 멤버십 감지: ${membershipGrade} (${membershipRate}%)`)
+    chrome.storage.local.set({ abcmart_membership_rate: membershipRate, abcmart_membership_grade: membershipGrade })
+    syncAbcmartMembership(membershipRate, membershipGrade)
+    sendResponse({ ok: true })
+  }
+  if (msg.type === 'SCRAPE_SSG_SCORES') {
+    scrapeSSGScores().then(data => sendResponse(data)).catch(e => sendResponse({ error: e.message }))
+    return true
   }
   return false
 })
@@ -196,7 +259,7 @@ async function sendMusinsaBalance(data) {
   ]
   for (const url of endpoints) {
     try {
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -260,7 +323,7 @@ async function getMusinsaCookies() {
 // 공용 폴링 함수
 async function pollOnce(endpoint, handler, label, logField) {
   try {
-    const res = await fetch(`${PROXY_URL}${API_PREFIX}/${endpoint}`)
+    const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/${endpoint}`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const job = await res.json()
     if (job.hasJob) {
@@ -596,24 +659,66 @@ async function handleCollectJob(job) {
   }
 }
 
-// 탭 로드 완료 대기
+// 탭 로드 완료 대기 — 이벤트 구동 방식 (500ms 폴링 제거)
 function waitForTabLoad(tabId, timeout) {
   return new Promise((resolve, reject) => {
-    const start = Date.now()
-    const check = () => {
-      chrome.tabs.get(tabId, (tab) => {
-        if (chrome.runtime.lastError) return reject(new Error('탭 접근 실패'))
-        if (tab.status === 'complete') return resolve()
-        if (Date.now() - start > timeout) return reject(new Error('탭 로드 타임아웃'))
-        setTimeout(check, 500)
-      })
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener)
+      reject(new Error('탭 로드 타임아웃'))
+    }, timeout)
+    const listener = (id, info) => {
+      if (id === tabId && info.status === 'complete') {
+        clearTimeout(timer)
+        chrome.tabs.onUpdated.removeListener(listener)
+        resolve()
+      }
     }
-    check()
+    chrome.tabs.onUpdated.addListener(listener)
+    // 이미 complete인 경우 즉시 resolve
+    chrome.tabs.get(tabId, (tab) => {
+      if (!chrome.runtime.lastError && tab?.status === 'complete') {
+        clearTimeout(timer)
+        chrome.tabs.onUpdated.removeListener(listener)
+        resolve()
+      }
+    })
   })
 }
 
 function wait(ms) {
   return new Promise(r => setTimeout(r, ms))
+}
+
+// GSShop 카테고리 렌더링 동적 대기 — "(숫자)" 패턴 3개 이상 출현 시 즉시 리턴
+async function waitForGSShopContent(tabId, timeoutMs = 8000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const [check] = await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN',
+        func: () => (document.body?.innerText?.match(/\(\d[\d,]*\)/g) || []).length >= 3
+      })
+      if (check?.result) return true
+    } catch {}
+    await wait(100)
+  }
+  return false
+}
+
+// GSShop 검색 결과 렌더링 동적 대기 — 상품 링크 1개 이상 출현 시 즉시 리턴
+async function waitForGSShopSearchResults(tabId, timeoutMs = 6000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const [check] = await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN',
+        func: () => document.querySelectorAll('a[href*="prd.gs"], a[href*="deal.gs"]').length >= 1
+      })
+      if (check?.result) return true
+    } catch {}
+    await wait(100)
+  }
+  return false
 }
 
 // ==================== KREAM 검색 큐 폴링 ====================
@@ -739,44 +844,36 @@ async function handleSearchJob(job) {
 
 // ==================== chrome.alarms 기반 폴링 엔진 ====================
 
-// 집중 폴링 모드 — job 발견 시 3초 간격 최대 20회 (약 60초)
+// 집중 폴링 모드 — job 발견 시 0.5초 간격 최대 120회 (약 60초)
 let focusPollActive = false
 async function runFocusPoll() {
   if (focusPollActive) return
   focusPollActive = true
-  console.log('[KREAM] 집중 폴링 모드 진입 (3초 간격, 최대 20회)')
+  console.log('[수집] 집중 폴링 모드 진입 (0.5초 간격, 최대 120회)')
   let emptyCount = 0
-  while (emptyCount < 20) {
-    const hadCollect = await pollCollectOnce()
-    const hadSearch = await pollSearchOnce()
+  while (emptyCount < 120) {
+    // KREAM/AI소싱 폴링 비활성화
     const hadSourcing = await pollSourcingOnce()
-    const hadAi = await pollAiSourcingOnce()
-    if (hadCollect || hadSearch || hadSourcing || hadAi) {
+    if (hadSourcing) {
       emptyCount = 0
     } else {
       emptyCount++
     }
-    if (emptyCount < 20) await wait(3000)
+    if (emptyCount < 120) await wait(500)
   }
   focusPollActive = false
-  console.log('[KREAM] 집중 폴링 종료 → alarm 대기 모드 (30초 주기)')
+  console.log('[수집] 집중 폴링 종료 → alarm 대기 모드 (30초 주기)')
 }
 
 // alarm 트리거 시 1회 폴링 — job 있으면 집중 모드 진입, 없으면 카운트 증가
 async function runPollCycle() {
-  const hadCollect = await pollCollectOnce()
-  const hadSearch = await pollSearchOnce()
+  // KREAM(pollCollectOnce, pollSearchOnce), AI소싱(pollAiSourcingOnce) 폴링 비활성화 — 401 오류 방지
   const hadSourcing = await pollSourcingOnce()
-  const hadAi = await pollAiSourcingOnce()
-  if (hadCollect || hadSearch || hadSourcing || hadAi) {
+  if (hadSourcing) {
     emptyPollCount = 0
     runFocusPoll()
-  } else {
-    emptyPollCount++
-    if (emptyPollCount >= MAX_EMPTY_POLLS) {
-      stopCollectPolling()
-    }
   }
+  // 자동중지 제거 — 확장앱이 켜져 있는 한 항상 폴링 (혜택가 수집용)
 }
 
 // alarm 이벤트 핸들러
@@ -791,21 +888,33 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // 수집 폴링 — job 없으면 5분 후 자동 중지, job 있으면 자동 재시작
 let emptyPollCount = 0
-const MAX_EMPTY_POLLS = 10 // 30초 × 10 = 5분간 빈 결과 → 중지
+let quickPollTimer = null
+const MAX_EMPTY_POLLS = 300 // 1초 × 300 = 5분간 빈 결과 → 중지
 
 function startCollectPolling() {
   emptyPollCount = 0
   chrome.alarms.get('collectPoll', (alarm) => {
     if (!alarm) {
       chrome.alarms.create('collectPoll', { periodInMinutes: 0.5 })
-      console.log('[수집] 폴링 시작 (30초 주기)')
+      console.log('[수집] alarm 등록 (30초/실제 1분 백업)')
     }
   })
+  // setInterval 1초 보조 폴링 — 서비스 워커 활성 중 빠른 응답
+  if (!quickPollTimer) {
+    quickPollTimer = setInterval(() => {
+      if (!focusPollActive) runPollCycle()
+    }, 1_000)
+    console.log('[수집] 폴링 시작 (1초 주기 + alarm 백업)')
+  }
   runPollCycle()
 }
 
 function stopCollectPolling() {
   chrome.alarms.clear('collectPoll')
+  if (quickPollTimer) {
+    clearInterval(quickPollTimer)
+    quickPollTimer = null
+  }
   console.log('[수집] 폴링 중지 (빈 결과 5분 연속)')
 }
 
@@ -834,7 +943,7 @@ async function pollBalanceCheckRequest() {
   ]
   for (const url of urls) {
     try {
-      const r = await fetch(url)
+      const r = await apiFetch(url)
       if (r.ok) {
         const data = await r.json()
         if (data.requested) {
@@ -854,16 +963,17 @@ chrome.alarms.get('balanceCheckPoll', (alarm) => {
   }
 })
 
-// 설치/업데이트/시작 시 — 수집 폴링은 시작하지 않음 (서버에서 수집 요청 시에만 시작)
-chrome.runtime.onInstalled.addListener(() => {})
-chrome.runtime.onStartup.addListener(() => {})
+// 설치/업데이트/시작 시 — 수집 폴링 자동 시작
+chrome.runtime.onInstalled.addListener(() => { startCollectPolling() })
+chrome.runtime.onStartup.addListener(() => { startCollectPolling() })
+startCollectPolling()
 
 // ==================== AI소싱 큐 폴링 ====================
 
 // AI소싱 큐는 /api/v1/samba/ai-sourcing/ 경로 사용 (proxy 아님)
 async function pollAiSourcingOnce() {
   try {
-    const res = await fetch(`${PROXY_URL}/api/v1/samba/ai-sourcing/collect-queue`)
+    const res = await apiFetch(`${PROXY_URL}/api/v1/samba/ai-sourcing/collect-queue`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const job = await res.json()
     if (job.hasJob) {
@@ -880,7 +990,7 @@ async function pollAiSourcingOnce() {
 
 // AI소싱 결과 전송도 별도 경로
 async function postAiSourcingResult(body) {
-  await fetch(`${PROXY_URL}/api/v1/samba/ai-sourcing/collect-result`, {
+  await apiFetch(`${PROXY_URL}/api/v1/samba/ai-sourcing/collect-result`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1113,26 +1223,320 @@ async function handleAiSourcingJob(job) {
   }
 }
 
-// ==================== 통합 소싱 큐 폴링 (ABCmart, GrandStage, OKmall, 롯데ON, GSShop) ====================
+// ==================== 통합 소싱 큐 폴링 (ABCmart, GrandStage, REXMONDE, 롯데ON, GSShop) ====================
 
-function pollSourcingOnce() {
-  return pollOnce('sourcing/collect-queue', handleSourcingJob, '소싱', 'url')
+const SOURCING_MAX_CONCURRENT = 5
+
+async function pollSourcingOnce() {
+  const jobs = []
+  for (let i = 0; i < SOURCING_MAX_CONCURRENT; i++) {
+    try {
+      const res = await apiFetch(`${PROXY_URL}${API_PREFIX}/sourcing/collect-queue`)
+      if (!res.ok) break
+      const job = await res.json()
+      if (!job.hasJob) break
+      console.log(`[소싱] ${job.url || '작업 수신'} (${jobs.length + 1}/${SOURCING_MAX_CONCURRENT})`)
+      jobs.push(job)
+    } catch { break }
+  }
+  if (jobs.length === 0) return false
+  if (jobs.length === 1) {
+    await handleSourcingJob(jobs[0])
+  } else {
+    console.log(`[소싱] 병렬 처리: ${jobs.length}개`)
+    await Promise.all(jobs.map(job => handleSourcingJob(job)))
+  }
+  return true
+}
+
+// 롯데ON: sitmNo + 쿠키 기반 pbf API 직접 호출로 혜택가 수집 (탭 불필요)
+async function fetchLotteonBenefitPrice(productId, sitmNo) {
+  try {
+    if (!sitmNo) {
+      console.log(`[LOTTEON] pbf 혜택가: sitmNo 없음 — 스킵 (${productId})`)
+      return null
+    }
+
+    // 1. lotteon.com 쿠키 수집
+    const cookies = await chrome.cookies.getAll({ domain: '.lotteon.com' })
+    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ')
+    if (!cookieStr) {
+      console.log(`[LOTTEON] pbf 혜택가: 쿠키 없음 — 스킵 (${productId})`)
+      return null
+    }
+
+    // 2. pbf API 호출 (수동 Cookie 헤더 — 서비스워커에서 credentials:'include' 무효)
+    const pbfResp = await fetch(`https://pbf.lotteon.com/product/v2/detail/search/base/sitm/${sitmNo}`, {
+      headers: {
+        'Cookie': cookieStr,
+        'Accept': 'application/json, text/plain, */*',
+        'Origin': 'https://www.lotteon.com',
+        'Referer': 'https://www.lotteon.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      }
+    })
+    const pbfData = await pbfResp.json()
+    const data = pbfData.data || {}
+    const priceInfo = data.priceInfo || {}
+    const slPrc = parseInt(priceInfo.slPrc || 0)
+    const immdDc = parseInt(priceInfo.immdDcAplyTotAmt || 0)
+    const adtnDc = parseInt(priceInfo.adtnDcAplyTotAmt || 0)
+
+    let benefitPrice = 0
+    let salePrice = slPrc
+    if (slPrc > 0 && (immdDc > 0 || adtnDc > 0)) {
+      benefitPrice = slPrc - immdDc - adtnDc
+      if (benefitPrice <= 0 || benefitPrice >= slPrc) benefitPrice = 0
+    }
+
+    console.log(`[LOTTEON] pbf 혜택가: ${productId} slPrc=${slPrc}, immdDc=${immdDc}, adtnDc=${adtnDc}, benefit=${benefitPrice}`)
+
+    if (benefitPrice > 0) {
+      return {
+        success: true,
+        site_product_id: productId,
+        sale_price: salePrice,
+        best_benefit_price: benefitPrice,
+        source_site: 'LOTTEON',
+      }
+    }
+    // immdDc=0 → 쿠키 인증 안 됐을 가능성 → null 반환하여 DOM 폴백
+    return null
+  } catch (err) {
+    console.error('[LOTTEON] pbf 혜택가 실패:', err.message)
+    return null
+  }
+}
+
+// ABCmart/GrandStage: 쿠키 기반 info API 직접 호출로 혜택가 수집 (탭 불필요)
+async function fetchAbcmartBenefitPrice(productId, site) {
+  try {
+    // 기존 a-rt.com 탭에서 info API 호출 (페이지 컨텍스트 = 세션+인증 자동 포함)
+    const tabs = await chrome.tabs.query({ url: '*://*.a-rt.com/*' })
+    if (!tabs.length) {
+      console.log(`[${site}] maxBenefitCoupon: a-rt.com 탭 없음 → DOM 폴백 (${productId})`)
+      return null
+    }
+
+    const tabId = tabs[0].id
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: async (prdtNo) => {
+        try {
+          const resp = await fetch(`/product/info?prdtNo=${prdtNo}`, {
+            credentials: 'include',
+            headers: { 'Accept': 'application/json' }
+          })
+          const data = await resp.json()
+          if (!data || !data.prdtName) return null
+          const pi = data.productPrice || {}
+          return {
+            name: (data.prdtName || '').trim(),
+            salePrice: parseInt(pi.sellAmt || 0),
+            normalAmt: parseInt(pi.normalAmt || 0),
+            coupons: data.maxBenefitCoupon || data.coupon || [],
+          }
+        } catch (e) {
+          return { error: e.message }
+        }
+      },
+      args: [productId],
+    })
+
+    const apiData = result?.result
+    if (!apiData || apiData.error || !apiData.salePrice) {
+      console.log(`[${site}] maxBenefitCoupon: 탭 내 API 실패 (${productId})`, apiData?.error || '')
+      return null
+    }
+
+    const { name, salePrice, normalAmt, coupons } = apiData
+    let totalDiscount = 0
+    for (const c of coupons) {
+      totalDiscount += parseInt(c.dscntAmt || 0)
+    }
+
+    let benefitPrice = totalDiscount > 0 ? salePrice - totalDiscount : 0
+    if (benefitPrice <= 0 || benefitPrice >= salePrice) benefitPrice = 0
+
+    console.log(`[${site}] maxBenefitCoupon: ${productId} sale=${salePrice}, discount=${totalDiscount}, benefit=${benefitPrice}`)
+    console.log(`[${site}] maxBenefitCoupon 상세:`, JSON.stringify(coupons))
+
+    if (benefitPrice > 0) {
+      return {
+        success: true,
+        site_product_id: productId,
+        name: (data.prdtName || '').trim(),
+        original_price: normalAmt || salePrice,
+        sale_price: salePrice,
+        best_benefit_price: benefitPrice,
+        source_site: site,
+      }
+    }
+    return null
+  } catch (err) {
+    console.error(`[${site}] maxBenefitCoupon 실패:`, err.message)
+    return null
+  }
 }
 
 // 소싱 작업 처리 — 탭 열기 → DOM 파싱 → 결과 전송
 async function handleSourcingJob(job) {
   let tabId = null
   try {
-    // 패션플러스: 상세페이지 lazy 컨텐츠 로딩을 위해 active:true 필요
-    const needsActive = job.type === 'detail' && job.site === 'FashionPlus'
-    const tab = await chrome.tabs.create({ url: job.url, active: needsActive })
+    // active:true 필요: SPA 상세(JS렌더링 필수), 카테고리스캔
+    const tab = await chrome.tabs.create({ url: job.url, active: false })
     tabId = tab.id
-    await waitForTabLoad(tabId, 30000)
-    await wait(needsActive ? 5000 : 4000) // 패션플러스 상세는 렌더링 시간 추가
+    await waitForTabLoad(tabId, 15000)
+
+    // GSShop: 동적 DOM 감지 (고정 8초 → 평균 2~3초)
+    if (job.type === 'category-scan' && job.site === 'GSShop') {
+      await waitForGSShopContent(tabId, 8000)
+    } else if (job.type === 'search' && job.site === 'GSShop') {
+      await waitForGSShopSearchResults(tabId, 6000)
+    } else {
+      await wait(5000) // SPA 렌더링 대기
+    }
 
     let result = null
-    if (job.type === 'search') {
-      result = await extractSearchResults(tabId, job.site)
+    if (job.type === 'category-scan' && job.site === 'GSShop') {
+      // GS샵 카테고리 스캔: 검색 결과 페이지에서 카테고리 분포 파싱
+      // 동적 대기 완료 — 고정 대기 제거
+
+      const [scanResult] = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: () => {
+          const categories = []
+          const seen = new Set()
+          const debugInfo = { url: location.href, title: document.title }
+
+          // innerText에서 "이름 (숫자)" 패턴을 전역 탐색
+          // DOM 구조에 의존하지 않는 가장 안정적인 방법
+          const bodyText = document.body?.innerText || ''
+          const lines = bodyText.split('\n')
+          for (const line of lines) {
+            const trimmed = line.replace(/\s+/g, ' ').trim()
+            const match = trimmed.match(/^(.+?)\s*\(([\d,]+)\)\s*$/)
+            if (!match) continue
+            const name = match[1].trim()
+            const count = parseInt(match[2].replace(/,/g, ''), 10)
+            // 탭 항목(전체상품, TV상품, 백화점) 및 노이즈 제외
+            if (count <= 0 || seen.has(name)) continue
+            if (['전체상품', 'TV상품', '백화점', '추천순'].includes(name)) continue
+            if (name.includes('검색결과')) continue
+            if (name.length > 30 || name.length < 2) continue
+            seen.add(name)
+            categories.push({ name, count, categoryCode: name, href: '' })
+          }
+
+          // href 보강: 카테고리명과 일치하는 a 태그에서 href 추출
+          if (categories.length > 0) {
+            const allLinks = document.querySelectorAll('a[href]')
+            for (const link of allLinks) {
+              const linkText = link.textContent.replace(/\s+/g, ' ').trim()
+              for (const cat of categories) {
+                if (linkText.includes(cat.name) && linkText.includes(`(${cat.count.toLocaleString()}`)) {
+                  cat.href = link.getAttribute('href') || ''
+                  try {
+                    const url = new URL(cat.href, location.origin)
+                    cat.categoryCode = url.searchParams.get('cls') || url.searchParams.get('sectCd') || cat.name
+                  } catch {}
+                  break
+                }
+              }
+            }
+          }
+
+          // 백화점 탭 전체 상품 수
+          let total = 0
+          for (const line of lines) {
+            const t = line.replace(/\s+/g, ' ').trim()
+            const m = t.match(/백화점\s*\(([\d,]+)\)/)
+            if (m) { total = parseInt(m[1].replace(/,/g, ''), 10); break }
+          }
+          if (total === 0 && categories.length > 0) {
+            total = categories.reduce((s, c) => s + c.count, 0)
+          }
+
+          debugInfo.categoryCount = categories.length
+          debugInfo.bodyTextLength = bodyText.length
+          debugInfo.sampleLines = lines.filter(l => l.includes('(')).slice(0, 10).map(l => l.trim().slice(0, 50))
+
+          return { success: categories.length > 0, categories, total, debugInfo }
+        }
+      })
+      result = scanResult?.result || { success: false, categories: [], total: 0, debugInfo: {} }
+      console.log(`[소싱] GSShop 카테고리 스캔: ${result.categories?.length || 0}개 카테고리, total=${result.total}`)
+      console.log(`[소싱] GSShop 디버그:`, JSON.stringify(result.debugInfo || {}))
+    } else if (job.type === 'search' && job.site === 'GSShop') {
+      // GS샵: 페이지네이션 반복 수집
+      const maxCount = job.maxCount || 999
+      const allProducts = []
+      const seenIds = new Set()
+      let pageNum = 1
+      const maxPages = Math.ceil(maxCount / 60) + 1
+
+      while (allProducts.length < maxCount && pageNum <= maxPages) {
+        if (pageNum > 1) {
+          const eh = btoa(JSON.stringify({ pageNumber: pageNum, selected: 'opt-page' }))
+          const nextUrl = new URL(job.url)
+          nextUrl.searchParams.set('eh', eh)
+          await chrome.tabs.update(tabId, { url: nextUrl.toString() })
+          await waitForTabLoad(tabId, 15000)
+          await waitForGSShopSearchResults(tabId, 5000)
+        }
+
+        const pageResult = await extractSearchResults(tabId, job.site, 999)
+        const pageProducts = pageResult?.products || []
+
+        if (pageProducts.length === 0) break
+
+        let newCount = 0
+        for (const p of pageProducts) {
+          if (!seenIds.has(p.site_product_id)) {
+            seenIds.add(p.site_product_id)
+            allProducts.push(p)
+            newCount++
+          }
+        }
+
+        console.log(`[소싱] GSShop 페이지 ${pageNum}: +${newCount}건 (총 ${allProducts.length}건)`)
+        if (newCount === 0) break
+
+        pageNum++
+      }
+
+      result = { success: true, products: allProducts.slice(0, maxCount), total: allProducts.length }
+    } else if (job.type === 'search') {
+      result = await extractSearchResults(tabId, job.site, job.maxCount || 999)
+    } else if (job.type === 'detail' && job.site === 'LOTTEON') {
+      // DOM 파싱으로 "나의 혜택가" 수집
+      result = await extractDetailData(tabId, job.site, job.productId)
+      // 혜택가 미수집 시 3초 대기 후 재시도 (렌더링 지연 대비)
+      if (!result?.best_benefit_price) {
+        console.log(`[LOTTEON] 혜택가 미수집 — 3초 후 재시도: ${job.productId}`)
+        await wait(3000)
+        result = await extractDetailData(tabId, job.site, job.productId)
+      }
+      if (result?.best_benefit_price) {
+        console.log(`[LOTTEON] DOM 혜택가: ${job.productId} → ${result.best_benefit_price}`)
+      } else {
+        console.log(`[LOTTEON] 혜택가 없음 (로그인 필요?): ${job.productId}`)
+      }
+    } else if (job.type === 'detail' && (job.site === 'ABCmart' || job.site === 'GrandStage')) {
+      // ABCmart/GrandStage SPA 렌더링 대기 후 최대혜택가 파싱
+      result = await extractDetailData(tabId, job.site, job.productId)
+      if (!result?.best_benefit_price) {
+        console.log(`[${job.site}] 혜택가 미수집 — 3초 후 재시도: ${job.productId}`)
+        await wait(3000)
+        result = await extractDetailData(tabId, job.site, job.productId)
+      }
+      if (result?.best_benefit_price) {
+        console.log(`[${job.site}] DOM 혜택가: ${job.productId} → ${result.best_benefit_price}`)
+      } else {
+        console.log(`[${job.site}] 혜택가 없음: ${job.productId}`)
+      }
     } else if (job.type === 'detail') {
       result = await extractDetailData(tabId, job.site, job.productId)
     }
@@ -1151,11 +1555,11 @@ async function handleSourcingJob(job) {
 }
 
 // 검색 결과 DOM 파싱 — 범용 상품 카드 추출
-async function extractSearchResults(tabId, site) {
+async function extractSearchResults(tabId, site, maxCount = 999) {
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: (siteName) => {
+    func: (siteName, maxItems) => {
       const products = []
       const seen = new Set()
 
@@ -1163,23 +1567,73 @@ async function extractSearchResults(tabId, site) {
       const linkPatterns = {
         'ABCmart': /\/product\?prdtNo=(\d+)/,
         'GrandStage': /\/product\?prdtNo=(\d+)/,
-        'OKmall': /\/products\/detail\/(\d+)/,
+        'REXMONDE': /\/products\/detail\/(\d+)/,
         'LOTTEON': /\/product\/productDetail[^"]*spdNo=(\d+)/,
-        'GSShop': /\/prd\/prd\.gs\?prdid=(\d+)/,
+        'GSShop': /\/(?:prd\/prd\.gs\?prdid|deal\/deal\.gs\?dealNo)=(\d+)/,
         'ElandMall': /\/goods\/goods\.action\?goodsNo=(\d+)/,
         'SSF': /\/goods\/([A-Z0-9]+)/,
       }
       const pattern = linkPatterns[siteName]
       if (!pattern) return { success: false, products: [], total: 0 }
 
-      // 모든 a 태그에서 상품 링크 찾기
-      document.querySelectorAll('a[href]').forEach(link => {
+      // 모든 a 태그에서 상품 링크 찾기 (GSShop: 컨테이너 스코핑)
+      let allLinks
+      if (siteName === 'GSShop') {
+        const container = document.querySelector('#searchPrdList .prd-list') || document.querySelector('.prd-list') || document
+        allLinks = container.querySelectorAll('a[href]')
+      } else {
+        allLinks = document.querySelectorAll('a[href]')
+      }
+      for (const link of allLinks) {
+        if (products.length >= maxItems) break  // 수량 제한
         const match = link.href.match(pattern)
-        if (!match || seen.has(match[1])) return
+        if (!match || seen.has(match[1])) continue
         seen.add(match[1])
 
         // 가장 가까운 상품 카드 컨테이너
         const card = link.closest('[class*="product"]') || link.closest('[class*="item"]') || link.closest('li') || link
+
+        // GSShop 전용 파싱 (prd-name, price-info 등 고유 클래스 활용)
+        if (siteName === 'GSShop') {
+          const nameEl = card.querySelector('dt.prd-name') || card.querySelector('.prd-name')
+          const priceEl = card.querySelector('dd.price-info') || card.querySelector('.price-info')
+          const imgEl = card.querySelector('.prd-img img') || card.querySelector('img')
+
+          const name = nameEl?.textContent?.trim() || ''
+          let image = imgEl?.src || imgEl?.getAttribute('data-src') || imgEl?.getAttribute('data-original') || ''
+          if (image.startsWith('//')) image = 'https:' + image
+          // GS샵 이미지 고해상도 변환 (250px → 800px)
+          if (image.includes('asset.m-gs.kr') && image.includes('/250')) {
+            image = image.replace('/250', '/800')
+          }
+
+          let salePrice = 0
+          let originalPrice = 0
+          if (priceEl) {
+            const priceText = priceEl.textContent || ''
+            const nums = priceText.match(/[\d,]+/g)?.map(n => parseInt(n.replace(/,/g, ''))).filter(n => n > 100) || []
+            if (nums.length >= 2) {
+              salePrice = Math.min(...nums)
+              originalPrice = Math.max(...nums)
+            } else if (nums.length === 1) {
+              salePrice = nums[0]
+              originalPrice = nums[0]
+            }
+          }
+
+          if (name || salePrice > 0) {
+            products.push({
+              site_product_id: match[1],
+              name: name || `GSShop ${match[1]}`,
+              brand: '',
+              original_price: originalPrice,
+              sale_price: salePrice,
+              images: image ? [image] : [],
+              source_site: siteName,
+            })
+          }
+          continue
+        }
 
         // 이미지
         const imgEl = card.querySelector('img')
@@ -1222,11 +1676,11 @@ async function extractSearchResults(tabId, site) {
             source_site: siteName,
           })
         }
-      })
+      }
 
       return { success: true, products, total: products.length }
     },
-    args: [site]
+    args: [site, maxCount]
   })
 
   return result?.result || { success: false, products: [], total: 0 }
@@ -1338,6 +1792,124 @@ async function extractDetailData(tabId, site, productId) {
           options, material, color, manufacturer, origin,
           care_instructions: careInstructions, quality_guarantee: qualityGuarantee,
           shipping_fee: shippingFee,
+        }
+      }
+
+      // ── 롯데ON 전용 파싱 (렌더된 DOM에서 프로모션가/혜택가 추출) ──
+      if (siteName === 'LOTTEON') {
+        let salePrice = 0
+        let originalPrice = 0
+        let benefitPrice = 0
+        let name = ''
+        let brand = ''
+
+        const nameEl = document.querySelector('h3[class*="product"], [class*="tit_product"], [class*="product-name"], [class*="pdp-title"]')
+        name = nameEl?.textContent?.trim() || document.querySelector('meta[property="og:title"]')?.content || ''
+
+        const brandEl = document.querySelector('[class*="brand"] a, [class*="brand-name"]')
+        brand = brandEl?.textContent?.trim() || ''
+
+        const bodyText = document.body?.innerText || ''
+
+        // "나의 혜택가" 추출
+        const benefitMatch = bodyText.match(/([\d,]+)\s*원\s*나의\s*혜택가/)
+        if (benefitMatch) {
+          benefitPrice = parseInt(benefitMatch[1].replace(/,/g, ''), 10)
+        }
+
+        // 프로모션 판매가
+        const promoMatch = bodyText.match(/(\d+)%\s+([\d,]+)\s*원/)
+        if (promoMatch) {
+          salePrice = parseInt(promoMatch[2].replace(/,/g, ''), 10)
+        }
+
+        // 정가
+        const delEl = document.querySelector('del, s, [class*="origin"] [class*="price"], [class*="before"] [class*="price"]')
+        if (delEl) {
+          const delNum = delEl.textContent.replace(/[^0-9]/g, '')
+          if (delNum) originalPrice = parseInt(delNum, 10)
+        }
+        if (!originalPrice) originalPrice = salePrice
+
+        // 옵션 (사이즈) + 실재고
+        const options = []
+        document.querySelectorAll('[class*="option"] li, [class*="option"] button, select option').forEach(el => {
+          const t = el.textContent.trim()
+          if (!t || t === '선택하세요.' || t.length > 50) return
+          const isSoldOut = t.includes('품절')
+          const stockMatch = t.match(/(\d+)\s*개\s*남음/)
+          let stock = 0
+          if (isSoldOut) stock = 0
+          else if (stockMatch) stock = parseInt(stockMatch[1], 10)
+          else stock = 1
+          const cleanName = t.replace(/\[품절\]\s*/g, '').replace(/\s*\d+개\s*남음.*/, '').replace(/\s*\(품절임박\)/, '').trim()
+          if (cleanName) {
+            options.push({ name: cleanName, stock, isSoldOut })
+          }
+        })
+
+        const images = []
+        document.querySelectorAll('[class*="thumb"] img, [class*="swiper"] img, [class*="slide"] img').forEach(img => {
+          let src = img.src || img.currentSrc || img.getAttribute('data-src') || ''
+          if (src.startsWith('//')) src = 'https:' + src
+          if (src && src.includes('http') && !src.includes('data:') && !images.includes(src)) {
+            images.push(src)
+          }
+        })
+
+        if (name || salePrice > 0) {
+          return {
+            success: true,
+            site_product_id: prdId,
+            name, brand,
+            original_price: originalPrice,
+            sale_price: salePrice || benefitPrice,
+            best_benefit_price: benefitPrice,
+            images: images.slice(0, 9),
+            source_site: siteName,
+            category: '', category1: '', category2: '', category3: '',
+            options,
+          }
+        }
+      }
+
+      // ── ABCmart/GrandStage 전용 파싱 (최대혜택가 추출) ──
+      if (siteName === 'ABCmart' || siteName === 'GrandStage') {
+        const bodyText = document.body?.innerText || ''
+        let benefitPrice = 0
+
+        // "최대 혜택가 70,400원" 또는 "최대혜택가 70,400원" 패턴
+        const benefitMatch = bodyText.match(/최대\s*혜택가\s*([\d,]+)\s*원/)
+        if (benefitMatch) {
+          benefitPrice = parseInt(benefitMatch[1].replace(/,/g, ''), 10)
+        }
+
+        if (benefitPrice > 0) {
+          let name = ''
+          let salePrice = 0
+          let originalPrice = 0
+          const nameEl = document.querySelector('h2[class*="name"], [class*="prd-name"], [class*="product_name"]')
+          name = nameEl?.textContent?.trim() || document.querySelector('meta[property="og:title"]')?.content || ''
+
+          const priceMatch = bodyText.match(/([\d,]+)\s*원\s*\[\d+%\]/)
+          if (priceMatch) salePrice = parseInt(priceMatch[1].replace(/,/g, ''), 10)
+
+          const origMatch = bodyText.match(/([\d,]+)\s*원\s+([\d,]+)\s*원/)
+          if (origMatch) {
+            originalPrice = parseInt(origMatch[1].replace(/,/g, ''), 10)
+            if (!salePrice) salePrice = parseInt(origMatch[2].replace(/,/g, ''), 10)
+          }
+
+          return {
+            success: true,
+            site_product_id: prdId,
+            name,
+            original_price: originalPrice || salePrice,
+            sale_price: salePrice || benefitPrice,
+            best_benefit_price: benefitPrice,
+            images: [],
+            source_site: siteName,
+          }
         }
       }
 
@@ -1571,7 +2143,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           penalty_rate: penData?.penaltyRate ? parseFloat(penData.penaltyRate) : null,
         }
 
-        const resp = await fetch(`${PROXY_URL}/api/v1/samba/monitor/store-scores/update`, {
+        const resp = await apiFetch(`${PROXY_URL}/api/v1/samba/monitor/store-scores/update`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -1598,7 +2170,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const productIds = msg.product_ids || []
     console.log(`[갱신] ${productIds.length}건 갱신 요청 수신`)
     // 현재는 서버에 다시 전달 (KREAM 등 인증 필요 사이트 수집 트리거)
-    fetch(`${PROXY_URL}/api/v1/samba/collector/products/refresh`, {
+    apiFetch(`${PROXY_URL}/api/v1/samba/collector/products/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ product_ids: productIds, auto_retransmit: true }),
@@ -1615,3 +2187,114 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true
   }
 })
+
+// ==================== ABCmart / GrandStage 잔액 전송 ====================
+
+async function sendAbcmartBalance(data) {
+  try {
+    const res = await apiFetch(`${PROXY_URL}/api/v1/samba/sourcing-accounts/sync-balance`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...data, site: data.siteName }),
+    })
+    if (res.ok) {
+      const result = await res.json()
+      console.log(`[잔액] ${data.siteName} 서버 저장 완료:`, result)
+    } else {
+      console.warn(`[잔액] ${data.siteName} 서버 저장 실패: HTTP ${res.status}`)
+    }
+  } catch (e) {
+    console.log(`[잔액] ${data.siteName} 서버 전송 실패 (무시): ${e.message}`)
+  }
+}
+
+// ==================== ABCmart 멤버십 등급 동기화 ====================
+
+async function syncAbcmartMembership(rate, grade) {
+  try {
+    const res = await apiFetch(`${PROXY_URL}/api/v1/samba/sourcing-accounts/sync-membership`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ site_name: 'ABCmart', membership_rate: rate, membership_grade: grade }),
+    })
+    if (res.ok) {
+      console.log(`[ABCmart] 멤버십 서버 저장 완료: ${grade} (${rate}%)`)
+    }
+  } catch (e) {
+    console.log(`[ABCmart] 멤버십 서버 전송 실패 (무시): ${e.message}`)
+  }
+}
+
+// ==================== SSG 판매자등급/평점 스크래핑 ====================
+
+async function scrapeSSGScores() {
+  const SSG_HOME_URL = 'https://po.ssgadm.com/main.ssg'
+  const result = {}
+
+  const allSsgTabs = await chrome.tabs.query({ url: 'https://po.ssgadm.com/*' })
+  const homeTabs = allSsgTabs.filter(t => t.url && t.url.includes('main.ssg'))
+
+  let tabId
+  if (homeTabs.length > 0) {
+    tabId = homeTabs[0].id
+  } else if (allSsgTabs.length > 0) {
+    tabId = allSsgTabs[0].id
+    await chrome.tabs.update(tabId, { url: SSG_HOME_URL, active: true })
+    await new Promise(r => setTimeout(r, 5000))
+  } else {
+    const tab = await chrome.tabs.create({ url: SSG_HOME_URL, active: false })
+    tabId = tab.id
+    await new Promise(r => setTimeout(r, 7000))
+  }
+
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const result = {}
+        const parseGradeVal = (text) => {
+          const m = text.match(/([\d.]+)\s*[%점]/)
+          return m ? m[1] : text.trim()
+        }
+        const rows = document.querySelectorAll('tr')
+        for (const row of rows) {
+          const cells = row.querySelectorAll('td, th')
+          if (cells.length >= 2) {
+            const label = (cells[0].textContent || '').trim()
+            const value = (cells[1].textContent || '').trim()
+            if (label.includes('서비스평점') || label.includes('서비스 평점')) {
+              if (!result.ssg_service_score) { const g = value.match(/([\d.]+)/); result.ssg_service_score = g ? g[1] : value }
+            } else if (label.includes('주문이행')) {
+              if (!result.ssg_order_fulfill) result.ssg_order_fulfill = parseGradeVal(value)
+            } else if (label.includes('출고준수')) {
+              if (!result.ssg_ship_comply) result.ssg_ship_comply = parseGradeVal(value)
+            } else if (label.includes('24시간') || label.includes('답변')) {
+              if (!result.ssg_reply_rate) result.ssg_reply_rate = parseGradeVal(value)
+            } else if (label.includes('판매등급') || label.includes('판매자등급')) {
+              if (!result.ssg_seller_grade) { const g = value.match(/([A-Z가-힣]+)/); result.ssg_seller_grade = g ? g[1] : value }
+            }
+          }
+        }
+        if (!result.ssg_service_score) {
+          const fullText = document.body.innerText || ''
+          const patterns = {
+            ssg_service_score: /서비스\s*평점[:\s]*([\d.]+)/,
+            ssg_order_fulfill: /주문이행[:\s]*([\d.]+)/,
+            ssg_ship_comply: /출고준수[:\s]*([\d.]+)/,
+            ssg_reply_rate: /(?:24시간|답변)[:\s]*([\d.]+)/,
+            ssg_seller_grade: /판매(?:자)?등급[:\s]*([A-Z가-힣]+)/,
+          }
+          for (const [key, re] of Object.entries(patterns)) {
+            if (!result[key]) { const m = fullText.match(re); if (m) result[key] = m[1] }
+          }
+        }
+        return result
+      },
+    })
+    Object.assign(result, res.result || {})
+  } catch (e) {
+    console.error(`[SSG스코어] 스크래핑 실패:`, e)
+  }
+
+  return result
+}

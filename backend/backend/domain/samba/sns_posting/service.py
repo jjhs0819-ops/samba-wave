@@ -33,7 +33,16 @@ class SnsPostingService:
         # DB 세션 및 외부 의존성 초기화
         self._session = session
         self._crawler = IssueCrawler()
-        self._writer = AiWriter()
+        self._writer: AiWriter | None = None
+
+    async def _get_writer(self) -> AiWriter:
+        """Gemma API 키를 로드하여 AiWriter 초기화."""
+        if self._writer is None:
+            from backend.domain.samba.ai.gemma_client import _get_gemma_api_key
+
+            api_key = await _get_gemma_api_key(self._session)
+            self._writer = AiWriter(api_key=api_key)
+        return self._writer
 
     # ------------------------------------------------------------------
     # 워드프레스 사이트 관리
@@ -237,7 +246,8 @@ class SnsPostingService:
 
         # AI 글 생성
         try:
-            post_data = await self._writer.generate_post(
+            writer = await self._get_writer()
+            post_data = await writer.generate_post(
                 issue_title=issue_title,
                 issue_description=issue_description,
                 category=category,

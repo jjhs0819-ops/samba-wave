@@ -71,8 +71,6 @@ export default function CategoriesPage() {
   // 카테고리 검색 드롭다운
   const [suggestions, setSuggestions] = useState<string[]>([])
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // 제안 선택 여부 (onBlur의 handleSaveEdit 호출 방지용)
-  const suggestionSelectedRef = useRef(false)
   // 마켓별 카테고리 수
   const [marketCatCounts, setMarketCatCounts] = useState<Record<string, number>>({})
   // 마켓별 AI 리매핑 로딩 상태
@@ -127,12 +125,6 @@ export default function CategoriesPage() {
       setMarketCatCounts(countResult.value)
     }
     setLoading(false)
-
-    // Phase 2: 상품 데이터 백그라운드 로드 (AI 리매핑 등에서 사용)
-    try {
-      const all = await collectorApi.listProducts(0, 100000)
-      if (Array.isArray(all) && all.length > 0) setProducts(all)
-    } catch { /* 백그라운드이므로 무시 */ }
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -194,25 +186,44 @@ export default function CategoriesPage() {
     setSelectedProducts([]); setSelectedPath('')
   }
 
-  // 선택 변경 시 경로 자동 업데이트
+  // 선택 변경 시 경로 업데이트 + 서버에서 상품 20건 조회
+  const [hasMore, setHasMore] = useState(false)
+  const productGridRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     if (!selectedSite && !selectedCat1 && !selectedCat2 && !selectedCat3 && !selectedCat4) {
-      setSelectedProducts([]); setSelectedPath('')
+      setSelectedProducts([]); setSelectedPath(''); setHasMore(false)
       return
     }
     const path = [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4].filter(Boolean)
     setSelectedPath(path.join(' > '))
-    // products 로드 완료 시 선택 상품 업데이트
-    if (products.length > 0) {
-      let filtered = products
-      if (selectedSite) filtered = filtered.filter(p => (p.source_site || '기타') === selectedSite)
-      if (selectedCat1) filtered = filtered.filter(p => p.category1 === selectedCat1)
-      if (selectedCat2) filtered = filtered.filter(p => p.category2 === selectedCat2)
-      if (selectedCat3) filtered = filtered.filter(p => p.category3 === selectedCat3)
-      if (selectedCat4) filtered = filtered.filter(p => p.category4 === selectedCat4)
-      setSelectedProducts(filtered)
+    // 선택된 카테고리의 상품을 서버에서 조회 (20건)
+    const catPath = [selectedCat1, selectedCat2, selectedCat3, selectedCat4].filter(Boolean).join(' > ')
+    if (selectedSite && catPath) {
+      collectorApi.listProducts(0, 20, undefined, selectedSite, catPath).then(data => {
+        if (Array.isArray(data)) {
+          setSelectedProducts(data)
+          setHasMore(data.length >= 20)
+        }
+      }).catch(() => { setSelectedProducts([]); setHasMore(false) })
+    } else {
+      setSelectedProducts([]); setHasMore(false)
     }
-  }, [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4, products])
+  }, [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4])
+
+  const loadMoreProducts = useCallback(() => {
+    if (!hasMore || !selectedSite) return
+    const catPath = [selectedCat1, selectedCat2, selectedCat3, selectedCat4].filter(Boolean).join(' > ')
+    if (!catPath) return
+    collectorApi.listProducts(selectedProducts.length, 20, undefined, selectedSite, catPath).then(data => {
+      if (Array.isArray(data) && data.length > 0) {
+        setSelectedProducts(prev => [...prev, ...data])
+        setHasMore(data.length >= 20)
+      } else {
+        setHasMore(false)
+      }
+    }).catch(() => setHasMore(false))
+  }, [hasMore, selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4, selectedProducts.length])
 
   // ── AI 카테고리 매핑 ──
 
@@ -354,7 +365,7 @@ export default function CategoriesPage() {
         source_category: sourceCategory,
         target_mappings: targetMappings,
       })
-      showAlert(`${Object.keys(targetMappings).length}개 마켓에 카테고리 매핑 저장 완료`, 'success')
+      showAlert(`${Object.keys(targetMappings).length.toLocaleString()}개 마켓에 카테고리 매핑 저장 완료`, 'success')
       setManualModalOpen(false)
       load()
     } catch (e) {
@@ -384,7 +395,7 @@ export default function CategoriesPage() {
         source_category: sourceCategory,
         target_mappings: targetMappings,
       })
-      showAlert(`${Object.keys(targetMappings).length}개 마켓에 카테고리 매핑 저장 완료`, 'success')
+      showAlert(`${Object.keys(targetMappings).length.toLocaleString()}개 마켓에 카테고리 매핑 저장 완료`, 'success')
       setAiModalOpen(false)
     } catch (e) {
       const msg = e instanceof Error ? e.message : '저장 실패'
@@ -454,8 +465,18 @@ export default function CategoriesPage() {
       try {
         const existing = mappings.find(m => m.source_site === selectedSite && m.source_category === sourceCategory)
         if (existing) {
-          await categoryApi.updateMapping(existing.id, { target_mappings: targetMappings })
-          setMappings(prev => prev.map(m => m.id === existing.id ? { ...m, target_mappings: targetMappings } : m))
+          try {
+            await categoryApi.updateMapping(existing.id, { target_mappings: targetMappings })
+            setMappings(prev => prev.map(m => m.id === existing.id ? { ...m, target_mappings: targetMappings } : m))
+          } catch {
+            // PUT 실패 시 새로 생성
+            await categoryApi.createMapping({
+              source_site: selectedSite,
+              source_category: sourceCategory,
+              target_mappings: targetMappings,
+            })
+            load()
+          }
         } else {
           await categoryApi.createMapping({
             source_site: selectedSite,
@@ -643,9 +664,19 @@ export default function CategoriesPage() {
       try {
         await categoryApi.updateMapping(id, { target_mappings: updatedTargets })
         setMappings(prev => prev.map(m => m.id === id ? { ...m, target_mappings: updatedTargets } : m))
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : '수정 실패'
-        showAlert(`매핑 수정 실패: ${msg}`, 'error')
+      } catch {
+        // PUT 실패 시 새로 생성
+        try {
+          await categoryApi.createMapping({
+            source_site: row.source_site,
+            source_category: row.source_category,
+            target_mappings: updatedTargets,
+          })
+          load()
+        } catch (e2) {
+          const msg = e2 instanceof Error ? e2.message : '수정 실패'
+          showAlert(`매핑 수정 실패: ${msg}`, 'error')
+        }
       }
     }
     setEditingCell(null)
@@ -673,9 +704,19 @@ export default function CategoriesPage() {
       try {
         await categoryApi.updateMapping(id, { target_mappings: updatedTargets })
         setMappings(prev => prev.map(m => m.id === id ? { ...m, target_mappings: updatedTargets } : m))
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : '수정 실패'
-        showAlert(`매핑 수정 실패: ${msg}`, 'error')
+      } catch {
+        // PUT 실패 시 새로 생성
+        try {
+          await categoryApi.createMapping({
+            source_site: row.source_site,
+            source_category: row.source_category,
+            target_mappings: updatedTargets,
+          })
+          load()
+        } catch (e2) {
+          const msg = e2 instanceof Error ? e2.message : '수정 실패'
+          showAlert(`매핑 수정 실패: ${msg}`, 'error')
+        }
       }
     }
     setEditingCell(null)
@@ -703,7 +744,7 @@ export default function CategoriesPage() {
       const blockedCount = ids.length - deletableIds.length
 
       if (deletableIds.length === 0) {
-        showAlert(`전체 ${ids.length}건 모두 등록 상품이 있어 삭제할 수 없습니다`, 'error')
+        showAlert(`전체 ${ids.length.toLocaleString()}건 모두 등록 상품이 있어 삭제할 수 없습니다`, 'error')
         return
       }
 
@@ -812,9 +853,23 @@ export default function CategoriesPage() {
             }
           } else {
             const updatedTargets = { ...row.target_mappings, [market]: newCat }
-            await categoryApi.updateMapping(row.id, { target_mappings: updatedTargets })
-            const idx = updatedMappings.findIndex(m => m.id === row.id)
-            if (idx >= 0) updatedMappings[idx] = { ...updatedMappings[idx], target_mappings: updatedTargets }
+            try {
+              await categoryApi.updateMapping(row.id, { target_mappings: updatedTargets })
+              const idx = updatedMappings.findIndex(m => m.id === row.id)
+              if (idx >= 0) updatedMappings[idx] = { ...updatedMappings[idx], target_mappings: updatedTargets }
+            } catch {
+              // PUT 실패 시 새로 생성
+              const created = await categoryApi.createMapping({
+                source_site: row.source_site,
+                source_category: row.source_category,
+                target_mappings: updatedTargets,
+              })
+              if (created && typeof created === 'object' && 'id' in created) {
+                const idx = updatedMappings.findIndex(m => m.id === row.id)
+                if (idx >= 0) updatedMappings[idx] = created as typeof row
+                else updatedMappings.push(created as typeof row)
+              }
+            }
           }
           successCount++
         }
@@ -828,36 +883,6 @@ export default function CategoriesPage() {
     setLastAiUsage({ calls: successCount, tokens: successCount * 1800, cost: successCount * COST_PER_CALL_KRW, date: new Date().toLocaleTimeString() })
     setMarketAiProgress({ market, current: total, total, success: successCount, fail: errorCount })
     if (skippedCount > 0) showAlert(`${skippedCount}건은 이미 매핑되어 건너뜀`, 'info')
-  }
-
-  // ── 불량 카테고리 감지 & 재매핑 ──
-  const [fixBadLoading, setFixBadLoading] = useState(false)
-  const [fixBadResult, setFixBadResult] = useState<{
-    detected: number; fixed: number; remapped: number;
-    bad_list: { source_site: string; source_category: string; bad_markets: Record<string, string> }[];
-    errors: string[]; message: string
-  } | null>(null)
-
-  const handleFixBadMappings = async () => {
-    setFixBadLoading(true)
-    setFixBadResult(null)
-    try {
-      const result = await categoryApi.fixBadMappings()
-      setFixBadResult(result)
-      if (result.detected === 0) {
-        showAlert('불량 카테고리가 없습니다.', 'success')
-      } else {
-        showAlert(result.message, 'success')
-        // 매핑 목록 갱신
-        const refreshed = await categoryApi.listMappings() as MappingRow[]
-        setMappings(refreshed)
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : '실패'
-      showAlert(`불량 매핑 수정 실패: ${msg}`, 'error')
-    } finally {
-      setFixBadLoading(false)
-    }
   }
 
   // ESM 크로스매핑 복사 (지마켓→옥션)
@@ -962,7 +987,7 @@ export default function CategoriesPage() {
       <div style={{ background: 'rgba(255,140,0,0.05)', border: '1px solid rgba(255,140,0,0.25)', borderRadius: '8px', padding: '0.875rem 1.25rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
         <span style={{ fontSize: '0.8125rem', color: '#888', flex: 1 }}>
           {selectedPath
-            ? `선택: ${selectedPath} (${selectedProducts.length}개) — AI가 마켓별 카테고리를 추천합니다`
+            ? `선택: ${selectedPath} (${selectedProducts.length.toLocaleString()}개) — AI가 마켓별 카테고리를 추천합니다`
             : '카테고리 선택 시 단건 매핑, 미선택 시 전체 미매핑 자동 처리'}
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
@@ -994,7 +1019,7 @@ export default function CategoriesPage() {
               cursor: filteredMappings.length === 0 ? 'not-allowed' : 'pointer',
               whiteSpace: 'nowrap',
             }}
-          >매핑 일괄 삭제 ({filteredMappings.length})</button>
+          >매핑 일괄 삭제 ({filteredMappings.length.toLocaleString()})</button>
         </div>
       </div>
 
@@ -1090,47 +1115,14 @@ export default function CategoriesPage() {
       {/* 매핑 현황 테이블 — 드릴다운 선택에 동적 반응 */}
       {(mappings.length > 0 || isLeafCategory) && (
         <div style={{ marginBottom: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, margin: 0 }}>
-              매핑 현황{' '}
-              <span style={{ fontSize: '0.875rem', fontWeight: 400, color: '#888' }}>
-                ({filteredMappings.length === mappings.length
-                  ? `총 ${mappings.length}건`
-                  : `${filteredMappings.length}건 / 전체 ${mappings.length}건`})
-              </span>
-            </h3>
-            <button
-              onClick={handleFixBadMappings}
-              disabled={fixBadLoading}
-              title="도서/음반·식품 등 패션과 무관한 카테고리로 잘못 매핑된 항목을 자동 감지하여 재매핑합니다"
-              style={{
-                padding: '0.375rem 0.875rem',
-                fontSize: '0.8125rem',
-                fontWeight: 600,
-                background: fixBadLoading ? '#333' : 'rgba(255,107,107,0.12)',
-                border: `1px solid ${fixBadLoading ? '#444' : 'rgba(255,107,107,0.35)'}`,
-                borderRadius: '6px',
-                color: fixBadLoading ? '#666' : '#FF6B6B',
-                cursor: fixBadLoading ? 'not-allowed' : 'pointer',
-              }}
-            >{fixBadLoading ? '감지 & 재매핑 중...' : '불량 카테고리 재매핑'}</button>
-          </div>
-          {/* 불량 재매핑 결과 요약 */}
-          {fixBadResult && fixBadResult.detected > 0 && (
-            <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: 'rgba(255,107,107,0.08)', border: '1px solid rgba(255,107,107,0.25)', borderRadius: '6px', fontSize: '0.8125rem' }}>
-              <div style={{ color: '#FF6B6B', fontWeight: 600, marginBottom: '0.375rem' }}>
-                불량 감지: {fixBadResult.detected}건 → 초기화: {fixBadResult.fixed}건 → 재매핑: {fixBadResult.remapped}건
-              </div>
-              {fixBadResult.bad_list.slice(0, 5).map((item, i) => (
-                <div key={i} style={{ color: '#999', fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                  [{item.source_site}] {item.source_category} → {Object.entries(item.bad_markets).map(([m, v]) => `${m}: ${v}`).join(', ')}
-                </div>
-              ))}
-              {fixBadResult.bad_list.length > 5 && (
-                <div style={{ color: '#666', fontSize: '0.75rem', marginTop: '0.25rem' }}>...외 {fixBadResult.bad_list.length - 5}건</div>
-              )}
-            </div>
-          )}
+          <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.75rem' }}>
+            매핑 현황{' '}
+            <span style={{ fontSize: '0.875rem', fontWeight: 400, color: '#888' }}>
+              ({filteredMappings.length === mappings.length
+                ? `총 ${mappings.length.toLocaleString()}건`
+                : `${filteredMappings.length.toLocaleString()}건 / 전체 ${mappings.length.toLocaleString()}건`})
+            </span>
+          </h3>
           <div style={{ ...card, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead>
@@ -1209,7 +1201,7 @@ export default function CategoriesPage() {
                               e.currentTarget.style.borderColor = 'transparent'
                             }
                           }}
-                          title={`${MARKET_LABELS[mk]} AI 리매핑 (${filteredMappings.length}건)`}
+                          title={`${MARKET_LABELS[mk]} AI 리매핑 (${filteredMappings.length.toLocaleString()}건)`}
                         >{marketAiLoading === mk ? '...' : 'AI'}</button>
                         <button
                           onClick={() => handleMarketColumnDelete(mk)}
@@ -1225,7 +1217,7 @@ export default function CategoriesPage() {
                           }}
                           onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
                           onMouseLeave={e => { e.currentTarget.style.color = '#444' }}
-                          title={`${MARKET_LABELS[mk]} 카테고리 일괄 삭제 (${filteredMappings.length}건)`}
+                          title={`${MARKET_LABELS[mk]} 카테고리 일괄 삭제 (${filteredMappings.length.toLocaleString()}건)`}
                         >✕</button>
                       </div>
                       <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? '#51CF66' : '#FF6B6B' }}>
@@ -1315,10 +1307,6 @@ export default function CategoriesPage() {
                                   onFocus={e => updateDropdownPos(e.target)}
                                   onBlur={() => {
                                     setTimeout(() => {
-                                      if (suggestionSelectedRef.current) {
-                                        suggestionSelectedRef.current = false
-                                        return
-                                      }
                                       if (editingCell?.id === row.id && editingCell?.market === mk) {
                                         handleSaveEdit()
                                       }
@@ -1409,7 +1397,6 @@ export default function CategoriesPage() {
               onMouseDown={e => {
                 e.preventDefault()
                 if (suggestions.length > 0) {
-                  suggestionSelectedRef.current = true
                   handleSelectSuggestion(s)
                 } else if (inlineFocusedMarket) {
                   setManualEdits(prev => ({ ...prev, [inlineFocusedMarket]: s }))
@@ -1438,29 +1425,38 @@ export default function CategoriesPage() {
           <div style={{ marginBottom: '1rem', fontSize: '0.875rem' }}>
             <span style={{ color: '#888' }}>[선택카테고리]</span>{' '}
             <span style={{ color: '#FF8C00', fontWeight: 600 }}>{selectedPath}</span>{' '}
-            <span style={{ color: '#888' }}>상품 {selectedProducts.length}개</span>
+            <span style={{ color: '#888' }}>상품 {selectedProducts.length.toLocaleString()}개</span>
           </div>
 
           {selectedProducts.length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
-              {selectedProducts.slice(0, 100).map(p => (
-                <div key={p.id} style={{ ...card, overflow: 'hidden', cursor: 'pointer' }}
-                  onClick={() => router.push(`/samba/products?highlight=${p.id}`)}
-                >
-                  {/* 이미지 */}
-                  <div style={{ width: '100%', aspectRatio: '1', background: '#1A1A1A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                    {p.images && p.images.length > 0 ? (
-                      <img src={p.images[0]} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-                    ) : (
-                      <span style={{ color: '#555', fontSize: '2rem' }}>🖼</span>
-                    )}
+            <div ref={productGridRef}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
+                {selectedProducts.map(p => (
+                  <div key={p.id} style={{ ...card, overflow: 'hidden', cursor: 'pointer' }}
+                    onClick={() => router.push(`/samba/products?highlight=${p.id}`)}
+                  >
+                    {/* 이미지 */}
+                    <div style={{ width: '100%', aspectRatio: '1', background: '#1A1A1A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                      {p.images && p.images.length > 0 ? (
+                        <img src={p.images[0]} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                      ) : (
+                        <span style={{ color: '#555', fontSize: '2rem' }}>🖼</span>
+                      )}
+                    </div>
+                    <div style={{ padding: '0.75rem' }}>
+                      <p style={{ fontSize: '0.8125rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.25rem' }}>{p.name}</p>
+                      <p style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FF8C00' }}>₩{(p.sale_price || 0).toLocaleString()}</p>
+                    </div>
                   </div>
-                  <div style={{ padding: '0.75rem' }}>
-                    <p style={{ fontSize: '0.8125rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.25rem' }}>{p.name}</p>
-                    <p style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FF8C00' }}>₩{(p.sale_price || 0).toLocaleString()}</p>
-                  </div>
+                ))}
+              </div>
+              {hasMore && (
+                <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                  <button onClick={loadMoreProducts} style={{ padding: '0.5rem 2rem', background: '#333', color: '#ccc', border: '1px solid #555', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8125rem' }}>
+                    더 보기
+                  </button>
                 </div>
-              ))}
+              )}
             </div>
           )}
         </div>
@@ -1537,7 +1533,7 @@ export default function CategoriesPage() {
                   {/* 에러 목록 */}
                   {bulkResult.errors.length > 0 && (
                     <div style={{ padding: '0.75rem 1rem', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px' }}>
-                      <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#EF4444', marginBottom: '0.5rem' }}>오류 {bulkResult.errors.length}건</div>
+                      <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#EF4444', marginBottom: '0.5rem' }}>오류 {bulkResult.errors.length.toLocaleString()}건</div>
                       <div style={{ maxHeight: '120px', overflowY: 'auto' }}>
                         {bulkResult.errors.map((err, i) => (
                           <div key={i} style={{ fontSize: '0.75rem', color: '#999', padding: '0.125rem 0' }}>{err}</div>
@@ -1771,7 +1767,7 @@ export default function CategoriesPage() {
                     ))}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.75rem' }}>
-                    선택: {activeMarketTypes.filter(t => bulkSelectedMarkets[t]).length}개 마켓
+                    선택: {activeMarketTypes.filter(t => bulkSelectedMarkets[t]).length.toLocaleString()}개 마켓
                   </div>
                 </div>
               </>
@@ -1808,7 +1804,7 @@ export default function CategoriesPage() {
                     ))}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.75rem' }}>
-                    선택: {marketKeys.filter(mk => aiSelectedMarkets[mk]).length}개 마켓 · 예상 비용 ₩{COST_PER_CALL_KRW}
+                    선택: {marketKeys.filter(mk => aiSelectedMarkets[mk]).length.toLocaleString()}개 마켓 · 예상 비용 ₩{COST_PER_CALL_KRW.toLocaleString()}
                   </div>
                 </div>
               </>

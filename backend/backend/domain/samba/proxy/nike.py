@@ -35,6 +35,122 @@ CAT_MAP = {
     "EQUIPMENT": "장비",
 }
 
+# subTitle 성별 접두사 (길이 내림차순 매칭)
+_GENDER_PREFIXES = [
+    "주니어(남아)",
+    "주니어(여아)",
+    "리틀키즈",
+    "남성용",
+    "여성용",
+    "주니어",
+    "남성",
+    "여성",
+    "여아",
+    "유아",
+    "키즈",
+]
+# 성별 정규화
+_GENDER_NORM = {
+    "남성용": "남성",
+    "여성용": "여성",
+    "주니어(남아)": "주니어",
+    "주니어(여아)": "주니어",
+    "여아": "주니어",
+    "리틀키즈": "키즈",
+    "유아": "키즈",
+}
+
+# subTitle 끝 키워드 → 세부 카테고리 매핑
+SUBTITLE_CAT_KEYWORDS: dict[str, str] = {
+    # 신발
+    "러닝화": "러닝화",
+    "레이싱화": "러닝화",
+    "축구화": "축구화",
+    "농구화": "농구화",
+    "테니스화": "테니스화",
+    "골프화": "골프화",
+    "슬라이드": "슬라이드",
+    "샌들": "슬라이드",
+    "신발": "신발",
+    # 상의
+    "티셔츠": "티셔츠",
+    "탑": "티셔츠",
+    "탱크": "티셔츠",
+    "저지": "저지",
+    "폴로": "폴로",
+    "셔츠": "셔츠",
+    "후디": "후디",
+    "후드 재킷": "후디",
+    "후드 미드 레이어": "후디",
+    "스웻셔츠": "후디",
+    "크루": "맨투맨",
+    # 아우터
+    "재킷": "재킷",
+    "파카": "재킷",
+    "패딩 재킷": "패딩",
+    "패딩 조끼": "패딩",
+    "조끼": "패딩",
+    # 하의
+    "팬츠": "팬츠",
+    "조거": "팬츠",
+    "쇼츠": "쇼츠",
+    "드레스": "드레스",
+    "스커트": "스커트",
+    "스코트": "스커트",
+    # 용품
+    "백팩": "가방",
+    "캡": "모자",
+    "삭스": "양말",
+}
+# 긴 키워드부터 매칭 (패딩 재킷 > 재킷)
+_SORTED_CAT_KEYWORDS = sorted(SUBTITLE_CAT_KEYWORDS.keys(), key=len, reverse=True)
+# contains 매칭용 (백팩 세트, 삭스 등)
+_CONTAINS_KEYWORDS = ["백팩", "삭스"]
+
+
+def parse_subtitle(subtitle: str, product_type: str = "") -> tuple[str, str]:
+    """Nike subTitle → (성별, 세부카테고리) 추출.
+
+    예: "남성 로드 러닝화" → ("남성", "러닝화")
+        "천연 잔디 클리트 축구화" → ("", "축구화")
+        "여성 오버사이즈 로고 후디(플러스 사이즈)" → ("여성", "후디")
+    """
+    if not subtitle:
+        return ("", "")
+
+    # 괄호 내용 제거: (와이드), (플러스 사이즈), (21L) 등
+    clean = re.sub(r"\([^)]*\)", "", subtitle).strip()
+
+    # 1. 성별 추출
+    gender = ""
+    rest = clean
+    for g in _GENDER_PREFIXES:
+        if clean.startswith(g + " ") or clean == g:
+            gender = g
+            rest = clean[len(g) :].strip()
+            break
+    gender = _GENDER_NORM.get(gender, gender)
+
+    # "나이키" 브랜드 접두사 제거
+    for prefix in ("나이키 ", "나이키"):
+        if rest.startswith(prefix):
+            rest = rest[len(prefix) :].strip()
+            break
+
+    # 2. 끝 키워드 매칭 (긴 키워드 우선)
+    for kw in _SORTED_CAT_KEYWORDS:
+        if rest.endswith(kw):
+            return (gender, SUBTITLE_CAT_KEYWORDS[kw])
+
+    # 3. 포함 매칭 (백팩 세트 등)
+    for kw in _CONTAINS_KEYWORDS:
+        if kw in rest:
+            return (gender, SUBTITLE_CAT_KEYWORDS[kw])
+
+    # 4. fallback: productType 대분류
+    return (gender, CAT_MAP.get(product_type, product_type))
+
+
 # 나이키 공식 취급주의 안내 (출처: https://www.nike.com/kr/help/a/product-handling)
 NIKE_CARE_INSTRUCTIONS: dict[str, str] = {
     "신발": (
@@ -99,7 +215,8 @@ class NikeClient:
         "https://api.nike.com/discover/product_wall/v1/marketplace/KR/language/ko"
         "/consumerChannelId/d9a5bc42-4b9c-4976-858a-f159cf99c647"
     )
-    PAGE_SIZE = 24
+    # Nike API는 count 값으로 24/50/100만 허용 (그 외 400 에러)
+    PAGE_SIZE = 100
 
     async def search(
         self, keyword: str, page: int = 1, max_count: int = 500
@@ -120,12 +237,14 @@ class NikeClient:
             params: dict[str, Any] = {"q": keyword}
             resp = await client.get(self.SEARCH_URL, params=params, headers=HEADERS)
             resp.raise_for_status()
-            products, total_resources = self._parse_search_data_with_total(resp.text)
+            products, total_resources, first_groupings = (
+                self._parse_search_data_with_total(resp.text)
+            )
             logger.info(
                 f"[Nike] 검색 '{keyword}' 1페이지 → {len(products)}건 (전체 {total_resources}건)"
             )
 
-            if not products or total_resources <= self.PAGE_SIZE:
+            if not products or total_resources <= first_groupings:
                 return {
                     "products": products[:max_count],
                     "total": total_resources,
@@ -137,7 +256,8 @@ class NikeClient:
             encoded_keyword = quote(keyword, safe="")
 
             # 2단계: 추가 페이지를 API로 수집
-            anchor = self.PAGE_SIZE
+            # anchor는 1페이지 실제 groupings 수부터 시작 (HTML은 항상 24개 반환)
+            anchor = first_groupings
             while len(products) < max_count and anchor < total_resources:
                 page_url = (
                     f"{self.PAGE_API_URL}"
@@ -168,9 +288,8 @@ class NikeClient:
                     pages_info = data.get("pages") or {}
                     if pages_info.get("totalResources"):
                         total_resources = pages_info["totalResources"]
-                    page_products = self._parse_api_groupings(
-                        data.get("productGroupings", [])
-                    )
+                    page_groupings = data.get("productGroupings", [])
+                    page_products = self._parse_api_groupings(page_groupings)
                     if not page_products:
                         last_error = f"빈 productGroupings at anchor={anchor}"
                         logger.info(f"[Nike] {last_error}")
@@ -191,7 +310,8 @@ class NikeClient:
                     last_error = f"{type(e).__name__} at anchor={anchor}: {e}"
                     logger.warning(f"[Nike] 페이지 수집 실패 {last_error}")
                     break
-                anchor += self.PAGE_SIZE
+                # anchor는 실제 반환된 groupings 수만큼 증가
+                anchor += len(page_groupings) if page_groupings else self.PAGE_SIZE
                 await asyncio.sleep(0.2)
 
         products = products[:max_count]
@@ -202,31 +322,89 @@ class NikeClient:
             "last_error": last_error,
         }
 
-    async def get_detail(self, style_color: str) -> dict[str, Any]:
-        """상품 상세 조회 — 검색으로 PDP URL 확인 후 PDP 직접 fetch.
+    async def scan_categories(self, keyword: str) -> dict[str, Any]:
+        """키워드 검색 후 카테고리 분포 집계.
 
-        Nike PDP URL은 슬러그 기반이라 styleColor만으로 바로 접근 불가.
-        1단계: 검색으로 pdpUrl.url 추출
-        2단계: PDP 페이지 fetch → selectedProduct 파싱
+        subTitle에서 성별+세부카테고리를 추출하여 세분화된 카테고리를 집계.
+        전체 상품을 수집하여 정확한 분포를 제공한다.
+
+        Returns:
+          {"categories": [...], "total": int, "groupCount": int}
         """
-        # 1단계: 검색으로 PDP URL + 기본 정보(이름) 확인 (첫 페이지만)
-        search_result = await self.search(style_color, max_count=24)
-        products = search_result.get("products", [])
-        base_info: dict[str, Any] = {}
-        pdp_url = None
+        result = await self.search(keyword, max_count=9999)
+        products = result.get("products", [])
+        if not products:
+            return {"categories": [], "total": 0, "groupCount": 0}
+
+        # 색상별(site_product_id) 기준 카운트 — 컬러웨이 각각 1건으로 집계
+        cat_counter: dict[str, int] = {}
         for p in products:
-            if p.get("site_product_id") == style_color:
-                pdp_url = p.get("url")
-                base_info = p
-                break
-        if not pdp_url and products:
-            pdp_url = products[0].get("url")
-            base_info = products[0]
+            c1 = p.get("category1", "")
+            c2 = p.get("category2", "")
+            c3 = p.get("category3", "")
+            if not c1 and not c2 and not c3:
+                continue
+            path = " > ".join([x for x in [c1, c2, c3] if x])
+            # categoryCode: "성별_세분류" (그룹 생성 시 고유키로 사용)
+            code = "_".join([x for x in [c2, c3] if x]) or c1
+            key = f"{code}||{path}||{c1}||{c2}||{c3}"
+            cat_counter[key] = cat_counter.get(key, 0) + 1
+
+        categories = []
+        for key, count in sorted(cat_counter.items(), key=lambda x: -x[1]):
+            code, path, c1, c2, c3 = key.split("||")
+            categories.append(
+                {
+                    "categoryCode": code,
+                    "path": path,
+                    "count": count,
+                    "category1": c1,
+                    "category2": c2,
+                    "category3": c3,
+                }
+            )
+
+        total = sum(c["count"] for c in categories)
+        logger.info(
+            f"[Nike] 카테고리 스캔 완료: '{keyword}' "
+            f"→ {len(categories)}개 카테고리, 총 {total}건"
+        )
+        return {
+            "categories": categories,
+            "total": total,
+            "groupCount": len(categories),
+        }
+
+    async def get_detail(
+        self,
+        style_color: str,
+        pdp_url: str | None = None,
+        base_info: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """상품 상세 조회 — PDP URL이 있으면 바로 fetch, 없으면 검색 후 fetch.
+
+        pdp_url: 검색 결과에서 이미 얻은 PDP URL (있으면 검색 스킵)
+        base_info: 검색 결과 상품 데이터 (이름/가격 보충용)
+        """
+        _base = base_info or {}
+
+        if not pdp_url:
+            # 검색으로 PDP URL + 기본 정보 확인 (pdp_url 없을 때만)
+            search_result = await self.search(style_color, max_count=24)
+            products = search_result.get("products", [])
+            for p in products:
+                if p.get("site_product_id") == style_color:
+                    pdp_url = p.get("url")
+                    _base = p
+                    break
+            if not pdp_url and products:
+                pdp_url = products[0].get("url")
+                _base = products[0]
 
         if not pdp_url:
             return {"error": f"상품 {style_color}의 PDP URL을 찾을 수 없습니다."}
 
-        # 2단계: PDP 직접 fetch → 상세 정보 (이미지, 색상, 제조국)
+        # PDP 직접 fetch → 상세 정보 (이미지, 색상, 제조국)
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
             resp = await client.get(pdp_url, headers=HEADERS)
             resp.raise_for_status()
@@ -234,34 +412,70 @@ class NikeClient:
             if not detail:
                 return {"error": f"상품 {style_color}를 파싱할 수 없습니다."}
 
-        # 3단계: 검색 기본 정보 + PDP 상세 정보 병합
-        # 이름은 검색 결과가 정확 (PDP __NEXT_DATA__에 title 없음)
+        # 검색 기본 정보 + PDP 상세 정보 병합
         result = {**detail}
-        if base_info.get("name"):
-            result["name"] = base_info["name"]
-        if base_info.get("sale_price") and not result.get("sale_price"):
-            result["sale_price"] = base_info["sale_price"]
-        if base_info.get("original_price") and not result.get("original_price"):
-            result["original_price"] = base_info["original_price"]
+        if _base.get("name"):
+            result["name"] = _base["name"]
+        if _base.get("sale_price") and not result.get("sale_price"):
+            result["sale_price"] = _base["sale_price"]
+        if _base.get("original_price") and not result.get("original_price"):
+            result["original_price"] = _base["original_price"]
+
+        # threads API로 사이즈별 실재고 반영
+        try:
+            avail = await self._fetch_availability(style_color)
+            if avail:
+                for opt in result.get("options", []):
+                    gtin = opt.get("gtin", "")
+                    if gtin and gtin not in avail:
+                        opt["stock"] = 0
+                    elif gtin and not avail.get(gtin, False):
+                        opt["stock"] = 0
+        except Exception as e:
+            logger.warning(f"[Nike] 재고 API 실패 {style_color}: {e}")
 
         logger.info(
             f"[Nike] 상세 '{style_color}' → 이미지 {len(result.get('images', []))}장"
         )
         return result
 
+    async def _fetch_availability(self, style_color: str) -> dict[str, bool]:
+        """threads API로 사이즈별 재고 조회 → {gtin: available} 맵 반환."""
+        url = (
+            "https://api.nike.com/product_feed/threads/v3"
+            "?filter=marketplace(KR)"
+            "&filter=language(ko)"
+            "&filter=channelId(d9a5bc42-4b9c-4976-858a-f159cf99c647)"
+            f"&filter=productInfo.merchProduct.styleColor({style_color})"
+        )
+        api_headers = {**HEADERS, "Accept": "application/json"}
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, headers=api_headers)
+            if resp.status_code != 200:
+                return {}
+            data = resp.json()
+        objects = data.get("objects", [])
+        if not objects:
+            return {}
+        pi = objects[0].get("productInfo", [{}])[0]
+        available_gtins = pi.get("availableGtins", [])
+        return {ag["gtin"]: ag.get("available", False) for ag in available_gtins}
+
     @staticmethod
-    def _parse_search_data_with_total(html: str) -> tuple[list[dict[str, Any]], int]:
-        """검색 페이지 __NEXT_DATA__ → (상품 목록, 총 상품수) 반환."""
+    def _parse_search_data_with_total(
+        html: str,
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        """검색 페이지 __NEXT_DATA__ → (상품 목록, 총 groupings 수, 1페이지 groupings 수) 반환."""
         nd_match = re.search(
             r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL
         )
         if not nd_match:
-            return [], 0
+            return [], 0, 0
 
         try:
             nd = json.loads(nd_match.group(1))
         except json.JSONDecodeError:
-            return [], 0
+            return [], 0, 0
 
         wall = (
             nd.get("props", {})
@@ -272,7 +486,7 @@ class NikeClient:
         total_resources = wall.get("pageData", {}).get("totalResources", 0)
         groupings = wall.get("productGroupings", [])
         products = NikeClient._parse_api_groupings(groupings)
-        return products, total_resources
+        return products, total_resources, len(groupings)
 
     @staticmethod
     def _parse_api_groupings(groupings: list[dict]) -> list[dict[str, Any]]:
@@ -294,29 +508,38 @@ class NikeClient:
                 initial_price = prices.get("initialPrice", 0)
                 img_url = images.get("portraitURL", "") or images.get("squarishURL", "")
                 product_code = prod.get("productCode", "")
+                group_key = prod.get("groupKey", product_code)
                 product_type = prod.get("productType", "")
-                category1 = CAT_MAP.get(product_type, product_type)
                 color = display_colors.get("colorDescription", "")
                 url = pdp_url.get("url", "") if isinstance(pdp_url, dict) else ""
+
+                # subTitle 기반 세분류: 성별 + 카테고리
+                gender, sub_cat = parse_subtitle(subtitle, product_type)
+                # category 경로: "남성 > 러닝화" (Nike 제외 — source_site로 충분)
+                cat_parts = [x for x in [gender, sub_cat] if x]
+                category_path = " > ".join(cat_parts) if cat_parts else "Nike"
 
                 products.append(
                     {
                         "site_product_id": product_code,
+                        "group_key": group_key or product_code,
                         "name": name or f"Nike {product_code}",
                         "original_price": initial_price,
                         "sale_price": current_price or initial_price,
                         "images": [img_url] if img_url else [],
                         "brand": "Nike",
                         "source_site": "Nike",
-                        "category": f"Nike > {category1}" if category1 else "Nike",
+                        "source_url": url,
+                        "category": category_path,
                         "category1": "Nike",
-                        "category2": category1,
-                        "category3": "",
+                        "category2": gender,
+                        "category3": sub_cat,
                         "color": color,
-                        "video_url": url,  # 나이키 PDP URL 저장 (영상 없으므로 원문링크용으로 활용)
+                        "video_url": url,
                         "url": url,
                         "options": [],
                         "detail_html": "",
+                        "free_shipping": True,
                     }
                 )
 
@@ -382,8 +605,12 @@ class NikeClient:
             url = (props.get("squarish") or {}).get("url") or (
                 props.get("portrait") or {}
             ).get("url")
-            if url and url not in images:
-                images.append(url)
+            if url:
+                # Nike CDN: t_default → 팔레트 PNG 반환 → strip_exif에서 검정색으로 깨짐
+                # t_PDP_1280_v1 프리셋 사용 → JPEG 반환 → 정상 업로드
+                url = url.replace("/t_default/", "/t_PDP_1280_v1/")
+                if url not in images:
+                    images.append(url)
 
         # 색상/제조국
         color = sp.get("colorDescription", "") or prod_data.get("colorDescription", "")
@@ -397,6 +624,10 @@ class NikeClient:
         # 카테고리/성별
         product_type = sp.get("productType", "") or prod_data.get("productType", "")
         category1 = CAT_MAP.get(product_type, product_type)
+        # subtitle 기반 세분류 (scan_products_from_search와 동일 로직)
+        _sub_gender, _sub_cat = parse_subtitle(subtitle, product_type)
+        # parse_subtitle 실패 시 CAT_MAP fallback
+        _final_cat = _sub_cat or category1
 
         # taxonomyLabels.Gender → 이미 한국어로 제공 ("남성"/"여성"/"키즈" 등)
         taxonomy = prod_data.get("taxonomyLabels") or sp.get("taxonomyLabels") or {}
@@ -414,21 +645,31 @@ class NikeClient:
             }
             gender_kr = gender_map.get(gender_en, gender_en)
 
-        # 사이즈 옵션: productGroups.sizes → localizedLabel + status(ACTIVE=재고있음)
+        # 사이즈 옵션: productGroups.sizes → localizedLabel + GTIN + status
         sizes_data = prod_data.get("sizes") or []
         if sizes_data:
-            options = [
-                {
-                    "size": s.get("localizedLabel", s.get("label", "")),
-                    "stock": 1 if s.get("status") == "ACTIVE" else 0,
-                }
-                for s in sizes_data
-                if s.get("localizedLabel") or s.get("label")
-            ]
+            options = []
+            for s in sizes_data:
+                label = s.get("localizedLabel") or s.get("label", "")
+                if not label:
+                    continue
+                # GTIN 추출 (threads API 재고 매칭용)
+                gtin_list = s.get("gtins") or []
+                gtin = gtin_list[0].get("gtin", "") if gtin_list else ""
+                options.append(
+                    {
+                        "name": label,
+                        "size": label,
+                        "gtin": gtin,
+                        "stock": 99 if s.get("status") == "ACTIVE" else 0,
+                    }
+                )
         else:
             # fallback: HTML label 태그에서 파싱
             size_labels = re.findall(r"<label[^>]*>\s*(\d{3})\s*</label>", html)
-            options = [{"size": s, "stock": 1} for s in dict.fromkeys(size_labels)]
+            options = [
+                {"name": s, "size": s, "stock": 99} for s in dict.fromkeys(size_labels)
+            ]
 
         # 상품 정보 섹션 (featuresAndBenefits, productDetails)
         product_info = prod_data.get("productInfo") or {}
@@ -546,12 +787,11 @@ class NikeClient:
             "images": images,
             "brand": "Nike",
             "source_site": "Nike",
-            "category": f"Nike > {gender_kr} > {category1}".strip(" > ")
-            if gender_kr or category1
-            else "Nike",
+            "category": " > ".join([x for x in [gender_kr, _final_cat] if x]) or "Nike",
             "category1": "Nike",
             "category2": gender_kr,
-            "category3": category1,
+            "category3": _final_cat,
+            "source_url": video_url,
             "color": color,
             "origin": origin,
             "material": material,
@@ -563,4 +803,5 @@ class NikeClient:
             "video_url": video_url,
             "options": options,
             "detail_html": detail_html,
+            "free_shipping": True,
         }

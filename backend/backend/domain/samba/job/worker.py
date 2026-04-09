@@ -10,6 +10,7 @@ import logging
 import threading
 from collections import deque
 from datetime import datetime, timezone
+from typing import Any
 
 from backend.domain.samba.job.model import JobStatus
 
@@ -109,18 +110,26 @@ def get_worker_status() -> dict[str, str | None]:
 
 def _run_collect_in_thread(worker: "JobWorker", job_id: str, payload: dict):
     """별도 스레드에서 독립 이벤트 루프로 수집 실행."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        asyncio.run(worker._execute_collect_isolated(job_id, payload))
+        loop.run_until_complete(worker._execute_collect_isolated(job_id, payload))
     except Exception as e:
         logger.error(f"[잡워커] 수집 스레드 에러: {job_id} — {e}")
+    finally:
+        loop.close()
 
 
 def _run_transmit_in_thread(worker: "JobWorker", job_id: str, payload: dict):
     """별도 스레드에서 독립 이벤트 루프로 전송 실행 — API 요청과 I/O 완전 격리."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        asyncio.run(worker._execute_transmit_isolated(job_id, payload))
+        loop.run_until_complete(worker._execute_transmit_isolated(job_id, payload))
     except Exception as e:
         logger.error(f"[잡워커] 전송 스레드 에러: {job_id} — {e}")
+    finally:
+        loop.close()
 
 
 class JobWorker:
@@ -137,6 +146,9 @@ class JobWorker:
         self._active_types: set[str] = set()  # 현재 실행 중인 잡 타입
         self._active_job_id: str | None = None  # 현재 실행 중인 잡 ID (shutdown 복구용)
         self._poll_count = 0
+        # 검색 결과 캐시: {(site, keyword): (items_list, timestamp)}
+        # 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
+        self._search_cache: dict[tuple[str, str], tuple[list, float]] = {}
 
     async def start(self):
         """무한 루프: pending 잡 조회 → 타입별 병렬 실행."""
@@ -226,36 +238,31 @@ class JobWorker:
                 logger.error(f"[잡워커] 배포 종료 잡 복구 실패: {e}")
 
     async def _poll_once(self) -> bool:
-        """OOM 방지: 한 번에 1개 잡만 실행 (수집+전송 동시 실행 차단)."""
+        """OOM 방지: 한 번에 1개 잡만 실행 (수집+전송 동시 실행 차단).
+
+        FOR UPDATE SKIP LOCKED로 원자적 잡 획득 — 멀티 worker 중복 실행 방지.
+        """
         _worker_status["last_poll"] = datetime.now(UTC).isoformat()
+
+        # OOM 방지: 이미 실행 중인 잡이 있으면 대기
+        if self._active_types:
+            return False
+
         from backend.db.orm import get_write_session
         from backend.domain.samba.job.repository import SambaJobRepository
 
         async with get_write_session() as session:
             repo = SambaJobRepository(session)
-            jobs = await repo.list_pending(limit=5)
-            if not jobs:
+            # 원자적 claim: FOR UPDATE SKIP LOCKED로 1개 잡만 획득
+            job = await repo.claim_pending_job()
+            if not job:
                 return False
 
-            # OOM 방지: 이미 실행 중인 잡이 있으면 대기
-            if self._active_types:
-                for job in jobs:
-                    job.status = JobStatus.PENDING
-                    job.started_at = None
-                await session.commit()
-                return False
-
-            # 1개만 선택, 나머지는 pending으로 되돌림
-            selected = jobs[0]
-            self._active_types.add(selected.job_type)
-            for job in jobs[1:]:
-                job.status = JobStatus.PENDING
-                job.started_at = None
-
+            self._active_types.add(job.job_type)
             await session.commit()
 
-        # 1개 잡만 실행
-        await self._execute_job(selected)
+        # claim된 잡 실행
+        await self._execute_job(job)
         return True
 
     async def _execute_job(self, job):
@@ -286,20 +293,42 @@ class JobWorker:
                     await asyncio.sleep(2)
                     elapsed += 2
                 if thread.is_alive():
-                    logger.error(f"[잡워커] 수집 스레드 10분 타임아웃: {_job_id}")
-                    _add_job_log(_job_id, "수집 타임아웃 (10분)")
-                    # 잡 상태를 failed로 갱신
-                    try:
-                        async with get_write_session() as timeout_session:
-                            from backend.domain.samba.job.repository import (
-                                SambaJobRepository,
-                            )
+                    if self._shutting_down:
+                        # 배포/재시작 중단 — pending으로 복구 (다음 인스턴스에서 재실행)
+                        logger.info(
+                            f"[잡워커] 수집 중 배포 중단 → pending 복구: {_job_id}"
+                        )
+                        _add_job_log(_job_id, "배포 중단 — 재시작 후 자동 재실행")
+                        try:
+                            async with get_write_session() as shutdown_session:
+                                from sqlalchemy import text as _text
 
-                            timeout_repo = SambaJobRepository(timeout_session)
-                            await timeout_repo.fail_job(_job_id, "수집 타임아웃 (10분)")
-                            await timeout_session.commit()
-                    except Exception as te:
-                        logger.error(f"[잡워커] 타임아웃 잡 상태 갱신 실패: {te}")
+                                await shutdown_session.execute(
+                                    _text(
+                                        "UPDATE samba_jobs SET status='pending' WHERE id=:jid AND status='running'"
+                                    ),
+                                    {"jid": _job_id},
+                                )
+                                await shutdown_session.commit()
+                        except Exception as se:
+                            logger.error(f"[잡워커] 배포 중단 pending 복구 실패: {se}")
+                    else:
+                        # 실제 10분 타임아웃
+                        logger.error(f"[잡워커] 수집 스레드 10분 타임아웃: {_job_id}")
+                        _add_job_log(_job_id, "수집 타임아웃 (10분)")
+                        try:
+                            async with get_write_session() as timeout_session:
+                                from backend.domain.samba.job.repository import (
+                                    SambaJobRepository,
+                                )
+
+                                timeout_repo = SambaJobRepository(timeout_session)
+                                await timeout_repo.fail_job(
+                                    _job_id, "수집 타임아웃 (10분)"
+                                )
+                                await timeout_session.commit()
+                        except Exception as te:
+                            logger.error(f"[잡워커] 타임아웃 잡 상태 갱신 실패: {te}")
                 return
 
             # 전송 + 기타: 메인 루프 직접 실행 (인메모리 로그 공유)
@@ -422,7 +451,7 @@ class JobWorker:
         from backend.domain.samba.emergency import clear_emergency_stop
 
         # 이전 취소/비상정지 잔존 플래그 해제 (새 전송은 항상 정상 시작)
-        clear_cancel_transmit()
+        clear_cancel_transmit(job.id)
         clear_emergency_stop()
 
         payload = job.payload or {}
@@ -446,6 +475,12 @@ class JobWorker:
         # 이어하기: 이전 진행 위치를 먼저 읽은 후 진행률 갱신
         # (update_progress가 identity map으로 job.current를 덮어쓰기 때문)
         start_from = job.current or 0
+        # 이어하기 방어: start_from이 total 이상이면 전체 재실행
+        if start_from >= total:
+            logger.warning(
+                f"[잡워커] start_from({start_from}) >= total({total}) — 전체 재실행"
+            )
+            start_from = 0
         await repo.update_progress(job.id, start_from, total)
 
         # 이어하기: 이전 실행의 카운트 복원
@@ -465,7 +500,8 @@ class JobWorker:
 
             try:
                 _is_cancelled = await repo.is_cancelled(job.id)
-            except Exception:
+            except Exception as exc:
+                logger.warning(f"[잡워커] 취소 체크 중 DB 에러: {job.id} — {exc}")
                 _is_cancelled = False
 
             # 배포 종료 감지 — progress 저장 후 정상 탈출 (pending 유지)
@@ -481,11 +517,13 @@ class JobWorker:
                 try:
                     await repo.update_progress(job.id, i, total)
                     await session.commit()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        f"[잡워커] 배포 종료 진행 저장 실패: {job.id} — {exc}"
+                    )
                 return  # fail 아닌 정상 리턴 — graceful_stop이 pending으로 전환
 
-            if is_emergency_stopped() or is_cancel_requested() or _is_cancelled:
+            if is_emergency_stopped() or is_cancel_requested(job.id) or _is_cancelled:
                 cancelled = len(product_ids) - i
                 reason = "비상정지" if is_emergency_stopped() else "취소"
                 _add_job_log(job.id, f"{reason} — {i}건 완료, {cancelled}건 중단")
@@ -493,6 +531,8 @@ class JobWorker:
                     f"[잡워커] 전송 {reason}: {job.id} — {i}건 완료, {cancelled}건 중단"
                 )
                 await repo.fail_job(job.id, f"{reason}: {i}건 완료, {cancelled}건 중단")
+                # 해당 잡 취소 플래그 정리
+                clear_cancel_transmit(job.id)
                 return
 
             # 건별 독립 세션 — greenlet_spawn 방지 (세션 상태 누적 차단)
@@ -619,8 +659,8 @@ class JobWorker:
                     )
                     try:
                         await session.rollback()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning(f"[잡워커] 세션 롤백 실패: {job.id} — {exc}")
 
         # 2차 재시도 — 실패 상품만 (건별 독립 세션)
         retry_success = 0
@@ -723,24 +763,20 @@ class JobWorker:
         site = sf.source_site
 
         # 직접 API 소싱처 (서버 HTTP)
-        DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas"}
+        DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas", "LOTTEON"}
         # 확장앱 기반 소싱처 (소싱큐)
         EXTENSION_SITES = {
             "ABCmart",
             "GrandStage",
-            "OKmall",
-            "LOTTEON",
+            "REXMONDE",
             "GSShop",
             "ElandMall",
             "SSF",
+            "SSG",
         }
 
         if site in DIRECT_API_SITES:
             await self._collect_direct_api(job, sf, session, repo)
-            return
-
-        if site == "SSG":
-            await self._collect_ssg(job, sf, session, repo)
             return
 
         if site in EXTENSION_SITES:
@@ -799,11 +835,8 @@ class JobWorker:
                 _category_filter = qs.get("category", [""])[0]
                 _min_price = int(_min_price_raw) if _min_price_raw.isdigit() else None
                 _max_price = int(_max_price_raw) if _max_price_raw.isdigit() else None
-        except Exception:
-            pass
-
-        # 브랜드 전체수집 모드 판별 (brand= 있고 category= 없으면)
-        _is_brand_exhaustive = bool(_brand_filter) and not _category_filter
+        except Exception as exc:
+            logger.warning(f"[잡워커] 검색 URL 파싱 실패: {exc}")
 
         # 기존 수집 수 확인
         requested_count = sf.requested_count or 100
@@ -829,13 +862,8 @@ class JobWorker:
         search_page = 1
         empty_pages = 0  # 연속 신규 0건 페이지 카운터 (잡 간 오염 방지용 로컬 변수)
         max_pages = 100  # API totalPages 기반으로 동적 조정 (초기값)
-        _search_rl_retries = 0  # 검색 API rate limit 연속 재시도 카운터
-        _failed_ids: list[str] = []  # 전체수집 모드: 실패 상품 재시도용
 
-        while search_page <= max_pages:
-            # 일반 모드: remaining 충족 시 종료 / 전체수집 모드: 페이지 소진까지 계속
-            if not _is_brand_exhaustive and total_saved >= remaining:
-                break
+        while total_saved < remaining and search_page <= max_pages:
             # 취소 확인 (DB에서 상태 재조회)
             from backend.domain.samba.job.model import SambaJob as _SJ
 
@@ -869,48 +897,25 @@ class JobWorker:
                         )
                     logger.info(
                         f"[잡워커] API 총 {api_total_count}건, {api_total_pages}페이지 → max_pages={max_pages}"
-                        + (" [전체수집모드]" if _is_brand_exhaustive else "")
                     )
-                _search_rl_retries = 0  # 검색 성공 시 rate limit 카운터 리셋
                 logger.info(
                     f"[잡워커] 검색 p{search_page}: {len(search_items)}건 (kw={keyword}, brand={_brand_filter})"
                 )
                 if not search_items:
                     break
                 await asyncio.sleep(_site_intervals.get(_ik, 0))
-            except RateLimitError as rle:
-                _search_rl_retries += 1
-                if not _is_brand_exhaustive:
-                    # 카테고리 그룹: rate limit 시 즉시 건너뜀 (전체 보정 그룹이 보정)
-                    logger.warning(
-                        "[잡워커] 검색 rate limit → 카테고리 그룹 스킵 (전체 보정 그룹에서 수집)"
-                    )
-                    break
-                if _search_rl_retries >= 3:
-                    # 전체수집 모드: 3회 연속 rate limit → 30초 대기 후 카운터 리셋
-                    logger.warning(
-                        f"[잡워커] 검색 rate limit {_search_rl_retries}회 → 30초 쿨다운"
-                    )
-                    await asyncio.sleep(30)
-                    _search_rl_retries = 0
-                    continue
-                logger.warning(
-                    f"[잡워커] 검색 rate limit (p{search_page}), {rle.retry_after}초 대기 ({_search_rl_retries}/3)"
-                )
-                await asyncio.sleep(max(rle.retry_after, 10))
-                continue
             except Exception as e:
                 logger.error(f"[잡워커] 검색 실패: {e}")
                 break
 
-            # 중복 필터링 (소싱처 전체 기준 — unique constraint는 source_site+site_product_id)
+            # 중복 필터링 (현재 필터 기준 — 다른 그룹과 독립적으로 수집)
             candidate_ids = [
                 str(item.get("siteProductId", item.get("goodsNo", "")))
                 for item in search_items
             ]
             existing_result = await session.execute(
                 select(CPModel.site_product_id).where(
-                    CPModel.source_site == site,
+                    CPModel.search_filter_id == filter_id,
                     CPModel.site_product_id.in_(candidate_ids),
                 )
             )
@@ -918,8 +923,7 @@ class JobWorker:
 
             targets = []
             for item in search_items:
-                # 전체수집 모드: remaining 제한 없이 모든 신규 상품 수집
-                if not _is_brand_exhaustive and total_saved + len(targets) >= remaining:
+                if total_saved + len(targets) >= remaining:
                     break
                 site_pid = str(item.get("siteProductId", item.get("goodsNo", "")))
                 if site_pid in existing_ids:
@@ -931,11 +935,7 @@ class JobWorker:
                 f"[잡워커] 중복={len(existing_ids)}, 타겟={len(targets)}, 스킵={total_skipped}"
             )
             if not targets:
-                if _is_brand_exhaustive or _brand_filter:
-                    # 브랜드 소싱 그룹: 모든 페이지 끝까지 순회 (카테고리 간 중복 무시)
-                    search_page += 1
-                    continue
-                # 일반 모드: 연속 5페이지 신규 0건이면 조기 종료
+                # 연속 5페이지 신규 0건이면 조기 종료
                 empty_pages += 1
                 if empty_pages >= 5:
                     logger.info(
@@ -950,21 +950,14 @@ class JobWorker:
             from backend.domain.samba.collector.refresher import SITE_CONCURRENCY
             import httpx as _httpx
 
-            # 브랜드 소싱: 동시성 1 (상품당 5~6개 API 호출 → rate limit 방지), 일반: 기존값
-            _concurrency = 1 if _brand_filter else SITE_CONCURRENCY.get("MUSINSA", 5)
-            _collect_sem = asyncio.Semaphore(_concurrency)
+            _collect_sem = asyncio.Semaphore(SITE_CONCURRENCY.get("MUSINSA", 5))
             _collect_results: list[dict | None] = []
             _rate_limited = False
-            _shared_http_kwargs: dict = {"timeout": _httpx.Timeout(15, connect=5.0)}
-            if _collect_proxy:
-                _shared_http_kwargs["proxy"] = _collect_proxy
-            _shared_http = _httpx.AsyncClient(**_shared_http_kwargs)
+            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(15, connect=5.0))
 
             async def _fetch_detail(goods_no: str) -> dict | None:
                 nonlocal total_skipped, _rate_limited
                 if _rate_limited:
-                    if _is_brand_exhaustive:
-                        _failed_ids.append(goods_no)
                     return None
                 async with _collect_sem:
                     try:
@@ -972,11 +965,6 @@ class JobWorker:
                             goods_no, _shared_client=_shared_http
                         )
                         if not detail or not detail.get("name"):
-                            logger.warning(
-                                f"[잡워커] 상세 빈 응답 {goods_no}: name={detail.get('name', 'MISSING') if detail else 'NO_DETAIL'}"
-                            )
-                            if _is_brand_exhaustive:
-                                _failed_ids.append(goods_no)
                             return None
                         if detail.get("saleStatus") == "sold_out" or detail.get(
                             "isOutOfStock"
@@ -991,41 +979,24 @@ class JobWorker:
                             return None
                         return {"goods_no": goods_no, "detail": detail}
                     except RateLimitError as rle:
-                        if _is_brand_exhaustive:
-                            _failed_ids.append(goods_no)
                         current = _site_intervals.get(_ik, 1.0)
                         _site_intervals[_ik] = min(30.0, current * 2)
                         _site_consecutive_errors[_ik] = (
                             _site_consecutive_errors.get("MUSINSA", 0) + 1
                         )
-                        _rl_total = _site_consecutive_errors.get("_rl_total", 0) + 1
-                        _site_consecutive_errors["_rl_total"] = _rl_total
                         if _site_consecutive_errors[_ik] >= 5:
-                            if _is_brand_exhaustive and _rl_total < 20:
-                                logger.warning(
-                                    f"[잡워커] rate limit 5회 → 30초 대기 후 재시도 (누적 {_rl_total}회)"
-                                )
-                                await asyncio.sleep(30)
-                                _site_consecutive_errors[_ik] = 0
-                            else:
-                                _rate_limited = True
+                            _rate_limited = True
                         if rle.retry_after > 0:
                             await asyncio.sleep(rle.retry_after)
                         return None
                     except Exception as e:
-                        if _is_brand_exhaustive:
-                            _failed_ids.append(goods_no)
-                        logger.warning(
-                            f"[잡워커] 수집 실패 {goods_no}: {type(e).__name__}: {e}"
-                        )
+                        logger.warning(f"[잡워커] 수집 실패 {goods_no}: {e}")
                         return None
 
-            try:
-                _collect_results = await asyncio.gather(
-                    *[_fetch_detail(gn) for gn in targets]
-                )
-            finally:
-                await _shared_http.aclose()
+            _collect_results = await asyncio.gather(
+                *[_fetch_detail(gn) for gn in targets]
+            )
+            await _shared_http.aclose()
 
             if _rate_limited:
                 await repo.fail_job(job.id, "소싱처 차단 (연속 rate limit)")
@@ -1035,119 +1006,62 @@ class JobWorker:
             from backend.api.v1.routers.samba.collector_common import _get_services
 
             svc = _get_services(session)
-
-            def _detail_to_product_data(detail: dict, gno: str) -> dict:
-                """상세 정보 → product_data 변환 (수집/재시도 공통)."""
-                if _use_max_discount:
-                    _raw = detail.get("bestBenefitPrice")
-                    cost = (
-                        _raw
-                        if (_raw is not None and _raw > 0)
-                        else (detail.get("salePrice") or 0)
-                    )
-                else:
-                    cost = detail.get("salePrice") or 0
-                rcat = detail.get("category", "") or ""
-                cparts = (
-                    [c.strip() for c in rcat.split(">") if c.strip()] if rcat else []
-                )
-                dhtml = detail.get("detailHtml", "")
-                if not dhtml:
-                    dimgs = detail.get("detailImages") or []
-                    if dimgs:
-                        dhtml = "\n".join(
-                            f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
-                            for img in dimgs
-                        )
-                return _build_product_data(
-                    detail,
-                    gno,
-                    filter_id,
-                    "MUSINSA",
-                    cost,
-                    detail.get("salePrice", 0),
-                    detail.get("originalPrice", 0),
-                    rcat,
-                    cparts,
-                    dhtml,
-                )
-
             for item in _collect_results:
                 if item is None:
                     continue
-                product_data = _detail_to_product_data(item["detail"], item["goods_no"])
+                goods_no = item["goods_no"]
+                detail = item["detail"]
+
+                if _use_max_discount:
+                    _raw_cost = detail.get("bestBenefitPrice")
+                    new_cost = (
+                        _raw_cost
+                        if (_raw_cost is not None and _raw_cost > 0)
+                        else (detail.get("salePrice") or 0)
+                    )
+                else:
+                    new_cost = detail.get("salePrice") or 0
+
+                raw_cat = detail.get("category", "") or ""
+                cat_parts = (
+                    [c.strip() for c in raw_cat.split(">") if c.strip()]
+                    if raw_cat
+                    else []
+                )
+                _sale_price = detail.get("salePrice", 0)
+                _original_price = detail.get("originalPrice", 0)
+
+                raw_detail_html = detail.get("detailHtml", "")
+                if not raw_detail_html:
+                    detail_imgs = detail.get("detailImages") or []
+                    if detail_imgs:
+                        raw_detail_html = "\n".join(
+                            f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+                            for img in detail_imgs
+                        )
+
+                product_data = _build_product_data(
+                    detail,
+                    goods_no,
+                    filter_id,
+                    "MUSINSA",
+                    new_cost,
+                    _sale_price,
+                    _original_price,
+                    raw_cat,
+                    cat_parts,
+                    raw_detail_html,
+                )
                 await svc.create_collected_product(product_data)
                 total_saved += 1
                 await repo.update_progress(
                     job.id, existing_count + total_saved, requested_count
                 )
 
-                if not _is_brand_exhaustive and total_saved >= remaining:
+                if total_saved >= remaining:
                     break
 
             search_page += 1
-
-        # 전체수집 모드: 실패 상품 deque 기반 재투입 (최대 6회, rate limit 시 30초 쿨다운)
-        if _is_brand_exhaustive and _failed_ids:
-            from collections import deque, defaultdict
-
-            # DB에 이미 존재하는 것 제외
-            _retry_check = await session.execute(
-                select(CPModel.site_product_id).where(
-                    CPModel.source_site == site,
-                    CPModel.site_product_id.in_(_failed_ids),
-                )
-            )
-            _already_saved = {row[0] for row in _retry_check.all()}
-            _pending = deque(
-                gn for gn in dict.fromkeys(_failed_ids) if gn not in _already_saved
-            )
-            if _pending:
-                logger.info(
-                    f"[잡워커] 실패 상품 재시도: {len(_pending)}건 (deque 재투입, 최대 6회)"
-                )
-                from backend.api.v1.routers.samba.collector_common import (
-                    _get_services as _gs2,
-                )
-
-                _svc2 = _gs2(session)
-                _retry_saved = 0
-                _attempts: dict[str, int] = defaultdict(int)
-                _max_attempts = 6
-                _retry_deadline = asyncio.get_event_loop().time() + 600  # 최대 10분
-
-                while _pending and asyncio.get_event_loop().time() < _retry_deadline:
-                    gn = _pending.popleft()
-                    _attempts[gn] += 1
-                    await asyncio.sleep(3)
-                    try:
-                        detail = await client.get_goods_detail(gn)
-                        if not detail or not detail.get("name"):
-                            if _attempts[gn] < _max_attempts:
-                                _pending.append(gn)
-                            continue
-                        if detail.get("saleStatus") == "sold_out" or detail.get(
-                            "isOutOfStock"
-                        ):
-                            continue
-                        if _exclude_preorder and detail.get("saleStatus") == "preorder":
-                            continue
-                        if _exclude_boutique and detail.get("isBoutique"):
-                            continue
-                        await _svc2.create_collected_product(
-                            _detail_to_product_data(detail, gn)
-                        )
-                        _retry_saved += 1
-                        total_saved += 1
-                    except RateLimitError as _rle:
-                        if _attempts[gn] < _max_attempts:
-                            _pending.append(gn)
-                        await asyncio.sleep(max(_rle.retry_after, 30))
-                    except Exception as e:
-                        if _attempts[gn] < _max_attempts:
-                            _pending.append(gn)
-                        logger.debug(f"[잡워커] 재시도 실패 {gn}: {e}")
-                logger.info(f"[잡워커] 재시도 완료: {_retry_saved}건 추가 수집")
 
         # 수집 완료 → last_collected_at 갱신 + 요청수를 실제 수집수로 보정
         from sqlalchemy import update as _sa_upd
@@ -1189,6 +1103,8 @@ class JobWorker:
                         "margin_rate": pr.get("marginRate", 15),
                         "shipping_cost": pr.get("shippingCost", 0),
                         "extra_charge": pr.get("extraCharge", 0),
+                        "use_range_margin": pr.get("useRangeMargin", False),
+                        "range_margins": pr.get("rangeMargins", []),
                     }
                 count = await svc.apply_policy_to_filter_products(
                     filter_id, sf.applied_policy_id, policy_data
@@ -1206,278 +1122,6 @@ class JobWorker:
             },
         )
         logger.info(f"[잡워커] 수집 완료: {job.id} ({total_saved}건)")
-
-        # 수집 완료 후 상품 0건인 그룹 자동 삭제
-        if _actual == 0:
-            from sqlalchemy import delete as _sa_del
-
-            # 마켓등록 상품 존재 여부 확인
-            _reg_stmt = (
-                select(_func.count())
-                .where(CPModel.search_filter_id == filter_id)
-                .where(CPModel.registered_accounts.isnot(None))
-            )
-            _reg_count = (await session.execute(_reg_stmt)).scalar() or 0
-            if _reg_count == 0:
-                await session.execute(
-                    _sa_del(CPModel).where(CPModel.search_filter_id == filter_id)
-                )
-                await session.execute(
-                    _sa_del(SambaSearchFilter).where(SambaSearchFilter.id == filter_id)
-                )
-                await session.commit()
-                logger.info(f"[잡워커] 빈 그룹 자동 삭제: {filter_id} (수집 상품 0건)")
-
-    async def _collect_ssg(self, job, sf, session, repo):
-        """SSG 소싱처 배치 수집.
-
-        50개 단위로 분할하여 배치 간 60초 대기 — SSG 차단 회피.
-        requested_count 기준으로 remaining 계산하여 정확한 수량 수집.
-        """
-        from datetime import datetime as _dt
-        from urllib.parse import parse_qs, urlparse
-
-        from sqlalchemy import update as _sa_upd
-        from sqlmodel import func as _func
-        from sqlmodel import select
-
-        from backend.api.v1.routers.samba.collector_common import (
-            _build_product_data,
-            _get_services,
-        )
-        from backend.domain.samba.collector.model import (
-            SambaCollectedProduct as CPModel,
-        )
-        from backend.domain.samba.collector.model import SambaSearchFilter as _SF
-        from backend.domain.samba.job.model import SambaJob as _SJ
-        from backend.domain.samba.proxy.ssg_sourcing import SSGSourcingClient
-
-        SSG_BATCH_SIZE = 50  # 배치당 수집 개수
-        SSG_BATCH_DELAY = 60  # 배치 간 대기 (초)
-        SSG_PAGE_SIZE = 40  # SSG API 한 페이지 크기
-
-        filter_id = sf.id
-        keyword_url = sf.keyword or ""
-        requested_count = sf.requested_count or 100
-
-        # URL에서 키워드·브랜드ID·옵션 파싱
-        preset_brand_ids: list[str] = []
-        try:
-            parsed = urlparse(keyword_url)
-            qs = parse_qs(parsed.query)
-            keyword = qs.get("query", [keyword_url])[0]
-            use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
-            rep_brand = qs.get("repBrandId", [""])[0]
-            if rep_brand:
-                preset_brand_ids = [b for b in rep_brand.split("|") if b]
-        except Exception:
-            keyword = keyword_url
-            use_max_discount = False
-
-        if not keyword:
-            await repo.fail_job(job.id, "SSG 키워드 없음")
-            return
-
-        # 기존 수집 수 확인
-        count_stmt = select(_func.count()).where(CPModel.search_filter_id == filter_id)
-        existing_count = (await session.execute(count_stmt)).scalar() or 0
-        remaining = max(0, requested_count - existing_count)
-
-        if remaining <= 0:
-            await repo.complete_job(
-                job.id,
-                {
-                    "saved": 0,
-                    "message": f"이미 {existing_count}개 수집됨 (요청: {requested_count}개)",
-                },
-            )
-            return
-
-        await repo.update_progress(job.id, existing_count, requested_count)
-
-        client = SSGSourcingClient()
-
-        # ── 기존 수집 ID 미리 조회 (검색 루프에서 신규 여부 즉시 판단) ──
-        existing_result_pre = await session.execute(
-            select(CPModel.site_product_id).where(CPModel.source_site == "SSG")
-        )
-        existing_ids: set[str] = {row[0] for row in existing_result_pre.all()}
-
-        # ── 검색 단계: 신규 상품 remaining개 확보될 때까지 페이지 순회 ──
-        all_items: list[dict] = []
-        targets: list[str] = []
-        skipped_dup = 0
-        skipped_soldout = 0
-
-        for page in range(1, 26):  # 최대 25페이지
-            if len(targets) >= remaining:
-                break
-            try:
-                items = await client.search_products(
-                    keyword=keyword,
-                    page=page,
-                    size=SSG_PAGE_SIZE,
-                    brand_ids=preset_brand_ids,
-                )
-                if not items:
-                    break
-                all_items.extend(items)
-                for item in items:
-                    if len(targets) >= remaining:
-                        break
-                    site_pid = str(item.get("siteProductId", item.get("goodsNo", "")))
-                    if not site_pid:
-                        continue
-                    if site_pid in existing_ids:
-                        skipped_dup += 1
-                        continue
-                    if item.get("isSoldOut", False):
-                        skipped_soldout += 1
-                        continue
-                    targets.append(site_pid)
-                await asyncio.sleep(1.0)  # 검색 페이지 간 딜레이
-            except Exception as e:
-                logger.warning(f"[SSG] 검색 p{page} 실패: {e}")
-                break
-
-        if not all_items:
-            await repo.fail_job(job.id, f"SSG '{keyword}' 검색 결과 없음")
-            return
-
-        filter_msg = (
-            f"[SSG] 후보 {len(all_items)}개 → 중복제거 {skipped_dup}개, 품절제거 {skipped_soldout}개, "
-            f"타겟 {len(targets)}개 (remaining={remaining})"
-        )
-        logger.info(filter_msg)
-        _add_job_log(job.id, filter_msg)
-
-        svc = _get_services(session)
-        total_saved = 0
-        total_batches = max(1, (len(targets) + SSG_BATCH_SIZE - 1) // SSG_BATCH_SIZE)
-
-        # ── 배치 수집 루프 ──
-        for i, item_id in enumerate(targets):
-            # 취소 확인
-            _job_chk = await session.get(_SJ, job.id)
-            if _job_chk and str(_job_chk.status) == "failed":
-                logger.info(f"[SSG] 수집 취소됨: {job.id}")
-                return
-
-            # 배치 경계: SSG_BATCH_SIZE번째마다 대기
-            if i > 0 and i % SSG_BATCH_SIZE == 0:
-                current_batch = i // SSG_BATCH_SIZE
-                logger.info(
-                    f"[SSG] 배치 {current_batch}/{total_batches} 완료 "
-                    f"({total_saved}개 저장), {SSG_BATCH_DELAY}초 대기 중..."
-                )
-                await repo.update_progress(
-                    job.id, existing_count + total_saved, requested_count
-                )
-                await asyncio.sleep(SSG_BATCH_DELAY)
-
-            try:
-                detail = await client.get_product_detail(item_id)
-                if not detail or not detail.get("name"):
-                    await asyncio.sleep(1.0)
-                    continue
-
-                # 가격 계산
-                if use_max_discount:
-                    _raw_cost = detail.get("bestBenefitPrice")
-                    new_cost = (
-                        float(_raw_cost)
-                        if (_raw_cost is not None and _raw_cost > 0)
-                        else float(detail.get("salePrice") or 0)
-                    )
-                else:
-                    new_cost = float(detail.get("salePrice") or 0)
-
-                _sale_price = float(detail.get("salePrice") or 0)
-                _original_price = float(detail.get("originalPrice") or 0) or _sale_price
-
-                raw_cat = detail.get("category", "") or ""
-                cat_parts = (
-                    [c.strip() for c in raw_cat.split(">") if c.strip()]
-                    if raw_cat
-                    else []
-                )
-
-                detail_imgs = detail.get("detailImages") or []
-                raw_detail_html = (
-                    "\n".join(
-                        f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
-                        for img in detail_imgs
-                    )
-                    if detail_imgs
-                    else ""
-                )
-
-                product_data = _build_product_data(
-                    detail,
-                    item_id,
-                    filter_id,
-                    "SSG",
-                    new_cost,
-                    _sale_price,
-                    _original_price,
-                    raw_cat,
-                    cat_parts,
-                    raw_detail_html,
-                )
-
-                from backend.domain.samba.collector.model import (
-                    SambaCollectedProduct as _CP,
-                )
-                from sqlalchemy.exc import IntegrityError as _IE
-
-                product_data = svc.prepare_product_data(product_data)
-                obj = _CP(**product_data)
-                session.add(obj)
-                try:
-                    await session.flush()
-                    total_saved += 1
-                    await repo.update_progress(
-                        job.id, existing_count + total_saved, requested_count
-                    )
-                except _IE:
-                    await session.rollback()
-
-            except Exception as e:
-                logger.warning(f"[SSG] 상세 수집 실패 {item_id}: {e}")
-                try:
-                    await session.rollback()
-                except Exception:
-                    pass
-
-            await asyncio.sleep(1.0)  # 상품별 딜레이
-
-        # ── 수집 완료: last_collected_at 갱신 + 요청수를 실제 수집수로 보정 ──
-        actual_count = (
-            await session.execute(
-                select(_func.count()).where(CPModel.search_filter_id == filter_id)
-            )
-        ).scalar() or 0
-
-        # requested_count는 덮어쓰지 않음 — 사용자가 설정한 목표 수량 유지
-        await session.execute(
-            _sa_upd(_SF)
-            .where(_SF.id == filter_id)
-            .values(last_collected_at=_dt.now(UTC))
-        )
-        await session.commit()
-
-        complete_msg = (
-            f"SSG 수집 완료: {total_saved}개 저장 (총 {actual_count}개) "
-            f"[후보 {len(all_items)}개 / 중복제거 {skipped_dup}개 / 품절제거 {skipped_soldout}개]"
-        )
-        _add_job_log(job.id, complete_msg)
-        await repo.complete_job(
-            job.id,
-            {
-                "saved": total_saved,
-                "message": complete_msg,
-            },
-        )
 
     async def _collect_direct_api(self, job, sf, session, repo):
         """FashionPlus/Nike/Adidas 등 직접 API 소싱처 수집."""
@@ -1497,13 +1141,18 @@ class JobWorker:
 
         # URL에서 키워드/필터 추출
         _search_kwargs: dict = {}
+        _use_max_discount = False
         try:
             from urllib.parse import urlparse, parse_qs
 
             parsed = urlparse(keyword)
             if parsed.scheme:
                 qs = parse_qs(parsed.query)
-                keyword = qs.get("searchWord", [keyword])[0]
+                _use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
+                # 소싱처별 키워드 파라미터: LOTTEON=q, FashionPlus=searchWord
+                keyword = qs.get(
+                    "q", qs.get("keyword", qs.get("searchWord", [keyword]))
+                )[0]
                 # 패션플러스 필터 파라미터
                 for k in (
                     "category1Id",
@@ -1526,8 +1175,8 @@ class JobWorker:
                 # skipDetail 옵션
                 if qs.get("skipDetail", [""])[0] == "1":
                     _search_kwargs["_skip_detail"] = True
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(f"[잡워커] 검색 URL 파싱 실패: {exc}")
 
         # 기존 수집 수 확인
         count_stmt = select(_func.count()).where(CPModel.search_filter_id == filter_id)
@@ -1553,6 +1202,16 @@ class JobWorker:
             from backend.domain.samba.proxy.adidas import AdidasClient
 
             client = AdidasClient()
+        elif site == "LOTTEON":
+            from backend.domain.samba.proxy.lotteon_sourcing import (
+                LotteonSourcingClient,
+            )
+
+            client = LotteonSourcingClient()
+        elif site == "ABCmart":
+            from backend.domain.samba.proxy.abcmart import ARTSourcingClient
+
+            client = ARTSourcingClient()
 
         # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
         if not client:
@@ -1565,8 +1224,30 @@ class JobWorker:
                 await repo.fail_job(job.id, f"미지원 소싱처: {site}")
                 return
             try:
-                _req_id, _future = SourcingQueue.add_search_job(site, keyword)
-                ext_result = await asyncio.wait_for(_future, timeout=60)
+                # sf.keyword가 이미 URL이면 SourcingQueue에 직접 전달 (템플릿 이중 치환 방지)
+                # 상대 URL(/shop/...)도 절대 URL로 변환하여 전달
+                _kw_raw = sf.keyword or ""
+                if _kw_raw.startswith("http"):
+                    _sq_url = _kw_raw
+                elif _kw_raw.startswith("/"):
+                    # 상대 URL → 소싱처 도메인 붙여서 절대 URL 변환
+                    _site_domains = {
+                        "GSShop": "https://www.gsshop.com",
+                        "ABCmart": "https://www.a-rt.com",
+                        "GrandStage": "https://www.a-rt.com",
+                        "REXMONDE": "https://www.okmall.com",
+                        "ElandMall": "https://www.elandmall.com",
+                        "SSF": "https://www.ssfshop.com",
+                        "SSG": "https://www.ssg.com",
+                    }
+                    _domain = _site_domains.get(site, "")
+                    _sq_url = f"{_domain}{_kw_raw}" if _domain else ""
+                else:
+                    _sq_url = ""
+                _req_id, _future = SourcingQueue.add_search_job(
+                    site, keyword, url=_sq_url
+                )
+                ext_result = await asyncio.wait_for(_future, timeout=180)
                 items_list = ext_result.get("products", [])
                 logger.info(
                     f"[잡워커] {site} 확장앱 검색 '{keyword}' → {len(items_list)}건"
@@ -1582,18 +1263,223 @@ class JobWorker:
                 return
             # 확장앱 결과는 검색 API와 동일 포맷으로 처리 (아래 중복필터+저장 로직 공유)
             result = {"products": items_list, "total": len(items_list)}
+            # GSShop: 검색은 확장앱, 상세조회는 서버 HTTP (프록시 3개 로테이션)
+            if site == "GSShop":
+                from backend.core.config import settings as _gs_cfg
+                from backend.domain.samba.proxy.gsshop_sourcing import (
+                    GsShopSourcingClient,
+                )
+
+                _gs_proxies: list[str] = []
+                if _gs_cfg.collect_proxy_url:
+                    _gs_proxies.append(_gs_cfg.collect_proxy_url.strip())
+                if _gs_cfg.proxy_urls:
+                    _gs_proxies.extend(
+                        [p.strip() for p in _gs_cfg.proxy_urls.split(",") if p.strip()]
+                    )
+                client = GsShopSourcingClient(proxy_pool=_gs_proxies or None)
 
         else:
             # 직접 API 검색
+            # LOTTEON: brands 파라미터가 있으면 각 브랜드명을 키워드로 개별 검색해서 합침
+            # (qapi 검색은 키워드 관련도 기반이라 단일 키워드로 검색하면 서브브랜드가 누락됨)
+            _per_brand_keywords: list[str] = []
+            if site == "LOTTEON":
+                try:
+                    parsed_kw = urlparse(sf.keyword or "")
+                    if parsed_kw.scheme:
+                        _qs_kw = parse_qs(parsed_kw.query)
+                        _bp = _qs_kw.get("brands", [""])[0]
+                        if _bp:
+                            _per_brand_keywords = [
+                                b.strip() for b in _bp.split(",") if b.strip()
+                            ]
+                except Exception as exc:
+                    logger.warning(f"[잡워커] LOTTEON 브랜드 파라미터 파싱 실패: {exc}")
+
             try:
-                result = await client.search(
-                    keyword, max_count=max(remaining * 2, 100), **_search_kwargs
-                )
-                items_list = result.get("products", [])
-                logger.info(f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건")
+                if _per_brand_keywords:
+                    items_list = []
+                    seen_pids: set[str] = set()
+                    per_max = max(remaining * 2, 100)
+                    for _kw in _per_brand_keywords:
+                        try:
+                            _r = await client.search(
+                                _kw, max_count=per_max, **_search_kwargs
+                            )
+                            _items = _r.get("products", [])
+                            for _it in _items:
+                                _pid = str(_it.get("site_product_id", ""))
+                                if _pid and _pid in seen_pids:
+                                    continue
+                                if _pid:
+                                    seen_pids.add(_pid)
+                                items_list.append(_it)
+                            logger.info(
+                                f"[잡워커] LOTTEON 브랜드별 검색 '{_kw}' → {len(_items)}건"
+                            )
+                        except Exception as _be:
+                            logger.warning(
+                                f"[잡워커] LOTTEON 브랜드 '{_kw}' 검색 실패: {_be}"
+                            )
+                    result = {"products": items_list, "total": len(items_list)}
+                    logger.info(
+                        f"[잡워커] LOTTEON 브랜드별 검색 합계 → {len(items_list)}건"
+                    )
+                else:
+                    # 카테고리필터가 있는 소싱처: 전체 검색 후 사후 필터링
+                    _max = (
+                        9999
+                        if (site in ("Nike", "ABCmart") and sf.category_filter)
+                        else max(remaining * 2, 100)
+                    )
+                    # 검색 캐시: 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
+                    import time as _time
+
+                    _cache_key = (site, keyword)
+                    _cached = self._search_cache.get(_cache_key)
+                    _cache_ttl = 300  # 5분
+                    if (
+                        _cached
+                        and _time.time() - _cached[1] < _cache_ttl
+                        and site in ("Nike", "ABCmart")
+                        and sf.category_filter
+                    ):
+                        items_list = list(_cached[0])
+                        logger.info(
+                            f"[잡워커] {site} 검색 캐시 히트 '{keyword}' → {len(items_list)}건"
+                        )
+                    else:
+                        result = await client.search(
+                            keyword, max_count=_max, **_search_kwargs
+                        )
+                        items_list = result.get("products", [])
+                        # ABCmart: 그랜드스테이지 결과 병합 (스캔과 동일 범위)
+                        if site == "ABCmart" and sf.category_filter:
+                            from backend.domain.samba.proxy.abcmart import (
+                                ARTSourcingClient as _ART,
+                            )
+
+                            _gs = _ART("10002")
+                            _gs_result = await _gs.search(
+                                keyword, max_count=_max, **_search_kwargs
+                            )
+                            _gs_products = _gs_result.get("products", [])
+                            if _gs_products:
+                                _seen = {
+                                    p.get("site_product_id", "")
+                                    for p in items_list
+                                    if p.get("site_product_id")
+                                }
+                                for p in _gs_products:
+                                    pid = p.get("site_product_id", "")
+                                    if pid and pid not in _seen:
+                                        _seen.add(pid)
+                                        items_list.append(p)
+                                logger.info(
+                                    f"[잡워커] ABCmart+GS 병합: ABC {len(result.get('products', []))}건 "
+                                    f"+ GS {len(_gs_products)}건 → 총 {len(items_list)}건"
+                                )
+                        logger.info(
+                            f"[잡워커] {site} 검색 '{keyword}' → {len(items_list)}건"
+                        )
+                        # 전수 검색 결과 캐시 저장
+                        if (
+                            site in ("Nike", "ABCmart")
+                            and sf.category_filter
+                            and items_list
+                        ):
+                            self._search_cache[_cache_key] = (
+                                items_list,
+                                _time.time(),
+                            )
             except Exception as e:
                 await repo.fail_job(job.id, f"검색 실패: {e}")
                 return
+
+        # Nike: category_filter("성별_세분류")로 검색 결과 사후 필터링
+        if site == "Nike" and sf.category_filter:
+            # "남성_러닝화" → c2="남성", c3="러닝화"
+            # "가방" (언더스코어 없음) → c2="", c3="가방" (성별 없는 카테고리)
+            _parts = sf.category_filter.split("_", 1)
+            if len(_parts) == 2:
+                _filter_c2, _filter_c3 = _parts[0], _parts[1]
+            else:
+                # 언더스코어 없으면 세분류만 (성별 없는 카테고리: 가방, 모자, 양말 등)
+                _filter_c2, _filter_c3 = "", _parts[0]
+            before = len(items_list)
+            filtered = []
+            for item in items_list:
+                ic2 = item.get("category2", "")
+                ic3 = item.get("category3", "")
+                # 성별+세분류 모두 일치해야 통과
+                if _filter_c2 and ic2 != _filter_c2:
+                    continue
+                if _filter_c3 and ic3 != _filter_c3:
+                    continue
+                filtered.append(item)
+            items_list = filtered
+            logger.info(
+                f"[잡워커] Nike 카테고리 필터 {sf.category_filter}: {before}→{len(items_list)}건"
+            )
+
+        # ABCmart: category_filter(카테고리 코드)로 검색 결과 사후 필터링
+        if site == "ABCmart" and sf.category_filter:
+            before = len(items_list)
+            items_list = [
+                item
+                for item in items_list
+                if (item.get("category_code") or "") == sf.category_filter
+            ]
+            logger.info(
+                f"[잡워커] ABCmart 카테고리 필터 {sf.category_filter}: {before}→{len(items_list)}건"
+            )
+
+        # LOTTEON: category_filter(BC코드, 콤마 구분)로 검색 결과 사후 필터링
+        if site == "LOTTEON" and sf.category_filter:
+            bc_set = set(sf.category_filter.split(","))
+            before = len(items_list)
+            items_list = [
+                item for item in items_list if (item.get("scat_no") or "") in bc_set
+            ]
+            logger.info(
+                f"[잡워커] LOTTEON BC코드 필터 {sf.category_filter}: {before}→{len(items_list)}건"
+            )
+
+        # LOTTEON: 선택된 브랜드 목록으로 정확 일치 필터링
+        # URL 파라미터 brands=나이키,나이키 키즈 형태 (콤마 구분)
+        # brands 파라미터 없으면 keyword 단일 브랜드로 사용 (하위 호환)
+        if site == "LOTTEON":
+            from backend.domain.samba.proxy.lotteon_sourcing import _filter_by_brands
+
+            _selected_brands: list[str] = []
+            try:
+                parsed2 = urlparse(sf.keyword or "")
+                if parsed2.scheme:
+                    _qs2 = parse_qs(parsed2.query)
+                    _brands_param = _qs2.get("brands", [""])[0]
+                    if _brands_param:
+                        _selected_brands = [
+                            b.strip() for b in _brands_param.split(",") if b.strip()
+                        ]
+            except Exception as exc:
+                logger.warning(f"[잡워커] LOTTEON 브랜드 필터 파싱 실패: {exc}")
+
+            if not _selected_brands and keyword:
+                _selected_brands = [keyword]
+
+            # 브랜드별로 직접 검색했다면 brand 정확일치 필터를 건너뛴다.
+            # (검색 결과의 brand 필드가 키워드와 다를 수 있으나 키워드 검색 결과를 신뢰)
+            if locals().get("_per_brand_keywords"):
+                _selected_brands = []
+
+            if _selected_brands:
+                before = len(items_list)
+                items_list = _filter_by_brands(items_list, _selected_brands)
+                if before != len(items_list):
+                    logger.info(
+                        f"[잡워커] LOTTEON 브랜드 필터 {_selected_brands}: {before}→{len(items_list)}건"
+                    )
 
         await repo.update_progress(job.id, 0, remaining)
 
@@ -1623,6 +1509,90 @@ class JobWorker:
         svc = _get_services(session)
         total_saved = 0
 
+        # LOTTEON: 저장 전 10건 병렬로 상세 정보 선취합 (1단계 통합 수집)
+        _lotteon_details: dict[str, dict[str, Any]] = {}
+        if site == "LOTTEON" and client:
+            # 중복 제외한 신규 상품만 상세 조회
+            new_items = [
+                it
+                for it in items_list
+                if str(it.get("site_product_id", "")) not in existing_ids
+            ][:remaining]
+            if new_items:
+                logger.info(
+                    f"[잡워커] LOTTEON 상세 선취합 시작: {len(new_items)}건 (10건 병렬)"
+                )
+                BATCH_SIZE = 10
+                for batch_start in range(0, len(new_items), BATCH_SIZE):
+                    batch = new_items[batch_start : batch_start + BATCH_SIZE]
+                    details = await asyncio.gather(
+                        *(
+                            client.get_detail(str(it.get("site_product_id", "")))
+                            for it in batch
+                        ),
+                        return_exceptions=True,
+                    )
+                    for it, det in zip(batch, details):
+                        pid = str(it.get("site_product_id", ""))
+                        if isinstance(det, Exception):
+                            logger.warning(
+                                f"[잡워커] LOTTEON 상세 선취합 실패 {pid}: {det}"
+                            )
+                            continue
+                        if det:
+                            _lotteon_details[pid] = det
+                    done = min(batch_start + BATCH_SIZE, len(new_items))
+                    logger.info(
+                        f"[잡워커] LOTTEON 상세 선취합 [{done}/{len(new_items)}]"
+                    )
+                    await asyncio.sleep(0.3)
+                logger.info(
+                    f"[잡워커] LOTTEON 상세 선취합 완료: {len(_lotteon_details)}/{len(new_items)}건 성공"
+                )
+
+        # Nike: 저장 전 10건 병렬로 상세 정보 선취합
+        _nike_details: dict[str, dict[str, Any]] = {}
+        if site == "Nike" and client:
+            new_items = [
+                it
+                for it in items_list
+                if str(it.get("site_product_id", "")) not in existing_ids
+            ][:remaining]
+            if new_items:
+                logger.info(
+                    f"[잡워커] Nike 상세 선취합 시작: {len(new_items)}건 (10건 병렬)"
+                )
+                _NK_BATCH = 10
+                for batch_start in range(0, len(new_items), _NK_BATCH):
+                    batch = new_items[batch_start : batch_start + _NK_BATCH]
+                    details = await asyncio.gather(
+                        *(
+                            client.get_detail(
+                                str(it.get("site_product_id", "")),
+                                pdp_url=it.get("url") or it.get("source_url"),
+                                base_info=it,
+                            )
+                            for it in batch
+                        ),
+                        return_exceptions=True,
+                    )
+                    for it, det in zip(batch, details):
+                        pid = str(it.get("site_product_id", ""))
+                        if isinstance(det, Exception):
+                            logger.warning(
+                                f"[잡워커] Nike 상세 선취합 실패 {pid}: {det}"
+                            )
+                            continue
+                        if det:
+                            _nike_details[pid] = det
+                    done = min(batch_start + _NK_BATCH, len(new_items))
+                    await repo.update_progress(job.id, done, len(new_items))
+                    logger.info(f"[잡워커] Nike 상세 선취합 [{done}/{len(new_items)}]")
+                    await asyncio.sleep(0.15)
+                logger.info(
+                    f"[잡워커] Nike 상세 선취합 완료: {len(_nike_details)}/{len(new_items)}건 성공"
+                )
+
         for item in items_list:
             if total_saved >= remaining:
                 break
@@ -1645,15 +1615,67 @@ class JobWorker:
             if not p_name and not sale_price:
                 continue
 
-            # 상세 페이지에서 추가 이미지/고시정보 보충 (서버 HTTP 우선)
+            # LOTTEON: search 결과의 scat_no로 카테고리 미리 매핑
+            _lotteon_cat = ""
+            _lotteon_cat1 = ""
+            _lotteon_cat2 = ""
+            _lotteon_cat3 = ""
+            _lotteon_cat4 = ""
+            _lotteon_scat_no = ""
+            if site == "LOTTEON":
+                from backend.domain.samba.proxy.lotteon_sourcing import (
+                    _LOTTEON_SCAT_NAMES,
+                )
+
+                _lotteon_scat_no = item.get("scat_no") or item.get("scatNo") or ""
+                if _lotteon_scat_no:
+                    _cat_name = _LOTTEON_SCAT_NAMES.get(_lotteon_scat_no, "")
+                    if _cat_name:
+                        _lotteon_cat = _cat_name
+                        _parts = _cat_name.split(" > ")
+                        _lotteon_cat1 = _parts[0] if len(_parts) > 0 else ""
+                        _lotteon_cat2 = _parts[1] if len(_parts) > 1 else ""
+                        _lotteon_cat3 = _parts[2] if len(_parts) > 2 else ""
+                        _lotteon_cat4 = _parts[3] if len(_parts) > 3 else ""
+
+            # 상세 페이지에서 추가 이미지/고시정보 보충
             detail = {}
+            # LOTTEON: 선취합된 상세 데이터 사용
+            if site == "LOTTEON" and p_id in _lotteon_details:
+                detail = _lotteon_details[p_id]
+            # Nike: 선취합된 상세 데이터 사용
+            if site == "Nike" and p_id in _nike_details:
+                detail = _nike_details[p_id]
             _skip_detail = _search_kwargs.get("_skip_detail", False)
-            if not _skip_detail:
-                # 서버 HTTP 상세 조회 (빠르고 안정적)
+            # ABCmart 최대혜택가: API에서 쿠폰+멤버십 직접 계산 (확장앱 불필요)
+            if (
+                _use_max_discount
+                and site in ("ABCmart", "GrandStage")
+                and not _skip_detail
+                and not detail
+            ):
                 if hasattr(client, "get_detail"):
                     try:
                         detail = await client.get_detail(p_id)
                         await asyncio.sleep(0.3)
+                    except Exception as e:
+                        logger.warning(f"[잡워커] {site} 서버 상세 실패 {p_id}: {e}")
+            if not _skip_detail and not detail:
+                # 서버 HTTP 상세 조회 (빠르고 안정적)
+                if hasattr(client, "get_detail"):
+                    try:
+                        # Nike: 검색 결과 URL 전달하여 중복 검색 방지
+                        if site == "Nike":
+                            detail = await client.get_detail(
+                                p_id,
+                                pdp_url=item.get("url") or item.get("source_url"),
+                                base_info=item,
+                            )
+                        else:
+                            detail = await client.get_detail(p_id)
+                        await asyncio.sleep(
+                            0.15 if site == "Nike" else (0 if site == "GSShop" else 0.3)
+                        )
                     except Exception as e:
                         logger.warning(f"[잡워커] {site} 서버 상세 실패 {p_id}: {e}")
 
@@ -1663,13 +1685,58 @@ class JobWorker:
             images = (
                 _detail_imgs if len(_detail_imgs) > len(_search_imgs) else _search_imgs
             )
-            cost = int(item.get("cost", 0)) or sale_price
+            # 원가: 최대혜택가 옵션 시 bestBenefitPrice 우선
+            if _use_max_discount:
+                _bbp = int(detail.get("bestBenefitPrice", 0) or 0) or int(
+                    item.get("best_benefit_price", 0) or 0
+                )
+                cost = _bbp if _bbp > 0 else (int(item.get("cost", 0)) or sale_price)
+            else:
+                cost = int(item.get("cost", 0)) or sale_price
             # 배송비 원가 가산 (무료배송 아닌 경우)
             _sourcing_ship_fee = 0
-            if not item.get("free_shipping", False):
+            _is_free_ship = item.get("free_shipping", False) or detail.get(
+                "free_shipping", False
+            )
+            if not _is_free_ship:
                 _sourcing_ship_fee = int(detail.get("shipping_fee", 3000))
                 cost += _sourcing_ship_fee
             _style_code = detail.get("style_code") or item.get("style_code", "")
+            # Nike: scan(item)의 parse_subtitle이 더 구체적이므로 item 우선
+            # 다른 소싱처: 기존 detail 우선 로직 유지
+            if site == "Nike":
+                _cat = item.get("category") or detail.get("category") or _category1_name
+                _cat1 = item.get("category1") or detail.get("category1") or ""
+                _cat2 = item.get("category2") or detail.get("category2") or ""
+                _cat3 = item.get("category3") or detail.get("category3") or ""
+                _cat4 = item.get("category4") or detail.get("category4") or ""
+            else:
+                _cat = (
+                    detail.get("category")
+                    or _lotteon_cat
+                    or item.get("category", "")
+                    or _category1_name
+                )
+                _cat1 = (
+                    detail.get("category1")
+                    or _lotteon_cat1
+                    or item.get("category1", "")
+                )
+                _cat2 = (
+                    detail.get("category2")
+                    or _lotteon_cat2
+                    or item.get("category2", "")
+                )
+                _cat3 = (
+                    detail.get("category3")
+                    or _lotteon_cat3
+                    or item.get("category3", "")
+                )
+                _cat4 = (
+                    detail.get("category4")
+                    or _lotteon_cat4
+                    or item.get("category4", "")
+                )
             product_data = {
                 "source_site": site,
                 "search_filter_id": filter_id,
@@ -1682,13 +1749,20 @@ class JobWorker:
                 "sale_price": sale_price,
                 "cost": cost,
                 "images": images,
-                "options": detail.get("options") or item.get("options", []),
-                "category": detail.get("category")
-                or item.get("category", "")
-                or _category1_name,
-                "category1": detail.get("category1") or item.get("category1", ""),
-                "category2": detail.get("category2") or item.get("category2", ""),
-                "category3": detail.get("category3") or item.get("category3", ""),
+                "options": [
+                    {
+                        **o,
+                        "stock": o.get("stock", 0)
+                        if (o.get("stock") or 0) > 1
+                        else (99 if (o.get("stock") or 0) > 0 else 0),
+                    }
+                    for o in (detail.get("options") or item.get("options", []))
+                ],
+                "category": _cat,
+                "category1": _cat1,
+                "category2": _cat2,
+                "category3": _cat3,
+                "category4": _cat4,
                 "detail_html": detail.get("detail_html") or item.get("detail_html", ""),
                 "detail_images": detail.get("detail_images")
                 if len(detail.get("detail_images") or []) > len(images)
@@ -1697,6 +1771,8 @@ class JobWorker:
                 "color": detail.get("color", ""),
                 "manufacturer": detail.get("manufacturer") or item.get("brand", ""),
                 "origin": detail.get("origin", ""),
+                "sex": detail.get("sex", "") or item.get("category2", "") or "남녀공용",
+                "season": detail.get("season", "") or "사계절",
                 "care_instructions": detail.get("care_instructions", ""),
                 "quality_guarantee": detail.get("quality_guarantee", ""),
                 "sourcing_shipping_fee": _sourcing_ship_fee,
@@ -1760,6 +1836,8 @@ class JobWorker:
                         "margin_rate": pr.get("marginRate", 15),
                         "shipping_cost": pr.get("shippingCost", 0),
                         "extra_charge": pr.get("extraCharge", 0),
+                        "use_range_margin": pr.get("useRangeMargin", False),
+                        "range_margins": pr.get("rangeMargins", []),
                     }
                 count = await svc.apply_policy_to_filter_products(
                     filter_id, sf.applied_policy_id, policy_data
@@ -1773,27 +1851,99 @@ class JobWorker:
             f"[잡워커] {site} 수집 완료: {job.id} ({total_saved}건{policy_msg})"
         )
 
-        # 수집 완료 후 상품 0건인 그룹 자동 삭제
-        if actual_count == 0:
-            from sqlalchemy import delete as _sa_del
-            from backend.domain.samba.collector.model import (
-                SambaSearchFilter as _SF2,
+        # LOTTEON: 수집 완료 후 상세 보강 (품번/제조국/성별/시즌/색상/재질)
+        # 10건 병렬로 get_detail 호출하여 속도 개선
+        # LOTTEON: 선취합 실패분만 보강 (폴백)
+        _enrich_needed = total_saved - len(_lotteon_details) if site == "LOTTEON" else 0
+        if site == "LOTTEON" and _enrich_needed > 0 and client:
+            logger.info(f"[잡워커] LOTTEON 보강(폴백): 선취합 실패 {_enrich_needed}건")
+            enrich_stmt = select(CPModel).where(
+                CPModel.search_filter_id == filter_id,
+                CPModel.source_site == "LOTTEON",
+                CPModel.brand == None,  # noqa: E711 — 선취합 안 된 상품
             )
+            products_to_enrich = (await session.execute(enrich_stmt)).scalars().all()
 
-            # 마켓등록 상품 존재 여부 확인
-            _reg_stmt = (
-                select(_func.count())
-                .where(CPModel.search_filter_id == filter_id)
-                .where(CPModel.registered_accounts.isnot(None))
-            )
-            _reg_count = (await session.execute(_reg_stmt)).scalar() or 0
-            if _reg_count == 0:
-                await session.execute(
-                    _sa_del(CPModel).where(CPModel.search_filter_id == filter_id)
+            BATCH_SIZE = 10
+            enriched = 0
+            total = len(products_to_enrich)
+
+            for batch_start in range(0, total, BATCH_SIZE):
+                batch = products_to_enrich[batch_start : batch_start + BATCH_SIZE]
+                # 10건 동시 get_detail 호출
+                details = await asyncio.gather(
+                    *(client.get_detail(p.site_product_id) for p in batch),
+                    return_exceptions=True,
                 )
-                await session.execute(_sa_del(_SF2).where(_SF2.id == filter_id))
+                for prod, detail in zip(batch, details):
+                    if isinstance(detail, Exception):
+                        logger.warning(
+                            f"[잡워커] LOTTEON 상세 보강 실패 {prod.site_product_id}: {detail}"
+                        )
+                        continue
+                    if not detail:
+                        continue
+                    changed = False
+                    for field in (
+                        "material",
+                        "color",
+                        "origin",
+                        "sex",
+                        "season",
+                        "care_instructions",
+                        "quality_guarantee",
+                    ):
+                        val = detail.get(field, "")
+                        if val and not getattr(prod, field, ""):
+                            setattr(prod, field, val)
+                            changed = True
+                    # 브랜드
+                    brd = detail.get("brand", "")
+                    if brd and not (prod.brand or ""):
+                        prod.brand = brd
+                        changed = True
+                    # 품번 (style_code)
+                    sc = detail.get("style_code") or detail.get("styleCode") or ""
+                    if sc and not (prod.style_code or ""):
+                        prod.style_code = sc
+                        changed = True
+                    # 제조사
+                    mfr = detail.get("manufacturer", "")
+                    if mfr and not (prod.manufacturer or ""):
+                        prod.manufacturer = mfr
+                        changed = True
+                    # 카테고리
+                    cat = detail.get("category", "")
+                    if cat and not (prod.category or "" == "-"):
+                        prod.category = cat
+                        changed = True
+                    # 이미지 보강
+                    d_imgs = detail.get("images") or []
+                    if len(d_imgs) > len(prod.images or []):
+                        prod.images = d_imgs
+                        changed = True
+                    d_detail_imgs = detail.get("detail_images") or []
+                    if d_detail_imgs and not (prod.detail_images or []):
+                        prod.detail_images = d_detail_imgs
+                        changed = True
+                    # 옵션 보강
+                    d_opts = detail.get("options") or []
+                    if d_opts and not (prod.options or []):
+                        prod.options = d_opts
+                        changed = True
+                    if changed:
+                        session.add(prod)
+                        enriched += 1
                 await session.commit()
-                logger.info(f"[잡워커] 빈 그룹 자동 삭제: {filter_id} (수집 상품 0건)")
+                done = min(batch_start + BATCH_SIZE, total)
+                logger.info(
+                    f"[잡워커] LOTTEON 상세 보강 [{done}/{total}] ({enriched}건 업데이트)"
+                )
+                await asyncio.sleep(0.3)
+
+            logger.info(
+                f"[잡워커] LOTTEON 상세 보강 완료: {enriched}/{total}건 업데이트"
+            )
 
     async def _run_stub(self, job, repo, name: str):
         """미구현 잡 타입 스텁."""

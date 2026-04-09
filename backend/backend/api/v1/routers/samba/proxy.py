@@ -44,6 +44,28 @@ from backend.utils.logger import logger
 
 router = APIRouter(prefix="/proxy", tags=["samba-proxy"])
 
+# 확장앱 소싱큐 전용 라우터 — 인증 불필요 (확장앱이 토큰 없이 폴링)
+sourcing_queue_router = APIRouter(prefix="/proxy", tags=["samba-proxy-public"])
+
+
+# ── Cloud Run 외부 IP 확인 ──
+@router.get("/myip")
+async def get_my_ip() -> dict[str, Any]:
+    """Cloud Run 컨테이너의 외부 IP 주소를 반환한다 (IPv4/IPv6)."""
+    result: dict[str, Any] = {}
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            resp = await client.get("https://api.ipify.org?format=json")
+            result["ipv4"] = resp.json().get("ip", "")
+        except Exception:
+            result["ipv4"] = ""
+        try:
+            resp = await client.get("https://api64.ipify.org?format=json")
+            result["ipv6"] = resp.json().get("ip", "")
+        except Exception:
+            result["ipv6"] = ""
+    return result
+
 
 # ── Helper: read setting from DB ──
 
@@ -71,6 +93,63 @@ async def _set_setting(session: AsyncSession, key: str, value: Any) -> None:
 async def _get_musinsa_client(session: AsyncSession) -> MusinsaClient:
     cookie = await _get_setting(session, "musinsa_cookie") or ""
     return MusinsaClient(cookie=str(cookie))
+
+
+# ── 프록시 설정 관리 API ──
+
+
+class ProxyConfigItem(BaseModel):
+    """프록시 설정 아이템."""
+
+    name: str  # 프록시 이름 (ex: "프록시칩 1")
+    url: str = ""  # 프록시 URL (비어있으면 메인 IP)
+    purposes: list[str] = []  # transmit | collect | autotune
+    enabled: bool = True
+
+
+class ProxyConfigPayload(BaseModel):
+    proxies: list[ProxyConfigItem]
+
+
+PROXY_SETTINGS_KEY = "proxy_config"
+
+
+@router.get("/config/proxies")
+async def get_proxy_config(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """프록시 설정 목록 조회."""
+    data = await _get_setting(session, PROXY_SETTINGS_KEY)
+    return data or []
+
+
+@router.put("/config/proxies")
+async def save_proxy_config(
+    payload: ProxyConfigPayload,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """프록시 설정 저장 (전체 교체)."""
+    items = [p.model_dump() for p in payload.proxies]
+    await _set_setting(session, PROXY_SETTINGS_KEY, items)
+    return {"ok": True, "count": len(items)}
+
+
+@router.post("/config/proxies/test")
+async def test_proxy_connection(
+    url: str = Form(...),
+):
+    """프록시 연결 테스트 — httpbin으로 외부 IP 확인."""
+    try:
+        async with httpx.AsyncClient(
+            proxy=url, timeout=httpx.Timeout(10, connect=5)
+        ) as client:
+            resp = await client.get("https://httpbin.org/ip")
+            if resp.status_code == 200:
+                origin = resp.json().get("origin", "")
+                return {"success": True, "ip": origin}
+            return {"success": False, "message": f"HTTP {resp.status_code}"}
+    except Exception as e:
+        return {"success": False, "message": str(e)[:200]}
 
 
 @router.get("/musinsa/ip-check")
@@ -613,7 +692,7 @@ async def lotteon_auth_test(
     if not creds or not isinstance(creds, dict):
         return {"success": False, "message": "롯데ON 설정이 저장되지 않았습니다."}
 
-    api_key = creds.get("apiKey", "")
+    api_key = (creds.get("apiKey", "") or "").strip()
     if not api_key:
         return {"success": False, "message": "API Key가 비어있습니다."}
 
@@ -687,6 +766,86 @@ async def ssg_auth_test(
     except Exception as exc:
         logger.error(f"[SSG] 인증 테스트 실패: {exc}")
         return {"success": False, "message": f"인증 실패: {exc}"}
+
+
+@router.get("/ssg/shipping-policies")
+async def ssg_shipping_policies(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    account_id: str | None = None,
+) -> dict[str, Any]:
+    """SSG 배송비정책 목록 조회."""
+    creds = await _get_setting(session, "store_ssg")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "policies": []}
+    api_key = creds.get("apiKey", "")
+    if not api_key:
+        return {"success": False, "policies": []}
+    try:
+        from backend.domain.samba.proxy.ssg import SSGClient
+
+        client = SSGClient(api_key)
+        result = await client.get_shipping_policies()
+        raw = result.get("result", {})
+        policies_wrapper = raw.get("shppcstPlcys", [{}])
+        policy_list = (
+            policies_wrapper[0].get("shppcstPlcy", []) if policies_wrapper else []
+        )
+        policies = []
+        for p in policy_list:
+            policies.append(
+                {
+                    "shppcstId": p.get("shppcstId", ""),
+                    "feeAmt": p.get("dlvCstAmt", 0),
+                    "prpayCodDivNm": p.get("prpayCodDivNm", ""),
+                    "shppcstAplUnitNm": p.get("shppcstAplUnitNm", ""),
+                    "divCd": p.get("shppcstPlcyDivCd", 0),
+                }
+            )
+        return {"success": True, "policies": policies}
+    except Exception as exc:
+        logger.error(f"[SSG] 배송비정책 조회 실패: {exc}")
+        return {"success": False, "policies": [], "message": str(exc)}
+
+
+@router.get("/ssg/addresses")
+async def ssg_addresses(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    account_id: str | None = None,
+) -> dict[str, Any]:
+    """SSG 출고/반송 주소 목록 조회."""
+    creds = await _get_setting(session, "store_ssg")
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "addresses": []}
+    api_key = creds.get("apiKey", "")
+    if not api_key:
+        return {"success": False, "addresses": []}
+    try:
+        from backend.domain.samba.proxy.ssg import SSGClient
+
+        client = SSGClient(api_key)
+        result = await client.get_addresses()
+        raw = result.get("result", {})
+        # SSG 실제 응답: venAddrDelInfo → venAddrDelInfoDto
+        addr_list = raw.get("venAddrDelInfo", [])
+        if isinstance(addr_list, dict):
+            addr_list = [addr_list]
+        addrs_raw = addr_list[0].get("venAddrDelInfoDto", []) if addr_list else []
+        if isinstance(addrs_raw, dict):
+            addrs_raw = [addrs_raw]
+        addresses = []
+        for a in addrs_raw:
+            addresses.append(
+                {
+                    "grpAddrId": a.get("grpAddrId", ""),
+                    "doroAddrId": a.get("doroAddrId", ""),
+                    "addrNm": a.get("addrlcAntnmNm", ""),
+                    "bascAddr": a.get("doroAddrBasc", ""),
+                }
+            )
+        return {"success": True, "addresses": addresses}
+    except Exception as exc:
+        logger.error(f"[SSG] 주소 조회 실패: {exc}")
+        return {"success": False, "addresses": [], "message": str(exc)}
 
 
 # ═══════════════════════════════════════════════
@@ -1171,7 +1330,7 @@ _SOURCING_SITE_BANNED: frozenset[str] = frozenset(
         "패션플러스",
         "grandstage",
         "그랜드스테이지",
-        "okmall",
+        "rexmonde",
         "elandmall",
         "이랜드몰",
         "ssf",
@@ -1478,7 +1637,7 @@ async def generate_ai_tags(
 
     product_ids = request.get("product_ids", [])
     req_group_ids = request.get("group_ids", [])
-    method: str = request.get("method", "gemini")  # gemini | claude
+    method: str = request.get("method", "gemini")  # gemini | gemma | claude
     logger.info(
         f"[AI태그] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}, method={method}"
     )
@@ -1487,12 +1646,15 @@ async def generate_ai_tags(
         return {"success": False, "message": "상품 또는 그룹을 선택해주세요"}
 
     # API 키 조회 (method에 따라 분기)
-    if method == "gemini":
+    if method in ("gemma", "gemini"):
         creds = await _get_setting(session, "gemini")
         if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
             return {"success": False, "message": "Gemini API 설정이 없습니다"}
         api_key = str(creds["apiKey"]).strip()
-        model = str(creds.get("model", "gemini-2.5-flash"))
+        if method == "gemma":
+            model = "gemma-4-26b-a4b-it"
+        else:
+            model = str(creds.get("model", "gemini-2.5-flash"))
     else:
         creds = await _get_setting(session, "claude")
         if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
@@ -1596,7 +1758,7 @@ async def generate_ai_tags(
                 resp = None
                 text = ""
                 for _attempt in range(3):
-                    if method == "gemini":
+                    if method in ("gemma", "gemini"):
                         resp = await http_client.post(
                             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
                             headers={"content-type": "application/json"},
@@ -1637,7 +1799,7 @@ async def generate_ai_tags(
                     continue
 
                 data = resp.json()
-                if method == "gemini":
+                if method in ("gemma", "gemini"):
                     usage = data.get("usageMetadata", {})
                     total_input_tokens += usage.get("promptTokenCount", 0)
                     total_output_tokens += usage.get("candidatesTokenCount", 0)
@@ -1784,7 +1946,7 @@ async def preview_ai_tags(
 
     product_ids = request.get("product_ids", [])
     req_group_ids = request.get("group_ids", [])
-    method: str = request.get("method", "gemini")  # gemini | claude
+    method: str = request.get("method", "gemini")  # gemini | gemma | claude
     logger.info(
         f"[AI태그 미리보기] 요청: product_ids={len(product_ids)}개, group_ids={req_group_ids}, method={method}"
     )
@@ -1793,12 +1955,15 @@ async def preview_ai_tags(
         return {"success": False, "message": "상품 또는 그룹을 선택해주세요"}
 
     # API 키 조회 (method에 따라 분기)
-    if method == "gemini":
+    if method in ("gemma", "gemini"):
         creds = await _get_setting(session, "gemini")
         if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
             return {"success": False, "message": "Gemini API 설정이 없습니다"}
         api_key = str(creds["apiKey"]).strip()
-        model = str(creds.get("model", "gemini-2.5-flash"))
+        if method == "gemma":
+            model = "gemma-4-26b-a4b-it"
+        else:
+            model = str(creds.get("model", "gemini-2.5-flash"))
     else:
         creds = await _get_setting(session, "claude")
         if not creds or not isinstance(creds, dict) or not creds.get("apiKey"):
@@ -1854,7 +2019,10 @@ async def preview_ai_tags(
     # 스마트스토어 클라이언트 초기화 (태그사전 검증용)
     ss_client_preview = await _get_smartstore_tag_client(session)
 
-    async with httpx.AsyncClient(timeout=30) as http_client:
+    async with httpx.AsyncClient(timeout=90) as http_client:
+        logger.info(
+            f"[AI태그 미리보기] {method} model={model} key={api_key[:10]}... groups={len(groups)}"
+        )
         for gid, products in groups.items():
             rep = products[0]
             rep_name = rep.name or ""
@@ -1907,7 +2075,7 @@ async def preview_ai_tags(
                 resp = None
                 text = ""
                 for _attempt in range(3):
-                    if method == "gemini":
+                    if method in ("gemma", "gemini"):
                         resp = await http_client.post(
                             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
                             headers={"content-type": "application/json"},
@@ -1943,12 +2111,13 @@ async def preview_ai_tags(
                 if not resp or resp.status_code != 200:
                     logger.warning(
                         f"[AI태그 미리보기] {method} 호출 실패: {resp.status_code if resp else 'no response'}"
+                        f" — {resp.text[:300] if resp else ''}"
                     )
                     failed_groups += 1
                     continue
 
                 data = resp.json()
-                if method == "gemini":
+                if method in ("gemma", "gemini"):
                     usage = data.get("usageMetadata", {})
                     total_input_tokens += usage.get("promptTokenCount", 0)
                     total_output_tokens += usage.get("candidatesTokenCount", 0)
@@ -2047,7 +2216,9 @@ async def preview_ai_tags(
                 )
 
             except Exception as e:
-                logger.error(f"[AI태그 미리보기] 그룹 {gid} 실패: {e}")
+                logger.error(
+                    f"[AI태그 미리보기] 그룹 {gid} 실패: {type(e).__name__}: {e}"
+                )
                 failed_groups += 1
                 continue
 
@@ -2257,7 +2428,7 @@ async def compare_image_filter_methods(
 EXTENSION_SITES = {
     "ABCmart",
     "GrandStage",
-    "OKmall",
+    "REXMONDE",
     "LOTTEON",
     "GSShop",
     "ElandMall",
@@ -2283,17 +2454,39 @@ def _get_sourcing_client(site: str):
     return None
 
 
-@router.get("/sourcing/collect-queue")
+class LotteonSetCookieRequest(BaseModel):
+    cookie: str
+
+
+@sourcing_queue_router.post("/lotteon/set-cookie")
+async def lotteon_set_cookie(
+    body: LotteonSetCookieRequest,
+    write_session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """확장앱에서 롯데ON 쿠키 수신 (인증 불필요 — 확장앱에서 직접 호출)."""
+    if not body.cookie:
+        raise HTTPException(status_code=400, detail="쿠키가 필요합니다.")
+    await _set_setting(write_session, "lotteon_cookie", body.cookie)
+    # 메모리 캐시에도 즉시 반영
+    from backend.domain.samba.proxy.lotteon_sourcing import set_lotteon_cookie
+
+    set_lotteon_cookie(body.cookie)
+    cookie_count = len(body.cookie.split(";"))
+    logger.info(f"[LOTTEON] 확장앱에서 쿠키 수신: {cookie_count}개")
+    return {"success": True, "cookieCount": cookie_count}
+
+
+@sourcing_queue_router.get("/sourcing/collect-queue")
 async def sourcing_collect_queue() -> dict[str, Any]:
-    """확장앱이 폴링하는 소싱 수집 큐."""
+    """확장앱이 폴링하는 소싱 수집 큐 (인증 불필요)."""
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     return SourcingQueue.get_next_job()
 
 
-@router.post("/sourcing/collect-result")
+@sourcing_queue_router.post("/sourcing/collect-result")
 async def sourcing_collect_result(body: dict[str, Any]) -> dict[str, Any]:
-    """확장앱이 수집 결과를 전달."""
+    """확장앱이 수집 결과를 전달 (인증 불필요)."""
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     request_id = body.get("requestId", "")
@@ -2952,8 +3145,10 @@ async def lottehome_auth(
     try:
         return await client.authenticate()
     except LotteApiError as exc:
+        logger.warning(f"[롯데홈] 인증 실패 (LotteApiError): {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
     except Exception as exc:
+        logger.error(f"[롯데홈] 인증 예외: {exc}")
         return {"success": False, "message": str(exc), "code": "AUTH_FAILED"}
 
 
@@ -2977,6 +3172,7 @@ async def lottehome_brands(
         result = await client.search_brands(brnd_nm)
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
+        logger.warning(f"[롯데홈] 브랜드 조회 실패: {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
 
 
@@ -2992,6 +3188,7 @@ async def lottehome_categories(
         result = await client.search_categories(disp_tp_cd, md_gsgr_no)
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
+        logger.warning(f"[롯데홈] 카테고리 조회 실패: {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
 
 
@@ -3005,6 +3202,7 @@ async def lottehome_md_groups(
         result = await client.search_md_groups()
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
+        logger.warning(f"[롯데홈] MD상품군 조회 실패: {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
 
 
@@ -3018,6 +3216,7 @@ async def lottehome_delivery_policies(
         result = await client.search_delivery_policies()
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
+        logger.warning(f"[롯데홈] 배송비정책 조회 실패: {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
 
 
@@ -3031,6 +3230,7 @@ async def lottehome_delivery_places(
         result = await client.search_return_places()
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
+        logger.warning(f"[롯데홈] 배송지 조회 실패: {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
 
 
@@ -3045,6 +3245,7 @@ async def lottehome_register_goods(
         result = await client.register_goods(goods_data)
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
+        logger.error(f"[롯데홈] 신규상품등록 실패: {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
 
 
@@ -3060,6 +3261,7 @@ async def lottehome_update_new_goods(
         result = await client.update_new_goods(goods_req_no, goods_data)
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
+        logger.error(f"[롯데홈] 신규상품수정 실패 (req={goods_req_no}): {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
 
 
@@ -3075,6 +3277,7 @@ async def lottehome_update_display_goods(
         result = await client.update_display_goods(goods_no, goods_data)
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
+        logger.error(f"[롯데홈] 전시상품수정 실패 (goods_no={goods_no}): {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
 
 
@@ -3094,6 +3297,7 @@ async def lottehome_sale_status(
         result = await client.update_sale_status(goods_no, body.sale_stat_cd)
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
+        logger.warning(f"[롯데홈] 판매상태 변경 실패 (goods_no={goods_no}): {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
 
 
@@ -3114,6 +3318,7 @@ async def lottehome_update_stock(
         result = await client.update_stock(body.goods_no, body.item_no, body.inv_qty)
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
+        logger.error(f"[롯데홈] 재고수정 실패 (goods_no={body.goods_no}): {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
 
 
@@ -3128,6 +3333,7 @@ async def lottehome_search_stock(
         result = await client.search_stock(goods_no)
         return {"success": True, "data": result.get("data")}
     except LotteApiError as exc:
+        logger.warning(f"[롯데홈] 재고 조회 실패 (goods_no={goods_no}): {exc}")
         return {"success": False, "message": str(exc), "code": exc.code}
 
 
