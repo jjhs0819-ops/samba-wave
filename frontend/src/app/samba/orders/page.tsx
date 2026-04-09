@@ -836,6 +836,9 @@ export default function OrdersPage() {
 
       {/* 필터 바 */}
       <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
+        <span style={{ fontSize: '0.72rem', color: '#aaa', whiteSpace: 'nowrap', marginRight: '4px' }}>
+          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.length.toLocaleString()}</span>건 / ₩<span style={{ color: '#FF8C00', fontWeight: 600 }}>{filteredOrders.reduce((s, o) => s + o.sale_price * o.quantity, 0).toLocaleString()}</span>
+        </span>
         <select style={{ ...inputStyle, width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품</option>
           <option value="customer">고객</option>
@@ -910,7 +913,7 @@ export default function OrdersPage() {
               <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
             ) : filteredOrders.length === 0 ? (
               <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>주문이 없습니다</td></tr>
-            ) : filteredOrders.map(o => {
+            ) : filteredOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((o, index) => {
               const costDisplay = editingCosts[o.id] !== undefined ? fmtNum(editingCosts[o.id]) : (o.cost ? o.cost.toLocaleString() : '')
               const shipFeeDisplay = editingShipFees[o.id] !== undefined ? fmtNum(editingShipFees[o.id]) : (o.shipping_fee ? o.shipping_fee.toLocaleString() : '')
               const liveProfit = calcProfit(o)
@@ -921,6 +924,7 @@ export default function OrdersPage() {
                 <tr key={o.id} style={{ borderBottom: '1px solid #1C2333', verticalAlign: 'top' }}>
                   {/* 체크박스 */}
                   <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center', borderRight: '1px solid #1C2333' }}>
+                    <div style={{ fontSize: '0.65rem', color: '#FFFFFF', fontWeight: 'bold', marginBottom: '2px' }}>{(currentPage - 1) * pageSize + index + 1}</div>
                     <input type="checkbox" style={{ accentColor: '#F59E0B' }} />
                   </td>
                   {/* 주문정보 */}
