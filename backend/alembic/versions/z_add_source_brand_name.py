@@ -8,7 +8,6 @@ Create Date: 2026-04-09
 
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -19,11 +18,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "samba_search_filter",
-        sa.Column("source_brand_name", sa.Text(), nullable=True),
+    # IF NOT EXISTS — 프로덕션 DB에서 중복 실행 안전
+    op.execute(
+        "ALTER TABLE samba_search_filter "
+        "ADD COLUMN IF NOT EXISTS source_brand_name TEXT"
     )
 
 
 def downgrade() -> None:
-    op.drop_column("samba_search_filter", "source_brand_name")
+    op.execute(
+        "ALTER TABLE samba_search_filter DROP COLUMN IF EXISTS source_brand_name"
+    )

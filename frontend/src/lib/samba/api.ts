@@ -35,12 +35,12 @@ export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Re
     headers['Authorization'] = `Bearer ${token}`
   }
   const res = await fetch(url, { cache: 'no-store', ...init, headers })
-  // 401 토큰 만료 시 자동 로그아웃
+  // 401 토큰 만료 시 자동 로그아웃 — never-resolving promise로 .catch 우회
   if (res.status === 401 && typeof window !== 'undefined') {
     localStorage.removeItem(STORAGE_KEYS.SAMBA_USER)
     document.cookie = 'samba_user=; path=/; max-age=0'
     window.location.href = '/samba/login'
-    throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.')
+    return new Promise<Response>(() => {})
   }
   return res
 }
@@ -67,12 +67,13 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     headers,
   });
   if (!res.ok) {
-    // 401이면 토큰 만료 — 로그인 페이지로 리다이렉트
+    // 401이면 토큰 만료 — 로그인 페이지로 강제 리다이렉트
+    // .catch(() => []) 에 삼켜지지 않도록 never-resolving promise 반환
     if (res.status === 401 && typeof window !== 'undefined') {
       localStorage.removeItem(STORAGE_KEYS.SAMBA_USER)
       document.cookie = 'samba_user=; path=/; max-age=0'
       window.location.href = '/samba/login'
-      throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.')
+      return new Promise<T>(() => {})
     }
     const data = await res.json().catch(() => null);
     const detail = data?.detail

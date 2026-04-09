@@ -25,6 +25,32 @@ if [ "$ENVIRONMENT" = "production" ]; then
   echo "Waiting for Cloud SQL proxy..."
   sleep 5
 
+  # 누락 컬럼 긴급 패치 (alembic 체인 문제 우회)
+  echo "Applying emergency schema fixes..."
+  uv run python -c "
+import asyncio, os, sys
+def _env(key):
+    return os.environ.get(key) or os.environ.get(key.lower()) or os.environ.get(key.upper()) or ''
+async def fix():
+    import asyncpg
+    host = _env('WRITE_DB_HOST')
+    if not host:
+        print('WRITE_DB_HOST not set, skip emergency fix'); return
+    kw = dict(user=_env('WRITE_DB_USER') or 'postgres', password=_env('WRITE_DB_PASSWORD'), database=_env('WRITE_DB_NAME') or 'railway')
+    if host.startswith('/'):
+        kw['host'] = host
+    else:
+        kw['host'] = host; kw['port'] = int(_env('WRITE_DB_PORT') or 5432)
+    conn = await asyncpg.connect(**kw)
+    try:
+        await conn.execute('ALTER TABLE samba_search_filter ADD COLUMN IF NOT EXISTS source_brand_name TEXT')
+        await conn.execute('ALTER TABLE samba_market_account DROP COLUMN IF EXISTS sort_order')
+        print('Emergency schema fixes applied.')
+    finally:
+        await conn.close()
+asyncio.run(fix())
+" || echo "Emergency fix failed (non-fatal)"
+
   # DB 마이그레이션 자동 실행 (최대 3회 재시도)
   echo "Running database migrations..."
   for i in 1 2 3; do

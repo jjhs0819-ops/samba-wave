@@ -2,7 +2,6 @@
 
 from typing import Sequence, Union
 from alembic import op
-import sqlalchemy as sa
 
 revision: str = "z_add_created_by"
 down_revision: Union[str, Sequence[str], None] = None
@@ -11,10 +10,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "samba_search_filter", sa.Column("created_by", sa.Text(), nullable=True)
+    # IF NOT EXISTS — 프로덕션 DB에서 중복 실행 안전
+    op.execute(
+        "ALTER TABLE samba_search_filter ADD COLUMN IF NOT EXISTS created_by TEXT"
     )
 
 
 def downgrade() -> None:
-    op.drop_column("samba_search_filter", "created_by")
+    op.execute("ALTER TABLE samba_search_filter DROP COLUMN IF EXISTS created_by")

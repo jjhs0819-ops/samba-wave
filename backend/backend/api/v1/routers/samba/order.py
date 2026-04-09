@@ -305,6 +305,41 @@ async def search_orders(
     return await svc.search_orders(q)
 
 
+@router.get("/by-date-range", response_model=list[SambaOrder])
+async def list_orders_by_date_range(
+    start: str = Query(..., description="시작일 YYYY-MM-DD"),
+    end: str = Query(..., description="종료일 YYYY-MM-DD"),
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """기간별 주문 조회 — COALESCE(paid_at, created_at) 기준, 제한 없이 전체 반환."""
+    from datetime import UTC, datetime
+    from sqlalchemy import func, select as sa_select, or_
+
+    start_dt = datetime.strptime(start, "%Y-%m-%d").replace(
+        hour=0, minute=0, second=0, tzinfo=UTC
+    )
+    end_dt = datetime.strptime(end, "%Y-%m-%d").replace(
+        hour=23, minute=59, second=59, tzinfo=UTC
+    )
+
+    order_date = func.coalesce(SambaOrder.paid_at, SambaOrder.created_at)
+    stmt = (
+        sa_select(SambaOrder)
+        .where(order_date >= start_dt, order_date <= end_dt)
+        .order_by(order_date.desc())
+    )
+    if tenant_id is not None:
+        stmt = stmt.where(
+            or_(
+                SambaOrder.tenant_id == tenant_id,
+                SambaOrder.tenant_id == None,  # noqa: E711
+            )
+        )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 @router.get("/find-by-number")
 async def find_by_order_number(
     order_number: str = Query(...),
