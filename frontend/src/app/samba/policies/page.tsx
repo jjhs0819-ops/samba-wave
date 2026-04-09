@@ -431,14 +431,28 @@ export default function PoliciesPage() {
           {/* 정책 복사 */}
           <button onClick={async () => {
             if (!editingId) { showAlert('복사할 정책을 선택하세요'); return }
-            const src = policies.find(p => p.id === editingId)
-            if (!src) return
             const copied = await policyApi.create({
-              name: `${src.name} (복사)`,
-              site_name: src.site_name,
-              pricing: src.pricing as Record<string, unknown>,
-              market_policies: src.market_policies,
-              extras: src.extras,
+              name: `${name} (복사)`,
+              site_name: siteName,
+              pricing: {
+                marginRate: pricing.marginRate,
+                shippingCost: pricing.shippingCost,
+                extraCharge: pricing.extraCharge,
+                minMarginAmount: pricing.minMarginAmount,
+                discountType: pricing.discountType,
+                discountValue: pricing.discountValue,
+                useRangeMargin: pricing.useRangeMargin,
+                rangeMargins: pricing.rangeMargins,
+                customFormula: pricing.customFormula,
+                currency: pricing.currency,
+                customsIncluded: pricing.customsIncluded,
+              },
+              market_policies: marketPolicies,
+              extras: {
+                detail_template_id: selectedDetailTemplateId || undefined,
+                market_detail_templates: Object.keys(marketDetailTemplates).length > 0 ? marketDetailTemplates : undefined,
+                name_rule_id: selectedNameRuleId || undefined,
+              },
             })
             setPolicies(await policyApi.list().catch(() => []))
             setSelectedPolicyId(copied.id)

@@ -88,6 +88,11 @@ class SambaSearchFilter(SQLModel, table=True):
         default=None, sa_column=Column(Text, nullable=True)
     )
 
+    # 소싱처 브랜드명 (브랜드 카테고리 스캔 시 전달된 원본 브랜드명)
+    source_brand_name: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
     # 그룹별 카테고리 매핑 (카테고리매핑 페이지보다 우선 적용)
     # 예: {"smartstore": "패션의류>남성의류>티셔츠", "coupang": "남성패션/상의/티셔츠"}
     target_mappings: Optional[Any] = Field(

@@ -22,13 +22,13 @@ logger = logging.getLogger(__name__)
 class GsShopSourcingPlugin(SourcingPlugin):
     """GS샵 소싱처 플러그인.
 
-    concurrency=1: 홈쇼핑몰 차단 강도 대응 (동시 1개만 요청)
-    request_interval=1.0: 요청 간 1초 딜레이 (보수적)
+    concurrency=3: 프록시 로테이션 분산 (worker에서 proxy_pool 전달)
+    request_interval=0.5: 요청 간 0.5초 딜레이
     """
 
     site_name = "GSSHOP"
-    concurrency = 1
-    request_interval = 1.0
+    concurrency = 3
+    request_interval = 0.5
 
     async def search(self, keyword: str, **filters) -> list[dict]:
         """GS샵 키워드 검색 — GsShopSourcingClient 경유 (올바른 URL 사용)."""
@@ -71,7 +71,9 @@ class GsShopSourcingPlugin(SourcingPlugin):
 
         try:
             client = GsShopSourcingClient()
-            detail = await self.safe_call(client.get_product_detail(site_product_id))
+            detail = await self.safe_call(
+                client.get_product_detail(site_product_id, refresh_only=True)
+            )
 
             if not detail:
                 return RefreshResult(

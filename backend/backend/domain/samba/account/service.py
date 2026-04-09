@@ -147,7 +147,7 @@ class SambaAccountService:
     async def list_accounts(
         self, skip: int = 0, limit: int = 500
     ) -> List[SambaMarketAccount]:
-        return await self.repo.list_async(skip=skip, limit=limit, order_by="sort_order")
+        return await self.repo.list_async(skip=skip, limit=limit, order_by="created_at")
 
     async def get_account(self, account_id: str) -> Optional[SambaMarketAccount]:
         return await self.repo.get_async(account_id)
@@ -184,12 +184,6 @@ class SambaAccountService:
         return await self.repo.filter_by_async(
             market_type=market_type, order_by="created_at", order_by_desc=True
         )
-
-    async def reorder_accounts(self, orders: List[Dict[str, Any]]) -> bool:
-        """계정 순서 일괄 업데이트. orders: [{id, sort_order}, ...]"""
-        for item in orders:
-            await self.repo.update_async(item["id"], sort_order=item["sort_order"])
-        return True
 
     async def toggle_active(self, account_id: str) -> Optional[SambaMarketAccount]:
         account = await self.repo.get_async(account_id)

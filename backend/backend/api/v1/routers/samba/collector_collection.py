@@ -2352,6 +2352,8 @@ async def brand_create_groups(
             bc_codes = cat.get("bc_codes") or ([code] if code else [])
             category_filter = ",".join(bc_codes) if bc_codes else None
 
+        # 소싱처 브랜드명 저장 (수집 시 빈 brand/manufacturer 자동 채움용)
+        _source_brand = body.brand_name or body.brand or ""
         filter_data: dict = {
             "source_site": body.source_site,
             "name": group_name,
@@ -2359,6 +2361,8 @@ async def brand_create_groups(
             "requested_count": req_count,
             "category_filter": category_filter,
         }
+        if _source_brand:
+            filter_data["source_brand_name"] = _source_brand
         if body.applied_policy_id:
             filter_data["applied_policy_id"] = body.applied_policy_id
 

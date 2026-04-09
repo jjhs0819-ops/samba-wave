@@ -515,79 +515,115 @@ class GsShopSourcingClient:
     # 상세 조회
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # HTTP 요청 헬퍼 (모바일 / PC 분리)
+    # ------------------------------------------------------------------
+
+    async def _fetch_mobile(self, product_id: str, proxy: str | None = None) -> str:
+        """모바일 상세 페이지 HTML 반환. 실패 시 빈 문자열."""
+        url = f"{self.PRODUCT_URL}?prdid={product_id}"
+        _ck: dict[str, Any] = {
+            "timeout": self._timeout,
+            "follow_redirects": True,
+        }
+        if proxy:
+            _ck["proxy"] = proxy
+        async with httpx.AsyncClient(**_ck) as client:
+            resp = await client.get(url, headers=self._headers(mobile=True))
+            if resp.status_code in (429, 403):
+                retry_after = int(resp.headers.get("Retry-After", "60"))
+                logger.warning(
+                    f"[GSSHOP] 차단 감지 HTTP {resp.status_code}: {product_id}"
+                )
+                raise RateLimitError(resp.status_code, retry_after)
+            if resp.status_code != 200:
+                logger.warning(
+                    f"[GSSHOP] 모바일 상세 HTTP {resp.status_code}: {product_id}"
+                )
+                return ""
+            return resp.text
+
+    async def _fetch_pc(self, product_id: str, proxy: str | None = None) -> str:
+        """PC 상세 페이지 HTML 반환. 실패 시 빈 문자열 (수집 중단 X)."""
+        pc_url = f"{self.BASE_PC}/prd/prd.gs?prdid={product_id}"
+        try:
+            _ck: dict[str, Any] = {
+                "timeout": self._timeout,
+                "follow_redirects": True,
+            }
+            if proxy:
+                _ck["proxy"] = proxy
+            async with httpx.AsyncClient(**_ck) as client:
+                resp = await client.get(pc_url, headers=self._headers(mobile=False))
+                if resp.status_code != 200:
+                    return ""
+                return resp.text
+        except Exception as e:
+            logger.debug(f"[GSSHOP] PC 상세 실패: {product_id} {e}")
+            return ""
+
+    def _parse_mobile_html(self, html: str, product_id: str) -> dict[str, Any]:
+        """모바일 HTML에서 renderJson → JSON-LD → og 메타 순으로 파싱."""
+        if not html:
+            return {}
+        now_iso = datetime.now(tz=timezone.utc).isoformat()
+        timestamp = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+
+        # 1순위: renderJson
+        render_data = self._extract_render_json(html)
+        if render_data:
+            result = self._build_from_render_json(
+                render_data, product_id, timestamp, now_iso
+            )
+            if result.get("name"):
+                return result
+
+        # 2순위: JSON-LD
+        json_ld_data = self._extract_json_ld(html)
+        if json_ld_data:
+            result = self._build_from_json_ld(
+                json_ld_data, product_id, timestamp, now_iso
+            )
+            if result.get("name"):
+                return result
+
+        # 3순위: og 메타 태그
+        return self._build_from_meta(html, product_id, timestamp, now_iso)
+
+    # ------------------------------------------------------------------
+    # 상세 조회 메인
+    # ------------------------------------------------------------------
+
     async def get_product_detail(
         self, product_id: str, refresh_only: bool = False
     ) -> dict[str, Any]:
         """GS샵 상품 상세 정보 조회.
 
-        모바일 상세 페이지의 renderJson 변수에서 전체 상품 데이터를 추출한다.
-        renderJson이 없으면 JSON-LD → og 메타 태그 순으로 폴백한다.
-
-        Args:
-          product_id: GS샵 상품 ID (prdid)
-          refresh_only: True이면 가격/재고만 빠르게 갱신
-
-        Returns:
-          표준 상품 상세 dict
-
-        Raises:
-          RateLimitError: 429/403 응답 시
+        refresh_only=False(수집): 모바일+PC 병렬 요청 → 데이터 온전 유지
+        refresh_only=True(오토튠/가격재고): 모바일만 → 빠른 가격/재고 갱신
         """
-        url = f"{self.PRODUCT_URL}?prdid={product_id}"
-        logger.info(f"[GSSHOP] 상세 조회: {product_id}")
+        logger.info(
+            f"[GSSHOP] 상세 조회: {product_id}"
+            f"{' (refresh_only)' if refresh_only else ''}"
+        )
 
         try:
             _proxy = self._next_proxy()
-            _client_kwargs: dict[str, Any] = {
-                "timeout": self._timeout,
-                "follow_redirects": True,
-            }
-            if _proxy:
-                _client_kwargs["proxy"] = _proxy
-            async with httpx.AsyncClient(**_client_kwargs) as client:
-                resp = await client.get(url, headers=self._headers(mobile=True))
 
-                # 차단 감지
-                if resp.status_code in (429, 403):
-                    retry_after = int(resp.headers.get("Retry-After", "60"))
-                    logger.warning(
-                        f"[GSSHOP] 차단 감지 HTTP {resp.status_code}: {product_id}"
-                    )
-                    raise RateLimitError(resp.status_code, retry_after)
-
-                if resp.status_code != 200:
-                    logger.warning(
-                        f"[GSSHOP] 상세 페이지 HTTP {resp.status_code}: {product_id}"
-                    )
-                    return {}
-
-                html = resp.text
-
-            now_iso = datetime.now(tz=timezone.utc).isoformat()
-            timestamp = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
-
-            # 1순위: renderJson 파싱
-            render_data = self._extract_render_json(html)
-            if render_data:
-                result = self._build_from_render_json(
-                    render_data, product_id, timestamp, now_iso
+            if refresh_only:
+                # 오토튠/가격재고업데이트 → 모바일만 (빠름)
+                mobile_html = await self._fetch_mobile(product_id, _proxy)
+                return self._parse_mobile_html(mobile_html, product_id)
+            else:
+                # 수집 → 모바일+PC 병렬 (데이터 온전)
+                mobile_html, pc_html = await asyncio.gather(
+                    self._fetch_mobile(product_id, _proxy),
+                    self._fetch_pc(product_id, _proxy),
                 )
-                if result.get("name"):
-                    # PC 페이지에서 제조국/색상/재질 보충
-                    await self._enrich_from_pc(result, product_id, _proxy)
-                    return result
-
-            # 2순위: JSON-LD 파싱
-            json_ld_data = self._extract_json_ld(html)
-            if json_ld_data:
-                result = self._build_from_json_ld(
-                    json_ld_data, product_id, timestamp, now_iso
-                )
-                if result.get("name"):
-                    return result
-
-            # 3순위: og 메타 태그 (최소 폴백)
-            return self._build_from_meta(html, product_id, timestamp, now_iso)
+                result = self._parse_mobile_html(mobile_html, product_id)
+                if result.get("name") and pc_html:
+                    self._enrich_from_pc_html(result, pc_html)
+                return result
 
         except RateLimitError:
             raise
@@ -631,13 +667,12 @@ class GsShopSourcingClient:
     # PC 페이지 상품정보 보충 (제조국/색상/재질만)
     # ------------------------------------------------------------------
 
-    async def _enrich_from_pc(
+    def _enrich_from_pc_html(
         self,
         result: dict[str, Any],
-        product_id: str,
-        proxy: str | None = None,
+        html: str,
     ) -> None:
-        """PC 상세 페이지의 상품정보 테이블에서 누락 필드 보충.
+        """PC HTML의 상품정보 테이블에서 누락 필드 보충 (HTTP 호출 없음).
 
         100개 상품 전수조사 기반 th 변형 패턴:
         - 소재: "제품 소재 (섬유의 조성...)" (55%), "소재" (12%)
@@ -647,20 +682,7 @@ class GsShopSourcingClient:
         - 품질보증: "품질보증기준" (97%), "품질보증기간" (15%)
         - 품번: "품명 및 모델명" (15%)
         """
-        pc_url = f"{self.BASE_PC}/prd/prd.gs?prdid={product_id}"
-        try:
-            _ck: dict[str, Any] = {
-                "timeout": self._timeout,
-                "follow_redirects": True,
-            }
-            if proxy:
-                _ck["proxy"] = proxy
-            async with httpx.AsyncClient(**_ck) as client:
-                resp = await client.get(pc_url, headers=self._headers(mobile=False))
-                if resp.status_code != 200:
-                    return
-                html = resp.text
-        except Exception:
+        if not html:
             return
 
         # 상품정보 테이블에서 th-td 추출

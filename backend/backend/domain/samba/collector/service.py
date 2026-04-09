@@ -13,6 +13,20 @@ from backend.domain.samba.collector.repository import (
     SambaSearchFilterRepository,
 )
 
+# 브랜드/제조사 필드의 의미없는 플레이스홀더 값
+_BRAND_PLACEHOLDERS = {
+    "상세참조",
+    "상품상세참조",
+    "상세설명참조",
+    "상세페이지참조",
+    "상세 참조",
+}
+
+
+def _is_placeholder(value: str) -> bool:
+    """브랜드/제조사 필드의 플레이스홀더 값 여부 판별."""
+    return value.strip() in _BRAND_PLACEHOLDERS
+
 
 class SambaCollectorService:
     def __init__(
@@ -75,8 +89,24 @@ class SambaCollectorService:
         self._sanitize_kream_data(data)
         self._clean_company_names(data)
         self._fill_optional_images(data)
+        await self._fill_source_brand(data)
         await self._inherit_group_attributes(data)
         return await self.product_repo.create_async(**data)
+
+    async def _fill_source_brand(self, data: Dict[str, Any]) -> None:
+        """검색필터의 source_brand_name으로 빈 brand/manufacturer 자동 채움."""
+        fid = data.get("search_filter_id")
+        if not fid:
+            return
+        sf = await self.filter_repo.get_async(fid)
+        if not sf or not sf.source_brand_name:
+            return
+        brand = sf.source_brand_name
+        if not (data.get("brand") or "").strip():
+            data["brand"] = brand
+        mfr = (data.get("manufacturer") or "").strip()
+        if not mfr or _is_placeholder(mfr):
+            data["manufacturer"] = brand
 
     async def _inherit_group_attributes(self, data: Dict[str, Any]) -> None:
         """같은 그룹 기존 상품의 태그/SEO/정책/마켓가격을 신규 상품에 상속."""
@@ -129,16 +159,31 @@ class SambaCollectorService:
             if item.get("search_filter_id")
         }
         filter_policy_map: Dict[str, str] = {}
+        filter_brand_map: Dict[str, str] = {}
         if filter_ids:
             filters = await self.filter_repo.filter_by_async(limit=len(filter_ids) + 10)
             for f in filters:
-                if f.id in filter_ids and f.applied_policy_id:
-                    filter_policy_map[f.id] = f.applied_policy_id
+                if f.id in filter_ids:
+                    if f.applied_policy_id:
+                        filter_policy_map[f.id] = f.applied_policy_id
+                    if f.source_brand_name:
+                        filter_brand_map[f.id] = f.source_brand_name
         for item in items:
             if not item.get("applied_policy_id"):
                 fid = item.get("search_filter_id", "")
                 if fid in filter_policy_map:
                     item["applied_policy_id"] = filter_policy_map[fid]
+        # 소싱처 브랜드명으로 빈 brand/manufacturer 자동 채움
+        for item in items:
+            fid = item.get("search_filter_id", "")
+            source_brand = filter_brand_map.get(fid)
+            if not source_brand:
+                continue
+            if not (item.get("brand") or "").strip():
+                item["brand"] = source_brand
+            mfr = (item.get("manufacturer") or "").strip()
+            if not mfr or _is_placeholder(mfr):
+                item["manufacturer"] = source_brand
         from backend.domain.samba.collector.model import SambaCollectedProduct
         from sqlalchemy.exc import IntegrityError
 

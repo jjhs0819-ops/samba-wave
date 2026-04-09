@@ -562,7 +562,6 @@ export interface SambaMarketAccount {
   seller_id?: string;
   business_name?: string;
   is_active: boolean;
-  sort_order: number;
   additional_fields?: Record<string, unknown>;
   created_at: string;
 }
@@ -580,8 +579,6 @@ export const accountApi = {
     request<SambaMarketAccount>(`${SAMBA_PREFIX}/accounts/${id}/toggle`, { method: "PUT" }),
   delete: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/accounts/${id}`, { method: "DELETE" }),
-  reorder: (orders: { id: string; sort_order: number }[]) =>
-    request<{ ok: boolean }>(`${SAMBA_PREFIX}/accounts/reorder`, { method: "PUT", body: JSON.stringify({ orders }) }),
 };
 
 // ── Shipments ──
