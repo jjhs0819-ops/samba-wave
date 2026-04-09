@@ -47,7 +47,7 @@ class LotteonSourcingPlugin(SourcingPlugin):
         return await self.safe_call(client.get_product_detail(site_product_id))
 
     async def refresh(self, product) -> "RefreshResult":
-        """가격/재고 갱신 — 상세 페이지 재조회로 최신 데이터 추출."""
+        """가격/재고 갱신 — pbf + benefits API로 빠른 갱신, 실패 시 HTML 폴백."""
         from backend.domain.samba.collector.refresher import RefreshResult
         from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
 
@@ -64,6 +64,64 @@ class LotteonSourcingPlugin(SourcingPlugin):
 
         try:
             client = LotteonSourcingClient()
+
+            # ── 1단계: pbf API로 빠른 갱신 시도 ──
+            pbf_client = await client._get_pbf_client()
+            pbf_data = await client._fetch_pbf_pd_detail(site_product_id, pbf_client)
+
+            if pbf_data:
+                basic = pbf_data.get("basicInfo") or {}
+                price_info = pbf_data.get("priceInfo") or {}
+                sl_prc = client._safe_int(price_info.get("slPrc", 0))
+
+                # benefits API로 혜택가 조회
+                best_benefit_price = await client.fetch_benefit_price(
+                    pbf_data, spd_no=site_product_id
+                )
+
+                # qapi로 프로모션가 조회
+                qapi = await client.fetch_qapi_price(site_product_id)
+                qapi_final = qapi.get("final", 0) if qapi else 0
+
+                # 판매가 결정: 혜택가 > qapi > slPrc
+                new_sale_price = sl_prc
+                if qapi_final and 0 < qapi_final < sl_prc:
+                    new_sale_price = qapi_final
+
+                # 옵션별 재고 조회
+                new_options = None
+                opt_stock = await client.fetch_option_stock(
+                    pbf_data, spd_no=site_product_id
+                )
+                if opt_stock:
+                    new_options = opt_stock
+
+                # 품절 판정
+                stck_info = pbf_data.get("stckInfo") or {}
+                stk_qty = client._safe_int(stck_info.get("stkQty", 0))
+                is_sold_out = stk_qty == 0
+                if new_options:
+                    is_sold_out = all(o.get("isSoldOut") for o in new_options)
+
+                logger.info(
+                    f"[LOTTEON] pbf+benefits 갱신: {site_product_id} "
+                    f"정가={sl_prc:,} 판매가={new_sale_price:,} "
+                    f"혜택가={best_benefit_price or 0:,} "
+                    f"qapi={qapi_final:,} 품절={is_sold_out}"
+                )
+
+                return RefreshResult(
+                    product_id=product_id,
+                    new_sale_price=float(new_sale_price) if new_sale_price else None,
+                    new_original_price=float(sl_prc) if sl_prc else None,
+                    new_cost=float(best_benefit_price) if best_benefit_price else None,
+                    new_sale_status="sold_out" if is_sold_out else "in_stock",
+                    new_options=new_options,
+                    changed=True,
+                )
+
+            # ── 2단계: pbf 실패 시 HTML 폴백 ──
+            logger.info(f"[LOTTEON] pbf 실패 → HTML 폴백: {site_product_id}")
             detail = await self.safe_call(client.get_product_detail(site_product_id))
 
             if not detail:
@@ -77,11 +135,8 @@ class LotteonSourcingPlugin(SourcingPlugin):
             is_sold_out = detail.get("isOutOfStock", False) or detail.get(
                 "isSoldOut", False
             )
-
-            # bestBenefitPrice → new_cost (실질 매입가)
             best_benefit_price = detail.get("bestBenefitPrice", 0)
 
-            # 옵션 데이터 변환
             new_options = None
             raw_options = detail.get("options", [])
             if raw_options:
