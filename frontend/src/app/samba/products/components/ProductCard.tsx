@@ -169,6 +169,60 @@ function getReplacementRegex(from: string, caseInsensitive: boolean): RegExp {
   return cached
 }
 
+// 동시치환: 모든 치환규칙의 매칭을 한번에 수집 → 긴 문자열 우선 → 비겹침 선택
+function simultaneousReplace(
+  text: string,
+  replacements: Array<{ from: string; to: string; caseInsensitive?: boolean }>,
+): string {
+  type Match = { start: number; end: number; to: string; fromLen: number; priority: number }
+  const allMatches: Match[] = []
+
+  for (let i = 0; i < replacements.length; i++) {
+    const r = replacements[i]
+    if (!r.from) continue
+    const escaped = r.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const flags = (r.caseInsensitive ?? true) ? 'gi' : 'g'
+    const regex = new RegExp(escaped, flags)
+    let m: RegExpExecArray | null
+    while ((m = regex.exec(text)) !== null) {
+      allMatches.push({
+        start: m.index,
+        end: m.index + m[0].length,
+        to: r.to || '',
+        fromLen: m[0].length,
+        priority: i,
+      })
+    }
+  }
+
+  if (allMatches.length === 0) return text
+
+  // 위치(ASC) → 길이(DESC, 긴 것 우선) → 규칙순서(ASC)
+  allMatches.sort((a, b) =>
+    a.start - b.start || b.fromLen - a.fromLen || a.priority - b.priority
+  )
+
+  // 겹치지 않는 매칭만 선택 (greedy left-to-right)
+  const selected: Match[] = []
+  let lastEnd = 0
+  for (const match of allMatches) {
+    if (match.start >= lastEnd) {
+      selected.push(match)
+      lastEnd = match.end
+    }
+  }
+
+  // 결과 문자열 조립
+  let result = ''
+  let pos = 0
+  for (const match of selected) {
+    result += text.slice(pos, match.start) + match.to
+    pos = match.end
+  }
+  result += text.slice(pos)
+  return result
+}
+
 // 상품명 조합 적용 (name_composition 태그 기반)
 export function composeProductName(
   product: SambaCollectedProduct,
@@ -190,12 +244,18 @@ export function composeProductName(
     .map(tag => tagMap[tag] ?? tag)
     .filter(v => v.trim() !== '')
     .join(' ')
-  // 치환어 적용 (캐싱된 정규식 사용)
+  // 치환어 적용 (동시치환/순차치환 분기)
   if (nameRule.replacements?.length) {
-    for (const r of nameRule.replacements) {
-      if (!r.from) continue
-      const regex = getReplacementRegex(r.from, !!r.caseInsensitive)
-      composed = composed.replace(regex, r.to || '')
+    if (nameRule.replace_mode === 'sequential') {
+      // 순차치환: 위에서 아래로 순서대로 치환
+      for (const r of nameRule.replacements) {
+        if (!r.from) continue
+        const regex = getReplacementRegex(r.from, r.caseInsensitive ?? true)
+        composed = composed.replace(regex, r.to || '')
+      }
+    } else {
+      // 동시치환(기본): 모든 규칙을 한번에 적용, 긴 문자열 우선
+      composed = simultaneousReplace(composed, nameRule.replacements)
     }
   }
   // 삭제어 적용 (dedup 전에 적용하여 중복 단어 감지 가능하게)

@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 import httpx
@@ -129,58 +128,116 @@ class GsShopSourcingClient:
         self,
         keyword: str,
         page: int = 1,
-        size: int = 40,
+        size: int = 9999,
         url: str = "",
         **filters: Any,
     ) -> list[dict[str, Any]]:
-        """GS샵 상품 검색 — 확장앱 큐 위임 방식.
+        """GS샵 상품 검색 — 서버단 직접 크롤링 방식.
 
-        GS샵은 검색 URL을 서버단에서 차단(405)하므로,
-        확장앱 SourcingQueue를 통해 브라우저에서 검색 페이지를 열고
-        DOM 파싱 결과를 받아온다.
+        PC 검색 페이지(백화점 탭)를 직접 순회하며 상품 ID를 수집한다.
+        scan_categories()와 동일한 서버단 접근 방식 사용.
 
         Args:
           keyword: 검색 키워드
           page: 페이지 번호 (현재 미사용)
           size: 최대 결과 수
+          url: 그룹 link URL (미사용, 호환성 유지)
 
         Returns:
-          표준 상품 dict 리스트
+          표준 상품 dict 리스트 (site_product_id 포함)
         """
-        from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+        import base64
 
-        logger.info(f'[GSSHOP] 검색 시작 (확장앱 큐): "{keyword}"')
+        logger.info(f'[GSSHOP] 검색 시작 (서버 직접): "{keyword}" max={size}')
+
+        link_pattern = re.compile(
+            r"/(?:prd/prd\.gs\?prdid|deal/deal\.gs\?dealNo)=(\d+)"
+        )
+        product_ids: list[str] = []
+        seen_ids: set[str] = set()
+        now_iso = datetime.now(tz=timezone.utc).isoformat()
 
         try:
-            # SourcingQueue.add_search_job() 대신 직접 큐 등록 (올바른 검색 URL 사용)
-            request_id = str(uuid.uuid4())[:8]
-            # url이 전달되면 그대로 사용, 없으면 keyword로 생성
-            if not url:
-                url = self.SEARCH_URL.replace("{keyword}", keyword)
-            loop = asyncio.get_event_loop()
-            future: asyncio.Future = loop.create_future()
-            SourcingQueue.queue.append(
+            _proxy = self._next_proxy()
+            _ck: dict[str, Any] = {
+                "timeout": self._timeout,
+                "follow_redirects": True,
+            }
+            if _proxy:
+                _ck["proxy"] = _proxy
+
+            async with httpx.AsyncClient(**_ck) as client:
+                for pg in range(1, 300):
+                    # 백화점 탭 eh 파라미터 생성 (scan_categories 동일)
+                    if pg == 1:
+                        eh = base64.b64encode(
+                            json.dumps(
+                                {"part": "DEPT", "selected": "opt-part"},
+                                separators=(",", ":"),
+                            ).encode()
+                        ).decode()
+                    else:
+                        eh = base64.b64encode(
+                            json.dumps(
+                                {
+                                    "pageNumber": pg,
+                                    "part": "DEPT",
+                                    "selected": "opt-page",
+                                },
+                                separators=(",", ":"),
+                            ).encode()
+                        ).decode()
+
+                    try:
+                        resp = await client.get(
+                            f"{self.BASE_PC}/shop/search/main.gs",
+                            params={"tq": keyword, "eh": eh},
+                            headers=self._headers(mobile=False),
+                        )
+                    except Exception as e:
+                        logger.warning(f"[GSSHOP] 검색 페이지 요청 실패 pg={pg}: {e}")
+                        break
+
+                    if resp.status_code != 200:
+                        logger.warning(
+                            f"[GSSHOP] 검색 페이지 HTTP {resp.status_code}: pg={pg}"
+                        )
+                        break
+
+                    new_count = 0
+                    for pid in link_pattern.findall(resp.text):
+                        if pid not in seen_ids:
+                            seen_ids.add(pid)
+                            product_ids.append(pid)
+                            new_count += 1
+
+                    if new_count == 0:
+                        break
+
+                    if len(product_ids) >= size:
+                        break
+
+                    # 페이지 간 딜레이 (차단 방지)
+                    await asyncio.sleep(0.1)
+
+            products = [
                 {
-                    "requestId": request_id,
-                    "site": "GSShop",
-                    "type": "search",
-                    "url": url,
-                    "keyword": keyword,
+                    "site_product_id": pid,
+                    "name": "(GSShop)",
+                    "sale_price": 1,
+                    "original_price": 0,
+                    "source_site": "GSSHOP",
+                    "source_url": f"{self.BASE_PC}/prd/prd.gs?prdid={pid}",
+                    "collectedAt": now_iso,
+                    "status": "collected",
                 }
+                for pid in product_ids[:size]
+            ]
+            logger.info(
+                f'[GSSHOP] 검색 완료: "{keyword}" → {len(products)}개 ({pg}페이지 순회)'
             )
-            SourcingQueue.resolvers[request_id] = future
-            logger.info(f"[GSSHOP] 큐 등록 완료: {request_id} → {url}")
+            return products
 
-            # 확장앱 결과 대기 (최대 300초 — 다중 페이지 수집 대응)
-            result = await asyncio.wait_for(future, timeout=300)
-
-            products = result.get("products", []) if isinstance(result, dict) else []
-            logger.info(f'[GSSHOP] 검색 완료: "{keyword}" -> {len(products)}개')
-            return products[:size]
-
-        except asyncio.TimeoutError:
-            logger.warning(f'[GSSHOP] 검색 타임아웃 (300초): "{keyword}"')
-            return []
         except Exception as e:
             logger.error(f"[GSSHOP] 검색 실패: {keyword} — {e}")
             return []
@@ -647,10 +704,13 @@ class GsShopSourcingClient:
             "category1": raw.get("category1", ""),
             "category2": raw.get("category2", ""),
             "category3": raw.get("category3", ""),
+            "category4": raw.get("category4", ""),
             "images": raw.get("images", []),
             "options": raw.get("options", []),
             "detail_html": raw.get("detailHtml", ""),
             "detail_images": raw.get("detailImages", []),
+            "salePrice": raw.get("salePrice", 0),
+            "originalPrice": raw.get("originalPrice", 0),
             "bestBenefitPrice": raw.get("bestBenefitPrice", 0),
             "source_url": raw.get("sourceUrl", ""),
             "free_shipping": raw.get("freeShipping", False),

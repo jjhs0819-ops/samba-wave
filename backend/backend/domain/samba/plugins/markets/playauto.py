@@ -265,6 +265,18 @@ class PlayAutoPlugin(MarketPlugin):
         if len(image_bytes) < 1000:
             raise ValueError(f"이미지 비정상 크기: {len(image_bytes)}B")
 
+        # WebP → JPG 실제 변환 (EMP는 WebP 미지원)
+        if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+            from PIL import Image as _PILImage
+
+            _img = _PILImage.open(io.BytesIO(image_bytes))
+            if _img.mode in ("RGBA", "P"):
+                _img = _img.convert("RGB")
+            _buf = io.BytesIO()
+            _img.save(_buf, format="JPEG", quality=90)
+            image_bytes = _buf.getvalue()
+            logger.info(f"[플레이오토] WebP→JPG 변환 완료: {image_url[:60]}")
+
         # R2 키 (해시 기반 중복 방지)
         if not r2_key:
             url_hash = hashlib.md5(image_url.encode()).hexdigest()[:12]

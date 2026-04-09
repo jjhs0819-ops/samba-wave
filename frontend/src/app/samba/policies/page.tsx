@@ -1184,7 +1184,7 @@ export default function PoliciesPage() {
                 {/* 치환 조건 목록 */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
                   <span style={{ color: '#888', fontSize: '0.78rem' }}>치환조건</span>
-                  <button onClick={() => updateRule({ replacements: [...(r.replacements || []), { from: '', to: '', caseInsensitive: false }] })}
+                  <button onClick={() => updateRule({ replacements: [...(r.replacements || []), { from: '', to: '', caseInsensitive: true }] })}
                     style={{ fontSize: '0.68rem', color: '#4C9AFF', background: 'transparent', border: '1px dashed #4C9AFF', borderRadius: '4px', padding: '1px 8px', cursor: 'pointer' }}>+ 조건추가</button>
                 </div>
                 {(r.replacements || []).map((rep: {from: string; to: string; caseInsensitive?: boolean}, idx: number) => (
@@ -1199,7 +1199,7 @@ export default function PoliciesPage() {
                     {idx > 0 && <button onClick={() => moveRep(idx, idx - 1)} style={{ color: '#888', background: 'none', border: '1px solid #2D2D2D', borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▲</button>}
                     {idx < (r.replacements || []).length - 1 && <button onClick={() => moveRep(idx, idx + 1)} style={{ color: '#888', background: 'none', border: '1px solid #2D2D2D', borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▼</button>}
                     <label style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '0.65rem', color: '#888', whiteSpace: 'nowrap' }}>
-                      <input type="checkbox" checked={rep.caseInsensitive ?? false}
+                      <input type="checkbox" checked={rep.caseInsensitive ?? true}
                         onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], caseInsensitive: e.target.checked }; updateRule({ replacements: reps }) }}
                         style={{ accentColor: '#FF8C00', width: '11px', height: '11px' }} />대소문자무시
                     </label>
@@ -1329,7 +1329,7 @@ export default function PoliciesPage() {
                   <span style={{ fontSize: '0.72rem', color: '#666' }}>상품명에서 중복 단어를 제거합니다</span>
                 </div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={r.dedup_enabled ?? false}
+                  <input type="checkbox" checked={r.dedup_enabled ?? true}
                     onChange={(e) => updateRule({ dedup_enabled: e.target.checked })}
                     style={{ accentColor: '#CC5DE8', width: '14px', height: '14px' }} />
                   <span style={{ fontSize: '0.8rem', color: '#C5C5C5' }}>중복단어를 필터링합니다</span>

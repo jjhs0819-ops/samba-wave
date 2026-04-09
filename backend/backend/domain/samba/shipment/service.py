@@ -77,7 +77,8 @@ def calc_market_price(
         calc_price = math.ceil(calc_price / (1 - m_fee / 100))
     if common_extra > 0:
         calc_price += common_extra
-    return int(calc_price)
+    # 100원 단위 내림 (111 → 100)
+    return (int(calc_price) // 100) * 100
 
 
 # 그룹상품 동시성 제어 락 (account_id별)
@@ -1213,6 +1214,17 @@ class SambaShipmentService:
                 # 마켓별 판매가 계산 (product_dict 원본 보호를 위해 복사본 사용)
                 acct_product = dict(product_dict)
 
+                # 마켓별 상세페이지 템플릿 오버라이드
+                if policy and policy.extras:
+                    _mdt = policy.extras.get("market_detail_templates") or {}
+                    _policy_key = MARKET_TYPE_TO_POLICY_KEY.get(market_type, "")
+                    _market_tpl_id = _mdt.get(_policy_key)
+                    if _market_tpl_id:
+                        acct_product["detail_html"] = await self._build_detail_html(
+                            acct_product,
+                            template_id_override=_market_tpl_id,
+                        )
+
                 # 마켓별 상품명 조합 덮어쓰기
                 _nr = product_dict.get("_name_rule")
                 if _nr and getattr(_nr, "market_name_compositions", None):
@@ -1560,27 +1572,35 @@ class SambaShipmentService:
         parts = [tag_map.get(tag, "") if tag in tag_map else tag for tag in composition]
         composed = " ".join(p for p in parts if p and p.strip())
 
-        # 치환어 적용
+        # 치환어 적용 (동시치환/순차치환 분기)
         import re
 
         replacements = name_rule.replacements or []
         if replacements:
-            for r in replacements:
-                fr = (
-                    r.get("from", "")
-                    if isinstance(r, dict)
-                    else getattr(r, "from_", "")
-                )
-                to = r.get("to", "") if isinstance(r, dict) else getattr(r, "to", "")
-                if not fr:
-                    continue
-                case_insensitive = (
-                    r.get("caseInsensitive", False)
-                    if isinstance(r, dict)
-                    else getattr(r, "caseInsensitive", False)
-                )
-                flags = re.IGNORECASE if case_insensitive else 0
-                composed = re.sub(re.escape(fr), to or "", composed, flags=flags)
+            replace_mode = getattr(name_rule, "replace_mode", "simultaneous")
+            if replace_mode == "sequential":
+                # 순차치환: 위에서 아래로 순서대로 치환
+                for r in replacements:
+                    fr = (
+                        r.get("from", "")
+                        if isinstance(r, dict)
+                        else getattr(r, "from_", "")
+                    )
+                    to = (
+                        r.get("to", "") if isinstance(r, dict) else getattr(r, "to", "")
+                    )
+                    if not fr:
+                        continue
+                    case_insensitive = (
+                        r.get("caseInsensitive", True)
+                        if isinstance(r, dict)
+                        else getattr(r, "caseInsensitive", True)
+                    )
+                    flags = re.IGNORECASE if case_insensitive else 0
+                    composed = re.sub(re.escape(fr), to or "", composed, flags=flags)
+            else:
+                # 동시치환(기본): 모든 규칙을 한번에 적용, 긴 문자열 우선
+                composed = self._simultaneous_replace(composed, replacements)
 
         # 삭제어 적용 (dedup 전에 적용하여 중복 단어 감지 가능하게)
         if deletion_words:
@@ -1608,12 +1628,64 @@ class SambaShipmentService:
 
         return composed.strip()
 
+    @staticmethod
+    def _simultaneous_replace(text: str, replacements: list) -> str:
+        """동시치환: 모든 치환규칙의 매칭을 한번에 수집 → 긴 문자열 우선 → 비겹침 선택."""
+        import re
+
+        # (start, end, to_val, from_len, priority)
+        all_matches: list[tuple[int, int, str, int, int]] = []
+
+        for i, r in enumerate(replacements):
+            fr = r.get("from", "") if isinstance(r, dict) else getattr(r, "from_", "")
+            to_val = r.get("to", "") if isinstance(r, dict) else getattr(r, "to", "")
+            if not fr:
+                continue
+            case_insensitive = (
+                r.get("caseInsensitive", True)
+                if isinstance(r, dict)
+                else getattr(r, "caseInsensitive", True)
+            )
+            flags = re.IGNORECASE if case_insensitive else 0
+            pattern = re.compile(re.escape(fr), flags)
+            for m in pattern.finditer(text):
+                all_matches.append(
+                    (m.start(), m.end(), to_val or "", m.end() - m.start(), i)
+                )
+
+        if not all_matches:
+            return text
+
+        # 위치(ASC) → 길이(DESC, 긴 것 우선) → 규칙순서(ASC)
+        all_matches.sort(key=lambda x: (x[0], -x[3], x[4]))
+
+        # 겹치지 않는 매칭만 선택 (greedy left-to-right)
+        selected = []
+        last_end = 0
+        for match in all_matches:
+            if match[0] >= last_end:
+                selected.append(match)
+                last_end = match[1]
+
+        # 결과 문자열 조립
+        parts: list[str] = []
+        pos = 0
+        for start, end, to_val, _, _ in selected:
+            parts.append(text[pos:start])
+            parts.append(to_val)
+            pos = end
+        parts.append(text[pos:])
+        return "".join(parts)
+
     # ==================== 상세페이지 HTML 생성 ====================
 
-    async def _build_detail_html(self, product: dict[str, Any]) -> str:
+    async def _build_detail_html(
+        self, product: dict[str, Any], template_id_override: str = ""
+    ) -> str:
         """정책의 상세 템플릿(상단/하단 이미지)과 상품 이미지를 조합하여 상세 HTML 생성.
 
         구조: 상단이미지 → 대표이미지 → 추가이미지 → 하단이미지
+        template_id_override: 마켓별 전용 템플릿 ID (있으면 기본 템플릿 대신 사용)
         """
         from backend.domain.samba.policy.repository import SambaPolicyRepository
         from backend.domain.samba.policy.model import SambaDetailTemplate
@@ -1661,8 +1733,14 @@ class SambaShipmentService:
             policy_repo = SambaPolicyRepository(self.session)
             policy = await policy_repo.get_async(policy_id)
             if policy and policy.extras:
-                template_id = policy.extras.get("detail_template_id")
-                logger.info(f"[상세HTML] 정책 {policy_id} 템플릿ID: {template_id}")
+                # 마켓별 오버라이드 우선, 없으면 기본 템플릿
+                template_id = template_id_override or policy.extras.get(
+                    "detail_template_id"
+                )
+                logger.info(
+                    f"[상세HTML] 정책 {policy_id} 템플릿ID: {template_id}"
+                    f"{' (마켓별 오버라이드)' if template_id_override else ''}"
+                )
                 if template_id:
                     tpl_repo = BaseRepository(self.session, SambaDetailTemplate)
                     tpl = await tpl_repo.get_async(template_id)

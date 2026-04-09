@@ -138,8 +138,8 @@ class JobWorker:
     POLL_INTERVAL = 5  # 초
     MAX_CONCURRENT_TRANSMIT = 3  # 전송 잡 동시 실행 상한
 
-    STUCK_CHECK_INTERVAL = 6  # 6회 폴링마다 stuck 체크 (≒30초)
-    STUCK_THRESHOLD_SEC = 300  # 5분 이상 progress 변화 없으면 stuck 판정
+    STUCK_CHECK_INTERVAL = 2  # 2회 폴링마다 stuck 체크 (≒10초)
+    STUCK_THRESHOLD_SEC = 60  # 1분 이상 progress 변화 없으면 stuck 판정
 
     def __init__(self):
         self._running = True
@@ -1374,7 +1374,9 @@ class JobWorker:
                     # 카테고리필터가 있는 소싱처: 전체 검색 후 사후 필터링
                     _max = (
                         9999
-                        if (site in ("Nike", "ABCmart") and sf.category_filter)
+                        if (
+                            site in ("Nike", "ABCmart", "GSShop") and sf.category_filter
+                        )
                         else max(remaining * 2, 100)
                     )
                     # 검색 캐시: 동일 브랜드 그룹 수집 시 전수 검색 1회만 실행
@@ -1386,7 +1388,7 @@ class JobWorker:
                     if (
                         _cached
                         and _time.time() - _cached[1] < _cache_ttl
-                        and site in ("Nike", "ABCmart")
+                        and site in ("Nike", "ABCmart", "GSShop")
                         and sf.category_filter
                     ):
                         items_list = list(_cached[0])
@@ -1432,7 +1434,7 @@ class JobWorker:
                         )
                         # 전수 검색 결과 캐시 저장
                         if (
-                            site in ("Nike", "ABCmart")
+                            site in ("Nike", "ABCmart", "GSShop")
                             and sf.category_filter
                             and items_list
                         ):
@@ -1652,6 +1654,78 @@ class JobWorker:
                     f"[잡워커] Nike 상세 선취합 완료: {len(_nike_details)}/{len(new_items)}건 성공"
                 )
 
+        # GSShop: 선취합 + 카테고리 필터 (검색 결과에 이름/카테고리 없으므로 상세 조회 필수)
+        _gsshop_details: dict[str, dict[str, Any]] = {}
+        if site == "GSShop" and client:
+            new_items = [
+                it
+                for it in items_list
+                if str(it.get("site_product_id", "")) not in existing_ids
+            ][:remaining]
+            if new_items:
+                logger.info(
+                    f"[잡워커] GSShop 상세 선취합 시작: {len(new_items)}건 (20건 병렬)"
+                )
+                _GS_BATCH = 20
+                _gs_cat_filter = sf.category_filter or ""
+                # 카테고리 필터: "카테고리명" 또는 "대>중>소" 형태
+                _gs_filter_parts = [
+                    p.strip()
+                    for p in _gs_cat_filter.replace(" > ", "_").split("_")
+                    if p.strip()
+                ]
+                for batch_start in range(0, len(new_items), _GS_BATCH):
+                    batch = new_items[batch_start : batch_start + _GS_BATCH]
+                    details = await asyncio.gather(
+                        *(
+                            client.get_detail(str(it.get("site_product_id", "")))
+                            for it in batch
+                        ),
+                        return_exceptions=True,
+                    )
+                    for it, det in zip(batch, details):
+                        pid = str(it.get("site_product_id", ""))
+                        if isinstance(det, Exception):
+                            logger.debug(
+                                f"[잡워커] GSShop 상세 선취합 실패 {pid}: {det}"
+                            )
+                            continue
+                        if not det or not det.get("name"):
+                            continue
+                        # 카테고리 필터 적용
+                        if _gs_filter_parts:
+                            _det_cats = [
+                                det.get("category1", ""),
+                                det.get("category2", ""),
+                                det.get("category3", ""),
+                                det.get("category4", ""),
+                            ]
+                            _det_cat_str = " ".join(c for c in _det_cats if c).lower()
+                            _matched = all(
+                                fp.lower() in _det_cat_str for fp in _gs_filter_parts
+                            )
+                            if not _matched:
+                                continue
+                        _gsshop_details[pid] = det
+                    done = min(batch_start + _GS_BATCH, len(new_items))
+                    await repo.update_progress(job.id, done, len(new_items))
+                    logger.info(
+                        f"[잡워커] GSShop 상세 선취합 [{done}/{len(new_items)}]"
+                        f" 카테고리 통과: {len(_gsshop_details)}건"
+                    )
+                logger.info(
+                    f"[잡워커] GSShop 상세 선취합 완료:"
+                    f" {len(_gsshop_details)}/{len(new_items)}건"
+                    f" (카테고리 필터: {_gs_cat_filter or '없음'})"
+                )
+            # GSShop: 선취합 결과로 items_list 교체 (카테고리 통과 상품만)
+            if _gsshop_details:
+                items_list = [
+                    it
+                    for it in items_list
+                    if str(it.get("site_product_id", "")) in _gsshop_details
+                ]
+
         for item in items_list:
             if total_saved >= remaining:
                 break
@@ -1705,6 +1779,27 @@ class JobWorker:
             # Nike: 선취합된 상세 데이터 사용
             if site == "Nike" and p_id in _nike_details:
                 detail = _nike_details[p_id]
+            # GSShop: 선취합된 상세 데이터 사용 + 이름/가격 보충
+            if site == "GSShop" and p_id in _gsshop_details:
+                detail = _gsshop_details[p_id]
+                # 검색 결과에 이름/가격 없으므로 상세에서 보충
+                if not p_name or p_name == "(GSShop)":
+                    p_name = detail.get("name", "") or p_name
+                if sale_price <= 1:
+                    sale_price = int(
+                        detail.get("salePrice", 0)
+                        or detail.get("bestBenefitPrice", 0)
+                        or detail.get("sale_price", 0)
+                        or 0
+                    )
+                    original_price = (
+                        int(
+                            detail.get("originalPrice", 0)
+                            or detail.get("original_price", 0)
+                            or 0
+                        )
+                        or sale_price
+                    )
             _skip_detail = _search_kwargs.get("_skip_detail", False)
             # ABCmart 최대혜택가: API에서 쿠폰+멤버십 직접 계산 (확장앱 불필요)
             if (

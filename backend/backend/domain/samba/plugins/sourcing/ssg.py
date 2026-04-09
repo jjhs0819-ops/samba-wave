@@ -64,7 +64,9 @@ class SSGPlugin(SourcingPlugin):
 
         try:
             client = SSGSourcingClient()
-            detail = await self.safe_call(client.get_product_detail(site_product_id))
+            detail = await self.safe_call(
+                client.get_product_detail(site_product_id, refresh_only=True)
+            )
 
             if not detail:
                 return RefreshResult(

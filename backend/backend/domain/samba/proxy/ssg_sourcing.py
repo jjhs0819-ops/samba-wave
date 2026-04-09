@@ -118,23 +118,16 @@ class SSGSourcingClient:
         async def _run(client: httpx.AsyncClient) -> list[dict[str, Any]]:
             # 1단계: page=1로 브랜드 필터 목록 조회
             if page == 1:
-                preset = filters.get("brand_ids", [])
-                if preset:
-                    # URL에 repBrandId가 명시된 경우 HTML 추출 스킵 — 해당 브랜드만 수집
-                    brand_ids = preset
-                    first_html = None
-                    logger.info(f"[SSG] 브랜드 preset 사용: {brand_ids}")
-                else:
-                    first_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
-                    resp = await client.get(first_url, headers=self._headers())
-                    if resp.status_code in (429, 403):
-                        raise RateLimitError(int(resp.status_code))
-                    if resp.status_code != 200:
-                        logger.warning(f"[SSG] 검색 페이지 HTTP {resp.status_code}")
-                        return []
-                    first_html = resp.text
-                    brand_ids = self._extract_matching_brand_ids(first_html, keyword)
-                    logger.info(f"[SSG] 매칭 브랜드: {len(brand_ids)}개 → {brand_ids}")
+                first_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
+                resp = await client.get(first_url, headers=self._headers())
+                if resp.status_code in (429, 403):
+                    raise RateLimitError(int(resp.status_code))
+                if resp.status_code != 200:
+                    logger.warning(f"[SSG] 검색 페이지 HTTP {resp.status_code}")
+                    return []
+                first_html = resp.text
+                brand_ids = self._extract_matching_brand_ids(first_html, keyword)
+                logger.info(f"[SSG] 매칭 브랜드: {len(brand_ids)}개 → {brand_ids}")
             else:
                 # page > 1: filters에서 brand_ids 전달받음
                 brand_ids = filters.get("brand_ids", [])
@@ -227,158 +220,6 @@ class SSGSourcingClient:
                             seen.add(value)
 
         return brand_ids
-
-    async def get_brand_filters(self, keyword: str) -> list[dict[str, Any]]:
-        """키워드 검색 결과의 브랜드 필터 목록 + 브랜드별 상품 수 반환.
-
-        1단계: keyword 검색 → 브랜드 목록 추출
-        2단계: 브랜드별 repBrandId 필터 요청 → 상품 수(areaList[0].count) 파싱
-        반환값: [{name, value, count}]
-        """
-        import asyncio
-
-        _client_kwargs: dict[str, Any] = {
-            "timeout": self._timeout,
-            "follow_redirects": True,
-        }
-        if self.proxy_url:
-            _client_kwargs["proxy"] = self.proxy_url
-
-        search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
-        try:
-            async with httpx.AsyncClient(**_client_kwargs) as client:
-                resp = await client.get(search_url, headers=self._headers())
-                if resp.status_code in (429, 403):
-                    raise RateLimitError(int(resp.status_code))
-                if resp.status_code != 200:
-                    logger.warning(f"[SSG] 브랜드 스캔 HTTP {resp.status_code}")
-                    return []
-                html = resp.text
-        except RateLimitError:
-            raise
-        except Exception as e:
-            logger.error(f"[SSG] 브랜드 스캔 실패: {keyword} — {e}")
-            return []
-
-        brands = self._extract_all_brand_filters(html)
-        if not brands:
-            return brands
-
-        # 브랜드별 상품 수 조회 (브랜드 수만큼 추가 요청, 1초 간격)
-        async with httpx.AsyncClient(**_client_kwargs) as client:
-            for brand in brands:
-                await asyncio.sleep(1.0)
-                try:
-                    brand_url = (
-                        f"{self.SEARCH_URL}?query={quote(keyword)}"
-                        f"&repBrandId={brand['value']}&page=1"
-                    )
-                    r = await client.get(brand_url, headers=self._headers())
-                    if r.status_code == 200:
-                        brand["count"] = self._parse_area_count(r.text)
-                        logger.info(
-                            f"[SSG] 브랜드 건수: {brand['name']} → {brand['count']}건"
-                        )
-                except Exception as e:
-                    logger.warning(f"[SSG] 브랜드 건수 조회 실패 {brand['name']}: {e}")
-
-        return brands
-
-    def _parse_area_count(self, html: str) -> int:
-        """__NEXT_DATA__ 에서 브랜드 필터 적용된 실제 상품 수 파싱.
-
-        PAGING_UNIT.itemCount 우선 사용,
-        결과 0건이면 PAGING_UNIT이 없으므로 unitText[item_cnt]로 폴백.
-        """
-        m = re.search(
-            r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
-            html,
-            re.DOTALL,
-        )
-        if not m:
-            return 0
-        try:
-            next_data = json.loads(m.group(1))
-        except json.JSONDecodeError:
-            return 0
-
-        queries = (
-            next_data.get("props", {})
-            .get("pageProps", {})
-            .get("dehydratedState", {})
-            .get("queries", [])
-        )
-
-        for q in queries:
-            qk = q.get("queryKey") or []
-            if "fetchSearchItemListArea" not in qk:
-                continue
-            data = q.get("state", {}).get("data")
-            if not isinstance(data, dict):
-                continue
-
-            area_list = data.get("areaList", [])
-
-            # 1순위: PAGING_UNIT.itemCount (브랜드 필터 적용된 정확한 상품 수)
-            for area in area_list:
-                if area.get("unitType") == "PAGING_UNIT":
-                    return int(area.get("itemCount", 0))
-
-            # 2순위: 0건 결과 — PAGING_UNIT 없음, unitText에서 item_cnt 추출
-            for area in area_list:
-                for unit_text in area.get("unitText") or []:
-                    if unit_text.get("type") == "item_cnt":
-                        return int(unit_text.get("value", 0))
-
-        return 0
-
-    def _extract_all_brand_filters(self, html: str) -> list[dict[str, Any]]:
-        """__NEXT_DATA__에서 브랜드 필터 전체 목록 추출.
-
-        반환값: [{name: str, value: str, count: int}]
-        """
-        m = re.search(
-            r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
-            html,
-            re.DOTALL,
-        )
-        if not m:
-            return []
-
-        try:
-            next_data = json.loads(m.group(1))
-        except json.JSONDecodeError:
-            return []
-
-        queries = (
-            next_data.get("props", {})
-            .get("pageProps", {})
-            .get("dehydratedState", {})
-            .get("queries", [])
-        )
-
-        brands: list[dict[str, Any]] = []
-        seen: set[str] = set()
-
-        for q in queries:
-            if "useTemplateFilterQuery" not in (q.get("queryKey") or []):
-                continue
-            filters_data = q.get("state", {}).get("data") or []
-            for f in filters_data:
-                if f.get("filterType") != "brandFilter":
-                    continue
-                for unit in f.get("unitList", []):
-                    for item in unit.get("dataList", []):
-                        name = item.get("name", "")
-                        value = item.get("value", "")
-                        count = 0  # 브랜드별 개별 요청으로 채워짐
-                        if value and value not in seen:
-                            brands.append(
-                                {"name": name, "value": value, "count": count}
-                            )
-                            seen.add(value)
-
-        return brands
 
     def _parse_search_html(self, html: str, keyword: str) -> list[dict[str, Any]]:
         """검색 결과 HTML에서 상품 정보 추출.
