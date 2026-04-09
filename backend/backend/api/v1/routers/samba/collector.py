@@ -1019,9 +1019,6 @@ async def product_dashboard_stats(
             func.count(case((_CP.registered_accounts != None, literal(1)))).label(
                 "registered"
             ),
-            func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
-                "policy_applied"
-            ),
             func.count(case((_CP.sale_status == "sold_out", literal(1)))).label(
                 "sold_out"
             ),
@@ -1036,7 +1033,6 @@ async def product_dashboard_stats(
             "source_site": r.source_site,
             "total": r.total,
             "registered": r.registered,
-            "policy_applied": r.policy_applied,
             "sold_out": r.sold_out,
         }
         for r in site_rows
@@ -1046,9 +1042,9 @@ async def product_dashboard_stats(
     acct_stmt = text("""
         SELECT aid, COUNT(*) AS cnt
         FROM samba_collected_product,
-             jsonb_array_elements_text(registered_accounts) AS aid
+             json_array_elements_text(registered_accounts) AS aid
         WHERE registered_accounts IS NOT NULL
-          AND jsonb_array_length(registered_accounts) > 0
+          AND json_array_length(registered_accounts) > 0
         GROUP BY aid
         ORDER BY cnt DESC
     """)

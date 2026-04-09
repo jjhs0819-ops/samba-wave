@@ -20,7 +20,7 @@ export default function SambaDashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [collectedCount, setCollectedCount] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [bySource, setBySource] = useState<{ source_site: string; total: number; registered: number; policy_applied: number; sold_out: number }[]>([])
+  const [bySource, setBySource] = useState<{ source_site: string; total: number; registered: number; sold_out: number }[]>([])
   const [byAccount, setByAccount] = useState<{ account_id: string; market_name: string; account_label: string; registered: number }[]>([])
 
   const now = new Date()
@@ -261,7 +261,6 @@ export default function SambaDashboard() {
               <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
                 <th style={{ textAlign: 'left', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>소싱처</th>
                 <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>수집</th>
-                <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>정책적용</th>
                 <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>등록</th>
                 <th style={{ textAlign: 'right', padding: '0.5rem 0', color: '#888', fontWeight: 500 }}>품절</th>
               </tr>
@@ -271,7 +270,6 @@ export default function SambaDashboard() {
                 <tr key={s.source_site} style={{ borderBottom: '1px solid rgba(45,45,45,0.3)' }}>
                   <td style={{ padding: '0.5rem 0', color: '#E5E5E5' }}>{s.source_site}</td>
                   <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#E5E5E5' }}>{fmtNum(s.total)}</td>
-                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#E5E5E5' }}>{fmtNum(s.policy_applied)}</td>
                   <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00' }}>{fmtNum(s.registered)}</td>
                   <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#888' }}>{fmtNum(s.sold_out)}</td>
                 </tr>
@@ -280,13 +278,12 @@ export default function SambaDashboard() {
                 <tr style={{ borderTop: '1px solid #2D2D2D' }}>
                   <td style={{ padding: '0.5rem 0', color: '#FF8C00', fontWeight: 600 }}>합계</td>
                   <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(bySource.reduce((a, s) => a + s.total, 0))}</td>
-                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(bySource.reduce((a, s) => a + s.policy_applied, 0))}</td>
                   <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(bySource.reduce((a, s) => a + s.registered, 0))}</td>
                   <td style={{ padding: '0.5rem 0', textAlign: 'right', color: '#888', fontWeight: 600 }}>{fmtNum(bySource.reduce((a, s) => a + s.sold_out, 0))}</td>
                 </tr>
               )}
               {bySource.length === 0 && (
-                <tr><td colSpan={5} style={{ padding: '1.5rem 0', textAlign: 'center', color: '#555' }}>데이터 없음</td></tr>
+                <tr><td colSpan={4} style={{ padding: '1.5rem 0', textAlign: 'center', color: '#555' }}>데이터 없음</td></tr>
               )}
             </tbody>
           </table>
