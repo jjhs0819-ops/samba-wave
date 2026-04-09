@@ -205,12 +205,29 @@ class LotteonClient:
         )
 
     async def delete_product(self, spd_no: str) -> dict[str, Any]:
-        """상품 삭제 (리스트에서 완전 제거)."""
+        """상품 삭제 (리스트에서 완전 제거).
+
+        다른 엔드포인트와 일관되게 `spdNo` 필드를 사용하며,
+        API 응답 코드를 검증해 실패 시 예외를 발생시켜
+        상위 `_safe_delete` 래퍼가 실패를 포착하도록 한다.
+        """
         result = await self._call_api(
             "POST",
             "/v1/openapi/product/v1/product/delete",
-            body={"spdLst": [{"selPrdNo": spd_no}]},
+            body={"spdLst": [{"spdNo": spd_no}]},
         )
+        # 응답 코드 검증 — 성공 코드가 아니면 RuntimeError
+        if isinstance(result, dict):
+            code = (
+                result.get("code")
+                or result.get("resultCode")
+                or result.get("returnCode")
+            )
+            if code and str(code) not in ("0", "00", "0000", "200", "SUCCESS"):
+                msg = (
+                    result.get("message") or result.get("resultMessage") or str(result)
+                )
+                raise RuntimeError(f"롯데온 삭제 API 실패: code={code} msg={msg}")
         return {"success": True, "data": result}
 
     # ------------------------------------------------------------------
