@@ -1215,13 +1215,13 @@ class SambaShipmentService:
                 acct_product = dict(product_dict)
 
                 # 마켓별 상세페이지 템플릿 오버라이드
+                # 프론트엔드는 market_type(영문 ID: "playauto")을 키로 저장
                 if policy and policy.extras:
                     _mdt = policy.extras.get("market_detail_templates") or {}
-                    _policy_key = MARKET_TYPE_TO_POLICY_KEY.get(market_type, "")
-                    _market_tpl_id = _mdt.get(_policy_key)
+                    _market_tpl_id = _mdt.get(market_type)
                     logger.info(
                         f"[전송] 마켓별 상세 템플릿 조회: market={market_type}, "
-                        f"policy_key={_policy_key}, mdt_keys={list(_mdt.keys())}, "
+                        f"mdt_keys={list(_mdt.keys())}, "
                         f"tpl_id={_market_tpl_id or '(없음)'}"
                     )
                     if _market_tpl_id:
