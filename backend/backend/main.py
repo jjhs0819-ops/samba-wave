@@ -74,6 +74,7 @@ async def lifespan(app: FastAPI):
     # 누락 컬럼 자동 추가 (CI/CD가 DB를 건드리지 않으므로 앱에서 보완)
     _migrations = [
         ("samba_order", "paid_at", "TIMESTAMPTZ"),
+        ("samba_search_filter", "source_brand_name", "TEXT"),
     ]
     try:
         from backend.db.orm import get_write_session
@@ -84,6 +85,12 @@ async def lifespan(app: FastAPI):
                 await session.execute(
                     text(f"ALTER TABLE {_tbl} ADD COLUMN IF NOT EXISTS {_col} {_typ}")
                 )
+            # sort_order 컬럼 제거 (모델에서 삭제됨)
+            await session.execute(
+                text(
+                    "ALTER TABLE samba_market_account DROP COLUMN IF EXISTS sort_order"
+                )
+            )
             # samba_login_history 테이블 자동 생성
             await session.execute(
                 text(
