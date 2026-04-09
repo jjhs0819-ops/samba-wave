@@ -1007,32 +1007,24 @@ async def product_dashboard_stats(
     if cached:
         return cached
 
-    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from backend.domain.samba.account.model import SambaMarketAccount as _MA
-    from sqlalchemy import func, case, literal, text, cast, String
+    from sqlalchemy import text
 
-    # 1) 소싱처별 수집현황
-    #    registered_accounts는 JSON null로 저장되므로 cast→text 비교 필요
-    site_stmt = (
-        select(
-            _CP.source_site,
-            func.count().label("total"),
-            func.count(
-                case(
-                    (
-                        cast(_CP.registered_accounts, String) != "null",
-                        literal(1),
-                    )
-                )
-            ).label("registered"),
-            func.count(case((_CP.sale_status == "sold_out", literal(1)))).label(
-                "sold_out"
-            ),
-        )
-        .where(_CP.source_site != None, _CP.source_site != "")
-        .group_by(_CP.source_site)
-        .order_by(func.count().desc())
-    )
+    # 1) 소싱처별 수집현황 — raw SQL로 json/jsonb 호환
+    site_stmt = text("""
+        SELECT source_site,
+               COUNT(*) AS total,
+               COUNT(*) FILTER (
+                   WHERE registered_accounts IS NOT NULL
+                     AND registered_accounts::text != 'null'
+                     AND registered_accounts::text != '[]'
+               ) AS registered,
+               COUNT(*) FILTER (WHERE sale_status = 'sold_out') AS sold_out
+        FROM samba_collected_product
+        WHERE source_site IS NOT NULL AND source_site != ''
+        GROUP BY source_site
+        ORDER BY total DESC
+    """)
     site_rows = (await session.execute(site_stmt)).all()
     by_source = [
         {
@@ -1044,44 +1036,49 @@ async def product_dashboard_stats(
         for r in site_rows
     ]
 
-    # 2) 마켓/계정별 등록현황 — registered_accounts JSON 배열 언래핑
-    #    서브쿼리로 배열 타입만 먼저 필터링 (json_array_length 에러 방지)
-    acct_stmt = text("""
-        SELECT aid, COUNT(*) AS cnt
-        FROM (
-            SELECT json_array_elements_text(registered_accounts) AS aid
-            FROM samba_collected_product
-            WHERE registered_accounts IS NOT NULL
-              AND json_typeof(registered_accounts) = 'array'
-        ) sub
-        GROUP BY aid
-        ORDER BY cnt DESC
-    """)
-    acct_rows = (await session.execute(acct_stmt)).all()
+    # 2) 마켓/계정별 등록현황 — jsonb_array_elements_text 사용 (cast로 호환)
+    by_account: list[dict] = []
+    try:
+        acct_stmt = text("""
+            SELECT aid, COUNT(*) AS cnt
+            FROM (
+                SELECT jsonb_array_elements_text(registered_accounts::jsonb) AS aid
+                FROM samba_collected_product
+                WHERE registered_accounts IS NOT NULL
+                  AND registered_accounts::text != 'null'
+                  AND registered_accounts::text != '[]'
+            ) sub
+            GROUP BY aid
+            ORDER BY cnt DESC
+        """)
+        acct_rows = (await session.execute(acct_stmt)).all()
 
-    # 계정 ID → 마켓명/계정라벨 매핑
-    acct_ids = [r.aid for r in acct_rows]
-    acct_map: dict[str, dict[str, str]] = {}
-    if acct_ids:
-        ma_stmt = select(_MA.id, _MA.market_name, _MA.account_label).where(
-            _MA.id.in_(acct_ids)
-        )
-        ma_rows = (await session.execute(ma_stmt)).all()
-        for m in ma_rows:
-            acct_map[m.id] = {
-                "market_name": m.market_name,
-                "account_label": m.account_label,
+        # 계정 ID → 마켓명/계정라벨 매핑
+        acct_ids = [r.aid for r in acct_rows]
+        acct_map: dict[str, dict[str, str]] = {}
+        if acct_ids:
+            ma_stmt = select(_MA.id, _MA.market_name, _MA.account_label).where(
+                _MA.id.in_(acct_ids)
+            )
+            ma_rows = (await session.execute(ma_stmt)).all()
+            for m in ma_rows:
+                acct_map[m.id] = {
+                    "market_name": m.market_name,
+                    "account_label": m.account_label,
+                }
+
+        by_account = [
+            {
+                "account_id": r.aid,
+                "market_name": acct_map.get(r.aid, {}).get("market_name", "알 수 없음"),
+                "account_label": acct_map.get(r.aid, {}).get("account_label", ""),
+                "registered": r.cnt,
             }
-
-    by_account = [
-        {
-            "account_id": r.aid,
-            "market_name": acct_map.get(r.aid, {}).get("market_name", "알 수 없음"),
-            "account_label": acct_map.get(r.aid, {}).get("account_label", ""),
-            "registered": r.cnt,
-        }
-        for r in acct_rows
-    ]
+            for r in acct_rows
+        ]
+    except Exception as e:
+        logger.warning("대시보드 계정별 통계 조회 실패: %s", e)
+        by_account = []
 
     result = {"by_source": by_source, "by_account": by_account}
     await cache.set("products:dashboard-stats", result, ttl=60)
