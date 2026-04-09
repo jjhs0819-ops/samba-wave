@@ -10,6 +10,7 @@ jobs:
   deploy:
     name: Deploy to Cloud Run
     runs-on: ubuntu-latest
+    environment: production
 
     steps:
       - uses: actions/checkout@v4
@@ -24,23 +25,21 @@ jobs:
         run: |
           cat > /tmp/cloudrun-env.yaml << EOF
           ENVIRONMENT: "production"
-          WRITE_DB_USER: "samba-user"
-          WRITE_DB_PASSWORD: "${{ secrets.DB_WRITE_PASSWORD }}"
-          WRITE_DB_HOST: "34.64.205.34"
+          WRITE_DB_USER: "postgres"
+          WRITE_DB_HOST: "/cloudsql/fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
           WRITE_DB_PORT: "5432"
-          WRITE_DB_NAME: "samba-wave"
-          READ_DB_USER: "samba-user"
-          READ_DB_PASSWORD: "${{ secrets.DB_READ_PASSWORD }}"
-          READ_DB_HOST: "34.64.205.34"
+          WRITE_DB_NAME: "railway"
+          READ_DB_USER: "postgres"
+          READ_DB_HOST: "/cloudsql/fresh-sanctuary-489804-v4:asia-northeast3:samba-wave-db"
           READ_DB_PORT: "5432"
-          READ_DB_NAME: "samba-wave"
+          READ_DB_NAME: "railway"
           DB_SSL_REQUIRED: "false"
-          JWT_SECRET_KEY: "${{ secrets.JWT_SECRET_KEY }}"
           WEB_CONCURRENCY: "1"
           GUNICORN_CMD_ARGS: "--timeout 300 --graceful-timeout 300"
           TERMINATION_GRACE_HACK: "1"
           PROXY_URLS: "${{ secrets.PROXY_URLS }}"
           COLLECT_PROXY_URL: "${{ secrets.COLLECT_PROXY_URL }}"
+          API_GATEWAY_KEY: "${{ secrets.API_GATEWAY_KEY }}"
           COMMIT_SHA: "${{ github.sha }}"
           EOF
 
@@ -53,6 +52,8 @@ jobs:
             --env-vars-file /tmp/cloudrun-env.yaml \
             --memory 2Gi \
             --min-instances=1 \
+            --max-instances=1 \
+            --no-cpu-throttling \
             --quiet
 
       - name: Verify traffic on latest revision
@@ -82,7 +83,7 @@ jobs:
       - name: Health Check
         run: |
           sleep 15
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://samba-wave-api-pz725ucp4q-du.a.run.app/api/v1/health)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://samba-wave-api-363598397345.asia-northeast3.run.app/api/v1/health)
           if [ "$STATUS" != "200" ]; then
             echo "❌ Health check 실패 (HTTP $STATUS)"
             gcloud run services describe samba-wave-api \
