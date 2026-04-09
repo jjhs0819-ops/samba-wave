@@ -1,1 +1,1 @@
-web: gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080 --timeout 600 --graceful-timeout 600
+web: sh -c 'sleep 5 && python scripts/migrate_fix.py 2>&1; alembic upgrade heads 2>&1; exec gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080 --timeout 600 --graceful-timeout 600'
