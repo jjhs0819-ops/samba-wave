@@ -991,14 +991,16 @@ class GsShopSourcingClient:
             parts = raw_val.split("\x08")  # 0x08 = 백스페이스(구분자)
             opt_name = " / ".join(p.strip() for p in parts if p.strip())
 
+            # stockFlg: Y=재고관리중(한정), N=재고관리안함(무제한/항상판매)
+            # 품절 여부는 prdSaleSt로 판단, stockFlg는 재고추적 여부
             stock_flg = attr.get("stockFlg", "N")
-            is_sold_out = stock_flg != "Y"
+            is_sold_out = False  # 옵션 레벨 품절은 prdSaleSt로만 판단
 
             options.append(
                 {
                     "name": opt_name,
                     "price": 0,  # GS샵 옵션은 추가가격 없음 (동일가)
-                    "stock": 0 if is_sold_out else 1,
+                    "stock": 99,  # 재고 불명 → 99 (프로젝트 규칙)
                     "isSoldOut": is_sold_out,
                     "attrPrdCd": attr.get("attrPrdCd"),
                 }
