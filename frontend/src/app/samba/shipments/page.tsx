@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { shipmentApi, accountApi, collectorApi, policyApi, categoryApi, fetchWithAuth, type SambaMarketAccount, type SambaCollectedProduct, type SambaSearchFilter, type SambaPolicy } from '@/lib/samba/api'
-import { MARKET_TYPE_TO_POLICY_KEY as SHARED_POLICY_KEY } from '@/lib/samba/markets'
+import { MARKET_TYPE_TO_POLICY_KEY } from '@/lib/samba/markets'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum } from '@/lib/samba/styles'
@@ -19,7 +19,6 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string }>
 const SOURCE_SITES = ['전체', 'MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
 // 영문 market_type → 한글 정책 키 (markets.ts에서 import)
-const MARKET_TYPE_TO_POLICY_KEY = SHARED_POLICY_KEY
 
 export default function ShipmentsPage() {
   useEffect(() => { document.title = 'SAMBA-상품전송삭제' }, [])

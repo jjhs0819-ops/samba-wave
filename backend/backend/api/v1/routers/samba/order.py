@@ -599,8 +599,8 @@ async def seller_cancel(
             await client.test_auth()
             success, message = await client.seller_cancel_order(
                 od_no=order.order_number,
-                reason_code="135",
-                reason_text="고객변심",
+                reason_code=body.reason_code,
+                reason_text=body.reason_text or "고객변심",
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"판매자 취소 실패: {e}")
@@ -612,7 +612,9 @@ async def seller_cancel(
             order_id,
             {"shipping_status": "취소완료", "status": "cancelled"},
         )
-        logger.info(f"[판매자취소] 롯데ON {order.order_number} 완료 (고객변심)")
+        logger.info(
+            f"[판매자취소] 롯데ON {order.order_number} 완료 ({body.reason_code})"
+        )
         return {"ok": True, "message": "판매자 취소 완료", "detail": message}
 
     elif account.market_type == "smartstore":
@@ -1516,6 +1518,23 @@ async def sync_orders_from_markets(
         for a in active_accounts
     ]
 
+    # 소싱처별 원문 URL 템플릿 (상수)
+    _sourcing_urls = {
+        "MUSINSA": "https://www.musinsa.com/products/{}",
+        "KREAM": "https://kream.co.kr/products/{}",
+        "FashionPlus": "https://www.fashionplus.co.kr/goods/detail/{}",
+        "ABCmart": "https://www.a-rt.com/product?prdtNo={}",
+        "GrandStage": "https://www.a-rt.com/product?prdtNo={}",
+        "REXMONDE": "https://www.okmall.com/products/detail/{}",
+        "LOTTEON": "https://www.lotteon.com/product/productDetail.lotte?spdNo={}",
+        "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={}",
+        "ElandMall": "https://www.elandmall.com/goods/goods.action?goodsNo={}",
+        "SSF": "https://www.ssfshop.com/goods/{}",
+        "SSG": "https://www.ssg.com/item/itemView.ssg?itemId={}",
+        "Nike": "https://www.nike.com/kr/t/{}",
+        "Adidas": "https://www.adidas.co.kr/{}.html",
+    }
+
     for account in account_snapshots:
         market_type = account["market_type"]
         extras = account["additional_fields"]
@@ -1524,6 +1543,7 @@ async def sync_orders_from_markets(
 
         try:
             orders_data: list[dict[str, Any]] = []
+            unconfirmed_ids: list[str] = []
 
             if market_type == "smartstore":
                 from backend.domain.samba.proxy.smartstore import SmartStoreClient
@@ -1782,21 +1802,6 @@ async def sync_orders_from_markets(
                 )
             )
             _mpn_cache: dict[str, dict] = {}
-            _sourcing_urls = {
-                "MUSINSA": "https://www.musinsa.com/products/{}",
-                "KREAM": "https://kream.co.kr/products/{}",
-                "FashionPlus": "https://www.fashionplus.co.kr/goods/detail/{}",
-                "ABCmart": "https://www.a-rt.com/product?prdtNo={}",
-                "GrandStage": "https://www.a-rt.com/product?prdtNo={}",
-                "REXMONDE": "https://www.okmall.com/products/detail/{}",
-                "LOTTEON": "https://www.lotteon.com/product/productDetail.lotte?spdNo={}",
-                "GSShop": "https://www.gsshop.com/prd/prd.gs?prdid={}",
-                "ElandMall": "https://www.elandmall.com/goods/goods.action?goodsNo={}",
-                "SSF": "https://www.ssfshop.com/goods/{}",
-                "SSG": "https://www.ssg.com/item/itemView.ssg?itemId={}",
-                "Nike": "https://www.nike.com/kr/t/{}",
-                "Adidas": "https://www.adidas.co.kr/{}.html",
-            }
             for _row in _cp_result.fetchall():
                 _cpid, _site, _spid, _imgs, _mpnos = _row
                 if _mpnos and isinstance(_mpnos, dict):
@@ -2161,6 +2166,47 @@ async def sync_orders_from_markets(
             logger.info(
                 f"[주문동기화] {label}: {len(orders_data)}건 조회, {synced}건 저장, {confirmed_count}건 발주확인"
             )
+
+            # ── paid_at 백필 — 스마트스토어 NULL paid_at 주문 직접 재조회 ──
+            if market_type == "smartstore":
+                try:
+                    _null_rows = await session.execute(
+                        _sa_text(
+                            "SELECT order_number FROM samba_order "
+                            "WHERE paid_at IS NULL AND source = 'smartstore' "
+                            "AND channel_id = :cid LIMIT 100"
+                        ),
+                        {"cid": account["id"]},
+                    )
+                    _null_po_ids = [r[0] for r in _null_rows.fetchall()]
+                    if _null_po_ids:
+                        _details = await client.get_product_orders_by_ids(_null_po_ids)
+                        _backfilled = 0
+                        for _d in _details:
+                            _po = _d.get("productOrder", _d)
+                            _oi = _d.get("order", {})
+                            _paid = _parse_iso_datetime(
+                                _oi.get("paymentDate") or _po.get("paymentDate")
+                            )
+                            if _paid:
+                                _poid = _po.get("productOrderId", "")
+                                await session.execute(
+                                    _sa_text(
+                                        "UPDATE samba_order SET paid_at = :paid "
+                                        "WHERE order_number = :on AND paid_at IS NULL"
+                                    ),
+                                    {"paid": _paid, "on": _poid},
+                                )
+                                _backfilled += 1
+                        if _backfilled:
+                            await session.commit()
+                            logger.info(
+                                f"[주문동기화] {label}: paid_at 백필 {_backfilled}건"
+                            )
+                except Exception as _bf_err:
+                    logger.warning(
+                        f"[주문동기화] {label}: paid_at 백필 실패 — {_bf_err}"
+                    )
 
         except Exception as e:
             await session.rollback()  # 세션 복구 — 다음 계정 연쇄 실패 방지

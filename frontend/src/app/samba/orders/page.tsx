@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { orderApi, channelApi, accountApi, proxyApi, collectorApi, sourcingAccountApi, forbiddenApi, fetchWithAuth, type SambaOrder, type SambaChannel, type SambaMarketAccount, type SambaSourcingAccount } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { PERIOD_BUTTONS } from '@/lib/samba/constants'
+import { PERIOD_BUTTONS, DELIVERY_TRACKING_URLS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum } from '@/lib/samba/styles'
 import { fmtDate } from '@/lib/samba/utils'
 
@@ -36,15 +36,7 @@ const MARKET_STATUS_OPTIONS = [
   '보류', '송장전송완료',
 ]
 
-// 택배사별 배송조회 URL
-const TRACKING_URLS: Record<string, string> = {
-  'CJ대한통운': 'https://trace.cjlogistics.com/next/tracking.html?wblNo=',
-  '한진택배': 'https://www.hanjin.com/kor/CMS/DeliveryMgr/WaybillResult.do?mession=&searchType=General&wblnumText2=',
-  '롯데택배': 'https://www.lotteglogis.com/home/reservation/tracking/link498?InvNo=',
-  '로젠택배': 'https://www.ilogen.com/web/personal/trace/',
-  '우체국택배': 'https://service.epost.go.kr/trace.RetrieveDomRi498.postal?sid1=',
-  '경동택배': 'https://kdexp.com/deliverySearch?barcode=',
-}
+const TRACKING_URLS = DELIVERY_TRACKING_URLS
 
 interface OrderForm {
   channel_id: string; product_name: string; customer_name: string; customer_phone: string
@@ -103,7 +95,6 @@ export default function OrdersPage() {
   const [editingOrderNumbers, setEditingOrderNumbers] = useState<Record<string, string>>({})
   // 직배/까대기/선물 토글 상태
   const [activeActions, setActiveActions] = useState<Record<string, string | null>>({})
-  // 미등록 입력 모달
   // 우측상단 알람
   const [notifications, setNotifications] = useState<{id: number, message: string, type: string}[]>([])
 
@@ -618,7 +609,7 @@ export default function OrdersPage() {
   }
 
   // 필터링된 주문 목록
-  const filteredOrders = orders.filter(o => {
+  const filteredOrders = useMemo(() => orders.filter(o => {
     const orderDate = new Date(o.created_at)
     // 시작일 고정이면 customStart 우선
     if (startLocked && customStart) {
@@ -691,7 +682,7 @@ export default function OrdersPage() {
     const aTime = a.paid_at ? new Date(a.paid_at).getTime() : new Date(a.created_at).getTime()
     const bTime = b.paid_at ? new Date(b.paid_at).getTime() : new Date(b.created_at).getTime()
     return bTime - aTime
-  })
+  }), [orders, period, startLocked, customStart, customEnd, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, activeActions, searchText, searchCategory, accounts])
 
   // 문자열 입력 → 숫자 콤마 포맷 (편집 중 입력값용)
   const fmtNumStr = (v: string) => {

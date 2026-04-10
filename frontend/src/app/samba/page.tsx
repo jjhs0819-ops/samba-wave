@@ -2,14 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { orderApi, collectorApi, type DashboardStats } from "@/lib/samba/api"
-import { fmtNum } from "@/lib/samba/styles"
-
-const card = {
-  background: 'rgba(30,30,30,0.5)',
-  backdropFilter: 'blur(20px)',
-  border: '1px solid #2D2D2D',
-  borderRadius: '12px',
-}
+import { card, fmtNum } from "@/lib/samba/styles"
 
 // 날짜 포맷: 3. 14. 형식
 function formatShortDate(d: Date) {

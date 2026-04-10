@@ -316,7 +316,7 @@ export default function CollectorPage() {
       setSelectedIds(new Set(displayedFilters.map(f => f.id)))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tagRegFilter, collectFilter, marketRegFilter, policyRegFilter, aiFilter])
+  }, [drillBrand, displayedFilters, tagRegFilter, collectFilter, marketRegFilter, policyRegFilter, aiFilter])
 
   // 프록시 & 무신사 인증 상태 확인
   useEffect(() => {

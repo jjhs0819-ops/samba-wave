@@ -4,13 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { accountApi, collectorApi, orderApi, type SambaMarketAccount, type SambaOrder } from '@/lib/samba/api'
 import { useLocalStorageState } from '@/hooks/useLocalStorageState'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
-
-const card = {
-  background: 'rgba(30,30,30,0.5)',
-  backdropFilter: 'blur(20px)',
-  border: '1px solid #2D2D2D',
-  borderRadius: '12px',
-}
+import { card, fmtNum } from '@/lib/samba/styles'
 
 const SOURCE_SITES = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSShop', 'ElandMall', 'SSF']
 
@@ -50,8 +44,8 @@ interface MonthlyCell {
   orders: number
 }
 
-// 숫자 포맷
-const fmt = (n: number) => n.toLocaleString()
+// 숫자 포맷 — fmtNum (styles.ts)
+const fmt = fmtNum
 
 export default function AnalyticsPage() {
   useEffect(() => { document.title = 'SAMBA-분석' }, [])
@@ -72,10 +66,6 @@ export default function AnalyticsPage() {
     STORAGE_KEYS.ANALYTICS_SEARCH,
     defaultSearch,
   )
-  // 주문상태: 항상 기본값으로 초기화
-  useEffect(() => {
-    setSearch(prev => ({ ...prev, statuses: DEFAULT_STATUSES }))
-  }, [])
   const searchYear = search.year
   const searchMonth = search.month
   const selectedMarkets = search.markets

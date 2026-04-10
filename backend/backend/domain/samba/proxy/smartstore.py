@@ -1442,6 +1442,30 @@ class SmartStoreClient:
         logger.info(f"[스마트스토어] 주문 상세 결과: {len(orders_data)}건")
         return orders_data
 
+    async def get_product_orders_by_ids(
+        self, po_ids: list[str]
+    ) -> list[dict[str, Any]]:
+        """productOrderId 목록으로 주문 상세 직접 조회 (last-changed 우회)."""
+        if not po_ids:
+            return []
+        results: list[dict[str, Any]] = []
+        for i in range(0, len(po_ids), 50):
+            batch = po_ids[i : i + 50]
+            data = await self._call_api(
+                "POST",
+                "/v1/pay-order/seller/product-orders/query",
+                body={"productOrderIds": batch},
+            )
+            # 응답: data 키 안에 리스트
+            inner = data.get("data", data) if isinstance(data, dict) else data
+            if isinstance(inner, list):
+                results.extend(inner)
+            elif isinstance(inner, dict):
+                results.extend(inner.get("productOrders", []))
+            if i + 50 < len(po_ids):
+                await asyncio.sleep(1.0)
+        return results
+
     async def confirm_product_orders(
         self, product_order_ids: list[str]
     ) -> dict[str, Any]:

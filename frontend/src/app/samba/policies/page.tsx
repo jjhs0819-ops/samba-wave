@@ -61,7 +61,6 @@ interface MarketPolicyForm {
 
 // 마켓 목록은 @/lib/samba/markets에서 import
 const MARKET_KEY_MAP = MARKET_ID_BY_LABEL
-const POLICY_MARKETS = [...POLICY_MARKETS_DOMESTIC, ...POLICY_MARKETS_OVERSEAS]
 
 const defaultPricing: PricingForm = {
   marginRate: 15,

@@ -22,12 +22,9 @@ import {
   type RefreshDetail,
 } from "@/lib/samba/api";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
+import { fmtNum as fmt } from '@/lib/samba/styles'
 import ProductCard from './components/ProductCard'
 import ProductImage from './components/ProductImage'
-
-function fmt(n: number): string {
-  return n.toLocaleString()
-}
 
 export default function ProductsPage() {
   useEffect(() => { document.title = 'SAMBA-상품관리' }, [])

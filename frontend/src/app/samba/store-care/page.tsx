@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   accountApi,
   storeCareApi,
@@ -8,14 +8,9 @@ import {
   type StoreCareSchedule,
   type StoreCarePurchase,
 } from '@/lib/samba/api'
+import { card as baseCard, fmtNum } from '@/lib/samba/styles'
 
-const card = {
-  background: 'rgba(30,30,30,0.5)',
-  backdropFilter: 'blur(20px)',
-  border: '1px solid #2D2D2D',
-  borderRadius: '12px',
-  padding: '20px',
-}
+const card = { ...baseCard, padding: '20px' }
 
 const MARKET_COLORS: Record<string, string> = {
   smartstore: '#03C75A', coupang: '#E6282B', '11st': '#FF0038',
@@ -24,7 +19,7 @@ const MARKET_COLORS: Record<string, string> = {
   toss: '#0064FF', rakuten: '#BF0000', amazon: '#FF9900',
 }
 
-function fmt(n: number) { return n.toLocaleString() }
+const fmt = fmtNum
 
 function getStatusBadge(status: string) {
   const map: Record<string, { bg: string; color: string; label: string }> = {
