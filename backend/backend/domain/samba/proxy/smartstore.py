@@ -1371,6 +1371,7 @@ class SmartStoreClient:
                 qparams = dict(params)
                 qparams["lastChangedFrom"] = qdate
                 qparams["lastChangedType"] = change_type
+                result = None
                 for _retry in range(3):
                     try:
                         result = await self._call_api(
@@ -1378,17 +1379,20 @@ class SmartStoreClient:
                             "/v1/pay-order/seller/product-orders/last-changed-statuses",
                             params=qparams,
                         )
-                        break  # 성공 시 루프 탈출
+                        break
                     except Exception as _api_err:
-                        # 429 속도제한 → 대기 후 재시도
                         if "429" in str(_api_err):
-                            await asyncio.sleep(1.0 * (_retry + 1))
+                            wait = 2.0 * (_retry + 1)  # 2초→4초→6초
+                            logger.info(
+                                f"[스마트스토어] 429 재시도 {_retry + 1}/3 ({wait}초 대기)"
+                            )
+                            await asyncio.sleep(wait)
                             continue
-                        break  # 429 외 에러는 재시도 안 함
-                else:
-                    continue  # 3회 모두 실패 시 다음 타입으로
-                # 요청 간 간격 — 429 방지
-                await asyncio.sleep(0.3)
+                        break
+                if result is None:
+                    continue
+                # 요청 간 간격 — 429 방지 (1초)
+                await asyncio.sleep(1.0)
                 data = result.get("data", result) if isinstance(result, dict) else {}
                 statuses_list = (
                     (
