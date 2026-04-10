@@ -569,7 +569,8 @@ async def _site_autotune_loop(site: str):
                                         else 0
                                     )
 
-                                    # 가격 변동 → 전송 예약
+                                    # 가격 변동 → 전송 예약 (100원 단위 절사 후 비교)
+                                    expected_price = (expected_price // 100) * 100
                                     if expected_price != last_price:
                                         price_changed_count += 1
                                         _all_price_pids.add(r.product_id)
