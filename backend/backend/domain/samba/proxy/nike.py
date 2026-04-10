@@ -434,6 +434,13 @@ class NikeClient:
         except Exception as e:
             logger.warning(f"[Nike] 재고 API 실패 {style_color}: {e}")
 
+        # Threads API 반영 후 품절 판정: 모든 옵션 stock=0이면 sold_out
+        all_options = result.get("options", [])
+        if all_options and all(opt.get("stock", 0) <= 0 for opt in all_options):
+            result["sale_status"] = "sold_out"
+        elif not all_options:
+            result["sale_status"] = "sold_out"
+
         logger.info(
             f"[Nike] 상세 '{style_color}' → 이미지 {len(result.get('images', []))}장"
         )

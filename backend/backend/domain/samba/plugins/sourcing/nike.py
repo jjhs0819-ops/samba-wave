@@ -79,9 +79,16 @@ class NikePlugin(SourcingPlugin):
             or new_original_price is not None
             and new_original_price != old_original_price
         )
-        # 재고 품절 감지: 사이즈 옵션이 비어있으면 품절
-        new_sale_status = "sold_out" if new_options == [] else "in_stock"
-        stock_changed = new_sale_status == "sold_out"
+        # 재고 품절 감지: 옵션 없거나 모든 옵션 stock=0이면 품절
+        if not new_options:
+            new_sale_status = "sold_out"
+        elif all(opt.get("stock", 0) <= 0 for opt in new_options):
+            new_sale_status = "sold_out"
+        else:
+            new_sale_status = "in_stock"
+
+        old_sale_status = getattr(product, "sale_status", "in_stock")
+        stock_changed = new_sale_status != old_sale_status
 
         return RefreshResult(
             product_id=product_id,
