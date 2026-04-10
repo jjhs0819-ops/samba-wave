@@ -323,8 +323,9 @@ def _log_refresh(
     kst = now + timedelta(hours=9)
     ts_str = kst.strftime("%H:%M:%S")
     prefix = f"[{idx:,}/{total:,}] " if idx and total else ""
+    site_tag = f"[{site}] " if site else ""
     name_label = f"{product_name[:80]}: " if product_name else ""
-    full_msg = f"[{ts_str}] {prefix}{name_label}{message}"
+    full_msg = f"[{ts_str}] {prefix}{site_tag}{name_label}{message}"
     _refresh_log_buffer.append(
         {
             "ts": now.isoformat(),
@@ -499,8 +500,8 @@ async def _refresh_product_inner(
         # LOTTEON: benefits API(혜택가) + option/mapping API(재고) 모두
         # 플러그인 refresh()에서 처리 완료 — 확장앱 불필요
 
-        # 레거시 파서(무신사/KREAM)는 자체 로그 → 여기서 안 찍음
-        if source_site not in ("MUSINSA", "KREAM") and not result.error:
+        # 오토튠 컨텍스트에서는 콜백이 로그 담당 → 범용 로그 스킵
+        if not result.error and _current_refresh_source.get() != "autotune":
             _name = getattr(product, "name", "") or ""
             _sid = getattr(product, "site_product_id", "") or ""
             _label = f"{_name} ({_sid})" if _sid else _name

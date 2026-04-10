@@ -205,7 +205,11 @@ class LotteonSourcingPlugin(SourcingPlugin):
         """
         global _lotteon_interval, _lotteon_consecutive_errors, _lotteon_safe_interval
 
-        from backend.domain.samba.collector.refresher import RefreshResult, _log_refresh
+        from backend.domain.samba.collector.refresher import (
+            RefreshResult,
+            _log_refresh,
+            _current_refresh_source,
+        )
         from backend.domain.samba.proxy.lotteon_sourcing import (
             LotteonSourcingClient,
             RateLimitError,
@@ -518,19 +522,20 @@ class LotteonSourcingPlugin(SourcingPlugin):
                 if o.get("stock", 0) != old_stock_map.get(o.get("name", ""), 0):
                     _stock_changes += 1
 
-        # ── 갱신 로그 ──
-        _name = getattr(product, "name", "") or ""
-        _prod_label = f"{_name} ({site_product_id})" if site_product_id else _name
-        _status_label = "전송" if (changed or _stock_changes > 0) else "스킵"
-        _log_refresh(
-            "LOTTEON",
-            product_id,
-            _prod_label,
-            f"{_status_label} [원가 {int(old_sale):,}→{int(new_sale_price):,}, "
-            f"상태 {old_status}→{new_sale_status}, 재고변동 {_stock_changes}건]",
-            idx=_idx,
-            total=_total,
-        )
+        # ── 갱신 로그 (오토튠 컨텍스트에서는 콜백이 담당 → 스킵) ──
+        if _current_refresh_source.get() != "autotune":
+            _name = getattr(product, "name", "") or ""
+            _prod_label = f"{_name} ({site_product_id})" if site_product_id else _name
+            _status_label = "전송" if (changed or _stock_changes > 0) else "스킵"
+            _log_refresh(
+                "LOTTEON",
+                product_id,
+                _prod_label,
+                f"{_status_label} [원가 {int(old_sale):,}→{int(new_sale_price):,}, "
+                f"상태 {old_status}→{new_sale_status}, 재고변동 {_stock_changes}건]",
+                idx=_idx,
+                total=_total,
+            )
 
         return RefreshResult(
             product_id=product_id,

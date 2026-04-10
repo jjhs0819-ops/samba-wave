@@ -604,7 +604,15 @@ async def _site_autotune_loop(site: str):
                                         )
 
                                 # 통합 한 줄 로그 (전송 전에 즉시 출력)
-                                _tail = f" [원가 {_cost_int:,}, 재고변동 {_stock_changes:,}건]"
+                                _old_cost_int = int(
+                                    product.cost or product.sale_price or 0
+                                )
+                                _cost_str = (
+                                    f"{_old_cost_int:,}→{_cost_int:,}"
+                                    if _old_cost_int != _cost_int
+                                    else f"{_cost_int:,}"
+                                )
+                                _tail = f" [원가 {_cost_str}, 재고변동 {_stock_changes:,}건]"
                                 if _actions:
                                     _log_line(
                                         site,
