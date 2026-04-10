@@ -21,9 +21,30 @@ fi
 echo "Running in $ENVIRONMENT mode"
 
 if [ "$ENVIRONMENT" = "production" ]; then
-  # Cloud SQL Auth Proxy 사이드카 대기
+  # Cloud SQL Auth Proxy 사이드카 대기 — 재시도로 확실히 연결 확인
   echo "Waiting for Cloud SQL proxy..."
-  sleep 5
+  for i in 1 2 3 4 5 6; do
+    if uv run python -c "
+import asyncio, os
+async def check():
+    import asyncpg
+    host = os.environ.get('WRITE_DB_HOST') or ''
+    if not host: return False
+    kw = dict(user=os.environ.get('WRITE_DB_USER') or 'postgres', password=os.environ.get('WRITE_DB_PASSWORD') or '', database=os.environ.get('WRITE_DB_NAME') or 'railway')
+    if host.startswith('/'): kw['host'] = host
+    else: kw['host'] = host; kw['port'] = int(os.environ.get('WRITE_DB_PORT') or 5432)
+    conn = await asyncpg.connect(**kw)
+    await conn.close()
+    return True
+r = asyncio.run(check())
+exit(0 if r else 1)
+" 2>/dev/null; then
+      echo "Cloud SQL proxy ready (attempt $i)."
+      break
+    fi
+    echo "Cloud SQL proxy not ready, retrying in 5s... (attempt $i/6)"
+    sleep 5
+  done
 
   # 누락 컬럼 긴급 패치 (alembic 체인 문제 우회)
   echo "Applying emergency schema fixes..."
