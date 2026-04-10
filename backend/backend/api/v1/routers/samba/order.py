@@ -1547,6 +1547,53 @@ async def sync_orders_from_markets(
                                         )
                 except Exception as ex_err:
                     logger.warning(f"[롯데ON] 교환 클레임 조회 실패: {ex_err}")
+            elif market_type == "playauto":
+                from datetime import UTC, datetime, timedelta
+
+                from backend.domain.samba.proxy.playauto import PlayAutoClient
+
+                api_key = extras.get("apiKey", "") or account.api_key or ""
+                if not api_key:
+                    results.append(
+                        {"account": label, "status": "skip", "message": "API Key 없음"}
+                    )
+                    continue
+                # 별칭 매핑 로드 (store_playauto 설정에서)
+                alias_map: dict[str, str] = {}
+                try:
+                    settings_repo = SambaSettingsRepository(session)
+                    pa_setting = await settings_repo.find_by_async(key="store_playauto")
+                    if pa_setting and isinstance(pa_setting.value, dict):
+                        for ak in ("alias1", "alias2", "alias3"):
+                            av = pa_setting.value.get(ak, "")
+                            if av and "-" in av:
+                                code, nick = av.split("-", 1)
+                                alias_map[code.strip()] = nick.strip()
+                except Exception:
+                    pass
+                pa_client = PlayAutoClient(api_key)
+                try:
+                    start_date = (
+                        datetime.now(UTC) - timedelta(days=body.days)
+                    ).strftime("%Y%m%d")
+                    # 전체 상태 한번에 조회 (상태 필터 없이)
+                    raw_orders = await pa_client.get_orders(
+                        start_date=start_date,
+                        count=500,
+                    )
+                    logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
+                    for ro in raw_orders:
+                        orders_data.append(
+                            _parse_playauto_order(ro, account.id, label, alias_map)
+                        )
+                except Exception as e:
+                    logger.warning(f"[주문동기화] {label}: 플레이오토 조회 실패 — {e}")
+                    results.append(
+                        {"account": label, "status": "error", "message": str(e)[:100]}
+                    )
+                    continue
+                finally:
+                    await pa_client.close()
             elif market_type == "coupang":
                 # 쿠팡 주문 조회 (구현 대기)
                 results.append(
@@ -2212,4 +2259,73 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         "customer_address": full_addr,
         "notes": item.get("dvMsg", "") or "",
         "created_at": created_at,
+    }
+
+
+def _parse_playauto_order(
+    ro: dict,
+    account_id: str,
+    account_label: str,
+    alias_map: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """플레이오토 EMP 주문 → SambaOrder 데이터 변환."""
+    status_map = {
+        "신규주문": "pending",
+        "송장출력": "wait_ship",
+        "송장입력": "processing",
+        "출고": "shipped",
+        "배송중": "shipped",
+        "수취확인": "delivered",
+        "정산완료": "delivered",
+        "주문확인": "pending",
+        "취소": "cancelled",
+        "취소마감": "cancelled",
+        "반품요청": "return_requested",
+        "반품마감": "returned",
+        "교환요청": "exchange_requested",
+        "교환마감": "exchanged",
+        "보류": "pending",
+    }
+
+    order_state = ro.get("OrderState", "")
+    sale_price = int(ro.get("Price", 0) or 0)
+    quantity = int(ro.get("Count", 1) or 1)
+
+    site_name = ro.get("SiteName", "")
+    site_id = ro.get("SiteId", "")
+    supply_price = int(ro.get("SupplyPrice", 0) or 0)
+
+    return {
+        "order_number": ro.get("OrderCode", ""),
+        "shipment_id": str(ro.get("Number", "")),
+        "channel_id": account_id,
+        "channel_name": account_label,
+        "product_id": ro.get("ProdCode", ""),
+        "product_name": ro.get("ProdName", ""),
+        "product_option": ro.get("Option", ""),
+        "product_image": "",
+        "customer_name": ro.get("RecipientName", "") or ro.get("OrderName", ""),
+        "customer_phone": ro.get("RecipientHtel", "")
+        or ro.get("RecipientTel", "")
+        or ro.get("OrderHtel", "")
+        or ro.get("OrderTel", ""),
+        "customer_address": ro.get("RecipientAddress", ""),
+        "quantity": quantity,
+        "sale_price": sale_price * quantity,
+        "cost": int(ro.get("CostPrice", 0) or 0),
+        "fee_rate": 0,
+        "revenue": supply_price * quantity if supply_price else sale_price * quantity,
+        "status": status_map.get(order_state, "pending"),
+        "shipping_status": order_state,
+        "shipping_company": ro.get("Sender", ""),
+        "tracking_number": ro.get("SenderNo", ""),
+        "source": "playauto",
+        # 판매처(사업자) 정보 — 별칭 매핑 적용
+        "source_site": (
+            f"{site_name}({alias_map[site_id]})"
+            if alias_map and site_id in alias_map and site_name
+            else f"{site_name}({site_id})"
+            if site_name
+            else ""
+        ),
     }

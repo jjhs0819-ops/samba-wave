@@ -1194,9 +1194,13 @@ class JobWorker:
             if parsed.scheme:
                 qs = parse_qs(parsed.query)
                 _use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
-                # 소싱처별 키워드 파라미터: LOTTEON=q, FashionPlus=searchWord
+                # 소싱처별 키워드 파라미터: LOTTEON=q, GSShop=tq, FashionPlus=searchWord
                 keyword = qs.get(
-                    "q", qs.get("keyword", qs.get("searchWord", [keyword]))
+                    "q",
+                    qs.get(
+                        "tq",
+                        qs.get("keyword", qs.get("searchWord", [keyword])),
+                    ),
                 )[0]
                 # 패션플러스 필터 파라미터
                 for k in (

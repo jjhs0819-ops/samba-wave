@@ -221,6 +221,242 @@ class SSGSourcingClient:
 
         return brand_ids
 
+    # ------------------------------------------------------------------
+    # 카테고리 스캔
+    # ------------------------------------------------------------------
+
+    async def scan_categories(self, keyword: str) -> dict[str, Any]:
+        """키워드 검색 → 카테고리 필터 추출 → 카테고리별 상품 수 집계.
+
+        __NEXT_DATA__의 필터 데이터에서 카테고리 필터를 직접 추출한다.
+        카테고리별 count가 0이면 개별 요청으로 PAGING_UNIT.itemCount를 파싱한다.
+
+        Returns:
+            {"categories": [...], "total": int, "groupCount": int}
+        """
+        import asyncio
+
+        logger.info(f'[SSG] 카테고리 스캔 시작: "{keyword}"')
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout, follow_redirects=True
+            ) as client:
+                # 1단계: 키워드 검색 페이지 요청
+                search_url = f"{self.SEARCH_URL}?query={quote(keyword)}&page=1"
+                resp = await client.get(search_url, headers=self._headers())
+                if resp.status_code in (429, 403):
+                    raise RateLimitError(int(resp.status_code))
+                if resp.status_code != 200:
+                    logger.warning(f"[SSG] 카테고리 스캔 HTTP {resp.status_code}")
+                    return {"categories": [], "total": 0, "groupCount": 0}
+
+                html = resp.text
+
+                # 2단계: __NEXT_DATA__에서 카테고리 필터 추출
+                categories = self._extract_category_filters(html)
+                if not categories:
+                    logger.info("[SSG] 카테고리 필터 없음 — 빈 결과 반환")
+                    return {"categories": [], "total": 0, "groupCount": 0}
+
+                # 3단계: count가 0인 카테고리는 개별 요청으로 상품 수 파싱
+                need_count = [c for c in categories if c.get("count", 0) == 0]
+                if need_count:
+                    logger.info(
+                        f"[SSG] {len(need_count)}개 카테고리 count 개별 조회 시작"
+                    )
+                    for cat in need_count:
+                        await asyncio.sleep(1.0)
+                        try:
+                            cat_url = (
+                                f"{self.SEARCH_URL}?query={quote(keyword)}"
+                                f"&stdCtg={cat['categoryCode']}&page=1"
+                            )
+                            r = await client.get(cat_url, headers=self._headers())
+                            if r.status_code == 200:
+                                cat["count"] = self._parse_area_count(r.text)
+                                logger.info(
+                                    f"[SSG] 카테고리 건수: {cat['path']} → {cat['count']}건"
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"[SSG] 카테고리 건수 조회 실패 {cat['path']}: {e}"
+                            )
+
+        except RateLimitError:
+            raise
+        except Exception as e:
+            logger.error(f"[SSG] 카테고리 스캔 실패: {keyword} — {e}")
+            return {"categories": [], "total": 0, "groupCount": 0}
+
+        # count > 0인 카테고리만 반환 (내림차순 정렬)
+        categories = [c for c in categories if c.get("count", 0) > 0]
+        categories.sort(key=lambda x: -x["count"])
+
+        total = sum(c["count"] for c in categories)
+        logger.info(
+            f'[SSG] 카테고리 스캔 완료: "{keyword}" → {len(categories)}개 카테고리, {total}건'
+        )
+        return {
+            "categories": categories,
+            "total": total,
+            "groupCount": len(categories),
+        }
+
+    def _extract_category_filters(self, html: str) -> list[dict[str, Any]]:
+        """__NEXT_DATA__에서 카테고리 필터 목록 추출.
+
+        useTemplateFilterQuery 데이터에서 카테고리 관련 filterType을 탐색한다.
+        후보: categoryFilter, ctgFilter, displayCategoryFilter, stdCtgFilter
+
+        Returns:
+            [{"categoryCode": "...", "path": "패션의류 > 남성", "count": 123,
+              "category1": "패션의류", "category2": "남성", "category3": ""}]
+        """
+        m = re.search(
+            r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        if not m:
+            return []
+
+        try:
+            next_data = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            return []
+
+        queries = (
+            next_data.get("props", {})
+            .get("pageProps", {})
+            .get("dehydratedState", {})
+            .get("queries", [])
+        )
+
+        # 카테고리 필터 탐색 — filterType에 "ctg" 또는 "category" 포함
+        _CATEGORY_KEYWORDS = ("ctg", "category", "카테고리")
+        cat_filter_data: list[dict] = []
+
+        for q in queries:
+            if "useTemplateFilterQuery" not in (q.get("queryKey") or []):
+                continue
+            filters_data = q.get("state", {}).get("data") or []
+
+            # 디버그: 모든 filterType 로깅 (개발 중 확인용)
+            all_types = [f.get("filterType", "") for f in filters_data]
+            logger.info(f"[SSG] __NEXT_DATA__ filterTypes: {all_types}")
+
+            for f in filters_data:
+                ft = (f.get("filterType") or "").lower()
+                if ft == "brandfilter":
+                    continue
+                if any(kw in ft for kw in _CATEGORY_KEYWORDS):
+                    for unit in f.get("unitList", []):
+                        cat_filter_data.extend(unit.get("dataList", []))
+                    break
+
+            # 카테고리 필터를 못 찾은 경우 — brandFilter 외 첫 번째 필터 시도
+            if not cat_filter_data:
+                for f in filters_data:
+                    ft = (f.get("filterType") or "").lower()
+                    if ft == "brandfilter":
+                        continue
+                    for unit in f.get("unitList", []):
+                        dl = unit.get("dataList", [])
+                        if dl:
+                            cat_filter_data.extend(dl)
+                            logger.info(
+                                f"[SSG] 폴백 필터 사용: filterType={f.get('filterType')}"
+                            )
+                            break
+                    if cat_filter_data:
+                        break
+
+        if not cat_filter_data:
+            return []
+
+        # 표준 형식으로 변환
+        categories: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in cat_filter_data:
+            name = (item.get("name") or "").strip()
+            value = str(item.get("value") or "").strip()
+            count = int(item.get("count", 0))
+            if not value or value in seen:
+                continue
+            seen.add(value)
+
+            # 카테고리 경로 파싱: "패션의류 > 남성의류" 또는 단일 이름
+            parts = [p.strip() for p in name.split(">") if p.strip()]
+            if not parts:
+                parts = [name] if name else [value]
+
+            c1 = parts[0] if len(parts) > 0 else ""
+            c2 = parts[1] if len(parts) > 1 else ""
+            c3 = parts[2] if len(parts) > 2 else ""
+            path = " > ".join(parts)
+
+            categories.append(
+                {
+                    "categoryCode": value,
+                    "path": path,
+                    "count": count,
+                    "category1": c1,
+                    "category2": c2,
+                    "category3": c3,
+                }
+            )
+
+        return categories
+
+    def _parse_area_count(self, html: str) -> int:
+        """__NEXT_DATA__에서 검색 결과 상품 수 파싱.
+
+        PAGING_UNIT.itemCount 우선 사용,
+        결과 0건이면 unitText[item_cnt]로 폴백.
+        """
+        m = re.search(
+            r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        if not m:
+            return 0
+        try:
+            next_data = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            return 0
+
+        queries = (
+            next_data.get("props", {})
+            .get("pageProps", {})
+            .get("dehydratedState", {})
+            .get("queries", [])
+        )
+
+        for q in queries:
+            qk = q.get("queryKey") or []
+            if "fetchSearchItemListArea" not in qk:
+                continue
+            data = q.get("state", {}).get("data")
+            if not isinstance(data, dict):
+                continue
+
+            area_list = data.get("areaList", [])
+
+            # 1순위: PAGING_UNIT.itemCount
+            for area in area_list:
+                if area.get("unitType") == "PAGING_UNIT":
+                    return int(area.get("itemCount", 0))
+
+            # 2순위: unitText에서 item_cnt 추출
+            for area in area_list:
+                for unit_text in area.get("unitText") or []:
+                    if unit_text.get("type") == "item_cnt":
+                        return int(unit_text.get("value", 0))
+
+        return 0
+
     def _parse_search_html(self, html: str, keyword: str) -> list[dict[str, Any]]:
         """검색 결과 HTML에서 상품 정보 추출.
 

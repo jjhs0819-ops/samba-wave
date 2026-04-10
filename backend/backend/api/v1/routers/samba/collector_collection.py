@@ -2172,6 +2172,12 @@ async def brand_scan(
         plugin = NikePlugin()
         return await plugin.scan_categories(keyword)
 
+    if body.source_site == "SSG":
+        from backend.domain.samba.plugins.sourcing.ssg import SSGPlugin
+
+        plugin = SSGPlugin()
+        return await plugin.scan_categories(keyword)
+
     raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
 
 
@@ -2329,6 +2335,16 @@ async def brand_create_groups(
             keyword = (
                 f"https://www.gsshop.com/shop/search/main.gs"
                 f"?tq={_quote_gs(_label)}&eh={_quote_gs(_eh)}{_md_gs}"
+            )
+            category_filter = code or None
+        elif body.source_site == "SSG":
+            from urllib.parse import quote as _quote_ssg
+
+            _label_ssg = body.brand_name or body.brand or ""
+            _md_ssg = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
+            keyword = (
+                f"https://department.ssg.com/search"
+                f"?query={_quote_ssg(_label_ssg)}&stdCtg={code}{_md_ssg}"
             )
             category_filter = code or None
         else:  # LOTTEON

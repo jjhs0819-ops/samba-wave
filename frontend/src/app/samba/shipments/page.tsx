@@ -56,6 +56,7 @@ export default function ShipmentsPage() {
   // 전송 로그
   const [logMessages, setLogMessages] = useState<string[]>(['— 전송 시작 버튼을 누르면 로그가 여기에 실시간으로 표시됩니다 —'])
   const [transmitting, setTransmitting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [stopping, setStopping] = useState('')  // '' | 'cancel' | 'emergency'
   const [pausedJobPayload, setPausedJobPayload] = useState<Record<string, unknown> | null>(null)
   const [progress, setProgress] = useState({ current: 0, total: 0 })
@@ -417,7 +418,7 @@ export default function ShipmentsPage() {
     }).join(', ')
     if (!await showConfirm(`${targetProducts.length}개 상품을 ${targetLabels || '선택 계정'}에서 마켓삭제하시겠습니까?`)) return
 
-    setTransmitting(true)
+    setDeleting(true)
     const ts = () => new Date().toLocaleTimeString()
     // 로그를 ref 배열로 관리 — spread O(n²) 방지
     const addLog = (msg: string) => setLogMessages(prev => [...prev, msg].slice(-30))
@@ -460,7 +461,7 @@ export default function ShipmentsPage() {
     }
     addLog(`[${ts()}] 마켓삭제 완료 — 성공 ${totalSuccess.toLocaleString()}건, 실패 ${totalFail.toLocaleString()}건`)
     await load()
-    setTransmitting(false)
+    setDeleting(false)
   }
 
   const handleStart = async (targetIds?: string[]) => {
@@ -931,8 +932,8 @@ export default function ShipmentsPage() {
                 await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' })
               } catch { /* ignore */ }
             }} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
-            <button onClick={handleMarketDelete} disabled={transmitting}
-              style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: transmitting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
+            <button onClick={handleMarketDelete} disabled={deleting}
+              style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: deleting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
             <button disabled={!!stopping} onClick={async () => {
                 setStopping('cancel')
                 const ts = new Date().toLocaleTimeString()
