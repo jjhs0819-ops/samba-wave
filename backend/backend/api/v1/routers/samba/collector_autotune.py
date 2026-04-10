@@ -724,6 +724,7 @@ async def _site_autotune_loop(site: str):
                                                     s_items,
                                                     [s_acc_id],
                                                     skip_unchanged=False,
+                                                    skip_refresh=True,
                                                 )
                                                 await tx_s.commit()
                                         except Exception as _se:

@@ -779,6 +779,43 @@ def _process_musinsa_detail(
     new_sale_status = detail.get("saleStatus", "in_stock")
     new_options = detail.get("options")
 
+    # 품절 상품인데 API가 가격 0 반환 → 기존 가격 보존
+    if new_sale_status == "sold_out" and new_sale_price == 0:
+        old_sp = getattr(product, "sale_price", 0) or 0
+        if old_sp > 0:
+            new_sale_price = old_sp
+            logger.info(
+                f"[refresher] {site_product_id} 품절+가격0 → 기존 판매가 {old_sp:,} 보존"
+            )
+    if new_sale_status == "sold_out" and new_original_price == 0:
+        old_op = getattr(product, "original_price", 0) or 0
+        if old_op > 0:
+            new_original_price = old_op
+    # 품절 시 원가도 기존값 보존
+    if new_sale_status == "sold_out" and new_cost is None:
+        old_cost = getattr(product, "cost", None)
+        if old_cost and old_cost > 0:
+            new_cost = old_cost
+
+    # 품절 상품 옵션 가격 0 → 기존 옵션 가격 보존
+    if new_sale_status == "sold_out" and new_options:
+        all_zero = all((o.get("price", 0) or 0) == 0 for o in new_options)
+        if all_zero:
+            old_opts = getattr(product, "options", None) or []
+            old_price_map = {
+                (o.get("name", "") or o.get("size", "")): o.get("price", 0)
+                for o in old_opts
+                if (o.get("price", 0) or 0) > 0
+            }
+            if old_price_map:
+                for o in new_options:
+                    key = o.get("name", "") or o.get("size", "")
+                    if key in old_price_map:
+                        o["price"] = old_price_map[key]
+                logger.info(
+                    f"[refresher] {site_product_id} 품절+옵션가격0 → 기존 옵션 가격 복원"
+                )
+
     # 부분 성공 경고: 주요 필드 누락 감지
     if new_sale_price == 0 and new_original_price == 0:
         warnings.append("salePrice/originalPrice 모두 0 — 무신사 API 구조 변경 가능성")
