@@ -207,11 +207,8 @@ class PlayAutoPlugin(MarketPlugin):
         image_url: str,
     ) -> str:
         """소싱처 이미지 → R2 업로드 (EMP 서버에서 접근 가능하도록)."""
-        # 이미 R2 URL이면 스킵 (단, WebP는 JPG 변환 필요 — EMP 미지원)
-        if public_url and public_url in image_url:
-            if not image_url.lower().endswith(".webp"):
-                return image_url
-            logger.info(f"[플레이오토] R2 WebP→JPG 변환: {image_url[:80]}")
+        # R2 이미지도 스킵하지 않음 — 확장자 없는 WebP가 있으므로
+        # v5 캐시에 이미 있으면 head_object에서 빠르게 반환됨
 
         # 해시 기반 중복 방지 — 동일 소싱처 URL은 같은 R2 파일로
         url_hash = hashlib.md5(image_url.encode()).hexdigest()[:12]
@@ -221,7 +218,7 @@ class PlayAutoPlugin(MarketPlugin):
             ext = ".png"
         elif low.endswith(".gif"):
             ext = ".gif"
-        r2_key = f"playauto/v4/{url_hash}{ext}"
+        r2_key = f"playauto/v5/{url_hash}{ext}"
         r2_url = f"{public_url}/{r2_key}"
 
         # R2에 이미 존재하면 재업로드 스킵
@@ -248,10 +245,6 @@ class PlayAutoPlugin(MarketPlugin):
         r2_key: str = "",
     ) -> str:
         """이미지 1장 다운로드 → R2 업로드 → 공개 URL 반환."""
-        # R2 URL이면 스킵 (단, WebP는 JPG 변환 필요)
-        if public_url and public_url in image_url:
-            if not image_url.lower().endswith(".webp"):
-                return image_url
 
         # 다운로드 (소싱처별 Referer 설정)
         parsed = urlparse(image_url)
@@ -297,7 +290,7 @@ class PlayAutoPlugin(MarketPlugin):
                 ext = ".png"
             elif image_url.lower().endswith(".gif"):
                 ext = ".gif"
-            r2_key = f"playauto/v4/{url_hash}{ext}"
+            r2_key = f"playauto/v5/{url_hash}{ext}"
 
         content_type = "image/jpeg"
         if r2_key.endswith(".png"):
