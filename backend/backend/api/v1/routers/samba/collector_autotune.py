@@ -1350,6 +1350,116 @@ async def auto_start_if_enabled():
         logger.warning(f"[오토튠] 자동 시작 실패: {e}")
 
 
+class RefreshOneRequest(BaseModel):
+    product_no: str
+
+
+@router.post("/autotune/refresh-one")
+async def autotune_refresh_one(body: RefreshOneRequest):
+    """단일 상품 오토튠 갱신 — 상품번호로 검색 후 1건 갱신."""
+    from zoneinfo import ZoneInfo
+
+    from backend.db.orm import get_write_session
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+    from backend.domain.samba.collector.refresher import refresh_products_bulk
+    from backend.domain.samba.collector.repository import (
+        SambaCollectedProductRepository,
+    )
+
+    pno = body.product_no.strip()
+    if not pno:
+        return {"ok": False, "error": "상품번호를 입력해주세요"}
+
+    async with get_write_session() as session:
+        repo = SambaCollectedProductRepository(session)
+
+        # 1) id 검색
+        product = await repo.get_async(pno)
+
+        # 2) site_product_id 검색
+        if not product:
+            stmt = select(_CP).where(_CP.site_product_id == pno).limit(1)
+            result = await session.execute(stmt)
+            product = result.scalars().first()
+
+        # 3) market_product_nos 값 검색 (JSON 내부 value 매칭)
+        if not product:
+            from sqlalchemy import cast, String
+
+            stmt = (
+                select(_CP)
+                .where(cast(_CP.market_product_nos, String).contains(pno))
+                .limit(5)
+            )
+            result = await session.execute(stmt)
+            candidates = list(result.scalars().all())
+            for c in candidates:
+                nos = c.market_product_nos or {}
+                if pno in str(nos.values()):
+                    product = c
+                    break
+
+        if not product:
+            return {"ok": False, "error": f"'{pno}' 상품을 찾을 수 없습니다"}
+
+        # 갱신 실행
+        results, summary = await refresh_products_bulk([product], source="manual")
+
+        kst_now = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul"))
+        r = results[0] if results else None
+        detail_text = "갱신 실패"
+        status = "error"
+
+        if r and not r.error:
+            old_price = product.sale_price or 0
+            new_price = r.new_sale_price if r.new_sale_price is not None else old_price
+            old_status = getattr(product, "sale_status", "in_stock")
+            changes: list[str] = []
+            if new_price != old_price:
+                changes.append(f"가격 ₩{int(old_price):,}→₩{int(new_price):,}")
+            if r.new_sale_status and r.new_sale_status != old_status:
+                changes.append(f"상태 {old_status}→{r.new_sale_status}")
+            if r.stock_changed:
+                changes.append("재고변동")
+
+            if changes:
+                detail_text = " / ".join(changes)
+                status = "changed"
+            else:
+                detail_text = "변동 없음"
+                status = "unchanged"
+
+            # DB 업데이트
+            updates: dict = {
+                "last_refreshed_at": datetime.now(timezone.utc),
+                "refresh_error_count": 0,
+            }
+            if r.new_options is not None:
+                updates["options"] = r.new_options
+            updates["sale_status"] = r.new_sale_status
+            if r.changed:
+                if r.new_sale_price is not None:
+                    updates["sale_price"] = r.new_sale_price
+                if r.new_original_price is not None:
+                    updates["original_price"] = r.new_original_price
+                if r.new_cost is not None:
+                    updates["cost"] = r.new_cost
+            await repo.update_async(product.id, **updates)
+            await session.commit()
+        elif r and r.error:
+            detail_text = r.error[:80]
+
+        return {
+            "ok": True,
+            "product_id": product.id,
+            "brand": getattr(product, "brand", "") or "",
+            "name": (getattr(product, "name", "") or "")[:50],
+            "time": kst_now.strftime("%H:%M:%S"),
+            "status": status,
+            "detail": detail_text,
+        }
+
+
 @router.post("/autotune/start")
 async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     """오토튠 무한 루프 시작 — 메인 이벤트 루프에서 실행."""
@@ -1379,7 +1489,7 @@ async def autotune_stop():
     if not _autotune_running_event.is_set():
         return {"ok": True, "status": "already_stopped"}
     _autotune_running_event.clear()
-    request_bulk_cancel()  # 벌크 갱신 즉시 중단
+    request_bulk_cancel("autotune")  # 오토튠 갱신만 즉시 중단
     # 소싱처별 태스크 전부 취소
     for _st in list(_site_tasks.values()):
         if not _st.done():

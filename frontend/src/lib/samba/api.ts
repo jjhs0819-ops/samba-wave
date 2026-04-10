@@ -552,6 +552,8 @@ export const collectorApi = {
     request<Record<string, unknown>>(`${SAMBA_PREFIX}/collector/probe/run`, { method: 'POST' }),
   autotuneStart: (target: string = 'all') =>
     request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/start`, { method: 'POST', body: JSON.stringify({ target }) }),
+  autotuneRefreshOne: (productNo: string) =>
+    request<{ ok: boolean; error?: string; product_id?: string; brand?: string; name?: string; time?: string; status?: string; detail?: string }>(`${SAMBA_PREFIX}/collector/autotune/refresh-one`, { method: 'POST', body: JSON.stringify({ product_no: productNo }) }),
   autotuneStop: () =>
     request<{ ok: boolean; status: string }>(`${SAMBA_PREFIX}/collector/autotune/stop`, { method: 'POST' }),
   autotuneStatus: () =>

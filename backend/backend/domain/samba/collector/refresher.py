@@ -278,24 +278,28 @@ def _rotate_musinsa_cookie() -> str:
     return _bulk_musinsa_cache.get("cookie", "")
 
 
-# ── 벌크 갱신 취소 플래그 ──
-_bulk_cancel_requested = False
+# ── 벌크 갱신 취소 플래그 (source별 분리) ──
+_cancel_flags: Dict[str, bool] = {"autotune": False, "manual": False, "transmit": False}
 
 
-def request_bulk_cancel():
-    """벌크 갱신 즉시 중단 요청."""
-    global _bulk_cancel_requested
-    _bulk_cancel_requested = True
+def request_bulk_cancel(source: str = "autotune"):
+    """특정 source의 벌크 갱신 즉시 중단 요청."""
+    _cancel_flags[source] = True
 
 
-def clear_bulk_cancel():
-    """벌크 갱신 취소 플래그 초기화."""
-    global _bulk_cancel_requested
-    _bulk_cancel_requested = False
+def request_bulk_cancel_all():
+    """모든 source의 벌크 갱신 즉시 중단 요청 (서버 종료 등)."""
+    for k in _cancel_flags:
+        _cancel_flags[k] = True
 
 
-def is_bulk_cancelled() -> bool:
-    return _bulk_cancel_requested
+def clear_bulk_cancel(source: str = "autotune"):
+    """특정 source의 취소 플래그 초기화."""
+    _cancel_flags[source] = False
+
+
+def is_bulk_cancelled(source: str = "autotune") -> bool:
+    return _cancel_flags.get(source, False)
 
 
 # ── 실시간 로그 링 버퍼 (최대 300건) ──
@@ -1112,6 +1116,9 @@ async def refresh_products_bulk(
     if not products:
         return [], BulkRefreshResult()
 
+    # 시작 시 해당 source의 취소 플래그 초기화
+    clear_bulk_cancel(source)
+
     # 소싱처별 그룹핑
     by_site: dict[str, list] = {}
     for p in products:
@@ -1142,8 +1149,8 @@ async def refresh_products_bulk(
 
         async def _limited(p: Any) -> RefreshResult:
             async with sem:
-                # 취소 요청 시 즉시 중단
-                if _bulk_cancel_requested:
+                # 취소 요청 시 즉시 중단 (자기 source만 체크)
+                if _cancel_flags.get(source, False):
                     return RefreshResult(
                         product_id=getattr(p, "id", "unknown"), error="cancelled"
                     )

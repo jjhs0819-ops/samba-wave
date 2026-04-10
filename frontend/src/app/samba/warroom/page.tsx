@@ -217,6 +217,8 @@ export default function WarroomPage() {
   const [autotuneRunning, setAutotuneRunning] = useState(false)
   const [autotuneCycles, setAutotuneCycles] = useState(0)
   const [autotuneRestarts, setAutotuneRestarts] = useState(0)
+  const [singleProductNo, setSingleProductNo] = useState('')
+  const [singleRefreshing, setSingleRefreshing] = useState(false)
   const [autotuneRefreshed, setAutotuneRefreshed] = useState(0)
   const [autotuneLastTick, setAutotuneLastTick] = useState<string | null>(null)
   const prevCyclesRef = useRef(0)
@@ -479,8 +481,42 @@ export default function WarroomPage() {
             {!autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
+            <input
+              type="text"
+              placeholder="상품번호"
+              value={singleProductNo}
+              onChange={e => setSingleProductNo(e.target.value)}
+              style={{
+                width: '110px', padding: '0.25rem 0.5rem',
+                background: '#1A1A1A', border: '1px solid #3D3D3D', borderRadius: '6px',
+                color: '#E5E5E5', fontSize: '0.75rem', outline: 'none',
+              }}
+              onKeyDown={e => { if (e.key === 'Enter' && singleProductNo.trim()) document.getElementById('btn-autotune-start')?.click() }}
+            />
             <button
+            id="btn-autotune-start"
+            disabled={singleRefreshing}
             onClick={async () => {
+              // 상품번호 입력 시 → 단일 상품 갱신
+              if (singleProductNo.trim()) {
+                setSingleRefreshing(true)
+                try {
+                  const res = await collectorApi.autotuneRefreshOne(singleProductNo.trim())
+                  if (res.ok) {
+                    const color = res.status === 'changed' ? '#51CF66' : res.status === 'error' ? '#FF6B6B' : '#888'
+                    const msg = `[${res.time}] ${res.brand} ${res.name} — ${res.detail}`
+                    await import('@/components/samba/Modal').then(m => m.showAlert(msg, res.status === 'error' ? 'error' : res.status === 'changed' ? 'success' : undefined))
+                  } else {
+                    await import('@/components/samba/Modal').then(m => m.showAlert(res.error || '갱신 실패', 'error'))
+                  }
+                } catch {
+                  await import('@/components/samba/Modal').then(m => m.showAlert('갱신 요청 실패', 'error'))
+                }
+                setSingleRefreshing(false)
+                setSingleProductNo('')
+                return
+              }
+              // 빈 입력 → 전체 오토튠 시작
               try {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
                 await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
@@ -492,15 +528,16 @@ export default function WarroomPage() {
             }}
             style={{
               padding: '0.25rem 0.75rem',
-              background: 'rgba(34,197,94,0.12)',
-              border: '1px solid rgba(34,197,94,0.35)',
+              background: singleRefreshing ? 'rgba(255,140,0,0.12)' : 'rgba(34,197,94,0.12)',
+              border: `1px solid ${singleRefreshing ? 'rgba(255,140,0,0.35)' : 'rgba(34,197,94,0.35)'}`,
               borderRadius: '6px',
-              color: '#22C55E',
+              color: singleRefreshing ? '#FF8C00' : '#22C55E',
               fontSize: '0.8125rem',
               fontWeight: 600,
-              cursor: 'pointer',
+              cursor: singleRefreshing ? 'wait' : 'pointer',
+              opacity: singleRefreshing ? 0.7 : 1,
             }}
-          >시작</button>
+          >{singleRefreshing ? '갱신중...' : '시작'}</button>
           <button
             onClick={async () => {
               try {

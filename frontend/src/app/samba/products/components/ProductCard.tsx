@@ -479,7 +479,8 @@ const ProductCard = React.memo(function ProductCard({
             </div>
           )
         }
-        const history = priceHistoryData
+        try {
+        const history = Array.isArray(priceHistoryData) ? priceHistoryData : []
         const isKream = p.source_site === 'KREAM'
         // 원가(cost) 기준으로 최저/최고가 계산
         const costPrices = history.map(h => Number(h.cost || h.sale_price || 0)).filter(Boolean)
@@ -596,8 +597,8 @@ const ProductCard = React.memo(function ProductCard({
                     </thead>
                     <tbody>
                       {history.map((h, i) => {
-                        const opts = (h.options || []) as Array<{ name?: string; price?: number; stock?: number; isSoldOut?: boolean }>
-                        const inStockCount = opts.filter(o => !o.isSoldOut && (o.stock === undefined || o.stock > 0)).length
+                        const rawOpts = h.options
+                        const opts = (Array.isArray(rawOpts) ? rawOpts : []) as Array<{ name?: string; price?: number; stock?: number; isSoldOut?: boolean }>
                         return (
                           <React.Fragment key={i}>
                             {/* 메인 행: 날짜 + 가격 + 옵션 요약 */}
@@ -670,6 +671,15 @@ const ProductCard = React.memo(function ProductCard({
             </div>
           </div>
         )
+        } catch {
+          // 데이터 파싱 에러 시 페이지 크래시 방지
+          return (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 99998, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}
+              onClick={() => setShowPriceHistoryModal(false)}>
+              <div style={{ background: '#1A1A1A', borderRadius: '10px', padding: '2rem', color: '#FF6B6B', fontSize: '0.85rem' }}>이력 데이터 로드 실패</div>
+            </div>
+          )
+        }
       })()}
 
       {/* 이미지 변경 모달 */}

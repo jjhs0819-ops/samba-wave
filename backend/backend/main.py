@@ -272,10 +272,10 @@ async def lifespan(app: FastAPI):
         _autotune_running_event,
         _autotune_task,
     )
-    from backend.domain.samba.collector.refresher import request_bulk_cancel
+    from backend.domain.samba.collector.refresher import request_bulk_cancel_all
 
     _autotune_running_event.clear()
-    request_bulk_cancel()
+    request_bulk_cancel_all()
     if _autotune_task and not _autotune_task.done():
         _autotune_task.cancel()
     watchdog_task.cancel()
