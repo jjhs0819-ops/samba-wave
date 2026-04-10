@@ -297,6 +297,18 @@ async def _site_autotune_loop(site: str):
                             )
                             _ref_mod._refresh_log_total += 1
 
+                        async def _partial_update(pid: str, vals: dict):
+                            """last_sent_data를 건드리지 않는 partial UPDATE."""
+                            from backend.domain.samba.collector.model import (
+                                SambaCollectedProduct as _PU_CP,
+                            )
+
+                            vals["updated_at"] = datetime.now(timezone.utc)
+                            stmt = (
+                                sa_update(_PU_CP).where(_PU_CP.id == pid).values(**vals)
+                            )
+                            await session.execute(stmt)
+
                         async def _on_result(product, r, idx=0, total=0):
                             """리프레시 직후 호출 — DB 업데이트 + 즉시 마켓 전송."""
                             nonlocal \
@@ -413,7 +425,7 @@ async def _site_autotune_loop(site: str):
                                             site,
                                             _site_consecutive_soldout[site],
                                         )
-                                        await repo.update_async(r.product_id, **updates)
+                                        await _partial_update(r.product_id, updates)
                                         return
                                     if not getattr(product, "lock_delete", False):
                                         product_dict = product.model_dump()
@@ -496,14 +508,14 @@ async def _site_autotune_loop(site: str):
                                             )
                                             if not _new_reg:
                                                 updates["status"] = "collected"
-                                    await repo.update_async(r.product_id, **updates)
+                                    await _partial_update(r.product_id, updates)
                                     _site_consecutive_soldout[site] = 0
                                     return
                                 else:
                                     _site_consecutive_soldout[site] = 0
 
                                 # DB 먼저 업데이트 (전송 전에 최신 데이터 반영)
-                                await repo.update_async(r.product_id, **updates)
+                                await _partial_update(r.product_id, updates)
 
                                 # ★ 마켓별 최종 판매가 비교 → 전송 판정
                                 new_cost = _cur_cost
