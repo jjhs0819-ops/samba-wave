@@ -1009,7 +1009,17 @@ async def product_counts(
         func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
             "policy_applied"
         ),
-        func.count(case((_CP.sale_status == "sold_out", literal(1)))).label("sold_out"),
+        func.count(
+            case(
+                (
+                    or_(
+                        _CP.sale_status == "sold_out",
+                        _all_options_sold_out(_CP),
+                    ),
+                    literal(1),
+                )
+            )
+        ).label("sold_out"),
     ).select_from(_CP)
     row = (await session.execute(stmt)).one()
     result = {

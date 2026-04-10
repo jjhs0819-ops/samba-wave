@@ -29,6 +29,17 @@ def _is_placeholder(value: str) -> bool:
     return value.strip() in _BRAND_PLACEHOLDERS
 
 
+def _derive_sale_status(data: Dict[str, Any]) -> None:
+    """전옵션 품절이면 sale_status를 sold_out으로 자동 설정."""
+    if data.get("sale_status") and data["sale_status"] != "in_stock":
+        return
+    options = data.get("options")
+    if not options or not isinstance(options, list) or len(options) == 0:
+        return
+    if all((opt.get("stock", 0) or 0) <= 0 for opt in options if isinstance(opt, dict)):
+        data["sale_status"] = "sold_out"
+
+
 class SambaCollectorService:
     def __init__(
         self,
@@ -92,6 +103,7 @@ class SambaCollectorService:
         self._fill_optional_images(data)
         await self._fill_source_brand(data)
         await self._inherit_group_attributes(data)
+        _derive_sale_status(data)
         try:
             return await self.product_repo.create_async(**data)
         except IntegrityError:
@@ -215,6 +227,7 @@ class SambaCollectorService:
 
         created = 0
         for d in items:
+            _derive_sale_status(d)
             obj = SambaCollectedProduct(**d)
             self.product_repo.session.add(obj)
             try:

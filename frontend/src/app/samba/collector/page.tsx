@@ -575,7 +575,7 @@ export default function CollectorPage() {
           const res = await collectorApi.brandScan(code, gf, keyword)
           allCategories.push(...res.categories)
           totalCount += res.total
-          if (code) addLog(`[카테고리스캔] ${code}: ${res.groupCount.toLocaleString()}개 카테고리, ${res.total.toLocaleString()}건`)
+          if (code) addLog(`[카테고리스캔] ${keyword || code}: ${res.groupCount.toLocaleString()}개 카테고리, ${res.total.toLocaleString()}건`)
         }
         setBrandCategories(allCategories)
         setBrandTotal(totalCount)
@@ -1243,7 +1243,7 @@ export default function CollectorPage() {
                 const gf = parsed?.searchParams.get('gf') || 'A'
                 try {
                   const res = await collectorApi.brandCreateGroups({
-                    brand, brand_name: keyword || brand, gf,
+                    brand, brand_name: pendingKeyword || keyword || brand, gf,
                     categories: selected,
                     requested_count_per_group: -1,
                     real_total: brandTotal,
