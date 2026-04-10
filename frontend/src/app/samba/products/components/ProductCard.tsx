@@ -694,7 +694,7 @@ const ProductCard = React.memo(function ProductCard({
             border: label ? '1px solid rgba(255,140,0,0.2)' : '1px solid #2D2D2D',
           }}>
             <div
-              onClick={() => openZoom(img)}
+              onClick={() => openZoom(img, list)}
               style={{ width: 64, height: 64, borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer', overflow: 'hidden', background: '#1A1A1A', position: 'relative' }}
             >
               <img src={img} alt="" loading="lazy" referrerPolicy="no-referrer"
