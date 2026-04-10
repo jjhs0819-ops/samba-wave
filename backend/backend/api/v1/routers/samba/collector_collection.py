@@ -1751,6 +1751,15 @@ async def enrich_product(
             "options": opts if opts else product.options,
         }
 
+        # 품절 판정: 모든 옵션 stock=0이면 sold_out
+        _kream_opts = opts if opts else []
+        if _kream_opts and all(o.get("stock", 0) <= 0 for o in _kream_opts):
+            updates["sale_status"] = "sold_out"
+        elif not _kream_opts:
+            updates["sale_status"] = "sold_out"
+        else:
+            updates["sale_status"] = "in_stock"
+
         # 가격이력 스냅샷 추가 (최대 200건)
         snapshot = _build_kream_price_snapshot(
             sale_p, pd.get("originalPrice") or product.original_price, cost_p, opts
@@ -1803,6 +1812,9 @@ async def enrich_product(
         if original_price is not None:
             updates["original_price"] = original_price
 
+        # sale_status 반영
+        updates["sale_status"] = detail.get("sale_status", "in_stock")
+
         snapshot = {
             "date": datetime.now(timezone.utc).isoformat(),
             "sale_price": sale_price or product.sale_price,
@@ -1843,6 +1855,13 @@ async def enrich_product(
             "cost": new_cost,
             "sourcing_shipping_fee": shipping_fee,
         }
+        # 품절 판정
+        if new_options and all(o.get("stock", 0) <= 0 for o in new_options):
+            updates["sale_status"] = "sold_out"
+        elif not new_options:
+            updates["sale_status"] = "sold_out"
+        else:
+            updates["sale_status"] = detail.get("saleStatus", "in_stock")
         if new_options:
             updates["options"] = new_options
 

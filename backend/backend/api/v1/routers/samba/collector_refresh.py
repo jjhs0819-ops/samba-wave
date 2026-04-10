@@ -231,6 +231,9 @@ async def refresh_products(
         if r.new_options is not None:
             updates["options"] = r.new_options
 
+        # sale_status는 가격 변동 무관하게 항상 반영
+        updates["sale_status"] = r.new_sale_status
+
         if r.changed:
             if r.new_sale_price is not None:
                 updates["sale_price"] = r.new_sale_price
@@ -241,9 +244,6 @@ async def refresh_products(
                 # 기존 원가가 더 낮으면(확장앱 혜택가) 보존
                 if not (_old_cost > 0 and _old_cost < r.new_cost):
                     updates["cost"] = r.new_cost
-
-            updates["sale_status"] = r.new_sale_status
-            # is_sold_out 제거 → sale_status로 통일
 
             # 가격 변동 추적
             old_price = product.sale_price or 0

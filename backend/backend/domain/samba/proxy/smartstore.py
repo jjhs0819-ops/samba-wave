@@ -1524,6 +1524,31 @@ class SmartStoreClient:
         logger.info(f"[스마트스토어] 취소승인 완료: {product_order_id}")
         return result
 
+    async def request_cancel(
+        self,
+        product_order_id: str,
+        cancel_reason: str = "SOLD_OUT",
+        cancel_detailed_reason: str = "",
+    ) -> dict[str, Any]:
+        """판매자 주도 취소 요청.
+
+        Commerce API: POST /v1/pay-order/seller/product-orders/{id}/claim/cancel/request
+        cancelReason: SOLD_OUT / INTENT_CHANGED / COLOR_AND_SIZE /
+                      WRONG_ORDER / DELAYED_DELIVERY / INCORRECT_INFO
+        """
+        body: dict[str, Any] = {"cancelReason": cancel_reason}
+        if cancel_detailed_reason:
+            body["cancelDetailedReason"] = cancel_detailed_reason
+        result = await self._call_api(
+            "POST",
+            f"/v1/pay-order/seller/product-orders/{product_order_id}/claim/cancel/request",
+            body=body,
+        )
+        logger.info(
+            f"[스마트스토어] 판매자취소 완료: {product_order_id} (사유={cancel_reason})"
+        )
+        return result
+
     async def reject_exchange(
         self, product_order_id: str, reason: str = "판매자 교환 거부"
     ) -> dict[str, Any]:

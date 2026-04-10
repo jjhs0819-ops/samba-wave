@@ -440,6 +440,8 @@ class NikeClient:
             result["sale_status"] = "sold_out"
         elif not all_options:
             result["sale_status"] = "sold_out"
+        else:
+            result["sale_status"] = "in_stock"
 
         logger.info(
             f"[Nike] 상세 '{style_color}' → 이미지 {len(result.get('images', []))}장"

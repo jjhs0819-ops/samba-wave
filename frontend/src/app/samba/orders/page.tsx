@@ -1154,8 +1154,30 @@ export default function OrdersPage() {
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>실수익</span><span>{liveProfit >= 0 ? '+' : ''}{Math.round(liveProfit).toLocaleString()}</span></div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>수익률</span><span style={{ color: '#888' }}>{liveProfitRate}%</span></div>
                     </div>
-                    {/* 가격X/재고X/직배/까대기/선물 */}
+                    {/* 주문취소 + 가격X/재고X/직배/까대기/선물 */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '0.375rem', borderTop: '1px solid #1C2333', paddingTop: '0.375rem' }}>
+                      <button
+                        onClick={async () => {
+                          const isPlayauto = (o.source === 'playauto' || o.channel_name?.toLowerCase().includes('플레이오토'))
+                          const confirmMsg = isPlayauto ? '주문확인 처리하시겠습니까?' : '주문을 취소하시겠습니까?'
+                          const yes = await showConfirm(confirmMsg)
+                          if (!yes) return
+                          try {
+                            const res = await orderApi.sellerCancel(o.id, 'SOLD_OUT')
+                            showAlert(res.message || '처리 완료', 'success')
+                            loadOrders()
+                          } catch (err) {
+                            showAlert(err instanceof Error ? err.message : '처리 실패', 'error')
+                          }
+                        }}
+                        style={{
+                          fontSize: '0.68rem', padding: '0.125rem 0',
+                          background: 'rgba(220,38,38,0.8)',
+                          color: '#fff', border: '1px solid #DC2626',
+                          borderRadius: '4px', cursor: 'pointer', textAlign: 'center',
+                          fontWeight: 600,
+                        }}
+                      >{(o.source === 'playauto' || o.channel_name?.toLowerCase().includes('플레이오토')) ? '주문확인' : '주문취소'}</button>
                       {ACTION_BUTTONS.map(btn => {
                         const isActive = activeAction === btn.key
                         return (

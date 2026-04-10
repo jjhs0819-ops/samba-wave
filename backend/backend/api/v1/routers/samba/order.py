@@ -527,8 +527,8 @@ async def seller_cancel(
             await client.test_auth()
             success, message = await client.seller_cancel_order(
                 od_no=order.order_number,
-                reason_code=body.reason_code,
-                reason_text=body.reason_text or "",
+                reason_code="135",
+                reason_text="고객변심",
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"판매자 취소 실패: {e}")
@@ -538,12 +538,72 @@ async def seller_cancel(
 
         await svc.update_order(
             order_id,
-            {"shipping_status": "취소완료"},
+            {"shipping_status": "취소완료", "status": "cancelled"},
         )
-        logger.info(
-            f"[판매자취소] 롯데ON {order.order_number} 완료 (rsnCd={body.reason_code})"
-        )
+        logger.info(f"[판매자취소] 롯데ON {order.order_number} 완료 (고객변심)")
         return {"ok": True, "message": "판매자 취소 완료", "detail": message}
+
+    elif account.market_type == "smartstore":
+        from backend.domain.samba.proxy.smartstore import SmartStoreClient
+        from backend.domain.samba.forbidden.repository import SambaSettingsRepository
+
+        extras = account.additional_fields or {}
+        client_id = extras.get("clientId", "") or account.api_key or ""
+        client_secret = extras.get("clientSecret", "") or account.api_secret or ""
+        if not client_id or not client_secret:
+            settings_repo = SambaSettingsRepository(session)
+            row = await settings_repo.find_by_async(key="store_smartstore")
+            if row and isinstance(row.value, dict):
+                client_id = client_id or row.value.get("clientId", "")
+                client_secret = client_secret or row.value.get("clientSecret", "")
+        if not client_id or not client_secret:
+            raise HTTPException(status_code=400, detail="스마트스토어 인증정보 없음")
+
+        client = SmartStoreClient(client_id, client_secret)
+        try:
+            await client.request_cancel(
+                product_order_id=order.order_number,
+                cancel_reason="SOLD_OUT",
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"판매자 취소 실패: {e}")
+
+        await svc.update_order(
+            order_id,
+            {"shipping_status": "취소완료", "status": "cancelled"},
+        )
+        logger.info(f"[판매자취소] 스마트스토어 {order.order_number} 완료 (SOLD_OUT)")
+        return {"ok": True, "message": "판매자 취소 완료"}
+
+    elif account.market_type == "playauto":
+        from backend.domain.samba.proxy.playauto import PlayAutoClient
+
+        extras = account.additional_fields or {}
+        api_key = extras.get("apiKey", "") or account.api_key or ""
+        if not api_key:
+            raise HTTPException(status_code=400, detail="플레이오토 API Key 없음")
+
+        # order_number를 정수로 변환 (플레이오토 주문번호는 숫자)
+        try:
+            order_num = int(order.order_number)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail=f"플레이오토 주문번호 변환 실패: {order.order_number}",
+            )
+
+        client = PlayAutoClient(api_key)
+        try:
+            result = await client.confirm_order([order_num])
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"주문확인 실패: {e}")
+
+        await svc.update_order(
+            order_id,
+            {"shipping_status": "주문확인"},
+        )
+        logger.info(f"[주문확인] 플레이오토 {order.order_number} 주문확인 완료")
+        return {"ok": True, "message": "주문확인 완료", "detail": str(result)}
 
     raise HTTPException(
         status_code=400, detail=f"{account.market_type} 판매자 취소 미지원"
