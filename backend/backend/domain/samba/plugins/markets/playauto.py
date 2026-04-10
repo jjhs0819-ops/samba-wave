@@ -219,7 +219,7 @@ class PlayAutoPlugin(MarketPlugin):
             ext = ".png"
         elif low.endswith(".gif"):
             ext = ".gif"
-        r2_key = f"playauto/v2/{url_hash}{ext}"
+        r2_key = f"playauto/v3/{url_hash}{ext}"
         r2_url = f"{public_url}/{r2_key}"
 
         # R2에 이미 존재하면 재업로드 스킵
@@ -258,6 +258,7 @@ class PlayAutoPlugin(MarketPlugin):
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Referer": referer,
+            "Accept": "image/jpeg,image/png,image/gif,*/*",
         }
         resp = await dl_client.get(image_url, headers=headers)
         resp.raise_for_status()
@@ -265,8 +266,15 @@ class PlayAutoPlugin(MarketPlugin):
         if len(image_bytes) < 1000:
             raise ValueError(f"이미지 비정상 크기: {len(image_bytes)}B")
 
-        # WebP → JPG 실제 변환 (EMP는 WebP 미지원)
-        if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        # 포맷 감지 — JPEG/PNG/GIF가 아니면 Pillow로 JPG 변환
+        is_jpeg = image_bytes[:2] == b"\xff\xd8"
+        is_png = image_bytes[:4] == b"\x89PNG"
+        is_gif = image_bytes[:4] == b"GIF8"
+        logger.info(
+            f"[플레이오토] 이미지 다운로드: {image_url[:80]}, "
+            f"size={len(image_bytes)}B, magic={image_bytes[:4].hex()}"
+        )
+        if not (is_jpeg or is_png or is_gif):
             from PIL import Image as _PILImage
 
             _img = _PILImage.open(io.BytesIO(image_bytes))
@@ -275,7 +283,7 @@ class PlayAutoPlugin(MarketPlugin):
             _buf = io.BytesIO()
             _img.save(_buf, format="JPEG", quality=90)
             image_bytes = _buf.getvalue()
-            logger.info(f"[플레이오토] WebP→JPG 변환 완료: {image_url[:60]}")
+            logger.info(f"[플레이오토] 비표준→JPG 변환: {image_url[:60]}")
 
         # R2 키 (해시 기반 중복 방지)
         if not r2_key:
@@ -285,7 +293,7 @@ class PlayAutoPlugin(MarketPlugin):
                 ext = ".png"
             elif image_url.lower().endswith(".gif"):
                 ext = ".gif"
-            r2_key = f"playauto/v2/{url_hash}{ext}"
+            r2_key = f"playauto/v3/{url_hash}{ext}"
 
         content_type = "image/jpeg"
         if r2_key.endswith(".png"):
