@@ -83,23 +83,31 @@ class PlayAutoPlugin(MarketPlugin):
             emp_data = self.transform(product, category_id)
 
             # 디버그: 실제 전송 데이터 확인
+            _img_debug = {
+                f"Image{i}": str(emp_data.get(f"Image{i}", ""))[:80]
+                for i in range(1, 11)
+                if emp_data.get(f"Image{i}")
+            }
             logger.info(
                 f"[플레이오토] 전송 데이터: ProdName={emp_data.get('ProdName', '')[:30]}, "
                 f"Price={emp_data.get('Price')}, CostPrice={emp_data.get('CostPrice')}, "
                 f"StreetPrice={emp_data.get('StreetPrice')}, Count={emp_data.get('Count')}, "
-                f"Model={emp_data.get('Model')}, Brand={emp_data.get('Brand')}, "
                 f"MadeIn={emp_data.get('MadeIn')}, "
-                f"Image1={str(emp_data.get('Image1', ''))[:60]}, "
+                f"Images={_img_debug}, "
                 f"Opts={len(emp_data.get('Opts', []))}건, "
                 f"Content={len(emp_data.get('Content', ''))}자, "
-                f"Keywords={','.join(emp_data.get(f'Keyword{i}', '') for i in range(1, 6) if emp_data.get(f'Keyword{i}'))}, "
                 f"MyCateName={emp_data.get('MyCateName', '(미설정)')}"
+            )
+            logger.info(
+                f"[플레이오토] 원본 images 필드: {[str(u)[:80] for u in (product.get('images') or [])]}"
             )
 
             if existing_no:
                 emp_data["MasterCode"] = existing_no
+                logger.info(f"[플레이오토] 기존 상품 수정(PATCH): {existing_no}")
                 results = await client.update_product([emp_data])
             else:
+                logger.info("[플레이오토] 신규 등록(POST)")
                 results = await client.register_product([emp_data])
 
             if not results:
