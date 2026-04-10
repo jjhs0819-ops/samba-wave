@@ -1364,7 +1364,12 @@ class SmartStoreClient:
             )
             data = result.get("data", result) if isinstance(result, dict) else {}
             statuses = (
-                data.get("lastChangedStatuses", []) if isinstance(data, dict) else []
+                (
+                    data.get("lastChangeStatuses", [])
+                    or data.get("lastChangedStatuses", [])
+                )
+                if isinstance(data, dict)
+                else []
             )
             for s in statuses:
                 pid = s.get("productOrderId", "")

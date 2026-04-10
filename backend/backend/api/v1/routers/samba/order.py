@@ -2287,6 +2287,15 @@ def _parse_playauto_order(
         "보류": "pending",
     }
 
+    # shipping_status 매핑 (스킬 가이드 기준)
+    shipping_status_map = {
+        "신규주문": "주문접수",
+        "송장출력": "배송대기중",
+        "주문확인": "취소중",
+        "수취확인": "배송완료",
+        "정산완료": "배송완료",
+    }
+
     order_state = ro.get("OrderState", "")
     sale_price = int(ro.get("Price", 0) or 0)
     quantity = int(ro.get("Count", 1) or 1)
@@ -2294,6 +2303,21 @@ def _parse_playauto_order(
     site_name = ro.get("SiteName", "")
     site_id = ro.get("SiteId", "")
     supply_price = int(ro.get("SupplyPrice", 0) or 0)
+
+    # 결제일 파싱
+    paid_at = None
+    order_date_raw = ro.get("OrderDate", "") or ""
+    if order_date_raw:
+        from datetime import datetime, timezone
+
+        for fmt in ("%Y%m%d%H%M%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                paid_at = datetime.strptime(order_date_raw.strip()[:19], fmt).replace(
+                    tzinfo=timezone.utc
+                )
+                break
+            except ValueError:
+                continue
 
     return {
         "order_number": ro.get("OrderCode", ""),
@@ -2316,9 +2340,10 @@ def _parse_playauto_order(
         "fee_rate": 0,
         "revenue": supply_price * quantity if supply_price else sale_price * quantity,
         "status": status_map.get(order_state, "pending"),
-        "shipping_status": order_state,
+        "shipping_status": shipping_status_map.get(order_state, order_state),
         "shipping_company": ro.get("Sender", ""),
         "tracking_number": ro.get("SenderNo", ""),
+        "paid_at": paid_at,
         "source": "playauto",
         # 판매처(사업자) 정보 — 별칭 매핑 적용
         "source_site": (
