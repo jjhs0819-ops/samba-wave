@@ -42,25 +42,35 @@ const SITES: { id: string; label: string; disabled?: boolean }[] = [
   { id: 'SSF', label: 'SSF샵', disabled: true },
 ]
 
+// 품절상품 포함 옵션 (모든 소싱처 공통, 기본 체크해제)
+const COMMON_OPTIONS: { id: string; label: string; warn?: string }[] = [
+  { id: 'includeSoldOut', label: '품절상품 포함' },
+]
+
 const SITE_OPTIONS: Record<string, { id: string; label: string; warn?: string }[]> = {
   MUSINSA: [
     { id: 'excludePreorder', label: '예약배송 수집제외' },
     { id: 'excludeBoutique', label: '부티끄 수집제외' },
     { id: 'maxDiscount', label: '최대혜택가' },
+    ...COMMON_OPTIONS,
   ],
-  KREAM: [],
-  FashionPlus: [],
+  KREAM: [...COMMON_OPTIONS],
+  FashionPlus: [...COMMON_OPTIONS],
   SSG: [
     { id: 'maxDiscount', label: '최대혜택가', warn: '수집 속도가 느려집니다' },
+    ...COMMON_OPTIONS,
   ],
   LOTTEON: [
     { id: 'maxDiscount', label: '최대혜택가', warn: '수집 속도가 느려집니다' },
+    ...COMMON_OPTIONS,
   ],
   ABCmart: [
     { id: 'maxDiscount', label: '최대혜택가', warn: '수집 속도가 느려집니다' },
+    ...COMMON_OPTIONS,
   ],
   GSShop: [
     { id: 'maxDiscount', label: '최대혜택가', warn: '수집 속도가 느려집니다' },
+    ...COMMON_OPTIONS,
   ],
 }
 
@@ -499,6 +509,7 @@ export default function CollectorPage() {
         if (checkedOptions['excludePreorder']) u.searchParams.set("excludePreorder", "1")
         if (checkedOptions['excludeBoutique']) u.searchParams.set("excludeBoutique", "1")
         if (checkedOptions['maxDiscount']) u.searchParams.set("maxDiscount", "1")
+        if (checkedOptions['includeSoldOut']) u.searchParams.set("includeSoldOut", "1")
         keywordUrl = u.toString()
       }
       if (site === 'FashionPlus' && !isUrl) {
@@ -515,6 +526,12 @@ export default function CollectorPage() {
       if (checkedOptions['maxDiscount'] && site !== 'MUSINSA' && keywordUrl.startsWith('http')) {
         const u = new URL(keywordUrl)
         u.searchParams.set('maxDiscount', '1')
+        keywordUrl = u.toString()
+      }
+      // 품절상품 포함 옵션 (MUSINSA 외 소싱처)
+      if (checkedOptions['includeSoldOut'] && site !== 'MUSINSA' && keywordUrl.startsWith('http')) {
+        const u = new URL(keywordUrl)
+        u.searchParams.set('includeSoldOut', '1')
         keywordUrl = u.toString()
       }
 
@@ -726,7 +743,7 @@ export default function CollectorPage() {
             if (!jobRes.ok) break
             const job = await jobRes.json() as {
               status: string; current: number; total: number
-              progress: number; result?: { saved?: number; skipped?: number; policy?: string; message?: string }
+              progress: number; result?: { saved?: number; skipped?: number; policy?: string; message?: string; in_stock_count?: number; sold_out_count?: number }
               error?: string
             }
 
@@ -740,8 +757,11 @@ export default function CollectorPage() {
               const saved = job.result?.saved ?? 0
               const skipped = job.result?.skipped ?? 0
               const policy = job.result?.policy || ''
-              const parts = [`신규 ${saved}건`]
-              if (skipped > 0) parts.push(`중복 ${skipped}건`)
+              const inStock = job.result?.in_stock_count ?? 0
+              const soldOut = job.result?.sold_out_count ?? 0
+              const parts = [`신규 ${saved.toLocaleString()}건`]
+              if (inStock > 0 || soldOut > 0) parts.push(`재고 ${inStock.toLocaleString()}건 | 품절 ${soldOut.toLocaleString()}건`)
+              if (skipped > 0) parts.push(`중복/스킵 ${skipped.toLocaleString()}건`)
               if (policy) parts.push(policy)
               addLog(`${gp} [${f.name}] 수집 완료: ${parts.join(' | ')}`)
               await new Promise(r => setTimeout(r, 100))

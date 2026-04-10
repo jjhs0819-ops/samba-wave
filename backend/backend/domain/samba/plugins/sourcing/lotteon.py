@@ -162,7 +162,7 @@ class LotteonSourcingPlugin(SourcingPlugin):
                     {
                         "name": label,
                         "price": sl_prc,
-                        "stock": 0 if disabled else (stk_qty or 1),
+                        "stock": 0 if disabled else (stk_qty or 99),
                         "isSoldOut": disabled,
                     }
                 )
@@ -178,7 +178,7 @@ class LotteonSourcingPlugin(SourcingPlugin):
                             {
                                 "name": label,
                                 "price": sl_prc,
-                                "stock": 0 if dis else (stk_qty or 1),
+                                "stock": 0 if dis else (stk_qty or 99),
                                 "isSoldOut": bool(dis),
                             }
                         )

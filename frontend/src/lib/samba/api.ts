@@ -377,6 +377,14 @@ export interface SambaCollectedProduct {
   updated_at?: string;
 }
 
+export interface RefreshDetail {
+  time: string
+  brand: string
+  name: string
+  status: 'changed' | 'unchanged' | 'error'
+  detail: string
+}
+
 export interface RefreshResult {
   total: number
   refreshed: number
@@ -386,6 +394,7 @@ export interface RefreshResult {
   retransmitted: number
   needs_extension: string[]
   errors: number
+  details?: RefreshDetail[]
 }
 
 export const collectorApi = {

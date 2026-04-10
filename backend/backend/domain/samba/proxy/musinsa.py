@@ -834,11 +834,17 @@ class MusinsaClient:
                 headers=self._headers(),
             )
             if opt_resp.status_code != 200:
+                logger.warning(
+                    f"[옵션] {goods_no} 옵션 API 비정상 응답: HTTP {opt_resp.status_code}"
+                )
                 return options, option_value_no_map
 
             opt_json = opt_resp.json()
             opt_meta = opt_json.get("meta", {})
             if opt_meta.get("result") != "SUCCESS" or not opt_json.get("data"):
+                logger.warning(
+                    f"[옵션] {goods_no} 옵션 API 실패: result={opt_meta.get('result')}, data={bool(opt_json.get('data'))}"
+                )
                 return options, option_value_no_map
 
             items = opt_json["data"].get("optionItems", [])
@@ -897,7 +903,7 @@ class MusinsaClient:
                 ]
                 inv = inventory_map.get(item.get("no", 0))
 
-                stock: Optional[int] = None
+                stock: Optional[int] = 99  # 재고 불명 기본값
                 is_sold_out = False
                 is_brand_delivery = False
 
@@ -907,12 +913,12 @@ class MusinsaClient:
                         stock = 0
                         is_sold_out = True
                     elif is_brand_delivery:
-                        stock = None
+                        stock = 99  # 브랜드직배: 재고 불명 → 99
                         is_sold_out = False
                     elif inv.get("remainQuantity") is not None:
                         stock = inv["remainQuantity"]
                     else:
-                        stock = 999
+                        stock = 99  # 재고 수량 불명 → 99
 
                 options.append(
                     {

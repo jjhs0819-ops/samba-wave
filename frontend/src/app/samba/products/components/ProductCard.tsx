@@ -107,6 +107,8 @@ export function calcPrice(
   let price = cost + marginAmt + ship
   if (fee > 0 && price > 0) price = Math.ceil(price / (1 - fee / 100))
   if (extra > 0) price += extra
+  // 100원 단위 절사 (백엔드 calc_market_price와 동일)
+  price = Math.floor(price / 100) * 100
   const feeAmt = fee > 0 && price > 0 ? Math.round(price * fee / 100) : 0
   const parts = [
     `원가 ${fmt(cost)}`,
@@ -340,7 +342,8 @@ const ProductCard = React.memo(function ProductCard({
     setShowPriceHistoryModal(true)
     setPriceHistoryData(null)
     collectorApi.getPriceHistory(p.id).then(data => {
-      setPriceHistoryData(data || [])
+      // API 응답이 배열이 아닌 경우 방어 (DB 데이터 손상 대비)
+      setPriceHistoryData(Array.isArray(data) ? data : [])
     }).catch(() => setPriceHistoryData([]))
   }, [p.id])
   const [showImageModal, setShowImageModal] = useState(false)

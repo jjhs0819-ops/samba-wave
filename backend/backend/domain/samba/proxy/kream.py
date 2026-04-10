@@ -112,7 +112,7 @@ class KreamClient:
                     {
                         "name": name,
                         "price": ask,
-                        "stock": 0 if (s.get("is_sold_out") or ask == 0) else 1,
+                        "stock": 0 if (s.get("is_sold_out") or ask == 0) else 99,
                         "isSoldOut": s.get("is_sold_out", False),
                         "kreamFastPrice": 0,
                         "kreamNormalPrice": 0,

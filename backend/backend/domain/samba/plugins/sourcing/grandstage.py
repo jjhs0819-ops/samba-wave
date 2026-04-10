@@ -124,7 +124,9 @@ class GrandStagePlugin(SourcingPlugin):
                     {
                         "name": opt.get("name", ""),
                         "price": opt.get("price", 0),
-                        "stock": 0 if opt.get("isSoldOut") else opt.get("stock", 1),
+                        "stock": 0
+                        if opt.get("isSoldOut")
+                        else (opt.get("stock") or 99),
                         "isSoldOut": opt.get("isSoldOut", False),
                     }
                     for opt in raw_options

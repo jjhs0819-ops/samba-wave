@@ -84,7 +84,7 @@ class GMarketPlugin(SourcingPlugin):
                     {
                         "name": opt.get("name", ""),
                         "price": opt.get("priceAdjust", 0),
-                        "stock": 0 if opt.get("isSoldOut") else 1,
+                        "stock": 0 if opt.get("isSoldOut") else 99,
                         "isSoldOut": opt.get("isSoldOut", False),
                     }
                     for opt in raw_options

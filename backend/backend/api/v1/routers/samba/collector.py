@@ -1251,12 +1251,15 @@ async def get_price_history(
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from sqlalchemy import select as _sel
 
-    stmt = _sel(_CP.price_history).where(_CP.id == product_id)
+    # 상품 존재 여부와 price_history 값을 분리 조회
+    # scalar_one_or_none()은 컬럼값이 NULL일 때도 None 반환하므로
+    # id 컬럼을 함께 SELECT하여 상품 존재 여부를 정확히 판단
+    stmt = _sel(_CP.id, _CP.price_history).where(_CP.id == product_id)
     result = await session.execute(stmt)
-    row = result.scalar_one_or_none()
+    row = result.one_or_none()
     if row is None:
         raise HTTPException(404, "상품을 찾을 수 없습니다")
-    return row or []
+    return row[1] or []
 
 
 @router.post("/products", status_code=201)

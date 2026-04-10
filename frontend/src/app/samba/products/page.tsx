@@ -19,6 +19,7 @@ import {
   type SambaMarketAccount,
   type SambaNameRule,
   type SambaDetailTemplate,
+  type RefreshDetail,
 } from "@/lib/samba/api";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import ProductCard from './components/ProductCard'
@@ -133,6 +134,12 @@ export default function ProductsPage() {
   useEffect(() => {
     if (aiJobLogRef.current) aiJobLogRef.current.scrollTop = aiJobLogRef.current.scrollHeight
   }, [aiJobLogs])
+
+  // 가격재고갱신 모달
+  const [refreshModal, setRefreshModal] = useState(false)
+  const [refreshLoading, setRefreshLoading] = useState(false)
+  const [refreshDetails, setRefreshDetails] = useState<RefreshDetail[]>([])
+  const [refreshSummary, setRefreshSummary] = useState('')
 
   // 프리셋 이미지 목록 로드
   useEffect(() => {
@@ -641,6 +648,79 @@ export default function ProductsPage() {
                 }}>확인</button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 가격재고갱신 모달 */}
+      {refreshModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 99998,
+          background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px',
+            width: '620px', maxHeight: '70vh', display: 'flex', flexDirection: 'column',
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{
+              padding: '14px 20px', borderBottom: '1px solid #2D2D2D',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#E5E5E5' }}>가격재고갱신</span>
+              {!refreshLoading && (
+                <button onClick={() => setRefreshModal(false)} style={{
+                  background: 'none', border: 'none', color: '#888', fontSize: '0.77rem', cursor: 'pointer',
+                }}>✕</button>
+              )}
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', padding: '0', maxHeight: '50vh' }}>
+              {refreshLoading ? (
+                <div style={{ padding: '40px 20px', textAlign: 'center', color: '#FFB84D', fontSize: '0.85rem' }}>
+                  갱신 중... ({selectedIds.size}건)
+                </div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #2D2D2D', color: '#888' }}>
+                      <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500 }}>시간</th>
+                      <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500 }}>브랜드</th>
+                      <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500 }}>상품명</th>
+                      <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500 }}>변동</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {refreshDetails.map((d, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid #1E1E1E' }}>
+                        <td style={{ padding: '6px 12px', color: '#888', whiteSpace: 'nowrap' }}>{d.time}</td>
+                        <td style={{ padding: '6px 12px', color: '#B0B0B0', whiteSpace: 'nowrap', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.brand}</td>
+                        <td style={{ padding: '6px 12px', color: '#E5E5E5', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</td>
+                        <td style={{
+                          padding: '6px 12px', whiteSpace: 'nowrap',
+                          color: d.status === 'changed' ? '#51CF66' : d.status === 'error' ? '#FF6B6B' : '#666',
+                        }}>{d.detail}</td>
+                      </tr>
+                    ))}
+                    {refreshDetails.length === 0 && !refreshLoading && (
+                      <tr><td colSpan={4} style={{ padding: '20px', textAlign: 'center', color: '#666' }}>결과 없음</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            {refreshSummary && !refreshLoading && (
+              <div style={{
+                padding: '10px 20px', borderTop: '1px solid #2D2D2D',
+                fontSize: '0.75rem', color: '#B0B0B0',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              }}>
+                <span>{refreshSummary}</span>
+                <button onClick={() => setRefreshModal(false)} style={{
+                  padding: '5px 16px', borderRadius: '6px', fontSize: '0.75rem',
+                  background: 'rgba(81,207,102,0.15)', border: '1px solid rgba(81,207,102,0.4)',
+                  color: '#51CF66', cursor: 'pointer', fontWeight: 600,
+                }}>확인</button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1459,46 +1539,18 @@ export default function ProductsPage() {
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
-              // 선택된 상품의 group_key 수집
-              // 전체선택 시 현재 페이지에 없는 상품도 서버에서 조회
-              let fullProducts: SambaCollectedProduct[] = allProducts
-              if (serverTotal > allProducts.length) {
-                try {
-                  const res = await collectorApi.scrollProducts({
-                    skip: 0, limit: serverTotal,
-                    search: searchQ.trim() || undefined,
-                    search_type: searchQ.trim() ? searchType : undefined,
-                    source_site: siteFilter || undefined,
-                    status: statusFilter || undefined,
-                    ai_filter: aiFilter || undefined,
-                    search_filter_id: filterByGroupId || undefined,
-                    sort_by: sortBy,
-                  })
-                  fullProducts = res.items as SambaCollectedProduct[]
-                } catch { /* 폴백: 현재 페이지만 */ }
-              }
-              const selectedProds = fullProducts.filter(p => selectedIds.has(p.id))
-              const groupKeys = new Set(selectedProds.map(p => p.group_key).filter(Boolean))
-              if (groupKeys.size === 0) { showAlert('선택한 상품에 그룹 정보가 없습니다'); return }
-              // 동일 그룹의 모든 상품 찾기
-              const groupIds = fullProducts
-                .filter(p => p.group_key && groupKeys.has(p.group_key))
-                .map(p => p.id)
-              if (!await showConfirm(`선택한 ${selectedIds.size}건의 그룹(${groupKeys.size}개) 전체 ${groupIds.length}건을 삭제하시겠습니까?`)) return
-              setAiJobTitle(`그룹상품삭제 (${groupIds.length}건)`)
-              setAiJobLogs([`${groupKeys.size}개 그룹, ${groupIds.length}건 삭제 중...`])
-              setAiJobDone(false)
-              setAiJobModal(true)
-              const idSet = new Set(groupIds)
+              const ids = Array.from(selectedIds)
+              setRefreshDetails([])
+              setRefreshModal(true)
+              setRefreshLoading(true)
               try {
-                const res = await collectorApi.bulkDeleteProducts(groupIds)
-                setAiJobLogs(prev => [...prev, `${res.deleted}건 삭제 완료 ✓`])
+                const res = await collectorApi.refresh(ids, false)
+                setRefreshDetails(res.details ?? [])
+                setRefreshSummary(`${res.total}건 중 ${res.changed}건 변동, ${res.sold_out}건 품절, ${res.errors}건 에러`)
               } catch {
-                setAiJobLogs(prev => [...prev, `삭제 실패 ✗`])
+                setRefreshSummary('갱신 실패')
               }
-              setAiJobDone(true)
-              setSelectedIds(new Set())
-              setSelectAll(false)
+              setRefreshLoading(false)
               reloadProducts()
             }}
             style={{
@@ -1506,7 +1558,7 @@ export default function ProductsPage() {
               border: "1px solid #3D3D3D", borderRadius: "5px",
               color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
             }}
-          >그룹상품삭제</button>
+          >가격재고갱신</button>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <button

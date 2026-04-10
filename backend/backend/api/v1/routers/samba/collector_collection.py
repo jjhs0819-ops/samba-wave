@@ -160,6 +160,8 @@ async def collect_by_url(
             exclude_boutique = qs.get("excludeBoutique", [""])[0] == "1"
             # 최대혜택가 사용 여부 (체크 시 cost=bestBenefitPrice, 미체크 시 cost=salePrice)
             use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
+            # 품절상품 포함 여부 (체크 시 품절도 수집)
+            include_sold_out = qs.get("includeSoldOut", [""])[0] == "1"
 
             # 검색그룹(SearchFilter) 자동 생성
             requested_count = 100  # 기본값
@@ -235,6 +237,7 @@ async def collect_by_url(
 
             # 중복/품절 필터링 → 수집 대상 상품번호 추출
             skipped_sold_out = 0
+            collected_sold_out = 0
             targets = []
             for item in all_items:
                 if len(targets) >= remaining:
@@ -243,8 +246,10 @@ async def collect_by_url(
                 if site_pid in existing_ids:
                     continue
                 if item.get("isSoldOut", False):
-                    skipped_sold_out += 1
-                    continue
+                    if not include_sold_out:
+                        skipped_sold_out += 1
+                        continue
+                    collected_sold_out += 1
                 targets.append(site_pid)
 
             # 각 상품 상세 수집 → 배치 저장 (10건씩 flush)
@@ -371,6 +376,8 @@ async def collect_by_url(
                 "skipped_sold_out": skipped_sold_out,
                 "skipped_preorder": skipped_preorder,
                 "skipped_boutique": skipped_boutique,
+                "in_stock_count": saved - collected_sold_out,
+                "sold_out_count": collected_sold_out,
             }
 
         else:
@@ -710,6 +717,7 @@ async def collect_by_url(
                 raise HTTPException(400, "검색 URL에서 키워드를 찾을 수 없습니다")
 
             use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
+            include_sold_out = qs.get("includeSoldOut", [""])[0] == "1"
 
             # 검색그룹 자동 생성
             search_filter = await svc.create_filter(
@@ -776,6 +784,7 @@ async def collect_by_url(
 
             targets = []
             skipped_sold_out = 0
+            collected_sold_out = 0
             for item in all_items:
                 if len(targets) >= remaining:
                     break
@@ -783,8 +792,10 @@ async def collect_by_url(
                 if site_pid in existing_ids:
                     continue
                 if item.get("isSoldOut", False):
-                    skipped_sold_out += 1
-                    continue
+                    if not include_sold_out:
+                        skipped_sold_out += 1
+                        continue
+                    collected_sold_out += 1
                 targets.append(site_pid)
 
             # 상세 수집 + 배치 저장
@@ -866,6 +877,8 @@ async def collect_by_url(
                 "saved": saved,
                 "enriched": saved,
                 "skipped_sold_out": skipped_sold_out,
+                "in_stock_count": saved - collected_sold_out,
+                "sold_out_count": collected_sold_out,
             }
 
         else:
@@ -964,6 +977,7 @@ async def collect_by_url(
                 raise HTTPException(400, "검색 URL에서 키워드를 찾을 수 없습니다")
 
             use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
+            include_sold_out = qs.get("includeSoldOut", [""])[0] == "1"
 
             # 검색그룹 자동 생성
             search_filter = await svc.create_filter(
@@ -1030,6 +1044,7 @@ async def collect_by_url(
 
             targets = []
             skipped_sold_out = 0
+            collected_sold_out = 0
             for item in all_items:
                 if len(targets) >= remaining:
                     break
@@ -1037,8 +1052,10 @@ async def collect_by_url(
                 if site_pid in existing_ids:
                     continue
                 if item.get("isSoldOut", False):
-                    skipped_sold_out += 1
-                    continue
+                    if not include_sold_out:
+                        skipped_sold_out += 1
+                        continue
+                    collected_sold_out += 1
                 targets.append(site_pid)
 
             # 상세 수집 + 배치 저장
@@ -1167,6 +1184,8 @@ async def collect_by_url(
                 "saved": saved,
                 "enriched": saved,
                 "skipped_sold_out": skipped_sold_out,
+                "in_stock_count": saved - collected_sold_out,
+                "sold_out_count": collected_sold_out,
             }
 
         else:
@@ -2314,6 +2333,9 @@ async def brand_create_groups(
             req_count = max(count, 1)
 
         # 소싱처별 keyword 및 category_filter 결정
+        # 공통 옵션: 품절상품 포함
+        _opts_include_sold_out = body.options.get("includeSoldOut", False)
+
         if body.source_site == "MUSINSA":
             parts = [
                 f"keyword={body.brand_name or body.brand}",
@@ -2324,6 +2346,15 @@ async def brand_create_groups(
                 parts.append(f"brand={body.brand}")
             if code:
                 parts.append(f"category={code}")
+            # MUSINSA 전용 옵션
+            if body.options.get("excludePreorder"):
+                parts.append("excludePreorder=1")
+            if body.options.get("excludeBoutique"):
+                parts.append("excludeBoutique=1")
+            if body.options.get("maxDiscount"):
+                parts.append("maxDiscount=1")
+            if _opts_include_sold_out:
+                parts.append("includeSoldOut=1")
             keyword = "https://www.musinsa.com/search/goods?" + "&".join(parts)
             category_filter = code or None
         elif body.source_site in ("ABCmart", "GrandStage"):
@@ -2331,16 +2362,18 @@ async def brand_create_groups(
 
             _label = body.brand_name or body.brand or keyword or ""
             _md = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
+            _so = "&includeSoldOut=1" if _opts_include_sold_out else ""
             keyword = (
                 f"https://abcmart.a-rt.com/display/search-word/result"
-                f"?searchWord={_quote(_label)}{_md}"
+                f"?searchWord={_quote(_label)}{_md}{_so}"
             )
             category_filter = code or None
         elif body.source_site == "Nike":
             from urllib.parse import quote as _quote_nike
 
             _label = body.brand_name or body.brand or keyword or ""
-            keyword = f"https://www.nike.com/kr/w?q={_quote_nike(_label)}"
+            _so_nike = "&includeSoldOut=1" if _opts_include_sold_out else ""
+            keyword = f"https://www.nike.com/kr/w?q={_quote_nike(_label)}{_so_nike}"
             category_filter = code or None
         elif body.source_site == "GSShop":
             import base64 as _b64
@@ -2351,9 +2384,10 @@ async def brand_create_groups(
                 '{"part":"DEPT","selected":"opt-part"}'.encode()
             ).decode()
             _md_gs = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
+            _so_gs = "&includeSoldOut=1" if _opts_include_sold_out else ""
             keyword = (
                 f"https://www.gsshop.com/shop/search/main.gs"
-                f"?tq={_quote_gs(_label)}&eh={_quote_gs(_eh)}{_md_gs}"
+                f"?tq={_quote_gs(_label)}&eh={_quote_gs(_eh)}{_md_gs}{_so_gs}"
             )
             category_filter = code or None
         elif body.source_site == "SSG":
@@ -2361,9 +2395,10 @@ async def brand_create_groups(
 
             _label_ssg = body.brand_name or body.brand or ""
             _md_ssg = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
+            _so_ssg = "&includeSoldOut=1" if _opts_include_sold_out else ""
             keyword = (
                 f"https://department.ssg.com/search"
-                f"?query={_quote_ssg(_label_ssg)}&stdCtg={code}{_md_ssg}"
+                f"?query={_quote_ssg(_label_ssg)}&stdCtg={code}{_md_ssg}{_so_ssg}"
             )
             category_filter = code or None
         else:  # LOTTEON
@@ -2372,16 +2407,17 @@ async def brand_create_groups(
             _brand_label = body.brand_name or body.brand or ""
             # 롯데백화점(mallId=2) 검색 URL로 저장 (가품 방지 목적)
             _md_lt = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
+            _so_lt = "&includeSoldOut=1" if _opts_include_sold_out else ""
             if body.selected_brands:
                 _brands_q = _quote_lt(",".join(body.selected_brands))
                 keyword = (
                     f"https://www.lotteon.com/csearch/search/search"
-                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&mallId=2&brands={_brands_q}{_md_lt}"
+                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&mallId=2&brands={_brands_q}{_md_lt}{_so_lt}"
                 )
             else:
                 keyword = (
                     f"https://www.lotteon.com/csearch/search/search"
-                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&mallId=2{_md_lt}"
+                    f"?render=search&platform=pc&q={_quote_lt(_brand_label)}&mallId=2{_md_lt}{_so_lt}"
                 )
             # 합산된 BC코드들을 콤마로 연결 (같은 path의 여러 BC코드)
             bc_codes = cat.get("bc_codes") or ([code] if code else [])

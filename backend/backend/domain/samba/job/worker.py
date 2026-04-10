@@ -901,6 +901,7 @@ class JobWorker:
         _exclude_preorder = False
         _exclude_boutique = False
         _use_max_discount = False
+        _include_sold_out = False
 
         _brand_filter = ""
         _min_price = None
@@ -916,6 +917,7 @@ class JobWorker:
                 _exclude_preorder = qs.get("excludePreorder", [""])[0] == "1"
                 _exclude_boutique = qs.get("excludeBoutique", [""])[0] == "1"
                 _use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
+                _include_sold_out = qs.get("includeSoldOut", [""])[0] == "1"
                 _brand_filter = qs.get("brand", [""])[0]
                 _min_price_raw = qs.get("minPrice", [""])[0]
                 _max_price_raw = qs.get("maxPrice", [""])[0]
@@ -1053,8 +1055,10 @@ class JobWorker:
             _rate_limited = False
             _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(15, connect=5.0))
 
+            _collected_sold_out = 0
+
             async def _fetch_detail(goods_no: str) -> dict | None:
-                nonlocal total_skipped, _rate_limited
+                nonlocal total_skipped, _rate_limited, _collected_sold_out
                 if _rate_limited:
                     return None
                 async with _collect_sem:
@@ -1064,11 +1068,14 @@ class JobWorker:
                         )
                         if not detail or not detail.get("name"):
                             return None
-                        if detail.get("saleStatus") == "sold_out" or detail.get(
+                        _is_sold = detail.get("saleStatus") == "sold_out" or detail.get(
                             "isOutOfStock"
-                        ):
-                            total_skipped += 1
-                            return None
+                        )
+                        if _is_sold:
+                            if not _include_sold_out:
+                                total_skipped += 1
+                                return None
+                            _collected_sold_out += 1
                         if _exclude_preorder and detail.get("saleStatus") == "preorder":
                             total_skipped += 1
                             return None
@@ -1218,7 +1225,10 @@ class JobWorker:
             except Exception as e:
                 logger.error(f"[잡워커] 정책 전파 실패: {e}")
 
+        _in_stock = total_saved - _collected_sold_out
         _parts = [f"신규 {total_saved}건"]
+        if _in_stock > 0 or _collected_sold_out > 0:
+            _parts.append(f"재고 {_in_stock}건 | 품절 {_collected_sold_out}건")
         if total_skipped > 0:
             _parts.append(f"중복/스킵 {total_skipped}건")
         if policy_msg:
@@ -1235,6 +1245,8 @@ class JobWorker:
                 "saved": total_saved,
                 "skipped": total_skipped,
                 "policy": policy_msg,
+                "in_stock_count": _in_stock,
+                "sold_out_count": _collected_sold_out,
             },
         )
         logger.info(f"[잡워커] 수집 완료: {job.id} ({total_saved}건)")
@@ -1259,6 +1271,7 @@ class JobWorker:
         # URL에서 키워드/필터 추출
         _search_kwargs: dict = {}
         _use_max_discount = False
+        _include_sold_out = False
         try:
             from urllib.parse import urlparse, parse_qs
 
@@ -1266,6 +1279,7 @@ class JobWorker:
             if parsed.scheme:
                 qs = parse_qs(parsed.query)
                 _use_max_discount = qs.get("maxDiscount", [""])[0] == "1"
+                _include_sold_out = qs.get("includeSoldOut", [""])[0] == "1"
                 # 소싱처별 키워드 파라미터: LOTTEON=q, GSShop=tq, FashionPlus=searchWord
                 keyword = qs.get(
                     "q",
@@ -1807,6 +1821,7 @@ class JobWorker:
                     if str(it.get("site_product_id", "")) in _gsshop_details
                 ]
 
+        _collected_sold_out = 0
         for item in items_list:
             if total_saved >= remaining:
                 break
@@ -1822,6 +1837,15 @@ class JobWorker:
             p_id = str(item.get("site_product_id", ""))
             if p_id in existing_ids:
                 continue
+
+            # 품절 필터링
+            _item_sold_out = item.get("is_sold_out", False) or item.get(
+                "isSoldOut", False
+            )
+            if _item_sold_out:
+                if not _include_sold_out:
+                    continue
+                _collected_sold_out += 1
 
             p_name = item.get("name", "")
             sale_price = int(item.get("sale_price", 0))
@@ -2085,7 +2109,10 @@ class JobWorker:
             except Exception as e:
                 logger.error(f"[잡워커] {site} 정책 전파 실패: {e}")
 
+        _in_stock = total_saved - _collected_sold_out
         _parts = [f"신규 {total_saved}건"]
+        if _in_stock > 0 or _collected_sold_out > 0:
+            _parts.append(f"재고 {_in_stock}건 | 품절 {_collected_sold_out}건")
         if policy_msg:
             _parts.append(policy_msg.lstrip(", "))
         _add_job_log(
@@ -2094,7 +2121,14 @@ class JobWorker:
             job_type="collect",
         )
 
-        await repo.complete_job(job.id, {"saved": total_saved})
+        await repo.complete_job(
+            job.id,
+            {
+                "saved": total_saved,
+                "in_stock_count": _in_stock,
+                "sold_out_count": _collected_sold_out,
+            },
+        )
         logger.info(
             f"[잡워커] {site} 수집 완료: {job.id} ({total_saved}건{policy_msg})"
         )

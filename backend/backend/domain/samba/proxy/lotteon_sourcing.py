@@ -1866,7 +1866,7 @@ class LotteonSourcingClient:
                 _stock = (
                     0
                     if disabled
-                    else (_prev_stock if _prev_stock > 0 else (stk_qty or 1))
+                    else (_prev_stock if _prev_stock > 0 else (stk_qty or 99))
                 )
                 options.append(
                     {
@@ -1893,7 +1893,7 @@ class LotteonSourcingClient:
                         _stock = (
                             0
                             if combined_disabled
-                            else (_prev_stock if _prev_stock > 0 else (stk_qty or 1))
+                            else (_prev_stock if _prev_stock > 0 else (stk_qty or 99))
                         )
                         options.append(
                             {

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -136,8 +137,10 @@ async def refresh_products(
 
     # 변동 감지된 상품 DB 업데이트
     now = datetime.now(timezone.utc)
+    kst_now = now.astimezone(ZoneInfo("Asia/Seoul"))
     changed_ids: list[str] = []
     soldout_ids: list[str] = []
+    refresh_details: list[dict] = []  # 개별 상품 갱신 결과
 
     for r in results:
         if r.error:
@@ -158,6 +161,15 @@ async def refresh_products(
                     product_id=r.product_id,
                     product_name=getattr(product, "name", None),
                     detail={"error": r.error},
+                )
+                refresh_details.append(
+                    {
+                        "time": kst_now.strftime("%H:%M:%S"),
+                        "brand": getattr(product, "brand", "") or "",
+                        "name": (getattr(product, "name", "") or "")[:40],
+                        "status": "error",
+                        "detail": r.error[:60],
+                    }
                 )
             continue
         if r.needs_extension:
@@ -233,6 +245,7 @@ async def refresh_products(
 
         # sale_status는 가격 변동 무관하게 항상 반영
         updates["sale_status"] = r.new_sale_status
+        old_status = getattr(product, "sale_status", "in_stock")
 
         if r.changed:
             if r.new_sale_price is not None:
@@ -272,6 +285,30 @@ async def refresh_products(
                 )
 
             changed_ids.append(r.product_id)
+
+            # 변동 상세: 가격/재고 변동 내용 조합
+            _changes: list[str] = []
+            if r.new_sale_price is not None and r.new_sale_price != (
+                product.sale_price or 0
+            ):
+                _changes.append(
+                    f"가격 ₩{int(product.sale_price or 0):,}→₩{int(r.new_sale_price):,}"
+                )
+            if r.new_sale_status and r.new_sale_status != old_status:
+                _changes.append(f"상태 {old_status}→{r.new_sale_status}")
+            if r.stock_changed:
+                _changes.append("재고변동")
+
+            refresh_details.append(
+                {
+                    "time": kst_now.strftime("%H:%M:%S"),
+                    "brand": getattr(product, "brand", "") or "",
+                    "name": (getattr(product, "name", "") or "")[:40],
+                    "status": "changed",
+                    "detail": " / ".join(_changes) if _changes else "변동",
+                }
+            )
+
             if r.new_sale_status == "sold_out":
                 soldout_ids.append(r.product_id)
                 # 모니터링: 품절 감지
@@ -283,6 +320,17 @@ async def refresh_products(
                     product_id=r.product_id,
                     product_name=product.name,
                 )
+        else:
+            # 변동 없음
+            refresh_details.append(
+                {
+                    "time": kst_now.strftime("%H:%M:%S"),
+                    "brand": getattr(product, "brand", "") or "",
+                    "name": (getattr(product, "name", "") or "")[:40],
+                    "status": "unchanged",
+                    "detail": "변동 없음",
+                }
+            )
 
         await repo.update_async(r.product_id, **updates)
 
@@ -487,6 +535,7 @@ async def refresh_products(
         "needs_extension": summary.needs_extension,
         "errors": summary.errors,
         "cleaned_filters": len(cleaned_filter_ids),
+        "details": refresh_details,
     }
 
 
