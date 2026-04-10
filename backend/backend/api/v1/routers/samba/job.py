@@ -28,33 +28,29 @@ async def create_job(
     """잡 생성 — 즉시 응답, 백그라운드 워커가 처리."""
     svc = SambaJobService(SambaJobRepository(session))
 
-    # 같은 소싱처 수집 Job이 이미 실행 중이면 거부
+    # 수집 잡: 대기 큐 위치 계산 (같은 소싱처 PENDING/RUNNING 수)
+    queue_position = 0
     if body.job_type == "collect":
         source_site = body.payload.get("source_site", "")
         if source_site:
             from backend.domain.samba.job.model import SambaJob
             from sqlmodel import select, col
+            from sqlalchemy import func
 
-            running = (
+            queue_position = (
                 (
                     await session.execute(
-                        select(SambaJob).where(
+                        select(func.count())
+                        .select_from(SambaJob)
+                        .where(
                             SambaJob.job_type == "collect",
                             col(SambaJob.status).in_(
                                 [JobStatus.PENDING, JobStatus.RUNNING]
                             ),
-                            SambaJob.payload["source_site"].as_string() == source_site,
                         )
                     )
-                )
-                .scalars()
-                .first()
-            )
-            if running:
-                raise HTTPException(
-                    409,
-                    f"{source_site} 수집이 이미 진행 중입니다 (Job: {running.id}). 완료 후 다시 시도해주세요.",
-                )
+                ).scalar()
+            ) or 0
 
     # 전송 잡: 최근 실패/취소 잡이 있으면 이어하기 (current 위치부터 재개)
     if body.job_type == "transmit":
@@ -109,7 +105,10 @@ async def create_job(
         }
     )
     await session.commit()
-    return {"id": job.id, "status": job.status, "job_type": job.job_type}
+    resp: dict = {"id": job.id, "status": job.status, "job_type": job.job_type}
+    if queue_position > 0:
+        resp["queue_position"] = queue_position
+    return resp
 
 
 @router.get("")
@@ -117,9 +116,12 @@ async def list_jobs(
     status: Optional[str] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
-    session: AsyncSession = Depends(get_read_session_dependency),
+    session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """잡 목록 조회 (payload 제외 — 경량 응답)."""
+    """잡 목록 조회 (payload 제외 — 경량 응답).
+
+    Write DB 사용 — Read Replica 복제 지연으로 cancel 직후 stale 상태 반환 방지.
+    """
     svc = SambaJobService(SambaJobRepository(session))
     jobs = await svc.list_jobs(status=status, skip=skip, limit=limit)
     return [
@@ -162,6 +164,26 @@ async def clear_shipment_log_buffer():
     return {"ok": True}
 
 
+@router.get("/collect-logs")
+async def get_collect_log_buffer(
+    since_idx: int = Query(0, ge=0),
+):
+    """수집 로그 링 버퍼 조회 — 창 닫아도 유지."""
+    from backend.domain.samba.job.worker import get_collect_logs
+
+    logs, current_idx = get_collect_logs(since_idx)
+    return {"logs": logs, "current_idx": current_idx}
+
+
+@router.post("/collect-logs/clear")
+async def clear_collect_log_buffer():
+    """수집 로그 링 버퍼 초기화."""
+    from backend.domain.samba.job.worker import clear_collect_logs
+
+    clear_collect_logs()
+    return {"ok": True}
+
+
 @router.post("/cancel-all")
 async def cancel_all_jobs(
     session: AsyncSession = Depends(get_write_session_dependency),
@@ -184,8 +206,12 @@ async def cancel_all_jobs(
     )
     await session.commit()
 
-    # 3) 플래그 즉시 해제하지 않음 — 워커가 감지할 시간 확보
-    # _run_transmit 시작 시 잔존 플래그를 자체 해제하므로 다음 전송에 영향 없음
+    # 3) 플래그 해제 — 워커가 이미 감지 완료, 다음 전송 정상 허용
+    from backend.domain.samba.emergency import clear_emergency_stop
+    from backend.domain.samba.shipment.service import clear_cancel_transmit
+
+    clear_emergency_stop()
+    clear_cancel_transmit()
 
     return {"ok": True, "cancelled": r.rowcount}
 

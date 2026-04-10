@@ -1813,6 +1813,9 @@ async def sync_orders_from_markets(
                         update_fields["source_url"] = order_data["source_url"]
                     if order_data.get("shipment_id") and not existing.shipment_id:
                         update_fields["shipment_id"] = order_data["shipment_id"]
+                    # 결제일 보충 (기존 주문에 없으면 채움)
+                    if order_data.get("paid_at") and not existing.paid_at:
+                        update_fields["paid_at"] = order_data["paid_at"]
                     # 주소 보충 (기존 주문에 없으면 채움)
                     if (
                         order_data.get("customer_address")
@@ -2156,6 +2159,7 @@ def _parse_smartstore_order(
         "shipping_status": market_order_status,
         "shipping_company": po.get("deliveryCompany", ""),
         "tracking_number": po.get("trackingNumber", ""),
+        "paid_at": order_info.get("paymentDate") or po.get("paymentDate"),
         "source": "smartstore",
     }
 
@@ -2258,6 +2262,7 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         or "",
         "customer_address": full_addr,
         "notes": item.get("dvMsg", "") or "",
+        "paid_at": created_at,
         "created_at": created_at,
     }
 

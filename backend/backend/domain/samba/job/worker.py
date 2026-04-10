@@ -65,6 +65,40 @@ def clear_shipment_logs():
     _shipment_log_total = 0
 
 
+# ── 수집 로그 전용 링 버퍼 (전송과 동일 방식) ──
+_collect_log_buffer: deque[str] = deque(maxlen=300)
+_collect_log_total: int = 0
+
+
+def get_collect_logs(since_idx: int = 0) -> tuple[list[str], int]:
+    """수집 로그 링 버퍼 조회 (since_idx 이후). (logs, current_idx) 반환."""
+    global _collect_log_total
+    buf_len = len(_collect_log_buffer)
+    buf_start = _collect_log_total - buf_len
+    if since_idx >= _collect_log_total:
+        return [], _collect_log_total
+    if since_idx <= buf_start:
+        logs = list(_collect_log_buffer)
+    else:
+        offset = since_idx - buf_start
+        logs = list(_collect_log_buffer)[offset:]
+    return logs, _collect_log_total
+
+
+def _add_collect_log(msg: str):
+    """수집 로그를 링 버퍼에 추가."""
+    global _collect_log_total
+    _collect_log_buffer.append(msg)
+    _collect_log_total += 1
+
+
+def clear_collect_logs():
+    """수집 로그 링 버퍼 초기화."""
+    global _collect_log_total
+    _collect_log_buffer.clear()
+    _collect_log_total = 0
+
+
 def get_job_logs(job_id: str, since: int = 0) -> list[str]:
     """Job 로그 조회 (since 인덱스 이후)."""
     buf = _job_logs.get(job_id)
@@ -73,8 +107,8 @@ def get_job_logs(job_id: str, since: int = 0) -> list[str]:
     return buf[since:]
 
 
-def _add_job_log(job_id: str, msg: str):
-    """Job 로그 추가 (최대 _MAX_JOB_LOGS 유지) + 전송 링 버퍼에도 저장."""
+def _add_job_log(job_id: str, msg: str, job_type: str = ""):
+    """Job 로그 추가 (최대 _MAX_JOB_LOGS 유지) + 링 버퍼에도 저장."""
     # 백엔드 타임스탬프 (KST) — 프론트 폴링 시각이 아닌 실제 처리 시각 기록
     from datetime import datetime as _dt, timezone, timedelta
 
@@ -85,8 +119,11 @@ def _add_job_log(job_id: str, msg: str):
     buf.append(msg)
     if len(buf) > _MAX_JOB_LOGS:
         _job_logs[job_id] = buf[-_MAX_JOB_LOGS:]
-    # 전송 링 버퍼에도 동시 저장
-    _add_shipment_log(msg)
+    # 수집/전송 링 버퍼 분기
+    if job_type == "collect":
+        _add_collect_log(msg)
+    else:
+        _add_shipment_log(msg)
 
 
 def clear_job_logs(job_id: str):
@@ -339,7 +376,11 @@ class JobWorker:
                         logger.info(
                             f"[잡워커] 수집 중 배포 중단 → pending 복구: {_job_id}"
                         )
-                        _add_job_log(_job_id, "배포 중단 — 재시작 후 자동 재실행")
+                        _add_job_log(
+                            _job_id,
+                            "배포 중단 — 재시작 후 자동 재실행",
+                            job_type="collect",
+                        )
                         try:
                             async with get_write_session() as shutdown_session:
                                 from sqlalchemy import text as _text
@@ -356,7 +397,9 @@ class JobWorker:
                     else:
                         # 실제 10분 타임아웃
                         logger.error(f"[잡워커] 수집 스레드 10분 타임아웃: {_job_id}")
-                        _add_job_log(_job_id, "수집 타임아웃 (10분)")
+                        _add_job_log(
+                            _job_id, "수집 타임아웃 (10분)", job_type="collect"
+                        )
                         try:
                             async with get_write_session() as timeout_session:
                                 from backend.domain.samba.job.repository import (
@@ -805,6 +848,7 @@ class JobWorker:
             return
 
         site = sf.source_site
+        _add_job_log(job.id, f"[{site}] [{sf.name}] 수집 시작", job_type="collect")
 
         # 직접 API 소싱처 (서버 HTTP)
         DIRECT_API_SITES = {"FashionPlus", "Nike", "Adidas", "LOTTEON"}
@@ -889,6 +933,11 @@ class JobWorker:
         remaining = max(0, requested_count - existing_count)
 
         if remaining <= 0:
+            _add_job_log(
+                job.id,
+                f"[{site}] 이미 {existing_count}개 수집됨 (요청: {requested_count}개)",
+                job_type="collect",
+            )
             await repo.complete_job(
                 job.id,
                 {
@@ -898,6 +947,11 @@ class JobWorker:
             )
             return
 
+        _add_job_log(
+            job.id,
+            f"[{site}] [{sf.name}] 잔여 {remaining}건 수집 시작 (기존 {existing_count}건)",
+            job_type="collect",
+        )
         await repo.update_progress(job.id, existing_count, requested_count)
 
         # 수집 루프
@@ -1101,6 +1155,13 @@ class JobWorker:
                 await repo.update_progress(
                     job.id, existing_count + total_saved, requested_count
                 )
+                # 10건 단위 진행 로그
+                if total_saved % 10 == 0 or total_saved >= remaining:
+                    _add_job_log(
+                        job.id,
+                        f"[{site}] [{sf.name}] [{existing_count + total_saved}/{requested_count}] 수집 중...",
+                        job_type="collect",
+                    )
 
                 if total_saved >= remaining:
                     break
@@ -1156,6 +1217,17 @@ class JobWorker:
                 policy_msg = f"정책 적용: {count}개"
             except Exception as e:
                 logger.error(f"[잡워커] 정책 전파 실패: {e}")
+
+        _parts = [f"신규 {total_saved}건"]
+        if total_skipped > 0:
+            _parts.append(f"중복/스킵 {total_skipped}건")
+        if policy_msg:
+            _parts.append(policy_msg)
+        _add_job_log(
+            job.id,
+            f"[{site}] [{sf.name}] 수집 완료: {' | '.join(_parts)}",
+            job_type="collect",
+        )
 
         await repo.complete_job(
             job.id,
@@ -1232,6 +1304,11 @@ class JobWorker:
         existing_count = (await session.execute(count_stmt)).scalar() or 0
         remaining = max(0, requested_count - existing_count)
         if remaining <= 0:
+            _add_job_log(
+                job.id,
+                f"[{site}] [{sf.name}] 이미 {existing_count}개 수집됨",
+                job_type="collect",
+            )
             await repo.complete_job(
                 job.id, {"saved": 0, "message": f"이미 {existing_count}개 수집됨"}
             )
@@ -1956,6 +2033,13 @@ class JobWorker:
                 await repo.update_progress(
                     job.id, existing_count + total_saved, requested_count
                 )
+                # 10건 단위 진행 로그
+                if total_saved % 10 == 0 or total_saved >= remaining:
+                    _add_job_log(
+                        job.id,
+                        f"[{site}] [{sf.name}] [{existing_count + total_saved}/{requested_count}] 수집 중...",
+                        job_type="collect",
+                    )
             except Exception as e:
                 logger.warning(f"[잡워커] {site} 저장 실패 {p_id}: {e}")
 
@@ -2000,6 +2084,15 @@ class JobWorker:
                 policy_msg = f", 정책 적용: {count}개"
             except Exception as e:
                 logger.error(f"[잡워커] {site} 정책 전파 실패: {e}")
+
+        _parts = [f"신규 {total_saved}건"]
+        if policy_msg:
+            _parts.append(policy_msg.lstrip(", "))
+        _add_job_log(
+            job.id,
+            f"[{site}] [{sf.name}] 수집 완료: {' | '.join(_parts)}",
+            job_type="collect",
+        )
 
         await repo.complete_job(job.id, {"saved": total_saved})
         logger.info(

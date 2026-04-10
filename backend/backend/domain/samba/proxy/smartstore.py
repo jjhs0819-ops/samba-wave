@@ -1338,46 +1338,61 @@ class SmartStoreClient:
         if order_status:
             params["lastChangedType"] = order_status
 
-        # 1단계: 변경된 주문 ID 목록 조회 (여러 구간으로 분할하여 누락 방지)
+        # 1단계: 변경된 주문 ID 목록 조회
+        # lastChangedType별로 조회해야 취소/반품도 수집됨
         logger.info(f"[스마트스토어] 주문 조회 시작 lastChangedFrom={since_str}")
 
         all_statuses: list[dict[str, Any]] = []
         seen_po_ids: set[str] = set()
 
-        # 요청 기간 + 최근 1일 병행 조회 (API 시크릿 재발급 등으로 과거 데이터 조회 불가 대비)
+        # 변경 유형별 조회 (미지정 시 PAYED만 반환되므로 각 타입 명시)
+        change_types = [
+            "PAYED",
+            "DELIVERING",
+            "DELIVERED",
+            "PURCHASE_DECIDED",
+            "EXCHANGED",
+            "CANCELED",
+            "RETURNED",
+            "CANCEL_REQUESTED",
+        ]
+
+        # 요청 기간 + 최근 1일 병행 조회
         query_dates = [since_str]
         recent = datetime.now(kst) - timedelta(days=1)
         recent_str = recent.strftime("%Y-%m-%dT%H:%M:%S.000+09:00")
         if recent_str != since_str:
             query_dates.append(recent_str)
 
-        for qdate in query_dates:
-            qparams = dict(params)
-            qparams["lastChangedFrom"] = qdate
-            result = await self._call_api(
-                "GET",
-                "/v1/pay-order/seller/product-orders/last-changed-statuses",
-                params=qparams,
-            )
-            logger.info(
-                f"[스마트스토어] last-changed-statuses 응답 (from={qdate}): {str(result)[:500]}"
-            )
-            data = result.get("data", result) if isinstance(result, dict) else {}
-            statuses = (
-                (
-                    data.get("lastChangeStatuses", [])
-                    or data.get("lastChangedStatuses", [])
+        for change_type in change_types:
+            for qdate in query_dates:
+                qparams = dict(params)
+                qparams["lastChangedFrom"] = qdate
+                qparams["lastChangedType"] = change_type
+                try:
+                    result = await self._call_api(
+                        "GET",
+                        "/v1/pay-order/seller/product-orders/last-changed-statuses",
+                        params=qparams,
+                    )
+                except Exception:
+                    continue
+                data = result.get("data", result) if isinstance(result, dict) else {}
+                statuses_list = (
+                    (
+                        data.get("lastChangeStatuses", [])
+                        or data.get("lastChangedStatuses", [])
+                    )
+                    if isinstance(data, dict)
+                    else []
                 )
-                if isinstance(data, dict)
-                else []
-            )
-            for s in statuses:
-                pid = s.get("productOrderId", "")
-                if pid and pid not in seen_po_ids:
-                    seen_po_ids.add(pid)
-                    all_statuses.append(s)
+                for s in statuses_list:
+                    pid = s.get("productOrderId", "")
+                    if pid and pid not in seen_po_ids:
+                        seen_po_ids.add(pid)
+                        all_statuses.append(s)
 
-        logger.info(f"[스마트스토어] 변경된 주문 수: {len(all_statuses)}")
+        logger.info(f"[스마트스토어] 변경 유형별 조회 완료 — 총 {len(all_statuses)}건")
 
         if not all_statuses:
             return []

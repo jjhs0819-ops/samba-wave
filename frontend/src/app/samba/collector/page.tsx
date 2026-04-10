@@ -265,6 +265,8 @@ export default function CollectorPage() {
 
   const logRef = useRef<HTMLDivElement>(null);
   const collectAbortRef = useRef<AbortController | null>(null);
+  const collectLogSinceRef = useRef(0);
+  const collectLogPollingRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -327,6 +329,87 @@ export default function CollectorPage() {
       if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
     }, 50);
   }, []);
+
+  // 수집 로그 링 버퍼 폴링 (서버 로그 — 창 닫아도 유지)
+  useEffect(() => {
+    if (!collecting) return
+    collectLogPollingRef.current = true
+    let checkCount = 0
+    const timer = setInterval(async () => {
+      if (!collectLogPollingRef.current) return
+      try {
+        const res = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/collect-logs?since_idx=${collectLogSinceRef.current}`)
+        if (!res.ok) return
+        const data = await res.json() as { logs: string[]; current_idx: number }
+        if (data.current_idx < collectLogSinceRef.current) {
+          collectLogSinceRef.current = 0
+          return
+        }
+        if (data.logs.length > 0) {
+          setCollectLog(prev => [...prev, ...data.logs].slice(-30))
+          setTimeout(() => {
+            if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+          }, 50)
+        }
+        collectLogSinceRef.current = data.current_idx
+
+        // 5초마다 수집 잡 완료 여부 확인 (자동 감지로 시작된 경우)
+        checkCount++
+        if (checkCount % 10 === 0) {
+          const jRes = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs?status=running&limit=5`)
+          if (jRes.ok) {
+            const jobs = await jRes.json() as Array<{ job_type: string; status: string }>
+            const stillRunning = jobs.some(j => j.job_type === 'collect')
+            if (!stillRunning) {
+              const pRes = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs?status=pending&limit=5`)
+              const pJobs = pRes.ok ? await pRes.json() as Array<{ job_type: string }> : []
+              const stillPending = pJobs.some(j => j.job_type === 'collect')
+              if (!stillPending) {
+                setCollecting(false)
+                load()
+              }
+            }
+          }
+        }
+      } catch { /* 네트워크 오류 무시 */ }
+    }, 500)
+    return () => { clearInterval(timer); collectLogPollingRef.current = false }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collecting])
+
+  // 페이지 로드 시 진행 중인 수집 Job 자동 감지 + 로그 복원
+  useEffect(() => {
+    const detectRunningCollect = async () => {
+      try {
+        // RUNNING 또는 PENDING 수집 잡이 있는지 확인
+        const res = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs?status=running&limit=5`)
+        if (!res.ok) return
+        const jobs = await res.json() as Array<{ job_type: string; status: string }>
+        const hasCollect = jobs.some(j => j.job_type === 'collect' && (j.status === 'running' || j.status === 'pending'))
+        if (!hasCollect) {
+          // PENDING도 확인
+          const pRes = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs?status=pending&limit=5`)
+          if (pRes.ok) {
+            const pJobs = await pRes.json() as Array<{ job_type: string; status: string }>
+            const hasPending = pJobs.some(j => j.job_type === 'collect')
+            if (!hasPending) return
+          } else return
+        }
+        // 진행 중 수집 잡 발견 → 링 버퍼에서 기존 로그 복원
+        const logRes = await fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/collect-logs?since_idx=0`)
+        if (logRes.ok) {
+          const logData = await logRes.json() as { logs: string[]; current_idx: number }
+          if (logData.logs.length > 0) {
+            setCollectLog(logData.logs.slice(-30))
+          }
+          collectLogSinceRef.current = logData.current_idx
+        }
+        setCollecting(true)
+      } catch { /* 무시 */ }
+    }
+    detectRunningCollect()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 브랜드 코드를 포함하여 그룹 생성 (내부 실행)
   const executeCreateGroup = async (brandCode?: string) => {
@@ -680,7 +763,11 @@ export default function CollectorPage() {
     addLog('수집 중단 요청...');
   };
 
-  const handleClearLog = () => { setCollectLog(["로그가 초기화되었습니다."]); };
+  const handleClearLog = () => {
+    setCollectLog(["로그가 초기화되었습니다."])
+    collectLogSinceRef.current = 0
+    fetchWithAuth(`${API_BASE}/api/v1/samba/jobs/collect-logs/clear`, { method: 'POST' }).catch(() => {})
+  };
   const handleCopyLog = () => { navigator.clipboard.writeText(collectLog.join("\n")).catch(() => {}); };
 
   const handleCheckboxToggle = (id: string, checked: boolean) => {
