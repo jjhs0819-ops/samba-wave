@@ -125,8 +125,6 @@ async def _classify_products(session) -> dict[str, int]:
 
 async def _site_autotune_loop(site: str):
     """소싱처별 독립 오토튠 루프 — 작업 완료 즉시 다음 사이클 재시작."""
-    import logging
-
     log = logging.getLogger("autotune")
     log.info("[오토튠][%s] 소싱처 루프 시작", site)
 
@@ -595,6 +593,15 @@ async def _site_autotune_loop(site: str):
                                     _api_opts = r.new_options
                                     _stock_diff = False
                                     _stock_changes_acc = 0
+                                    # 디버그: 첫 3개 상품만 로그
+                                    if idx <= 3:
+                                        log.info(
+                                            "[재고디버그] %s api_opts=%s, sent_opts=%s, acc=%s",
+                                            r.product_id,
+                                            len(_api_opts) if _api_opts else _api_opts,
+                                            "있음" if _sent_opts else "없음",
+                                            acc_id[:20],
+                                        )
                                     if _api_opts:
                                         if _sent_opts is None:
                                             # 기준값 없음 → 첫 1회 무조건 전송
@@ -1159,8 +1166,6 @@ async def _autotune_loop():
     각 소싱처는 자기 작업이 끝나면 즉시 다음 사이클을 시작한다.
     """
     global _autotune_last_tick, _autotune_cycle_count, _autotune_restart_count
-    import logging
-
     log = logging.getLogger("autotune")
     log.info("[오토튠] 코디네이터 시작")
 
@@ -1401,8 +1406,6 @@ class RefreshOneRequest(BaseModel):
 @router.post("/autotune/refresh-one")
 async def autotune_refresh_one(body: RefreshOneRequest):
     """단일 상품 오토튠 갱신 — 상품번호로 검색 후 1건 갱신."""
-    from zoneinfo import ZoneInfo
-
     from backend.db.orm import get_write_session
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from backend.domain.samba.collector.refresher import refresh_products_bulk
@@ -1450,7 +1453,7 @@ async def autotune_refresh_one(body: RefreshOneRequest):
         results, summary = await refresh_products_bulk([product], source="manual")
 
         now = datetime.now(timezone.utc)
-        kst_now = now.astimezone(ZoneInfo("Asia/Seoul"))
+        kst_now = now + timedelta(hours=9)
         ts_str = kst_now.strftime("%H:%M:%S")
         r = results[0] if results else None
         detail_text = "갱신 실패"
