@@ -75,15 +75,15 @@ export default function OrdersPage() {
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
   const [loading, setLoading] = useState(true)
-  const [period, setPeriod] = useState('thisyear')
+  const [period, setPeriod] = useState('1month')
   const [marketFilter, setMarketFilter] = useState('')
   const [marketStatus, setMarketStatus] = useState('')
   const [siteFilter, setSiteFilter] = useState('')
   const [accountFilter, setAccountFilter] = useState('')
   const [inputFilter, setInputFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('active')
+  const [statusFilter, setStatusFilter] = useState('')
   const [searchText, setSearchText] = useState('')
-  const [pageSize, setPageSize] = useState(50)
+  const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [logMessages, _setLogMessagesRaw] = useState<string[]>(['[대기] 주문 가져오기 결과가 여기에 표시됩니다...'])
   const setLogMessages: typeof _setLogMessagesRaw = (v) => _setLogMessagesRaw(prev => {
@@ -156,7 +156,11 @@ export default function OrdersPage() {
   const [searchCategory, setSearchCategory] = useState('customer')
   // 일자 고정
   const [dateLocked, setDateLocked] = useState(false)
-  const [customStart, setCustomStart] = useState(`${new Date().getFullYear()}-01-01`)
+  const [customStart, setCustomStart] = useState(() => {
+    const d = new Date()
+    d.setDate(d.getDate() - 29)
+    return d.toLocaleDateString('sv-SE')
+  })
   const [startLocked, setStartLocked] = useState(false)
   const [customEnd, setCustomEnd] = useState(new Date().toLocaleDateString('sv-SE'))
 
@@ -901,7 +905,7 @@ export default function OrdersPage() {
           <span style={{ width: '1px', background: '#333', height: '18px', margin: '0 2px' }} />
           <select style={{ ...inputStyle, width: '88px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}><option>-- 정렬 --</option><option>주문일자▲</option><option>주문일자▼</option></select>
           <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
-            <option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
+            <option value={20}>20개 보기</option><option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
           </select>
         </div>
       </div>
