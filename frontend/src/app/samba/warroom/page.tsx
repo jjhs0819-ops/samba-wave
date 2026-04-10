@@ -495,47 +495,34 @@ export default function WarroomPage() {
             />
             <button
             id="btn-autotune-start"
-            disabled={singleRefreshing}
             onClick={async () => {
-              // 상품번호 입력 시 → 단일 상품 갱신 (로그 패널에 결과 표시)
-              if (singleProductNo.trim()) {
-                setSingleRefreshing(true)
-                try {
-                  const res = await collectorApi.autotuneRefreshOne(singleProductNo.trim())
-                  if (!res.ok) {
-                    const { showAlert } = await import('@/components/samba/Modal')
-                    showAlert(res.error || '상품을 찾을 수 없습니다', 'error')
-                  }
-                } catch {
-                  const { showAlert } = await import('@/components/samba/Modal')
-                  showAlert('갱신 요청 실패', 'error')
-                }
-                setSingleRefreshing(false)
-                setSingleProductNo('')
-                return
-              }
-              // 빈 입력 → 전체 오토튠 시작
               try {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
                 await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/emergency-clear`, { method: 'POST' })
-                await collectorApi.autotuneStart('registered')
+                const pno = singleProductNo.trim() || undefined
+                const res = await collectorApi.autotuneStart('registered', pno)
+                if (!res.ok) {
+                  const { showAlert } = await import('@/components/samba/Modal')
+                  showAlert(res.error || '시작 실패', 'error')
+                  return
+                }
                 falseCountRef.current = 0
                 setAutotuneRunning(true)
                 setAutotuneCycles(0)
+                if (pno) setSingleProductNo('')
               } catch { /* ignore */ }
             }}
             style={{
               padding: '0.25rem 0.75rem',
-              background: singleRefreshing ? 'rgba(255,140,0,0.12)' : 'rgba(34,197,94,0.12)',
-              border: `1px solid ${singleRefreshing ? 'rgba(255,140,0,0.35)' : 'rgba(34,197,94,0.35)'}`,
+              background: 'rgba(34,197,94,0.12)',
+              border: '1px solid rgba(34,197,94,0.35)',
               borderRadius: '6px',
-              color: singleRefreshing ? '#FF8C00' : '#22C55E',
+              color: '#22C55E',
               fontSize: '0.8125rem',
               fontWeight: 600,
-              cursor: singleRefreshing ? 'wait' : 'pointer',
-              opacity: singleRefreshing ? 0.7 : 1,
+              cursor: 'pointer',
             }}
-          >{singleRefreshing ? '갱신중...' : '시작'}</button>
+          >시작</button>
           <button
             onClick={async () => {
               try {

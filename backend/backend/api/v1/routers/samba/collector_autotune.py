@@ -41,6 +41,9 @@ _site_tasks: dict[str, asyncio.Task] = {}  # 소싱처별 asyncio 태스크
 _site_cycle_counts: dict[str, int] = {}  # 소싱처별 누적 사이클 수
 _site_last_ticks: dict[str, str] = {}  # 소싱처별 마지막 tick 시간
 
+# 단일 상품 오토튠 필터 (설정 시 해당 상품만 갱신)
+_autotune_target_ids: Optional[set] = None
+
 
 # 등급 분류 기준 기간 (일)
 CLASSIFY_WINDOW_DAYS = 7
@@ -189,13 +192,17 @@ async def _site_autotune_loop(site: str):
                     else:
                         _order_clause = (_CP.last_refreshed_at.asc().nullsfirst(),)
 
+                    _where = [
+                        *market_cond,
+                        _CP.applied_policy_id != None,
+                        _CP.source_site == site,
+                    ]
+                    # 단일 상품 오토튠 필터
+                    if _autotune_target_ids:
+                        _where.append(_CP.id.in_(_autotune_target_ids))
                     stmt = (
                         select(_CP)
-                        .where(
-                            *market_cond,
-                            _CP.applied_policy_id != None,
-                            _CP.source_site == site,
-                        )
+                        .where(*_where)
                         .order_by(*_order_clause)
                         .options(
                             defer(_CP.detail_html),
@@ -1278,7 +1285,7 @@ async def _autotune_loop():
 
 
 class AutotuneStartRequest(BaseModel):
-    pass
+    target_product_no: Optional[str] = None
 
 
 async def _save_autotune_state(enabled: bool):
@@ -1509,11 +1516,55 @@ async def autotune_refresh_one(body: RefreshOneRequest):
 @router.post("/autotune/start")
 async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     """오토튠 무한 루프 시작 — 메인 이벤트 루프에서 실행."""
-    global _autotune_task, _autotune_cycle_count, _autotune_restart_count
+    global \
+        _autotune_task, \
+        _autotune_cycle_count, \
+        _autotune_restart_count, \
+        _autotune_target_ids
     from backend.domain.samba.collector.refresher import clear_bulk_cancel
 
     if _autotune_running_event.is_set():
         return {"ok": True, "status": "already_running"}
+
+    # 단일 상품 오토튠: 상품번호 → 내부 ID 변환
+    _autotune_target_ids = None
+    if body.target_product_no:
+        pno = body.target_product_no.strip()
+        if pno:
+            from backend.db.orm import get_read_session
+            from backend.domain.samba.collector.model import (
+                SambaCollectedProduct as _CP,
+            )
+            from sqlalchemy import cast, String
+
+            async with get_read_session() as session:
+                # id 검색
+                stmt = select(_CP.id).where(_CP.id == pno).limit(1)
+                row = (await session.execute(stmt)).scalar()
+                if not row:
+                    # site_product_id 검색
+                    stmt = select(_CP.id).where(_CP.site_product_id == pno).limit(1)
+                    row = (await session.execute(stmt)).scalar()
+                if not row:
+                    # market_product_nos 값 검색
+                    stmt = (
+                        select(_CP.id, _CP.market_product_nos)
+                        .where(cast(_CP.market_product_nos, String).contains(pno))
+                        .limit(5)
+                    )
+                    rows = (await session.execute(stmt)).all()
+                    for r in rows:
+                        nos = r[1] or {}
+                        if pno in str(nos.values()):
+                            row = r[0]
+                            break
+                if not row:
+                    return {
+                        "ok": False,
+                        "error": f"'{pno}' 상품을 찾을 수 없습니다",
+                    }
+                _autotune_target_ids = {row}
+
     _autotune_running_event.set()
     _autotune_cycle_count = 0
     _autotune_restart_count = 0
@@ -1522,7 +1573,8 @@ async def autotune_start(body: AutotuneStartRequest = AutotuneStartRequest()):
     _site_tasks.clear()
     clear_bulk_cancel()
     _autotune_task = asyncio.create_task(_autotune_loop())
-    await _save_autotune_state(True)
+    if not body.target_product_no:
+        await _save_autotune_state(True)
     return {"ok": True, "status": "started", "target": "registered"}
 
 

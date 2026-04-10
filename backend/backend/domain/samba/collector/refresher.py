@@ -801,7 +801,7 @@ def _process_musinsa_detail(
 
     changed = new_sale_price != old_sale or new_sale_status != old_status
 
-    # 옵션 재고 변동 건수 — 품절↔리스탁 전환 + 수량 변동 모두 카운트
+    # 옵션 재고 변동 건수 — 품절↔리스탁 전환만 카운트
     old_options = getattr(product, "options", None) or []
     _stock_changes = 0
     if new_options and old_options:
@@ -813,7 +813,9 @@ def _process_musinsa_detail(
             key = o.get("name", "") or o.get("size", "")
             old_stock = old_stock_map.get(key, 0) or 0
             new_stock = o.get("stock", 0) or 0
-            if old_stock != new_stock:
+            was_soldout = old_stock <= 0
+            is_soldout = new_stock <= 0 or o.get("isSoldOut", False)
+            if was_soldout != is_soldout:
                 _stock_changes += 1
 
     # 상품명 (품번) 형태 + 마켓/계정 정보
