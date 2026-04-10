@@ -68,7 +68,10 @@ export default function ShipmentsPage() {
   const sinceIdxRef = useRef(0)  // 링 버퍼 폴링용
 
   // 실시간 Job 큐 상태
-  const [jobQueueStatus, setJobQueueStatus] = useState<{ running: number, pending: number }>({ running: 0, pending: 0 })
+  const [jobQueueStatus, setJobQueueStatus] = useState<{
+    running: { markets: string, product_count: number, current: number, total: number }[],
+    pending: { markets: string, product_count: number, current: number, total: number }[],
+  }>({ running: [], pending: [] })
   const jobQueuePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const cancelledAtRef = useRef<number>(0) // 작업중지 후 폴링 업데이트 차단 (새 전송 시작 시 해제)
 
@@ -85,17 +88,13 @@ export default function ShipmentsPage() {
     const fetchJobQueue = async () => {
       try {
         const { API_BASE_URL: apiBase } = await import('@/config/api')
-        const [runRes, penRes] = await Promise.all([
-          fetchWithAuth(`${apiBase}/api/v1/samba/jobs?status=running&limit=100`),
-          fetchWithAuth(`${apiBase}/api/v1/samba/jobs?status=pending&limit=100`),
-        ])
-        const runJobs = await runRes.json()
-        const penJobs = await penRes.json()
+        const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/transmit-queue-status`)
+        const data = await res.json()
         // 작업중지 후 폴링 업데이트 영구 차단 (새 전송 시작 시 해제)
         if (cancelledAtRef.current) return
         setJobQueueStatus({
-          running: Array.isArray(runJobs) ? runJobs.length : 0,
-          pending: Array.isArray(penJobs) ? penJobs.length : 0,
+          running: Array.isArray(data.running) ? data.running : [],
+          pending: Array.isArray(data.pending) ? data.pending : [],
         })
       } catch { /* ignore */ }
     }
@@ -915,15 +914,21 @@ export default function ShipmentsPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>전송 로그</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', flexWrap: 'wrap' }}>
               <span style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0,
-                background: jobQueueStatus.running > 0 ? '#51CF66' : jobQueueStatus.pending > 0 ? '#FAB005' : '#444',
+                background: jobQueueStatus.running.length > 0 ? '#51CF66' : jobQueueStatus.pending.length > 0 ? '#FAB005' : '#444',
               }} />
-              <span style={{ color: jobQueueStatus.running > 0 ? '#51CF66' : jobQueueStatus.pending > 0 ? '#FAB005' : '#555' }}>
-                {jobQueueStatus.running > 0 ? `전송 중 ${jobQueueStatus.running.toLocaleString()}건` : jobQueueStatus.pending > 0 ? `대기 ${jobQueueStatus.pending.toLocaleString()}건` : '대기 잡 없음'}
-              </span>
-              {jobQueueStatus.pending > 0 && jobQueueStatus.running > 0 && (
-                <span style={{ color: '#FAB005' }}>+ 대기 {jobQueueStatus.pending.toLocaleString()}건</span>
+              {jobQueueStatus.running.length > 0 ? (
+                <span style={{ color: '#51CF66' }}>
+                  전송 중 {jobQueueStatus.running.length}건 — {jobQueueStatus.running.map(j => `${j.markets} ${j.current.toLocaleString()}/${j.total.toLocaleString()}`).join(', ')}
+                </span>
+              ) : jobQueueStatus.pending.length > 0 ? (
+                <span style={{ color: '#FAB005' }}>대기 {jobQueueStatus.pending.length}건</span>
+              ) : (
+                <span style={{ color: '#555' }}>대기 잡 없음</span>
+              )}
+              {jobQueueStatus.pending.length > 0 && jobQueueStatus.running.length > 0 && (
+                <span style={{ color: '#FAB005' }}>+ 대기 {jobQueueStatus.pending.length}건 — {jobQueueStatus.pending.map(j => `${j.markets} ${j.product_count.toLocaleString()}건`).join(', ')}</span>
               )}
             </div>
           </div>
@@ -949,7 +954,7 @@ export default function ShipmentsPage() {
                   const { API_BASE_URL: apiBase } = await import('@/config/api')
                   await fetchWithAuth(`${apiBase}/api/v1/samba/shipments/cancel`, { method: 'POST' })
                   activeJobIdRef.current = ''
-                  setJobQueueStatus({ running: 0, pending: 0 })
+                  setJobQueueStatus({ running: [], pending: [] })
                   cancelledAtRef.current = Date.now()
                   setLogMessages(prev => [...prev, `[${ts}] 일시정지 완료 — 이어하기로 재개 가능`].slice(-30))
                 } catch {
@@ -976,7 +981,7 @@ export default function ShipmentsPage() {
                   await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/cancel-all`, { method: 'POST' })
                   activeJobIdRef.current = ''
                   setPausedJobPayload(null)
-                  setJobQueueStatus({ running: 0, pending: 0 })
+                  setJobQueueStatus({ running: [], pending: [] })
                   cancelledAtRef.current = Date.now()
                   setLogMessages(prev => [...prev, `[${ts}] 작업중지 완료`].slice(-30))
                 } catch {

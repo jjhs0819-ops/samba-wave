@@ -671,8 +671,9 @@ const ProductCard = React.memo(function ProductCard({
             </div>
           </div>
         )
-        } catch {
+        } catch (err) {
           // 데이터 파싱 에러 시 페이지 크래시 방지
+          console.error('[가격이력] 렌더링 에러:', err, '데이터:', priceHistoryData)
           return (
             <div style={{ position: 'fixed', inset: 0, zIndex: 99998, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}
               onClick={() => setShowPriceHistoryModal(false)}>

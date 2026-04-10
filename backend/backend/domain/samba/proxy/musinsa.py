@@ -887,12 +887,18 @@ class MusinsaClient:
                 except Exception as inv_err:
                     logger.warning(f"[재고] {goods_no} 재고 API 실패 (무시): {inv_err}")
 
-            # 옵션 정리 — preorder 등 salePrice=0인 경우 normalPrice 폴백
+            # 옵션 정리 — preorder/품절 등 salePrice=0인 경우 normalPrice 폴백
             base_price = (
                 gp.get("immediateDiscountedPrice")
                 or gp.get("salePrice")
                 or gp.get("normalPrice", 0)
             )
+            # 품절 상품이라도 normalPrice가 있으면 가격 보존
+            if not base_price and gp.get("normalPrice"):
+                base_price = gp["normalPrice"]
+                logger.info(
+                    f"[옵션] {goods_no} base_price=0 → normalPrice {base_price:,} 폴백"
+                )
             for item in items:
                 if not item.get("activated") or item.get("isDeleted"):
                     continue

@@ -237,6 +237,65 @@ async def get_collect_queue_status(
     return {"running": running, "pending": pending}
 
 
+@router.get("/transmit-queue-status")
+async def get_transmit_queue_status(
+    session: AsyncSession = Depends(get_read_session_dependency),
+):
+    """전송 Job 큐 상태 — 마켓명·계정·진행률 포함."""
+    from sqlmodel import select, col
+    from backend.domain.samba.job.model import SambaJob
+    from backend.domain.samba.account.model import SambaMarketAccount
+
+    stmt = (
+        select(SambaJob)
+        .where(
+            SambaJob.job_type == "transmit",
+            col(SambaJob.status).in_([JobStatus.RUNNING, JobStatus.PENDING]),
+        )
+        .order_by(SambaJob.created_at.asc())
+    )
+    result = await session.execute(stmt)
+    jobs = result.scalars().all()
+
+    # target_account_ids → 마켓 계정 이름 일괄 조회
+    all_acc_ids: set[str] = set()
+    for j in jobs:
+        all_acc_ids.update((j.payload or {}).get("target_account_ids", []))
+
+    acc_map: dict[str, str] = {}
+    if all_acc_ids:
+        acc_result = await session.execute(
+            select(
+                SambaMarketAccount.id,
+                SambaMarketAccount.market_name,
+                SambaMarketAccount.account_label,
+            ).where(col(SambaMarketAccount.id).in_(list(all_acc_ids)))
+        )
+        for aid, mname, alabel in acc_result.all():
+            acc_map[aid] = f"{mname}({alabel})" if alabel else mname
+
+    running = []
+    pending = []
+    for j in jobs:
+        payload = j.payload or {}
+        target_ids = payload.get("target_account_ids", [])
+        markets = ", ".join(
+            dict.fromkeys(acc_map.get(a, "") for a in target_ids if acc_map.get(a))
+        )
+        item = {
+            "markets": markets or "알 수 없음",
+            "product_count": len(payload.get("product_ids", [])),
+            "current": j.current or 0,
+            "total": j.total or 0,
+        }
+        if j.status == JobStatus.RUNNING:
+            running.append(item)
+        else:
+            pending.append(item)
+
+    return {"running": running, "pending": pending}
+
+
 @router.post("/cancel-all")
 async def cancel_all_jobs(
     session: AsyncSession = Depends(get_write_session_dependency),
