@@ -204,8 +204,16 @@ class GsShopSourcingClient:
                         )
                         break
 
+                    # prd-list 섹션만 추출 (사이드바/배너 상품 제외)
+                    _prd_section = re.search(
+                        r'<section[^>]+class="prd-list"[^>]*>(.*?)</section>',
+                        resp.text,
+                        re.DOTALL,
+                    )
+                    _search_html = _prd_section.group(1) if _prd_section else resp.text
+
                     new_count = 0
-                    for pid in link_pattern.findall(resp.text):
+                    for pid in link_pattern.findall(_search_html):
                         if pid not in seen_ids:
                             seen_ids.add(pid)
                             product_ids.append(pid)
@@ -430,8 +438,15 @@ class GsShopSourcingClient:
                         params=params,
                         headers=self._headers(mobile=False),
                     )
+                    # prd-list 섹션만 추출 (사이드바/배너 상품 제외)
+                    _prd_sec = re.search(
+                        r'<section[^>]+class="prd-list"[^>]*>(.*?)</section>',
+                        resp.text,
+                        re.DOTALL,
+                    )
+                    _scan_html = _prd_sec.group(1) if _prd_sec else resp.text
                     new_count = 0
-                    for pid in link_pattern.findall(resp.text):
+                    for pid in link_pattern.findall(_scan_html):
                         if pid not in seen_ids:
                             seen_ids.add(pid)
                             product_ids.append(pid)

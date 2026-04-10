@@ -662,6 +662,7 @@ class NikeClient:
                         "size": label,
                         "gtin": gtin,
                         "stock": 99 if s.get("status") == "ACTIVE" else 0,
+                        "us_label": s.get("label", ""),  # US 사이즈 (예: "M 5.5")
                     }
                 )
         else:

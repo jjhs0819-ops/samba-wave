@@ -345,6 +345,25 @@ def _build_combination_options(
             }
         )
 
+    # ── 동일 옵션명 중복 감지 → US 사이즈 접미사로 구분 (나이키 등) ──
+    from collections import Counter as _Counter
+
+    _name_counts = _Counter(c["optionName1"] for c in combinations)
+    _dup_names = {n for n, cnt in _name_counts.items() if cnt > 1}
+    if _dup_names:
+        _dup_seq: dict[str, int] = {}
+        for _c, _opt in zip(combinations, options):
+            if _c["optionName1"] in _dup_names:
+                _us = _opt.get("us_label", "")
+                if _us:
+                    _c["optionName1"] = f"{_c['optionName1']} US{_us}"
+                else:
+                    _base = _c["optionName1"]
+                    _seq = _dup_seq.get(_base, 1)
+                    _dup_seq[_base] = _seq + 1
+                    if _seq > 1:
+                        _c["optionName1"] = f"{_base}({_seq})"
+
     # 스마트스토어 필수조건: 옵션가 0원 + 재고 1개 이상 + 사용여부 Y 가 최소 1개
     has_base = any(
         c["price"] == 0 and c["stockQuantity"] > 0 and c["usable"] for c in combinations
