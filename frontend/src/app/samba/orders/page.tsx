@@ -1041,7 +1041,19 @@ export default function OrdersPage() {
                             }
                           } catch { /* ignore */ }
                         }
+                        // 상품명으로 수집상품 검색 (market_names 포함)
                         if (o.product_name) {
+                          try {
+                            const _scrollRes = await collectorApi.scrollProducts({
+                              search: o.product_name,
+                              search_type: 'name',
+                              limit: 1,
+                            })
+                            if (_scrollRes.items?.length > 0 && _scrollRes.total === 1) {
+                              window.open(`/samba/products?search=${encodeURIComponent(_scrollRes.items[0].id)}&search_type=id&highlight=${_scrollRes.items[0].id}`, '_blank')
+                              return
+                            }
+                          } catch { /* ignore */ }
                           window.open(`/samba/products?search=${encodeURIComponent(o.product_name)}`, '_blank')
                         } else {
                           showAlert('상품 정보가 없습니다', 'info')

@@ -26,6 +26,23 @@ from backend.api.v1.routers.samba.collector_common import (
 router = APIRouter(prefix="/collector", tags=["samba-collector"])
 
 
+def _all_options_sold_out(cp):
+    """options JSON 배열의 모든 옵션이 stock <= 0인 조건 (sale_status 무관)."""
+    from sqlalchemy import and_, text, cast, String
+
+    return and_(
+        cp.options.isnot(None),
+        cast(cp.options, String) != "null",
+        cast(cp.options, String) != "[]",
+        text(
+            "NOT EXISTS ("
+            "  SELECT 1 FROM json_array_elements(options) AS elem"
+            "  WHERE COALESCE((elem->>'stock')::int, 0) > 0"
+            ")"
+        ),
+    )
+
+
 # ── Inline DTOs (will be replaced by dtos/samba/collector.py when ready) ──
 
 
@@ -654,7 +671,9 @@ async def scroll_products(
             )
         )
     elif status == "sold_out":
-        conditions.append(_CP.sale_status == "sold_out")
+        conditions.append(
+            or_(_CP.sale_status == "sold_out", _all_options_sold_out(_CP))
+        )
     elif status and status.startswith("mtype_reg_"):
         # 마켓타입별 등록 필터: 해당 마켓타입의 계정 중 하나라도 등록된 상품
         market_type = status[10:]
@@ -720,7 +739,9 @@ async def scroll_products(
 
     # AI 필터 (JSON 태그/이미지 패턴)
     if ai_filter == "sold_out":
-        conditions.append(_CP.sale_status == "sold_out")
+        conditions.append(
+            or_(_CP.sale_status == "sold_out", _all_options_sold_out(_CP))
+        )
     elif ai_filter == "ai_tag_yes":
         conditions.append(cast(_CP.tags, String).like('%"__ai_tagged__"%'))
     elif ai_filter == "ai_tag_no":
@@ -800,9 +821,17 @@ async def scroll_products(
             func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
                 "policy_applied"
             ),
-            func.count(case((_CP.sale_status == "sold_out", literal(1)))).label(
-                "sold_out"
-            ),
+            func.count(
+                case(
+                    (
+                        or_(
+                            _CP.sale_status == "sold_out",
+                            _all_options_sold_out(_CP),
+                        ),
+                        literal(1),
+                    )
+                )
+            ).label("sold_out"),
         ).select_from(_CP)
         counts_task = session.execute(counts_stmt)
 
@@ -1245,6 +1274,7 @@ async def lookup_by_market_product_no(
         "FROM samba_collected_product "
         "WHERE market_product_nos::text LIKE :pattern "
         "   OR market_product_nos::text LIKE :pattern_bare "
+        "   OR site_product_id = :spid "
         "LIMIT 1"
     )
     result = await session.execute(
@@ -1252,6 +1282,7 @@ async def lookup_by_market_product_no(
         {
             "pattern": f'%"{market_product_no}"%',
             "pattern_bare": f"%{market_product_no}%",
+            "spid": market_product_no,
         },
     )
     row = result.fetchone()

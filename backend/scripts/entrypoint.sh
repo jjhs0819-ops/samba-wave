@@ -45,6 +45,13 @@ async def fix():
     try:
         await conn.execute('ALTER TABLE samba_search_filter ADD COLUMN IF NOT EXISTS source_brand_name TEXT')
         await conn.execute('ALTER TABLE samba_market_account DROP COLUMN IF EXISTS sort_order')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS clm_req_seq TEXT')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS ord_prd_seq TEXT')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_retrieval_status TEXT')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_retrieved_at TIMESTAMPTZ')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_reship_company TEXT')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_reship_tracking TEXT')
+        await conn.execute('ALTER TABLE samba_return ADD COLUMN IF NOT EXISTS exchange_delivered_at TIMESTAMPTZ')
         print('Emergency schema fixes applied.')
     finally:
         await conn.close()

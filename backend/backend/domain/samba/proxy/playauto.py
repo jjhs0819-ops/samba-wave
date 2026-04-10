@@ -480,8 +480,10 @@ class PlayAutoClient:
                 data[f"Image{img_idx}"] = url
                 img_idx += 1
         # 미사용 슬롯을 대표이미지로 채움 (EMP가 Content에서 자동추출하는 것 방지)
+        # 추가이미지 없으면 5개까지만 채움 (리소스 절약)
         main_img = data.get("Image1", "")
-        for fill_idx in range(img_idx, 11):
+        max_fill = 11 if img_idx > 2 else 6
+        for fill_idx in range(img_idx, max_fill):
             data[f"Image{fill_idx}"] = main_img
 
         # 상세설명 HTML

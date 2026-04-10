@@ -2070,6 +2070,7 @@ async def sync_orders_from_markets(
             )
 
         except Exception as e:
+            await session.rollback()  # 세션 복구 — 다음 계정 연쇄 실패 방지
             logger.error(f"[주문동기화] {label} 실패: {e}")
             results.append({"account": label, "status": "error", "message": str(e)})
 
