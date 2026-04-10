@@ -1131,9 +1131,32 @@ class LotteonPlugin(MarketPlugin):
                 else:
                     new_price = int(product.get("sale_price") or 0)
                     new_options = product.get("options") or []
-                    # 옵션명 → 재고 매핑
-                    opt_stock_map = {
-                        o.get("name", ""): o.get("stock", 0) for o in new_options
+
+                    # 계정 재고수량 상한 (transform_product와 동일 정책)
+                    # 주의: 경량 분기는 1410 라인의 product_copy 주입보다 먼저 실행되므로
+                    # account.additional_fields에서 직접 로드해야 함.
+                    _acc_extras = getattr(account, "additional_fields", None) or {}
+                    try:
+                        _max_stock_per_opt = int(_acc_extras.get("stockQuantity") or 0)
+                    except (ValueError, TypeError):
+                        _max_stock_per_opt = 0
+
+                    def _apply_stock_cap(raw: int, sold: bool) -> int:
+                        """스마트스토어 _build_combination_options 패턴과 동일."""
+                        if sold:
+                            return 0
+                        r = max(int(raw or 0), 0)
+                        if _max_stock_per_opt > 0:
+                            return min(r, _max_stock_per_opt)
+                        return r
+
+                    # 옵션명 → (stock, isSoldOut) 매핑 — isSoldOut 반영 위해 튜플로
+                    opt_info_map = {
+                        (o.get("name") or "").strip(): (
+                            o.get("stock", 0) or 0,
+                            bool(o.get("isSoldOut", False)),
+                        )
+                        for o in new_options
                     }
 
                     # 가격 변경 요청
@@ -1153,14 +1176,16 @@ class LotteonPlugin(MarketPlugin):
                             )
                         # 재고 업데이트 (옵션명으로 매칭)
                         itm_name = (itm.get("itmNm") or itm.get("optNm") or "").strip()
-                        if itm_name in opt_stock_map:
-                            stk = opt_stock_map[itm_name]
-                        elif new_options:
-                            # 옵션명 매칭 실패 → 전체 재고 중 최솟값 사용
-                            stk = min(
-                                (o.get("stock", 0) for o in new_options), default=0
-                            )
+                        if itm_name in opt_info_map:
+                            raw_s, sold = opt_info_map[itm_name]
+                            stk = _apply_stock_cap(raw_s, sold)
                         else:
+                            # 매칭 실패 시: 기존 min() 폴백은 품절 옵션이 섞이면 0이 되는
+                            # 위험한 로직이었음. 이제는 명시적 0 + 경고 로그 (임의 재고 주입 금지).
+                            logger.warning(
+                                f"[롯데ON] 경량 업데이트 — 옵션명 매칭 실패: "
+                                f"'{itm_name}', stkQty=0 강제"
+                            )
                             stk = 0
                         itm_stk_lst.append(
                             {
